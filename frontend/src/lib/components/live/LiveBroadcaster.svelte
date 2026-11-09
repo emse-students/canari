@@ -18,12 +18,17 @@
     CameraOff,
     Eye,
     LoaderCircle,
+    MessageCircle,
+    MessageCircleOff,
+    Monitor,
+    Pencil,
     Radio,
     RefreshCcw,
     ShieldAlert,
     ShieldCheck,
+    Share2,
     SwitchCamera,
-    Timer,
+    Video,
     WifiOff,
     X,
   } from '@lucide/svelte';
@@ -41,6 +46,15 @@
     type LiveStartProblem,
   } from '$lib/live/liveBroadcast.svelte';
   import { batteryWarrantsWarning, openLiveCamera, readBatteryLevel } from '$lib/live/liveDevice';
+  import { liveRecordingGap, type LiveRecordingGap } from '$lib/live/liveRecorder';
+  import { currentUserId } from '$lib/stores/userState.svelte';
+  import { shareLiveLink } from '$lib/live/shareLive';
+  import { grabPosterFrame } from '$lib/live/livePoster';
+  import { clampLiveTitleInput, liveTitleLength } from '$lib/live/liveTitle';
+  import Button from '$lib/components/ui/Button.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
+  import LiveBadge from './LiveBadge.svelte';
+  import LiveIdentity from './LiveIdentity.svelte';
   import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
   import LiveViewerCount from './LiveViewerCount.svelte';
 
@@ -77,6 +91,10 @@
   let viewers = $state<number | null>(null);
   let ticker: ReturnType<typeof setInterval> | null = null;
   let frameReady = $state(false);
+  /** Whether the chat is drawn over the video; the toggle at the top right flips it. */
+  let chatOpen = $state(true);
+  /** Who broadcasts, for the corner identity: the signed-in member, or the association they speak as. */
+  const broadcasterId = $derived(currentUserId());
   let video = $state<HTMLVideoElement | null>(null);
 
   const onAir = $derived(broadcast.phase === 'live' || broadcast.phase === 'away');
@@ -88,7 +106,7 @@
 
   /** Asks, then ends the live: the End button, Back and the edge swipe all come here. */
   export async function confirmEnd(): Promise<void> {
-    console.debug('[LIVE-SCREEN] end asked');
+    console.debug(`[LIVE-SCREEN] end asked in ${broadcast.phase}`);
     const ok = await showConfirm(m.live_end_confirm(), {
       danger: true,
       confirmLabel: m.live_end_confirm_button(),
@@ -99,6 +117,10 @@
       return;
     }
     await broadcast.end();
+    // The line that decides a "stayed up after Terminer" report: the phase the End left behind.
+    console.debug(
+      `[LIVE-SCREEN] end returned in ${broadcast.phase} (${broadcast.endCause ?? 'no cause'})`
+    );
   }
 
   function close() {
@@ -132,6 +154,46 @@
     video.srcObject = camera.stream;
   });
 
+  // The preview still (owner, 2026-11-07) is grabbed from THIS element, the one the member sees:
+  // the camera or the shared screen alike. The broadcast asks for it on its segment cadence.
+  $effect(() => {
+    const el = video;
+    broadcast.setPosterCapture(el ? () => grabPosterFrame(el) : null);
+    return () => broadcast.setPosterCapture(null);
+  });
+
+  /** The on-air title editor: null when closed, the draft while open. */
+  let titleDraft = $state<string | null>(null);
+  const titleMax = $derived(broadcast.limits?.titleMaxChars ?? null);
+
+  const TITLE_TEXT: Record<'invalid' | 'offline' | 'failed', () => string> = {
+    invalid: () => m.live_title_invalid({ max: titleMax ?? 0 }),
+    offline: m.live_title_offline,
+    failed: m.live_title_failed,
+  };
+
+  /**
+   * A title field after a keystroke: one line, cut at the bound - written back into the element too,
+   * because a cut that leaves the state unchanged would not redraw the field.
+   */
+  function clampTitleField(input: HTMLInputElement, max: number): string {
+    const next = clampLiveTitleInput(input.value, max);
+    if (next !== input.value) input.value = next;
+    return next;
+  }
+
+  function openTitleEditor() {
+    console.debug('[LIVE-SCREEN] title editor opened');
+    titleDraft = broadcast.title;
+  }
+
+  async function saveTitleDraft() {
+    if (titleDraft === null) return;
+    const taken = await broadcast.saveTitle(titleDraft);
+    console.debug(`[LIVE-SCREEN] title edit ${taken ? 'taken' : 'not taken'}`);
+    if (taken) titleDraft = null;
+  }
+
   $effect(() => {
     if (!onAir) return;
     elapsedMs = broadcast.elapsedMs();
@@ -141,6 +203,13 @@
       clearInterval(t);
       ticker = null;
     };
+  });
+
+  // The share was stopped from the browser's own bar: the live ends (liveBroadcast.screenShareStopped).
+  $effect(() => {
+    if (camera.phase === 'error' && camera.fault === 'interrupted') {
+      void broadcast.screenShareStopped();
+    }
   });
 
   onMount(() => {
@@ -181,6 +250,18 @@
     });
   }
 
+  /** Why THIS browser cannot broadcast, in plain words and with what to do (live.md, "Firefox"). */
+  const UNSUPPORTED_TEXT: Record<LiveRecordingGap, () => string> = {
+    firefox: m.live_unsupported_firefox,
+    outdated: m.live_unsupported_outdated,
+    other: m.live_unsupported,
+  };
+  /** Asked ONCE per sheet (it logs): an engine's recording support does not change while open. */
+  const recordingGap = liveRecordingGap();
+  function unsupportedText(): string {
+    return UNSUPPORTED_TEXT[recordingGap ?? 'other']();
+  }
+
   const START_TEXT: Record<LiveStartProblem, () => string> = {
     muted: m.live_start_muted,
     'rules-not-accepted': m.live_start_rules_not_accepted,
@@ -188,10 +269,11 @@
     withdrawn: m.live_start_withdrawn,
     'already-open': m.live_start_already_open,
     'association-forbidden': m.live_start_association_forbidden,
+    'association-archived': m.live_start_association_archived,
     'rate-limited': m.live_start_rate_limited,
     disabled: m.live_limits_disabled,
     offline: m.live_start_offline,
-    unsupported: m.live_unsupported,
+    unsupported: unsupportedText,
     failed: m.live_start_failed,
   };
 
@@ -234,7 +316,8 @@
   {#key camera.stream}
     <video
       bind:this={video}
-      class="absolute inset-0 h-full w-full object-cover {camera.facing === 'user'
+      class="absolute inset-0 h-full w-full object-cover {camera.facing === 'user' &&
+      broadcast.source === 'camera'
         ? '-scale-x-100'
         : ''} {camera.phase === 'live' && frameReady
         ? 'opacity-100'
@@ -256,19 +339,81 @@
     {#if onAir || broadcast.phase === 'starting' || broadcast.phase === 'ending'}
       <div class="flex flex-col items-start gap-2" role="status">
         {#if onAir}
-          <span
-            class="inline-flex items-center gap-2 rounded-full bg-red-600 px-3 py-1 text-xs font-bold tracking-wide uppercase"
-          >
-            <span class="h-2 w-2 rounded-full bg-white motion-safe:animate-pulse" aria-hidden="true"
-            ></span>
-            {m.live_on_air()}
+          <!-- Who is on air, then the badge, the time and the audience: Instagram Live's corner. -->
+          {#if broadcasterId}
+            <span class="text-sm" data-live-identity>
+              <LiveIdentity live={{ broadcasterId, associationId }} size="sm" />
+            </span>
+          {/if}
+          <span class="flex items-center gap-1.5">
+            <LiveBadge />
             <span
               role="timer"
               aria-label={m.live_elapsed_label()}
-              class="font-semibold tabular-nums">{clock(elapsedMs)}</span
+              class="bg-cn-scrim/40 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
+              >{clock(elapsedMs)}</span
             >
+            <LiveViewerCount count={viewers} />
           </span>
-          <LiveViewerCount count={viewers} />
+          {#if titleMax}
+            <!-- The title, editable on air (owner, 2026-11-07): what the feed card shows. -->
+            {#if titleDraft === null}
+              <Button
+                variant="secondary"
+                size="compact"
+                class="max-w-64"
+                aria-label={m.live_title_edit_label()}
+                onclick={openTitleEditor}
+                data-live-title-chip
+              >
+                <Pencil size={12} strokeWidth={2.5} aria-hidden="true" />
+                <span class="truncate">{broadcast.title || m.live_title_add()}</span>
+              </Button>
+            {:else}
+              <form
+                class="flex max-w-72 flex-col gap-1.5 rounded-lg bg-black/60 p-2"
+                onsubmit={(e) => {
+                  e.preventDefault();
+                  void saveTitleDraft();
+                }}
+                data-live-title-editor
+              >
+                <Input
+                  density="compact"
+                  aria-label={m.live_title_edit_label()}
+                  placeholder={m.live_title_placeholder()}
+                  value={titleDraft}
+                  oninput={(e) => (titleDraft = clampTitleField(e.currentTarget, titleMax))}
+                  disabled={broadcast.titleSaving}
+                  data-live-title-input
+                />
+                <span class="flex items-center justify-between gap-2 text-xs">
+                  <span class="text-white/70 tabular-nums"
+                    >{m.live_title_counter({
+                      count: liveTitleLength(titleDraft),
+                      max: titleMax,
+                    })}</span
+                  >
+                  <span class="flex gap-1.5">
+                    <Button variant="secondary" size="compact" onclick={() => (titleDraft = null)}
+                      >{m.common_cancel_button()}</Button
+                    >
+                    <Button
+                      type="submit"
+                      size="compact"
+                      disabled={broadcast.titleSaving}
+                      data-live-title-save>{m.common_save_button()}</Button
+                    >
+                  </span>
+                </span>
+              </form>
+            {/if}
+            {#if broadcast.titleProblem}
+              <span class="max-w-72 text-xs text-white/80" data-live-title-problem
+                >{TITLE_TEXT[broadcast.titleProblem]()}</span
+              >
+            {/if}
+          {/if}
         {/if}
         {#if onAir && broadcast.health === 'retrying'}
           <span
@@ -296,22 +441,69 @@
       </button>
     {/if}
 
-    {#if broadcast.phase === 'preview' && camera.phase === 'live'}
-      <button
-        type="button"
-        class={iconButton}
-        aria-label={m.reels_camera_switch()}
-        title={m.reels_camera_switch()}
-        onclick={() => void camera.switchFacing()}
-      >
-        <SwitchCamera size={22} strokeWidth={2.25} />
-      </button>
-    {/if}
+    <div class="flex shrink-0 items-center gap-2">
+      {#if broadcast.phase === 'preview' && camera.phase === 'live' && camera.canSwitch && broadcast.source === 'camera'}
+        <button
+          type="button"
+          class={iconButton}
+          aria-label={m.reels_camera_switch()}
+          title={m.reels_camera_switch()}
+          onclick={() => void camera.switchFacing()}
+        >
+          <SwitchCamera size={22} strokeWidth={2.25} />
+        </button>
+      {/if}
+      {#if onAir}
+        <!-- The on-air controls, together at the top right: share the link, show or hide the chat
+             (the old eye-off icon hid ONE LINE and is now in that line's tap menu), and the small
+             End - destructive, so it asks (`confirmEnd`). -->
+        {#if broadcast.liveId}
+          {@const sharedId = broadcast.liveId}
+          <button
+            type="button"
+            class={iconButton}
+            aria-label={m.live_share_label()}
+            title={m.live_share_label()}
+            onclick={() => shareLiveLink(sharedId)}
+            data-live-share
+          >
+            <Share2 size={20} strokeWidth={2.25} />
+          </button>
+        {/if}
+        <button
+          type="button"
+          class={iconButton}
+          aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+          title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+          aria-pressed={chatOpen}
+          onclick={() => (chatOpen = !chatOpen)}
+          data-live-chat-toggle
+        >
+          {#if chatOpen}
+            <MessageCircle size={20} strokeWidth={2.25} />
+          {:else}
+            <MessageCircleOff size={20} strokeWidth={2.25} />
+          {/if}
+        </button>
+        <!-- A compact X like the other controls, tinted red because it is destructive; its name is
+             "Terminer" and the confirmation stays. -->
+        <button
+          type="button"
+          class="ui-icon-button rounded-full bg-red-600/80 outline-none hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-white"
+          aria-label={m.live_end_button()}
+          title={m.live_end_button()}
+          onclick={() => void confirmEnd()}
+          data-live-end
+        >
+          <X size={20} strokeWidth={2.75} />
+        </button>
+      {/if}
+    </div>
   </div>
 
   {#if broadcast.phase === 'preview' || broadcast.phase === 'starting'}
     <div
-      class="absolute inset-x-0 bottom-0 flex flex-col gap-3 bg-linear-to-t from-black/90 via-black/70 to-transparent px-4 pt-12 pb-[calc(var(--safe-area-inset-bottom,0px)+1.25rem)]"
+      class="absolute inset-x-0 bottom-0 flex max-h-[calc(100%-var(--safe-area-inset-top,0px)-4rem)] flex-col gap-3 overflow-y-auto bg-linear-to-t from-black/90 via-black/70 to-transparent px-4 pt-12 pb-[calc(var(--safe-area-inset-bottom,0px)+1.25rem)]"
     >
       <h2 class="text-lg font-bold">{m.live_prelive_title()}</h2>
       <p class="text-sm text-white/80">
@@ -319,6 +511,60 @@
           ? m.live_prelive_as_association({ name: associationName })
           : m.live_prelive_as_member()}
       </p>
+      {#if titleMax}
+        {@const max = titleMax}
+        <label class="flex flex-col gap-1 text-sm" data-live-title-field>
+          <span class="flex items-center justify-between gap-2">
+            <span class="font-semibold">{m.live_title_label()}</span>
+            <span class="text-xs text-white/70 tabular-nums"
+              >{m.live_title_counter({ count: liveTitleLength(broadcast.title), max })}</span
+            >
+          </span>
+          <Input
+            placeholder={m.live_title_placeholder()}
+            value={broadcast.title}
+            oninput={(e) => (broadcast.title = clampTitleField(e.currentTarget, max))}
+            disabled={broadcast.phase !== 'preview'}
+            data-live-title-input
+          />
+        </label>
+      {/if}
+      {#if broadcast.canShareScreen}
+        <div
+          class="flex flex-col gap-2"
+          role="radiogroup"
+          aria-label={m.live_source_label()}
+          data-live-source-group
+        >
+          <div class="flex gap-2">
+            {#each ['camera', 'screen'] as const as option (option)}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={broadcast.source === option}
+                disabled={broadcast.phase !== 'preview' || broadcast.choosingSource}
+                class="{pill} flex-1 justify-center {broadcast.source === option
+                  ? 'bg-white text-black'
+                  : 'bg-white/15 hover:bg-white/25'}"
+                onclick={() => void broadcast.chooseSource(option)}
+                data-live-source={option}
+              >
+                {#if option === 'camera'}
+                  <Video size={18} strokeWidth={2.25} />
+                  {m.live_source_camera()}
+                {:else}
+                  <Monitor size={18} strokeWidth={2.25} />
+                  {m.live_source_screen()}
+                {/if}
+              </button>
+            {/each}
+          </div>
+          {#if broadcast.source === 'screen'}
+            <p class="text-sm text-white/80" data-live-source-hint>{m.live_source_screen_hint()}</p>
+          {/if}
+        </div>
+      {/if}
+
       <ul class="flex flex-col gap-2 text-sm text-white/90">
         <li class="flex items-start gap-2.5">
           <Eye size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />
@@ -329,12 +575,6 @@
           {m.live_rule_moderation()}
         </li>
         {#if broadcast.limits}
-          <li class="flex items-start gap-2.5">
-            <Timer size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />
-            {m.live_rule_duration({
-              minutes: Math.floor(broadcast.limits.maxDurationMs / 60_000),
-            })}
-          </li>
           <li class="flex items-start gap-2.5">
             <CameraOff size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />
             {m.live_rule_background({
@@ -376,7 +616,7 @@
       {/if}
 
       {#if !broadcast.supported}
-        <p class="text-sm font-semibold text-red-300" role="alert">{m.live_unsupported()}</p>
+        <p class="text-sm font-semibold text-red-300" role="alert">{unsupportedText()}</p>
       {:else if broadcast.limitsProblem}
         <div class="flex items-center justify-between gap-3" role="alert">
           <p class="text-sm font-semibold text-red-300">
@@ -405,7 +645,13 @@
 
       {#if camera.phase === 'error' && camera.fault}
         <div class="flex items-center justify-between gap-3" role="alert">
-          <p class="text-sm text-white/80">{CAMERA_FAULT_TEXT[camera.fault]()}</p>
+          <p class="text-sm text-white/80">
+            {broadcast.source === 'screen'
+              ? broadcast.phase === 'preview'
+                ? m.live_source_screen_stopped()
+                : m.live_source_screen_stopped_on_air()
+              : CAMERA_FAULT_TEXT[camera.fault]()}
+          </p>
           <button
             type="button"
             class="{pill} shrink-0 bg-white/15 hover:bg-white/25"
@@ -452,13 +698,14 @@
        cursors survive a camera taken away. A verdict that the live is over goes to the machine. -->
   {#if onAir && broadcast.liveId && broadcast.chatKey}
     <div
-      class="pointer-events-none absolute inset-x-0 top-1/3 bottom-[calc(var(--safe-area-inset-bottom,0px)+5rem)]"
+      class="pointer-events-none absolute inset-x-0 top-1/4 bottom-(--safe-area-inset-bottom,0px)"
       data-live-broadcaster-chat-box
     >
       {#key broadcast.liveId}
         <LiveBroadcasterChat
           liveId={broadcast.liveId}
           keyHex={broadcast.chatKey}
+          visible={chatOpen}
           onEnded={(verdict) => broadcast.chatHeardEnd(verdict)}
           onViewers={(count) => (viewers = count)}
         />
@@ -492,22 +739,6 @@
           {m.live_away_retry()}
         </button>
       {/if}
-    </div>
-  {/if}
-
-  {#if onAir}
-    <div
-      class="absolute inset-x-0 bottom-0 flex justify-center pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]"
-    >
-      <button
-        type="button"
-        class="{pill} bg-red-600 hover:bg-red-500"
-        onclick={() => void confirmEnd()}
-        data-live-end
-      >
-        <X size={18} strokeWidth={2.5} />
-        {m.live_end_button()}
-      </button>
     </div>
   {/if}
 

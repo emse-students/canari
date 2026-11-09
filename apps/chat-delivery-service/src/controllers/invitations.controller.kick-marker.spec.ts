@@ -120,11 +120,7 @@ describe('InvitationsController - the kick marker', () => {
     deviceGroupRepo.findOne.mockResolvedValue(membership());
 
     const before = Date.now();
-    await controller.kickStaleDevice(
-      { deviceId: DEVICE, userId: TARGET, groupId: GROUP },
-      CALLER,
-      'false'
-    );
+    await controller.kickStaleDevice({ deviceId: DEVICE, userId: TARGET, groupId: GROUP }, CALLER);
 
     expect(demotion().removedFromTreeAt).toBeInstanceOf(Date);
     expect((demotion().removedFromTreeAt as Date).getTime()).toBeGreaterThanOrEqual(before);
@@ -137,7 +133,7 @@ describe('InvitationsController - the kick marker', () => {
       membership({ id: 'm-3', deviceId: 'tauri-3' }),
     ]);
 
-    await controller.kickStaleUser({ userId: TARGET, groupId: GROUP }, CALLER, 'false');
+    await controller.kickStaleUser({ userId: TARGET, groupId: GROUP }, CALLER);
 
     expect(messaging.deactivateDeviceMembership).toHaveBeenCalledTimes(3);
     const instants = [0, 1, 2].map((n) => (demotion(n).removedFromTreeAt as Date).getTime());
@@ -155,8 +151,7 @@ describe('InvitationsController - the kick marker', () => {
 
     const answer = await controller.updateInvitationStatus(
       { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
-      TARGET,
-      'false'
+      TARGET
     );
 
     expect(messaging.activateDeviceMembership).toHaveBeenCalledWith(
@@ -180,8 +175,7 @@ describe('InvitationsController - the kick marker', () => {
 
     await controller.updateInvitationStatus(
       { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'pending' },
-      TARGET,
-      'false'
+      TARGET
     );
 
     expect(demotion()).toEqual({ removedFromTreeAt: null, tag: 'INVITATION_STATUS' });
@@ -192,8 +186,7 @@ describe('InvitationsController - the kick marker', () => {
 
     const answer = await controller.kickStaleDevice(
       { deviceId: DEVICE, userId: TARGET, groupId: GROUP },
-      CALLER,
-      'false'
+      CALLER
     );
 
     expect(answer).toEqual({ status: 'not_found', affected: 0 });

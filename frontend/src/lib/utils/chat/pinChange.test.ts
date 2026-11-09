@@ -324,7 +324,8 @@ describe('both PIN paths go through performPinChange', () => {
     return sessionAuth.slice(from, sessionAuth.indexOf('\n}\n', from));
   };
 
-  it.each(['export async function recoverPinImpl(', 'export async function changePinImpl('])(
+  // The recovery's steps are `recoverPinSteps`; `recoverPinImpl` only tracks them as a flow in flight.
+  it.each(['async function recoverPinSteps(', 'export async function changePinImpl('])(
     '%s re-seals through performPinChange and nothing else',
     (head) => {
       const fn = body(head);
@@ -344,7 +345,7 @@ describe('both PIN paths go through performPinChange', () => {
   });
 
   it('the recovery hands performPinChange the STORED state, the change does not', () => {
-    expect(body('export async function recoverPinImpl(')).toContain('storedMlsState: state');
+    expect(body('async function recoverPinSteps(')).toContain('storedMlsState: state');
     expect(body('export async function changePinImpl(')).not.toContain('storedMlsState');
   });
 });
@@ -692,7 +693,12 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
       const rows = await read(store);
       if (store === 'messages') {
         live.push(
-          s.gated.updateMessage('m1', { content: message('m1', 'edited').content }, OLD),
+          s.gated.updateMessage(
+            message('m1').conversationId,
+            'm1',
+            { content: message('m1', 'edited').content },
+            OLD
+          ),
           s.gated.saveMessage(message('m3'), OLD),
           s.gated.saveGraineSession(session('s3'), OLD),
           s.gated.saveOutboxEntry(queued('o2'), OLD)

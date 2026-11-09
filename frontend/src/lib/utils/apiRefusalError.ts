@@ -1,6 +1,7 @@
 // THE CLASS ALONE, with no Paraglide import: `apiRefusal.ts` pulls the whole message catalogue
 // (thousands of generated modules), and a data-layer module that only needs to EXTEND the type
 // (`SocialApiError`) must not pay that on every import - its tests re-import it per case.
+import { responseOrigin, type ResponseOrigin } from './apiJson';
 
 /**
  * A REFUSAL THE SERVER ANSWERED, carrying the STATUS instead of spelling it into a sentence.
@@ -34,6 +35,12 @@ export class ApiRefusalError extends Error {
    * (`retryAfterMs`); null otherwise.
    */
   readonly retryAfterMs: number | null;
+  /**
+   * WHO ANSWERED, read at the throw by {@link responseOrigin}, as `MediaUploadError` carries it:
+   * `edge` for a non-JSON page (the host's proxy, never the app), `gateway` otherwise. A `502` from
+   * the edge is no answer about anything; the app's own `502` is one.
+   */
+  readonly origin: ResponseOrigin;
 
   constructor(
     /** The HTTP status the server answered with. */
@@ -41,12 +48,17 @@ export class ApiRefusalError extends Error {
     /** The server's stable error code, or null when the body carried none. */
     readonly code: string | null,
     message: string,
-    details: { reason?: string | null; retryAfterMs?: number | null } = {}
+    details: {
+      reason?: string | null;
+      retryAfterMs?: number | null;
+      origin?: ResponseOrigin;
+    } = {}
   ) {
     super(message);
     this.name = 'ApiRefusalError';
     this.reason = details.reason ?? null;
     this.retryAfterMs = details.retryAfterMs ?? null;
+    this.origin = details.origin ?? 'gateway';
   }
 }
 
@@ -87,5 +99,6 @@ export async function refusalFromResponse(
   return new ApiRefusalError(res.status, code, `${message} (${res.status})`, {
     reason,
     retryAfterMs,
+    origin: responseOrigin(res),
   });
 }

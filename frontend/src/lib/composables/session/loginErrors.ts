@@ -54,6 +54,28 @@ export type LoginErrorCode =
    * state nothing showed to be broken, and it is not an ordinary outcome - it accuses the engine.
    */
   | 'local_state_unreadable_now'
+  /**
+   * PIN accepted, and the saved state failed to load for a cause NOTHING typed (an IPC fault, a disk
+   * read, a panic, an install lock: `SavedStateUnopenedError` reason `unknown`). It proves nothing
+   * about the bytes, so the sentence is retry-first and offers no reset. Like
+   * `local_state_unreadable_now`, in NONE of the predicates below.
+   */
+  | 'local_state_unknown'
+  /**
+   * PIN accepted, and the native app refused the sign-in because a move of a local state between two
+   * accounts' places on this install was cut part-way and could not be finished
+   * (`MlsSlotMoveUnfinishedError`). Nothing was opened, rotated or written; the move is retried at
+   * the next sign-in, so the sentence says to restart, and no reset is offered. In NONE of the
+   * predicates below.
+   */
+  | 'local_state_move_unfinished'
+  /**
+   * PIN accepted, the native app OPENED this device's local MLS state, and could not record beside it
+   * which account it is (`MlsSlotOwnerUnrecordedError`): the device's storage refused a small write.
+   * Nothing was installed, rotated or deleted; the sentence names the storage and says to retry, and
+   * no reset is offered. In NONE of the predicates below.
+   */
+  | 'local_state_owner_unrecorded'
   /** Biometric mode with nothing in the platform keystore yet. */
   | 'keystore_empty'
   /** This device was revoked; local state has been wiped and it must re-register. */
@@ -86,6 +108,19 @@ export type LoginErrorCode =
    * there to refuse it. Only an online sign-in (a new account, once the erasure completed) lifts it.
    */
   | 'account_deleted'
+  /**
+   * The OWNER REVOKED THIS DEVICE and its per-account wipe is still owed (the pending-wipe marker
+   * names this account with the reason `revoked`, round 9 of the review of #2919). The same refusal
+   * as `account_deleted` - no session may re-create what the wipe removes - but the account
+   * EXISTS, so no line may say it was deleted. Lifted by an online sign-in, which enrols a new device.
+   */
+  | 'revoked_device_wipe_owed'
+  /**
+   * A "forgot PIN" reset of this account is staged and waits for the server's answer
+   * (`MlsResetUnsettledError`, round 10 of the review of #2919): its state is set apart, nothing was
+   * opened or destroyed. The user goes online and retries; the retry settles the reset first.
+   */
+  | 'pin_reset_unsettled'
   /**
    * This device's identity had to be rotated, and the fresh state could not be recorded: ANOTHER
    * TAB of this account wrote the stored state after this login loaded it (the version guard's
@@ -137,13 +172,37 @@ export class LoginFailure extends LocalizedError {
  * catch releases what the login took (its MLS client, its gateway socket) and does nothing else: no
  * error under the PIN, no `onSessionExpired` (a second sign-out), no forgotten vault slot - the
  * sign-out IS the outcome. `stage` names the await it was found after, for the log.
+ *
+ * `by` says what stopped it: a sign-out, or the loss of the session's MLS session
+ * (`endLostSessionImpl`), whose own reaction - the PIN gate - is the outcome then. The release is the
+ * same; only the log line differs, read from this field, never from the message.
  */
 export class LoginStoppedBySignOutError extends Error {
-  constructor(readonly stage: string) {
-    super(`login stopped after ${stage} - the account signed out meanwhile`);
+  constructor(
+    readonly stage: string,
+    readonly by: LoginStop = 'sign-out'
+  ) {
+    super(
+      `login stopped after ${stage} - ${by === 'sign-out' ? 'the account signed out' : 'its MLS session was lost'} meanwhile`
+    );
     this.name = 'LoginStoppedBySignOutError';
   }
 }
+
+/**
+ * Thrown by a login whose tab was PROMOTED to leader after it loaded the MLS state as a follower
+ * (`promotedSinceLoad`): it does not go live on that copy, it reloads the page instead, which reads
+ * the state as the old leader left it. An ordinary outcome, not a failure: nothing is shown.
+ */
+export class LoginStoppedForPromotionError extends Error {
+  constructor() {
+    super('login stopped before going live - this tab was promoted to leader on a follower copy');
+    this.name = 'LoginStoppedForPromotionError';
+  }
+}
+
+/** What stops a login in flight: a sign-out, or a lost MLS session (`endLostSessionImpl`). */
+export type LoginStop = 'sign-out' | 'lost session';
 
 /**
  * Reads the failure code off an unknown thrown value, defaulting to `'other'`.
@@ -227,6 +286,8 @@ export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
     code === 'keystore_empty' ||
     code === 'server_unreachable' ||
     code === 'account_deleted' ||
+    code === 'revoked_device_wipe_owed' ||
+    code === 'pin_reset_unsettled' ||
     code === 'state_written_by_another_tab' ||
     isVaultRefusal(code)
   );

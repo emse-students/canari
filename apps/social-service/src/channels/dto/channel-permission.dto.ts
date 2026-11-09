@@ -15,3 +15,11 @@ export interface RolePermissionsResponseDto {
   roleName: string;
   permissions: string[];
 }
+
+/**
+ * Body of the role-rename endpoint: the community's own display name for the role, or null / blank
+ * to reset it to the localized default. Validated by `validateRoleLabel`.
+ */
+export interface SetRoleLabelDto {
+  label: string | null;
+}

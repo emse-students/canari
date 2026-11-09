@@ -94,4 +94,17 @@ describe('a booking calendar link (D13)', () => {
     expect(ics).toContain('URL:https://example.test/bookings/spaces/space-1');
     expect(ics).not.toContain('DESCRIPTION');
   });
+
+  it("names the space alone for its hidden column (D44), never 'Salle - Salle'", () => {
+    const ics = bookingIcs({
+      bookingId: ID,
+      spaceId: 'space-1',
+      spaceName: 'Salle de musique',
+      resourceName: 'Salle de musique',
+      startsAt: new Date('2026-11-02T10:00:00Z'),
+      endsAt: new Date('2026-11-02T10:30:00Z'),
+      frontendBaseUrl: 'https://example.test/',
+    });
+    expect(ics).toMatch(/SUMMARY:Salle de musique\r?\n/);
+  });
 });

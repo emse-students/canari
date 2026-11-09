@@ -137,6 +137,27 @@ impl MlsManager {
         Some(protocol_message.epoch().as_u64())
     }
 
+    /// `(frame epoch, held epoch)` when `message_bytes` names an epoch AHEAD of a group this state
+    /// holds and is still a member of - read from the frame's cleartext header, nothing decrypted
+    /// and no ratchet key consumed. `None` for a group not held, a frame that does not parse, a frame
+    /// at or behind the held epoch, and a group this device was REMOVED from: the frames that keep
+    /// arriving there are ahead by construction (the group commits on without us), and they are
+    /// `Evicted` - refused for good, never a gap a catch-up or a resync could close.
+    ///
+    /// THE ONE COPY of the question every caller asks before it hands a frame to MLS: the
+    /// foreground's queue-for-resync (`recevoir_message_bytes`) and the push path's commit catch-up
+    /// (`background.rs`). The foreground's own copy did not check membership, so an evicted group's
+    /// frame was queued as a gap with a "resync" no resync could answer.
+    pub fn frame_epoch_ahead(&self, group_id: &str, message_bytes: &[u8]) -> Option<(u64, u64)> {
+        let group = self.groups.get(group_id)?;
+        if !group.is_active() {
+            return None;
+        }
+        let held = group.epoch().as_u64();
+        let msg = Self::parse_message_epoch(message_bytes)?;
+        (msg > held).then_some((msg, held))
+    }
+
     /// Parse the group id a framed MLS message names, without decrypting anything - the twin of
     /// [`Self::parse_message_epoch`]: both PrivateMessage and PublicMessage carry it in clear.
     ///
@@ -190,6 +211,10 @@ impl MlsManager {
         // dropped now would be re-written from whatever tree the re-Welcome brings. The pins and the
         // departures are bounded at load, past their cap only (`load_or_create`).
         self.drop_graine_run(group_id);
+        // The admission classification IS pruned: unlike a pin it carries nothing a re-Welcome could
+        // get wrong, and a key group healed this way is unclassified until its next registration opens it
+        // again - which, while the rule is disarmed, merges exactly the commits `open` would.
+        self.forget_admission_policy(group_id);
         if min_epoch > 0 {
             self.forgotten_group_min_epochs
                 .insert(group_id.to_string(), min_epoch);

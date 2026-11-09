@@ -33,6 +33,11 @@ interface HubRowBase {
   badge?: number;
   /** The localized name of `badge` for assistive technology; required for the pill to be read. */
   badgeLabel?: string;
+  /**
+   * The guided-help anchor this row IS (`guideAnchor`), set only when the page wants a help to point
+   * at it - and only for a reader it applies to, since an unset row registers nothing.
+   */
+  guideAnchor?: string;
 }
 
 /** A row's glyph: a Lucide component. */
@@ -40,6 +45,8 @@ export type HubIcon = import('svelte').Component<{ size?: number }>;
 
 /** An organisation's logo as a row's lead; the row's `icon` is what draws when it has none. */
 export interface HubLogo {
+  /** The association id: seeds the placeholder colour. */
+  id: string;
   name: string;
   logoUrl: string | null;
 }

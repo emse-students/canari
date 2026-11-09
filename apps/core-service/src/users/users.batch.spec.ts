@@ -50,7 +50,7 @@ describe('GET /users/batch', () => {
   it('answers every id in one query', async () => {
     const { controller, find } = makeController([row('a'), row('b')]);
 
-    const { users } = await controller.findMany('a,b');
+    const { users } = await controller.findMany('a,b', 'viewer');
 
     expect(users.map((u) => u.id)).toEqual(['a', 'b']);
     expect(find).toHaveBeenCalledTimes(1);
@@ -59,7 +59,7 @@ describe('GET /users/batch', () => {
   it('omits an id that matches nothing rather than refusing the whole request', async () => {
     const { controller } = makeController([row('alive')]);
 
-    const { users } = await controller.findMany('alive,gone');
+    const { users } = await controller.findMany('alive,gone', 'viewer');
 
     expect(users.map((u) => u.id)).toEqual(['alive']);
   });
@@ -67,7 +67,7 @@ describe('GET /users/batch', () => {
   it('NAMES an id that matches nothing as deleted, with no name, instead of leaving it to inference', async () => {
     const { controller } = makeController([row('alive')]);
 
-    const answer = await controller.findMany('alive,gone');
+    const answer = await controller.findMany('alive,gone', 'viewer');
 
     expect(answer.deleted).toEqual(['gone']);
     expect(JSON.stringify(answer.deleted)).not.toMatch(/firstName|displayName/);
@@ -76,13 +76,13 @@ describe('GET /users/batch', () => {
   it('answers an empty deleted list when every id is live', async () => {
     const { controller } = makeController([row('a')]);
 
-    expect((await controller.findMany('a')).deleted).toEqual([]);
+    expect((await controller.findMany('a', 'viewer')).deleted).toEqual([]);
   });
 
   it('asks for each id once, however many times it was listed', async () => {
     const { controller, find } = makeController([row('a')]);
 
-    await controller.findMany(' a , a ,a,');
+    await controller.findMany(' a , a ,a,', 'viewer');
 
     expect(find).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: expect.anything() } })
@@ -96,7 +96,7 @@ describe('GET /users/batch', () => {
 
     const ids = Array.from({ length: 101 }, (_, i) => `u${i}`).join(',');
 
-    await expect(controller.findMany(ids)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(controller.findMany(ids, 'viewer')).rejects.toBeInstanceOf(BadRequestException);
     expect(find).not.toHaveBeenCalled();
   });
 
@@ -106,19 +106,19 @@ describe('GET /users/batch', () => {
     // `IN (...)`.
     const { controller, find } = makeController([]);
 
-    await expect(controller.findMany(['a', 'b'] as unknown as string)).rejects.toBeInstanceOf(
-      BadRequestException
-    );
-    await expect(controller.findMany({ x: 1 } as unknown as string)).rejects.toBeInstanceOf(
-      BadRequestException
-    );
+    await expect(
+      controller.findMany(['a', 'b'] as unknown as string, 'viewer')
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      controller.findMany({ x: 1 } as unknown as string, 'viewer')
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(find).not.toHaveBeenCalled();
   });
 
   it('never reaches the database for an empty list', async () => {
     const { controller, find } = makeController([]);
 
-    const { users } = await controller.findMany('');
+    const { users } = await controller.findMany('', 'viewer');
 
     expect(users).toEqual([]);
     expect(find).not.toHaveBeenCalled();

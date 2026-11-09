@@ -121,7 +121,7 @@
     async function poll() {
       if (cancelled) return;
       try {
-        const devices = await session.ensureMls().fetchUserDevices(userId);
+        const devices = await session.ensureMls().listUserDevices(userId);
         if (!cancelled) {
           deviceCount = devices.length;
         }
@@ -377,7 +377,6 @@
   externalError={changePinError}
   isLoading={changePinLoading}
   loadingProgress={changePinProgress}
-  account={session.userId}
 />
 
 {#if session.isLoggedIn}

@@ -2,13 +2,16 @@ import {
   MLS_MAX_PAST_EPOCHS,
   isBeyondPastEpochWindow,
   mlsFrameEpoch,
+  publisherAdmissionBase,
   readCommitFrame,
+  sealedBeforeAdmission,
 } from './mls-frame-epoch';
 import {
   externalCommitBody,
   externalCommitFrame,
   mlsFrame as frame,
 } from '../testing/mlsFrameFixture';
+import { OPENMLS_FOREIGN_REMOVE, OPENMLS_RESYNC } from '../testing/openmlsExternalRemoveFixture';
 
 const GROUP = '68227a77-0515-43d7-b7ee-2943bfa78f1f';
 
@@ -58,6 +61,7 @@ describe('readCommitFrame', () => {
       epoch: 9,
       external: true,
       leafIdentity: 'user-1:device-1',
+      removedLeaves: [],
     });
     expect(readCommitFrame(externalCommitFrame(GROUP, 9n, 'user-1:device-1', 2))?.external).toBe(
       true
@@ -79,13 +83,51 @@ describe('readCommitFrame', () => {
       epoch: 1,
       external: true,
       leafIdentity: 'user-c:dev-c',
+      removedLeaves: [],
     });
     expect(readCommitFrame(OPENMLS_EXTERNAL_REJOIN)).toEqual({
       groupId: 'g-fixture',
       epoch: 1,
       external: true,
       leafIdentity: 'user-b:dev-b',
+      removedLeaves: [1],
     });
+  });
+
+  it('reads the leaf every Remove of an external commit names', () => {
+    // RFC 9420 12.4.3.2: the joiner's own prior leaf (the resync) - and the shapes the gate refuses.
+    expect(readCommitFrame(OPENMLS_RESYNC)).toMatchObject({
+      leafIdentity: 'user-1:device-1',
+      removedLeaves: [1],
+    });
+    expect(readCommitFrame(OPENMLS_FOREIGN_REMOVE)).toMatchObject({
+      leafIdentity: 'user-1:device-1',
+      removedLeaves: [2],
+    });
+    expect(
+      readCommitFrame(externalCommitFrame(GROUP, 9n, 'user-1:device-1', 1, [1, 70000]))
+    ).toMatchObject({ removedLeaves: [1, 70000] });
+  });
+
+  it('refuses an external commit carrying a proposal Canari never puts in one', () => {
+    const withProposal = (proposal: number[]) => {
+      const body = externalCommitBody('user-1:device-1');
+      const size = body[0];
+      return frame(1, GROUP, 9n, 1, [
+        4,
+        0,
+        3,
+        size + proposal.length,
+        ...body.slice(1, 1 + size),
+        ...proposal,
+        ...body.slice(1 + size),
+      ]);
+    };
+    // An inline Add (1), an inline PreSharedKey (4), a proposal by reference, a truncated Remove.
+    expect(readCommitFrame(withProposal([1, 0, 1]))).toBeNull();
+    expect(readCommitFrame(withProposal([1, 0, 4]))).toBeNull();
+    expect(readCommitFrame(withProposal([2, 1, 0xaa]))).toBeNull();
+    expect(readCommitFrame(withProposal([1, 0, 3, 0, 0]))).toBeNull();
   });
 
   it('refuses a PublicMessage that is not a well-formed external commit - Canari sends none', () => {
@@ -129,5 +171,48 @@ describe('isBeyondPastEpochWindow', () => {
 
   it('says nothing about a frame AHEAD of the group', () => {
     expect(isBeyondPastEpochWindow(142, 141)).toBe(false);
+  });
+});
+
+describe('sealedBeforeAdmission', () => {
+  const admitted = (base: number | null, inferred = false) => ({
+    admittedByBaseEpoch: base,
+    admissionInferred: inferred,
+  });
+
+  it('a frame sealed at the base of the admitting commit, or before it, is not the seat`s', () => {
+    expect(sealedBeforeAdmission(5, admitted(5))).toBe(true);
+    expect(sealedBeforeAdmission(3, admitted(5))).toBe(true);
+  });
+
+  it('a frame sealed at the epoch the admission created, or after, is', () => {
+    expect(sealedBeforeAdmission(6, admitted(5))).toBe(false);
+    expect(sealedBeforeAdmission(40, admitted(5))).toBe(false);
+  });
+
+  it('an inferred floor or no recorded admission never withholds anything', () => {
+    expect(sealedBeforeAdmission(1, admitted(5, true))).toBe(false);
+    expect(sealedBeforeAdmission(1, admitted(null))).toBe(false);
+  });
+});
+
+describe('publisherAdmissionBase', () => {
+  // The publish records an admission on ANY active seat without one - a member whose seat carries
+  // none, not only the creator - so the device holding epoch 7 must still be handed a frame a peer
+  // seals at 7 (review of #3026: recording 7 itself withheld it).
+  it('records the base leading to the held epoch, so a frame sealed AT that epoch still reaches it', () => {
+    const base = publisherAdmissionBase(7);
+    expect(base).toBe(6);
+    expect(sealedBeforeAdmission(7, { admittedByBaseEpoch: base, admissionInferred: false })).toBe(
+      false
+    );
+    expect(sealedBeforeAdmission(6, { admittedByBaseEpoch: base, admissionInferred: false })).toBe(
+      true
+    );
+  });
+
+  it('never records below 0, the base of the first commit', () => {
+    expect(publisherAdmissionBase(0)).toBe(0);
+    expect(publisherAdmissionBase(1)).toBe(0);
   });
 });

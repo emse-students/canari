@@ -10,7 +10,7 @@ use crate::state::{
     PendingDb,
 };
 use mls_core::pending_submission::PendingSubmissionRead;
-use mls_core::{DecryptErrorKind, MlsManager};
+use mls_core::{DecryptErrorKind, MlsManager, StateLoadRefusal};
 use std::sync::Mutex;
 
 /// The two situational inputs of [`initialiser_mls`], grouped so the command keeps a workable
@@ -40,9 +40,22 @@ pub(crate) struct InitMlsOptions {
     /// when the user's unlock cadence is "every 12h" and a prompted unlock happened inside that
     /// window - see `biometricCadence.ts`, which owns that decision. Absent means prompt, as before.
     pub unattended_key_read: Option<bool>,
+    /// A FRESH START THAT KNOWINGLY REPLACES THE SLOT'S STATE: the device identity rotation, after this
+    /// account's state failed to open under a cause no PIN repairs. Every other fresh start is refused
+    /// over a slot that holds a state (`fresh_start_refusal`), because the caller decided "no state"
+    /// on an answer that did not see it - so the one that means to replace it says so.
+    pub replaces_unopened_state: Option<bool>,
 }
 
 /// Initialises the MLS manager for this session and caches its at-rest key.
+///
+/// **IT REJECTS WITH A [`StateLoadRefusal`] - `{ code, message }` - AND NEVER WITH A SENTENCE.** The
+/// code is decided on the `MlsError` variant (`state_load_code`): a verdict about the saved bytes
+/// (`STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH`), an empty
+/// keystore (`KEYSTORE_KEY_UNAVAILABLE`), or `null` for anything untyped. `TauriMlsService` turns it
+/// into a typed error at the invoke boundary, so no frontend code reads a recovery out of `message`.
+/// No older native build has to be understood: the app EMBEDS its frontend, so both halves ship
+/// together.
 #[tauri::command]
 pub(crate) async fn initialiser_mls(
     app: tauri::AppHandle,
@@ -52,30 +65,10 @@ pub(crate) async fn initialiser_mls(
     encrypted_state: Option<Vec<u8>>,
     opts: Option<InitMlsOptions>,
     state: tauri::State<'_, AppState>,
-) -> Result<String, String> {
+) -> Result<String, StateLoadRefusal> {
     let opts = opts.unwrap_or_default();
     let legacy_pin = opts.legacy_pin;
-    // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when it
-    // did. `state_on_disk` is only honoured when the caller supplied no bytes, so a caller that
-    // does supply them (old-PIN recovery, the migration retry) keeps deciding what is loaded.
-    //
-    // EITHER WAY THE FOREGROUND IS MARKED BEFORE ANY BYTES ARE TRUSTED, and the disk read happens
-    // under the write lock: a background engine (a key-group join from a push, channel-encryption
-    // section 26) then either wrote before this read or sees the mark and gives up - never lands
-    // between the read and this manager's first persist, which would erase it.
-    let encrypted_state = match (encrypted_state, opts.state_on_disk) {
-        (None, Some(true)) => {
-            let path = tauri::Manager::path(&app)
-                .app_data_dir()
-                .map_err(|e| e.to_string())?
-                .join("mls.bin");
-            crate::concurrency::foreground_load_mls_bin(&path)?
-        }
-        (supplied, _) => {
-            crate::concurrency::mark_foreground_manager_loading();
-            supplied
-        }
-    };
+    let state_on_disk = opts.state_on_disk;
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();
     let keystore = PluginDeviceKeyStore::new(app.clone())
@@ -90,84 +83,525 @@ pub(crate) async fn initialiser_mls(
     } else {
         Some(device_key_b64)
     };
+    let replaces_unopened_state = opts.replaces_unopened_state == Some(true);
     tauri::async_runtime::spawn_blocking(move || {
-        // Resolve the key explicitly instead of letting the loader do it internally: the
-        // resolved key is cached below so later saves in this session (which arrive with an
-        // empty device_key_b64 in biometric mode) never have to prompt again.
-        let key = MlsManager::resolve_at_rest_key(
-            &user_id,
-            &device_id,
-            encrypted_state.as_deref(),
-            key_b64_opt,
-            &keystore,
-        )
-        .map_err(|e| e.to_string())?;
+        let data_dir = tauri::Manager::path(&app)
+            .app_data_dir()
+            .map_err(|e| StateLoadRefusal::from(e.to_string()))?;
+        // FIRST, BEFORE ANYTHING CAN FAIL: every exit that does not reach `install` - an `Err`, a
+        // panic - ends the native session THIS ATTEMPT ESTABLISHED when the guard drops, so a failed
+        // sign-in never leaves a manager or key installed, nor this process marked warm over no
+        // manager. An attempt refused before its selection established nothing and ends nothing:
+        // the session it was refused for is another sign-in's.
+        let install = InstallGuard::new(manager_state, device_key_state);
+        let request = SignIn {
+            data_dir: &data_dir,
+            user_id: &user_id,
+            encrypted_state,
+            state_on_disk,
+            replaces_unopened_state,
+        };
+        sign_in(install, request, |encrypted_state, claim| {
+            // Resolve the key explicitly instead of letting the loader do it internally: the
+            // resolved key is cached below so later saves in this session (which arrive with an
+            // empty device_key_b64 in biometric mode) never have to prompt again.
+            let key = MlsManager::resolve_at_rest_key(
+                &user_id,
+                &device_id,
+                encrypted_state.as_deref(),
+                key_b64_opt,
+                &keystore,
+            )
+            .map_err(StateLoadRefusal::from)?;
+            let manager = load_state_with_key(
+                &data_dir,
+                claim,
+                (&user_id, &device_id),
+                encrypted_state,
+                legacy_pin.as_deref(),
+                &key,
+            )?;
+            Ok((manager, key))
+        })
+    })
+    .await
+    .map_err(|e| StateLoadRefusal::from(e.to_string()))?
+}
 
-        let manager =
-            match MlsManager::load_with_key(&user_id, &device_id, encrypted_state.clone(), &key) {
-                Ok(manager) => manager,
-                Err(e) => {
-                    let migrated = match (&encrypted_state, &legacy_pin) {
-                        (Some(blob), Some(pin)) => migrate_legacy_state_blob(&app, blob, pin, &key),
-                        _ => None,
-                    };
-                    match migrated {
-                        Some(resealed) => {
-                            log::info!("[MLS] Pre-v0.11.0 mls.bin re-sealed under the device key.");
-                            MlsManager::load_with_key(&user_id, &device_id, Some(resealed), &key)
-                                .map_err(|e| e.to_string())?
-                        }
-                        None => return Err(e.to_string()),
-                    }
+/// Ends the native MLS session when an [`initialiser_mls`] attempt is dropped without installing - an
+/// `Err` from any step, or a panic - so a failed install leaves the slot EMPTY BY CONSTRUCTION rather
+/// than by a reset each error branch must remember.
+///
+/// **WHY A FAILED INSTALL ENDS THE SESSION RATHER THAN KEEPING THE ONE BEFORE IT.** The slot is
+/// process-wide and a sign-out on a phone is an in-app navigation: when account B's install fails
+/// (another account's state, a refused key), what the slot still held was account A's manager and
+/// key, and a later command could act on A's state under B's session.
+///
+/// **IT ENDS ONLY THE SESSION THIS ATTEMPT ESTABLISHED** (review of #2919): the session is the one its
+/// selection claimed ([`crate::concurrency::SessionClaim`]). An attempt refused before or by its
+/// selection - "a foreground MLS session is still open" - holds no claim, and ending the session then
+/// cleared ANOTHER sign-in's warm mark while its manager loaded, letting a background engine write
+/// under it and a third selection switch the slot under it. A claim a later selection superseded
+/// ends nothing either.
+/// What one `initialiser_mls` asks of the slot, its arguments resolved.
+struct SignIn<'a> {
+    data_dir: &'a std::path::Path,
+    user_id: &'a str,
+    /// Bytes the caller supplied (the old-PIN recovery, the migration retry), or `None`.
+    encrypted_state: Option<Vec<u8>>,
+    /// `Some(true)`: the state is on disk and read here rather than handed over.
+    state_on_disk: Option<bool>,
+    /// The rotation's fresh start, which replaces the state that did not open
+    /// ([`InitMlsOptions::replaces_unopened_state`]).
+    replaces_unopened_state: bool,
+}
+
+/// THE WHOLE OF `initialiser_mls` THAT TOUCHES THE SLOT, in order: the selection (which claims the
+/// session), the fresh-start guard, the claimed read of `mls.bin`, the `load` (the key resolution and
+/// the decrypt, handed in so a test drives this exact sequence with the slowness of a biometric sheet
+/// or an Argon2 in the middle), and the install. Every write a sign-in makes into the slot - the
+/// legacy re-seal inside `load`, the owner record and the background-stage report inside
+/// [`InstallGuard::install`] - happens under [`crate::concurrency::while_claim_current`], so a sign-in
+/// whose session was ended while it loaded writes NOTHING (round 4 of the review of #2919: it wrote
+/// its owner over the next account's slot and cleared that account's stage ledger).
+fn sign_in(
+    mut install: InstallGuard,
+    request: SignIn<'_>,
+    load: impl FnOnce(
+        Option<Vec<u8>>,
+        crate::concurrency::SessionClaim,
+    ) -> Result<(MlsManager, [u8; 32]), StateLoadRefusal>,
+) -> Result<String, StateLoadRefusal> {
+    let SignIn {
+        data_dir,
+        user_id,
+        encrypted_state,
+        state_on_disk,
+        replaces_unopened_state,
+    } = request;
+    // EVERY REFUSAL IS HANDED TO THE GUARD BEFORE IT PROPAGATES, so the guard knows WHY it did not
+    // install and an expected one (a cancelled biometric sheet) is not logged as a failure.
+    let attempt = |install: &mut InstallGuard| -> Result<(MlsManager, [u8; 32]), StateLoadRefusal> {
+        // THE SLOT IS GIVEN TO THIS ACCOUNT BEFORE ANYTHING READS OR SEALS IT, ON EVERY PATH
+        // (`mls_account_state.rs`): the previous account's state is parked under the account its
+        // owner record names and this account's own parked state comes back - renamed, never
+        // rewritten. A refusal stops the sign-in with nothing moved and nothing written; an
+        // unfinished move is typed (`SLOT_MOVE_UNFINISHED`), anything else carries a `null` code.
+        // The process is marked warm in the selection's own hold, and the claim that hold returns
+        // is what every later step of THIS sign-in is checked against.
+        let selection = install.select(data_dir, user_id)?;
+        let claim = install.claimed()?;
+        // A FRESH START OVER A SAVED STATE IS REFUSED, whatever the selection (round 4): the caller
+        // chose "no state" on an answer that did not see it. Only the rotation says it replaces one.
+        if let Some(refusal) = crate::commands::mls_account_state::fresh_start_refusal(
+            selection,
+            encrypted_state.is_none() && state_on_disk != Some(true),
+            replaces_unopened_state,
+            data_dir,
+        ) {
+            log::error!("[MLS] fresh start refused, nothing sealed: {refusal}");
+            return Err(StateLoadRefusal::from(refusal));
+        }
+        // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when it
+        // did. `state_on_disk` is only honoured when the caller supplied no bytes. EITHER WAY THE
+        // FOREGROUND IS MARKED BEFORE ANY BYTES ARE TRUSTED, and the read happens under the write
+        // lock, both only while THIS sign-in's session is current.
+        let encrypted_state = match (encrypted_state, state_on_disk) {
+            (None, Some(true)) => crate::concurrency::foreground_load_mls_bin_claimed(
+                &data_dir.join("mls.bin"),
+                claim,
+            )?,
+            (supplied, _) => {
+                crate::concurrency::while_claim_current(claim, || ()).map_err(|e| e.to_string())?;
+                supplied
+            }
+        };
+        install.starts_fresh = encrypted_state.is_none();
+        load(encrypted_state, claim)
+    };
+    match attempt(&mut install) {
+        Ok((manager, key)) => {
+            install.install(manager, key)?;
+            Ok("MLS Initialized".into())
+        }
+        Err(refusal) => {
+            install.refused(&refusal);
+            Err(refusal)
+        }
+    }
+}
+
+struct InstallGuard {
+    manager_state: std::sync::Arc<Mutex<Option<MlsManager>>>,
+    device_key_state: std::sync::Arc<Mutex<Option<[u8; 32]>>>,
+    outcome: InstallOutcome,
+    /// The session this attempt's selection claimed, `None` until [`InstallGuard::select`] succeeds.
+    claim: Option<crate::concurrency::SessionClaim>,
+    /// The data directory and the account the selection gave the slot to - where the install records
+    /// the owner and reports the background stages.
+    selected: Option<(std::path::PathBuf, String)>,
+    /// This attempt loaded no state: its manager is a FRESH one, whose install requires the slot to
+    /// be still empty.
+    starts_fresh: bool,
+}
+
+/// How an [`initialiser_mls`] attempt ended, as [`InstallGuard`] knows it when it drops - a TYPE, so
+/// the level of its line is decided on why the install did not happen, never on a message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InstallOutcome {
+    /// Nothing was handed over: an `Err` that skipped [`InstallGuard::refused`], or a panic. A real
+    /// failure, accused.
+    Unreported,
+    /// The one success exit.
+    Installed,
+    /// Biometric mode found no key - a cancelled or refused sheet, a wiped entry. EXPECTED: the
+    /// frontend hands the user to the PIN modal, so it is no failure and does not warn.
+    NoKeystoreKey,
+    /// The saved state is framed under another device key (`STATE_KEY_MISMATCH`) - the PIN was
+    /// changed on another device. EXPECTED: the frontend offers the old-PIN recovery, so it does not
+    /// warn either.
+    SealedUnderAnotherKey,
+    /// Any other refusal: a verdict on the saved bytes or an untyped failure. Accused.
+    Refused,
+}
+
+impl InstallGuard {
+    fn new(
+        manager_state: std::sync::Arc<Mutex<Option<MlsManager>>>,
+        device_key_state: std::sync::Arc<Mutex<Option<[u8; 32]>>>,
+    ) -> Self {
+        Self {
+            manager_state,
+            device_key_state,
+            outcome: InstallOutcome::Unreported,
+            claim: None,
+            selected: None,
+            starts_fresh: false,
+        }
+    }
+
+    /// Gives the slot to `user_id` ([`crate::commands::mls_account_state::select_account_state`])
+    /// and keeps the session claim the selection returns: from here on, a failure of this attempt
+    /// ends that session, and before it nothing does.
+    fn select(
+        &mut self,
+        data_dir: &std::path::Path,
+        user_id: &str,
+    ) -> Result<
+        crate::commands::mls_account_state::Selection,
+        crate::commands::mls_account_state::SelectionRefused,
+    > {
+        let (selection, claim) =
+            crate::commands::mls_account_state::select_account_state(data_dir, user_id)?;
+        self.claim = Some(claim);
+        self.selected = Some((data_dir.to_path_buf(), user_id.to_string()));
+        Ok(selection)
+    }
+
+    /// Records why this attempt will not install, before its refusal propagates: the code decides
+    /// the drop's level ([`StateLoadRefusal::is_keystore_key_unavailable`],
+    /// [`StateLoadRefusal::is_sealed_under_another_key`]), never its message.
+    fn refused(&mut self, refusal: &StateLoadRefusal) {
+        self.outcome = if refusal.is_keystore_key_unavailable() {
+            InstallOutcome::NoKeystoreKey
+        } else if refusal.is_sealed_under_another_key() {
+            InstallOutcome::SealedUnderAnotherKey
+        } else {
+            InstallOutcome::Refused
+        };
+    }
+
+    /// The session this attempt's selection claimed - every step after the selection needs it.
+    fn claimed(&self) -> Result<crate::concurrency::SessionClaim, String> {
+        self.claim
+            .ok_or_else(|| "initialiser_mls reached its load without a selection".to_string())
+    }
+
+    /// Installs `manager` and its at-rest `key` - the one success exit. The key is written while the
+    /// manager mutex is held, the order [`crate::concurrency::end_native_session`] takes them in.
+    ///
+    /// **ONLY WHILE THIS ATTEMPT'S SESSION IS STILL THE CURRENT ONE** (round 3 of the review of #2919):
+    /// under the manager mutex, the device-key mutex and then [`crate::concurrency::mls_bin_write_lock`],
+    /// the order every teardown takes them in, the claim is checked and the warm mark re-asserted in
+    /// the same hold as the install ([`crate::concurrency::while_claim_current`]). A sign-in whose
+    /// session a sign-out or another sign-in's failure ended while it loaded is REFUSED and its manager
+    /// dropped: installed, it would be a live manager over a cleared warm mark, which a later
+    /// selection would switch the slot under.
+    ///
+    /// **AND THE SIGN-IN'S TWO WRITES INTO THE SLOT ARE IN THAT SAME HOLD** (round 4 of the review of
+    /// #2919): the owner record - the state is now proven to be this account's, `load_or_create`
+    /// refused it otherwise - and the report of the background stages a Welcome left. Run outside it,
+    /// a sign-in ended while it loaded wrote its owner over the NEXT account's slot and cleared that
+    /// account's stage ledger. **THE OWNER RECORD IS LOAD-BEARING** (the switch parks by it, a push
+    /// join is bound by it, `save_mls_state` writes by it), so a failure to write it fails the install.
+    ///
+    /// **AND ONLY OVER THE SLOT IT LOADED** (round 5): in the same hold, the slot's owner record must
+    /// not name another account, and a FRESH start's slot must still hold no state. A write that
+    /// reached the slot while this sign-in loaded - a backup restored by `save_mls_state` into the
+    /// empty slot, which records its own account - would otherwise have its owner overwritten here
+    /// and its bytes overwritten by this manager's first checkpoint. Refused, nothing is written.
+    fn install(mut self, manager: MlsManager, key: [u8; 32]) -> Result<(), StateLoadRefusal> {
+        let claim = self.claimed()?;
+        let (data_dir, user_id) = self
+            .selected
+            .clone()
+            .ok_or_else(|| "initialiser_mls reached its install without a selection".to_string())?;
+        let starts_fresh = self.starts_fresh;
+        let installed = {
+            let mut slot = self
+                .manager_state
+                .lock()
+                .map_err(|_| "Failed to lock state".to_string())?;
+            let mut cached_key = self
+                .device_key_state
+                .lock()
+                .map_err(|_| "Failed to lock device key".to_string())?;
+            crate::concurrency::while_claim_current(claim, || -> Result<(), StateLoadRefusal> {
+                let owner = crate::commands::storage::read_mls_state_owner(&data_dir)?;
+                if owner.as_deref().is_some_and(|owner| owner != user_id) {
+                    log::error!(
+                        "[MLS] the slot's owner record names another account since this sign-in selected it - not installed"
+                    );
+                    return Err("the slot changed hands while this sign-in loaded"
+                        .to_string()
+                        .into());
                 }
-            };
-
-        // THE STATE IS NOW PROVEN TO BE THIS ACCOUNT'S - `load_or_create` refused it otherwise - so
-        // this is the one place the record beside `mls.bin` may name it. A failure to write it costs
-        // only the gate's "another account's messages are here" for a later sign-in, so it is
-        // accused and the session goes on. It is written BEFORE this state is ever saved (a created
-        // one has no `mls.bin` yet): a crash in between leaves at worst a STALE record beside the
-        // previous file, never a state of this account recorded as another's.
-        if let Err(e) = crate::commands::storage::write_mls_state_owner(&app, &user_id) {
-            log::error!("[MLS] Recording the owner of mls.bin failed: {e}");
-        }
-        // A stage a background Welcome left in mls.bin is reported against what was loaded.
-        match tauri::Manager::path(&app).app_data_dir() {
-            Ok(dir) => {
-                crate::commands::storage::report_background_stages(&dir, &manager);
+                if starts_fresh && crate::commands::mls_account_state::slot_holds_state(&data_dir)?
+                {
+                    log::error!(
+                        "[MLS] a state was written into the slot while this fresh start loaded - not installed, nothing sealed over it"
+                    );
+                    return Err(
+                        "a state was written into the slot while this sign-in loaded"
+                            .to_string()
+                            .into(),
+                    );
+                }
+                crate::commands::storage::record_mls_state_owner(&data_dir, &user_id).map_err(
+                    |e| {
+                        log::error!(
+                            "[MLS] initialiser_mls NOT installed: the owner of mls.bin could not be recorded ({e}) - the manager is dropped"
+                        );
+                        StateLoadRefusal::slot_owner_unrecorded(e)
+                    },
+                )?;
+                // The fact that decides whether a state of unproven owner is ever offered to this
+                // account (round 8 of the review of #2919). Its loss costs only that offer - the
+                // account's own state is located by its owner record - so it is accused, not fatal.
+                if let Err(e) = crate::commands::mls_account_state::record_account_opened_held(
+                    &data_dir, &user_id,
+                ) {
+                    log::error!("[MLS] the account's opened marker was not written: {e}");
+                }
+                // A stage a background Welcome left in mls.bin is reported against what was loaded.
+                crate::commands::storage::report_background_stages_held(&data_dir, &manager);
+                *cached_key = Some(key);
+                *slot = Some(manager);
+                Ok(())
+            })
+        };
+        match installed {
+            Err(superseded) => {
+                log::error!(
+                    "[MLS] initialiser_mls NOT installed: {superseded} - the manager is dropped, nothing of this sign-in was written"
+                );
+                return Err(superseded.to_string().into());
             }
-            Err(e) => {
-                log::warn!("[MLS] app_data_dir() failed ({e}) - background stages not reported")
-            }
+            Ok(Err(refusal)) => return Err(refusal),
+            Ok(Ok(())) => {}
         }
+        self.outcome = InstallOutcome::Installed;
+        log::debug!("[MLS] manager and at-rest key installed");
+        Ok(())
+    }
+}
 
-        let mut lock = manager_state
-            .lock()
-            .map_err(|_| "Failed to lock state".to_string())?;
-        *lock = Some(manager);
-        *device_key_state
-            .lock()
-            .map_err(|_| "Failed to lock device key".to_string())? = Some(key);
-        Ok::<String, String>("MLS Initialized".into())
+impl Drop for InstallGuard {
+    fn drop(&mut self) {
+        if self.outcome == InstallOutcome::Installed {
+            return;
+        }
+        let Some(claim) = self.claim else {
+            // Refused before or by the selection: this attempt marked nothing warm and installed
+            // nothing, so there is no session of ITS to end - and the one that refused it is
+            // another sign-in's, which ending would leave loading under no warm mark.
+            log::debug!(
+                "[MLS] initialiser_mls did not install a manager ({:?}) and established no session - nothing ended",
+                self.outcome
+            );
+            return;
+        };
+        match self.outcome {
+            InstallOutcome::Installed => return,
+            InstallOutcome::NoKeystoreKey => log::debug!(
+                "[MLS] initialiser_mls found no keystore key (the PIN modal is next) - ending the native session so no previous one stays installed"
+            ),
+            InstallOutcome::SealedUnderAnotherKey => log::debug!(
+                "[MLS] initialiser_mls found the state sealed under another device key (the old-PIN recovery is next) - ending the native session so no previous one stays installed"
+            ),
+            InstallOutcome::Unreported | InstallOutcome::Refused => log::warn!(
+                "[MLS] initialiser_mls did not install a manager ({:?}) - ending the native session so no previous one stays installed",
+                self.outcome
+            ),
+        }
+        if let Err(e) = crate::concurrency::end_native_session_claimed(
+            &self.manager_state,
+            &self.device_key_state,
+            claim,
+            "failed initialiser_mls",
+        ) {
+            log::error!("[MLS] the teardown after a failed initialiser_mls failed: {e}");
+        }
+    }
+}
+
+/// Ends this process's native MLS session - the ONE teardown command, reached through the frontend's
+/// one helper (`endNativeMlsSession`) at a sign-out, an account switch, a failed sign-in and a state
+/// reset. With `sweep_state`, `mls.bin` and every file built from it go in the SAME hold
+/// ([`crate::concurrency::end_native_session`]); without it they stay, because a sign-out keeps the
+/// local state for the account's next sign-in.
+#[tauri::command]
+pub(crate) async fn terminer_session_mls(
+    reason: String,
+    sweep_state: bool,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let manager_state = state.mls_manager.clone();
+    let device_key_state = state.device_key.clone();
+    let data_dir = if sweep_state {
+        Some(
+            tauri::Manager::path(&app)
+                .app_data_dir()
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    // Off the async runtime: the teardown may wait for an in-flight checkpoint.
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::concurrency::end_native_session(
+            &manager_state,
+            &device_key_state,
+            data_dir.as_deref(),
+            &reason,
+        )
+        .map(|_| ())
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
+/// The load of a sign-in once its key is resolved: the state under `key`, and - when that fails and
+/// the caller holds the PIN - the pre-v0.11.0 envelope re-sealed under `key`, written into the slot
+/// ONLY ONCE IT LOADED AS THIS ACCOUNT (round 7 of the review of #2919: a legacy blob the PIN opens
+/// may be ANOTHER account's under the same PIN - an unproven state offered to this one - and writing
+/// it first rewrote that account's state under this account's key, for good).
+fn load_state_with_key(
+    data_dir: &std::path::Path,
+    claim: crate::concurrency::SessionClaim,
+    (user_id, device_id): (&str, &str),
+    encrypted_state: Option<Vec<u8>>,
+    legacy_pin: Option<&str>,
+    key: &[u8; 32],
+) -> Result<MlsManager, StateLoadRefusal> {
+    let e = match MlsManager::load_with_key(user_id, device_id, encrypted_state.clone(), key) {
+        Ok(manager) => return Ok(manager),
+        Err(e) => e,
+    };
+    let resealed = match (&encrypted_state, legacy_pin) {
+        (Some(blob), Some(pin)) => reseal_legacy_state_blob(blob, pin, key),
+        _ => None,
+    };
+    let Some(resealed) = resealed else {
+        let refusal = StateLoadRefusal::from(e);
+        // OPENED UNDER THIS ACCOUNT'S OWN KEY: the device key derives from the account id, the PIN and
+        // the salt (the hardware-held key is the account's keystore entry), so a state it opens was
+        // sealed by THIS account - and an identity mismatch can only be its own older device id.
+        if refusal.is_identity_mismatch() {
+            unproven_verdict(
+                data_dir,
+                claim,
+                user_id,
+                UnprovenVerdict::OwnUnderAnotherDevice,
+            );
+        }
+        return Err(refusal);
+    };
+    let manager = load_resealed_legacy_state(data_dir, claim, &resealed, |bytes| {
+        MlsManager::load_with_key(user_id, device_id, Some(bytes), key)
+    })
+    .inspect_err(|refusal| {
+        // OPENED BY THE PIN ALONE: a legacy envelope is sealed under Argon2(PIN, salt), which says
+        // nothing of the account - another account with the same PIN opens it too. An identity
+        // mismatch is then not proof of whose it is, but it is proof it is not THIS sign-in's: set
+        // aside for the next account it is offered to.
+        if refusal.is_identity_mismatch() {
+            unproven_verdict(data_dir, claim, user_id, UnprovenVerdict::NotThisSignIns);
+        }
+    })?
+    .ok_or_else(|| StateLoadRefusal::from(e))?;
+    log::info!("[MLS] Pre-v0.11.0 mls.bin re-sealed under the device key.");
+    Ok(manager)
+}
+
+/// What an `IDENTITY_MISMATCH` proves about a state of UNPROVEN owner (round 8 of the review of #2919),
+/// decided by WHICH KEY opened it - never by reading the identity out of the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnprovenVerdict {
+    /// The account's own key opened it: it is this account's, under an older device id. Its owner is
+    /// recorded, so the identity rotation the frontend answers with replaces it as the account's own
+    /// (`fresh_start_refusal` allows that only over `Selection::AlreadyInSlot`) - never stranded.
+    OwnUnderAnotherDevice,
+    /// The PIN alone opened it (a legacy envelope): it is not this sign-in's, whose it is unknown. Put
+    /// back aside under the next name, offered to the next account a state has opened for here.
+    NotThisSignIns,
+}
+
+/// Applies an [`UnprovenVerdict`] to the slot - only when it still holds a state NO owner record names
+/// (an account's own state already has its record), and only while this sign-in's session is current.
+fn unproven_verdict(
+    data_dir: &std::path::Path,
+    claim: crate::concurrency::SessionClaim,
+    user_id: &str,
+    verdict: UnprovenVerdict,
+) {
+    let applied = crate::concurrency::while_claim_current(claim, || -> Result<bool, String> {
+        if crate::commands::storage::read_mls_state_owner(data_dir)?.is_some()
+            || !crate::commands::mls_account_state::slot_holds_state(data_dir)?
+        {
+            return Ok(false);
+        }
+        match verdict {
+            UnprovenVerdict::OwnUnderAnotherDevice => {
+                crate::commands::storage::record_mls_state_owner(data_dir, user_id)?;
+                log::warn!(
+                    "[MLS] the unproven state opened under this account's key with an older device id - it is this account's, recorded as such"
+                );
+            }
+            UnprovenVerdict::NotThisSignIns => {
+                crate::commands::mls_account_state::return_unproven_aside_held(data_dir)?;
+            }
+        }
+        Ok(true)
+    });
+    match applied {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => log::error!("[MLS] the verdict on the unproven state was not applied: {e}"),
+        Err(superseded) => {
+            log::error!("[MLS] the verdict on the unproven state was not applied: {superseded}")
+        }
+    }
+}
+
 /// Opens a pre-v0.11.0 `mls.bin` (Argon2id, `[salt (16) || nonce (12) || ciphertext]`) with `pin`
-/// and rewrites it sealed under `key`, returning the re-sealed bytes.
+/// and returns it sealed under `key` - WRITING NOTHING. The caller loads the result first and only
+/// then persists it ([`load_resealed_legacy_state`], round 7 of the review of #2919: a blob the PIN
+/// opens may be another account's under the same PIN, and was rewritten before its load refused it).
 ///
 /// Returns `None` when the blob is not that envelope or `pin` does not open it - the caller then
-/// keeps the original load error and falls back to recovery. The rewrite happens here rather than
-/// being left to the opportunistic save on the JS side: a snapshot left in the legacy envelope
-/// replays this migration on every launch, and any failure in between resurfaces as a bogus
-/// "PIN changed on another device".
-fn migrate_legacy_state_blob(
-    app: &tauri::AppHandle,
-    blob: &[u8],
-    pin: &str,
-    key: &[u8; 32],
-) -> Option<Vec<u8>> {
+/// keeps the original load error and falls back to recovery.
+fn reseal_legacy_state_blob(blob: &[u8], pin: &str, key: &[u8; 32]) -> Option<Vec<u8>> {
     if blob.len() < 16 + 12 {
         return None;
     }
@@ -175,13 +609,44 @@ fn migrate_legacy_state_blob(
     let legacy_key = mls_core::security::derive_key_from_pin_owned(pin.to_string(), salt).ok()?;
     let plain = mls_core::security::decrypt_blob(&legacy_key, sealed).ok()?;
 
-    let resealed = MlsManager::encrypt_state_blob_with_key(&plain, key)
+    MlsManager::encrypt_state_blob_with_key(&plain, key)
         .map_err(|e| log::error!("[MLS] Re-sealing the legacy snapshot failed: {e}"))
-        .ok()?;
-    write_mls_state_blob(app, &resealed)
-        .map_err(|e| log::error!("[MLS] Persisting the re-sealed snapshot failed: {e}"))
-        .ok()?;
-    Some(resealed)
+        .ok()
+}
+
+/// LOADS a legacy snapshot re-sealed by [`reseal_legacy_state_blob`] and, only once it loaded as
+/// this account, writes it into the slot. `Err` is the load's refusal, the slot untouched; `Ok(None)`
+/// a load that succeeded and a write that did not (the caller keeps its original error, as before).
+///
+/// The write is here rather than left to the opportunistic save on the JS side: a snapshot left in
+/// the legacy envelope replays the migration on every launch, and any failure in between resurfaces
+/// as a bogus "PIN changed on another device". It happens ONLY while the sign-in's session is
+/// current ([`crate::concurrency::while_claim_current`]): a sign-in ended while it loaded writes
+/// nothing into a slot that may be another account's by now (round 4 of the review of #2919).
+fn load_resealed_legacy_state(
+    data_dir: &std::path::Path,
+    claim: crate::concurrency::SessionClaim,
+    resealed: &[u8],
+    load: impl FnOnce(Vec<u8>) -> Result<MlsManager, mls_core::MlsError>,
+) -> Result<Option<MlsManager>, StateLoadRefusal> {
+    let manager = load(resealed.to_vec()).map_err(|e| {
+        log::warn!("[MLS] the re-sealed legacy snapshot did not load - nothing written: {e}");
+        StateLoadRefusal::from(e)
+    })?;
+    let path = data_dir.join("mls.bin");
+    match crate::concurrency::while_claim_current(claim, || {
+        crate::concurrency::write_slot_mls_bin(&path, resealed)
+    }) {
+        Ok(Ok(())) => Ok(Some(manager)),
+        Ok(Err(e)) => {
+            log::error!("[MLS] Persisting the re-sealed snapshot failed: {e}");
+            Ok(None)
+        }
+        Err(superseded) => {
+            log::error!("[MLS] the re-sealed snapshot is NOT written: {superseded}");
+            Ok(None)
+        }
+    }
 }
 
 /// Resolve the at-rest key for a save: the caller's base64 key when it supplied one, otherwise
@@ -199,7 +664,7 @@ fn session_at_rest_key(
     (*cached
         .lock()
         .map_err(|_| "Failed to lock device key".to_string())?)
-    .ok_or_else(|| "no device key for this session - MLS not initialized".to_string())
+    .ok_or_else(crate::state::manager_absent_error)
 }
 
 /// Returns the at-rest key [`initialiser_mls`] cached for this session, base64-encoded, or `None`
@@ -272,7 +737,7 @@ pub(crate) fn creer_groupe(group_id: String, state: tauri::State<AppState>) -> R
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
 
     manager.create_group(group_id).map_err(|e| e.to_string())
 }
@@ -303,9 +768,7 @@ pub(crate) async fn oublier_key_packages(
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager(&lock)?;
 
         let outcome = manager
             .forget_key_packages(&key_packages)
@@ -337,9 +800,7 @@ pub(crate) async fn key_package_a_clef_privee(
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager(&lock)?;
         let has_private = manager
             .key_package_has_private(&key_package_bytes)
             .map_err(|e| e.to_string())?;
@@ -365,9 +826,7 @@ pub(crate) async fn generer_key_packages_et_persister(
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager(&lock)?;
 
         log::debug!(
             "generer_key_packages_et_persister start count={} (batch native path)",
@@ -481,7 +940,7 @@ pub(crate) fn oublier_groupe(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager.forget_group(&group_id, min_epoch);
     Ok(())
 }
@@ -492,7 +951,7 @@ pub(crate) fn lister_groupes(state: tauri::State<AppState>) -> Result<Vec<String
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager.get_known_groups())
 }
 
@@ -505,7 +964,7 @@ pub(crate) fn lister_groupes(state: tauri::State<AppState>) -> Result<Vec<String
 /// **IT IS A COMMAND RATHER THAN A LINE IN `initialiser_mls`, AND THAT IS THE WHOLE POINT.** It used
 /// to be a `log::info!` inside `load_or_create`, which put an O(pool) walk that deserialises every
 /// stored bundle in front of the first screen: 24.5 ms against 12.9 ms at a 1000-package pool,
-/// measured on OXYGEN 2026-09-17 - half of a cold load. Web already called its own census after
+/// measured on the workstation 2026-09-17 - half of a cold load. Web already called its own census after
 /// `MLS ready` for exactly that reason. Now both do.
 ///
 /// Returns the line rather than logging it, so the ONE place that decides where a diagnostic is
@@ -516,7 +975,7 @@ pub(crate) fn recenser_key_packages(state: tauri::State<AppState>) -> Result<Str
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager.key_package_census_summary())
 }
 
@@ -540,9 +999,7 @@ pub(crate) async fn groupe_actif(
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager(&lock)?;
         manager
             .is_group_active(&group_id)
             .map_err(|e| e.to_string())
@@ -563,9 +1020,7 @@ pub(crate) async fn obtenir_epoch(
         let lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_ref()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager(&lock)?;
         // u64: no truncation; Tauri serializes it as a JSON number (exact <= 2^53, never reached). [[S4]]
         manager.get_epoch(&group_id).map_err(|e| e.to_string())
     })
@@ -598,7 +1053,7 @@ pub(crate) fn ajouter_membres_bulk(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
 
     // Stage-only (C7-A): the commit is NOT merged here. The caller validates it server-side then
     // calls confirmer_commit (accepted) / annuler_commit (rejected), and reads the post-merge
@@ -637,7 +1092,7 @@ pub(crate) fn remplacer_appareil(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     let record = manager
         .replace_device_recorded(&group_id, &identity, &key_package, intent)
         .map_err(|e| e.to_string())?;
@@ -657,7 +1112,7 @@ pub(crate) fn verifier_key_package(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager
         .vet_key_package(&key_package, &expected_identity)
         .to_string())
@@ -675,7 +1130,7 @@ pub(crate) fn feuille_portant_cle(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .leaf_holding_key_of(&group_id, &key_package)
         .map_err(|e| e.to_string())
@@ -694,7 +1149,7 @@ pub(crate) fn cles_signature_epinglees(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager.pinned_signature_keys(&user_id, &device_id))
 }
 
@@ -710,7 +1165,7 @@ pub(crate) fn epoques_departs(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager.removal_epochs(&group_id, &user_id))
 }
 
@@ -724,7 +1179,7 @@ pub(crate) fn prendre_evenements_appareils(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     Ok(manager.take_device_events())
 }
 
@@ -738,7 +1193,7 @@ pub(crate) fn trailer_welcome(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
 
     manager
         .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
@@ -780,7 +1235,7 @@ pub(crate) fn envoyer_message_bytes(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     seal_unless_commit_pending(manager, &group_id, &message_bytes)
 }
 
@@ -815,7 +1270,7 @@ pub(crate) fn prendre_constats_fork(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager
         .take_fork_findings()
         .into_iter()
@@ -837,7 +1292,7 @@ pub(crate) fn skip_send_generations(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
 
     manager
         .skip_send_generations(&group_id, count)
@@ -858,7 +1313,7 @@ pub(crate) fn lister_identites_membres(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
 
     manager.member_identities(&group_id).map_err(|e| {
         log::error!(
@@ -868,6 +1323,26 @@ pub(crate) fn lister_identites_membres(
         );
         e.to_string()
     })
+}
+
+/// Classifies `group_id` for the admission rule (`mls_core::admission`): `closed` for a conversation,
+/// `open` for a community or salon key group, whose members enter by external commit by design.
+/// The caller checkpoints the state after it, like every mutation. Rejects any other name.
+#[tauri::command]
+pub(crate) fn definir_politique_admission(
+    group_id: String,
+    policy: String,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let policy = mls_core::AdmissionPolicy::parse(&policy)
+        .ok_or_else(|| format!("unknown admission policy '{policy}'"))?;
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    manager.set_admission_policy(&group_id, policy);
+    Ok(())
 }
 
 #[tauri::command]
@@ -881,7 +1356,7 @@ pub(crate) fn retirer_membres(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
 
     let id_slices: Vec<&str> = user_ids.iter().map(|s| s.as_str()).collect();
     manager
@@ -901,7 +1376,7 @@ pub(crate) fn retirer_membres_par_appareil(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
 
     let id_slices: Vec<&str> = device_identities.iter().map(|s| s.as_str()).collect();
     manager
@@ -924,7 +1399,7 @@ pub(crate) fn rafraichir_feuille(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager
         .stage_self_update_recorded(&group_id, intent)
         .map(|r| (r.commit, r.group_info))
@@ -942,7 +1417,7 @@ pub(crate) fn date_feuille(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .own_leaf_minted_at(&group_id)
         .map_err(|e| e.to_string())
@@ -959,7 +1434,7 @@ pub(crate) fn cle_feuille(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .own_leaf_encryption_key(&group_id)
         .map_err(|e| e.to_string())
@@ -977,7 +1452,7 @@ pub(crate) fn contexte_correspond_base(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .own_context_matches_base(&group_id, &group_info)
         .map_err(|e| e.to_string())
@@ -1011,7 +1486,7 @@ pub(crate) fn soumission_en_attente(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(match manager.pending_submission(&group_id) {
         PendingSubmissionRead::None => SoumissionLue::None,
         PendingSubmissionRead::Unreadable => SoumissionLue::Unreadable,
@@ -1035,7 +1510,7 @@ pub(crate) fn groupes_commit_en_attente(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager.groups_with_pending_commit())
 }
 
@@ -1051,7 +1526,7 @@ pub(crate) fn confirmer_commit_welcome_du(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager
         .merge_pending_commit_owing_welcome(&group_id, recipients)
         .map_err(|e| e.to_string())
@@ -1074,7 +1549,7 @@ pub(crate) fn welcomes_dus(state: tauri::State<AppState>) -> Result<Vec<WelcomeD
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     Ok(manager
         .owed_welcomes()
         .into_iter()
@@ -1099,7 +1574,7 @@ pub(crate) fn welcome_remis(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager.welcome_delivered(&group_id, &recipient, &welcome);
     Ok(())
 }
@@ -1120,7 +1595,7 @@ pub(crate) fn confirmer_commit(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager
         .merge_pending_commit_for(&group_id)
         .map_err(|e| e.to_string())
@@ -1137,7 +1612,7 @@ pub(crate) fn annuler_commit(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager
         .clear_pending_commit_for(&group_id)
         .map_err(|e| e.to_string())
@@ -1154,7 +1629,7 @@ pub(crate) fn exporter_ratchet_tree(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .export_ratchet_tree_for(&group_id)
         .map_err(|e| e.to_string())
@@ -1171,9 +1646,26 @@ pub(crate) fn exporter_group_info(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .export_group_info(&group_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Whether an external commit built on this GroupInfo would bring this device in as a FURTHER
+/// DEVICE OF A MEMBER (`MlsManager::external_join_is_a_further_device`).
+#[tauri::command]
+pub(crate) async fn mls_external_join_is_a_further_device(
+    group_info_bytes: Vec<u8>,
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, String> {
+    let lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    manager
+        .external_join_is_a_further_device(&group_info_bytes)
         .map_err(|e| e.to_string())
 }
 
@@ -1191,7 +1683,7 @@ pub(crate) fn rejoindre_par_commit_externe(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     manager
         .join_by_external_commit(&group_info_bytes)
         .map_err(|e| e.to_string())
@@ -1217,13 +1709,9 @@ pub(crate) async fn recevoir_message_bytes(
             .lock()
             .map_err(|_| "Failed to lock state")?;
         match lock.as_ref() {
-            Some(manager) => {
-                let group_epoch = manager.get_epoch(&group_id).ok();
-                match (MlsManager::parse_message_epoch(&message_bytes), group_epoch) {
-                    (Some(msg_ep), Some(group_ep)) if msg_ep > group_ep => Some((msg_ep, group_ep)),
-                    _ => None,
-                }
-            }
+            // ONE COPY of the question (`MlsManager::frame_epoch_ahead`), which leaves an evicted
+            // group's frame to MLS (`Evicted`) instead of queueing it for a resync that cannot come.
+            Some(manager) => manager.frame_epoch_ahead(&group_id, &message_bytes),
             None => None,
         }
         // lock is released here - no await has happened yet
@@ -1272,7 +1760,7 @@ pub(crate) async fn recevoir_message_bytes(
             .mls_manager
             .lock()
             .map_err(|_| "Failed to lock state")?;
-        let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+        let manager = crate::state::live_manager_mut(&mut lock)?;
         manager.process_incoming_message_with_sender(&group_id, &message_bytes)
     };
 
@@ -1449,9 +1937,7 @@ pub(crate) async fn recevoir_messages_batch(
         let mut lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        let manager = lock
-            .as_mut()
-            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let manager = crate::state::live_manager_mut(&mut lock)?;
         log::debug!(
             "recevoir_messages_batch group={} count={}",
             group_id,
@@ -1475,7 +1961,7 @@ pub(crate) fn exporter_secret(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
 
     manager
         .export_secret(
@@ -1613,7 +2099,7 @@ pub(crate) fn graine_sign_with_device_credential(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .sign_with_device_credential(&message)
         .map_err(|e| e.to_string())
@@ -1639,7 +2125,7 @@ pub(crate) fn graine_run(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager_mut(&mut lock)?;
     let reading = manager.graine_run(&group_id).map_err(|e| e.to_string())?;
     Ok(GraineRunDto {
         run_id: reading.run_id,
@@ -1660,8 +2146,805 @@ pub(crate) fn graine_member_signature_key(
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
+    let manager = crate::state::live_manager(&lock)?;
     manager
         .member_signature_key(&group_id, &identity)
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::concurrency::test_support::serialise;
+    use std::sync::Arc;
+
+    const KEY_A: [u8; 32] = [1u8; 32];
+    const KEY_B: [u8; 32] = [2u8; 32];
+
+    type Slot = Arc<Mutex<Option<MlsManager>>>;
+    type KeySlot = Arc<Mutex<Option<[u8; 32]>>>;
+
+    /// A fresh directory standing for `app_data_dir`.
+    fn data_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("canari-guard-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// An attempt for `user` whose selection succeeded on `dir`: from here its failure ends ITS
+    /// session. Starts the process cold.
+    fn selected_attempt(
+        manager: &Slot,
+        key: &KeySlot,
+        dir: &std::path::Path,
+        user: &str,
+    ) -> InstallGuard {
+        crate::concurrency::forget_live_manager_for_test();
+        let mut install = InstallGuard::new(manager.clone(), key.clone());
+        install.select(dir, user).unwrap();
+        install
+    }
+
+    /// Account A's session, installed as a successful `initialiser_mls` leaves it.
+    fn slot_of_account_a() -> (Slot, KeySlot) {
+        let manager = Arc::new(Mutex::new(None));
+        let key = Arc::new(Mutex::new(None));
+        let dir = data_dir("account-a");
+        selected_attempt(&manager, &key, &dir, "guard-a")
+            .install(
+                MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                KEY_A,
+            )
+            .unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        (manager, key)
+    }
+
+    /// THE FAILED SIGN-IN OF ANOTHER ACCOUNT: B's install fails (here, an `Err` before `install`),
+    /// and A's manager and key must not stay behind - `Some` used to be written on success only, so
+    /// the failure left A's session installed under B's.
+    #[test]
+    fn a_failed_install_leaves_the_slot_empty_and_the_key_cleared() {
+        let _s = serialise();
+        let (manager, key) = slot_of_account_a();
+        assert!(
+            manager.lock().unwrap().is_some(),
+            "precondition: A is installed"
+        );
+
+        let dir = data_dir("failed");
+        let attempt = || -> Result<(), String> {
+            let _install = selected_attempt(&manager, &key, &dir, "guard-b");
+            Err("the saved state is another account's".to_string())
+        };
+        assert!(attempt().is_err());
+        assert!(!crate::concurrency::live_manager_in_process());
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(
+            manager.lock().unwrap().is_none(),
+            "A's manager outlived B's failed install"
+        );
+        assert!(
+            key.lock().unwrap().is_none(),
+            "A's key outlived B's failed install"
+        );
+    }
+
+    /// A REFUSED BIOMETRIC SHEET AND AN OLD-PIN STATE ARE EXPECTED OUTCOMES, AND THE GUARD KNOWS THEM
+    /// BY CODE: `NoKeystoreKey` and `SealedUnderAnotherKey` (debug lines, not warnings), any other
+    /// refusal - a text naming either code included - stays `Refused`, and either way the session is
+    /// still ended.
+    #[test]
+    fn a_keystore_refusal_is_recorded_as_expected_and_still_ends_the_session() {
+        let _s = serialise();
+        let no_key = StateLoadRefusal::from(mls_core::MlsError::KeystoreKeyUnavailable(
+            "sheet cancelled".into(),
+        ));
+        let old_pin = StateLoadRefusal::from(mls_core::MlsError::StateSealedUnderAnotherKey(
+            "header names another key".into(),
+        ));
+        let old_pin_in_prose = StateLoadRefusal::from("STATE_KEY_MISMATCH: a sentence".to_string());
+        let altered = StateLoadRefusal::from(mls_core::MlsError::StateAltered("tag".into()));
+        let untyped = StateLoadRefusal::from("KEYSTORE_KEY_UNAVAILABLE: a sentence".to_string());
+        for (refusal, expected) in [
+            (no_key, InstallOutcome::NoKeystoreKey),
+            (old_pin, InstallOutcome::SealedUnderAnotherKey),
+            (old_pin_in_prose, InstallOutcome::Refused),
+            (altered, InstallOutcome::Refused),
+            (untyped, InstallOutcome::Refused),
+        ] {
+            let (manager, key) = slot_of_account_a();
+            let dir = data_dir("keystore");
+            let mut install = selected_attempt(&manager, &key, &dir, "guard-b");
+            install.refused(&refusal);
+            assert_eq!(install.outcome, expected, "{refusal:?}");
+            drop(install);
+            assert!(manager.lock().unwrap().is_none(), "{refusal:?}");
+            assert!(key.lock().unwrap().is_none(), "{refusal:?}");
+        }
+    }
+
+    /// A panic inside the install is a failed install too: the guard drops while unwinding.
+    #[test]
+    fn a_panicking_install_leaves_the_slot_empty() {
+        let _s = serialise();
+        let (manager, key) = slot_of_account_a();
+        let dir = data_dir("panic");
+        let (m, k, d) = (manager.clone(), key.clone(), dir.clone());
+        let panicked = std::panic::catch_unwind(move || {
+            let _install = selected_attempt(&m, &k, &d, "guard-b");
+            panic!("the load exploded");
+        });
+        assert!(panicked.is_err());
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(manager.lock().unwrap_or_else(|e| e.into_inner()).is_none());
+        assert!(key.lock().unwrap_or_else(|e| e.into_inner()).is_none());
+    }
+
+    /// F1 of the re-review of #2919, THROUGH THE GUARD: a sign-in refused because another one is
+    /// loading must not end THAT one. Before, the refused attempt's guard cleared the warm mark of the
+    /// sign-in in flight, so a background engine could write under its loading manager and a third
+    /// selection could switch the slot under it.
+    #[test]
+    fn a_sign_in_refused_by_a_loading_one_does_not_end_it() {
+        let _s = serialise();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("interleaved");
+
+        // A's sign-in has selected the slot and is loading.
+        let a = selected_attempt(&manager, &key, &dir, "guard-a");
+        // B's sign-in is refused by the selection, and its guard drops.
+        let mut b = InstallGuard::new(manager.clone(), key.clone());
+        assert!(b.select(&dir, "guard-b").is_err());
+        b.refused(&StateLoadRefusal::from(
+            "a foreground MLS session is still open".to_string(),
+        ));
+        drop(b);
+        assert!(
+            crate::concurrency::live_manager_in_process(),
+            "B's refused attempt ended A's sign-in in flight"
+        );
+        // A third account is therefore still refused, with nothing moved.
+        let mut c = InstallGuard::new(manager.clone(), key.clone());
+        assert!(c.select(&dir, "guard-c").is_err());
+        drop(c);
+        assert!(crate::concurrency::live_manager_in_process());
+
+        // A's own failure ends A's session.
+        drop(a);
+        assert!(!crate::concurrency::live_manager_in_process());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A claim a later selection superseded ends nothing: two sign-ins of ONE account (the slot is
+    /// its own, so both select), the first fails after the second claimed the process.
+    #[test]
+    fn a_superseded_claim_ends_nothing() {
+        let _s = serialise();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("superseded");
+        std::fs::write(
+            dir.join(crate::commands::storage::MLS_STATE_OWNER_FILE),
+            "guard-a",
+        )
+        .unwrap();
+        std::fs::write(dir.join("mls.bin"), b"A").unwrap();
+
+        let first = selected_attempt(&manager, &key, &dir, "guard-a");
+        let mut second = InstallGuard::new(manager.clone(), key.clone());
+        second.select(&dir, "guard-a").unwrap();
+        second
+            .install(
+                MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                KEY_A,
+            )
+            .unwrap();
+        drop(first);
+        assert!(
+            manager.lock().unwrap().is_some(),
+            "the superseded attempt dropped the session the later one installed"
+        );
+        assert_eq!(*key.lock().unwrap(), Some(KEY_A));
+        assert!(crate::concurrency::live_manager_in_process());
+
+        // ROUND 3, THE REVERSE ORDER: the LATER attempt fails first and its teardown ends the session
+        // (the mark cleared, the generation moved on) - the earlier one must then not install a live
+        // manager over the cleared mark.
+        crate::concurrency::end_native_session(&manager, &key, None, "test sign-out").unwrap();
+        let earlier = selected_attempt(&manager, &key, &dir, "guard-a");
+        let mut later = InstallGuard::new(manager.clone(), key.clone());
+        later.select(&dir, "guard-a").unwrap();
+        later.refused(&StateLoadRefusal::from(
+            mls_core::MlsError::KeystoreKeyUnavailable("sheet cancelled".into()),
+        ));
+        drop(later);
+        assert!(!crate::concurrency::live_manager_in_process());
+        assert!(earlier
+            .install(
+                MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                KEY_A,
+            )
+            .is_err());
+        assert!(
+            manager.lock().unwrap().is_none(),
+            "a manager installed by a session that had ended"
+        );
+        assert!(key.lock().unwrap().is_none());
+        assert!(!crate::concurrency::live_manager_in_process());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The request of a sign-in with no state handed over and none on disk - a first install.
+    fn first_sign_in<'a>(dir: &'a std::path::Path, user: &'a str) -> SignIn<'a> {
+        SignIn {
+            data_dir: dir,
+            user_id: user,
+            encrypted_state: None,
+            state_on_disk: None,
+            replaces_unopened_state: false,
+        }
+    }
+
+    /// A pre-v0.11.0 `mls.bin` of `user`, sealed under `pin` as `encrypt_with_pin` did.
+    fn legacy_state_of(user: &str, pin: &str) -> Vec<u8> {
+        let plain = MlsManager::load_or_create(user, "d9", None)
+            .unwrap()
+            .save_state()
+            .unwrap();
+        let salt = mls_core::security::generate_salt().unwrap();
+        let pin_key =
+            mls_core::security::derive_key_from_pin_owned(pin.to_string(), &salt).unwrap();
+        let mut blob = salt.to_vec();
+        blob.extend(mls_core::security::encrypt_blob(&pin_key, &plain).unwrap());
+        blob
+    }
+
+    /// What a successful install records for `user` on `dir`: an account a state has opened for.
+    fn known(dir: &std::path::Path, user: &str) {
+        let _guard = crate::concurrency::mls_bin_write_lock().lock().unwrap();
+        crate::commands::mls_account_state::record_account_opened_held(dir, user).unwrap();
+    }
+
+    /// The sign-in of an account a state has opened for here, its load the command's own
+    /// ([`load_state_with_key`]) with the PIN that opens the legacy envelope.
+    fn legacy_sign_in(
+        dir: &std::path::Path,
+        user: &str,
+        manager: &Slot,
+        key: &KeySlot,
+    ) -> Result<String, StateLoadRefusal> {
+        sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            SignIn {
+                data_dir: dir,
+                user_id: user,
+                encrypted_state: None,
+                state_on_disk: Some(true),
+                replaces_unopened_state: false,
+            },
+            |state, claim| {
+                load_state_with_key(dir, claim, (user, "d9"), state, Some("1234"), &KEY_A)
+                    .map(|m| (m, KEY_A))
+            },
+        )
+    }
+
+    /// ROUND 7 (M1): a legacy state of unproven owner that the account's PIN OPENS but that carries
+    /// ANOTHER identity is NEVER rewritten under this account's key - the re-seal is written only once
+    /// it loaded as this account. It is put back aside byte for byte, for its owner. The account's
+    /// OWN legacy state still migrates.
+    #[test]
+    fn a_legacy_state_of_another_identity_is_never_rewritten() {
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+
+        let dir = data_dir("legacy-other-identity");
+        known(&dir, "guard-a");
+        let other = legacy_state_of("guard-other", "1234");
+        std::fs::write(dir.join("mls.bin"), &other).unwrap();
+        let refusal = legacy_sign_in(&dir, "guard-a", &manager, &key).unwrap_err();
+        assert!(refusal.is_identity_mismatch(), "{refusal:?}");
+        assert!(manager.lock().unwrap().is_none());
+        assert!(
+            !dir.join("mls.bin").exists(),
+            "put back aside, the slot free"
+        );
+        assert_eq!(
+            std::fs::read(
+                dir.join("mls_accounts")
+                    .join("unproven.residue-0")
+                    .join("mls.bin")
+            )
+            .unwrap(),
+            other,
+            "the other identity's legacy state was rewritten"
+        );
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+
+        let dir = data_dir("legacy-own-identity");
+        known(&dir, "guard-a");
+        let own = legacy_state_of("guard-a", "1234");
+        std::fs::write(dir.join("mls.bin"), &own).unwrap();
+        legacy_sign_in(&dir, "guard-a", &manager, &key).unwrap();
+        let written = std::fs::read(dir.join("mls.bin")).unwrap();
+        assert_ne!(written, own, "the account's own legacy state is re-sealed");
+        crate::concurrency::end_native_session(&manager, &key, None, "test: done").unwrap();
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 8 (M-1), THROUGH THE COMMAND'S OWN SEQUENCE: a sign-in whose load FAILS records nothing,
+    /// so B, refused once, is still not offered A's unproven state at its retry; B's first SUCCESSFUL
+    /// install records it.
+    #[test]
+    fn only_an_installed_state_makes_an_account_known_here() {
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("known-only-once-installed");
+        known(&dir, "guard-a");
+        let marker_of = |user: &str| {
+            let _guard = crate::concurrency::mls_bin_write_lock().lock().unwrap();
+            crate::commands::mls_account_state::account_known_here_held(&dir, user).unwrap()
+        };
+
+        let refused = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-b"),
+            |_, _| {
+                Err(StateLoadRefusal::from(
+                    "test: the load is refused".to_string(),
+                ))
+            },
+        );
+        assert!(refused.is_err());
+        assert!(
+            !marker_of("guard-b"),
+            "a refused sign-in made its account known"
+        );
+        crate::concurrency::forget_live_manager_for_test();
+
+        sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-b"),
+            |_, _| {
+                Ok((
+                    MlsManager::load_or_create("guard-b", "d1", None).unwrap(),
+                    KEY_A,
+                ))
+            },
+        )
+        .unwrap();
+        assert!(marker_of("guard-b"));
+        crate::concurrency::end_native_session(&manager, &key, None, "test: done").unwrap();
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 8 (L-3): an unproven state the account's OWN key opens with an older device id is the
+    /// account's - its owner is recorded, so the identity rotation replaces it as its own instead of
+    /// it being set aside where nothing collects it.
+    #[test]
+    fn an_unproven_state_of_the_account_under_an_older_device_is_recognised_as_its_own() {
+        use crate::commands::storage::MLS_STATE_OWNER_FILE;
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("own-older-device");
+        known(&dir, "guard-a");
+        let plain = MlsManager::load_or_create("guard-a", "d-old", None)
+            .unwrap()
+            .save_state()
+            .unwrap();
+        let sealed = MlsManager::encrypt_state_blob_with_key(&plain, &KEY_A).unwrap();
+        std::fs::write(dir.join("mls.bin"), &sealed).unwrap();
+
+        let refusal = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            SignIn {
+                data_dir: &dir,
+                user_id: "guard-a",
+                encrypted_state: None,
+                state_on_disk: Some(true),
+                replaces_unopened_state: false,
+            },
+            |state, claim| {
+                load_state_with_key(&dir, claim, ("guard-a", "d-new"), state, None, &KEY_A)
+                    .map(|m| (m, KEY_A))
+            },
+        )
+        .unwrap_err();
+        assert!(refusal.is_identity_mismatch(), "{refusal:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(MLS_STATE_OWNER_FILE)).unwrap(),
+            "guard-a"
+        );
+        assert_eq!(
+            std::fs::read(dir.join("mls.bin")).unwrap(),
+            sealed,
+            "left in place"
+        );
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 4 (H1), THROUGH THE COMMAND'S OWN SEQUENCE: account A's sign-in is in its load (a
+    /// biometric sheet, an Argon2) when the page reloads, another sign-in's failure ends the process
+    /// session from the page (an UNCLAIMED end), and account B signs in and takes the slot. A's load
+    /// then finishes: it writes NOTHING - not its owner over B's slot, not the clearing of B's stage
+    /// ledger - and installs nothing.
+    #[test]
+    fn a_sign_in_ended_while_it_loaded_writes_nothing_into_the_slot() {
+        use crate::commands::storage::{BACKGROUND_STAGES_FILE, MLS_STATE_OWNER_FILE};
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("ended-while-loading");
+        let stages = r#"{"group-b":{"baseEpoch":1}}"#;
+
+        let result = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-a"),
+            |_, _| {
+                crate::concurrency::end_native_session(&manager, &key, None, "test: unclaimed end")
+                    .unwrap();
+                let _session_of_b =
+                    crate::commands::mls_account_state::select_account_state(&dir, "guard-b")
+                        .unwrap();
+                std::fs::write(dir.join(MLS_STATE_OWNER_FILE), "guard-b").unwrap();
+                std::fs::write(dir.join("mls.bin"), b"state-b").unwrap();
+                std::fs::write(dir.join(BACKGROUND_STAGES_FILE), stages).unwrap();
+                Ok((
+                    MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                    KEY_A,
+                ))
+            },
+        );
+
+        assert!(
+            result.is_err(),
+            "a sign-in whose session ended must not install"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join(MLS_STATE_OWNER_FILE)).unwrap(),
+            "guard-b",
+            "the ended sign-in wrote its owner over the next account's slot"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join(BACKGROUND_STAGES_FILE)).unwrap(),
+            stages,
+            "the ended sign-in cleared the next account's stage ledger"
+        );
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-b");
+        assert!(manager.lock().unwrap().is_none());
+        assert!(key.lock().unwrap().is_none());
+        assert!(
+            crate::concurrency::live_manager_in_process(),
+            "B's session, which the ended attempt does not own, is left open"
+        );
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 4 (H1), THROUGH THE COMMAND'S OWN SEQUENCE: a sign-in refused AT ITS SELECTION because
+    /// another one is loading ends nothing BY ITSELF - the loading one then installs, its owner
+    /// recorded. What this pins is the command: the full login flow, on a failed login, DOES end the
+    /// process session afterwards, unclaimed (`mlsHolder` `client reset`, pinned at the login level by
+    /// `signOutDuringLogin.test.ts`) - deliberately, it is what clears an orphan's installed manager,
+    /// and an attempt it ends writes nothing (`a_sign_in_ended_while_it_loaded_writes_nothing_into_the_slot`).
+    #[test]
+    fn a_sign_in_refused_at_its_selection_does_not_end_the_loading_one() {
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("refused-at-selection");
+        let (loading_tx, loading_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+
+        let loading = {
+            let (manager, key, dir) = (manager.clone(), key.clone(), dir.clone());
+            std::thread::spawn(move || {
+                sign_in(
+                    InstallGuard::new(manager, key),
+                    first_sign_in(&dir, "guard-a"),
+                    |_, _| {
+                        loading_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                        Ok((
+                            MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                            KEY_A,
+                        ))
+                    },
+                )
+            })
+        };
+        loading_rx.recv().unwrap();
+
+        let refused = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-b"),
+            |_, _| panic!("a sign-in refused at its selection must never load"),
+        )
+        .unwrap_err();
+        assert!(!refused.is_slot_move_unfinished());
+        assert!(
+            crate::concurrency::live_manager_in_process(),
+            "the refused sign-in ended the loading one's session"
+        );
+
+        release_tx.send(()).unwrap();
+        loading.join().unwrap().unwrap();
+        assert!(manager.lock().unwrap().is_some());
+        assert_eq!(*key.lock().unwrap(), Some(KEY_A));
+        assert_eq!(
+            crate::commands::storage::read_mls_state_owner(&dir)
+                .unwrap()
+                .as_deref(),
+            Some("guard-a")
+        );
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 5 (L4): a backup restored into the EMPTY slot while a fresh sign-in of another account
+    /// loads (`save_mls_state`, which records its own account) is neither re-owned nor sealed over: the
+    /// fresh sign-in's install is refused and writes nothing.
+    #[test]
+    fn a_fresh_start_is_not_installed_over_a_state_written_while_it_loaded() {
+        use crate::commands::storage::MLS_STATE_OWNER_FILE;
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("restored-while-fresh");
+
+        let refused = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-a"),
+            |_, _| {
+                crate::commands::storage::write_account_mls_state(&dir, "guard-b", b"restored-b")
+                    .unwrap();
+                Ok((
+                    MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                    KEY_A,
+                ))
+            },
+        )
+        .unwrap_err();
+
+        assert!(!refused.is_slot_owner_unrecorded());
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"restored-b");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(MLS_STATE_OWNER_FILE)).unwrap(),
+            "guard-b"
+        );
+        assert!(manager.lock().unwrap().is_none());
+        assert!(!crate::concurrency::live_manager_in_process());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 5 (L2): an owner record that cannot be WRITTEN fails the install with its own code - the
+    /// gate says the device's storage is the cause, not "unknown" on every retry - and installs nothing.
+    #[test]
+    fn an_owner_record_that_cannot_be_written_fails_the_install_with_its_own_code() {
+        use crate::commands::storage::MLS_STATE_OWNER_FILE;
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("owner-unwritable");
+        // A directory where the record's temporary file goes: the write fails, the read does not.
+        std::fs::create_dir_all(dir.join(format!("{MLS_STATE_OWNER_FILE}.tmp"))).unwrap();
+
+        let refused = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-a"),
+            |_, _| {
+                Ok((
+                    MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                    KEY_A,
+                ))
+            },
+        )
+        .unwrap_err();
+
+        assert!(refused.is_slot_owner_unrecorded());
+        assert!(manager.lock().unwrap().is_none());
+        assert!(key.lock().unwrap().is_none());
+        assert!(!crate::concurrency::live_manager_in_process());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 4 (L3): a move that cannot be finished refuses the sign-in with the TYPED code the gate
+    /// answers (`SLOT_MOVE_UNFINISHED`), and ends nothing.
+    #[test]
+    fn an_unfinished_move_refuses_the_sign_in_with_its_own_code() {
+        use crate::commands::storage::MLS_STATE_OWNER_FILE;
+        let _s = serialise();
+        crate::concurrency::forget_live_manager_for_test();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("unfinished-move");
+        // A's park cut with a non-empty mls.bin at both ends: it cannot be finished.
+        std::fs::write(dir.join(MLS_STATE_OWNER_FILE), "guard-a").unwrap();
+        std::fs::write(dir.join("mls.bin"), b"state-a").unwrap();
+        let journal = crate::commands::mls_account_state::start_park_for_test(&dir, "guard-a");
+        std::fs::write(journal.join("mls.bin"), b"state-a-older").unwrap();
+
+        let refused = sign_in(
+            InstallGuard::new(manager.clone(), key.clone()),
+            first_sign_in(&dir, "guard-b"),
+            |_, _| panic!("a sign-in refused at its selection must never load"),
+        )
+        .unwrap_err();
+        assert!(refused.is_slot_move_unfinished());
+        assert!(!crate::concurrency::live_manager_in_process());
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-a");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 3: A SIGN-OUT DURING A LOAD ends the loading sign-in's session. Its read of `mls.bin`
+    /// and its install are refused afterwards, nothing is installed, the mark stays clear, and its
+    /// own failure ends nothing more.
+    #[test]
+    fn a_sign_out_during_a_load_refuses_the_install() {
+        let _s = serialise();
+        let manager: Slot = Arc::new(Mutex::new(None));
+        let key: KeySlot = Arc::new(Mutex::new(None));
+        let dir = data_dir("sign-out-during-load");
+        let loading = selected_attempt(&manager, &key, &dir, "guard-a");
+        let claim = loading.claimed().unwrap();
+
+        crate::concurrency::end_native_session(&manager, &key, None, "test sign-out").unwrap();
+
+        assert!(
+            crate::concurrency::foreground_load_mls_bin_claimed(&dir.join("mls.bin"), claim)
+                .is_err()
+        );
+        assert!(!crate::concurrency::live_manager_in_process());
+        assert!(loading
+            .install(
+                MlsManager::load_or_create("guard-a", "d1", None).unwrap(),
+                KEY_A,
+            )
+            .is_err());
+        assert!(manager.lock().unwrap().is_none());
+        assert!(key.lock().unwrap().is_none());
+        assert!(!crate::concurrency::live_manager_in_process());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The success exit replaces the slot and the key, and does not end the session it installed.
+    #[test]
+    fn a_successful_install_replaces_the_slot_and_the_key() {
+        let _s = serialise();
+        let (manager, key) = slot_of_account_a();
+        let dir = data_dir("success");
+        selected_attempt(&manager, &key, &dir, "guard-b")
+            .install(
+                MlsManager::load_or_create("guard-b", "d1", None).unwrap(),
+                KEY_B,
+            )
+            .unwrap();
+        assert!(manager.lock().unwrap().is_some());
+        assert_eq!(*key.lock().unwrap(), Some(KEY_B));
+        assert!(crate::concurrency::live_manager_in_process());
+        crate::concurrency::forget_live_manager_for_test();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A save with no key of its own and none cached is the typed refusal, not a sentence.
+    #[test]
+    fn a_save_with_no_session_key_is_refused_with_the_typed_code() {
+        let refused = session_at_rest_key("", &Mutex::new(None)).err().unwrap();
+        assert!(
+            refused.starts_with(crate::state::MLS_MANAGER_ABSENT),
+            "{refused}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod state_load_refusal_tests {
+    //! `initialiser_mls` rejects with [`StateLoadRefusal`], and `TauriMlsService` builds its typed
+    //! error from the serialized `code` field ALONE. These pin that field per variant, on the very
+    //! JSON the IPC bridge carries - a reworded message must change nothing here.
+
+    use mls_core::{MlsError, MlsManager, NoopDeviceKeyStore, StateLoadRefusal};
+
+    const USER: &str = "11111111-1111-4111-8111-111111111111";
+    const DEVICE: &str = "tauri-test-device";
+
+    /// The JSON the invoke rejection carries, as the WebView receives it.
+    fn wire(refusal: StateLoadRefusal) -> serde_json::Value {
+        serde_json::to_value(refusal).expect("a refusal always serializes")
+    }
+
+    #[test]
+    fn every_typed_variant_crosses_the_bridge_with_its_code_as_a_field() {
+        let cases = [
+            (MlsError::StateAltered("x".into()), "STATE_ALTERED"),
+            (
+                MlsError::StateSealedUnderAnotherKey("x".into()),
+                "STATE_KEY_MISMATCH",
+            ),
+            (
+                MlsError::StateUndecryptable("x".into()),
+                "STATE_UNDECRYPTABLE",
+            ),
+            (
+                MlsError::StateIdentityMismatch("x".into()),
+                "IDENTITY_MISMATCH",
+            ),
+            (
+                MlsError::KeystoreKeyUnavailable("x".into()),
+                "KEYSTORE_KEY_UNAVAILABLE",
+            ),
+        ];
+        for (err, code) in cases {
+            // The message is the variant's detail alone: the code crosses as its own field, and a
+            // message that led with it too was printed twice once typed (`STATE_ALTERED: STATE_ALTERED`).
+            assert_eq!(
+                wire(StateLoadRefusal::from(err)),
+                serde_json::json!({ "code": code, "message": "x" }),
+            );
+        }
+    }
+
+    #[test]
+    fn an_untyped_failure_crosses_with_a_null_code_whatever_its_text_says() {
+        // A message that NAMES a verdict proves nothing: the code is decided on the variant.
+        for err in [
+            MlsError::OpenMls("STATE_ALTERED appears in this text".into()),
+            MlsError::InvalidData,
+        ] {
+            assert_eq!(
+                wire(StateLoadRefusal::from(err))["code"],
+                serde_json::Value::Null
+            );
+        }
+        let lock = StateLoadRefusal::from("STATE_KEY_MISMATCH: Failed to lock state".to_string());
+        assert_eq!(wire(lock)["code"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn real_bytes_answer_their_code_through_the_commands_error_type() {
+        let key = [9u8; 32];
+        let manager = MlsManager::load_or_create(USER, DEVICE, None).expect("make");
+        let framed = manager.save_encrypted_with_key(&key).expect("seal");
+
+        let mut altered = framed.clone();
+        let last = altered.len() - 1;
+        altered[last] ^= 1;
+        let err = MlsManager::load_with_key(USER, DEVICE, Some(altered), &key)
+            .map(|_| ())
+            .expect_err("an altered state must not load");
+        assert_eq!(wire(err.into())["code"], "STATE_ALTERED");
+
+        let err = MlsManager::load_with_key(USER, DEVICE, Some(framed.clone()), &[8u8; 32])
+            .map(|_| ())
+            .expect_err("another key must be refused");
+        assert_eq!(wire(err.into())["code"], "STATE_KEY_MISMATCH");
+
+        let err = MlsManager::load_with_key(USER, "another-device", Some(framed.clone()), &key)
+            .map(|_| ())
+            .expect_err("another device's state must be refused");
+        assert_eq!(wire(err.into())["code"], "IDENTITY_MISMATCH");
+
+        let err =
+            MlsManager::resolve_at_rest_key(USER, DEVICE, Some(&framed), None, &NoopDeviceKeyStore)
+                .expect_err("no key in hand and none in the keystore");
+        assert_eq!(wire(err.into())["code"], "KEYSTORE_KEY_UNAVAILABLE");
+    }
 }

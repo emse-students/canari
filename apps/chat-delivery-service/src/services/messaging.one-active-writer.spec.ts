@@ -1,8 +1,9 @@
 /// <reference types="jest" />
 
+import { IsNull } from 'typeorm';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { MessagingService } from './messaging.service';
 import { GroupsController } from '../controllers/groups.controller';
 import { InvitationsController } from '../controllers/invitations.controller';
@@ -595,6 +596,56 @@ describe('the ONE writer of an active membership', () => {
       expect(redis.sadd).toHaveBeenCalledTimes(3);
     });
 
+    /**
+     * THE ADMISSION OF A SEAT NO COMMIT ADMITTED (`admittedByBaseEpoch`): the creator, in from the
+     * first epoch, and a key group's publisher - recorded only where none is, so neither lowers the
+     * floor an accepted commit set (`commitFloorOf`).
+     */
+    it("records a creator's or a publisher's admission only on a seat that holds none", async () => {
+      seats = [];
+      lockedManager(null);
+      deviceGroupRepo.update.mockClear();
+
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', {
+          authority: 'group_creator',
+          admittedByBaseEpoch: 0,
+        })
+      ).resolves.toEqual({ ok: true });
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', {
+          authority: 'distribution_publisher',
+          claim,
+          admittedByBaseEpoch: 7,
+        })
+      ).resolves.toEqual({ ok: true });
+      // A publisher past the creation: its floor is written INFERRED (it may have been in the tree
+      // long before this publish), so it never withholds a frame.
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', {
+          authority: 'distribution_publisher',
+          claim,
+          admittedByBaseEpoch: 8,
+          admissionInferred: true,
+        })
+      ).resolves.toEqual({ ok: true });
+
+      expect(deviceGroupRepo.update.mock.calls).toEqual([
+        [
+          { userId: 'u1', deviceId: 'd1', groupId: 'g1', admittedByBaseEpoch: IsNull() },
+          { admittedByBaseEpoch: 0, admissionInferred: false },
+        ],
+        [
+          { userId: 'u1', deviceId: 'd1', groupId: 'g1', admittedByBaseEpoch: IsNull() },
+          { admittedByBaseEpoch: 7, admissionInferred: false },
+        ],
+        [
+          { userId: 'u1', deviceId: 'd1', groupId: 'g1', admittedByBaseEpoch: IsNull() },
+          { admittedByBaseEpoch: 8, admissionInferred: true },
+        ],
+      ]);
+    });
+
     it('writes no route for a promoted seat an eviction deleted after its commit', async () => {
       // The eviction lands between the promotion's commit and the route's re-read under the lock.
       const transaction = (
@@ -747,8 +798,7 @@ describe('the INVITATION_STATUS door', () => {
   const promote = () =>
     controller.updateInvitationStatus(
       { deviceId: 'd1', userId: 'u1', groupId: 'g1', status: 'active' },
-      'u1',
-      'false'
+      'u1'
     );
 
   it('promotes through the one writer instead of writing the row itself', async () => {
@@ -774,8 +824,7 @@ describe('the INVITATION_STATUS door', () => {
   it('does NOT reach the promotion writer on a demotion - the two directions are separate', async () => {
     await controller.updateInvitationStatus(
       { deviceId: 'd1', userId: 'u1', groupId: 'g1', status: 'pending' },
-      'u1',
-      'false'
+      'u1'
     );
 
     // What the demotion DOES is the sibling suite's subject: it was written locally here until
@@ -833,7 +882,8 @@ describe('the CREATE_GROUP door', () => {
       'u1',
       'd1',
       expect.any(String),
-      expect.objectContaining({ tag: 'CREATE_GROUP' })
+      // In from the group's first epoch: every commit time is the creator's (`commitFloorOf`).
+      expect.objectContaining({ tag: 'CREATE_GROUP', admittedByBaseEpoch: 0 })
     );
   });
 
@@ -921,5 +971,29 @@ describe('the CREATE_GROUP door', () => {
     expect(groupRepo.save).toHaveBeenCalled();
     expect(messaging.deviceAddressability).not.toHaveBeenCalled();
     expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
+  });
+
+  it('records the AUTHENTICATED caller as the creator - the one account the empty roster admits', async () => {
+    await controller.createGroup(BODY, 'u1');
+
+    expect(groupRepo.save).toHaveBeenCalledWith(expect.objectContaining({ createdBy: 'u1' }));
+  });
+
+  it('compares the body and the header in canonical form: an id differing only in case is the caller', async () => {
+    await controller.createGroup({ ...BODY, createdBy: ' U1 ' }, 'U1');
+
+    // Stored lower-cased, the form the guard verifies the header against.
+    expect(groupRepo.save).toHaveBeenCalledWith(expect.objectContaining({ createdBy: 'u1' }));
+  });
+
+  it('refuses 403 a body createdBy naming someone other than the caller, and writes no row', async () => {
+    const err = await controller.createGroup(BODY, 'mallory').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect((err as ForbiddenException).getResponse()).toMatchObject({
+      code: 'MEMBERSHIP_NOT_ALLOWED',
+    });
+    expect(groupRepo.save).not.toHaveBeenCalled();
+    expect(messaging.deviceAddressability).not.toHaveBeenCalled();
   });
 });

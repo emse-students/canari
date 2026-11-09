@@ -53,8 +53,8 @@ vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: () => Promise.resolve('Ada Lovelace'),
 }));
 vi.mock('$lib/utils/userAvatarCache', () => ({
-  resolveUserAvatarDisplayUrl: () => new Promise(() => {}),
-  releaseUserAvatarDisplayUrl: () => {},
+  resolveUserAvatarDisplay: () => new Promise(() => {}),
+  releaseUserAvatarDisplay: () => {},
 }));
 vi.mock('$lib/admin/access', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/admin/access')>()),

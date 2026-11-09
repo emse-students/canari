@@ -473,7 +473,8 @@ things read it, and they converge on ONE reset ([auth](frontend/modules/auth.md#
 owner → reset if it is this one`, `[SECURITY] Revoked-device reset starting.`, `[RESET] done - nothing
 of this device remains`, and on the live variant also `revocation check: the server ended this
 session BECAUSE the device was revoked` and `Revoked-device reset already running - joined`. Never
-`the server disagrees`, and no `Gateway inaccessible` after it.
+`the server disagrees`, and no `[WS] Gateway connection failed` after it (`Gateway inaccessible`
+before 2026-10-30).
 
 **Designed outcomes of that end, and how they log (2026-10-26).** The reset's own `clearAuth` IS the
 device's one sign-out: `endExpiredSession` (the session-expired handler's decision) skips its own
@@ -494,6 +495,8 @@ rotated device id, another account, a transport failure, a plain expiry),
 `startGatewayHandshake.test.ts` and `signOutInProgressReconnect.test.ts` (the reconnect stops).
 
 ## A session that ends takes its device's push registration with it (2026-10-22)
+
+**Order of a sign-out (2026-11-08).** The server's push deregistration is started by `endSessionImpl` while the credential is valid and AWAITED by `clearAuth` (through the sign-out handler's promise, bounded by the write deadline) before the revocation `POST /api/auth/logout`; then the teardown and the wipe. Run beside the revocation it came back `HTTP 401` (Mi 9T, `1.6.7-alpha.3`). A transport failure is a `[Push]` warning naming what stayed registered and never blocks the sign-out.
 
 **After any sign-out, the device stops being a push destination for the account that left - on
 both sides, and neither depends on the other.**
@@ -594,6 +597,19 @@ handler now reads `navigating.to?.url` (else the current location) through `logi
 redirect would have built survives; the root and the sign-in pages stay bare. Source guard:
 `sessionExpiredRelease.test.ts`. The hardware reading is [check H](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android), step 4.
 
+## A return target is held to the page's origin (2026-10-28)
+
+A `returnTo` or `redirect` query parameter is of unknown origin, and its consumers include a plain
+`<a href>` as well as `goto` and the stored sign-in return. `safeInternalPath`
+(`utils/internalPath.ts`) is the ONE gate. A target must start with `/` and, resolved by the URL
+parser against a fixed reserved origin, keep that origin - for a value starting with `/` that is
+the same as keeping the page's own, whatever the page. It is the parser's verdict, not a reading of
+the first characters. Control characters (C0, DEL, C1), the line and paragraph separators and
+backslashes are refused at any position, and a value that is not a string is refused. A refused
+value falls back to the caller's default and logs its length, never the value. `gotoAppPath` holds
+a full-page load to the page's origin a second time, at the load itself. Tests: `internalPath.test.ts` (the function) and
+`routes/forms/create/page.backLink.svelte.test.ts` (a rendered link).
+
 ## A token that names another account than the local identity is refused (2026-10-10)
 
 The MLS identity (`canari_saved_user`, the `userId` the WASM client is initialised with) comes from
@@ -624,6 +640,134 @@ wrote is lost), parks it for that controller's life and logs it as an error. A r
 attempt per entry, a sign-in builds a new controller. A 5xx still climbs the backoff ladder. Tests:
 `auth.test.ts`, `tokenIdentity.svelte.test.ts`, `mlsDeliveryApi.forbidden.test.ts`,
 `outbox.test.ts`. HOW the split is produced is open: [backlog](backlog.md).
+
+## The avatar token
+
+**A user's photo (`GET /api/users/:id/avatar`) is asked for by an `<img>` or a cache `fetch`, and
+neither carries the access token** - an `<img>` cannot send a header, the refresh cookie is scoped to
+`/api/auth`, and on `tauri://localhost` there is no cookie at all. So the viewer proves itself IN THE
+URL, as `?t=<avatar token>`, decided owner 2026-11-02.
+
+- **What it is.** `<sessionId>.<day>.<mac>`: the UTC day it was minted in (days since the epoch) and
+  the base64url HMAC-SHA256 under `AVATAR_TOKEN_SECRET` of `avatar-v1|<sessionId>|<day>`
+  (`apps/core-service/src/auth/avatar-token.ts`). Core mints it beside EVERY access token - the
+  sign-in, a restore and every refresh (`avatar_token` in the body) - for the same session. It has
+  exactly ONE spelling: a non-canonical last base64url character, or a day with a leading zero, is
+  `malformed`.
+- **What makes it valid is durable state, not the clock.** It is honoured only while the session it
+  names is LIVE (`AuthSessionsService.isLiveSession`, the same row and the same two conditions as
+  [an access token's liveness](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). Ending a
+  session deletes its row, and every avatar URL minted for it is refused at its next request.
+- **The day bucket is a cache-friendliness choice, NOT a termination proof.** It keeps one URL per
+  face per day, so the browser's HTTP cache and its ETag revalidation keep working. The day TRAVELS
+  IN THE TOKEN: core checks the MAC over the day the token names, then honours yesterday, today and
+  tomorrow by its own clock (midnight, and a clock a little ahead, refuse nothing). A genuine token of
+  another day is `stale`, a forged one `bad-signature` - two reasons in the log, never one. The client
+  reads the day too, and does not send a token older than yesterday (a session that has not
+  refreshed for a day): it loads the face unsigned until the next refresh rather than earning a 403
+  and initials.
+- **Its cost is a cold face once a day, from phase 1 on.** The token is a pure function of (session,
+  UTC day) - every refresh of the day answers the same one - but it differs per viewer and per day,
+  so each viewer's first load of each face each day misses the edge and the browser cache. The Mi 9T
+  community-open reading with cold avatars is owed BEFORE the phase-1 stable
+  ([backlog](backlog.d/p2-avatar-urls-refuse-unsigned-requests.md#the-cold-avatar-cost---owed-before-the-phase-1-stable)).
+- **Who is exempt: a service, by credential.** chat-delivery's notification face
+  (`GET /api/mls/push/avatar/:id`) and social-service's public roster relay ask core on behalf of a
+  caller they authenticated themselves, with `x-internal-secret` - the credential every
+  service-to-service call to core already carries ([api-surface](protocols/api-surface.md#internal-cross-service-calls)).
+  The exemption is that credential, never a network position.
+- **Every answer to a wrong credential is a bodyless `403`, `no-store`**: a malformed token, a
+  forged one, a stale one, one of an ended session, a wrong internal secret. The client says a 403
+  at `warn`, since a token too old to be honoured is never sent.
+  Bodyless for the reason every non-image answer of that route is
+  ([core-service](services/core-service.md#the-avatar-proxy)). A session store that does not answer
+  is a bodyless `503`, never a verdict.
+- **The rollout has two phases and no date.** Phase 1 (this release): clients send the token, and
+  a request carrying none is still answered, its one `[AVATAR]` line saying `access=unsigned
+  via=<nginx|direct> origin=<native|web|none>` - the evidence that separates an old build from a
+  builder that bypasses the helper or a service missing its secret. Phase 2 refuses it once that count says the old builds
+  are gone ([backlog](backlog.d/p2-avatar-urls-refuse-unsigned-requests.md)).
+- **One client builder, and every cache keyed by the PERSON.** `avatarUrl(userId)`
+  (`frontend/src/lib/utils/avatarUrl.ts`) is the only place the URL is built; the token is in memory
+  only, adopted by `auth.ts` with the access token and dropped at a sign-out or a proven-dead session
+  (a transport failure keeps it). `userAvatarCache.ts` keys its blobs, its in-flight loads and its
+  known absences by user id and builds the URL at the request, so a token that rotates never splits
+  one face in two. `avatarUrl.test.ts` fails if a raw `/api/users/${id}/avatar` builder reappears in
+  `frontend/src`.
+- **Pinned by** `avatar-access.spec.ts` and `users.avatar-log.spec.ts` (core: current and previous
+  day, an older day, an ended session, a tampered token, another session's mac, the internal
+  exemption, the phase-1 count), `push.controller.avatar.spec.ts` (chat-delivery sends its secret),
+  `avatarUrl.test.ts` and `userAvatarCache.test.ts` (client).
+
+## The sign-in handoff to the MiConnect sites (2026-11-08)
+
+**Canari, signed in, opens a sibling site that signs in through MiConnect (MiGallery first, then Sky
+and Le Cercle) already signed in**, instead of the site asking for a MiConnect login the browser has
+long forgotten. Decided by the owner on 2026-11-07; the design, the threats and the per-site work
+are in [the design note](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md),
+which also holds **the contract a site implements**. This section is what Canari does.
+
+- **The mint.** `POST /api/auth/handoff { aud, dest }` -> `{ url, expiresInSeconds }` on
+  core-service (`auth/handoff/handoff.service.ts`, the route in `auth.controller.ts`). It needs a
+  LIVE access token (`requireAccessToken`, [the session's liveness](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)
+  included), so an ended Canari session mints nothing, and a sid-less (legacy) token, which names no
+  session at all, is refused too; the subject is the token's, never the body's. Throttled per account (20 a minute). One audit line per mint,
+  `[HANDOFF] minted aud=<site> user=<sub> jti=<jti> dest=<path>`, and **the token itself is never
+  logged**.
+- **The token.** A compact JWS, `ES256`, header `typ: canari-handoff+jwt` and `kid` (RFC 7638),
+  payload `iss` (the origin of `FRONTEND_URL`'s first entry), `aud` (the site id), `sub` (the
+  MiConnect sub, which IS `users.id`), `jti` (128 random bits), `iat`, `exp = iat + 60`, `dest` (a
+  path). Its own key, `HANDOFF_SIGNING_KEY`, never `JWT_SECRET`: a separate key and an explicit type
+  keep it from ever being taken for an access token (see [Keys](#keys)). Sub only (F1): no claim
+  rides in it until the MiConnect read of the design note's F3 is proven.
+- **The registry is closed and server-side.** `libs/contracts/ecosystem-sites.json`, copied by
+  core-service (`handoff-sites.ts`) and by the client (`ecosystemSites.ts`), each asserting its copy
+  equals the file. The client names a site by id; **core-service composes the URL**
+  (`<origin>/auth/handoff#<token>`), so the route is no open redirect. `dest` must equal one path
+  of the site's allowlist exactly (`{uuid}` one lowercase UUID segment; no query, no fragment, no
+  normalisation). A site is minted for only while its `handoff` flag is true, and **every flag ships
+  false**. A flag goes on only when core-service runs MiConnect's access check at mint (the user
+  active, `check_access` on the target application - without it a handoff bypasses MiConnect's
+  decisions), the site's provider `sub_mode` was read as `hashed_user_id`, and the site's
+  redemption is live with handoff sessions MARKED and stepped up through a MiConnect sign-in before
+  any state-changing action - the answer to login CSRF ([the design note](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md),
+  sections 0 and 3.7).
+- **The fragment.** The token rides after `#`, which no browser sends to a server, so it stays out
+  of every access log and `Referer`. The site's landing page removes it at once and redeems it with
+  a same-origin POST.
+- **The JWKS.** `GET /api/auth/handoff/jwks`, public, `Cache-Control: public, max-age=60`. A site
+  refetches on an unknown `kid`. **A rotation is a hard cut at Canari** (one variable, no "previous
+  key", the rule of [Keys](#keys)): the tokens of the last 60 s are refused `invalid` and the user
+  taps again. **At a site it is bounded by its cache**: each site sets `cacheMaxAge` to 60-120 s, so
+  a rotated-out key verifies for two minutes at most; after a compromise the operator also restarts
+  each site right after the deploy.
+- **Fails closed.** No key: `HANDOFF_NOT_OFFERED` (404) on both routes, said once at boot. A key
+  that is set but unreadable (a PEM, another curve, garbage), or no issuer: said at `error` at boot,
+  closed, never weaker. Dev holds no key (manifest `silent`) until a site test instance trusts dev's
+  issuer: a dev token would be `wrong_issuer` at every production site.
+- **Single use is the SITE's.** Canari's mint is stateless; the site's ledger (`jti` as a primary
+  key, the INSERT is the decision) is where a replay lands, so the site owns it.
+- **The client: one opener.** `openEcosystemSite(id, dest)` (`frontend/src/lib/navigation/openEcosystemSite.ts`)
+  is the only place a sibling site is opened: the launcher (`EcosystemLauncher.svelte`), the
+  profile-photo button and the profile-photo prompt (`profilePhotoLink.ts`). A flagged site mints
+  then opens the URL: the system browser on the native shells, on the web a tab opened `about:blank`
+  in the click itself (a popup blocker drops a window opened after an `await`), cut from its opener,
+  then pointed at the URL. **A site without the flag is opened plainly**, today's behaviour. **A
+  refused or failed mint opens the site plainly and says so at `warn` with its class** (the code and
+  status, or the error's name): the primary path failed. `HANDOFF_NOT_OFFERED` is the estate's
+  configured state and is said once at info. A minted URL not on the site's origin is refused
+  (`HandoffUrlMismatchError`). The launcher's anchors carry `data-ecosystem-site`, which the global
+  link handler leaves to their own `onclick`. **Links inside messages and posts are never handed
+  off**: a link someone else wrote must not choose what the user's own session opens.
+- **Pinned by** `handoff.service.spec.ts` (the mint, refusals, fail-closed, the audit line, the token
+  in no log line), `handoff-redeem.contract.spec.ts` (a reference verifier, the contract's steps in
+  order, run over the vectors `libs/contracts/handoff-token.cases.json` and over minted tokens:
+  single use, replay, expiry, audience, a forged `sub`, another issuer, another key),
+  `auth.controller.handoff.spec.ts` (a live session only, the body's `sub` ignored, the JWKS),
+  `handoff-sites.spec.ts` and `ecosystemSites.test.ts` (the contract file), `openEcosystemSite.test.ts`
+  (flagged, unflagged, refused, transport failure, foreign URL, not offered, the web tab, and a scan
+  that fails if any module but `ecosystemSites.ts` writes a registered origin). The vectors are
+  written by `bun tools/handoff-vectors/generate.ts` with core-service's own signing code.
 
 ## Keys
 

@@ -169,7 +169,9 @@ offered Google's template URL (no use without a Google account; Etar users had n
 
 **Now:** `feed.ics` takes `eventId`, keeping that one event of the window (same builder, same
 `UID@canari` as the subscription, so import + subscribe never doubles it).
-`eventIcsAbsoluteUrl` builds the link (one day either side of the start); a phone opens it in the
+`eventIcsAbsoluteUrl` builds the link (one day either side of the start) and, since 2026-11-02,
+carries the event's own signature `icsSig`, served with each validated event - no signature, no link
+([D40 closed](../../profiles-and-access.md#d40-closed---no-event-is-published-to-an-anonymous-reader-2026-11-02)); a phone opens it in the
 SYSTEM BROWSER - iOS Safari answers a text/calendar response with "Add to Calendar", Android downloads
 it and the calendar app owning `.ics` takes it (Etar's `ImportActivity` resolves
 `VIEW text/calendar` on the Mi 9T, measured). iOS goes straight there; Android and desktop keep the
@@ -210,6 +212,8 @@ asks it, and it reaches nothing - this list, its rights, its readers' agenda - u
 accept. The form reads the states from `GET .../events/:eventId/co-organisers` after it opens and
 sends `coOwnerIds` only once they arrived (`coOwnersLoad`), because the event's own `coOwners` names
 only the accepted ones ([profiles-and-access](../../profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
+
+**Partner side (E2, 2026-11-03).** The form reads `GET .../events/:eventId/write-side` with the states; for a `partner` the date and the co-organiser list are neither drawn nor sent, and a "withdraw" button replaces the list ([profiles-and-access](../../profiles-and-access.md#e2-partner-rights-on-a-co-organised-event-wp-q1-2026-11-03)).
 
 **The detail modal and the picker (2026-10-10).** The modal lists every organiser as a pill chip
 (logo, name, link to its page) and, to whoever may edit the event, one quiet "n pending" line read
@@ -767,6 +771,119 @@ forward lookup, now returning the full `AssociationCalendarFeedEvent` shape the 
 association identity included - rather than the bare `serializeCalendarEvent` it used to), and
 calls `agenda.openDetail(event)` directly. That call needs no month loaded: `openDetail` only ever
 sets local state, so it is independent of `agenda.reload()`'s own window.
+
+## Neutral campus events (owner, 2026-11-08)
+
+The BDE secretary asked to put events on the agenda that are NOT branded BDE. Owner decisions: the
+people who already file the BDE's events choose, when filing, "au nom du BDE" or neutral; a neutral
+event shows a generic label and no association name or logo; who filed it is seen by moderation
+only. **What "moderation" became, and what the UI says**: the event's STEWARDS (below) - the people
+who may edit or validate it - see the owning association (`Déposé par <BDE>`), never the individual
+creator's name, which no agenda surface shows anyone. The form's hint says exactly that
+(`asso_calendar_event_neutral_hint`: "only the agenda's managers see which association filed it").
+
+**The label is "Campus"** (`calendar_neutral_label`, the same word in both locales). The UI had no
+better existing word: the agenda's filter says "Toutes les associations", which names associations,
+and "Campus" is already the axis of the spaces model (a reader's campus) and of the public feed
+selection. It is also the word the server can write itself, untranslated, in the anonymous `.ics`
+(`NEUTRAL_EVENT_LABEL`), which has no locale.
+
+### The BDE stays the owner; only the presentation changes
+
+**Stored as a flag, not as an event without an association**:
+`association_calendar_events.presentation` (`association` | `neutral`, migration 144, default
+`association`). `associationId` stays the BDE, so every path that keys on it keeps working with no
+new branch: edit and delete rights (`assertMayWriteEvent`: PROPOSE_EVENT on the BDE, the BDE agenda
+right over it, or a platform admin), the validation queue and its proposal notice
+(`notifyEventValidatorsOfProposal`), the audience (`eventVisibleToViewerSql` reads the owner's
+rules, so a neutral event reaches exactly the BDE's spaces), the date-move demotion and its notices,
+and the account erasure of `createdBy`. An event with NO owner would have needed a second answer to
+each of those questions; a flag needs one answer to one question - what a reader is told.
+
+**Who may file one**: the route already demands PROPOSE_EVENT on `:id` (the right that files the
+BDE's events; a BDE validator depositing through `targetAssocId` is the other existing way in). The
+service adds `assertNeutralPresentationAllowed` (`event-presentation.ts`): the OWNER must be a BDE
+(`Association.isBDE`, read from `spaces`), else `CALENDAR_NEUTRAL_NOT_A_BDE` (403). Editing and
+deleting it later is the same rule as for any event of the BDE, and changing the presentation is the
+organiser side's only (E2, `partnerOrganiserOnlyRefusal('presentation')`).
+
+**What a neutral event may not carry**, each a typed 400 the form translates (`calendarErrors.ts`):
+
+| Refused | Code | Why |
+| --- | --- | --- |
+| a co-organiser (asked or accepted) | `CALENDAR_NEUTRAL_NO_PARTNERS` | each is a named association on the event, and the partner's own proposal names the organiser |
+| a linked registration form | `CALENDAR_NEUTRAL_NO_FORM` | the form page names its association; migration 144 holds this one as a CHECK too |
+| a post linking it | `CALENDAR_NEUTRAL_LINKED_POST` | the post is published in the BDE's name; refused both ways - linking from the composer (`resolvePostCalendarEventLink`) and turning a linked event neutral |
+
+Turning an existing event neutral NEVER withdraws its partners or detaches its form silently: the
+form leaves both fields unsent while neutral is chosen, and the server refuses until they are
+removed by hand.
+
+**The link and the switch are serialised, not reconciled.** The post write resolves its link INSIDE
+its own transaction, reading the event row `FOR SHARE` (`PostsService.saveWithEventLink` ->
+`resolvePostCalendarEventLink(..., manager)`); the presentation switch holds the same row
+`FOR NO KEY UPDATE` (`withEventLock`) while it asks whether a post links it. The two locks conflict,
+so whichever commits first is seen by the other and the second is refused with
+`CALENDAR_NEUTRAL_LINKED_POST`. (A check made before the post transaction, as first built, left a
+window where both passed: the switch's EXISTS could not see an uncommitted post.) Only a link SET or
+CHANGED is checked: the edit form sends the current link with every edit, and an unchanged one is
+already committed, so the switch sees it - re-checking it made a post uneditable once its event was
+rejected or deleted. Both orders are run against PostgreSQL in
+`posts/calendar-link-lock.integration.spec.ts`. The three post
+readers then STATE the rule rather than heal a breach of it: the two forward ones
+(`findCalendarEventByLinkedPost`, `findValidatedCalendarEventSummary`) and the reverse one
+(`findPostLinkedToCalendarEvent`, `GET /posts/calendar-link/:eventId`, which joins the event) read
+`presentation = 'association'` only, and the detail modal does not ask the reverse one for a
+neutral event.
+
+### Who is told the owner - the stewards - and what everybody else receives
+
+`presentEventsToViewer` is the ONE exit of every listing a reader receives: `listCalendarEvents` (an
+association's agenda), `listAggregatedCalendarFeed` (the agenda, the JSON feed, the `.ics`, the
+one-event `.ics`) and `listPendingCalendarEvents` (the queue). A reader is a **steward** of a neutral
+event exactly when they may WRITE it (`assertMayWriteEvent`): a platform admin, PROPOSE_EVENT on its
+owner through `mayActOnAny` (the member bitmask AND the BDE `MANAGE_ASSO` super-admin - the three
+tiers of `mayAct`), or the BDE agenda right over it (`associationsUnderBdeAgendaRight`). So a
+`MANAGE_ASSO`-only BDE member who files a neutral event sees it and edits it; nobody may edit a row
+they are shown masked. "The creator is visible to moderation only" costs no new predicate. For everybody else, anonymous
+readers included:
+
+- the row is **masked**: `associationId` `''`, `associationName` and `associationSlug` `''`,
+  `associationColor` and `associationLogoUrl` null, `createdBy` `''`, `validatedBy` and `rejectedBy`
+  null, `coOwners` `[]`; `presentation: 'neutral'` is what the client draws "Campus" from, never the
+  blanks;
+- on the OWNER's own agenda (its page, or the global agenda filtered on it, `listedFor`) the row is
+  **not listed at all**: a list of "the BDE's events" names the owner as surely as a field.
+
+The stewardship costs two batched queries, so it is asked only when the page holds a neutral event.
+
+**What masking cannot hide, inherent to "the BDE stays the owner"** (accepted with the design, not
+defects): the audience is the BDE's, so (1) a neutral event reaches exactly the readers of the BDE's
+spaces, and a route readable by BDE membership only tells its reader the event is the BDE's; (2) on a
+campus with ONE BDE, the campus `.ics` holding a neutral event says which spaces, hence which BDE,
+it serves; (3) the pending queue (`GET calendar/pending`) lists an association's pending events to
+its own members who may open it, so a BDE member there who is no steward receives a neutral row
+MASKED, yet knows it is the BDE's by the queue it came in.
+
+### Every surface that names an organiser, checked
+
+| Surface | What it shows for a neutral event |
+| --- | --- |
+| month grid, day panel, schedule list (`eventOwners`, `eventAccentColor`) | one identity "Campus", key `campus`, no logo, one accent derived from that key - the same for a steward, who receives the owner but is shown what readers see |
+| detail modal | a "Campus" chip that links nowhere; the share / add-to-calendar source URL is `/calendar` |
+| `.ics` (subscription and one event) | `SUMMARY: <title> - Campus`, `URL: <site>/calendar` |
+| PDF / PNG export (`calendarExport.ts`) | the "Campus" colour, no logo watermark, no missing-logo warning |
+| pending queue (`/admin/agenda`) | "Campus" and, for a steward, "Déposé par <BDE>"; a masked row offers no association link and no delete |
+| post composer's event picker | neutral events are not offered (`listLinkableValidatedCalendarEvents`) |
+| notifications and pushes | unchanged and safe: every event notice (`event_proposed`, `event_validated` / `updated` / `deleted` / `rejected`, the reopen notices) goes to the BDE's own proposers or to its validators - stewards - and carries the TITLE only |
+| engagement openings (WP-4, not built) | **when built**, a neutral event is NOT an opening "of the BDE": no follower of the BDE is told under the BDE's name. If it is announced at all, it is to the event's audience as "Nouvel événement sur le campus", with no association ([engagement](../../engagement.md#d-openings-for-followers---one-notice-never-two)) |
+| SEO / public share card | none exist for an event (`/events` is an empty page; no event is published to an anonymous reader except through a signed `.ics`, which is masked) |
+
+**Owed on the phones** (after a pre-release): filing a neutral event from the BDE's page and from the
+global agenda on the Mi 9T and the iPhone 12; reading it as a student account (no BDE name, logo,
+link or creator anywhere on the grid, the list, the detail modal, the add-to-calendar sheet);
+reading the BDE's page as a student (absent) and as the secretary (present, "Campus", editable,
+deletable); the subscribed `.ics` on the iPhone showing `- Campus`.
 
 ## HOW FAR BACK THE AGENDA GOES: THE READER'S OWN PROMO (2026-09-20)
 

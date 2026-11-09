@@ -1,9 +1,11 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { m } from '$lib/paraglide/messages';
   import { cutLive, LiveRefusalError } from '$lib/live/api';
   import type { LiveCutResult } from '$lib/live/types';
   import { reportReasons, type ReportReason } from '$lib/moderation/reasons';
+  import { describeModerationRefusal } from '$lib/moderation/moderationRefusal';
   import { LIVE_CUT_DETAILS_MAX } from '$lib/live/constants';
   import { isTransportFailure } from '$lib/utils/transportFailure';
 
@@ -47,6 +49,9 @@
 
   /** The sentence for a refusal, decided on the typed code and kind, never on a message. */
   function errorText(e: unknown): string {
+    // A refusal of the moderator's REACH (an institution's or a BDE's live, another BDE's spaces).
+    const reach = describeModerationRefusal(e);
+    if (reach) return reach;
     if (e instanceof LiveRefusalError) {
       if (e.code === 'LIVE_CUT_FORBIDDEN') return m.moderation_live_cut_forbidden();
       if (e.kind === 'not-found') return m.moderation_live_cut_not_found();
@@ -134,16 +139,11 @@
 
     <div class="flex justify-end gap-2 pt-1">
       {#if step === 'pick'}
-        <button
-          type="button"
-          class="text-text-muted rounded-xl px-4 py-2 text-sm font-semibold transition-colors hover:bg-black/5"
-          onclick={onClose}
-        >
+        <Button variant="ghost" onclick={onClose}>
           {m.common_cancel_button()}
-        </button>
-        <button
-          type="button"
-          class="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-40"
+        </Button>
+        <Button
+          variant="danger"
           onclick={() => {
             error = '';
             step = 'confirm';
@@ -152,19 +152,13 @@
           data-live-cut-continue
         >
           {m.moderation_live_cut_continue_button()}
-        </button>
+        </Button>
       {:else}
-        <button
-          type="button"
-          class="text-text-muted rounded-xl px-4 py-2 text-sm font-semibold transition-colors hover:bg-black/5 disabled:opacity-40"
-          onclick={() => (step = 'pick')}
-          disabled={submitting}
-        >
+        <Button variant="ghost" onclick={() => (step = 'pick')} disabled={submitting}>
           {m.moderation_live_cut_back_button()}
-        </button>
-        <button
-          type="button"
-          class="rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-40"
+        </Button>
+        <Button
+          variant="danger"
           onclick={confirm}
           disabled={submitting}
           data-live-cut-confirm-button
@@ -172,7 +166,7 @@
           {submitting
             ? m.moderation_live_cut_in_progress()
             : m.moderation_live_cut_confirm_button()}
-        </button>
+        </Button>
       {/if}
     </div>
   </div>

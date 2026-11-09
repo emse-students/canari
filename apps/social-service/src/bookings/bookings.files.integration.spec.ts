@@ -25,6 +25,7 @@ import { BookingSlotsService } from './booking-slots.service';
 import { BookingSpacesService } from './booking-spaces.service';
 import { BOOKING_FILE_MAX_PENDING_PER_ACCOUNT, BookingFilesService } from './booking-files.service';
 import { BookingRetentionScheduler } from './booking-retention.scheduler';
+import type { BookingNotificationsService } from './booking-notifications.service';
 import { HttpService } from '@nestjs/axios';
 import { of } from 'rxjs';
 import { BookingPosterMedia } from './booking-poster-media';
@@ -137,7 +138,22 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
     });
     await ds.initialize();
     await q(`CREATE TABLE associations (id uuid PRIMARY KEY)`);
-    await q(`CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar)`);
+    // The profile columns the campus predicate reads (`reader-spaces.ts`): every account here is an
+    // ICM Saint-Etienne student, and every association reaches every space - the campus border is
+    // `bookings.service.integration.spec.ts`'s subject, not this file's.
+    await q(
+      `CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar,
+         admin boolean NOT NULL DEFAULT false, campus varchar DEFAULT 'saint-etienne',
+         cursus jsonb NOT NULL DEFAULT '[{"formation": "ICM"}]')`
+    );
+    await q(`CREATE TABLE spaces (formation varchar NOT NULL, campus varchar NOT NULL)`);
+    await q(`INSERT INTO spaces VALUES ('ICM', 'saint-etienne')`);
+    await q(
+      `CREATE TABLE association_audiences ("associationId" uuid NOT NULL, formation varchar, campus varchar)`
+    );
+    await q(
+      `CREATE TABLE association_members ("associationId" uuid NOT NULL, "userId" varchar NOT NULL)`
+    );
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
     );
@@ -257,6 +273,13 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       repo(Booking)
     );
     files = new BookingFilesService(repo(BookingFile), formFiles);
+    // The notices (WP-N) have their own cases in `bookings.service.integration.spec.ts`.
+    const silent = {
+      added: async () => {},
+      cancelled: async () => {},
+      withdrawn: async () => {},
+      spaceDeleted: async () => {},
+    } as unknown as BookingNotificationsService;
     service = new BookingsService(
       repo(BookingSpace),
       repo(BookingResource),
@@ -266,7 +289,8 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       slots,
       associations,
       pricingFacts,
-      files
+      files,
+      silent
     );
     organiser = new BookingSpacesService(
       repo(BookingSpace),
@@ -277,7 +301,8 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       slots,
       associations,
       { listCotisationTiers: async () => [] } as unknown as UserTagService,
-      posterMedia
+      posterMedia,
+      silent
     );
     retention = new BookingRetentionScheduler(repo(BookingFile), formFiles);
   });
@@ -294,7 +319,11 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
    */
   async function setup(settings: Partial<BookingSpace> = {}) {
     const association = (
-      await q(`INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id`)
+      await q(
+        `WITH a AS (INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id),
+           r AS (INSERT INTO association_audiences ("associationId") SELECT id FROM a)
+         SELECT id FROM a`
+      )
     )[0].id as string;
     grants.add(`${ORGA}:${association}`);
     const space = await ds.getRepository(BookingSpace).save({
@@ -875,10 +904,16 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
           .finally(() => (settled = true));
         // The writer commits only once the release has either finished or is WAITING on the lock -
         // read from the server, never from a clock - so an unlocked release reads "uncited" first.
+        // Only a waiter on THIS poster's lock counts: `pg_locks` is database-wide, and a sibling
+        // spec waiting on its own advisory lock must never end this wait early. A bigint key is
+        // split by PostgreSQL into classid (high 32 bits) and objid (low 32 bits).
         for (;;) {
           const [{ n }] = (
             await admin.query(
-              `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`
+              `SELECT count(*)::int AS n FROM pg_locks
+                WHERE locktype = 'advisory' AND NOT granted
+                  AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`,
+              [`booking-poster:${mine.mediaId}`]
             )
           ).rows as { n: number }[];
           if (n > 0 || settled) break;

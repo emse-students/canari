@@ -80,12 +80,12 @@ on:
         default: false
         type: boolean
       # A BUILD FOR ONE PHONE ON A BENCH, not a compile check and not a release. Non-empty (say
-      # `http://192.168.1.32:8081`) it builds an UNSIGNED app whose seven origins are that address,
+      # `http://<workstation-lan-ip>:8081`) it builds an UNSIGNED app whose seven origins are that address,
       # with no banner, and uploads it as `ios-local-device`; the workstation then signs it with a
       # development certificate that never leaves it (docs/wiki/frontend/mobile.md#a-build-for-the-phone-on-the-bench).
       # It exists because an iPhone has no `adb reverse` and Windows cannot compile Apple code.
       local_url:
-        description: 'Local-device build: the workstation origin the phone reaches, e.g. http://192.168.1.32:8081. Empty = a normal compile check.'
+        description: 'Local-device build: the workstation origin the phone reaches, e.g. http://<workstation-lan-ip>:8081. Empty = a normal compile check.'
         required: false
         default: ''
         type: string
@@ -507,57 +507,24 @@ jobs:
           # Rust on iOS) and not the web implementation.
           TAURI_TARGET=aarch64-apple-ios bun run build
 
+      # THE BODY IS `.github/scripts/ios-libapp.sh`, which the pull-request compile (`compile-ios-app`
+      # in `ci.yml`) runs too - one implementation, and its header holds the why (the disabled Xcode
+      # phase, `custom-protocol`, the deployment target).
+      #
+      # A BENCH build (local_url set) also takes tauri/devtools, which marks the WKWebView
+      # inspectable in a release binary: without it the phone bench cannot read one number
+      # off the iPhone's DOM (a safe-area inset, a hit box) and is left inferring them from
+      # screenshots. A store build never reaches this branch - local_url and publish are
+      # refused together above.
+      #
+      # And `bench-observables`: the `bench_native_store` command through which the cross-client
+      # rig counts, snapshots and damages the native stores (docs/wiki/cross-client-ios.md, O5
+      # and O15). Same mode, same reason a store build can never carry it - and the archive of a
+      # store build is asserted to carry none of it after it is built.
       - name: Prebuild Rust static lib (libapp.a)
-        working-directory: frontend/src-tauri
-        env:
-          # Match the lowest pbxproj IPHONEOS_DEPLOYMENT_TARGET (16.0, the app minimum since 2026-10-22). Without it,
-          # rustc/cc default the objects' min-iOS to the SDK version, and every link
-          # pass floods "object file built for newer iOS version than being linked"
-          # (~75 ld warnings per run).
-          IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         run: |
-          # The Xcode "Build Rust Code" phase is disabled in the hand-maintained pbxproj
-          # (it shells out to bun, which isn't on Xcode's PATH), and Externals/ is
-          # gitignored - so a clean checkout has no libapp.a and both the app AND the NSE
-          # fail to link with `ld: library 'app' not found`. Reproduce what Tauri's
-          # xcode-script does: cross-compile the app staticlib and drop it where the
-          # linker search path (Externals/<arch>/<config>) expects it, as `libapp.a`.
-          # rust-toolchain.toml pins 1.97.0 (no `targets`), which overrides the action's
-          # `stable` here - so the iOS std isn't installed for the toolchain cargo actually
-          # uses. Add it to the pinned toolchain (override is active in this dir).
-          #
-          # --features tauri/custom-protocol is required here because we bypass `tauri ios
-          # build`: that CLI enables it automatically, but a raw `cargo build` does not, and
-          # without it tauri-build's build.rs bakes `dev=true` into the binary (dev =
-          # !has_feature("custom-protocol"), tauri-2.11.1/build.rs). A "dev" binary loads the
-          # webview from the Vite dev server (127.0.0.1:1420) instead of the bundled
-          # frontendDist assets - unreachable on a real device, producing a black screen with
-          # "did you grant local network permission?" (this shipped once, TestFlight v0.14.4).
-          #
-          # A BENCH build (local_url set) also takes tauri/devtools, which marks the WKWebView
-          # inspectable in a release binary: without it the phone bench cannot read one number
-          # off the iPhone's DOM (a safe-area inset, a hit box) and is left inferring them from
-          # screenshots. A store build never reaches this branch - local_url and publish are
-          # refused together above.
-          #
-          # And `bench-observables`: the `bench_native_store` command through which the cross-client
-          # rig counts, snapshots and damages the native stores (docs/wiki/cross-client-ios.md, O5
-          # and O15). Same mode, same reason a store build can never carry it - and the archive of a
-          # store build is asserted to carry none of it after it is built.
-          FEATURES=tauri/custom-protocol
-          if [ -n "$LOCAL_URL" ]; then FEATURES="$FEATURES,tauri/devtools,bench-observables"; fi
-          echo "cargo features: $FEATURES"
-          rustup target add aarch64-apple-ios
-          cargo build --lib --release --target aarch64-apple-ios --features "$FEATURES"
-          LIB=$(find target/aarch64-apple-ios/release -maxdepth 1 -name 'libmines_app_lib.a' | head -1)
-          if [ -z "$LIB" ]; then
-            echo "::error::libmines_app_lib.a not produced by cargo"
-            exit 1
-          fi
-          DEST=gen/apple/Externals/arm64/release
-          mkdir -p "$DEST"
-          cp "$LIB" "$DEST/libapp.a"
-          echo "✅ libapp.a staged at $DEST ($(du -h "$DEST/libapp.a" | cut -f1))"
+          if [ -n "$LOCAL_URL" ]; then export IOS_EXTRA_CARGO_FEATURES="tauri/devtools,bench-observables"; fi
+          bash .github/scripts/ios-libapp.sh
 
       # UNSIGNED ON PURPOSE. The signing identity and both development profiles live on the
       # workstation and nowhere else: the private key of a certificate that can install on a real
@@ -590,7 +557,7 @@ jobs:
             'GCC_PREPROCESSOR_DEFINITIONS=$(inherited) CANARI_BENCH=1' \
             'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) CANARI_BENCH'
 
-          APP="$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name '*.app' | head -1)"
+          APP="$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name '*.app' | sed -n 1p)"
           if [ -z "$APP" ]; then
             echo "::error::the archive holds no .app"
             exit 1
@@ -675,14 +642,14 @@ jobs:
 
           # THE STORE APP EMBEDS EXACTLY ITS TWO EXTENSIONS - one missing still archives, uploads and
           # launches; only a phone would show the share sheet without Canari (ios-extensions.sh).
-          STORE_APP="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name '*.app' | head -1)"
+          STORE_APP="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name '*.app' | sed -n 1p)"
           bash ../.github/scripts/ios-extensions.sh "$STORE_APP"
 
           # THE ICON IS AN ICON COMPOSER DOCUMENT (gen/apple/AppIcon.icon), written without the Mac app
           # that normally authors it, and nothing but Xcode 26 can say whether it means what it was
           # meant to. `actool` compiles it into Assets.car: list what came out, and FAIL if the icon
           # is not there at all - a build that ships the default blank icon is green otherwise.
-          CAR="$(find "$ARCHIVE_PATH/Products/Applications" -name Assets.car | head -1)"
+          CAR="$(find "$ARCHIVE_PATH/Products/Applications" -name Assets.car | sed -n 1p)"
           if [ -z "$CAR" ]; then
             echo "::error::the archive holds no Assets.car"
             exit 1
@@ -698,7 +665,7 @@ jobs:
           # WHAT THE STORE BINARY DECLARES, PRINTED AND NEVER WRITTEN: the background modes and the
           # microphone purpose string of the BUILT app, the iOS twin of the Android built-manifest step.
           # `callsCompiled.test.ts` asserts the SOURCE plist; this is what App Review will read.
-          BUILT_PLIST="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 2 -name Info.plist -path '*.app/Info.plist' | head -1)"
+          BUILT_PLIST="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 2 -name Info.plist -path '*.app/Info.plist' | sed -n 1p)"
           if [ -z "$BUILT_PLIST" ]; then
             echo "::error::the archive's app carries no Info.plist"
             exit 1
@@ -762,7 +729,7 @@ jobs:
             -exportOptionsPlist ExportOptions.plist \
             -exportPath build/ipa
 
-          IPA=$(find build/ipa -name '*.ipa' | head -1)
+          IPA=$(find build/ipa -name '*.ipa' | sed -n 1p)
           if [ -z "$IPA" ]; then
             echo "::error::exportArchive produced no .ipa"
             exit 1

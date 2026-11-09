@@ -92,7 +92,7 @@ const standingOf = (over: Partial<LiveStanding> = {}): LiveStanding => ({
   ...over,
 });
 
-function render(live: ReportedLive) {
+function render(live: ReportedLive, mayActOnBroadcaster = true) {
   const onCut = vi.fn<(r: LiveCutResult) => void>();
   const onWithdrawn = vi.fn<(r: LiveWithdrawalResult) => void>();
   const onStale = vi.fn<() => void>();
@@ -108,6 +108,7 @@ function render(live: ReportedLive) {
       onCut,
       onWithdrawn,
       onStale,
+      mayActOnBroadcaster,
     },
   });
   mounted.push(() => void unmount(app));
@@ -260,12 +261,12 @@ describe('the cut', () => {
       403,
       'LIVE_CUT_FORBIDDEN',
       'refused',
-      'moderation_live_cut_forbidden',
+      m.moderation_live_cut_forbidden,
     ],
-    ['404 LIVE_NOT_FOUND', 404, 'LIVE_NOT_FOUND', 'not-found', 'moderation_live_cut_not_found'],
-    ['400 reason', 400, 'LIVE_CUT_REASON_INVALID', 'refused', 'moderation_live_cut_invalid'],
-    ['400 details', 400, 'LIVE_CUT_DETAILS_INVALID', 'refused', 'moderation_live_cut_invalid'],
-    ['500 no code', 500, null, 'unavailable', 'moderation_live_cut_error'],
+    ['404 LIVE_NOT_FOUND', 404, 'LIVE_NOT_FOUND', 'not-found', m.moderation_live_cut_not_found],
+    ['400 reason', 400, 'LIVE_CUT_REASON_INVALID', 'refused', m.moderation_live_cut_invalid],
+    ['400 details', 400, 'LIVE_CUT_DETAILS_INVALID', 'refused', m.moderation_live_cut_invalid],
+    ['500 no code', 500, null, 'unavailable', m.moderation_live_cut_error],
   ] as const)(
     '%s says its own sentence and returns to the form',
     async (_n, status, code, kind, key) => {
@@ -274,7 +275,7 @@ describe('the cut', () => {
       toConfirmation();
       q('[data-live-cut-confirm-button]')!.click();
       await settle();
-      expect(q('[data-live-cut-error]')!.textContent).toContain(m[key]());
+      expect(q('[data-live-cut-error]')!.textContent).toContain(key());
       expect(onCut).not.toHaveBeenCalled();
       expect(q('[data-live-cut-step]')!.dataset.liveCutStep).toBe('pick');
     }
@@ -315,6 +316,12 @@ describe("the broadcaster's standing and the withdrawal", () => {
     );
     expect(target.querySelector('[data-moderation-live-due]')).not.toBeNull();
     expect(target.querySelector('[data-moderation-live-withdraw]')).not.toBeNull();
+  });
+
+  it('offers no withdrawal to a caller who does not moderate the broadcaster', () => {
+    const { target } = render(openLive({ broadcasterStanding: standingOf() }), false);
+    expect(target.querySelector('[data-moderation-live-due]')).not.toBeNull();
+    expect(target.querySelector('[data-moderation-live-withdraw]')).toBeNull();
   });
 
   it('offers no withdrawal below the cuts it needs', () => {
@@ -412,18 +419,18 @@ describe("the broadcaster's standing and the withdrawal", () => {
       403,
       'LIVE_WITHDRAWAL_FORBIDDEN',
       'refused',
-      'moderation_live_withdraw_forbidden',
+      m.moderation_live_withdraw_forbidden,
     ],
-    ['409 not due', 409, 'LIVE_WITHDRAWAL_NOT_DUE', 'refused', 'moderation_live_withdraw_not_due'],
-    ['400 reason', 400, 'LIVE_CUT_REASON_INVALID', 'refused', 'moderation_live_withdraw_invalid'],
+    ['409 not due', 409, 'LIVE_WITHDRAWAL_NOT_DUE', 'refused', m.moderation_live_withdraw_not_due],
+    ['400 reason', 400, 'LIVE_CUT_REASON_INVALID', 'refused', m.moderation_live_withdraw_invalid],
     [
       '400 account',
       400,
       'LIVE_ACCOUNT_INVALID',
       'refused',
-      'moderation_live_withdraw_account_invalid',
+      m.moderation_live_withdraw_account_invalid,
     ],
-    ['500 no code', 500, null, 'unavailable', 'moderation_live_withdraw_error'],
+    ['500 no code', 500, null, 'unavailable', m.moderation_live_withdraw_error],
   ] as const)('%s says its own sentence and stays open', async (_n, status, code, kind, key) => {
     withdrawBroadcaster.mockRejectedValue(
       new LiveRefusalError(status, code, '', kind, null, null, null)
@@ -432,7 +439,7 @@ describe("the broadcaster's standing and the withdrawal", () => {
     toWithdrawForm();
     q('[data-live-withdraw-confirm-button]')!.click();
     await settle();
-    expect(q('[data-live-withdraw-error]')!.textContent).toContain(m[key]());
+    expect(q('[data-live-withdraw-error]')!.textContent).toContain(key());
     expect(onWithdrawn).not.toHaveBeenCalled();
     expect(q('[data-live-withdraw-dialog]')).not.toBeNull();
   });

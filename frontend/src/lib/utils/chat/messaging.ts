@@ -51,6 +51,8 @@ import { forgetOwedSalonWrite, oweSalonWrite } from './salonOwed';
 import { salonRepeatIsSafe, whenSalonRepeatIsSafe } from './salonRepeatProof';
 import { CHANNEL_MESSAGE_DELETED } from '$lib/services/ChannelService';
 import { flushDmReadMarks } from './salonReadMarkQueue';
+import { MessagePairWriteError, MessageWrittenError } from './messageWrittenError';
+import { readWatermarkFrameData, readWatermarkFrameMark } from './readState';
 
 /**
  * Dependencies required by message-sending helpers.
@@ -59,6 +61,11 @@ import { flushDmReadMarks } from './salonReadMarkQueue';
 export interface SendMessageDeps {
   userId: string;
   conversation: Conversation;
+  /**
+   * Shows (and, unless told otherwise, stores) a message. Calls `onPairWritten` when the message
+   * and its `outboxEntry` reached disk in one write; a failed pair write THROWS
+   * `MessagePairWriteError`; with no storage, neither.
+   */
   addMessageToChat: (
     senderId: string,
     content: string,
@@ -72,6 +79,8 @@ export interface SendMessageDeps {
       skipDbSave?: boolean;
       /** Written in the same transaction as the message - see `AddMessageToChatOptions`. */
       outboxEntry?: OutboxEntry;
+      /** The pair reached disk - see `AddMessageToChatOptions`. */
+      onPairWritten?: () => void;
       /** A salon echo, shown before the server has a row - see `AddMessageToChatOptions`. */
       salonEcho?: boolean;
     }
@@ -96,6 +105,11 @@ interface SalonSend {
   mentionedUserIds: string[];
   /** The echo writer and logger of the last attempt: what a re-send on the reconnect reuses. */
   deps: SendMessageDeps;
+  /**
+   * An uploaded ATTACHMENT (`salonAttachmentSend.ts`): never given back to the composer, which could
+   * take its caption but not its file.
+   */
+  attachment?: true;
 }
 const salonSends = new Map<string, SalonSend>();
 
@@ -351,6 +365,34 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
   }
 }
 
+/**
+ * Posts a salon ATTACHMENT whose file is uploaded and whose echo already shows the real envelope
+ * (`salonAttachmentSend.ts`), through the same machinery as a text ({@link deliverSalonSend}): the
+ * gate, the offline hold, `unconfirmed`, Retry and Discard. Not written to the unsent ledger, which
+ * rebuilds a text and could not rebuild this payload: a reload before the answer loses the row, as it
+ * loses the upload before it.
+ *
+ * @returns the refusal sentence, or `null` when sent or held for the reconnect.
+ */
+export function deliverSalonAttachment(
+  messageId: string,
+  conversationKey: string,
+  payload: Uint8Array,
+  deps: SendMessageDeps
+): Promise<string | null> {
+  const send: SalonSend = {
+    text: '',
+    conversationKey,
+    channelId: conversationKey.replace(/^channel_/, ''),
+    payload,
+    mentionedUserIds: [],
+    deps,
+    attachment: true,
+  };
+  salonSends.set(messageId, send);
+  return deliverSalonSend(messageId, send);
+}
+
 /** Rows whose retry is on the wire: a second click while one is in flight is refused, not sent. */
 const retrying = new Set<string>();
 
@@ -398,6 +440,12 @@ export async function retrySalonSend(
 export function takeBackSalonSend(messageId: string, userId: string): string | null {
   const send = salonSends.get(messageId);
   if (!send) return null;
+  if (send.attachment) {
+    send.deps.log(
+      `[SEND] take back ${messageId.slice(0, 8)}…: an attachment cannot go back to the composer - Retry or Discard`
+    );
+    return null;
+  }
   discardSalonSend(messageId, userId);
   return send.text;
 }
@@ -504,15 +552,21 @@ async function queueSalonSend(
   salonSends.set(messageId, send);
   // Before the POST leaves: a kill from here on sends it again at the next start.
   recordUnsentSalonText(deps.userId, entry);
-  if (mayHaveLanded && !salonRepeatIsSafe()) {
-    deps.log(
-      `[SEND] unanswered salon message ${messageId.slice(0, 8)}... NOT sent again yet: no answer has proven this server answers a repeat with its row - unconfirmed, its Retry offered`
-    );
-    deps.patchSalonEcho(conversationKey, messageId, { kind: 'state', status: 'unconfirmed' });
-    awaitRepeatProof(messageId);
-    return { echoed: true, refusal: null };
+  // From here the message is in the ledger: a throw is about a message that EXISTS, typed so no
+  // caller sends it again.
+  try {
+    if (mayHaveLanded && !salonRepeatIsSafe()) {
+      deps.log(
+        `[SEND] unanswered salon message ${messageId.slice(0, 8)}... NOT sent again yet: no answer has proven this server answers a repeat with its row - unconfirmed, its Retry offered`
+      );
+      deps.patchSalonEcho(conversationKey, messageId, { kind: 'state', status: 'unconfirmed' });
+      awaitRepeatProof(messageId);
+      return { echoed: true, refusal: null };
+    }
+    return { echoed: true, refusal: await deliverSalonSend(messageId, send) };
+  } catch (e) {
+    throw new MessageWrittenError(messageId, e);
   }
-  return { echoed: true, refusal: await deliverSalonSend(messageId, send) };
 }
 
 /** The tail of the resumes in flight - see `resumeUnsentSalonSends`. */
@@ -624,7 +678,7 @@ export async function sendChatMessage(
   contactName: string,
   replyingTo: ChatMessage | null,
   deps: SendMessageDeps
-): Promise<{ success: boolean; error?: string; echoed?: boolean }> {
+): Promise<{ success: boolean; error?: string; echoed?: boolean; messageId?: string }> {
   const { userId, conversation, addMessageToChat } = deps;
 
   deps.log(
@@ -702,10 +756,11 @@ export async function sendChatMessage(
   // the click and reproduced it on 2026-09-05: the console showed `sendChatMessage` with no
   // `[OUTBOX] Queued` after it, the peer had nothing, the sender had the message.
   //
-  // `alreadyDurable` below is exact rather than optimistic: `addMessageToChat` writes the pair
-  // whenever it has a storage layer, and the outbox's own `enqueue` returns early on exactly the
-  // same condition - one `storage`, so the two cannot disagree. With no storage neither wrote
-  // before this change either.
+  // `alreadyDurable` below is exact rather than optimistic: it is what `addMessageToChat` REPORTS
+  // it wrote (`onPairWritten`), never inferred. With no storage it wrote nothing and says so; a pair
+  // write that failed is thrown typed (`MessagePairWriteError`), and the outbox then writes its own
+  // row - the message still leaves (review of #2843, M1: it used to be swallowed, and the row was
+  // marked durable when nothing was on disk).
   const entry: OutboxEntry = {
     id: messageId,
     conversationId: conversation.id,
@@ -726,17 +781,34 @@ export async function sendChatMessage(
     createdAt: sentAt,
   };
   const envelope = serializeEnvelope(mkTextEnvelope(text, replyToData));
-  await addMessageToChat(userId, envelope, contactName, {
-    messageId,
-    status: 'pending',
-    timestamp: new Date(sentAt),
-    outboxEntry: entry,
-    ...(replyToData ? { replyTo: replyToData } : {}),
-  });
-  // The durable half is already done; this is the mirror and the flush.
-  await enqueueOutboxMessage(entry, { alreadyDurable: true });
+  let pairWritten = false;
+  try {
+    await addMessageToChat(userId, envelope, contactName, {
+      messageId,
+      status: 'pending',
+      timestamp: new Date(sentAt),
+      outboxEntry: entry,
+      onPairWritten: () => {
+        pairWritten = true;
+      },
+      ...(replyToData ? { replyTo: replyToData } : {}),
+    });
+  } catch (e) {
+    if (!(e instanceof MessagePairWriteError)) throw e;
+    // The entry reached disk alone (SQLite writes it first): the queue owns it already.
+    pairWritten = e.entryWritten;
+    deps.log(
+      e.entryWritten
+        ? `[SEND] ${messageId.slice(0, 8)}… its entry was written WITHOUT its echo - the queue sends it: ${String(e.cause)}`
+        : `[SEND] ${messageId.slice(0, 8)}… its echo and entry were NOT written together - the outbox writes its own row: ${String(e.cause)}`
+    );
+  }
+  // Written beside the echo: only the mirror and the flush are owed. Otherwise the outbox writes the
+  // row. Either way it classifies its own failures at the throw: `MessageWrittenError` once the row
+  // is on disk, `OutboxEnqueueError` before.
+  await enqueueOutboxMessage(entry, pairWritten ? { alreadyDurable: true } : undefined);
   deps.log(`[SEND] ${messageId.slice(0, 8)}… queued (pending)`);
-  return { success: true };
+  return { success: true, messageId };
 }
 
 /** Minimal dependencies shared by reaction, edit, delete, and read-receipt helpers. */
@@ -951,6 +1023,31 @@ export async function setMessagePinned(
 }
 
 /**
+ * Captures a "nickname" system event in the durable outbox: *`userId` is called `nickname` in this
+ * conversation* (`null` = reset), so every member's register converges ("Modifier les pseudos").
+ *
+ * Silent and durable like every control event (`DELIVERY.mutation`): it notifies nobody, and the
+ * group's shared log hands it to a device that was offline. A member admitted later receives the
+ * register from the bundles instead (`conversationNicknames.svelte.ts`). The SETTER is never in the
+ * payload: every reader takes it from the identity MLS authenticated for the frame.
+ *
+ * `at` is the CALLER's, for the reason `setMessagePinned` gives: the local apply and the broadcast are
+ * one act and must state one instant. The value must already be normalized (`normalizeNickname`).
+ */
+export async function setConversationNickname(
+  userId: string,
+  nickname: string | null,
+  at: number,
+  deps: MessageActionDeps
+): Promise<boolean> {
+  return enqueueControlEvent(
+    'nickname',
+    deps.conversation.id,
+    encodeAppMessage(mkSystem('nickname', JSON.stringify({ userId, nickname, at })))
+  );
+}
+
+/**
  * Captures a "read_watermark" system event in the durable outbox: *I have read this conversation
  * up to `at`*, one monotone instant rather than a list of message ids.
  *
@@ -972,9 +1069,13 @@ export async function sendReadWatermark(at: number, deps: MessageActionDeps): Pr
   return true;
 }
 
+/**
+ * The frame and its latest-wins key. `at` is on the SERVER's clock (`readMarkTarget`), and the frame
+ * says so with `serverAt`; the same value rides as `at` for an older client (readState.ts).
+ */
 function readWatermarkFrame(at: number): [Uint8Array, LatestWins] {
   return [
-    encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at }))),
+    encodeAppMessage(mkSystem('read_watermark', JSON.stringify(readWatermarkFrameData(at)))),
     { value: at, valueOf: queuedReadWatermarkAt },
   ];
 }
@@ -987,11 +1088,17 @@ function readWatermarkFrame(at: number): [Uint8Array, LatestWins] {
  * @returns how many marks the outbox took.
  */
 export function flushOwedDmReadMarks(userId: string): Promise<number> {
-  return flushDmReadMarks(userId, (conversationId, at) =>
-    Number.isFinite(at) && at > 0
+  return flushDmReadMarks(userId, (conversationId, at, clock) => {
+    if (!(Number.isFinite(at) && at > 0)) return Promise.resolve();
+    // A mark owed from before 2026-10-31 is on the authors' `sentAt` clock: it leaves as the older
+    // `{at}` frame, which every reader takes into its stamped map - never as `serverAt`.
+    return clock === 'server'
       ? queueControlEvent(conversationId, ...readWatermarkFrame(at))
-      : Promise.resolve()
-  );
+      : queueControlEvent(
+          conversationId,
+          encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at })))
+        );
+  });
 }
 
 /**
@@ -1024,8 +1131,11 @@ export function queuedReadWatermarkAt(entry: OutboxEntry): number | null {
   const system = decodeAppMessage(entry.controlProto)?.system;
   if (system?.event !== 'read_watermark') return null;
   try {
-    const at = Number((JSON.parse(system.data ?? '') as { at?: unknown }).at);
-    return Number.isFinite(at) && at > 0 ? at : null;
+    // ONLY A SERVER-CLOCK MARK TAKES PART in latest-wins: a stamped `{at}` (queued before 2026-10-31,
+    // or flushed from the stamped ledger) is on another clock, and comparing the two numbers would
+    // let one supersede the other on a meaningless order. Each stamped frame is simply sent.
+    const mark = readWatermarkFrameMark(JSON.parse(system.data ?? '') as object);
+    return mark?.clock === 'server' ? mark.at : null;
   } catch (e) {
     console.warn(
       `[OUTBOX] queued read_watermark ${entry.id.slice(0, 8)}… has unreadable data, left alone:`,

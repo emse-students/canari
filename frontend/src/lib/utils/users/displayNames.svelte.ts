@@ -1,6 +1,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 
 import { getUserDisplayNameSync, resolveUserDisplayName } from './displayName';
+import { visibleNickname } from './conversationNicknames.svelte';
 
 /**
  * ONE user id, resolved to a display name and kept up to date - the reactive half of
@@ -20,10 +21,19 @@ import { getUserDisplayNameSync, resolveUserDisplayName } from './displayName';
  * The id is taken as a THUNK rather than a value because the caller's is reactive: a list that
  * re-keys its rows would otherwise hold the first id for ever.
  *
+ * A NICKNAME WINS OVER BOTH, and is read at every access rather than written into `name`: it lives in
+ * its own reactive register (`conversationNicknames.svelte.ts`), so one set or cleared while the row
+ * is on screen repaints it, and the profile resolve below can never overwrite it.
+ *
  * @param userId reader for the id to resolve - re-read whenever it changes
  * @param fallback what to show until the name is known; defaults to the id, as the sync reader does
+ * @param scope reader for the conversation the name is drawn in - see `getUserDisplayNameSync`
  */
-export function userDisplayName(userId: () => string, fallback?: () => string | undefined) {
+export function userDisplayName(
+  userId: () => string,
+  fallback?: () => string | undefined,
+  scope?: () => string | null | undefined
+) {
   let name = $state('');
 
   $effect(() => {
@@ -38,7 +48,7 @@ export function userDisplayName(userId: () => string, fallback?: () => string | 
 
   return {
     get current() {
-      return name;
+      return visibleNickname(scope?.(), userId()) ?? name;
     },
   };
 }
@@ -58,9 +68,16 @@ export function userDisplayName(userId: () => string, fallback?: () => string | 
  * landing for one member repaints that member and not the whole list, and the async writes below
  * need no copy of the map to notify anybody.
  *
+ * A nickname set in `scope` wins over the profile name, read at every access exactly as in
+ * {@link userDisplayName} - so `get` is the reader, and the map is never written a nickname.
+ *
  * @param userIds reader for the ids to resolve - re-read whenever the list changes
+ * @param scope reader for the conversation the names are drawn in - see `getUserDisplayNameSync`
  */
-export function userDisplayNames(userIds: () => string[]) {
+export function userDisplayNames(
+  userIds: () => string[],
+  scope?: () => string | null | undefined
+): NameReader {
   const names = new SvelteMap<string, string>();
   // THE KEYS ARE TRACKED HERE, OUTSIDE THE MAP, AND THAT IS THE WHOLE OF THE RULE. Pruning has to
   // know which ids to drop, and the only other way to know is to ask the map - which would make the
@@ -90,5 +107,25 @@ export function userDisplayNames(userIds: () => string[]) {
     }
   });
 
-  return names;
+  return {
+    get(id: string) {
+      return visibleNickname(scope?.(), id) ?? names.get(id);
+    },
+    keys() {
+      return names.keys();
+    },
+    get size() {
+      return names.size;
+    },
+  };
+}
+
+/** What {@link userDisplayNames} hands back: the live names, read per id, nickname first. */
+export interface NameReader {
+  /** The name to draw for `id`, or undefined while it is not in the list. */
+  get(id: string): string | undefined;
+  /** The ids currently resolved. */
+  keys(): IterableIterator<string>;
+  /** How many ids are resolved - reactive, for a panel that waits on the first name. */
+  readonly size: number;
 }

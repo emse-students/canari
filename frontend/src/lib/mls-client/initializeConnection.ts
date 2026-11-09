@@ -4,6 +4,8 @@ import { republishBaseIfStale } from '$lib/utils/chat/staleBase';
 import { isStrandedSeat } from '$lib/utils/chat/welcomeOwed';
 import { DeviceLimitReachedError } from './mlsDeliveryApi';
 import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { getIsTabLeader } from './tabLeader';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -30,6 +32,13 @@ export interface ConnectionDeps {
   deviceKeyB64: string;
   scheduleReconnect: () => void;
   setIsWsConnected: (value: boolean) => void;
+  /**
+   * Called once per opened socket, AFTER the post-connect catch-up (`settleUnresolvedCommits`, then
+   * `fetchPendingMessages`). The signal a call answered on the native ring waits for: joined
+   * earlier, its `exportSecret` and its answered notice would run at an epoch the pending frames
+   * are about to move (calls.md, "An answer from the ring joins on the ring's facts").
+   */
+  onCaughtUp: () => void;
   setReconnectAttempts: (value: number) => void;
   processDeviceInvitationsLocally: () => Promise<void>;
   log: (msg: string) => void;
@@ -136,10 +145,15 @@ export function startGatewayHandshake(
  * @param started a handshake already in flight from {@link startGatewayHandshake}. Omitted, this
  *   function starts one itself and awaits it, which is what the reconnect path does - it has
  *   nothing to overlap the wait with.
+ * @param onCatchUpStarted the login's: when given, the post-connect pull is the boot pull (the
+ *   login armed `IMlsService.holdInboundUntilRowsSeeded`, so it is issued once the restore has
+ *   seeded the conversation rows), and the catch-up (that pull, then `onCaughtUp`) is handed here STARTED rather
+ *   than awaited - the restore that releases it runs after this function returns. Never rejects.
  */
 export async function openGatewayConnection(
   deps: ConnectionDeps,
-  started?: StartedHandshake | null
+  started?: StartedHandshake | null,
+  onCatchUpStarted?: (caughtUp: Promise<void>) => void
 ): Promise<boolean> {
   const { mlsService, scheduleReconnect, setIsWsConnected, setReconnectAttempts, log } = deps;
 
@@ -189,11 +203,30 @@ export async function openGatewayConnection(
     } catch (e) {
       log(`[WARN] Failed to settle unresolved commits: ${String(e)}`);
     }
-    try {
-      await mlsService.fetchPendingMessages();
-    } catch (e) {
-      log(`[WARN] Failed to fetch initial pending messages: ${String(e)}`);
-    }
+    // THE LOGIN'S PULL WAITS FOR THE RESTORE'S ROWS, and the login must not wait for it here: the
+    // rows are seeded by the restore it runs AFTER this function returns, so awaiting the pull on
+    // this line would wait for the very thing waiting on us. Handed back started, and awaited by the
+    // login once its restore returned. Every other connection pulls at once and waits, as before.
+    // The pull is the same call on both: while the login's hold is armed, ANY ask - this one, or a
+    // reconnect's racing it - joins the boot pull the seeding issues (`fetchPendingMessages`).
+    const caughtUp = (async () => {
+      try {
+        await mlsService.fetchPendingMessages();
+      } catch (e) {
+        log(`[WARN] Failed to fetch initial pending messages: ${String(e)}`);
+      }
+      // A DESTROYED CLIENT CAUGHT NOTHING UP: its destroy released the pull with nothing listed,
+      // and saying "caught up" now would mark a session ready over a client that was let go of.
+      if (mlsService.isDestroyed()) {
+        log('[WS] catch-up ended on a destroyed MLS client - not reported as caught up');
+        return;
+      }
+      // THE CATCH-UP IS DONE (attempted, each failure said above): the groups are at the epoch the
+      // server holds, so a call joined from here derives its keys and sends its notices there.
+      deps.onCaughtUp();
+    })();
+    if (onCatchUpStarted) onCatchUpStarted(caughtUp);
+    else await caughtUp;
 
     if (typeof window !== 'undefined') {
       // The `disconnect` control frame is the ONLY departure signal, and it is deliberately the
@@ -231,8 +264,19 @@ export async function openGatewayConnection(
       log(`Gateway connection stopped - the session has ended: ${msg}`);
       throw wsErr;
     }
-    log(`Gateway inaccessible: ${msg}`);
-    console.error('[WS] Gateway connection failed:', msg);
+    // ONE LINE, BY WHAT IS KNOWN. It was two - `log` and `console.error` - on every attempt, an
+    // absent link included: offline, the reconnect ladder logged an ERROR per rung (6 in 61 s on the
+    // Mi 9T, a DNS failure at a cold start on a Pixel, production 1.5.1). A socket that could not
+    // open while the link is KNOWN down - the failure is a transport failure (the token's refresh
+    // got no answer), or the browser reports no network, or a request got no answer since - is the
+    // expected state, said as what is owed. The socket's own rejection cannot say it: a browser
+    // hides why a WebSocket failed, and the native plugin hands over a sentence. Any other failure
+    // is a gateway that should have answered, and accuses.
+    if (isTransportFailure(wsErr) || connectivity.isOffline) {
+      log(`[WS] Gateway connection failed - the link is down, the next reconnect opens it: ${msg}`);
+    } else {
+      console.error('[WS] Gateway connection failed:', msg);
+    }
     // THE REOPEN AFTER A ROTATION FAILED ON A HANDED-IN HANDSHAKE - the login's. No disconnect
     // handler was registered to hear it (that happens above, after the settle), and the login has
     // no ladder of its own, so the reconnect is scheduled HERE rather than left to the watchdog. The
@@ -271,7 +315,11 @@ export async function syncConnectionAfterWsOpen(
   // the server so the host can invite it immediately after.
   let keyPackagePublished = false;
   try {
-    await mlsService.generateKeyPackage(deviceKeyB64);
+    // FRESH: a round already in flight was started before this socket opened - on a reconnect, it
+    // is often the login's round dying on the link that just died. Joining it would hand this sync
+    // that round's failure and defer every welcome_request below to a next connection that may
+    // never come. A fresh round queues behind it (no overlap) and runs on the link this open proved.
+    await mlsService.generateKeyPackage(deviceKeyB64, { fresh: true });
     log('KeyPackage published.');
     keyPackagePublished = true;
     // Proactive reconciliation (best-effort, background): purge orphaned one-time

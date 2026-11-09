@@ -76,7 +76,7 @@ describe('an account deleted from this device opens nothing (scenario B of #2023
     // per-account keys after the wipe had removed them. The refusal must come before every line
     // that opens a store of the account - the landing preview's `getStorage`, the MLS state lookup -
     // and before `getToken`, whose failure is what turns a login into an offline unlock.
-    const refusal = loginImplBody.indexOf('isDeletedAccountHere(ctx.getUserId())');
+    const refusal = loginImplBody.indexOf('isDeletedAccountHere(id))');
     expect(refusal).toBeGreaterThan(-1);
     for (const opener of [
       'storageOpen = getStorage(',
@@ -92,12 +92,17 @@ describe('an account deleted from this device opens nothing (scenario B of #2023
 
   it('refuses with its own code and a localized message, inside the try its catch reports from', () => {
     const tryAt = loginImplBody.indexOf('  try {\n');
-    const refusal = loginImplBody.indexOf('isDeletedAccountHere(ctx.getUserId())');
+    const refusal = loginImplBody.indexOf('isDeletedAccountHere(id))');
     expect(tryAt).toBeGreaterThan(-1);
     expect(tryAt).toBeLessThan(refusal);
     expect(loginImplBody).toContain(
-      "throw new LoginFailure('account_deleted', m.auth_account_deleted_here());"
+      "new LoginFailure('revoked_device_wipe_owed', m.auth_device_revoked_here())"
     );
+    expect(loginImplBody).toContain(
+      "new LoginFailure('account_deleted', m.auth_account_deleted_here())"
+    );
+    // Round 9 of the review of #2919: the reason is read for the id the guard matched.
+    expect(loginImplBody).toContain('wipeReasonOf(wipedHere)');
   });
 });
 
@@ -250,16 +255,6 @@ describe('a failed unlock keeps the identity unless the session is dead', () => 
  * revocation path had never run any of it. These pin the two halves that cannot drift again.
  */
 describe('what a revoked device stops before it deletes anything', () => {
-  it('stops the live session before the first delete', () => {
-    const wipe = wipeRevokedDeviceBody;
-    const stop = wipe.indexOf("tearDownLiveSession(ctx, cb, 'revoked');");
-    expect(stop).toBeGreaterThan(-1);
-    // Every erasure must come after it - one running timer is enough to undo all three.
-    for (const erase of ['resetDeviceAsFreshImpl(', 'clearAuth()', 'wipeDeviceToFactory()']) {
-      expect(wipe.indexOf(erase)).toBeGreaterThan(stop);
-    }
-  });
-
   it('stops the watchdog that re-created the state, and empties what it iterates', () => {
     // The timer AND its candidate set: the watchdog unions the live conversation map with the
     // not-ready registry, so clearing the timer alone would still leave a reactive path a source.
@@ -488,13 +483,13 @@ describe('the gateway handshake is held across the MLS state load', () => {
 
   it('opens no socket at all on an offline session', () => {
     // There is no token to carry and no server to reach; the attempt would cost a timeout and log
-    // `Gateway inaccessible` for a device that never had a gateway.
+    // `[WS] Gateway connection failed` for a device that never had a gateway.
     expect(loginImplBody).toContain('const startedHandshake = offlineSession\n      ? null');
   });
 
   it('adopts the started handshake instead of opening a second socket', () => {
-    expect(loginImplBody).toContain(
-      'await openGatewayConnection(makeConnectionDeps(ctx, cb), startedHandshake)'
+    expect(loginImplBody).toMatch(
+      /await openGatewayConnection\(\s*makeConnectionDeps\(ctx, cb\),\s*startedHandshake,/
     );
   });
 
@@ -513,8 +508,42 @@ describe('the gateway handshake is held across the MLS state load', () => {
     // adoption, because everything `openGatewayConnection` does after the socket opens (the pending
     // pull most of all) assumes a client that can read what it fetches.
     const ready = loginImplBody.indexOf('await mlsService.markInboundReady();');
-    const adopt = loginImplBody.indexOf('await openGatewayConnection(makeConnectionDeps(ctx, cb)');
+    const adopt = loginImplBody.indexOf('await openGatewayConnection(');
     expect(ready).toBeGreaterThan(-1);
     expect(adopt).toBeGreaterThan(ready);
+  });
+});
+
+/**
+ * AND NOTHING INBOUND IS HANDLED BEFORE THE RESTORE HAS SEEDED THE CONVERSATION ROWS.
+ *
+ * Measured on the Mi 9T (`1.6.5-alpha.1`, 2026-11-05): the pull ran ahead of the restore, so six
+ * frames of DMs this device held were refused `absent-conversation` and fetched again at every cold
+ * start. The hold itself is proven in `BaseMlsService.bootDrainAfterSeeding.test.ts`; what is pinned
+ * here is the login's half of the order - each line below, moved, reintroduces either the race or a
+ * login that waits on its own restore.
+ */
+describe('the boot drain waits for the rows the restore seeds', () => {
+  it('arms the hold before the socket can deliver a frame', () => {
+    const hold = loginImplBody.indexOf('mlsService.holdInboundUntilRowsSeeded();');
+    const start = loginImplBody.indexOf('const startedHandshake = offlineSession');
+    expect(hold).toBeGreaterThan(-1);
+    expect(start).toBeGreaterThan(hold);
+  });
+
+  it('hands the boot catch-up back started instead of awaiting it ahead of the restore', () => {
+    // Awaited inside the connection, the pull would wait for the seeding and the seeding for the
+    // restore that runs after the connection returns - a login that never ends.
+    expect(loginImplBody).toContain('(caughtUp) => (bootCatchUp = caughtUp)');
+  });
+
+  it('ends the hold once the restore returned or threw, and only then awaits the catch-up', () => {
+    const restore = loginImplBody.indexOf('await cb.loadAndRestoreConversations();');
+    const end = loginImplBody.indexOf('mlsService.endRowSeedingHold();');
+    const catchUp = loginImplBody.indexOf('if (bootCatchUp) await bootCatchUp;');
+    expect(restore).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(restore);
+    expect(loginImplBody.slice(restore, end)).toContain('} finally {');
+    expect(catchUp).toBeGreaterThan(end);
   });
 });

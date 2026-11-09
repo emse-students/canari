@@ -15,7 +15,9 @@
  * before the Welcome makes it false, and nothing retracts a notice. The frame cannot say which it
  * is; the device asking can, and `reAddIsInFlight` is that fact. `retireIfEvicted` reads it BEFORE
  * recording anything - see {@link markAwaitingReAdmission} for why the row becomes `pending` rather
- * than staying `active`. Observed on a production handset, 2026-09-15.
+ * than staying `active`. Observed on a production handset, 2026-09-15. And it DROPS the evicted
+ * state there (2026-10-31): a `pending` row over a group this device does not hold is the ordinary
+ * awaiting-Welcome state, which the recovery seam already ends one way or the other.
  *
  * The fact is read from OpenMLS (`isGroupActive`), never mirrored into a flag of our own: the group
  * state is already durable, and a second copy can only ever be wrong in the direction that matters
@@ -54,6 +56,8 @@
 
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage } from '$lib/db';
+import type { ServerInstant } from '$lib/mls-client/serverInstant';
+import { removalLineIds, writeRemovalNotice } from './removalNotice';
 import { m } from '$lib/paraglide/messages';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import {
@@ -61,6 +65,7 @@ import {
   markAwaitingReAdmission,
   retireConversation,
 } from '$lib/utils/chat/conversations';
+import { dropGroupState, type DroppableMlsService } from '$lib/utils/chat/dropGroupState';
 
 /**
  * How this device found out, and the ONLY thing the five learning sites legitimately differ in.
@@ -113,6 +118,25 @@ export interface RecordEvictionDeps {
   groupId: string;
   /** How this device found out - see {@link EvictionEvidence}. */
   evidence: EvictionEvidence;
+  /**
+   * WHEN THE REMOVAL HAPPENED, in server milliseconds, when the evidence carries it - and the date of
+   * the notice. A `remove-commit` delivered live carries the server's acceptance of the Remove commit
+   * (its delivery's `queuedCreatedAt`); a `system-event` the server's acceptance of its author's
+   * announcement, sent right after that commit. A Remove commit applied through the replay
+   * (`commitReplay.ts`) carries no delivery time, and every other evidence is learnt AFTER the
+   * removal (a later frame, a check, a refusal) - those ask {@link askRemovedAt} instead.
+   */
+  removedAt?: number;
+  /**
+   * Asks the server when THIS device's own seat was removed (`IMlsService.ownRemovalAt`: the
+   * person's closed membership stretch, or this device's kick) - the date of the notice when the
+   * evidence carries none. Read of the device's own rows, so a removed device may ask; the
+   * members-only commit log could not answer it. An answer with no instant settles the line; no
+   * answer leaves it OWED, durably (`removalNotice.ts`).
+   */
+  askRemovedAt?: () => Promise<ServerInstant>;
+  /** The signed-in account: an owed removal line is recorded under it, and asked again next session. */
+  ownerId?: string;
   log: (message: string) => void;
   saveConversation?: (key: string) => Promise<void>;
   /**
@@ -148,7 +172,17 @@ export interface RecordEvictionDeps {
  * says so. Returns whether THIS call performed the transition.
  */
 export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean> {
-  const { conversations, groupId, evidence, log, saveConversation, addMessageToChat } = deps;
+  const {
+    conversations,
+    groupId,
+    evidence,
+    removedAt,
+    askRemovedAt,
+    ownerId,
+    log,
+    saveConversation,
+    addMessageToChat,
+  } = deps;
   const short = groupId.slice(0, 8);
   const { what, missed } = EVICTION_EVIDENCE[evidence];
 
@@ -160,20 +194,32 @@ export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean>
     return false;
   }
 
-  // Read BEFORE the retire, which rewrites the row: the notice is deduplicated on the thread's own
-  // contents, the only place the first evidence left a trace the second can see.
-  const notice = m.chat_system_removed_from_group();
-  const alreadyNoticed =
-    conversations.get(key)?.messages.some((msg) => msg.isSystem && msg.content === notice) ?? false;
+  // Read BEFORE the retire: the removal lines the thread already holds. If this evidence retires the
+  // row, they belong to an EARLIER removal (a re-admission came between), and must not stand for this
+  // one's; otherwise the notice is deduplicated on the thread's own contents by `writeRemovalNotice`.
+  const linesBefore = removalLineIds(conversations.get(key));
 
   const retired = await retireConversation({ conversations, key, groupId, saveConversation });
 
-  if (!alreadyNoticed) {
-    // Best-effort, and after the retire: the banner is the durable half and must not be held up by
-    // a message write. A swallowed branch logs.
-    await addMessageToChat?.('system', notice, key, { isSystem: true }).catch((e: unknown) =>
-      log(`[EVICT] ${short}… - removal notice not posted: ${String(e)}`)
-    );
+  if (addMessageToChat) {
+    // NEVER DATED BY WHEN THIS DEVICE FOUND OUT. A notice written with no date takes the local clock
+    // at this instant, and a device learning its removal days late (a check on selection, a refused
+    // send) drew "you were removed" below everything said after it. The evidence's own time first,
+    // then the server's record of this seat's removal - and, with no answer, the line is OWED.
+    // Only the call that retired the row speaks, so a second evidence does not repeat a refusal.
+    await writeRemovalNotice({
+      conversations,
+      key,
+      groupId,
+      ownerId,
+      removedAt,
+      askRemovedAt,
+      addMessageToChat,
+      speak: retired,
+      ...(retired ? { earlierLines: linesBefore } : {}),
+      label: evidence,
+      log,
+    });
   }
 
   if (missed) {
@@ -268,7 +314,8 @@ export async function retractEvictionNotice(deps: {
 
 /** Everything {@link retireIfEvicted} needs, kept to the narrowest set both call sites can supply. */
 export interface EvictionCheckDeps extends Omit<RecordEvictionDeps, 'groupId' | 'evidence'> {
-  mlsService: Pick<IMlsService, 'isGroupActive'>;
+  /** `forgetGroup` / `persistCheckpoint`: the Remove half of our own re-admission drops the state. */
+  mlsService: Pick<IMlsService, 'isGroupActive'> & DroppableMlsService;
   groupId: string;
   /**
    * How this device came to be asking.
@@ -348,11 +395,40 @@ export async function retireIfEvicted(deps: EvictionCheckDeps): Promise<boolean>
   // already knows the Remove it is holding is the first half of the answer. Recording an eviction
   // here writes a permanent notice into the thread that the Welcome falsifies seconds later, and
   // nothing retracts it.
+  //
+  // AND THE EVICTED STATE IS DROPPED HERE, which is what makes the wait END (review of #2804). Kept,
+  // it left a `pending` row over a HELD group: the outbox sees a sendable group it is not a member
+  // of, `requestReAdd` stands down on any held group, the watchdog reads a held group as healthy -
+  // so a re-admission whose Welcome never came was waited on for ever, and the user never told.
+  // Dropped, the row is the ordinary awaiting-Welcome state: the outbox holds and asks
+  // `requestReAdd`, the watchdog re-drives it, and the server's answer ends it - a Welcome owed is
+  // waited for, a seat with none is joined, NO seat retires the row (`stopRecovering`). The state
+  // could not send or read anything after this Remove; the past it opened is stored decrypted
+  // locally, and the Welcome installs on nothing, as a fresh join does.
+  //
+  // NO ORDER HERE IS WHAT MAKES A KILL SAFE, and none could be. The merged Remove can reach disk
+  // before this row does by a path this function does not own - the commit path's own `persistNow`,
+  // a flush on backgrounding, another group's structural checkpoint, one already running: a
+  // checkpoint takes no lock against the commit path, and the row lives in another store. So any
+  // pair of (row, state) can survive a kill, `active` over the evicted state included, and the
+  // RESTORE is what is total over them (`reconcileRestoredLifecycles`): a row over a held group this
+  // device is out of has that state dropped and is left `pending` for the server to answer, never
+  // read as an eviction. The row is marked first only so the in-memory readers see `pending` the
+  // moment the state is gone. `deferred`: the commit path holds the MLS client mutex.
   if (reAddInFlight) {
     const key = findConversationKeyByGroupId(rest.conversations, groupId);
-    if (key) await markAwaitingReAdmission({ ...rest, key });
+    const row = key ? rest.conversations.get(key) : undefined;
+    if (key && row && row.lifecycle !== 'removed') {
+      const marked = markAwaitingReAdmission({ ...rest, key });
+      await dropGroupState(mlsService, groupId, {
+        reason: "the Remove half of this device's own re-admission - awaiting the Welcome",
+        checkpoint: 'deferred',
+        log,
+      });
+      await marked;
+    }
     log(
-      `[EVICT] ${groupId.slice(0, 8)}… - Remove commit is the first half of the re-admission this device asked for, awaiting the Welcome`
+      `[EVICT] ${groupId.slice(0, 8)}… - Remove commit is the first half of the re-admission this device asked for, state dropped, awaiting the Welcome`
     );
     return false;
   }

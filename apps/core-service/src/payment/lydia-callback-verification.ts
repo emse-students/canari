@@ -57,7 +57,7 @@ export type LydiaCallbackVerdict =
  * holds no key - two cases deliberately not told apart, here or to the caller.
  *
  * Resolving the key FROM the body is sound because the signature is the proof: a forger may name
- * any association's (public) vendor token, but must then sign with that association's private key.
+ * any association's vendor token, but must then sign with that association's private key.
  * A transport failure of `fetchBusinessKey` propagates: it is not a verdict about the callback.
  */
 export async function verifyLydiaCallback(

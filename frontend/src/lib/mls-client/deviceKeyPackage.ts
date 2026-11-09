@@ -113,3 +113,16 @@ export function keyPackagePublication(answer: DeviceKeyPackageAnswer): KeyPackag
   if (answer.reason === 'revoked') return 'revoked';
   return 'absent';
 }
+
+/**
+ * One device of an account's roster, as `listUserDevices` reads it: no KeyPackage,
+ * because the read claimed none - a caller holding a package believes it may build a Welcome on it.
+ */
+export interface UserDeviceEntry {
+  deviceId: string;
+  /** The `userId` asked for. */
+  userId: string;
+  deviceName?: string;
+  deviceOs?: string;
+  deviceAppVersion?: string;
+}

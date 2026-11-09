@@ -93,9 +93,7 @@ export class FakeUploader {
 export const LIMITS: LiveLimits = {
   segmentMaxBytes: 4 * 1024 * 1024,
   reconnectWindowMs: 60_000,
-  maxDurationMs: 3_600_000,
   manifestWindow: 10,
-  byteBudget: 1_687_500_000,
   segmentMinDurationMs: 1000,
   segmentBurst: 15,
   startsPerHour: 6,
@@ -134,6 +132,7 @@ export function fakeDeps() {
   const clock = { t: 1_000 };
   /** Every bounded wait started, fired only by the test: no real time passes. */
   const timers: { ms: number; fire: () => void }[] = [];
+  const reconnectListeners = new Set<() => void>();
   let hidden = false;
   const deps = {
     fetchLiveLimits: vi.fn(async () => LIMITS),
@@ -143,8 +142,27 @@ export function fakeDeps() {
       acceptedVersion: 1,
       acceptedAt: '2026-10-19T09:00:00.000Z',
     })),
-    startLive: vi.fn(async () => liveView()),
+    startLive: vi.fn(
+      async (_k: string, _a?: string, _r?: number, title?: string | null): Promise<LiveView> => ({
+        ...liveView(),
+        title: title ?? null,
+      })
+    ),
+    setLiveTitle: vi.fn(async (id: string, title: string | null) => ({ id, title })),
+    putLivePoster: vi.fn(async (_id: string, _sealed: Uint8Array<ArrayBuffer>) => ({
+      name: 'p',
+      posterAt: '2026-10-19T10:00:00.000Z',
+    })),
+    derivePosterKey: vi.fn(async (_k: string, _l: string) => 'pk'.repeat(32)),
+    sealPoster: vi.fn(
+      async (_k: string, _l: string, plain: Uint8Array) =>
+        new Uint8Array(plain) as Uint8Array<ArrayBuffer>
+    ),
     fetchLive: vi.fn(async () => liveView()),
+    onReconnect: vi.fn((listener: () => void) => {
+      reconnectListeners.add(listener);
+      return () => reconnectListeners.delete(listener);
+    }),
     endLive: vi.fn(async () => ({
       id: LIVE_ID,
       endedAt: '2026-10-19T10:30:00.000Z',
@@ -174,6 +192,9 @@ export function fakeDeps() {
     now: () => clock.t,
     sleep: vi.fn((ms: number) => new Promise<void>((fire) => timers.push({ ms, fire }))),
     isHidden: () => hidden,
+    screenShareAvailable: vi.fn(() => false),
+    openScreen: vi.fn(async (_context: AudioContext | null) => fakeStream().stream),
+    createAudioContext: vi.fn((): AudioContext | null => null),
   } satisfies LiveBroadcastDeps;
   return {
     deps,
@@ -181,6 +202,13 @@ export function fakeDeps() {
     uploaders,
     clock,
     timers,
+    /** The link comes back: every subscribed listener runs. */
+    reconnect: () => {
+      // A SNAPSHOT: a one-shot listener removes itself from the set while it runs.
+      // oxlint-disable-next-line unicorn/no-useless-spread
+      for (const l of [...reconnectListeners]) l();
+    },
+    reconnectListeners,
     /** Fires every pending bound of `ms`. */
     fireTimers: (ms: number) => {
       for (const t of timers.filter((x) => x.ms === ms)) t.fire();

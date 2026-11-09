@@ -37,6 +37,7 @@
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { CaptureDestination } from '$lib/reels/reelCapture';
+  import type { ComposerReelState } from '$lib/posts/composerReelState';
   import {
     abandonHistoryOverlay,
     armHistoryOverlayGesture,
@@ -57,13 +58,12 @@
     onclose: () => void;
     /** The session, injectable for tests. */
     session?: CameraSession;
-    /** The new-post composer's text and identity, the start of a reel filmed from it (`post`). */
-    composerCaption?: string;
-    composerIdentity?: string;
+    /** The new-post composer's state, the start of a reel filmed from it (`post`). */
+    composerStart?: ComposerReelState;
     /** A reel filmed from the new-post composer was published (`post`). */
     onpublished?: (identity: string) => void;
-    /** "Garder comme post": the publish step's caption and identity, back to the composer. */
-    onkept?: (caption: string, identity: string) => void;
+    /** "Garder comme post": the publish step's state, back to the composer. */
+    onkept?: (kept: ComposerReelState) => void;
     /** A `chat` camera that may film a reel message (`chatReelWriter.ts`); photos only otherwise. */
     chatFilms?: boolean;
   }
@@ -73,8 +73,7 @@
     oncapture,
     onclose,
     session,
-    composerCaption,
-    composerIdentity,
+    composerStart,
     onpublished,
     onkept,
     chatFilms = false,
@@ -136,8 +135,7 @@
     {destination}
     {oncapture}
     {onclose}
-    {composerCaption}
-    {composerIdentity}
+    {composerStart}
     {onpublished}
     {onkept}
     {chatFilms}

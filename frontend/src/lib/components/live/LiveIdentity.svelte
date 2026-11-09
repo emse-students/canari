@@ -70,7 +70,13 @@
 <span class="flex min-w-0 items-center gap-2" data-live-broadcaster>
   <span class="shrink-0" aria-hidden="true">
     {#if associationId}
-      <AssociationAvatar {name} {logoUrl} {size} shape="circle" />
+      <AssociationAvatar
+        id={live.associationId ?? live.broadcasterId}
+        {name}
+        {logoUrl}
+        {size}
+        shape="circle"
+      />
     {:else}
       <Avatar userId={broadcasterId} {size} />
     {/if}

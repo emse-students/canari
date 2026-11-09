@@ -4,10 +4,12 @@ import {
   ConflictException,
   GoneException,
   NotFoundException,
+  ServiceUnavailableException,
   Logger,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { CHANNEL_SIGNATURE_REQUIRED, ChannelService, clientIdLockSql } from './channel.service';
+import type { ChatReelMediaClient } from './chat-reel-media.client';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -139,6 +141,12 @@ describe('ChannelService security hardening', () => {
       increment: jest.fn(() => Promise.resolve()),
       delete: jest.fn(() => Promise.resolve({ affected: 0 })),
     };
+    // The media service's salon reel purge (reels-in-chat 15.4): nothing purged unless a test says so.
+    const chatReelMedia = {
+      purge: jest.fn((_items: Array<{ mediaId: string; ownerId: string }>) =>
+        Promise.resolve({} as Record<string, string>)
+      ),
+    };
     const redis = {
       publishChannelEvent: jest.fn(() => Promise.resolve()),
       onlineUserIds: jest.fn((_ids: readonly string[]) => Promise.resolve(new Set<string>())),
@@ -157,11 +165,13 @@ describe('ChannelService security hardening', () => {
       memberRepo as unknown as Repository<ChannelMember>,
       messageRepo as unknown as Repository<ChannelMessage>,
       inviteRepo as unknown as Repository<WorkspaceInvite>,
-      redis as unknown as RedisService
+      redis as unknown as RedisService,
+      chatReelMedia as unknown as ChatReelMediaClient
     );
 
     return {
       service,
+      chatReelMedia,
       workspaceRepo,
       channelRepo,
       roleRepo,
@@ -544,6 +554,159 @@ describe('ChannelService security hardening', () => {
     );
   });
 
+  it('a kick names the committing device the actor sent, and drops a malformed one', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob', roleIds: [] }]);
+
+    await service.kickFromWorkspace('ws1', 'u-bob', 'u1', 'web-1');
+    expect(redis.publishChannelEvent).toHaveBeenLastCalledWith(
+      'channel.member.kicked',
+      { workspaceId: 'ws1', kickedUserId: 'u-bob', kickedBy: 'u1', actorDeviceId: 'web-1' },
+      expect.any(Array)
+    );
+
+    await service.kickFromWorkspace('ws1', 'u-bob', 'u1', 'not/a device');
+    expect(redis.publishChannelEvent).toHaveBeenLastCalledWith(
+      'channel.member.kicked',
+      { workspaceId: 'ws1', kickedUserId: 'u-bob', kickedBy: 'u1' },
+      expect.any(Array)
+    );
+  });
+
+  it('a kick whose announcement fails is still a kick, not a 500', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob', roleIds: [] }]);
+    redis.publishChannelEvent.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(service.kickFromWorkspace('ws1', 'u-bob', 'u1')).resolves.toEqual({
+      success: true,
+    });
+  });
+
+  // ── A released Remove (channel-encryption section 10) ──────────────────────
+  // The actor's device claimed the key-group Remove and knows it did not commit it: the remaining
+  // members elect a committer on this event only.
+
+  it('a community release reaches the remaining members, not the actor', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-carol' }]);
+
+    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'dev-1')).resolves.toEqual({
+      success: true,
+    });
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.member.removal-released',
+      {
+        workspaceId: 'ws1',
+        channelId: null,
+        removedUserId: 'u-bob',
+        releasedBy: 'u1',
+        releasedByDevice: 'dev-1',
+      },
+      ['u-carol']
+    );
+  });
+
+  it('a release names its releasing device, or is refused before anything is read', async () => {
+    // Receivers re-decide only where they deferred to THAT device's leaf; a release without it
+    // would make every receiver re-decide, and race the election the removal already ran.
+    const { service, memberRepo, redis } = makeService();
+
+    await expect(service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1')).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+    await expect(
+      service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'not a device/id')
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(memberRepo.findOne).not.toHaveBeenCalled();
+    expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+  });
+
+  it('a release about somebody still a member is refused, and nothing is announced', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-bob' }]);
+
+    await expect(
+      service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+  });
+
+  it('a release needs the removal permission', async () => {
+    const { service, memberRepo, roleRepo, redis } = makeService();
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.invite'] }]);
+
+    await expect(
+      service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+  });
+
+  it('a salon release names the salon, refuses a public one and one the person can still read', async () => {
+    const { service, channelRepo, memberRepo, roleRepo, redis } = makeService();
+    const salon = {
+      id: 'ch1',
+      workspaceId: 'ws1',
+      isPrivate: true,
+      allowedUsers: ['u1', 'u-carol'],
+    };
+    channelRepo.findOne.mockResolvedValue(salon);
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([
+      { userId: 'u1' },
+      { userId: 'u-carol' },
+      { userId: 'u-bob' },
+    ]);
+
+    await service.releaseChannelRemoval('ch1', 'u-bob', 'u1', 'dev-1');
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.member.removal-released',
+      {
+        workspaceId: 'ws1',
+        channelId: 'ch1',
+        removedUserId: 'u-bob',
+        releasedBy: 'u1',
+        releasedByDevice: 'dev-1',
+      },
+      ['u-carol']
+    );
+
+    await expect(
+      service.releaseChannelRemoval('ch1', 'u-carol', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(ConflictException);
+    channelRepo.findOne.mockResolvedValue({ ...salon, isPrivate: false });
+    await expect(
+      service.releaseChannelRemoval('ch1', 'u-bob', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('a release that cannot be announced is a 503 - the announcement is the release', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u-carol' }]);
+    redis.publishChannelEvent.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(
+      service.releaseWorkspaceRemoval('ws1', 'u-bob', 'u1', 'dev-1')
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
   it('removeMemberFromChannel reports whether the channel was private', async () => {
     const { service, channelRepo, memberRepo, roleRepo, redis } = makeService();
     channelRepo.findOne.mockResolvedValue({
@@ -641,6 +804,111 @@ describe('ChannelService security hardening', () => {
     await service.deleteChannelMessage('ch1', 'm1', 'u1');
 
     expect(messageRepo.delete).toHaveBeenCalledWith({ id: 'm1', channelId: 'ch1' });
+  });
+
+  // ── A moderator's delete of a salon reel purges its file (reels-in-chat 15.4, RC-14) ─────────
+  describe("a moderator's delete of a message that declares a reel", () => {
+    const REEL = '4f1c2b3a-5d6e-4f70-8a9b-0c1d2e3f4a5b';
+    const asModerator = (declared: string | null, author = 'someone-else') => {
+      const repos = makeService();
+      arrangePollAccess(repos.channelRepo, repos.memberRepo);
+      repos.memberRepo.findOne.mockResolvedValue({
+        workspaceId: 'ws1',
+        userId: 'u1',
+        roleIds: ['r1'],
+      });
+      repos.roleRepo.find.mockResolvedValue([{ permissions: ['channel.moderate'] }]);
+      // The declaration is a column of the row the delete already reads - by id AND salon.
+      repos.messageRepo.findOne.mockResolvedValue({
+        id: 'm1',
+        channelId: 'ch1',
+        authorId: author,
+        reelMediaId: declared,
+      });
+      repos.messageRepo.query.mockResolvedValueOnce([{}]);
+      return repos;
+    };
+
+    it("purges the declared file for the ROW'S AUTHOR, after the delete committed and the salon was told", async () => {
+      const { service, messageRepo, redis, chatReelMedia } = asModerator(REEL);
+      chatReelMedia.purge.mockResolvedValue({ [REEL]: 'deleted' });
+
+      await service.deleteChannelMessage('ch1', 'm1', 'u1');
+      await service.settleFanouts();
+
+      expect(messageRepo.findOne).toHaveBeenCalledWith({ where: { id: 'm1', channelId: 'ch1' } });
+      expect(chatReelMedia.purge).toHaveBeenCalledWith([
+        { mediaId: REEL, ownerId: 'someone-else' },
+      ]);
+      expect(messageRepo.delete.mock.invocationCallOrder[0]).toBeLessThan(
+        chatReelMedia.purge.mock.invocationCallOrder[0]
+      );
+      expect(redis.publishChannelEvent.mock.invocationCallOrder[0]).toBeLessThan(
+        chatReelMedia.purge.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('answers without waiting for the purge, and a SIGTERM settle still waits for it', async () => {
+      const { service, chatReelMedia } = asModerator(REEL);
+      let finish!: (r: Record<string, string>) => void;
+      chatReelMedia.purge.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+
+      await expect(service.deleteChannelMessage('ch1', 'm1', 'u1')).resolves.toMatchObject({
+        success: true,
+      });
+      let settled = false;
+      const settling = service.settleFanouts().then(() => (settled = true));
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      finish({ [REEL]: 'deleted' });
+      await settling;
+      expect(settled).toBe(true);
+    });
+
+    it('purges nothing for a row that declares no reel', async () => {
+      const { service, messageRepo, chatReelMedia } = asModerator(null);
+      await service.deleteChannelMessage('ch1', 'm1', 'u1');
+      await service.settleFanouts();
+      expect(messageRepo.delete).toHaveBeenCalled();
+      expect(chatReelMedia.purge).not.toHaveBeenCalled();
+    });
+
+    it("purges nothing on the AUTHOR's own delete: the sender releases their hold themselves (15.7)", async () => {
+      const { service, channelRepo, memberRepo, messageRepo, chatReelMedia } = makeService();
+      arrangePollAccess(channelRepo, memberRepo);
+      messageRepo.findOne.mockResolvedValue({
+        id: 'm1',
+        channelId: 'ch1',
+        authorId: 'u1',
+        reelMediaId: REEL,
+      });
+      messageRepo.query.mockResolvedValueOnce([{}]);
+
+      await service.deleteChannelMessage('ch1', 'm1', 'u1');
+      await service.settleFanouts();
+
+      expect(messageRepo.delete).toHaveBeenCalled();
+      expect(chatReelMedia.purge).not.toHaveBeenCalled();
+    });
+
+    it('still deletes the message when the media service refuses or is unreachable', async () => {
+      const refused = asModerator(REEL);
+      refused.chatReelMedia.purge.mockResolvedValue({ [REEL]: 'refused' });
+      await expect(refused.service.deleteChannelMessage('ch1', 'm1', 'u1')).resolves.toMatchObject({
+        success: true,
+      });
+      await refused.service.settleFanouts();
+
+      const down = asModerator(REEL);
+      down.chatReelMedia.purge.mockRejectedValue(new Error('connect ECONNREFUSED media-service'));
+      await expect(down.service.deleteChannelMessage('ch1', 'm1', 'u1')).resolves.toMatchObject({
+        success: true,
+      });
+      await down.service.settleFanouts();
+      expect(down.messageRepo.delete).toHaveBeenCalled();
+      expect(down.chatReelMedia.purge).toHaveBeenCalled();
+    });
   });
 
   it('deleteChannelMessage writes NO tombstone for a row removed while it waited (an erasure)', async () => {
@@ -1857,6 +2125,65 @@ describe('ChannelService security hardening', () => {
     });
   });
 
+  // ── A salon send DECLARES its reel file (migration 122, reels-in-chat 15.4, RC-14) ────────────
+  describe('a send that declares its reel file', () => {
+    const REEL = '4f1c2b3a-5d6e-4f70-8a9b-0c1d2e3f4a5b';
+    const send = (extra: Record<string, unknown>) => {
+      const repos = makeService();
+      repos.channelRepo.findOne.mockResolvedValue({
+        id: 'ch1',
+        workspaceId: 'ws1',
+        isPrivate: false,
+      });
+      repos.memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+      repos.memberRepo.find.mockResolvedValue([]);
+      repos.messageRepo.findOne.mockResolvedValue(null);
+      repos.messageRepo.create.mockImplementation((row: any) => row);
+      repos.messageRepo.save.mockImplementation(async (row: any) => ({
+        ...row,
+        id: 'm-new',
+        createdAt: new Date(2_000),
+      }));
+      jest.spyOn(repos.service as any, 'notifyChannelRecipients').mockResolvedValue(undefined);
+      const done = repos.service.sendMessage('ch1', {
+        senderId: 'u1',
+        ciphertext: 'abc',
+        nonce: 'def',
+        senderSessionId: 'sess-1',
+        messageIndex: 4,
+        signature: SIGNATURE,
+        ...extra,
+      } as never);
+      return { ...repos, done };
+    };
+    it("writes the declaration, lower-cased, as a column of the send transaction's insert", async () => {
+      const { done, messageRepo } = send({ reelMediaId: REEL.toUpperCase() });
+      await done;
+      expect(messageRepo.manager.transaction).toHaveBeenCalledTimes(1);
+      expect(messageRepo.save).toHaveBeenCalledWith(expect.objectContaining({ reelMediaId: REEL }));
+    });
+
+    it('declares null for a message that carries no reel', async () => {
+      const { done, messageRepo } = send({});
+      await done;
+      expect(messageRepo.save).toHaveBeenCalledWith(expect.objectContaining({ reelMediaId: null }));
+    });
+
+    it.each([
+      ['a string that is not a UUID', 'reel-1'],
+      ['a number', 7],
+      ['an empty string', ''],
+    ])('refuses %s as the declared reel, storing nothing', async (_label, reelMediaId) => {
+      const { done, messageRepo } = send({ reelMediaId });
+      const response = await done.then(
+        () => null,
+        (e: BadRequestException) => e.getResponse() as { code?: string }
+      );
+      expect(response?.code).toBe('CHANNEL_REEL_MEDIA_ID_INVALID');
+      expect(messageRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
   it('rejects sendMessage from a plain member when writePolicy is admins', async () => {
     const { service, channelRepo, memberRepo, roleRepo } = makeService();
     channelRepo.findOne.mockResolvedValue({
@@ -2616,6 +2943,44 @@ describe('ChannelService security hardening', () => {
 
     expect(channel.allowedUsers).toEqual(['boss']);
     expect(rows.map((r) => r.userId).sort()).toEqual(['boss', 'u1']);
+  });
+
+  it('leaving a private channel announces a removal whose actor is the leaver', async () => {
+    const repos = makeService();
+    arrangeCommunityWithOneChannel(repos, { isPrivate: true });
+
+    await repos.service.leaveChannel('ch1', { userId: 'u1' });
+
+    // The remaining members elect the device that commits the key-group Remove from this event,
+    // and the leaver's other devices drop the salon from it - so the leaver must be in the list
+    // even though `allowedUsers` no longer names them.
+    expect(repos.redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.member.removed',
+      expect.objectContaining({
+        channelId: 'ch1',
+        workspaceId: 'ws1',
+        removedUserId: 'u1',
+        removedBy: 'u1',
+        isPrivate: true,
+        // The revision the strip left, so a client that saw a later grant does not purge.
+        accessRevision: expect.any(Number),
+      }),
+      expect.arrayContaining(['u1'])
+    );
+    // A leave names no committing device: the leaver's own leaf is the one leaving.
+    const calls = repos.redis.publishChannelEvent.mock.calls as unknown[][];
+    expect(calls[calls.length - 1][1]).not.toHaveProperty('actorDeviceId');
+  });
+
+  it('a leave whose announcement fails is still a leave, not a 500', async () => {
+    const repos = makeService();
+    const { channel } = arrangeCommunityWithOneChannel(repos, { isPrivate: true });
+    repos.redis.publishChannelEvent.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(repos.service.leaveChannel('ch1', { userId: 'u1' })).resolves.toEqual({
+      success: true,
+    });
+    expect(channel.allowedUsers).toEqual(['boss']);
   });
 
   // ── The governance postcondition (2026-08-18) ──────────────────────────────────────────────

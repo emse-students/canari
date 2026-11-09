@@ -31,6 +31,7 @@ import {
   type UnackedReason,
 } from '$lib/mls-client/messagePipeline/unackedFrames';
 import { flushMacrotask } from '../../test/flush';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
  * A Graine key-distribution group on the client (WP-22) - a community's, or a private salon's.
@@ -75,7 +76,8 @@ const proto = BaseMlsService.prototype as unknown as {
     groupId: string,
     sender: string,
     ciphertext: Uint8Array,
-    senderDeviceId?: string
+    senderDeviceId?: string,
+    aheadOfMailbox?: boolean
   ): Promise<boolean>;
   noteDistributionGroup(groupId: string): void;
   forgetDistributionGroupById(groupId: string): Promise<boolean>;
@@ -86,6 +88,8 @@ const proto = BaseMlsService.prototype as unknown as {
     groupId?: string
   ): boolean;
   collectFramesLeftForKeyGroup(groupId: string): void;
+  openAdmissionOfKeyGroup(groupId: string): void;
+  noteDistributionGroup(groupId: string): void;
   persistDistributionGroup(scope: DistributionScope, groupId: string): void;
   openDistributionFrame(
     groupId: string,
@@ -160,6 +164,10 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     refetchFramesLeftBehind: proto.refetchFramesLeftBehind,
     collectFramesLeftForKeyGroup: proto.collectFramesLeftForKeyGroup,
+    // REAL: a key group is classified OPEN where it is registered, and that is pinned below. The
+    // service it asks is a stub - the compiled rule is `admission.realWasm.test.ts`'s subject.
+    openAdmissionOfKeyGroup: proto.openAdmissionOfKeyGroup,
+    setAdmissionPolicy: vi.fn().mockResolvedValue(undefined),
     persistDistributionGroup: proto.persistDistributionGroup,
     // The route's own halves and the catch-up it runs on an epoch gap - REAL, since which frame is
     // acknowledged and when a gap closes is exactly what these cases pin.
@@ -241,7 +249,7 @@ describe('where a group-info base is read and written', () => {
     await channel.fetch();
     await channel.publish('QUFB', 4);
 
-    expect(ctx.delivery.fetchGroupInfo).toHaveBeenCalledWith('g-plain');
+    expect(ctx.delivery.fetchGroupInfo).toHaveBeenCalledWith('g-plain', 'd');
     expect(ctx.delivery.storeGroupInfo).toHaveBeenCalledWith('g-plain', 'QUFB', 4);
     expect(ctx.distributionGroupInfo.fetch).not.toHaveBeenCalled();
   });
@@ -312,7 +320,8 @@ describe('joining on first use', () => {
     const ctx = makeCtx();
 
     expect(await ensure(ctx, WS, REF_PUBLISHED)).toEqual({ joined: true });
-    expect(ctx.externalJoin).toHaveBeenCalledWith('g-1');
+    // Asking whether a Welcome is owed AFTER the base it builds on (channel-encryption section 20).
+    expect(ctx.externalJoin).toHaveBeenCalledWith('g-1', { welcomeOwed: 'ask' });
     expect(ctx.createGroup).not.toHaveBeenCalled();
   });
 
@@ -334,7 +343,7 @@ describe('joining on first use', () => {
     // Keeping it would fork the community: two MLS groups under one id, each holding half the
     // seeds, with nothing on either side ever reporting it.
     expect(ctx.forgetGroup).toHaveBeenCalledWith('g-1', 0);
-    expect(ctx.externalJoin).toHaveBeenCalledWith('g-1');
+    expect(ctx.externalJoin).toHaveBeenCalledWith('g-1', { welcomeOwed: 'ask' });
   });
 
   it('discards a group whose base could not be published at all', async () => {
@@ -684,6 +693,39 @@ describe('routing a frame that arrived on the group', () => {
     error.mockRestore();
   });
 
+  // Production 1.5.1: a handler that could not reach the server was logged as a refusal, at error.
+  it('keeps a frame its handler could not handle for lack of an answer, said as no answer', async () => {
+    const ctx = registered({
+      distributionFrameHandler: vi.fn(async () => {
+        throw new TransportFailureError(new TypeError('Failed to fetch'));
+      }),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(false);
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('got no answer'));
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('control: a handler that REFUSES a frame for another cause still accuses', async () => {
+    const ctx = registered({
+      distributionFrameHandler: vi.fn(async () => {
+        throw new Error('seed store refused');
+      }),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('handler refused a frame'),
+      expect.stringContaining('seed store refused')
+    );
+    error.mockRestore();
+  });
+
   it('refuses a group it has no community for', async () => {
     const ctx = makeCtx();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -855,6 +897,48 @@ describe('the durable registry', () => {
   });
 });
 
+// A KEY GROUP IS CLASSIFIED OPEN WHERE IT IS REGISTERED, which is always before it is joined or
+// created. A group a conversation's rule closed would refuse every newcomer of a community, so this
+// is the half of the admission rule that must never be missing for a key group.
+describe('registering a key group opens it for the admission rule', () => {
+  beforeEach(() => resetUnackedFrames());
+
+  it('classifies the group open when a scope names it', () => {
+    const ctx = makeCtx();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    proto.registerDistributionGroup.call(ctx, WS, 'g-open');
+
+    expect(ctx.setAdmissionPolicy).toHaveBeenCalledWith('g-open', 'open');
+    log.mockRestore();
+  });
+
+  it('classifies a group the server named without a scope open too', () => {
+    const ctx = makeCtx();
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    proto.noteDistributionGroup.call(ctx, 'g-noted');
+
+    expect(ctx.setAdmissionPolicy).toHaveBeenCalledWith('g-noted', 'open');
+    log.mockRestore();
+  });
+
+  it('says so at WARN when it cannot, and the registration still completes', async () => {
+    const ctx = makeCtx();
+    ctx.setAdmissionPolicy = vi.fn().mockRejectedValue(new Error('wasm not ready'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    expect(() => proto.registerDistributionGroup.call(ctx, WS, 'g-late')).not.toThrow();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('stays unclassified'));
+    warn.mockRestore();
+    log.mockRestore();
+  });
+});
+
 describe('registering a key group collects what the drain refused for it', () => {
   beforeEach(() => resetUnackedFrames());
 
@@ -964,6 +1048,9 @@ describe('a held key group behind its server', () => {
   function behind(epoch: number, log: { baseEpoch: number }[], serverEpoch: number) {
     const tree = { epoch };
     let settle!: () => void;
+    const drained = new Promise<void>((r) => {
+      settle = r;
+    });
     const listener = vi.fn();
     const ctx = makeCtx({
       getLocalGroups: vi.fn().mockReturnValue(['g-1']),
@@ -978,10 +1065,9 @@ describe('a held key group behind its server', () => {
         activeEpoch: serverEpoch,
         belowFloor: false,
       })),
-      initialDrain: new Promise<void>((r) => {
-        settle = r;
-      }),
-      waitForGroupQueueIdle: vi.fn().mockResolvedValue(undefined),
+      // The drain of THIS link (a pull listed the whole mailbox since the socket opened, and the
+      // group's share of it applied) - never the boot's, which a resume leaves hours old.
+      whenGroupDrained: vi.fn(() => drained),
       distributionEpochChecks: new Map(),
       distributionGapListener: listener,
       catchUpDistributionGroup: (proto2 as { catchUpDistributionGroup: unknown })
@@ -999,6 +1085,10 @@ describe('a held key group behind its server', () => {
 
     expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
     expect(isInEpochGap('g-1')).toBe(false);
+    // The drain of THIS group on THIS link, not the boot's (2026-11-04: a resume left it hours old).
+    expect((ctx as unknown as { whenGroupDrained: unknown }).whenGroupDrained).toHaveBeenCalledWith(
+      'g-1'
+    );
     void verdict;
   });
 
@@ -1121,6 +1211,76 @@ describe('a frame from an epoch this device has not reached', () => {
     // Still behind the server: nothing may be sealed yet.
     expect(isInEpochGap('g-1')).toBe(true);
     log.mockRestore();
+  });
+
+  /**
+   * THE LIVE FRAME THAT OVERTAKES ITS OWN MAILBOX (tester export, 2026-11-04: nine seeds of one key
+   * group lost as `past-epoch-application` during a resume's bulk ingest, no join anywhere). After a
+   * reconnect, a seed pushed live at the server's epoch reaches the scheduler before the pull has
+   * listed the commits and seeds queued ahead of it. Stepping the log to its epoch put every one of
+   * those seeds more than `max_past_epochs` (2) behind, for good.
+   */
+  describe('stamped as having arrived ahead of the mailbox on this link', () => {
+    /** `gapped()` plus the real hold. The STAMP is what decides, never the link read now. */
+    function liveGapped(link: { pulling?: Promise<void> | null } = {}) {
+      const g = gapped();
+      Object.assign(g.ctx, {
+        // Listed by now - which is exactly the moment the stamp exists for: the pull that listed
+        // the mailbox may have ended before this frame, ahead of its rows, is handled.
+        mailboxEmptiedByAPull: true,
+        pendingPullInFlight: link.pulling ?? null,
+        liveHeldKeyGroups: new Map<string, number>(),
+        holdLiveKeyGroupFrame: (
+          BaseMlsService.prototype as unknown as { holdLiveKeyGroupFrame(g: string): void }
+        ).holdLiveKeyGroupFrame,
+      });
+      return g;
+    }
+    const routeAhead = (ctx: Ctx, bytes: Uint8Array, ahead = true) =>
+      proto.routeDistributionFrame.call(ctx, 'g-1', 'peer', bytes, 'peer-phone', ahead);
+
+    it('steps NO commit, leaves the frame unacknowledged, and pulls the mailbox in order', async () => {
+      const { ctx, tree } = liveGapped();
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+      expect(await routeAhead(ctx, new Uint8Array([1]))).toBe(false);
+      await flushMacrotask();
+
+      expect(tree.epoch).toBe(4);
+      expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
+      expect(ctx.distributionFrameHandler).not.toHaveBeenCalled();
+      expect(ctx.fetchPendingMessages).toHaveBeenCalledTimes(1);
+      log.mockRestore();
+    });
+
+    it('asks the pull for its key group on every frame, and counts the burst for the line it prints', async () => {
+      // ONE pull for the burst is the single-flight rule of `fetchPendingMessages` itself (asked
+      // while a pull fetches, it is owed and issued once) - `BaseMlsService.singleFlightPull.test.ts`.
+      const { ctx } = liveGapped({ pulling: new Promise<void>(() => undefined) });
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+      await routeAhead(ctx, new Uint8Array([1]));
+      await routeAhead(ctx, new Uint8Array([1]));
+      await flushMacrotask();
+
+      expect(ctx.fetchPendingMessages).toHaveBeenCalledTimes(2);
+      expect(ctx.fetchPendingMessages).toHaveBeenCalledWith(['g-1']);
+      expect(
+        (ctx as unknown as { liveHeldKeyGroups: Map<string, number> }).liveHeldKeyGroups
+      ).toEqual(new Map([['g-1', 2]]));
+      log.mockRestore();
+    });
+
+    it('steps as before a frame NOT stamped - pulled, or live after the listing: the commits really are missing', async () => {
+      const { ctx, tree } = liveGapped();
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+      expect(await routeAhead(ctx, new Uint8Array([1]), false)).toBe(true);
+
+      expect(tree.epoch).toBe(5);
+      expect(ctx.fetchPendingMessages).not.toHaveBeenCalled();
+      log.mockRestore();
+    });
   });
 
   it('hands the envelope device to the RETRY as well, so a step cannot drop the check', async () => {

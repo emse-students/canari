@@ -46,7 +46,7 @@ writer and every door in the code, the server suites, and production COUNTS (no 
 
 | # | Path | Receipt ("Lu par") | Private count | Evidence | Verdict |
 | --- | --- | --- | --- | --- | --- |
-| 1 | reader clicks a salon, window focused | moves after the 2 s debounce | cleared | bench 10-08: one salon opened -> exactly one `read-mark`, that salon only | intended |
+| 1 | reader clicks a salon, window focused | moves AT ONCE on the first reading (leading-edge throttle, owner 2026-11-07), later marks inside the 2 s window coalesce into one trailing send, flushed at once when the reader leaves the salon (only a mark the reading already decided, never one for an unread message) | cleared | bench 10-08: one salon opened -> exactly one `read-mark`, that salon only | intended |
 | 2 | message arrives in the salon being read | moves | stays 0 | receipt effect; bench 10-10 control row | intended |
 | 3 | reader walks the ten communities, opens no salon | none | unchanged | bench 10-08 (twice): 0 `read-mark`, server marks unchanged; `onSelectCommunity` clears the selection | intended |
 | 4 | community selected, a salon auto-selected | n/a | n/a | only creation (`ensureWorkspaceByName`) and invite acceptance (`openInvitedChannel`) select a salon, both gestures; every other `selectConversation` caller is a click, a notification tap or the profile/mini-panel "message" button | refuted |
@@ -78,6 +78,15 @@ writer and every door in the code, the server suites, and production COUNTS (no 
 - **The other direction, under-marking:** the receipt effect does not track `isAppInForeground()`
   (a plain global), so on Android a message that arrived while the app was in the background is not
   marked on resume until something else changes the conversation - read in the code, not measured.
+  **Fixed 2026-11-02**, door 1 unchanged: the effect now follows the foreground as state, so the
+  resume itself runs it ([chat](frontend/modules/chat.md#read-state-between-devices---the-census-2026-11-02)).
+  **Its consequence, decided by the owner the same day:** a resume caused by tapping a notification
+  for conversation Y, with X left open, must NOT mark X, the same on both platforms. The shell sends
+  the link the resume opens WITH the foreground edge (`detail.opening`: Android from the intent
+  `onNewIntent` took before `onResume`, iOS from its notification delegate), and the page holds X
+  until the landing selects Y, is abandoned, or the link navigates (`resumeOpening.svelte.ts`). A
+  plain resume still marks X, and a tap on a notification the page raised itself follows the same
+  rule. The hold only withholds a mark - door 1 is narrowed, never widened.
 
 ## The fix (2026-10-14)
 

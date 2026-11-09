@@ -9,7 +9,7 @@
  * DETERMINISTIC data set whose every person is visibly invented.
  *
  * WHAT IT SEEDS AND WHAT IT DELIBERATELY DOES NOT.
- *   - Seeded: users, the ten spaces, association categories, associations (one BDE, clubs, a list,
+ *   - Seeded: users, the ten spaces, associations (one BDE, clubs, a list,
  *     an institution), their audiences, memberships, follows, posts and calendar events - the
  *     plaintext surfaces a tester opens first.
  *   - NOT seeded: communities, salons, DMs and anything else under MLS. A community inserted as
@@ -92,14 +92,22 @@ const MIN_CLIENT_VERSION = '1.2.7';
 const PEOPLE = [
   { key: 'alice', first: 'Alice', formation: 'ICM', promo: 2024, campus: 'saint-etienne' },
   { key: 'bruno', first: 'Bruno', formation: 'ICM', promo: 2023, campus: 'saint-etienne' },
-  { key: 'chloe', first: 'Chloe', formation: 'ICM', promo: 2025, campus: 'saint-etienne' },
+  { key: 'chloe', first: 'Chloé', formation: 'ICM', promo: 2025, campus: 'saint-etienne' },
   { key: 'david', first: 'David', formation: 'ISMIN', promo: 2024, campus: 'gardanne' },
   { key: 'emma', first: 'Emma', formation: 'ISMIN', promo: 2025, campus: 'gardanne' },
   { key: 'farid', first: 'Farid', formation: 'FSSS', promo: 2024, campus: 'saint-etienne' },
-  { key: 'gaelle', first: 'Gaelle', formation: 'PDIS', promo: 2022, campus: 'saint-etienne' },
+  { key: 'gaelle', first: 'Gaëlle', formation: 'PDIS', promo: 2022, campus: 'saint-etienne' },
   { key: 'hugo', first: 'Hugo', formation: 'Autre', promo: 2025, campus: 'gardanne' },
-  { key: 'ines', first: 'Ines', formation: 'ICM', promo: 2026, campus: 'saint-etienne' },
+  { key: 'ines', first: 'Inès', formation: 'ICM', promo: 2026, campus: 'saint-etienne' },
   { key: 'jules', first: 'Jules', formation: 'ICM', promo: 2026, campus: 'saint-etienne' },
+  { key: 'kenza', first: 'Kenza', formation: 'ISMIN', promo: 2024, campus: 'gardanne' },
+  { key: 'louis', first: 'Louis', formation: 'ICM', promo: 2025, campus: 'saint-etienne' },
+  { key: 'manon', first: 'Manon', formation: 'FSSS', promo: 2023, campus: 'saint-etienne' },
+  { key: 'noe', first: 'Noé', formation: 'ICM', promo: 2024, campus: 'saint-etienne' },
+  { key: 'oceane', first: 'Océane', formation: 'PDIS', promo: 2026, campus: 'saint-etienne' },
+  { key: 'pablo', first: 'Pablo', formation: 'ISMIN', promo: 2026, campus: 'gardanne' },
+  { key: 'rose', first: 'Rose', formation: 'ICM', promo: 2026, campus: 'saint-etienne' },
+  { key: 'samir', first: 'Samir', formation: 'Autre', promo: 2024, campus: 'saint-etienne' },
 ] as const;
 
 type PersonKey = (typeof PEOPLE)[number]['key'];
@@ -107,12 +115,6 @@ type PersonKey = (typeof PEOPLE)[number]['key'];
 /** Every formation x campus pair, as migration 071 creates them; the seed restores all ten. */
 const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'] as const;
 const CAMPUSES = ['saint-etienne', 'gardanne'] as const;
-
-const CATEGORIES = [
-  { key: 'sport', label: 'Sport', sortOrder: 0 },
-  { key: 'culture', label: 'Culture', sortOrder: 1 },
-  { key: 'vie', label: 'Vie etudiante', sortOrder: 2 },
-] as const;
 
 /**
  * The associations. `audience` is the rule set (`null` = any): the institution addresses everyone,
@@ -123,18 +125,16 @@ const ASSOCIATIONS = [
     key: 'bde',
     name: 'BDE Fictif',
     type: 'association',
-    category: 'vie',
     color: '#2563eb',
     president: 'alice',
     members: ['bruno', 'chloe', 'ines'],
     audience: [['ICM', 'saint-etienne']],
-    description: "Le bureau des eleves de demonstration. Rien de ce qui est ecrit ici n'est reel.",
+    description: "Le bureau des élèves de démonstration. Rien de ce qui est écrit ici n'est réel.",
   },
   {
     key: 'echecs',
-    name: 'Club Echecs Fictif',
+    name: "Club d'Échecs Fictif",
     type: 'association',
-    category: 'culture',
     color: '#16a34a',
     president: 'bruno',
     members: ['farid', 'jules'],
@@ -145,45 +145,81 @@ const ASSOCIATIONS = [
     key: 'fanfare',
     name: 'Fanfare Fictive',
     type: 'association',
-    category: 'culture',
     color: '#db2777',
     president: 'gaelle',
     members: ['alice', 'hugo'],
     audience: [[null, null]],
-    description: 'Cuivres, percussions et repetitions imaginaires.',
+    description: 'Cuivres, percussions et répétitions imaginaires.',
   },
   {
     key: 'escalade',
     name: 'Escalade Fictive Gardanne',
     type: 'association',
-    category: 'sport',
     color: '#ea580c',
     president: 'david',
     members: ['emma', 'hugo'],
     audience: [[null, 'gardanne']],
-    description: 'Sorties en salle et en falaise, toutes inventees.',
+    description: 'Sorties en salle et en falaise, toutes inventées.',
   },
   {
     key: 'liste',
     name: 'Liste Fictive 2026',
     type: 'list',
-    category: null,
     color: '#7c3aed',
     president: 'ines',
     members: ['jules'],
     audience: [['ICM', 'saint-etienne']],
-    description: 'Une liste de campagne de demonstration.',
+    description: 'Une liste de campagne de démonstration.',
   },
   {
     key: 'ecole',
-    name: 'Ecole Fictive',
+    name: 'École Fictive',
     type: 'institution',
-    category: null,
     color: '#0f172a',
     president: 'gaelle',
     members: [],
     audience: [[null, null]],
-    description: "L'institution de demonstration : ses publications s'adressent a tout le monde.",
+    description: "L'institution de démonstration : ses publications s'adressent à tout le monde.",
+  },
+  {
+    key: 'photo',
+    name: 'Club Photo Fictif',
+    type: 'association',
+    color: '#0891b2',
+    president: 'kenza',
+    members: ['louis', 'manon', 'rose'],
+    audience: [[null, null]],
+    description: 'Sorties photo, expositions et ateliers de retouche, le tout imaginaire.',
+  },
+  {
+    key: 'theatre',
+    name: 'Troupe de Théâtre Fictive',
+    type: 'association',
+    color: '#be123c',
+    president: 'noe',
+    members: ['oceane', 'jules', 'chloe'],
+    audience: [[null, 'saint-etienne']],
+    description: "Improvisation le mercredi, pièce de fin d'année et décors en carton.",
+  },
+  {
+    key: 'solidaire',
+    name: 'Solidarité Fictive',
+    type: 'association',
+    color: '#65a30d',
+    president: 'samir',
+    members: ['pablo', 'rose', 'emma'],
+    audience: [[null, null]],
+    description: 'Collectes, maraudes et soutien scolaire, pour de faux.',
+  },
+  {
+    key: 'robotique',
+    name: 'Club Robotique Fictif',
+    type: 'association',
+    color: '#4f46e5',
+    president: 'pablo',
+    members: ['david', 'kenza', 'louis'],
+    audience: [[null, 'gardanne']],
+    description: 'Robots suiveurs de ligne, impression 3D et coupe fictive en mai.',
   },
 ] as const;
 
@@ -210,42 +246,42 @@ const POSTS: {
     author: 'bruno',
     as: 'echecs',
     daysAgo: 5,
-    markdown: 'Tournoi fictif samedi prochain : inscrivez-vous aupres du bureau du club.',
+    markdown: 'Tournoi fictif samedi prochain : inscrivez-vous auprès du bureau du club.',
   },
   {
     key: 'repet',
     author: 'gaelle',
     as: 'fanfare',
     daysAgo: 4,
-    markdown: 'Repetition generale jeudi, salle imaginaire B12.',
+    markdown: 'Répétition générale jeudi, salle imaginaire B12.',
   },
   {
     key: 'perso-alice',
     author: 'alice',
     as: null,
     daysAgo: 3,
-    markdown: "Quelqu'un a vu mon parapluie fictif ? Il etait bleu.",
+    markdown: "Quelqu'un a vu mon parapluie fictif ? Il était bleu.",
   },
   {
     key: 'soiree',
     author: 'alice',
     as: 'bde',
     daysAgo: 2,
-    markdown: "La soiree d'integration fictive aura lieu vendredi. Tenue correcte exigee.",
+    markdown: "La soirée d'intégration fictive aura lieu vendredi. Tenue correcte exigée.",
   },
   {
     key: 'falaise',
     author: 'david',
     as: 'escalade',
     daysAgo: 2,
-    markdown: 'Sortie falaise annulee pour cause de pluie fictive.',
+    markdown: 'Sortie falaise annulée pour cause de pluie fictive.',
   },
   {
     key: 'programme',
     author: 'ines',
     as: 'liste',
     daysAgo: 1,
-    markdown: 'Notre programme fictif tient en trois mots : cafe, sommeil, partiels.',
+    markdown: 'Notre programme fictif tient en trois mots : café, sommeil, partiels.',
   },
   {
     key: 'perso-hugo',
@@ -253,6 +289,36 @@ const POSTS: {
     as: null,
     daysAgo: 0,
     markdown: 'Premier message de test depuis Gardanne.',
+  },
+  {
+    key: 'expo-photo',
+    author: 'kenza',
+    as: 'photo',
+    daysAgo: 3,
+    markdown:
+      '**Exposition fictive** jeudi au hall : une photo par membre, le thème est *« le reflet »*. Venez avec vos tirages !',
+  },
+  {
+    key: 'impro',
+    author: 'noe',
+    as: 'theatre',
+    daysAgo: 2,
+    markdown: "Soirée d'improvisation mercredi à 20 h. Entrée libre, public imaginaire bienvenu.",
+  },
+  {
+    key: 'collecte',
+    author: 'samir',
+    as: 'solidaire',
+    daysAgo: 1,
+    markdown:
+      "Collecte fictive de vêtements chauds jusqu'à vendredi. Dépôt au bureau de **Solidarité Fictive**.",
+  },
+  {
+    key: 'robot',
+    author: 'pablo',
+    as: 'robotique',
+    daysAgo: 1,
+    markdown: 'Notre robot suiveur de ligne a terminé le parcours en 42 secondes (fictives).',
   },
 ];
 
@@ -264,7 +330,8 @@ const EVENTS: {
   days: number;
   hour: number;
   title: string;
-  status: 'validated' | 'pending';
+  status: 'validated' | 'pending' | 'rejected';
+  rejectionReason?: string;
 }[] = [
   {
     key: 'tournoi',
@@ -281,7 +348,7 @@ const EVENTS: {
     author: 'alice',
     days: 4,
     hour: 21,
-    title: "Soiree d'integration fictive",
+    title: "Soirée d'intégration fictive",
     status: 'validated',
   },
   {
@@ -299,7 +366,7 @@ const EVENTS: {
     author: 'david',
     days: 2,
     hour: 18,
-    title: 'Seance en salle',
+    title: 'Séance en salle',
     status: 'validated',
   },
   {
@@ -308,8 +375,54 @@ const EVENTS: {
     author: 'ines',
     days: 7,
     hour: 12,
-    title: 'Debat de campagne fictif',
+    title: 'Débat de campagne fictif',
     status: 'pending',
+  },
+  {
+    key: 'expo',
+    association: 'photo',
+    author: 'kenza',
+    days: 3,
+    hour: 17,
+    title: 'Exposition « Le reflet »',
+    status: 'validated',
+  },
+  {
+    key: 'impro',
+    association: 'theatre',
+    author: 'noe',
+    days: 6,
+    hour: 20,
+    title: "Soirée d'improvisation",
+    status: 'validated',
+  },
+  {
+    key: 'atelier-robots',
+    association: 'robotique',
+    author: 'pablo',
+    days: 9,
+    hour: 14,
+    title: 'Atelier robots suiveurs de ligne',
+    status: 'pending',
+  },
+  {
+    key: 'maraude',
+    association: 'solidaire',
+    author: 'samir',
+    days: 12,
+    hour: 18,
+    title: 'Collecte de vêtements chauds',
+    status: 'pending',
+  },
+  {
+    key: 'karaoke',
+    association: 'theatre',
+    author: 'oceane',
+    days: 6,
+    hour: 21,
+    title: 'Karaoké fictif au foyer',
+    status: 'rejected',
+    rejectionReason: 'Le foyer est déjà réservé ce soir-là, merci de proposer un autre créneau.',
   },
 ];
 
@@ -320,6 +433,11 @@ const ASSOCIATION_FOLLOWS: [PersonKey, AssociationKey][] = [
   ['jules', 'bde'],
   ['emma', 'fanfare'],
   ['farid', 'bde'],
+  ['alice', 'photo'],
+  ['bruno', 'theatre'],
+  ['chloe', 'solidaire'],
+  ['david', 'robotique'],
+  ['manon', 'echecs'],
 ];
 const USER_FOLLOWS: [PersonKey, PersonKey][] = [
   ['alice', 'bruno'],
@@ -348,20 +466,12 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
     updatedAt: ago(30),
   }));
 
-  const categories = CATEGORIES.map((c) => ({
-    id: uuid(`category:${c.key}`),
-    label: c.label,
-    slug: c.key,
-    sortOrder: c.sortOrder,
-  }));
-
   const associations = ASSOCIATIONS.map((a) => ({
     id: assoId(a.key),
     name: a.name,
     slug: `${a.key}-fictif`,
     description: a.description,
     color: a.color,
-    categoryId: a.category ? uuid(`category:${a.category}`) : null,
     type: a.type,
     promo: a.type === 'list' ? 2026 : null,
     contactEmail: `bureau.${a.key}@${SEED_EMAIL_DOMAIN}`,
@@ -416,13 +526,18 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
     id: uuid(`user-follow:${who}:${whom}`),
     followerUserId: userId(who),
     followedUserId: userId(whom),
+    // Written, never defaulted: the column's default is a pending REQUEST (migration 114), and a
+    // seeded follow is meant to be an accepted one - which `CHK_user_follows_accepted_at` refuses
+    // without its acceptance date. Dated like `createdAt`, which the row leaves to its default.
+    status: 'accepted',
+    acceptedAt: ago(0),
   }));
 
   const events = EVENTS.map((e) => ({
     id: uuid(`event:${e.key}`),
     associationId: assoId(e.association),
     title: e.title,
-    description: `Evenement fictif organise par ${ASSOCIATIONS.find((a) => a.key === e.association)?.name}.`,
+    description: `Événement fictif organisé par ${ASSOCIATIONS.find((a) => a.key === e.association)?.name}.`,
     startsAt: ahead(e.days, e.hour),
     endsAt: ahead(e.days, e.hour + 2),
     createdBy: userId(e.author),
@@ -431,6 +546,10 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
     // A validated event names its validator: the BDE president, who holds every flag.
     validatedAt: e.status === 'validated' ? ago(1) : null,
     validatedBy: e.status === 'validated' ? userId('alice') : null,
+    // A rejected event names who refused it (the BDE president) and why, as the app does.
+    rejectedAt: e.status === 'rejected' ? ago(0, 3) : null,
+    rejectedBy: e.status === 'rejected' ? userId('alice') : null,
+    rejectionReason: e.rejectionReason ?? null,
   }));
 
   const posts = POSTS.map((p) => ({
@@ -457,10 +576,16 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
         // Dev is where lives are read on the bench phones, so its lives kill switch (migration 015)
         // is open too; production's row defaults to `off`.
         lives_mode: 'on',
+        // Dev keeps today's push payloads (migration 018); the wake-up push is moved to `wake` by
+        // hand at `/admin/platform` for its readings, and a reset puts it back.
+        push_mode: 'full',
+        // Dev starts with the MLS checkpoint skip OFF like every estate (migration 020); it is moved
+        // to `on` by hand at `/admin/platform` for the readings of WP-CHECKPOINT-SKIP, and a reset
+        // puts it back.
+        checkpoint_skip_mode: 'off',
       },
     ],
     users,
-    association_categories: categories,
     associations,
     association_audiences: audiences,
     spaces,

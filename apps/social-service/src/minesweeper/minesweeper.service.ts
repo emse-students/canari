@@ -8,6 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
 import { Repository } from 'typeorm';
+import { inReviewCohortSql, isInReviewCohort, sameSideOfReviewCohort } from '../review-cohort';
 import { SubmitMinesweeperDto } from './dto/submit-minesweeper.dto';
 import { MinesweeperBan } from './entities/minesweeper-ban.entity';
 import { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
@@ -29,6 +30,8 @@ const MAX_NETWORK_CREDIT_MS = 4_000;
 /** Extra slack beyond measured challenge RTT for submit hop + generation. */
 const NETWORK_CREDIT_SLACK_MS = 1_000;
 const LEADERBOARD_LIMIT = 25;
+/** How many of a player's latest wins `stats` returns. */
+const RECENT_WINS_LIMIT = 10;
 
 /**
  * Picks the scored duration: prefer the client timer when it sits in
@@ -57,6 +60,17 @@ function resolveScoredDurationMs(
 }
 
 /** Ranked Minesweeper: issue seeds, verify solves by replay, store best times. */
+/**
+ * A SQL boolean on the player id `column`: the player stands on the same side of the review cohort's
+ * boundary as `userId` (`review-cohort.ts`) - so a review account ranks among the cohort only, and a
+ * member never sees a review account on the board. `true` with no cohort configured, or no user.
+ */
+function sameSideAsSql(userId: string | undefined, column: string): string {
+  const inCohort = inReviewCohortSql(column);
+  if (inCohort === 'false' || userId === undefined) return 'true';
+  return isInReviewCohort(userId) ? inCohort : `NOT ${inCohort}`;
+}
+
 @Injectable()
 export class MinesweeperService {
   private readonly logger = new Logger(MinesweeperService.name);
@@ -230,9 +244,14 @@ export class MinesweeperService {
     };
   }
 
-  /** Top verified clears (best time per user). Display names from shared `users` table. */
-  async leaderboard(limit = LEADERBOARD_LIMIT) {
+  /**
+   * One page of verified clears (best time per user), `offset` places down, plus the `total` number
+   * of ranked players so a client knows when the last page is reached. Display names from the
+   * shared `users` table.
+   */
+  async leaderboard(limit = LEADERBOARD_LIMIT, viewerId?: string, offset = 0) {
     const capped = Math.min(Math.max(limit, 1), 50);
+    const start = Math.max(Math.trunc(offset) || 0, 0);
     const rows: Array<{
       scoreId: string;
       userId: string;
@@ -249,6 +268,7 @@ export class MinesweeperService {
         s."verifiedAt" AS "verifiedAt"
       FROM minesweeper_scores s
       WHERE NOT EXISTS (SELECT 1 FROM minesweeper_bans b WHERE b."userId" = s."userId")
+        AND ${sameSideAsSql(viewerId, 's."userId"')}
       ORDER BY s."userId", s."durationMs" ASC, s."verifiedAt" ASC
       `
     );
@@ -256,7 +276,7 @@ export class MinesweeperService {
     rows.sort(
       (a, b) => a.durationMs - b.durationMs || a.verifiedAt.getTime() - b.verifiedAt.getTime()
     );
-    const top = rows.slice(0, capped);
+    const top = rows.slice(start, start + capped);
     const userIds = top.map((r) => r.userId);
     const nameById = new Map<string, string>();
     if (userIds.length > 0) {
@@ -270,8 +290,9 @@ export class MinesweeperService {
     }
 
     return {
+      total: rows.length,
       entries: top.map((r, i) => ({
-        rank: i + 1,
+        rank: start + i + 1,
         // The row to remove: a global admin's "remove this score" names it (`removeScore`).
         scoreId: r.scoreId,
         userId: r.userId,
@@ -294,13 +315,14 @@ export class MinesweeperService {
    * Rank among distinct players: 1 + count of users with a strictly better (lower) PB.
    * Equal times share the same rank band (tied players all get the same number).
    */
-  async rankForDurationMs(durationMs: number): Promise<number> {
+  async rankForDurationMs(durationMs: number, playerId?: string): Promise<number> {
     const rows: Array<{ cnt: string | number }> = await this.scores.query(
       `
       WITH bests AS (
         SELECT MIN(s."durationMs") AS best
         FROM minesweeper_scores s
         WHERE NOT EXISTS (SELECT 1 FROM minesweeper_bans b WHERE b."userId" = s."userId")
+          AND ${sameSideAsSql(playerId, 's."userId"')}
         GROUP BY s."userId"
       )
       SELECT COUNT(*)::int AS cnt FROM bests WHERE best < $1
@@ -310,18 +332,89 @@ export class MinesweeperService {
     return Number(rows[0]?.cnt ?? 0) + 1;
   }
 
-  /** Standing for a user who has at least one verified score; null otherwise. */
-  async userStanding(userId: string) {
+  /**
+   * Standing for a user who has at least one verified score; null otherwise - and null to a viewer
+   * on the other side of the review cohort's boundary (`review-cohort.ts`), as for a non-player.
+   * The rank is among the players on the user's own side.
+   */
+  async userStanding(userId: string, viewerId?: string) {
+    if (viewerId !== undefined && !sameSideOfReviewCohort(viewerId, userId)) return null;
     // A banned player has no standing: a profile badge must not show a rank they were removed from.
     if (await this.isBanned(userId)) return null;
     const best = await this.getPersonalBest(userId);
     if (!best) return null;
-    const rank = await this.rankForDurationMs(best.durationMs);
+    const rank = await this.rankForDurationMs(best.durationMs, userId);
     return {
       personalBestMs: best.durationMs,
       moveCount: best.moveCount,
       verifiedAt: best.verifiedAt.toISOString(),
       rank,
+    };
+  }
+
+  /**
+   * The caller's own ranked record. Only RANKED games are known to the server: a casual game never
+   * opens a challenge, so "played" is the player's challenges and "won" their stored scores; the
+   * difference is every ranked game that was lost, abandoned, rejected or left to expire.
+   */
+  async stats(userId: string) {
+    const [challengeRows, aggregateRows, recent, standing] = await Promise.all([
+      this.challenges.query(
+        `SELECT COUNT(*)::int AS played FROM minesweeper_challenges WHERE "userId" = $1`,
+        [userId]
+      ) as Promise<Array<{ played: number | string }>>,
+      this.scores.query(
+        `
+        SELECT COUNT(*)::int AS won,
+               MIN("durationMs")::int AS best,
+               ROUND(AVG("durationMs"))::int AS average,
+               ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY "durationMs"))::int AS median
+        FROM minesweeper_scores
+        WHERE "userId" = $1
+        `,
+        [userId]
+      ) as Promise<
+        Array<{
+          won: number | string;
+          best: number | null;
+          average: number | null;
+          median: number | null;
+        }>
+      >,
+      this.scores.query(
+        `
+        SELECT id AS "scoreId", "durationMs", "moveCount", "verifiedAt"
+        FROM minesweeper_scores
+        WHERE "userId" = $1
+        ORDER BY "verifiedAt" DESC
+        LIMIT ${RECENT_WINS_LIMIT}
+        `,
+        [userId]
+      ) as Promise<
+        Array<{ scoreId: string; durationMs: number; moveCount: number; verifiedAt: Date }>
+      >,
+      this.me(userId),
+    ]);
+
+    const won = Number(aggregateRows[0]?.won ?? 0);
+    // A score always has its challenge, but never trust that for a ratio: won cannot exceed played.
+    const played = Math.max(Number(challengeRows[0]?.played ?? 0), won);
+    const aggregate = aggregateRows[0];
+    return {
+      played,
+      won,
+      lost: played - won,
+      winRate: played > 0 ? won / played : null,
+      bestMs: won > 0 ? (aggregate?.best ?? null) : null,
+      averageMs: won > 0 ? (aggregate?.average ?? null) : null,
+      medianMs: won > 0 ? (aggregate?.median ?? null) : null,
+      rank: standing.rank,
+      recent: recent.map((r) => ({
+        scoreId: r.scoreId,
+        durationMs: r.durationMs,
+        moveCount: r.moveCount,
+        verifiedAt: new Date(r.verifiedAt).toISOString(),
+      })),
     };
   }
 

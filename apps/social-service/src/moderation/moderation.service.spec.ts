@@ -4,8 +4,12 @@ import { Logger } from '@nestjs/common';
 import * as signature from '../lives/live-report-signature';
 import { LIVE_KEY_ENCRYPTION_SECRET_ENV, sealLiveKey } from '../lives/live-key-at-rest';
 import { ModerationService } from './moderation.service';
+import { reportInBdeScopeSql } from '../spaces/bde-moderation';
 import type { ContentReport } from './entities/content-report.entity';
 import type { UserModeration } from './entities/user-moderation.entity';
+
+/** The platform admin's scope: the lists unnarrowed. */
+const ADMIN_SCOPE = { userId: 'admin', isGlobalAdmin: true };
 
 /**
  * What the 2026-08-27 report reform changed, and therefore what must not regress:
@@ -21,7 +25,10 @@ describe('ModerationService - reports', () => {
     save: jest.Mock;
     count: jest.Mock;
     manager: { query: jest.Mock; transaction: jest.Mock };
+    createQueryBuilder: jest.Mock;
   };
+  /** The queue's query builder: `getMany` answers what `find` is mocked to, `where` is recorded. */
+  let reportQb: Record<string, jest.Mock>;
   let muteRepo: { findOne: jest.Mock; save: jest.Mock; create: jest.Mock; find: jest.Mock };
 
   beforeEach(() => {
@@ -32,7 +39,11 @@ describe('ModerationService - reports', () => {
       save: jest.fn().mockImplementation((row) => Promise.resolve({ id: 'r1', ...row })),
       count: jest.fn().mockResolvedValue(1),
       manager: { query: jest.fn().mockResolvedValue([]), transaction: jest.fn() },
+      createQueryBuilder: jest.fn(() => reportQb),
     };
+    reportQb = {};
+    for (const m of ['orderBy', 'take', 'skip', 'where']) reportQb[m] = jest.fn(() => reportQb);
+    reportQb.getMany = jest.fn(() => reportRepo.find());
     // The hide and the republications it drops are one transaction, run on the same query mock.
     reportRepo.manager.transaction.mockImplementation((fn: (m: unknown) => unknown) =>
       fn(reportRepo.manager)
@@ -40,14 +51,150 @@ describe('ModerationService - reports', () => {
     muteRepo = { findOne: jest.fn(), save: jest.fn(), create: jest.fn(), find: jest.fn() };
     service = new ModerationService(
       reportRepo as unknown as Repository<ContentReport>,
-      muteRepo as unknown as Repository<UserModeration>
+      muteRepo as unknown as Repository<UserModeration>,
+      {} as never
     );
+    answerGate();
+  });
+
+  const POST_ID = '00000000-0000-4000-8000-0000000000a1';
+
+  /**
+   * Answers the open-a-post gate (`readPostOpenVerdict`) the way the database would: the post row
+   * (or the comment's, with its post), the audience term, and the reporter's blocks. Every other
+   * query answers nothing. The audience SQL itself is proven against PostgreSQL in
+   * `post-openable.integration.spec.ts`; here it is a switch.
+   */
+  function answerGate(
+    opts: {
+      post?: Record<string, unknown> | null;
+      visible?: boolean;
+      blocks?: string[];
+      comment?: Record<string, unknown> | null;
+      /** The comments predicate names the reporter (a named reader, switch off). */
+      withheld?: boolean;
+    } = {}
+  ) {
+    const post =
+      opts.post === null
+        ? null
+        : {
+            id: POST_ID,
+            authorId: 'author',
+            associationId: null,
+            anonymous: false,
+            hiddenByModeration: false,
+            scheduledAt: null,
+            kind: 'post',
+            expiresAt: null,
+            ...opts.post,
+          };
+    reportRepo.manager.query.mockImplementation((sql: string) => {
+      if (sql.includes('elem AS comment')) {
+        return Promise.resolve(
+          post && opts.comment !== null
+            ? [{ ...post, comment: opts.comment ?? { id: 'c1', userId: 'real-writer' } }]
+            : []
+        );
+      }
+      if (sql.includes('read_grant_readers')) {
+        return Promise.resolve(post && opts.withheld ? [{ id: post.id }] : []);
+      }
+      if (sql.includes('FROM posts p WHERE p.id')) return Promise.resolve(post ? [post] : []);
+      if (sql.includes('AS visible')) return Promise.resolve([{ visible: opts.visible ?? true }]);
+      if (sql.includes('FROM user_blocks')) {
+        return Promise.resolve((opts.blocks ?? []).map((otherId) => ({ otherId })));
+      }
+      return Promise.resolve([]);
+    });
+  }
+
+  /** A report on `contentType` `contentId` by alice. */
+  const report = (contentType: 'post' | 'comment', contentId: string) =>
+    service.createReport({ reporterId: 'alice', contentType, contentId, reason: 'spam' });
+
+  describe('a post or a comment is reported only by who may open it (the read gate)', () => {
+    it('files a report on a post the reporter may open', async () => {
+      await report('post', POST_ID);
+      expect(reportRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ contentType: 'post', contentId: POST_ID })
+      );
+    });
+
+    it.each([
+      ['outside its audience', { visible: false }],
+      ['hidden by moderation', { post: { hiddenByModeration: true } }],
+      ['whose author the reporter blocked, or was blocked by', { blocks: ['author'] }],
+      ['scheduled later', { post: { scheduledAt: new Date(Date.now() + 86_400_000) } }],
+      ['that does not exist', { post: null }],
+    ] as const)('refuses 404 CONTENT_NOT_FOUND on a post %s', async (_case, gate) => {
+      answerGate(gate as Parameters<typeof answerGate>[0]);
+      await expect(report('post', POST_ID)).rejects.toMatchObject({
+        status: 404,
+        response: { code: 'CONTENT_NOT_FOUND' },
+      });
+      expect(reportRepo.save).not.toHaveBeenCalled();
+      expect(reportRepo.count).not.toHaveBeenCalled();
+    });
+
+    it('refuses a post id that is not one without asking the database', async () => {
+      await expect(report('post', 'not-a-uuid')).rejects.toMatchObject({ status: 404 });
+      expect(reportRepo.manager.query).not.toHaveBeenCalled();
+    });
+
+    it('keeps the block exemption of an anonymous post: a report is no oracle on its author', async () => {
+      answerGate({ post: { anonymous: true }, blocks: ['author'] });
+      await report('post', POST_ID);
+      expect(reportRepo.save).toHaveBeenCalled();
+    });
+
+    it('files a report on a comment the reporter is shown', async () => {
+      await report('comment', 'c1');
+      expect(reportRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ contentType: 'comment', contentId: 'c1' })
+      );
+    });
+
+    it.each([
+      ['under a post outside their audience', { visible: false }],
+      ['under a hidden post', { post: { hiddenByModeration: true } }],
+      ['under a post whose author a block separates from them', { blocks: ['author'] }],
+      ['by a writer a block separates from them', { blocks: ['real-writer'] }],
+      ['that does not exist', { comment: null }],
+    ] as const)('refuses 404 CONTENT_NOT_FOUND on a comment %s', async (_case, gate) => {
+      answerGate(gate as Parameters<typeof answerGate>[0]);
+      await expect(report('comment', 'c1')).rejects.toMatchObject({
+        status: 404,
+        response: { code: 'CONTENT_NOT_FOUND' },
+      });
+      expect(reportRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses 404 a comment report from a reader the comments are withheld from, not a post report', async () => {
+      // The comment's report asks the comments' gate (owner, 2026-11-04); the post's, the post's.
+      answerGate({ withheld: true });
+      await expect(report('comment', 'c1')).rejects.toMatchObject({
+        status: 404,
+        response: { code: 'CONTENT_NOT_FOUND' },
+      });
+      await report('post', POST_ID);
+      expect(reportRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ contentType: 'post', contentId: POST_ID })
+      );
+    });
+
+    it('files a report on an anonymous comment whose writer is blocked: the read shows it', async () => {
+      answerGate({
+        blocks: ['real-writer'],
+        comment: { id: 'c1', userId: 'real-writer', anonymous: true },
+      });
+      await report('comment', 'c1');
+      expect(reportRepo.save).toHaveBeenCalled();
+    });
   });
 
   describe('createReport', () => {
     it('takes the writer of a reported comment from the stored comment, never from the client', async () => {
-      reportRepo.manager.query.mockResolvedValue([{ user_id: 'real-writer' }]);
-
       await service.createReport({
         reporterId: 'alice',
         contentType: 'comment',
@@ -68,7 +215,7 @@ describe('ModerationService - reports', () => {
         service.createReport({
           reporterId: 'alice',
           contentType: 'post',
-          contentId: 'p1',
+          contentId: POST_ID,
           reason: 'spam',
         })
       ).rejects.toMatchObject({
@@ -83,7 +230,7 @@ describe('ModerationService - reports', () => {
         service.createReport({
           reporterId: 'alice',
           contentType: 'post',
-          contentId: 'p1',
+          contentId: POST_ID,
           reason: 'spam',
         })
       ).rejects.toBeInstanceOf(ConflictException);
@@ -98,13 +245,13 @@ describe('ModerationService - reports', () => {
         service.createReport({
           reporterId: 'alice',
           contentType: 'post',
-          contentId: 'p1',
+          contentId: POST_ID,
           reason: 'spam',
         })
       ).rejects.toBeInstanceOf(ConflictException);
 
       expect(reportRepo.findOne).toHaveBeenCalledWith({
-        where: { reporterId: 'alice', contentId: 'p1' },
+        where: { reporterId: 'alice', contentId: POST_ID },
       });
     });
 
@@ -128,21 +275,21 @@ describe('ModerationService - reports', () => {
       await service.createReport({
         reporterId: 'alice',
         contentType: 'post',
-        contentId: 'p1',
+        contentId: POST_ID,
         reason: 'spam',
       });
 
       expect(reportRepo.count).toHaveBeenCalledWith({
-        where: { contentId: 'p1', status: 'pending' },
+        where: { contentId: POST_ID, status: 'pending' },
       });
       expect(reportRepo.manager.query).toHaveBeenCalledWith(
         expect.stringContaining('hiddenByModeration'),
-        ['p1']
+        [POST_ID]
       );
       // D38: hiding the original removes every republication, in the same transaction.
       expect(reportRepo.manager.query).toHaveBeenCalledWith(
         expect.stringContaining('DELETE FROM post_republications'),
-        ['p1']
+        [POST_ID]
       );
     });
 
@@ -152,11 +299,16 @@ describe('ModerationService - reports', () => {
       await service.createReport({
         reporterId: 'alice',
         contentType: 'post',
-        contentId: 'p1',
+        contentId: POST_ID,
         reason: 'spam',
       });
 
-      expect(reportRepo.manager.query).not.toHaveBeenCalled();
+      // Only the read gate asked the database: nothing was hidden.
+      expect(reportRepo.manager.query).not.toHaveBeenCalledWith(
+        expect.stringContaining('hiddenByModeration" = true'),
+        expect.anything()
+      );
+      expect(reportRepo.manager.transaction).not.toHaveBeenCalled();
     });
 
     it('never auto-hides on a report that is not about a post', async () => {
@@ -419,7 +571,7 @@ describe('ModerationService - reports', () => {
           .spyOn(signature, 'verifyReportedLine')
           .mockReturnValue({ content, author: 'verified', reporter: 'verified' });
 
-        const [row] = await service.listAllReports();
+        const [row] = await service.listAllReports(ADMIN_SCOPE);
 
         expect(row.contentPreview).toBe(preview);
         expect(row.liveChat?.text).toBe('hello');
@@ -431,7 +583,7 @@ describe('ModerationService - reports', () => {
     it('deletes nothing - retention is the weekly cron and not a side effect of reading', async () => {
       reportRepo.find.mockResolvedValue([]);
 
-      await service.listAllReports();
+      await service.listAllReports(ADMIN_SCOPE);
 
       const statements = reportRepo.manager.query.mock.calls.map((c) => String(c[0]));
       expect(statements.some((sql) => /DELETE/i.test(sql))).toBe(false);
@@ -443,7 +595,7 @@ describe('ModerationService - reports', () => {
       ]);
       reportRepo.manager.query.mockResolvedValue([{ id: 'bob', displayName: 'Bob Martin' }]);
 
-      const [row] = await service.listAllReports();
+      const [row] = await service.listAllReports(ADMIN_SCOPE);
 
       expect(row.contentPreview).toBe('Bob Martin');
       expect(row.postId).toBeNull();
@@ -455,9 +607,24 @@ describe('ModerationService - reports', () => {
       ]);
       reportRepo.manager.query.mockResolvedValue([{ id: 'bob', displayName: null }]);
 
-      const [row] = await service.listAllReports();
+      const [row] = await service.listAllReports(ADMIN_SCOPE);
 
       expect(row.contentPreview).toBe('bob');
+    });
+
+    // Owner, 2026-11-02: MODERATE is scoped - a BDE reads the reports of its governed spaces only.
+    it('narrows the queue to the BDE scope, in SQL, for a moderator who is not the platform admin', async () => {
+      await service.listAllReports({ userId: 'bde-mod', isGlobalAdmin: false }, 50, 0);
+
+      expect(reportQb.where).toHaveBeenCalledWith(reportInBdeScopeSql('r', ':scopeModerator'), {
+        scopeModerator: 'bde-mod',
+      });
+    });
+
+    it('leaves the queue whole for the platform admin', async () => {
+      await service.listAllReports({ userId: 'admin', isGlobalAdmin: true }, 50, 0);
+
+      expect(reportQb.where).not.toHaveBeenCalled();
     });
   });
 });

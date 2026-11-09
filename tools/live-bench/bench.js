@@ -112,7 +112,12 @@
   const api = (path, init = {}) =>
     rawFetch(`${C.api}${path}`, {
       ...init,
-      headers: { ...init.headers, Authorization: window.__LB_AUTH },
+      // The lives routes answer 404 to a request that names no build >= 1.5.4 (LiveEnabledGuard).
+      headers: {
+        ...init.headers,
+        Authorization: window.__LB_AUTH,
+        'X-Canari-Client-Version': '1.5.4',
+      },
     });
 
   /** Min-RTT clock sync: against dev's manifest `serverNow`, or the bench server's /time. */

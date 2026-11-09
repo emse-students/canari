@@ -9,6 +9,7 @@ import {
   Param,
   ParseIntPipe,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Res,
@@ -17,19 +18,38 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { contentDisposition } from '../common/content-disposition';
 import { FORM_FILE_MAX_BYTES, type UploadedFormFile } from '../forms/form-files.service';
 import { parseBookingExportLabels } from './booking-export';
 import { BookingsService, SPACE_BOOKINGS_PAGE, type Actor } from './bookings.service';
-import { CreateBlockDto, CreateBookingDto } from './dto/booking.dto';
+import {
+  CancelBookingDto,
+  CreateBlockDto,
+  CreateBookingDto,
+  EditBookingDto,
+  ReminderDto,
+  ZONED_INSTANT,
+} from './dto/booking.dto';
 
 /** The caller nginx authenticated. */
 export const actorOf = (userId: string, globalAdmin: string | undefined): Actor => ({
   userId: userId.trim().toLowerCase(),
   isGlobalAdmin: globalAdmin === 'true',
 });
+
+/**
+ * How many edits one account may send to ONE booking in a minute (`UserResourceThrottlerGuard`,
+ * keyed on the account AND `:bookingId`). Each one may notify every person it adds, removes or
+ * moves, so a loop - a stuck tab, a script - must not be able to drive it; an organiser editing a
+ * column of bookings in a row is not throttled by their own earlier edits. A flood spread over
+ * many bookings reaches a person only through bookings the actor holds or manages, and D21's block
+ * stops it at the next edit (review of #2945).
+ */
+export const BOOKING_EDITS_PER_MINUTE = 10;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -44,6 +64,18 @@ export function parseIds(raw: string | undefined): string[] | undefined {
     throw new BadRequestException({ code: 'ids' });
   }
   return [...new Set(ids)];
+}
+
+/**
+ * The `from` filter of the organiser list (WP-R5): absent is the whole history; present, an
+ * instant that names its zone (`Z` or an offset - without one `Date.parse` would read it in the
+ * SERVER's zone), or a 400 `from`.
+ */
+export function parseFrom(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const ms = ZONED_INSTANT.test(raw) ? Date.parse(raw) : NaN;
+  if (Number.isNaN(ms)) throw new BadRequestException({ code: 'from' });
+  return ms;
 }
 
 /**
@@ -102,7 +134,8 @@ export class BookingsController {
 
   /**
    * Every booking of the space, answers included: the organiser's list. `ids` (comma-separated,
-   * at most one page) narrows it to the bookings a D29 refusal named.
+   * at most one page) narrows it to the bookings a D29 refusal named; `from` (an instant) to the
+   * live ones ending after it - the dashboard's "coming" list (WP-R5).
    */
   @Get('spaces/:spaceId/bookings')
   spaceBookings(
@@ -111,10 +144,18 @@ export class BookingsController {
     @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
     @Query('limit', new DefaultValuePipe(SPACE_BOOKINGS_PAGE), ParseIntPipe) limit: number,
     @Query('ids') ids?: string,
+    @Query('from') from?: string,
     @Headers('x-global-admin') ga?: string
   ) {
     if (offset < 0) throw new BadRequestException({ code: 'offset' });
-    return this.service.spaceBookings(spaceId, actorOf(userId, ga), offset, limit, parseIds(ids));
+    return this.service.spaceBookings(
+      spaceId,
+      actorOf(userId, ga),
+      offset,
+      limit,
+      parseIds(ids),
+      parseFrom(from)
+    );
   }
 
   /** Books a range; an organiser may book on behalf of an account. */
@@ -128,14 +169,46 @@ export class BookingsController {
     return this.service.book(spaceId, dto, actorOf(userId, ga), Date.now());
   }
 
-  /** Cancels a coming booking: its holder or the organiser, at any time before the start (D5). */
+  /**
+   * Cancels a coming booking: its holder or the organiser, at any time before the start (D5). The
+   * body is optional - an older client sends none - and carries the organiser's word (Q-R3).
+   */
   @Post(':bookingId/cancel')
   cancel(
     @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Body() dto: CancelBookingDto,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
-    return this.service.cancel(bookingId, actorOf(userId, ga), Date.now());
+    return this.service.cancel(bookingId, actorOf(userId, ga), Date.now(), dto?.message);
+  }
+
+  /**
+   * Edits a coming booking (owner, 2026-11-02): its range on the same day, and its other people.
+   * Who may is who may cancel. Refusals are typed (`BOOKING_EDIT_*`, `reason` the rule); the
+   * original booking stays whole until the one transaction that replaces it commits.
+   */
+  @Patch(':bookingId')
+  @UseGuards(UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: BOOKING_EDITS_PER_MINUTE, ttl: 60_000 } })
+  edit(
+    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Body() dto: EditBookingDto,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.edit(bookingId, dto, actorOf(userId, ga), Date.now());
+  }
+
+  /** Sets the caller's own reminder delay on a booking they are one of the people of (Q-R1). */
+  @Patch(':bookingId/reminder')
+  reminder(
+    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Body() dto: ReminderDto,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.setReminder(bookingId, dto.minutes, actorOf(userId, ga), Date.now());
   }
 
   /** A participant leaves a coming booking. */

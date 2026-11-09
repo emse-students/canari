@@ -18,6 +18,7 @@ import { ServerUnreachableError } from '$lib/utils/fetchOrUnreachable';
 import { m } from '$lib/paraglide/messages';
 import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 
 const FALLBACK = m.post_create_publish_error();
 
@@ -88,5 +89,17 @@ describe('publishFailureMessage', () => {
     expect(publishFailureMessage(new VideoPrepareError('unsupported', 'x'), FALLBACK)).toBe(
       m.video_prepare_unsupported()
     );
+  });
+});
+
+describe('publishFailureMessage - the attachment cap', () => {
+  it('words the typed POST_ATTACHMENTS_TOO_MANY refusal in the reader language, never the server prose', () => {
+    const refusal = new ApiRefusalError(400, 'POST_ATTACHMENTS_TOO_MANY', 'A post has at most 10');
+    expect(publishFailureMessage(refusal, FALLBACK)).toBe(m.post_attachments_too_many({ max: 10 }));
+  });
+
+  it('does not read the message: the same prose under another code is the fallback', () => {
+    const other = new ApiRefusalError(400, 'SOMETHING_ELSE', 'A post has at most 10');
+    expect(publishFailureMessage(other, FALLBACK)).toBe(FALLBACK);
   });
 });

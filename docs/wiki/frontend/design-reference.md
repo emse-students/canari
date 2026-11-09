@@ -14,6 +14,9 @@ weights, spacing, radii, surfaces, the whole colour treatment - is in scope: *"T
 bouger, etre redimensionne"*. The goal is not to erase Canari's identity but to make it
 *"BEAUCOUP plus ergonomique"*.
 
+**Buttons, selects and text fields (2026-11-07):** their height, edge and corner are one convention,
+not a measurement of the reference - [controls](controls.md).
+
 ---
 
 ## 1. The finding in one line
@@ -74,6 +77,8 @@ holds for all of them. On iOS the chrome is Apple's native Liquid Glass; elsewhe
 `.glass-chrome` in `app.css` (translucent `--glass-chrome-bg`, `backdrop-filter: blur(18px)
 saturate(180%)`, a light edge and a soft shadow), the one place the app builds a surface from
 translucency. The layout and the reasons are in [chat](modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30).
+
+**WIDENED BY THE OWNER, 2026-10-31: `.glass-chrome` IS THE MATERIAL OF EVERYTHING THAT FLOATS ABOVE CONTENT** - the feed bar, the header pieces, menus, popovers (post, community, ecosystem, emoji pickers) and sticky headers over a scrolling list; cards and lists stay opaque. One `--glass-chrome-blur` token carries the blur, and `@supports not (backdrop-filter)` or `prefers-reduced-transparency: reduce` sets it to `none` and the background to `--cn-surface` (opaque). Never glass a bar that no content scrolls under (the bottom nav, the desktop top bar): the blur would cost a low-end Android for nothing. Never stack two blurs.
 
 ## 4. The reference radii
 
@@ -204,6 +209,12 @@ progressive enhancement of one property, not a second code path. The conversatio
 avatar in ONE 40px box that the avatar fills (it used to draw a 48px avatar inside a 40px wrapper),
 and the phone apps' glass title pill, being a `rounded-full` surface, holds a CIRCLE avatar so the
 two corners are concentric - a squircle inscribed in a pill was the mismatch.
+
+**The native pill's avatar is a bitmap and must paint the same gradient (2026-10-31).** Placeholders
+are `background-image` gradients since #2776, so `avatarBitmap.ts` can no longer read a
+`backgroundColor` (transparent: bare initials on dark, white on white in light). It reads the
+computed `--avatar-hue-from/to` of the `.avatar-placeholder` and paints a 135deg canvas gradient,
+person, group glyph and association alike; `app.css` stays the only copy of the palette.
 
 ---
 
@@ -1116,14 +1127,13 @@ from a lazy per-face `fetch` the client can cache to a per-user upstream call ma
 being assembled, and it would make the user payload fail when MiGallery does. **The discriminator
 this rule asks for has to be known to the layer that would carry it, and here it is not.**
 
-**Chromium does not warn about `apple-mobile-web-app-capable`.** The note said a deprecation warning
-was logged on every load and that `mobile-web-app-capable` should be added beside it. Measured on
-Chrome 153 against the served page (the tag IS in the markup): one console message on a cold load,
-`Initialised in WEB mode (WASM)`, and nothing under `warn`, `error`, `verbose` or `issue`. There is
-also **no web app manifest in this repository**, so the standard spelling would install nothing and
-declare nothing - the Apple tag is the whole of "added to the home screen, this opens without
-Safari's chrome", and it is the only one of the two any engine here reads. Adding the second name
-would have put an inert tag in the source to silence a line that is not printed.
+**Chromium DOES warn about a lone `apple-mobile-web-app-capable` (re-measured 2026-11-01).** An
+earlier note here said it did not (Chrome 153); on Chrome 156 a bare page carrying only the Apple tag
+logs `<meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta
+name="mobile-web-app-capable" content="yes">` as a `warn`, and a page carrying BOTH tags logs nothing.
+So `app.html` keeps both: the standard name silences Chrome, the Apple one is the only spelling Safari
+reads for "added to the home screen, opens without Safari's chrome". There is no web app manifest in
+this repository, so neither name installs anything by itself.
 
 **`MIN_USEFUL_HEIGHT` exceeding the room on the chosen side is not a fault.** A panel smaller than
 it shows a header and a clipped first row, so the height is KEPT and the panel is moved instead.
@@ -2476,8 +2486,10 @@ The height is MEASURED rather than counted, for the same reason `--chat-composer
 depends on how many banners are up, how their text wrapped and how wide the window is, so a constant
 per banner would be a sixth copy of a number that has already drifted five ways.
 
-The five window-scale banners (`EnvironmentBanner`, `MaintenanceAdminBanner`, `MlsFatalErrorBanner`,
-`TabFollowerBanner`, `OfflineBanner`) all render in that one column, above the row - so they are
+The four window-scale banners (`EnvironmentBanner`, `MaintenanceAdminBanner`, `MlsFatalErrorBanner`,
+`OfflineBanner`; `TabFollowerBanner` was the fifth until 2026-11-08, when a follower tab started handing
+its commits to the leader and the banner had nothing left to say - [chat](modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08))
+all render in that one column, above the row - so they are
 full width by construction, and `Banner.svelte` insets itself squarely at `m-3`, the same 0.75rem
 gutter grid every other card in the floating shell sits on. It was `mx-3 mt-2`: three different
 numbers on four sides (user: *"si il y a des marges elles doivent etre egales de tous les cotes"*).
@@ -2488,7 +2500,8 @@ itself by hand reads as correct CSS in review and cannot be caught any other way
 
 ### Verified on the user's own reproduction - two tabs of one account (2026-09-22)
 
-Measured on W1 at 1920px, on the estate built from this branch, with the follower banner up:
+Measured on W1 at 1920px, on the estate built from this branch, with the follower banner up (the
+banner is gone since 2026-11-08; the measurement stands for any window-scale banner):
 
 | | Before | After |
 |---|---|---|
@@ -3230,7 +3243,7 @@ Class B has no iOS twin on the left (the iOS back swipe is the app's own, `swipe
 a conversation).
 
 **The fix for A** is the lock moving under the engine's slop - the move that decides who owns the
-touch must be the one the gesture claims ([backlog](../backlog.md#p2---the-tab-swipe-is-lost-on-a-slow-start-the-12-px-lock-sits-past-chromes-8-dp-slop-mi-9t-2026-10-21)).
+touch must be the one the gesture claims ([backlog](../backlog.d/p2-the-tab-swipe-on-a-slow-start-both-causes-fixed-owed-a-real-finger.md)).
 **B is not the page's to fix in-page**: the page only ever sees a `touchcancel`. The options are the
 ones the right edge had - exclusion rects (`edgeGestureExclusion.ts`, 200 dp per edge) over the
 feed, or nothing - and that is a user decision.
@@ -3293,3 +3306,22 @@ and a tap on the reel slide it out on the drag release snap, the reel growing ba
 comment in `PostComments` (`commentArrivals`: one new id plays the entrance - never the first draw,
 never a page of older comments, never the swap of the reader's local id for the server's row), and
 the three buttons of the reel action rail (`motion-press`). There is no reaction drawer on `main`.
+
+Two more (owner, 2026-10-31): the feed tab pill is ONE measured element moved by `transform` with `--motion-slow` (`FeedTabRow`; the first placement and a re-layout never slide), and the reel viewer grows out of the clapper button (`reels/expandFrom.ts`): a view transition named `reel-open` (button and `[data-reel-viewer]`, `::view-transition` is `pointer-events: none`), else `motion-expand-in` scaling from the button's centre; the fallback is logged at debug, and reduced motion starts neither.
+
+## Avatar placeholders: eight gradient hues, picked from the entity's ID (user, 2026-10-30)
+
+Every avatar without a photo or logo (a person, a group or community, an association) used to be yellow initials on the same navy disc. It is now ONE component, `AvatarPlaceholder.svelte`, used by `Avatar`, `GroupAvatar` and `AssociationAvatar` (the anonymous-post avatar stays an icon on navy on purpose: it is nobody).
+
+- **The palette** is `--avatar-hue-0..7-from/to` in `app.css` (orange, pink, violet, blue, cyan, green, red, amber) drawn as a plain 135deg `linear-gradient` on the element. Theme-independent: white initials on every stop in both themes. No `background-clip` text trick (WebKit draws it badly). Every stop keeps white at >= 3:1 (WCAG AA large text); the amber is darkened for it, and `avatar.test.ts` recomputes the ratio from `app.css`.
+- **The pick** is `avatarHueIndex(id)` (FNV-1a mod 8), seeded by the ID: user id, conversation / group / workspace id, association id. NEVER the display name, which changes. `GroupAvatar` and `AssociationAvatar` therefore take a required `id`. Known gap: a channel-invitation card carries no workspace id on the wire, so it seeds on the channel id.
+- **Shapes** are unchanged: the caller passes `circle` or `squircle`. A real photo or logo is untouched.
+- Not converted: the Carte poster canvas (`trombinoscope.ts`) still draws its own `generateAvatarColor` tiles.
+
+## User-visible text shows outcomes, never internals (owner, 2026-10-31)
+
+No key fingerprint or technical id on a normal screen: the waiting device's own notice (`chat_waiting_own_device`) no longer prints its key, and the devices list shows a device's name, browser and last use but not its id. The rule and the screens still listed are in [durable-rules](../durable-rules.md) (UI and i18n).
+
+## The brand lockup is centred on its icon by trimming the line boxes (2026-10-31)
+
+`CanariBrand` (the only place the lockup is drawn: `Navbar`, and `MobileHeader` without the tagline) sat 1.5-2 px low because each line box carries space above the cap height and below the baseline. Each line is now `leading-none` with `em` margins from the font's real metrics (Fredoka 700: cap top 0.166em, baseline 0.131em from the box edges; Nunito 500: 0.110em and 0.171em), and the block is `min-h-10` + `justify-between`, so the cap top of "Canari" and the baseline of the tagline sit on the icon's edges (measured: within 0.5 px, was +2.0 / +1.6 px). `em` and not `text-box: trim-both cap alphabetic`, which Firefox has not shipped. Re-measure these constants if the brand or body font changes.

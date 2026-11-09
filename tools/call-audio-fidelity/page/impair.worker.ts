@@ -24,17 +24,47 @@ interface Transformer {
     doubleEncrypt?: boolean;
     kind?: 'audio' | 'video';
     wholeFrameVideo?: boolean;
+    webkitVideoMetadata?: boolean;
   };
 }
 
-/** The rig's key, captured from the same `setKey` the app worker receives (whole-frame experiment). */
-let rigKey: CryptoKey | null = null;
-self.addEventListener('message', (e: MessageEvent<{ type: string; payload?: ArrayBuffer }>) => {
-  if (e.data?.type !== 'setKey' || !e.data.payload) return;
-  void crypto.subtle
-    .importKey('raw', e.data.payload, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
-    .then((k) => (rigKey = k));
-});
+/**
+ * SCENARIO: every video frame handed on with a metadata that names NO codec and no payload type, as
+ * WebKit's encoded frames do (iOS, `mime=? pt=-1`, 2026-11-07). The frame is the platform's own,
+ * shadowed per instance, so the engine still takes it back on the writable side.
+ */
+function webkitMetadata() {
+  return new TransformStream({
+    transform(frame: { getMetadata?: () => Record<string, unknown> }, controller) {
+      const original = frame.getMetadata?.bind(frame);
+      Object.defineProperty(frame, 'getMetadata', {
+        value: () => {
+          const meta = { ...original?.() };
+          delete meta.mimeType;
+          delete meta.payloadType;
+          return meta;
+        },
+      });
+      controller.enqueue(frame);
+    },
+  });
+}
+
+/**
+ * The rig's two direction keys, captured from the same `setKeys` the app worker receives
+ * (whole-frame experiment): this side encrypts with `send`, decrypts with `receive`.
+ */
+const rigKeys: { send: CryptoKey | null; receive: CryptoKey | null } = { send: null, receive: null };
+self.addEventListener(
+  'message',
+  (e: MessageEvent<{ type: string; send?: ArrayBuffer; receive?: ArrayBuffer }>) => {
+    if (e.data?.type !== 'setKeys' || !e.data.send || !e.data.receive) return;
+    const importKey = (raw: ArrayBuffer) =>
+      crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    void importKey(e.data.send).then((k) => (rigKeys.send = k));
+    void importKey(e.data.receive).then((k) => (rigKeys.receive = k));
+  }
+);
 
 /** Frames the whole-frame experiment could not encrypt or decrypt (dropped). */
 let wholeFrameFailures = 0;
@@ -43,6 +73,7 @@ let wholeFrameFailures = 0;
 function wholeFrame(op: 'encrypt' | 'decrypt') {
   return new TransformStream({
     async transform(frame: { data: ArrayBuffer }, controller) {
+      const rigKey = op === 'encrypt' ? rigKeys.send : rigKeys.receive;
       if (!rigKey) return;
       try {
         if (op === 'encrypt') {
@@ -147,6 +178,7 @@ scope.onrtctransform = (event: Event) => {
       .pipeTo(writable);
     return;
   }
+  if (o.kind === 'video' && o.webkitVideoMetadata) readable = readable.pipeThrough(webkitMetadata());
   // Built field by field: the platform transformer's members are prototype getters, so a spread
   // would copy none of them.
   if (o.side === 'sender' && o.doubleEncrypt) {

@@ -16,8 +16,8 @@ vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: async (id: string) => `Resolved ${id}`,
 }));
 vi.mock('$lib/utils/userAvatarCache', () => ({
-  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
-  releaseUserAvatarDisplayUrl: () => {},
+  resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplay: () => {},
 }));
 
 const mounted: (() => void)[] = [];
@@ -97,5 +97,15 @@ describe('CommentItem author', () => {
     const t = await render(comment({ association, userId: 'u2' }));
     expect(nameLine(t).textContent!.trim()).toBe('BDE');
     expect(t.querySelector('[data-revealed-author]')).toBeNull();
+  });
+
+  it('a moderation tombstone draws one line: no author, no text, no action (lead, 2026-11-04)', async () => {
+    const t = await render(
+      comment({ text: '', removedByModeration: true, canEdit: false, canDelete: false })
+    );
+    const line = t.querySelector('[data-testid="comment-removed-by-moderation"]')!;
+    expect(line.textContent!.trim()).toBe(m.post_comment_removed_by_moderation());
+    expect(t.querySelector('.text-xs.font-bold')).toBeNull();
+    expect(t.querySelectorAll('button')).toHaveLength(0);
   });
 });

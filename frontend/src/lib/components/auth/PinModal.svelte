@@ -1,7 +1,7 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { onMount, tick } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
-  import PinAccountField from './PinAccountField.svelte';
   import {
     LoaderCircle,
     FingerprintPattern,
@@ -71,8 +71,6 @@
      * local MLS state exists). When set, a "PIN changed elsewhere → recover" link is shown.
      */
     onRecoverPin?: () => void;
-    /** The signed-in account's id, filed with the PIN by a password manager (see `PinAccountField`). */
-    account?: string;
     /**
      * The PIN being typed, two-way bound so the caller EMPTIES it where it refuses an attempt - a
      * wrong PIN or no server to ask. The digits used to stay and the next ones were APPENDED: iPhone
@@ -99,7 +97,6 @@
     onForgotPinReset,
     resetWithheldNotice = '',
     onRecoverPin,
-    account = '',
     pin = $bindable(''),
   }: Props = $props();
 
@@ -277,7 +274,6 @@
       onsubmit={handleSubmit}
       class="m-auto flex w-full max-w-xs shrink-0 flex-col items-center gap-4 pt-2 pb-4"
     >
-      <PinAccountField {account} />
       <header class="flex flex-col items-center gap-2 text-center">
         <div
           class="bg-cn-ink flex size-16 items-center justify-center rounded-2xl border border-white/10 shadow-lg [@media(max-height:700px)]:hidden"
@@ -383,7 +379,7 @@
           <input
             id="encryption-pin"
             type="password"
-            autocomplete={isFirstSetup ? 'new-password' : 'current-password'}
+            autocomplete="one-time-code"
             inputmode={isFirstSetup ? 'numeric' : undefined}
             bind:value={pin}
             oninput={() => {
@@ -470,17 +466,17 @@
               >{m.auth_pin_reset_end()}
             </p>
             {#if confirmReset}
-              <button
-                type="button"
+              <Button
+                variant="danger"
+                class="w-full"
                 disabled={isLoading}
                 onclick={() => {
                   confirmReset = false;
                   onForgotPinReset?.();
                 }}
-                class="block w-full rounded-xl bg-red-500 py-2.5 text-center text-xs font-bold text-white transition-colors hover:bg-red-600 disabled:opacity-50"
               >
                 {m.auth_pin_reset_confirm()}
-              </button>
+              </Button>
             {:else}
               <button
                 type="button"
@@ -571,12 +567,7 @@
          ends 12 px above the unlock button rather than against it, where rows 7-9 read as covered
          BY the button at the largest text size (iPhone 12, v1.2.9-alpha.4). -->
     <div class="mx-auto flex w-full max-w-xs flex-col items-center gap-1 pt-3" data-pin-footer>
-      <button
-        type="submit"
-        form={FORM_ID}
-        disabled={isLoading}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 text-base font-semibold shadow-lg transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
-      >
+      <Button class="min-h-13 w-full" type="submit" form={FORM_ID} disabled={isLoading}>
         {#if isLoading}
           <LoaderCircle size={16} class="animate-spin" />
           {loadingStep || m.auth_pin_verifying()}
@@ -585,7 +576,7 @@
         {:else}
           {m.auth_pin_unlock()}
         {/if}
-      </button>
+      </Button>
 
       <button
         type="button"

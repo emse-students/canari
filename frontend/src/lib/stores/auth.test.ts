@@ -1,4 +1,12 @@
 // @vitest-environment happy-dom
+import { flushMacrotask } from '../../test/flush';
+import { AnswerBodyLostError, NotFromApiError } from '$lib/utils/apiJson';
+import {
+  isSessionQuestionOpen,
+  isTransportFailure,
+  RefreshFailedError,
+  TransientAnswerError,
+} from '$lib/utils/transportFailure';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -89,8 +97,105 @@ describe('the session-expired announcement', () => {
     setSessionExpiredHandler(handler);
     fetchMock.mockResolvedValue(answer(503));
 
-    await expect(refresh()).rejects.toThrow();
+    // TYPED AT THE THROW: a 503 is no verdict, so the boot keeps the session question open.
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(TransientAnswerError);
+    expect((outcome as TransientAnswerError).status).toBe(503);
+    expect((outcome as TransientAnswerError).code).toBeNull();
+    expect(isSessionQuestionOpen(outcome)).toBe(true);
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("carries core-service's 503 MAINTENANCE code as a field, so the boot names a maintenance", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    fetchMock.mockResolvedValue(
+      Response.json({ code: 'MAINTENANCE', message: 'Back soon' }, { status: 503 })
+    );
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(TransientAnswerError);
+    expect((outcome as TransientAnswerError).code).toBe('MAINTENANCE');
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it.each([408, 429])('reads a %i as no verdict', async (status) => {
+    fetchMock.mockResolvedValue(answer(status));
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(TransientAnswerError);
+  });
+
+  it.each([404, 410])(
+    "reads the app's own %i (Nest's envelope) as a verdict on the request: the base type, question closed",
+    async (status) => {
+      const handler = vi.fn();
+      setSessionExpiredHandler(handler);
+      fetchMock.mockResolvedValue(answer(status));
+
+      const outcome = await refresh().catch((e: unknown) => e);
+      expect(outcome).toBeInstanceOf(RefreshFailedError);
+      expect(outcome).not.toBeInstanceOf(TransientAnswerError);
+      expect(outcome).not.toBeInstanceOf(SessionExpiredError);
+      expect(isSessionQuestionOpen(outcome)).toBe(false);
+      expect(handler).not.toHaveBeenCalled();
+    }
+  );
+
+  it("reads a captive portal's 200 text/html as NO answer, never a SyntaxError", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    fetchMock.mockResolvedValue(
+      new Response('<html>Sign in to the hotel Wi-Fi</html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      })
+    );
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(NotFromApiError);
+    expect(isTransportFailure(outcome)).toBe(true);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('reads a 200 whose body is lost on the way as NO answer, never a verdict', async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    fetchMock.mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.error(new TypeError('network error'));
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    );
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(AnswerBodyLostError);
+    expect(isTransportFailure(outcome)).toBe(true);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("carries the operator's maintenance text, and only the operator's", async () => {
+    fetchMock.mockResolvedValue(
+      Response.json(
+        { code: 'MAINTENANCE', message: 'Back at noon', maintenanceMessage: 'Back at noon' },
+        { status: 503 }
+      )
+    );
+    const withText = await refresh().catch((e: unknown) => e);
+    expect((withText as TransientAnswerError).maintenanceMessage).toBe('Back at noon');
+
+    fetchMock.mockResolvedValue(
+      Response.json(
+        { code: 'MAINTENANCE', message: 'Canari is under maintenance.', maintenanceMessage: null },
+        { status: 503 }
+      )
+    );
+    const without = await refresh().catch((e: unknown) => e);
+    expect((without as TransientAnswerError).maintenanceMessage).toBeNull();
   });
 
   it("stays silent on an edge's HTML 403 - a WAF or a portal says nothing about the cookie", async () => {
@@ -105,6 +210,7 @@ describe('the session-expired announcement', () => {
 
     const outcome = await refresh().catch((e: unknown) => e);
     expect(outcome).not.toBeInstanceOf(SessionExpiredError);
+    expect(outcome).toBeInstanceOf(TransientAnswerError);
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -117,6 +223,7 @@ describe('the session-expired announcement', () => {
 
     const outcome = await refresh().catch((e: unknown) => e);
     expect(outcome).not.toBeInstanceOf(SessionExpiredError);
+    expect(outcome).toBeInstanceOf(TransientAnswerError);
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -219,6 +326,29 @@ describe('the fetch a refresh is made with', () => {
 });
 
 /**
+ * ONE LINE PER REFRESH SENT, NOT ONE PER CALLER (production 1.5.1: 653 `[A] token→refresh` lines
+ * for 51 refreshes). The reason rides the request's own line; a caller that joins says nothing.
+ */
+describe('what a burst of callers without a usable token logs', () => {
+  it('logs the refresh that leaves, once, with its reason - and nothing per caller', async () => {
+    const claims = btoa(JSON.stringify({ sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 30 }));
+    setToken(`h.${claims}.s`);
+    fetchMock.mockResolvedValue(answer(200));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await Promise.all([getToken(), getToken(), getToken(), getToken(), getToken()]);
+
+    const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith('[A] '));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(lines.filter((l) => l.includes('→refresh'))).toEqual([]);
+    const sent = lines.filter((l) => l.startsWith('[A] refresh→ '));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatch(/\(token exp=\d+s\)$/);
+    log.mockRestore();
+  });
+});
+
+/**
  * THE TOKEN MUST NAME THE LOCAL IDENTITY (bench phone, 2026-10-10: MLS identity Alpha, token Delta,
  * every request a 403 and the outbox re-posting 23 times). The comparison is made where a token is
  * obtained, so it is tested here: refused, not published, not asked again, lifted only by sign-out.
@@ -227,7 +357,10 @@ describe('a token for another account than the local identity', () => {
   /** A refresh answer whose token names `sub`. */
   function answerFor(sub: string): Response {
     const claims = btoa(JSON.stringify({ sub, exp: Math.floor(Date.now() / 1000) + 3600 }));
-    return new Response(JSON.stringify({ access_token: `h.${claims}.s` }), { status: 200 });
+    return new Response(JSON.stringify({ access_token: `h.${claims}.s` }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
   }
 
   it('throws IdentitySplitError, publishes nothing and keeps the MLS state', async () => {
@@ -271,7 +404,7 @@ describe('a refresh superseded by a sign-in as another account', () => {
     fetchMock.mockImplementation(async () => {
       // The sign-in saves the new identity while the request is out.
       currentUserId.mockReturnValue('new-user');
-      return new Response(JSON.stringify({ access_token: claims('old-user') }), { status: 200 });
+      return Response.json({ access_token: claims('old-user') });
     });
 
     await expect(refresh()).resolves.toBe(claims('new-user'));
@@ -293,12 +426,12 @@ describe('the sign-out handler', () => {
     setToken(liveToken());
     fetchMock.mockResolvedValue(new Response('', { status: 200 }));
     const seen: { requests: number; socketCookie: boolean }[] = [];
-    setSignOutHandler(() =>
+    setSignOutHandler(() => {
       seen.push({
         requests: fetchMock.mock.calls.length,
         socketCookie: document.cookie.includes('canari_ws_token=h'),
-      })
-    );
+      });
+    });
 
     await clearAuth();
     setSignOutHandler(null);
@@ -306,6 +439,33 @@ describe('the sign-out handler', () => {
     // Once, with nothing torn down yet: the teardown deregisters the push token with that credential.
     expect(seen).toEqual([{ requests: 0, socketCookie: true }]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for the handlers own work (the push deregistration) before it revokes the session', async () => {
+    const { setSignOutHandler } = await import('$lib/stores/auth');
+    setToken(liveToken());
+    const order: string[] = [];
+    let release!: () => void;
+    const deregistration = new Promise<void>((resolve) => {
+      release = resolve;
+    }).then(() => {
+      order.push('push deregistered');
+    });
+    fetchMock.mockImplementation(async (url: unknown) => {
+      order.push(`fetch ${String(url)}`);
+      return new Response('', { status: 200 });
+    });
+    setSignOutHandler(() => deregistration);
+
+    const signingOut = clearAuth();
+    // The revocation must not have been sent while the deregistration is still pending.
+    await flushMacrotask();
+    expect(order).toEqual([]);
+    release();
+    await signingOut;
+    setSignOutHandler(null);
+
+    expect(order).toEqual(['push deregistered', expect.stringContaining('/api/auth/logout')]);
   });
 
   it('does not stop the sign-out when the handler throws', async () => {

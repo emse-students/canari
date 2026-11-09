@@ -30,9 +30,24 @@ export interface AnswerOption {
 
 /** The only part of a question this reader needs. */
 export interface AnswerQuestion {
+  /** Read for a priced grid, to find its lines among the answer's. */
+  id?: string;
   options?: AnswerOption[];
-  /** Read for one type only, `file`, whose stored value is an id and never something to show. */
+  /** Read for `file`, whose stored value is an id, and for `product_grid`. */
   type?: string;
+  /** A priced grid's axes: its answer is keyed `rowId:colId`, and these name the ids. */
+  productGrid?: { rows: AnswerOption[]; columns: AnswerOption[] };
+}
+
+/**
+ * One ordered cell of a priced grid AS CHARGED (`submissions.lines`): read before the grid itself,
+ * so an answer says what was ordered even after the creator renamed or deleted a row.
+ */
+export interface AnswerGridLine {
+  itemId: string;
+  rowLabel: string;
+  colLabel: string;
+  quantity: number;
 }
 
 /**
@@ -67,6 +82,35 @@ function oneValue(value: unknown, options: AnswerOption[] | undefined): string {
   return optionLabel(String(value), options);
 }
 
+/** One ordered cell: `Vert / M x2`. */
+function gridCellText(rowLabel: string, colLabel: string, quantity: number): string {
+  return `${rowLabel} / ${colLabel} x${quantity}`;
+}
+
+/** A priced grid's answer: its charged lines when the answer has them, else the grid's labels. */
+function gridText(
+  answer: unknown,
+  item: AnswerQuestion,
+  lines: readonly AnswerGridLine[] | null | undefined
+): string {
+  const charged = (lines ?? []).filter((line) => line.itemId === item.id);
+  if (charged.length > 0) {
+    return charged.map((l) => gridCellText(l.rowLabel, l.colLabel, l.quantity)).join('; ');
+  }
+  if (answer === null || typeof answer !== 'object' || Array.isArray(answer)) return '';
+  const label = (axis: AnswerOption[] | undefined, id: string) =>
+    axis?.find((entry) => entry.id === id)?.label ?? id;
+  return Object.entries(answer as Record<string, unknown>)
+    .filter(([, quantity]) => typeof quantity === 'number' && quantity > 0)
+    .map(([key, quantity]) => {
+      const cut = key.indexOf(':');
+      const row = label(item.productGrid?.rows, key.slice(0, cut));
+      const col = label(item.productGrid?.columns, key.slice(cut + 1));
+      return gridCellText(row, col, quantity as number);
+    })
+    .join('; ');
+}
+
 /**
  * The submitter's answer to one question, as text - empty when they did not answer it.
  *
@@ -81,9 +125,19 @@ function oneValue(value: unknown, options: AnswerOption[] | undefined): string {
  *
  * A FILE answer reads as `words.file` or `words.fileDeleted`, never as its id. A caller that reads
  * one without supplying the words is a defect, and it THROWS rather than printing the id.
+ *
+ * A PRICED GRID (`product_grid`) reads `Vert / M x2; Noir / L x1`, from `lines` - what was charged -
+ * when the caller has them, else from the grid's own labels.
  */
-export function answerText(answer: unknown, item: AnswerQuestion, words?: AnswerWords): string {
+export function answerText(
+  answer: unknown,
+  item: AnswerQuestion,
+  words?: AnswerWords,
+  lines?: readonly AnswerGridLine[] | null
+): string {
   if (answer == null || answer === '') return '';
+
+  if (item.type === 'product_grid') return gridText(answer, item, lines);
 
   if (item.type === 'file') {
     if (!words) throw new Error('answerText: a file answer is read with the words of its reader');

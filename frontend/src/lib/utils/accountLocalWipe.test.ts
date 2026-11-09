@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { publishQueueDbName } from '$lib/posts/publishQueue/publishQueueStore';
+import { tabCommitDbName } from './chat/tabCommitStore';
 import { loadDeviceKey, saveDeviceKey } from './deviceKeyVault';
 import {
   accountIndexedDbNames,
@@ -14,6 +16,7 @@ import {
   type AccountLiveness,
 } from './accountLocalWipe';
 import { ACCOUNT_KEY, keystoreAlias } from './accountLocalKeys';
+import { isDeletedAccountHere } from './deletedAccountMarker';
 
 /** Nobody signed in here but `liveId`, and no sign-in in flight. */
 function settledAs(liveId: string | null): AccountLiveness {
@@ -111,6 +114,24 @@ describe('wipeDeletedAccountLocalData', () => {
     expect(order.join(' ')).not.toContain('CanariDBLog');
   });
 
+  it("deletes that account's publish queue: its media wait there in the clear", () => {
+    expect(accountIndexedDbNames('user-a')).toContain(publishQueueDbName('user-a'));
+    expect(publishQueueDbName('user-a')).toBe('CanariDBPublish_user-a');
+  });
+
+  it("deletes that account's handed-over tab commits: group names and user ids wait there", () => {
+    expect(accountIndexedDbNames('user-a')).toContain(tabCommitDbName('user-a'));
+    expect(tabCommitDbName('user-a')).toBe('CanariDBTabCommit_user-a');
+  });
+
+  it("a revoked device's account wipe does not mark the account deleted - it may sign in here again", async () => {
+    // Round 6 of the review of #2919: the wipe of ONE account of a revoked device another account uses.
+    await wipeDeletedAccountLocalData('user-c', { ...AFTER_DELETE, accountStillExists: true });
+    expect(isDeletedAccountHere('user-c')).toBe(false);
+    await wipeDeletedAccountLocalData('user-d', AFTER_DELETE);
+    expect(isDeletedAccountHere('user-d')).toBe(true);
+  });
+
   it("drops that account's vault slot and leaves another account's, and the preferences", async () => {
     localStorage.setItem('canari_theme', 'dark');
     await saveDeviceKey('user-a', KEY_A);
@@ -126,9 +147,21 @@ describe('wipeDeletedAccountLocalData', () => {
     expect(invokeMock).not.toHaveBeenCalled();
     tauri = true;
     await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
-    expect(invokeMock).toHaveBeenCalledTimes(3);
+    // Six steps, plus the seed step's question whether another account lives here.
+    expect(invokeMock).toHaveBeenCalledTimes(7);
+    // The account's MLS states - its parked one, and the slot only when its record names it.
+    expect(invokeMock).toHaveBeenCalledWith('delete_user_mls_state', { userId: 'user-a' });
     // The push side's plaintext files too - gated natively on the owner `push_context.json` names.
     expect(invokeMock).toHaveBeenCalledWith('delete_user_push_files', { userId: 'user-a' });
+    // Its Graine seeds in the push mirror - the entries its label alone names.
+    // Alone on the install (no other account recorded, no other MLS state): its entries of unknown
+    // writer go too, since nothing else will ever remove them for an account that is gone.
+    expect(invokeMock).toHaveBeenCalledWith('forget_account_graine_seeds', {
+      userId: 'user-a',
+      aloneOnInstall: true,
+    });
+    // And this account's waiting quick replies - its lines only, never the whole file.
+    expect(invokeMock).toHaveBeenCalledWith('delete_user_quick_replies', { userId: 'user-a' });
     // The data is gone, so the at-rest marker goes: the explicit reset that frees the keystore entry.
     expect(invokeMock).toHaveBeenCalledWith('cle_au_repos_oublier', { userId: 'user-a' });
     expect(invokeMock).toHaveBeenCalledWith('delete_user_database', {
@@ -164,6 +197,65 @@ describe('wipeDeletedAccountLocalData', () => {
     });
     expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([
       'the native push files',
+    ]);
+    expect(pendingDeletedAccountWipes()).toEqual(['user-a']);
+    invokeMock.mockImplementation(async () => {});
+  });
+
+  it('keeps the seeds of unknown writer when another account lives on the install', async () => {
+    tauri = true;
+    // Another account's device identity is recorded here: it may have written them.
+    localStorage.setItem(ACCOUNT_KEY.deviceId('user-b'), 'device-b');
+    await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
+    expect(invokeMock).toHaveBeenCalledWith('forget_account_graine_seeds', {
+      userId: 'user-a',
+      aloneOnInstall: false,
+    });
+    localStorage.removeItem(ACCOUNT_KEY.deviceId('user-b'));
+    invokeMock.mockClear();
+    // No other identity recorded, but the native side holds another account's MLS state.
+    invokeMock.mockImplementation(async (cmd: string) =>
+      cmd === 'mls_other_accounts_present' ? true : undefined
+    );
+    await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
+    expect(invokeMock).toHaveBeenCalledWith('forget_account_graine_seeds', {
+      userId: 'user-a',
+      aloneOnInstall: false,
+    });
+    // And an answer the native side cannot give is read as "present": less is erased.
+    invokeMock.mockClear();
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'mls_other_accounts_present') throw new Error('no answer');
+    });
+    await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
+    expect(invokeMock).toHaveBeenCalledWith('forget_account_graine_seeds', {
+      userId: 'user-a',
+      aloneOnInstall: false,
+    });
+    invokeMock.mockImplementation(async () => {});
+  });
+
+  it('reports a seed-mirror step that failed, so the wipe stays owed', async () => {
+    tauri = true;
+    markDeletedAccountWipePending('user-a');
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'forget_account_graine_seeds') throw new Error('no native cache key');
+    });
+    expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([
+      'the mirrored Graine seeds',
+    ]);
+    expect(pendingDeletedAccountWipes()).toEqual(['user-a']);
+    invokeMock.mockImplementation(async () => {});
+  });
+
+  it('reports a quick-reply removal that failed, so the wipe stays owed', async () => {
+    tauri = true;
+    markDeletedAccountWipePending('user-a');
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'delete_user_quick_replies') throw new Error('no cache key - nothing removed');
+    });
+    expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([
+      'the waiting quick replies',
     ]);
     expect(pendingDeletedAccountWipes()).toEqual(['user-a']);
     invokeMock.mockImplementation(async () => {});

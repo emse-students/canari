@@ -4,7 +4,7 @@
  * bench, docs/wiki/frontend/media-frame.md). The judgements are `threadAnchor.ts`'s; this is only
  * the wiring that feeds them the numbers.
  */
-import { anchorShift, firstRowBelow, shouldFollowThreadBottom, threadReach } from './threadAnchor';
+import { anchorShift, firstRowBelow, threadGrowthResponse, threadReach } from './threadAnchor';
 
 /** What the pane knows about itself at the moment a change is observed. */
 export interface ThreadGrowthState {
@@ -69,22 +69,25 @@ export function observeThreadGrowth(
   const follow = () => {
     const now = state();
     const currentReach = threadReach(scroller);
-    const shouldFollow = shouldFollowThreadBottom({
+    const response = threadGrowthResponse({
       previousReach,
       currentReach,
       wasNearBottom: now.wasNearBottom,
       isLoadingOlder: now.isLoadingOlder,
       isEntering: now.isEntering,
     });
-    const shift = shouldFollow
-      ? 0
-      : anchorShift({
-          previousTop: anchor?.top ?? null,
-          currentTop: anchor?.row.isConnected ? anchor.row.offsetTop : null,
-          isEntering: now.isEntering,
-        });
+    // THE ROW ANCHOR IS FOR A READER IN HISTORY ONLY: for one at the bottom, keeping the top row in
+    // place is what scrolled the thread up when a `svh`-capped photo shrank under the keyboard.
+    const shift =
+      response === 'keep-row'
+        ? anchorShift({
+            previousTop: anchor?.top ?? null,
+            currentTop: anchor?.row.isConnected ? anchor.row.offsetTop : null,
+            isEntering: now.isEntering,
+          })
+        : 0;
     previousReach = currentReach;
-    if (shouldFollow) scroller.scrollTop = scroller.scrollHeight;
+    if (response === 'follow-bottom') scroller.scrollTop = scroller.scrollHeight;
     // `loadOlderGroups` also restores the IndexedDB page's position, by absolute assignment after
     // its own `await tick()`. That assignment is computed from its own captured `scrollTop` and
     // therefore lands on the same pixel whether or not this ran first - it cannot double-count.

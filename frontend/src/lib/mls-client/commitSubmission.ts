@@ -246,6 +246,27 @@ export class CommitOutcomeUnknownError extends TransportFailureError {
 }
 
 /**
+ * THE SERVER ACCEPTED the commit of `groupId` staged on `baseEpoch`, and merging it HERE then
+ * failed. The commit LANDED - the members have it - whatever this device's state says, so a caller
+ * must never read this as a refusal: the tree this device still holds is the one before the commit.
+ * The original failure is the `cause`, and its text stays in the message.
+ */
+export class AcceptedCommitNotMergedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly baseEpoch: number,
+    cause: unknown
+  ) {
+    super(
+      `the commit of ${groupId.slice(0, 8)}... staged on epoch ${baseEpoch} was ACCEPTED by the server ` +
+        `and its local merge failed: ${String(cause)}`,
+      { cause }
+    );
+    this.name = 'AcceptedCommitNotMergedError';
+  }
+}
+
+/**
  * NOTHING WAS STAGED: `groupId` still holds an EARLIER commit whose outcome is unknown, and no commit
  * is built on top of one (`runCommitTransaction`). A {@link CommitOutcomeUnknownError} for every
  * caller that only needs "retry when the server answers"; its own type for the one that must tell a
@@ -313,6 +334,22 @@ export class FollowerTabCommitError extends Error {
         'commits, so nothing was staged'
     );
     this.name = 'FollowerTabCommitError';
+  }
+}
+
+/**
+ * A key package was asked of a tab whose copy of the MLS state is not the leader's (a follower, or
+ * a leader promoted in place before its reload), and refused before anything was minted: a key
+ * package's private half would live only in that copy, so a peer's Welcome to it could never be
+ * opened by the state that is kept. Same fact as {@link FollowerTabCommitError} (`refusesCommitsHere`).
+ */
+export class FollowerTabKeyPackageError extends Error {
+  constructor() {
+    super(
+      'a key package was asked of a tab whose MLS copy is not the leader copy - only that copy may ' +
+        'mint one, so nothing was minted or published'
+    );
+    this.name = 'FollowerTabKeyPackageError';
   }
 }
 

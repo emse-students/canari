@@ -122,9 +122,11 @@ export function isRetryableMediaFailure(cause: MediaFailureCause): boolean {
 /**
  * The one log line of a media that could not be shown, at the level its cause deserves.
  *
- * A purge or a 404 is the server's ANSWER about an object, expected and permanent: a `warn`. Every
- * other cause is a failure of this path and is logged as one. The cause leads the line so a log
- * read in the field separates them without opening the error.
+ * A purge or a 404 is the server's ANSWER about an object, expected and permanent: a `warn`. A
+ * request that got NO answer (`unreachable`, typed at the throw as `MediaUnreachableError`) is the
+ * expected state of an absent link, not a failure of this path: a `warn` naming what is owed - the
+ * card's Retry - without a stack. Every other cause is a failure of this path and is logged as one.
+ * The cause leads the line so a log read in the field separates them without opening the error.
  */
 export function logMediaFailure(
   where: string,
@@ -133,7 +135,13 @@ export function logMediaFailure(
   err: unknown
 ): void {
   const line = `[${where}] media not shown (${cause})`;
-  if (isRetryableMediaFailure(cause)) console.error(line, mediaId, err);
+  if (cause === 'unreachable') {
+    console.warn(
+      `${line} - the media service got no answer, Retry draws it again`,
+      mediaId,
+      String(err)
+    );
+  } else if (isRetryableMediaFailure(cause)) console.error(line, mediaId, err);
   else console.warn(line, mediaId, err);
 }
 
@@ -169,7 +177,13 @@ export class MediaUploadError extends ApiRefusalError {
      * The refusal says the STAGED SESSION is gone (a chunk route answering 404 after a restart or a
      * sweep). Not a verdict on the file: a fresh session mends it, so it is retried.
      */
-    readonly sessionLost = false
+    readonly sessionLost = false,
+    /**
+     * media-service's OWN 429 for the daily `chat-reel` budget, read from the `code` its JSON body
+     * carries ({@link CHAT_REEL_OVER_BUDGET}) - a verdict for today, never retried (RC-13). Any other
+     * 429 (an open-session limit, the edge) has no such code and stays transient.
+     */
+    readonly overBudget = false
   ) {
     super(status, null, message);
     this.name = 'MediaUploadError';
@@ -193,8 +207,29 @@ export async function uploadRefusalFrom(
     res.status,
     `${what} (${res.status}${origin === 'edge' ? ', answered by the edge, not the app' : ''})${excerpt}`,
     origin,
-    opts.sessionLost === true
+    opts.sessionLost === true,
+    res.status === 429 && origin === 'gateway' && isOverBudgetBody(text)
   );
+}
+
+/**
+ * The `code` of media-service's 429 for the daily `chat-reel` budget (RC-13) - the ONE 429 that is
+ * a verdict. The server's copy is `CHAT_REEL_OVER_BUDGET` in `apps/media-service/src/media/media.service.ts`.
+ */
+export const CHAT_REEL_OVER_BUDGET = 'chat-reel-over-budget';
+
+/** Whether an application JSON body carries the over-budget code. A body that is not JSON does not. */
+export function isOverBudgetBody(text: string): boolean {
+  try {
+    const body: unknown = JSON.parse(text);
+    return (
+      typeof body === 'object' &&
+      body !== null &&
+      (body as { code?: unknown }).code === CHAT_REEL_OVER_BUDGET
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** The application's own statuses that say no to THIS upload and that no retry changes. */
@@ -215,13 +250,18 @@ const REFUSED_BY_THE_APP = [400, 403, 404, 422];
  * - `refused`: the application's own 400, 403, 404 or 422, which a retry cannot mend - except a 404
  *   that says the staged chunk session is gone (`sessionLost`): a new session mends that.
  *
- * Everything else - 401 (renewed once by `fetchUpload`), 408, 425, 429, 5xx, a deadline, a network
+ * - `over-budget`: media-service's own 429 carrying the daily `chat-reel` budget's code (RC-13).
+ *
+ * Everything else - 401 (renewed once by `fetchUpload`), 408, 425, any other 429, 5xx, a deadline, a network
  * error - is `null`, retried with backoff.
  */
-export function uploadRefusalCause(err: unknown): 'too-large' | 'blocked' | 'refused' | null {
+export function uploadRefusalCause(
+  err: unknown
+): 'too-large' | 'blocked' | 'refused' | 'over-budget' | null {
   if (!(err instanceof MediaUploadError)) return null;
   const { status } = err;
   if (status === 413) return 'too-large';
+  if (err.overBudget) return 'over-budget';
   if (err.origin === 'edge') return status === 403 ? 'blocked' : null;
   if (err.sessionLost) return null;
   return REFUSED_BY_THE_APP.includes(status) ? 'refused' : null;

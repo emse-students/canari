@@ -14,7 +14,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
-import { ChannelService } from './channel.service';
+import { Throttle } from '@nestjs/throttler';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
+import { ChannelService, roleLabelOfBody } from './channel.service';
 import {
   type AcceptWorkspaceInviteDto,
   type ChannelInviteDto,
@@ -38,9 +40,16 @@ import {
   CHANNEL_NOTIFICATION_LEVELS,
   CHANNEL_WRITE_POLICIES,
 } from './dto/channel.dto';
-import { type SetRolePermissionDto } from './dto/channel-permission.dto';
+import { type SetRoleLabelDto, type SetRolePermissionDto } from './dto/channel-permission.dto';
 import { LiveGraineSessionsDto } from './dto/live-graine-sessions.dto';
 import { CHANNEL_MESSAGE_RETENTION_DAYS } from './channel-retention.scheduler';
+
+/**
+ * Releases one user may announce per minute. A release is one per key group a removal touched and
+ * its actor could not commit - a community kick releases the community's and each private salon's -
+ * so an honest burst is a handful; the bound keeps a loop from fanning events out to every member.
+ */
+export const REMOVAL_RELEASES_PER_MINUTE = 60;
 
 /** Manages workspace and channel resources including membership and messages. */
 @Controller('channels')
@@ -135,14 +144,22 @@ export class ChannelsController {
    * membership, which only lives here; chat-delivery's own MLS routes gate on a `dm_group_members`
    * row, and a distribution group has none by construction. See
    * `docs/wiki/protocols/channel-encryption.md`.
+   *
+   * `?deviceId=` asks for that device's OWN seat in the same answer, read after the base, so a
+   * joiner never judges a base against a seat older than it (section 20, one door at a time).
    */
   @UseGuards(NginxAuthGuard)
   @Get('workspaces/:workspaceId/distribution-group')
   getDistributionGroup(
     @Headers('x-user-id') xUserId: string,
-    @Param('workspaceId') workspaceId: string
+    @Param('workspaceId') workspaceId: string,
+    @Query('deviceId') deviceId?: string
   ) {
-    return this.service.getDistributionGroupForMember(workspaceId, xUserId.trim().toLowerCase());
+    return this.service.getDistributionGroupForMember(
+      workspaceId,
+      xUserId.trim().toLowerCase(),
+      deviceId
+    );
   }
 
   /** Publishes the GroupInfo a member just committed on the community's distribution group. */
@@ -181,16 +198,19 @@ export class ChannelsController {
    *
    * A public salon is refused here rather than answered with the community's group: it has none of
    * its own, on purpose, and pretending otherwise would hide the distinction from the client.
+   * `?deviceId=` as on the workspace route.
    */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/distribution-group')
   getChannelDistributionGroup(
     @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string
+    @Param('channelId') channelId: string,
+    @Query('deviceId') deviceId?: string
   ) {
     return this.service.getChannelDistributionGroupForMember(
       channelId,
-      xUserId.trim().toLowerCase()
+      xUserId.trim().toLowerCase(),
+      deviceId
     );
   }
 
@@ -392,12 +412,37 @@ export class ChannelsController {
   removeMemberFromChannel(
     @Headers('x-user-id') xUserId: string,
     @Param('channelId') channelId: string,
-    @Param('userId') userId: string
+    @Param('userId') userId: string,
+    @Query('actorDevice') actorDevice?: string
   ) {
+    // `actorDevice`: the actor's device that commits the key-group Remove (`committingDevice`).
     return this.service.removeMemberFromChannel(
       channelId,
       userId.trim().toLowerCase(),
-      xUserId.trim().toLowerCase()
+      xUserId.trim().toLowerCase(),
+      actorDevice
+    );
+  }
+
+  /**
+   * The actor of a private-salon revoke RELEASES the key-group Remove it claimed and could not
+   * commit (`releaseRemoval`): the salon's remaining members elect a committer on this event only.
+   * Throttled per user ({@link REMOVAL_RELEASES_PER_MINUTE}).
+   */
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: REMOVAL_RELEASES_PER_MINUTE, ttl: 60_000 } })
+  @Post(':channelId/members/:userId/removal-released')
+  releaseChannelRemoval(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Param('userId') userId: string,
+    @Query('actorDevice') actorDevice?: string
+  ) {
+    return this.service.releaseChannelRemoval(
+      channelId,
+      userId.trim().toLowerCase(),
+      xUserId.trim().toLowerCase(),
+      actorDevice
     );
   }
 
@@ -459,12 +504,36 @@ export class ChannelsController {
   kickFromWorkspace(
     @Headers('x-user-id') xUserId: string,
     @Param('workspaceId') workspaceId: string,
-    @Param('userId') userId: string
+    @Param('userId') userId: string,
+    @Query('actorDevice') actorDevice?: string
   ) {
     return this.service.kickFromWorkspace(
       workspaceId,
       userId.trim().toLowerCase(),
-      xUserId.trim().toLowerCase()
+      xUserId.trim().toLowerCase(),
+      actorDevice
+    );
+  }
+
+  /**
+   * The actor of a community kick RELEASES the key-group Remove it claimed and could not commit
+   * (`releaseRemoval`): the community's remaining members elect a committer on this event only.
+   * Throttled per user ({@link REMOVAL_RELEASES_PER_MINUTE}).
+   */
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: REMOVAL_RELEASES_PER_MINUTE, ttl: 60_000 } })
+  @Post('workspaces/:workspaceId/members/:userId/removal-released')
+  releaseWorkspaceRemoval(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Param('userId') userId: string,
+    @Query('actorDevice') actorDevice?: string
+  ) {
+    return this.service.releaseWorkspaceRemoval(
+      workspaceId,
+      userId.trim().toLowerCase(),
+      xUserId.trim().toLowerCase(),
+      actorDevice
     );
   }
 
@@ -820,6 +889,24 @@ export class ChannelsController {
     return this.service
       .liveGraineSessions(xUserId.trim().toLowerCase(), body.sessionIds ?? [])
       .then((live) => ({ live, retentionDays: CHANNEL_MESSAGE_RETENTION_DAYS }));
+  }
+
+  /**
+   * Gives a role the community's own display name, or resets it (`label` null or blank).
+   * Administrators only; label only - the role's identity and permissions never change.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Patch('roles/:roleId/label')
+  setRoleLabel(
+    @Headers('x-user-id') xUserId: string,
+    @Param('roleId') roleId: string,
+    @Body() body: SetRoleLabelDto
+  ) {
+    return this.service.setRoleDisplayLabel(
+      roleId,
+      xUserId.trim().toLowerCase(),
+      roleLabelOfBody(body)
+    );
   }
 
   /**

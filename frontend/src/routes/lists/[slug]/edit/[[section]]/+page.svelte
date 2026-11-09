@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -9,17 +10,45 @@
     getAssociationBySlug,
     listMembers,
     getMyBdeReach,
+    canTakePayments,
+    keepPaymentsReady,
+    grantableFlags,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
-  import { Building2, Users, TriangleAlert, CalendarClock } from '@lucide/svelte';
+  import {
+    Building2,
+    Users,
+    TriangleAlert,
+    CalendarClock,
+    FolderLock,
+    ClipboardList,
+    Handshake,
+    Inbox,
+    CreditCard,
+    Users as UsersIcon,
+    HandCoins,
+    Share2,
+  } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
   import EditMembersTab from '$lib/components/associations/edit/EditMembersTab.svelte';
   import EditDangerTab from '$lib/components/associations/edit/EditDangerTab.svelte';
+  import AssociationDocumentManager from '$lib/components/associations/AssociationDocumentManager.svelte';
+  import EditFormsTab from '$lib/components/associations/edit/EditFormsTab.svelte';
+  import EditPartnershipsTab from '$lib/components/associations/edit/EditPartnershipsTab.svelte';
+  import EditProposalsTab from '$lib/components/associations/edit/EditProposalsTab.svelte';
   import EditBookingsTab from '$lib/components/bookings/organiser/EditBookingsTab.svelte';
+  import EditBoutiqueTab from '$lib/components/associations/edit/EditBoutiqueTab.svelte';
+  import EditAchatsTab from '$lib/components/associations/edit/EditAchatsTab.svelte';
+  import EditCotisationsTab from '$lib/components/associations/edit/EditCotisationsTab.svelte';
+  import EditDelegationTab from '$lib/components/associations/edit/EditDelegationTab.svelte';
+  import {
+    activePaymentProvider,
+    loadActivePaymentProvider,
+  } from '$lib/associations/activePaymentProvider.svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import type { HubIcon, HubRow } from '$lib/components/navigation/breadcrumb';
   import {
@@ -27,6 +56,7 @@
     editRights,
     editSectionHref,
     editTrail,
+    mayEnterEditArea,
     mayOpenEditSection,
     parseEditSection,
     visibleEditSections,
@@ -42,7 +72,7 @@
   /**
    * The open section is a ROUTE segment (`/lists/<slug>/edit/<section>`), never local state: Back
    * goes up one level, a reload keeps the place. `null` is the hub; a segment that is not one of the
-   * list's four sections never reaches here - `+page.ts` redirects it.
+   * list's sections never reaches here - `+page.ts` redirects it.
    */
   let editSection = $derived<EditSection | null>(parseEditSection(page.params.section));
 
@@ -55,8 +85,8 @@
    * super-admin - whom the server grants `MANAGE_MEMBERS` on every association - was refused the
    * controls here. That omission is the exact drift `mayActOnAssociation` exists to end.
    *
-   * The super-admin tier is THIS list's (WP6c step 2): `MANAGE_ASSO` in the BDE of a space it
-   * reaches, read from the server's `me/bde-reach` - a BDE of another space holds nothing here.
+   * The super-admin tier is THIS list's: `MANAGE_ASSO` in its parent BDE (WP-D2), read from the
+   * server's `me/bde-reach` - another BDE holds nothing here.
    */
   let superAdminOf = $state<string[]>([]);
   let isSuperAdminUser = $derived(!!list && superAdminOf.includes(list.id));
@@ -67,21 +97,43 @@
   });
   let rights = $derived(editRights(permissionContext, 'list'));
   let canManageMembers = $derived(rights.members);
+  let canManageProducts = $derived(rights.products);
   /**
-   * Archiving is `PATCH :id { archived }`, admitted at `MANAGE_MEMBERS`; deleting is `DELETE :id`
+   * A list has no Lydia account of its own: it collects through the association that ACCEPTED its
+   * payment delegation (owner, 2026-11-02). Readiness is the server's `paymentsReady`, and every
+   * not-ready banner points at the delegation section, never at a payout account.
+   */
+  let onlinePaymentsReady = $derived(
+    !!list && canTakePayments(list, activePaymentProvider.current)
+  );
+  /**
+   * Archiving is `PATCH :id { archived }`, admitted at `MANAGE_MEMBERS` (`rights.archive`);
+   * deleting is `DELETE :id`
    * behind a bare global-admin guard. The tab opens on the first, the delete card carries the
    * second - see the same pair on the association edit page.
    */
-  let canArchiveList = $derived(canManageMembers);
+  let canArchiveList = $derived(rights.archive);
   /** Deleting is `DELETE :id`: a global admin, or MANAGE_ASSO in the BDE governing this list. */
   let canDeleteList = $derived(isGlobalAdminUser || isSuperAdminUser);
 
   const slug = $derived((page.params as Record<string, string>).slug);
+  /** Where a list's not-ready banners send its managers: the delegation section. */
+  let delegationHref = $derived(
+    resolve(internalPath(editSectionHref(slug, 'delegation', '/lists')))
+  );
 
   const SECTION_ICONS: Partial<Record<EditSection, HubIcon>> = {
     profile: Building2,
     members: Users,
+    payments: CreditCard,
+    documents: FolderLock,
+    achats: UsersIcon,
+    cotisations: HandCoins,
+    delegation: Share2,
+    formulaires: ClipboardList,
     reservations: CalendarClock,
+    partnerships: Handshake,
+    republications: Inbox,
     danger: TriangleAlert,
   };
 
@@ -90,10 +142,26 @@
     switch (section) {
       case 'members':
         return m.common_members_label();
+      case 'payments':
+        return m.asso_edit_tab_payments();
+      case 'achats':
+        return m.asso_edit_tab_achats();
+      case 'cotisations':
+        return m.asso_edit_tab_cotisations();
+      case 'delegation':
+        return m.asso_edit_tab_delegation();
       case 'danger':
         return m.asso_edit_tab_danger();
       case 'reservations':
         return m.bookings_tab_label();
+      case 'documents':
+        return m.asso_edit_tab_documents();
+      case 'formulaires':
+        return m.asso_edit_tab_formulaires();
+      case 'partnerships':
+        return m.asso_edit_tab_partenariats();
+      case 'republications':
+        return m.asso_edit_tab_proposals();
       default:
         return m.asso_edit_tab_profile();
     }
@@ -129,27 +197,36 @@
   // A segment is user input: once the rights are known, a section its reader may not open is
   // replaced by the hub. Only for someone admitted to the area at all - `loadData` sends the rest
   // to the public page and a second redirect must not race it.
-  let mayEnterArea = $derived(isGlobalAdminUser || !!myMembership?.isAdmin);
+  // F2: the BDE governing the list enters too - it may delete its lists (owner, 2026-11-02).
+  let mayEnterArea = $derived(
+    mayEnterEditArea({
+      isGlobalAdmin: isGlobalAdminUser,
+      isSuperAdmin: isSuperAdminUser,
+      isMemberAdmin: !!myMembership?.isAdmin,
+    })
+  );
   $effect(() => {
     if (loading || !list || !editSection || !mayEnterArea) return;
     if (!mayOpenEditSection(editSection, rights)) {
       console.warn('[lists/edit] section refused, back to the hub', editSection);
-      void goto(resolve(editSectionHref(slug, null, '/lists')), { replaceState: true });
+      void goto(resolve(internalPath(editSectionHref(slug, null, '/lists'))), { replace: true });
     }
   });
 
-  onMount(loadData);
+  onMount(() => {
+    void loadActivePaymentProvider();
+    void loadData();
+  });
 
   async function loadData() {
     loading = true;
     error = '';
-    void getMyBdeReach().then((reach) => (superAdminOf = reach.manageAsso));
     try {
       const a = await getAssociationBySlug(slug);
       // A regular association is managed from the association edit page.
       if (a.type !== 'list') {
-        await goto(resolve(`/associations/${encodeURIComponent(slug)}/edit`), {
-          replaceState: true,
+        await goto(resolve(`associations/${encodeURIComponent(slug)}/edit`), {
+          replace: true,
         });
         return;
       }
@@ -166,9 +243,17 @@
         });
       }
       const mine = members.find((m) => m.userId === currentUserId());
-      const canEdit = isGlobalAdmin() || (!!mine && mine.isAdmin);
+      // F2: the BDE reach is AWAITED before the access decision. Fired and forgotten, it lost the
+      // race and a BDE governing the list - not a member of it - was sent to the public page.
+      superAdminOf = (await getMyBdeReach()).manageAsso;
+      const canEdit = mayEnterEditArea({
+        isGlobalAdmin: isGlobalAdmin(),
+        isSuperAdmin: superAdminOf.includes(a.id),
+        isMemberAdmin: !!mine?.isAdmin,
+      });
       if (!canEdit) {
-        await goto(resolve(`/lists/${encodeURIComponent(slug)}`));
+        console.warn('[lists/edit] not admitted to the edit area, to the public page', a.id);
+        await goto(resolve(`lists/${encodeURIComponent(slug)}`));
         return;
       }
     } catch {
@@ -182,9 +267,7 @@
 <PageContainer>
   <PageHeader
     title={editSection ? sectionLabel(editSection) : m.list_edit_page_title()}
-    subtitle={list
-      ? `@${list.slug}${list.promo ? ` · ${m.list_campaigns_heading({ year: list.promo })}` : ''}`
-      : undefined}
+    subtitle={list?.promo ? m.list_campaigns_heading({ year: list.promo }) : undefined}
     {crumbs}
   />
 
@@ -211,11 +294,75 @@
       {/if}
 
       {#if editSection === 'profile'}
-        <EditProfileTab asso={list} canEdit={canManageMembers} onUpdated={(a) => (list = a)} />
+        <EditProfileTab
+          asso={list}
+          canEdit={rights.profile}
+          canEditParent={rights.parent}
+          onUpdated={(a) => (list = keepPaymentsReady(a, list))}
+        />
       {/if}
 
-      {#if editSection === 'members' && canManageMembers}
-        <EditMembersTab asso={list} bind:members bind:resolvedMemberNames />
+      {#if editSection === 'members' && rights.memberRoster}
+        <EditMembersTab
+          asso={list}
+          grantable={grantableFlags(permissionContext)}
+          bind:members
+          bind:resolvedMemberNames
+        />
+      {/if}
+
+      {#if editSection === 'documents' && rights.documents}
+        <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
+          <div>
+            <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+              <FolderLock size={20} />
+              {m.asso_doc_vault_title()}
+            </h2>
+            <p class="text-text-muted mt-1 text-sm">{m.asso_doc_vault_desc()}</p>
+          </div>
+          <AssociationDocumentManager associationId={list.id} />
+        </div>
+      {/if}
+
+      {#if editSection === 'payments' && canManageProducts}
+        <!-- The shop only: a list holds no payout account, so no bank or Lydia enrolment card. -->
+        <EditBoutiqueTab
+          asso={list}
+          {onlinePaymentsReady}
+          canManagePayoutAccount={false}
+          {delegationHref}
+        />
+      {/if}
+
+      {#if editSection === 'achats' && canManageProducts}
+        <EditAchatsTab asso={list} />
+      {/if}
+
+      {#if editSection === 'cotisations' && (canManageMembers || canManageProducts)}
+        <EditCotisationsTab bind:asso={list} {canManageMembers} {canManageProducts} />
+      {/if}
+
+      {#if editSection === 'delegation' && canManageProducts}
+        <EditDelegationTab asso={list} />
+      {/if}
+
+      {#if editSection === 'formulaires' && rights.forms}
+        <!-- A list collects through its delegate: the banner points at the delegation section. -->
+        <EditFormsTab
+          asso={list}
+          {onlinePaymentsReady}
+          canManagePayoutAccount={false}
+          onGoToPayments={() => goto(delegationHref)}
+          {delegationHref}
+        />
+      {/if}
+
+      {#if editSection === 'partnerships' && rights.partnerships}
+        <EditPartnershipsTab asso={list} />
+      {/if}
+
+      {#if editSection === 'republications' && rights.proposals}
+        <EditProposalsTab asso={list} />
       {/if}
 
       {#if editSection === 'reservations' && rights.bookings}
@@ -227,7 +374,7 @@
           asso={list}
           kind="list"
           canDelete={canDeleteList}
-          onUpdated={(a) => (list = a)}
+          onUpdated={(a) => (list = keepPaymentsReady(a, list))}
           onDeleted={() => goto('/lists')}
         />
       {/if}

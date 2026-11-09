@@ -5,6 +5,8 @@
   import type { MessageSendStatus } from '$lib/types';
 
   interface Props {
+    /** The conversation's nickname scope ("Modifier les pseudos"): names drawn here are read in it. */
+    nicknameScope?: string | null;
     /** When true, shows an "(modifié)" label. */
     isEdited: boolean;
     /**
@@ -50,6 +52,7 @@
     onRetry,
     onDiscard,
     onRestore,
+    nicknameScope = null,
   }: Props = $props();
 
   /*
@@ -203,7 +206,7 @@
       </span>
     {:else if showRead}
       <!-- Reader avatars + double-check (tap bubble for names/time detail) -->
-      <SeenByHeads readers={readBy} withCheck />
+      <SeenByHeads readers={readBy} withCheck {nicknameScope} />
     {/if}
   </div>
   {#if showUnverified && unverifiedOpen}

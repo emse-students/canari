@@ -2,8 +2,8 @@ import type { IMlsService } from '$lib/mlsService';
 import type { JoinDeclineOutcome } from '$lib/mls-client/mlsDeliveryApi';
 import type { Conversation } from '$lib/types';
 import { treeHoldsUser } from '$lib/mls-client/leafIdentity';
-import type { AnsweredJoinAsk, BulkAdditionOutcome } from './groupCreation';
-import type { JoinAnswerResult, JoinRequest } from './joinRequests.svelte';
+import type { AnsweredJoinAsk, BulkAdditionOutcome, BulkAdditionRefusal } from './groupCreation';
+import type { JoinAnswerResult, JoinRefusalKind, JoinRequest } from './joinRequests.svelte';
 
 /**
  * A MEMBER'S TWO ANSWERS TO "X ASKS TO JOIN" (`joinRequests.svelte.ts`), each saying whether it
@@ -131,12 +131,35 @@ export async function admitJoinRequest(
     request.askId !== undefined ? { userId: request.userId, askId: request.askId } : undefined
   );
   if (outcome.kind === 'not-added') {
-    return { done: false, reason: `the Add did not happen (${outcome.reason})` };
+    const kind = refusalKindOf(outcome.reason);
+    return {
+      done: false,
+      reason: `the Add did not happen (${outcome.reason})`,
+      ...(kind ? { kind } : {}),
+    };
   }
   if (!outcome.addedUsers.includes(request.userId.toLowerCase())) {
     return { done: false, reason: 'the Add admitted none of their devices' };
   }
   return { done: true };
+}
+
+/**
+ * The refusals of an Add that mean ANOTHER MEMBER is the cause ({@link JoinRefusalKind}): the
+ * group's add lock is held (an ANSWERED refusal - no answer at all is a failure), or the Add was
+ * abandoned because the person was declined or removed meanwhile. A lost commit race is neither: it
+ * proves no one answered this ask. A
+ * typed switch on the refusal, never a read of its text.
+ */
+function refusalKindOf(reason: BulkAdditionRefusal): JoinRefusalKind | undefined {
+  switch (reason) {
+    case 'add-lock-busy':
+      return 'busy';
+    case 'removed-meanwhile':
+      return 'raced';
+    default:
+      return undefined;
+  }
 }
 
 /** What each answer of the server to a Decline means, as the log line says it - one line each. */

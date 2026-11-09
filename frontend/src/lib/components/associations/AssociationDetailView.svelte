@@ -1,20 +1,18 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { resolve } from '$app/paths';
+  import { internalPath } from '$lib/utils/internalPath';
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { Log } from '$lib/utils/Log';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import { goto } from '$app/navigation';
   import {
     getAssociationBySlug,
     listMembers,
-    followAssociation,
-    unfollowAssociation,
-    getAssociationFollowStatus,
-    getAssociationPushMuteStatus,
-    muteAssociationPush,
-    unmuteAssociationPush,
     hasPermissionFlag,
     getMyBdeReach,
+    leaveAssociation,
     type BdeReach,
     AssociationPermissionFlag,
     listAssociationProducts,
@@ -26,20 +24,23 @@
     type PartnershipCard,
   } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import AccountBell from '$lib/components/follows/AccountBell.svelte';
+  import {
+    followAssociationLedgered,
+    readAssociationFollowed,
+    recordAssociationFollowed,
+    unfollowAssociationLedgered,
+  } from '$lib/follows/followState.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS, type PageWidth } from '$lib/components/layout/pageWidth';
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
-  import CardTile from '$lib/components/shared/CardTile.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
-  import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { associationAccent } from '$lib/associations/accent';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import {
     Bell,
     BellOff,
-    Volume2,
-    VolumeX,
     Settings,
     CalendarDays,
     Users,
@@ -47,7 +48,11 @@
     Handshake,
     Download,
     Mail,
+    LogOut,
   } from '@lucide/svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { leaveRefusalMessage } from '$lib/associations/leaveRefusal';
   import Breadcrumb from '$lib/components/navigation/Breadcrumb.svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import type { HubIcon, HubRow } from '$lib/components/navigation/breadcrumb';
@@ -65,9 +70,16 @@
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import AssociationMemberRow from '$lib/components/associations/AssociationMemberRow.svelte';
   import AssociationCalendarSection from '$lib/components/associations/AssociationCalendarSection.svelte';
-  import ProductPurchaseButton from '$lib/components/shop/ProductPurchaseButton.svelte';
-  import { gridPriceIsProvisional, gridPriceLabel, gridRefuses } from '$lib/pricing/viewerPrice';
+  import MembershipCard from '$lib/components/shop/MembershipCard.svelte';
+  import ProductCard from '$lib/components/shop/ProductCard.svelte';
+  import {
+    cotisationDisabledForAssociation,
+    hasUnrankedTier,
+    nonTierProducts,
+    offeredTiers,
+  } from '$lib/shop/productCards';
   import { m } from '$lib/paraglide/messages';
+  import { setPageTitle } from '$lib/seo/pageTitle.svelte';
   import { wordingFor } from '$lib/associations/kindWording';
 
   interface Props {
@@ -106,8 +118,8 @@
   let myMembership = $derived(members.find((m) => m.userId === userId));
   /**
    * The associations whose BDE grants the viewer a scoped power - the server's own answer. A BDE
-   * governs the associations reaching its spaces, not every association (WP6c step 2), so the two
-   * BDE-derived controls below read THIS association out of it.
+   * governs its children - MANAGE_ASSO in its parent BDE (or itself when a BDE), WP-D2 - not every
+   * association, so the two BDE-derived controls below read THIS association out of it.
    */
   let bdeReach = $state<BdeReach>({ validateEvents: [], manageAsso: [] });
   let canManage = $derived(
@@ -132,9 +144,6 @@
 
   let following = $state(false);
   let followLoading = $state(false);
-  /** The viewer's push mute of THIS association: its pushes only, never the feed or the follow. */
-  let pushMuted = $state(false);
-  let muteLoading = $state(false);
   /**
    * The open section is a ROUTE segment (`/associations/<slug>/<section>`), never local state: Back
    * goes up one level, a reload keeps the place and a link can be shared. `null` is the hub. A post's
@@ -193,6 +202,19 @@
     })
   );
 
+  /**
+   * The first-time helps' anchors on the hub rows (docs/wiki/frontend/guided-help.md, batch 3), each
+   * set only for a reader the help is FOR, from the facts this page already draws by: the shop row
+   * whenever it is drawn (the hub lists it only when the association sells something); the agenda row
+   * only for a manager who may propose events (the agenda section's own edit right). An unset row
+   * registers nothing, so its step is left out.
+   */
+  function hubAnchor(section: PublicSection): string | undefined {
+    if (section === 'shop') return 'asso.shop';
+    if (section === 'calendar') return canManage && canProposeEvent ? 'asso.agenda' : undefined;
+    return undefined;
+  }
+
   /** One hub row per section that exists; a count only where the roster already has it. */
   const hubRows = $derived(
     visiblePublicSections(content).map((section): HubRow => ({
@@ -200,6 +222,7 @@
       href: publicSectionHref(base, slug, section),
       label: sectionLabel(section),
       icon: SECTION_ICONS[section],
+      guideAnchor: hubAnchor(section),
       summary:
         section === 'members'
           ? kind === 'list'
@@ -224,8 +247,17 @@
     if (loading || !asso || !activeSection) return;
     if (!mayOpenPublicSection(activeSection, content)) {
       Log.d('AssociationDetailView: section refused, back to the hub', activeSection);
-      void goto(resolve(publicSectionHref(base, slug)), { replaceState: true });
+      void goto(resolve(internalPath(publicSectionHref(base, slug))), { replace: true });
     }
+  });
+
+  // The tab names the entity once it is loaded (association, list or institution alike): the path
+  // alone only knows a neutral word, and the server-injected name exists for a hard load only.
+  $effect(() => {
+    const name = asso?.name?.trim();
+    if (!name) return;
+    setPageTitle(name);
+    return () => setPageTitle(null);
   });
 
   onMount(loadData);
@@ -241,14 +273,14 @@
       const loaded = await getAssociationBySlug(slug);
       // Enforce canonical URL: lists live under /lists, associations under /associations.
       if (loaded.type === 'list' && kind !== 'list') {
-        await goto(resolve(publicSectionHref('/lists', slug, activeSection)), {
-          replaceState: true,
+        await goto(resolve(internalPath(publicSectionHref('/lists', slug, activeSection))), {
+          replace: true,
         });
         return;
       }
       if (loaded.type !== 'list' && kind === 'list') {
-        await goto(resolve(publicSectionHref('/associations', slug, activeSection)), {
-          replaceState: true,
+        await goto(resolve(internalPath(publicSectionHref('/associations', slug, activeSection))), {
+          replace: true,
         });
         return;
       }
@@ -259,23 +291,15 @@
       // behind a label.
       const uid = currentUserId();
       let followStatus: { following: boolean };
-      let muteStatus: { muted: boolean };
-      [members, products, partnerships, followStatus, muteStatus] = await Promise.all([
+      [members, products, partnerships, followStatus] = await Promise.all([
         listMembers(asso.id),
         listAssociationProducts(asso.id).catch(() => []),
         listAssociationPartnerships(asso.id).catch(() => []),
         uid
-          ? getAssociationFollowStatus(asso.id).catch(() => ({ following: false }))
+          ? readAssociationFollowed(asso.id).then((following) => ({ following }))
           : Promise.resolve({ following: false }),
-        uid
-          ? getAssociationPushMuteStatus(asso.id).catch((err) => {
-              Log.d('AssociationDetailView: push-mute status unreadable', err);
-              return { muted: false };
-            })
-          : Promise.resolve({ muted: false }),
       ]);
       following = followStatus.following;
-      pushMuted = muteStatus.muted;
       const names: Record<string, string> = {};
       for (const m of members) {
         names[m.userId] = rosterDisplayName(m);
@@ -315,8 +339,8 @@
     following = !wasFollowing;
     followLoading = true;
     try {
-      if (wasFollowing) await unfollowAssociation(asso.id);
-      else await followAssociation(asso.id);
+      if (wasFollowing) await unfollowAssociationLedgered(asso.id);
+      else await followAssociationLedgered(asso.id);
     } catch (err) {
       Log.d('AssociationDetailView.toggleFollow failed', err);
       following = wasFollowing;
@@ -326,21 +350,27 @@
     }
   }
 
-  async function togglePushMute() {
-    if (!asso || !userId) return;
-    // Optimistic like the follow button above: back on a refused write.
-    const wasMuted = pushMuted;
-    pushMuted = !wasMuted;
-    muteLoading = true;
+  let leaving = $state(false);
+
+  /**
+   * THE "QUITTER" BUTTON (owner, 2026-11-03): any member leaves from here without asking anyone,
+   * except the last holder of MANAGE_MEMBERS, whom the server refuses with a typed code.
+   */
+  async function leave() {
+    if (!asso || !myMembership || leaving) return;
+    const name = asso.name;
+    if (!(await showConfirm(m.asso_leave_confirm({ name }), { danger: true }))) return;
+    leaving = true;
     try {
-      if (wasMuted) await unmuteAssociationPush(asso.id);
-      else await muteAssociationPush(asso.id);
+      await leaveAssociation(asso.id);
+      Log.d('AssociationDetailView.leave done', { association: asso.id });
+      members = members.filter((member) => member.userId !== userId);
+      showToast(m.asso_leave_done({ name }), 'info');
     } catch (err) {
-      Log.d('AssociationDetailView.togglePushMute failed', err);
-      pushMuted = wasMuted;
-      error = m.common_generic_error_label();
+      Log.d('AssociationDetailView.leave failed', err);
+      showToast(leaveRefusalMessage(err) ?? m.common_generic_error_label());
     } finally {
-      muteLoading = false;
+      leaving = false;
     }
   }
 </script>
@@ -393,28 +423,21 @@
         second line instead of ending in an ellipsis.
       -->
         <div class="flex flex-wrap items-start gap-4">
-          <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
+          <AssociationAvatar id={asso.id} name={asso.name} logoUrl={asso.logoUrl} size="lg" />
           <div class="min-w-0 flex-1 basis-64">
             <h1 class="text-text-main text-xl font-bold tracking-tight [overflow-wrap:anywhere]">
               {asso.name}
             </h1>
             <!--
-            THE META LINE IS A FLEX ROW, NOT A RUN OF TEXT, and the separators are its children.
-            Written as prose it read `{/if}@{asso.slug}`, and Svelte TRIMS the whitespace at the end
-            of an `{#if}` block - so the space that was supposed to follow the middot never reached
-            the DOM and production showed `BDE - Bureau des Eleves ·@minestagnard`. Spacing carried
-            by `gap-*` cannot be trimmed by a compiler, which is the whole reason for the shape.
-
-            NO MEMBER COUNT (user, 2026-09-23). The members tab states it, and on a list it printed
-            "0 membre" for a campaign whose roster is simply not registered yet.
+            NO SLUG UNDER THE TITLE (user, 2026-10-26: a technical id is never shown to a person).
+            A list keeps its parent's name. NO MEMBER COUNT (user, 2026-09-23): the members tab
+            states it, and on a list it printed "0 membre" for a roster not registered yet.
           -->
-            <p class="text-text-muted flex flex-wrap items-center gap-x-1.5 text-xs">
-              {#if kind === 'list' && asso.parentName}
+            {#if kind === 'list' && asso.parentName}
+              <p class="text-text-muted text-xs">
                 <span class="text-text-main font-semibold">{asso.parentName}</span>
-                <span aria-hidden="true">&#183;</span>
-              {/if}
-              <span>@{asso.slug}</span>
-            </p>
+              </p>
+            {/if}
             <!--
             THE SECOND LOGO SITS WITH THE SECOND NAME, not with the first (user, 2026-09-23: *"ce
             n'est pas logique d'avoir logo1 puis titre1 et titre2 puis logo2"*). Both logos used to
@@ -427,6 +450,7 @@
             {#if hasSecondTheme}
               <div class="mt-1.5 flex items-center gap-2">
                 <AssociationAvatar
+                  id={asso.id}
                   name={secondName || asso.name}
                   logoUrl={secondLogoUrl}
                   size="sm"
@@ -452,12 +476,7 @@
             class="flex w-full shrink-0 flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center"
           >
             {#if userId}
-              <button
-                type="button"
-                onclick={() => toggleFollow()}
-                disabled={followLoading}
-                class="border-cn-border text-text-main flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
-              >
+              <Button variant="secondary" onclick={() => toggleFollow()} disabled={followLoading}>
                 {#if following}
                   <BellOff size={16} />
                   {m.asso_unfollow_button()}
@@ -465,27 +484,29 @@
                   <Bell size={16} />
                   {m.asso_follow_button()}
                 {/if}
-              </button>
-              <button
-                type="button"
-                onclick={() => togglePushMute()}
-                disabled={muteLoading}
-                aria-pressed={pushMuted}
-                data-testid="asso-push-mute"
-                class="border-cn-border text-text-main flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
+              </Button>
+              <!--
+                THE BELL (engagement WP-3) replaced the push mute: "Rien" is what the mute was, and
+                it is offered followed or not, since an association's posts reach its whole
+                audience (L7).
+              -->
+              <AccountBell kind="association" targetId={asso.id} />
+            {/if}
+            {#if myMembership}
+              <Button
+                variant="secondary"
+                onclick={() => leave()}
+                disabled={leaving}
+                data-testid="asso-leave"
               >
-                {#if pushMuted}
-                  <Volume2 size={16} />
-                  {m.asso_push_unmute_button()}
-                {:else}
-                  <VolumeX size={16} />
-                  {m.asso_push_mute_button()}
-                {/if}
-              </button>
+                <LogOut size={16} />
+                {m.asso_leave_button()}
+              </Button>
             {/if}
             {#if canManage}
               <a
                 href="{base}/{encodeURIComponent(slug)}/edit"
+                use:guideAnchor={'asso.manage'}
                 class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
               >
                 <Settings size={16} />
@@ -551,6 +572,7 @@
           associationSlug={asso.slug}
           canEdit={canProposeEvent}
           {canDeclareBreak}
+          canPresentNeutral={asso.isBDE && canProposeEvent}
         />
       </div>
     {:else if activeSection === 'members'}
@@ -560,15 +582,15 @@
             {m.common_members_label()}
           </h1>
           {#if members.length > 0}
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="compact"
               onclick={handleExportTrombinoscope}
               disabled={exportingPdf}
-              class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
             >
               <Download size={14} />
               {exportingPdf ? m.common_generating_label() : m.asso_trombinoscope_button()}
-            </button>
+            </Button>
           {/if}
         </div>
         <p class="text-text-muted text-sm">
@@ -597,77 +619,26 @@
             {m.asso_view_all_shop()}
           </a>
         </div>
+        <!-- One membership card with the tiers inside, then one card per other product -->
         <div class={CARD_GRID}>
-          {#each products as product (product.id)}
-            <CardTile
-              iconUrl={product.iconUrl}
-              fallbackIcon={productFallbackIcon(product.type)}
+          {#if offeredTiers(products).length > 0 || cotisationDisabledForAssociation(products)}
+            <MembershipCard
+              tiers={offeredTiers(products)}
+              allProducts={products}
               accentColor={cardAccentColor}
-              badgeText={product.badgeText}
-            >
-              <div class="flex h-full flex-col gap-3 p-5">
-                <div class="min-w-0 flex-1">
-                  <p class="text-text-main text-sm font-semibold">{product.name}</p>
-                  {#if product.description}
-                    <p class="text-text-muted mt-0.5 text-xs">{product.description}</p>
-                  {/if}
-                  <p class="text-text-muted mt-1 text-xs">
-                    <!--
-                      A grid answers first and alone: while one is set the product's own amount
-                      decides nothing, so printing it would name a figure no checkout charges.
-                    -->
-                    {#if gridPriceLabel(product) !== null}
-                      {gridPriceLabel(product)}
-                    {:else if product.amountCents}
-                      {(product.amountCents / 100).toFixed(2)} {product.currency.toUpperCase()}
-                    {:else if product.allowCustomAmount}
-                      {m.asso_product_custom_price()}
-                    {:else}
-                      {m.asso_product_free_price()}
-                    {/if}
-                    <span
-                      class="bg-cn-border/40 text-2xs ml-2 rounded-full px-1.5 py-0.5 font-bold uppercase"
-                    >
-                      {product.type === 'membership'
-                        ? m.asso_product_membership_type()
-                        : product.type === 'balance_topup'
-                          ? m.asso_product_topup_type()
-                          : m.asso_product_other_type()}
-                    </span>
-                  </p>
-                  {#if product.allowCustomAmount && product.amountCents === null}
-                    <div class="mt-2 flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={product.customAmountMinCents != null
-                          ? product.customAmountMinCents / 100
-                          : 0}
-                        max={product.customAmountMaxCents != null
-                          ? product.customAmountMaxCents / 100
-                          : undefined}
-                        step="0.01"
-                        placeholder={m.asso_product_amount_placeholder()}
-                        class="border-cn-border text-text-main focus:ring-cn-accent flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-                        bind:value={shopCustomAmounts[product.id]}
-                      />
-                    </div>
-                  {/if}
-                </div>
-                {#if gridRefuses(product)}
-                  <p class="text-xs text-amber-700 dark:text-amber-400">
-                    {m.shop_price_unavailable_hint()}
-                  </p>
-                {:else if gridPriceIsProvisional(product, userId !== null)}
-                  <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
-                {/if}
-                <ProductPurchaseButton
-                  {product}
-                  customAmountEuros={shopCustomAmounts[product.id]}
-                  disabled={gridRefuses(product)}
-                  class="w-full"
-                />
-              </div>
-            </CardTile>
+              unrankedHint={hasUnrankedTier(products)}
+              cotisationDisabled={cotisationDisabledForAssociation(products)}
+              signedIn={userId !== null}
+            />
+          {/if}
+          {#each nonTierProducts(products) as product (product.id)}
+            <ProductCard
+              {product}
+              siblings={products}
+              accentColor={cardAccentColor}
+              bind:customAmountCents={shopCustomAmounts[product.id]}
+              signedIn={userId !== null}
+            />
           {/each}
         </div>
       </div>

@@ -10,24 +10,29 @@
 import {
   AssociationPermissionFlag,
   hasPermissionFlag,
-  listAssociations,
   listMyAssociations,
   type Association,
 } from '$lib/associations/api';
-import { isGlobalAdmin } from '$lib/stores/user';
+import { listActableAssociations } from '$lib/associations/actable';
 import { ANONYMOUS_POST_IDENTITY } from './postComposerDraft';
 import type { CreatePostPayload } from './api';
 
 /**
- * The associations the member may publish - or comment - as: every one for a global admin,
- * otherwise those where they hold `POST_AS_ASSO` itself.
- *
- * It filtered on `isAdmin` ("holds ANY permission") until 2026-10-21, a wider test than the one the
- * server applies (`canPostAs`): a member who could only manage the roster was OFFERED an association
- * the server then refused. The server still checks - this list only decides what is offered.
+ * The associations the member may publish - or comment - as: `POST_AS_ASSO` held themselves, or
+ * everything for a global admin. A BDE super-admin does NOT inherit it (`listActableAssociations`).
+ * It filtered on `isAdmin` until 2026-10-21, wider than the server's `canPostAs`.
  */
-export async function listPostAsAssociations(): Promise<Association[]> {
-  if (isGlobalAdmin()) return listAssociations();
+export function listPostAsAssociations(): Promise<Association[]> {
+  return listActableAssociations(AssociationPermissionFlag.POST_AS_ASSO);
+}
+
+/**
+ * The associations a LIVE may be started as - the answer `POST /api/lives` gives, which is narrower
+ * than {@link listPostAsAssociations}: the server asks `mayAct(POST_AS_ASSO)` WITHOUT the global
+ * admin tier, so only `POST_AS_ASSO` held in the member's own bitmask counts (a global admin who is
+ * no member got `403 LIVE_ASSOCIATION_FORBIDDEN` for every association it was offered).
+ */
+export async function listLiveAssociations(): Promise<Association[]> {
   const mine = await listMyAssociations();
   return mine.filter((a) =>
     hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.POST_AS_ASSO)

@@ -27,6 +27,8 @@ describe('PostsService republication fields', () => {
     publisherOf?: string[];
     /** The reader sees the post ONLY through a nominative read grant. */
     grantOnly?: boolean;
+    /** The reader sees the post ONLY through a member's repost (WP-F6): grant-free, not first-hand. */
+    repostOnly?: boolean;
     /** D38b: among `republishAs`, the associations of the kind that may ask an author. */
     personalAs?: string[];
     /** D38b: the server's requestable predicate holds for the post. */
@@ -44,9 +46,12 @@ describe('PostsService republication fields', () => {
         );
       }
       if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
-      if (sql.startsWith('SELECT posts.id FROM posts')) {
-        // The grant-free predicate: a grant-only post is absent from the answer.
-        return Promise.resolve(opts.grantOnly ? [] : [{ id: opts.post.id }]);
+      if (sql.startsWith('SELECT posts.id,') && sql.includes('AS "firstHand"')) {
+        // The grant-free predicate: a grant-only post is absent from the answer; a post seen only
+        // through a member repost is present, and not first-hand.
+        return Promise.resolve(
+          opts.grantOnly ? [] : [{ id: opts.post.id, firstHand: !opts.repostOnly }]
+        );
       }
       if (sql.includes('FROM post_republications pr')) {
         return Promise.resolve(
@@ -64,7 +69,7 @@ describe('PostsService republication fields', () => {
           [...new Set([...(opts.republishAs ?? []), ...(opts.personalAs ?? [])])].map(
             (associationId) => ({
               associationId,
-              type: (opts.personalAs ?? []).includes(associationId) ? 'association' : 'institution',
+              type: (opts.personalAs ?? []).includes(associationId) ? 'institution' : 'club',
               archived: false,
             })
           )
@@ -81,6 +86,8 @@ describe('PostsService republication fields', () => {
         Promise.resolve(new Set(ids.filter((id) => (opts.publisherOf ?? []).includes(id))))
       ),
       isContentModerator: jest.fn(() => Promise.resolve(false)),
+      moderatedPostIds: () => Promise.resolve(new Set<string>()),
+      mayModeratePost: () => Promise.resolve(false),
       findValidatedCalendarEventSummary: jest.fn(() => Promise.resolve(null)),
     };
     return new PostsService(
@@ -150,6 +157,14 @@ describe('PostsService republication fields', () => {
     });
   });
 
+  it('NO CHAIN (WP-F6): offers no "Republier" on a post only a member repost shows, and still the vote', async () => {
+    const service = makeService({ post: assoPost, republishAs: [A2], repostOnly: true });
+    expect(await service.getById('p1', { viewerId: 'follower' })).toMatchObject({
+      canRepublish: false,
+      canVote: true,
+    });
+  });
+
   it('offers the vote to a reader who sees the post without a grant', async () => {
     const service = makeService({ post: assoPost });
     expect((await service.getById('p1', { viewerId: 'reader' })).canVote).toBe(true);
@@ -191,8 +206,9 @@ describe('PostsService republication fields', () => {
       );
     });
 
-    it('never offers it in the name of an association of a kind that may not ask', async () => {
-      // A2 is an institution here: it republishes association posts, never a person's.
+    it('never offers it in the name of an association of a kind nobody listed', async () => {
+      // A2 is of a kind nobody listed here (`personalAs` rows are institutions, which may ask since
+      // 2026-11-02): it is never offered.
       const service = makeService({ post: personalPost, republishAs: [A2], requestable: true });
       expect((await service.getById('p1', { viewerId: 'reader' })).canRequestRepublication).toBe(
         false

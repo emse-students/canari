@@ -19,8 +19,11 @@
     onReactionSelect: (reactionType: string) => void;
     /** Total number of comments (top-level + replies). */
     commentCount?: number;
-    /** Called when the user clicks the Comment button to toggle the comment section. */
-    onCommentClick: () => void;
+    /**
+     * Called when the user clicks the Comment button to toggle the comment section. ABSENT when the
+     * post's comments are withheld from its reader (owner, 2026-11-04): no button, no count.
+     */
+    onCommentClick?: () => void;
     /**
      * The tally of reactions already cast, rendered right-aligned on THIS row rather than on one of
      * its own. The caller owns it because the caller owns the post's reaction state; this component
@@ -100,18 +103,20 @@
     {/if}
   </button>
 
-  <button
-    type="button"
-    onclick={onCommentClick}
-    class="{ACTION} text-text-muted hover:bg-(--cn-surface)"
-    aria-label={m.post_commenter()}
-    title={m.post_commenter()}
-  >
-    <MessageCircle size={20} />
-    {#if commentCount}
-      <span class="text-sm font-medium">{commentCount}</span>
-    {/if}
-  </button>
+  {#if onCommentClick}
+    <button
+      type="button"
+      onclick={onCommentClick}
+      class="{ACTION} text-text-muted hover:bg-(--cn-surface)"
+      aria-label={m.post_commenter()}
+      title={m.post_commenter()}
+    >
+      <MessageCircle size={20} />
+      {#if commentCount}
+        <span class="text-sm font-medium">{commentCount}</span>
+      {/if}
+    </button>
+  {/if}
 
   {#if reactionSummary}
     <div class="ml-auto flex min-w-0 items-center">

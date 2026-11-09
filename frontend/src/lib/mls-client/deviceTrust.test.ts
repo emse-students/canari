@@ -4,8 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DeviceTrustRefusedError,
+  announcesNewDevice,
   deviceEventAudience,
   deviceEventKey,
+  entersAsUnvouchedDevice,
+  entersByItsOwnCommit,
   entersUninvited,
   isNewToItsOwner,
   keyFingerprintOf,
@@ -97,11 +100,13 @@ describe('deviceEventAudience and deviceEventKey - the table shared with Rust', 
     isKeyDistributionGroup: boolean;
     audience: string;
     key: string | null;
+    unvouched?: boolean;
   }>;
 
   it.each(cases.map((c) => [c.name, c] as const))('%s', (_name, c) => {
     expect(deviceEventAudience(c.event, c)).toBe(c.audience);
     expect(deviceEventKey(c.event)).toBe(c.key);
+    if (c.unvouched !== undefined) expect(entersAsUnvouchedDevice(c.event)).toBe(c.unvouched);
   });
 });
 
@@ -136,42 +141,63 @@ describe('isNewToItsOwner', () => {
   const now = 100 * DAY;
   const enrolled = 90 * DAY; // this device enrolled ten days ago
 
-  it('an undated key predates the history and is never new', () => {
-    expect(
-      isNewToItsOwner(null, { learnedAt: now, ownEnrolledAt: enrolled, isOwnAccount: false })
-    ).toBe(false);
-    expect(
-      isNewToItsOwner(null, { learnedAt: now, ownEnrolledAt: enrolled, isOwnAccount: true })
-    ).toBe(false);
+  const dated = (at: number) => ({ kind: 'dated', at }) as const;
+
+  it('a key the server lists undated predates the history and is never new', () => {
+    const sight = { kind: 'before-history' } as const;
+    for (const ownersAlert of [false, true]) {
+      expect(isNewToItsOwner(sight, { learnedAt: now, ownEnrolledAt: enrolled, ownersAlert })).toBe(
+        false
+      );
+    }
+  });
+
+  it('A SERVER THAT STAYS SILENT DOES NOT SILENCE IT: a key it says nothing about is new', () => {
+    const sight = { kind: 'unknown' } as const;
+    for (const ownersAlert of [false, true]) {
+      for (const ownEnrolledAt of [enrolled, null]) {
+        expect(isNewToItsOwner(sight, { learnedAt: now, ownEnrolledAt, ownersAlert })).toBe(true);
+      }
+    }
   });
 
   it("a contact's device registered minutes ago is new", () => {
     expect(
-      isNewToItsOwner(now - 5 * 60_000, {
+      isNewToItsOwner(dated(now - 5 * 60_000), {
         learnedAt: now,
         ownEnrolledAt: enrolled,
-        isOwnAccount: false,
+        ownersAlert: false,
       })
     ).toBe(true);
   });
 
   it("a contact's old device a heal re-adds is not - before this device enrolled, or long ago", () => {
-    const ctx = { learnedAt: now, ownEnrolledAt: enrolled, isOwnAccount: false };
-    expect(isNewToItsOwner(30 * DAY, ctx)).toBe(false);
-    expect(isNewToItsOwner(enrolled + DAY, ctx)).toBe(false);
+    const ctx = { learnedAt: now, ownEnrolledAt: enrolled, ownersAlert: false };
+    expect(isNewToItsOwner(dated(30 * DAY), ctx)).toBe(false);
+    expect(isNewToItsOwner(dated(enrolled + DAY), ctx)).toBe(false);
   });
 
   it("the owner's old device re-added on a young device is not; one registered since it enrolled is", () => {
-    const ctx = { learnedAt: now, ownEnrolledAt: enrolled, isOwnAccount: true };
-    expect(isNewToItsOwner(30 * DAY, ctx)).toBe(false);
+    const ctx = { learnedAt: now, ownEnrolledAt: enrolled, ownersAlert: true };
+    expect(isNewToItsOwner(dated(30 * DAY), ctx)).toBe(false);
     // However late this device learns of it - a phone off for a fortnight still alerts.
-    expect(isNewToItsOwner(enrolled + DAY, { ...ctx, learnedAt: now + 14 * DAY })).toBe(true);
+    expect(isNewToItsOwner(dated(enrolled + DAY), { ...ctx, learnedAt: now + 14 * DAY })).toBe(
+      true
+    );
+    // The LINE is bounded like a contact's: not written a fortnight late.
+    expect(
+      isNewToItsOwner(dated(enrolled + DAY), {
+        ...ctx,
+        ownersAlert: false,
+        learnedAt: now + 14 * DAY,
+      })
+    ).toBe(false);
   });
 
-  it('the owner with no known enrolment of its own announces nothing', () => {
-    expect(
-      isNewToItsOwner(now - 60_000, { learnedAt: now, ownEnrolledAt: null, isOwnAccount: true })
-    ).toBe(false);
+  it('an unknown own enrolment skips that comparison, the window still holds', () => {
+    const ctx = { learnedAt: now, ownEnrolledAt: null, ownersAlert: false };
+    expect(isNewToItsOwner(dated(now - 60_000), ctx)).toBe(true);
+    expect(isNewToItsOwner(dated(now - 8 * DAY), ctx)).toBe(false);
   });
 });
 
@@ -252,5 +278,39 @@ describe('entersUninvited - an entry no member made', () => {
         event({ identity: 'mallory:dev1', addedBy: null, memberAlreadyPresent: false })
       )
     ).toBe(false);
+  });
+});
+
+describe('entersAsUnvouchedDevice - a member device that admitted itself into a group it was never in', () => {
+  it('is a KNOWN device of a present user, never in this group, that signed its own admission under a new key', () => {
+    expect(
+      entersAsUnvouchedDevice(
+        event({ addedBy: 'Bob:web-2', firstInGroup: true, trust: 'key-changed' })
+      )
+    ).toBe(true);
+  });
+
+  it('is only the key-changed class (D3): a further device under its known or a first-seen key is not', () => {
+    for (const trust of ['pinned', 'key-changed', 'first-sight'] as const) {
+      const e = event({ addedBy: 'bob:web-2', trust, firstInGroup: true });
+      expect(entersByItsOwnCommit(e)).toBe(true);
+      expect(entersAsUnvouchedDevice(e)).toBe(trust === 'key-changed');
+      // And the owner is told, whichever: the alert is what carries "Not me".
+      expect(announcesNewDevice(e)).toBe(true);
+    }
+  });
+
+  it('is not a device coming back to this group, a member-signed Add or a new person', () => {
+    expect(entersAsUnvouchedDevice(event({ addedBy: 'bob:web-2', firstInGroup: false }))).toBe(
+      false
+    );
+    expect(entersAsUnvouchedDevice(event({ addedBy: 'bob:web-2' }))).toBe(false);
+    expect(entersAsUnvouchedDevice(event({ firstInGroup: true }))).toBe(false);
+    expect(
+      entersAsUnvouchedDevice(
+        event({ addedBy: 'bob:web-2', memberAlreadyPresent: false, firstInGroup: true })
+      )
+    ).toBe(false);
+    expect(entersAsUnvouchedDevice(event({ addedBy: null, firstInGroup: true }))).toBe(false);
   });
 });

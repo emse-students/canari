@@ -35,9 +35,8 @@ form occupying the first screen.
   breakpoints, `EmptyState` use (a search pass, 2026-10-16, on `origin/main` at `990ba8fe9`).
 - Screen: `dev.canari-emse.fr`, signed in as the bench account `fourth` (the `chrome-w3` profile, a
   plain member, NOT staff, holding no association), CDP device-metrics override at 390x844 (mobile)
-  and 1280x900. 21 pages, two widths each, saved under
-  `F:/Programmation/canari-harness/ui-audit-2026-10-16/<page>-<width>.png` (outside the repository:
-  dev is a copy of production and the shots carry real association content). Nothing was posted,
+  and 1280x900. 21 pages, two widths each, saved as `<page>-<width>.png` outside the repository
+  (dev is a copy of production and the shots carry real association content). Nothing was posted,
   followed or changed.
 - **Not seen: `/admin` itself.** The bench account holds no admin tier, so `/admin` redirected to
   `/dashboard` (`admin-390.png` is the dashboard). The admin standard was read from its code and from

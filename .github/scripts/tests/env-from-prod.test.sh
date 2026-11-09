@@ -30,16 +30,35 @@ trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/infrastructure/local" "$TMP/frontend"
 cp "$SCRIPT" "$TMP/infrastructure/local/env-from-prod.sh"
 
-# A snapshot carrying every variable the script classifies, so none is "unknown". The names come
-# from the script's own five lists: the test cannot drift from them.
-snapshot="$TMP/prod.env"
+# WHAT PRODUCTION CARRIES IS READ FROM THE MANIFEST, NOT FROM THE SCRIPT. A snapshot built from the
+# script's own five lists can only ever contain names the script classifies, so it passed while
+# three variables production renders (LIVE_ENABLED, LYDIA_RECONCILE_ENABLED, ANDROID_APP_LINK_SHA256)
+# were in no list and a real snapshot stopped the script. Every row of
+# `infrastructure/deploy/env-manifest.tsv` whose PRODUCTION disposition is not `skip` is a variable
+# the rendered production .env may hold, so each one must be classified - asserted name by name.
+MANIFEST="infrastructure/deploy/env-manifest.tsv"
+manifest_prod="$(awk -F'\t' '!/^#/ && NF >= 4 && $2 != "skip" { print $1 }' "$MANIFEST" | sort -u)"
 assignments="$(awk '/^(KEEP|BLANK|REGENERATE|LOCAL|OIDC)=/ { on = 1 } on { print } on && /"$/ { on = 0 }' "$SCRIPT")"
-names="$(
+classified="$(
   eval "$assignments"
   printf '%s\n' "$KEEP $BLANK $REGENERATE $LOCAL $OIDC" | tr ' ' '\n' | grep -v '^$' | sort -u
 )"
+if [ -z "$manifest_prod" ]; then
+  fail "read no production row from $MANIFEST - wrong path, or the columns moved"
+else
+  unclassified="$(comm -23 <(printf '%s\n' "$manifest_prod") <(printf '%s\n' "$classified") | tr '\n' ' ')"
+  if [ -z "$unclassified" ]; then
+    pass "every one of the $(printf '%s\n' "$manifest_prod" | wc -l | tr -d ' ') production rows of the manifest is classified by the script"
+  else
+    fail "production renders variables the script does not classify: $unclassified"
+  fi
+fi
+
+# The snapshot carries every production row of the manifest AND every name the script classifies
+# (some, like the database's, come from outside the manifest), so a real-shaped snapshot is run.
+snapshot="$TMP/prod.env"
 : >"$snapshot"
-for n in $names; do
+for n in $(printf '%s\n%s\n' "$manifest_prod" "$classified" | sort -u); do
   printf '%s=value-of-%s\n' "$n" "$n" >>"$snapshot"
 done
 # The three that matter here, with values that must not survive.

@@ -231,11 +231,19 @@ function liveReading(at: number, sent: number, received: number): RTCStatsReport
       packetsLost: 1,
       packetsReceived: 99,
       jitter: 0.012,
-      audioLevel: 0.25,
+      // An RMS level of 0.25 held since the start: energy = level^2 x seconds.
+      totalAudioEnergy: 0.0625 * (at / 1000),
+      totalSamplesDuration: at / 1000,
       codecId: 'C',
       timestamp: at,
     },
-    { id: 'S', type: 'media-source', kind: 'audio', audioLevel: 0.5 },
+    {
+      id: 'S',
+      type: 'media-source',
+      kind: 'audio',
+      totalAudioEnergy: 0.25 * (at / 1000),
+      totalSamplesDuration: at / 1000,
+    },
     { id: 'C', type: 'codec', mimeType: 'audio/opus' },
   ]);
 }
@@ -263,22 +271,64 @@ const ctx = {
   callId: 'room-1',
   phase: 'tick' as const,
   durMs: 12_345.6,
-  setupMs: 812.4,
+  ringMs: 6_420.2,
+  connectMs: 812.4,
   engine: 'Chrome/155',
   ice: 'connected',
   e2e: workerReport(),
+  ns: 'on',
+  nsFallbacks: 0,
 };
 
 describe('buildCallReport', () => {
   it('writes every field of the plan line, and no rate on the first reading', () => {
     const { line, snapshot } = buildCallReport(liveReading(1_000, 4_000, 8_000), ctx, null);
     expect(line).toBe(
-      '[CALL_REPORT] call=room-1 phase=tick dur_ms=12346 setup_ms=812 engine=Chrome/155 ice=connected ' +
+      '[CALL_REPORT] call=room-1 phase=tick dur_ms=12346 ring_ms=6420 connect_ms=812 engine=Chrome/155 ice=connected ' +
         'pair=relay/udp->srflx/udp relayed=yes relay_proto=tls turn=turn.cloudflare.com:3478 ' +
         'out_kbps=- in_kbps=- loss_in_pct=1.0 jitter_ms=12 audio_level_out=0.500 audio_level_in=0.250 ' +
-        'e2e=on enc_frames=500 dec_frames=498 dec_fail=3 keyframes_in=1 codec_a=opus codec_v=-'
+        'e2e=on enc_frames=500 dec_frames=498 dec_fail=3 keyframes_in=1 codec_a=opus codec_v=- ' +
+        'ns=on ns_fallbacks=0'
     );
-    expect(snapshot).toEqual({ atMs: 1_000, bytesSent: 4_000, bytesReceived: 8_000 });
+    expect(snapshot).toEqual({
+      atMs: 1_000,
+      bytesSent: 4_000,
+      bytesReceived: 8_000,
+      audioIn: { energy: 0.0625, seconds: 1 },
+      audioOut: { energy: 0.25, seconds: 1 },
+    });
+  });
+
+  it('reads the audio level over the INTERVAL, so a silent instant is not a silent tick', () => {
+    const at = (ms: number, energyIn: number, secondsIn: number) =>
+      report([
+        { id: 'T', type: 'transport', timestamp: ms },
+        {
+          id: 'I',
+          type: 'inbound-rtp',
+          kind: 'audio',
+          totalAudioEnergy: energyIn,
+          totalSamplesDuration: secondsIn,
+          timestamp: ms,
+        },
+      ]);
+    const first = buildCallReport(at(1_000, 0, 1), ctx, null);
+    expect(first.line).toContain('audio_level_in=0.000');
+    // 10 s of voice at RMS 0.1 since: +0.1 energy over +10 s -> sqrt(0.01) = 0.100.
+    const { line } = buildCallReport(at(11_000, 0.1, 11), ctx, first.snapshot);
+    expect(line).toContain('audio_level_in=0.100');
+  });
+
+  it('says what the microphone sender carries, and counts the noise suppression fallbacks', () => {
+    const failed = buildCallReport(report([]), { ...ctx, ns: 'unavailable', nsFallbacks: 1 }, null);
+    expect(failed.line).toMatch(/ ns=unavailable ns_fallbacks=1$/);
+    const noMic = buildCallReport(report([]), { ...ctx, ns: null, nsFallbacks: null }, null);
+    expect(noMic.line).toMatch(/ ns=- ns_fallbacks=-$/);
+  });
+
+  it('writes - for an audio level the engine does not count', () => {
+    const { line } = buildCallReport(report([]), ctx, null);
+    expect(line).toContain('audio_level_out=- audio_level_in=-');
   });
 
   it('counts a NON-empty frame too short to be ours as a decrypt failure, an empty one not', () => {
@@ -301,8 +351,12 @@ describe('buildCallReport', () => {
   });
 
   it('says what it does not know rather than inventing it', () => {
-    const { line } = buildCallReport(report([]), { ...ctx, setupMs: null, e2e: null }, null);
-    expect(line).toContain('setup_ms=-');
+    const { line } = buildCallReport(
+      report([]),
+      { ...ctx, ringMs: null, connectMs: null, e2e: null },
+      null
+    );
+    expect(line).toContain('ring_ms=- connect_ms=-');
     expect(line).toContain('pair=none');
     expect(line).toContain('turn=-');
     expect(line).toContain('loss_in_pct=-');

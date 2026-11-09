@@ -1,12 +1,16 @@
 import { m } from '$lib/paraglide/messages';
 import type {
+  BulkAdditionOutcome,
   BulkAdditionRefusal,
   ConversationRefusal,
+  InviteeLeftOut,
   LostInvitationOutcome,
 } from '$lib/utils/chat/groupCreation';
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { showToast } from '$lib/stores/toast.svelte';
+import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
+import type { DelegationRefusal } from './tabCommitDelegation';
 
 /**
  * THE ONE PLACE A REFUSAL BECOMES A SENTENCE, AND THE REASON IT IS A TABLE.
@@ -27,8 +31,30 @@ const SENTENCES: Record<ConversationRefusal, () => string> = {
   'block-check-unavailable': () => m.chat_modal_error_block_check_unavailable(),
   'peer-has-no-device': () => m.chat_modal_error_peer_has_no_device(),
   'follower-tab': () => m.chat_error_follower_tab(),
+  'leader-gone': () => m.chat_error_main_tab_gone(),
+  'leader-unavailable': () => m.chat_error_main_tab_unavailable(),
   'creation-failed': () => m.chat_modal_error_creation_failed(),
 };
+
+/** What a gesture handed to the main tab came to when the main tab did not answer it itself. */
+const DELEGATION_SENTENCES: Record<DelegationRefusal, () => string> = {
+  'leader-gone': () => m.chat_error_main_tab_gone(),
+  'leader-unavailable': () => m.chat_error_main_tab_unavailable(),
+  'not-delegable': () => m.chat_error_follower_tab(),
+  failed: () => m.chat_error_main_tab_failed(),
+};
+
+/**
+ * Tells the member that a gesture this tab handed to the main tab (`tabCommitDelegation.ts`) was not
+ * answered by it: it closed while running it (`leader-gone`, checked before retrying - it is never
+ * run twice), it is locked or signed out (`leader-unavailable`), it cannot be asked
+ * (`not-delegable`), or it failed (`failed`). Read from the reason,
+ * never a log.
+ */
+export function reportDelegationRefusal(reason: DelegationRefusal): void {
+  console.warn(`[TAB-COMMIT] the member is told: a gesture handed to the main tab ended ${reason}`);
+  showToast(DELEGATION_SENTENCES[reason](), reason === 'leader-gone' ? 'warning' : undefined);
+}
 
 /**
  * The localized line a creation modal shows when a conversation was refused.
@@ -76,12 +102,18 @@ export function reportFollowerTabRefusal(e: unknown): boolean {
  * @returns `recorded` when the removal stands and only its commit is owed, `not-removed` otherwise.
  */
 export function reportMemberRemovalFailure(e: unknown): 'recorded' | 'not-removed' {
-  if (e instanceof MemberRemovalNotCommittedError) {
-    showToast(m.chat_group_remove_member_keys_pending(), 'warning');
-    return 'recorded';
-  }
-  showToast(m.chat_group_remove_member_failed());
-  return 'not-removed';
+  const ending = e instanceof MemberRemovalNotCommittedError ? 'recorded' : 'not-removed';
+  reportMemberRemovalEnding(ending);
+  return ending;
+}
+
+/**
+ * The sentence of an incomplete removal, by its ending - the ONE place both a removal run here
+ * ({@link reportMemberRemovalFailure}) and one the main tab ran for this tab say it.
+ */
+export function reportMemberRemovalEnding(ending: 'recorded' | 'not-removed'): void {
+  if (ending === 'recorded') showToast(m.chat_group_remove_member_keys_pending(), 'warning');
+  else showToast(m.chat_group_remove_member_failed());
 }
 
 /** Every way an invitation can add nobody, as a sentence - total for the reason the file gives. */
@@ -90,14 +122,27 @@ const INVITE_SENTENCES: Record<BulkAdditionRefusal, () => string> = {
   'nobody-reachable': () => m.chat_invite_error_nobody_reachable(),
   'no-devices': () => m.chat_invite_error_no_devices(),
   'add-lock-busy': () => m.chat_invite_error_add_lock_busy(),
+  'add-lock-unanswered': () => m.chat_invite_error_unreachable(),
   'no-device-added': () => m.chat_invite_error_no_device_added(),
   'commit-race-lost': () => m.chat_invite_error_commit_race_lost(),
   'removed-meanwhile': () => m.chat_invite_error_removed_meanwhile(),
   'tree-unconfirmed': () => m.chat_invite_error_tree_unconfirmed(),
   'outcome-unknown': () => m.chat_invite_pending_connection(),
   'previous-commit-unresolved': () => m.chat_invite_error_previous_commit_unresolved(),
+  unreachable: () => m.chat_invite_error_unreachable(),
   failed: () => m.chat_invite_error_failed(),
 };
+
+/**
+ * The reasons said as a WARNING rather than an error: nothing about the invitation is wrong, it is
+ * waiting on the connection - kept and finishing by itself (`outcome-unknown`), or never started
+ * (`unreachable`, or the add-lock request that got no answer, `add-lock-unanswered`).
+ */
+const INVITE_WARNINGS: ReadonlySet<BulkAdditionRefusal> = new Set([
+  'outcome-unknown',
+  'unreachable',
+  'add-lock-unanswered',
+]);
 
 /**
  * Tells the member that an invitation they made added nobody, and why - read from the outcome's
@@ -109,12 +154,70 @@ const INVITE_SENTENCES: Record<BulkAdditionRefusal, () => string> = {
  * itself (`owedInvitations.ts`), so it is said as a warning, and {@link reportLostInvitation} speaks
  * if it does not finish.
  *
+ * LOGS NOTHING: the outcome was logged once where it was decided (`processBulkAddition`, TOK-2) - a
+ * second line here would be the same fact said twice.
+ *
  * @param reason - the refusal `inviteMembersToGroup` returned.
  */
 export function reportBulkAdditionRefusal(reason: BulkAdditionRefusal): void {
-  console.warn(`[GROUP] an invitation added nobody (${reason})`);
-  if (reason === 'outcome-unknown') showToast(INVITE_SENTENCES[reason](), 'warning');
+  if (INVITE_WARNINGS.has(reason)) showToast(INVITE_SENTENCES[reason](), 'warning');
   else showToast(INVITE_SENTENCES[reason]());
+}
+
+/**
+ * Tells the member what an invitation they made came to: a refusal ({@link reportBulkAdditionRefusal}),
+ * or an Add that LEFT SOMEONE OUT while adding others - named, by display name, one sentence per
+ * reason ({@link reportLeftOut}). A full success says nothing: the member list shows it.
+ *
+ * @param outcome - what `inviteMembersToGroup` returned.
+ */
+export async function reportBulkAdditionOutcome(outcome: BulkAdditionOutcome): Promise<void> {
+  if (outcome.kind === 'not-added') {
+    reportBulkAdditionRefusal(outcome.reason);
+    return;
+  }
+  if (outcome.leftOut?.length) await reportLeftOut(outcome.leftOut);
+}
+
+/** The display names of `people`, joined for a sentence - an id where no name resolves. */
+async function namesOf(people: readonly InviteeLeftOut[]): Promise<string> {
+  const ids = people.map((p) => p.userId);
+  const nameOf = await resolveDisplayNames(ids);
+  return ids.map(nameOf).join(', ');
+}
+
+/**
+ * Names the people an Add left out ({@link InviteeLeftOut}), as a warning - the Add itself happened
+ * for the others. `conversation` is set for a re-planned invitation, whose member is no longer
+ * looking at it: one sentence naming the conversation. Otherwise one sentence per reason, since
+ * only `unchecked` is worth inviting again.
+ */
+async function reportLeftOut(
+  leftOut: readonly InviteeLeftOut[],
+  conversation?: string
+): Promise<void> {
+  if (conversation !== undefined) {
+    showToast(
+      m.chat_invite_resumed_left_out({ conversation, names: await namesOf(leftOut) }),
+      'warning'
+    );
+    return;
+  }
+  const unchecked = leftOut.filter((l) => l.why === 'unchecked');
+  const noDevice = leftOut.filter((l) => l.why === 'no-device');
+  const noKeyPackage = leftOut.filter((l) => l.why === 'no-key-package');
+  if (unchecked.length > 0) {
+    showToast(m.chat_invite_left_out_unchecked({ names: await namesOf(unchecked) }), 'warning');
+  }
+  if (noDevice.length > 0) {
+    showToast(m.chat_invite_left_out_no_device({ names: await namesOf(noDevice) }), 'warning');
+  }
+  if (noKeyPackage.length > 0) {
+    showToast(
+      m.chat_invite_left_out_no_key_package({ names: await namesOf(noKeyPackage) }),
+      'warning'
+    );
+  }
 }
 
 /**
@@ -130,6 +233,16 @@ export function reportBulkAdditionRefusal(reason: BulkAdditionRefusal): void {
  * @param conversation - the conversation's display name.
  */
 export function reportLostInvitation(outcome: LostInvitationOutcome, conversation: string): void {
+  // A completion that left someone out names them (async: their display names); it was logged once
+  // where it was decided, by the Add's own line.
+  if (outcome.kind === 'completed' && outcome.leftOut?.length) {
+    void reportLeftOut(outcome.leftOut, conversation).catch((e: unknown) =>
+      console.warn(
+        `[INVITE_OWED] the people a re-plan left out could not be named: ${String(e).slice(0, 120)}`
+      )
+    );
+    return;
+  }
   if (outcome.kind === 'completed' || outcome.kind === 'kept' || outcome.kind === 'waiting') return;
   const why = outcome.kind === 'not-completed' ? outcome.reason : outcome.kind;
   console.warn(

@@ -3,10 +3,12 @@
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
-  /** A workspace role row (id, name, priority). */
+  /** A workspace role row (id, name, priority) and the name to DRAW for it (the community's own, or the default). */
   export interface PermissionGridRole {
     id: string;
     name: string;
+    /** What the header shows; the stored `name` when absent. Never read for a decision. */
+    label?: string;
     priority: number;
   }
 
@@ -119,7 +121,7 @@
                 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
                 : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'}"
           >
-            @{role.name}
+            @{role.label ?? role.name}
           </span>
         </header>
         {#if isAdmin}

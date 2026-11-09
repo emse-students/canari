@@ -1,13 +1,13 @@
 <script lang="ts">
-  import { appPathFromPathname, internalPath, safeInternalPath } from '$lib/utils/internalPath';
-  import { resolve } from '$app/paths';
-  import { goto } from '$app/navigation';
+  import { appPathFromPathname, safeInternalPath } from '$lib/utils/internalPath';
+  import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { onMount } from 'svelte';
   import {
     startOidcLogin,
     hasStoredSession,
     getToken,
     PASSWORD_LOGIN_FLOW_SLUG,
+    type OidcLoginStart,
   } from '$lib/stores/auth';
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
@@ -133,17 +133,24 @@
       if (await hasStoredSession()) {
         try {
           await getToken();
-          const target = getSafeReturnTarget();
-          const current = appPathFromPathname(window.location.pathname) + window.location.search;
-
-          // Only redirect when not already on the target page, and never twice in a row to a
-          // target that just bounced back here.
-          if (target !== current && shouldAutoRedirectTo(target)) {
-            await goto(resolve(internalPath(target)), { replaceState: true });
-          }
         } catch {
           // Token expired or invalid: stay on login so the user can re-authenticate.
           console.debug('Session expired or invalid, re-login required.');
+          return;
+        }
+        const target = getSafeReturnTarget();
+        const current = appPathFromPathname(window.location.pathname) + window.location.search;
+
+        // Only redirect when not already on the target page, and never twice in a row to a
+        // target that just bounced back here. A navigation that fails is a navigation failure,
+        // logged as one - never read as an expired session.
+        if (target !== current && shouldAutoRedirectTo(target)) {
+          await gotoAppPath(target, { replace: true }).catch((err: unknown) =>
+            console.error(
+              '[LOGIN] signed in, but leaving /login for the return target failed:',
+              err
+            )
+          );
         }
         return;
       }
@@ -174,7 +181,9 @@
       const attempt = await attemptRestore();
       if (attempt.outcome === 'restored') {
         console.debug('[LOGIN] session restored, leaving /login');
-        await goto(resolve(internalPath(getSafeReturnTarget())), { replaceState: true });
+        await gotoAppPath(getSafeReturnTarget(), { replace: true }).catch((err: unknown) =>
+          console.error('[LOGIN] session restored, but leaving /login failed:', err)
+        );
         return;
       }
       if (attempt.outcome === 'refused' && attempt.shown) loginError = attempt.shown;
@@ -212,17 +221,35 @@
   }
 
   /**
-   * Reports a login that never reached Authentik, and hands the form back to the user.
+   * Reports a sign-in that failed on THIS side of the identity provider, and hands the form back.
    *
-   * The card carries a GENERIC line and the console carries the exception. `startOidcLogin` fails
-   * before any response exists - a discovery document that would not parse, a redirect the engine
-   * refused - so there is no status to describe and nothing localized to show: its message is dev
-   * prose in English, and this is the most exposed card in the application, read by someone who is
-   * not signed in and has no way past it.
+   * Two kinds reach it, neither carrying an HTTP status: a failure before MiConnect was reached (a
+   * discovery document that would not parse, a redirect the engine refused), and - on a phone - an
+   * in-app browser that failed after reaching it (the session errored, or its callback could not be
+   * re-dispatched to the app). A sheet the USER closed is not one: that is `cancelled`, an outcome.
+   *
+   * The card carries a GENERIC line and the console carries the exception: its message is dev prose
+   * in English, and this is the most exposed card in the application, read by someone who is not
+   * signed in and has no way past it.
    */
   function failLoginAttempt(e: unknown) {
-    console.warn(`[LOGIN] OIDC start failed: ${String(e)}`);
-    loginError = m.auth_login_start_failed();
+    console.warn(`[LOGIN] OIDC sign-in failed: ${String(e)}`);
+    loginError = m.auth_login_attempt_failed();
+    isLoggingIn = false;
+  }
+
+  /**
+   * Acts on how the sign-in left the page. A sheet the USER CLOSED (iOS) hands the form back at
+   * once: it raises no visibility, focus or foreground edge, so `onVisible` never would - the button
+   * stayed on "Redirection..." until the app was killed (iPhone 12, 2026-11-03). Every other outcome
+   * is followed by a navigation, the callback's deep link or the foreground edge, and stays busy.
+   */
+  function settleLoginStart(start: OidcLoginStart) {
+    if (start !== 'cancelled') {
+      console.debug(`[LOGIN] sign-in under way (${start}), the form stays busy.`);
+      return;
+    }
+    console.debug('[LOGIN] sign-in sheet closed by the user, the form is handed back.');
     isLoggingIn = false;
   }
 
@@ -231,8 +258,7 @@
     try {
       // Awaited: `startOidcLogin` is async, and an unawaited rejection would escape this `catch`
       // and leave the form busy for ever.
-      await startOidcLogin(getSafeReturnTarget());
-      // The browser navigates to Authentik - no need to reset isLoggingIn.
+      settleLoginStart(await startOidcLogin(getSafeReturnTarget()));
     } catch (e: unknown) {
       failLoginAttempt(e);
     }
@@ -241,7 +267,9 @@
   async function handlePasswordLogin() {
     if (!(await beginLoginAttempt())) return;
     try {
-      await startOidcLogin(getSafeReturnTarget(), { flowSlug: PASSWORD_LOGIN_FLOW_SLUG });
+      settleLoginStart(
+        await startOidcLogin(getSafeReturnTarget(), { flowSlug: PASSWORD_LOGIN_FLOW_SLUG })
+      );
     } catch (e: unknown) {
       failLoginAttempt(e);
     }

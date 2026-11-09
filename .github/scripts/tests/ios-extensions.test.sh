@@ -40,7 +40,7 @@ run "$(make_app both CanariNotifications.appex CanariShare.appex)"
 
 run "$(make_app noshare CanariNotifications.appex)"
 [ "$rc" -eq 1 ] && pass 'the share extension missing: exit 1' || fail "missing share: exit $rc"
-printf '%s' "$out" | grep -q 'CanariShare.appex' && pass 'the message names what must be there' || fail "not named: $out"
+grep -q 'CanariShare.appex' <<<"$out" && pass 'the message names what must be there' || fail "not named: $out"
 
 run "$(make_app extra CanariNotifications.appex CanariShare.appex Other.appex)"
 [ "$rc" -eq 1 ] && pass 'an unexpected extension: exit 1' || fail "extra: exit $rc"

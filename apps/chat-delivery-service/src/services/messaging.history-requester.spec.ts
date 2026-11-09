@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { Logger } from '@nestjs/common';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { MessagingService } from './messaging.service';
@@ -30,9 +30,9 @@ describe('a history read names who asked', () => {
   let error: jest.SpyInstance;
   let redis: { xrange: jest.Mock; xrevrange: jest.Mock; del: jest.Mock };
   let intervalFind: jest.Mock;
+  let seatFind: jest.Mock;
 
   const GROUP = 'group-1';
-  const ADMIN = 'true';
   const DEVICE = 'device-7';
   const USER = 'user-9';
 
@@ -58,13 +58,23 @@ describe('a history read names who asked', () => {
       xrevrange: jest.fn().mockResolvedValue([]),
       del: jest.fn(),
     };
-    intervalFind = jest.fn().mockResolvedValue([]);
+    // The caller is an admitted member of every group it asks for, and has been since the epoch:
+    // history is a member's read, and the cases below are about what a MEMBER is served.
+    intervalFind = jest
+      .fn()
+      .mockResolvedValue([{ groupId: GROUP, joinedAt: new Date(0), leftAt: null }]);
+    // `IN (...)` honoured, as Postgres would: one admitted seat per group asked about.
+    seatFind = jest
+      .fn()
+      .mockImplementation(async (opts: { where: { groupId: { value: string[] } } }) =>
+        opts.where.groupId.value.map((groupId) => ({ groupId, awaitingAdmission: false }))
+      );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
-        { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
+        { provide: getRepositoryToken(GroupMember), useValue: { ...emptyRepo(), find: seatFind } },
         {
           provide: getRepositoryToken(Group),
           // The group must exist, or the orphan purge answers before anything reads the stream.
@@ -134,7 +144,7 @@ describe('a history read names who asked', () => {
     });
 
     it('on the single-group read, the row is absent - never a shape without content', async () => {
-      const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
+      const page = await service.getHistory(GROUP, undefined, USER);
 
       expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '3-0']);
       for (const row of page.rows) expect(typeof row['content']).toBe('string');
@@ -142,7 +152,7 @@ describe('a history read names who asked', () => {
     });
 
     it('on the batch read', async () => {
-      const res = await service.getHistoryBatch([{ groupId: GROUP }], USER, ADMIN);
+      const res = await service.getHistoryBatch([{ groupId: GROUP }], USER);
 
       expect(res.histories[GROUP].map((r) => r['id'])).toEqual(['1-0', '3-0']);
     });
@@ -156,7 +166,7 @@ describe('a history read names who asked', () => {
       put(5, 7);
 
       // An incremental read (`after` set) takes the caller's limit.
-      const page = await service.getHistory(GROUP, '0-0', USER, ADMIN, 2);
+      const page = await service.getHistory(GROUP, '0-0', USER, 2);
 
       expect(page.rows.map((r) => r['id'])).toEqual(['4-0', '5-0']);
     });
@@ -184,7 +194,7 @@ describe('a history read names who asked', () => {
       let head: string | undefined;
       const decoded: string[] = [];
       for (let guard = 0; guard < 20; guard++) {
-        const page = await service.getHistory(GROUP, cursor ?? '0-0', USER, ADMIN, 3, head);
+        const page = await service.getHistory(GROUP, cursor ?? '0-0', USER, 3, head);
         head ??= page.head;
         if (page.rows.length === 0) break;
         for (const row of page.rows) {
@@ -202,7 +212,7 @@ describe('a history read names who asked', () => {
       for (let n = 1; n <= 300; n++) put(n, 4); // all inside the window
       put(301, 6);
 
-      const page = await service.getHistory(GROUP, '0-0', USER, ADMIN, 1);
+      const page = await service.getHistory(GROUP, '0-0', USER, 1);
 
       expect(page.rows.map((r) => r['id'])).toEqual(['301-0']);
       // One chunk of HISTORY_FULL_PAGE_LIMIT, never 301 reads of one row.
@@ -262,7 +272,7 @@ describe('a history read names who asked', () => {
     it('repairs a roster member with no open interval instead of reading them as still out', async () => {
       const values = withRepairableTable(at('2026-10-05T00:00:00Z'), true);
 
-      const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
+      const page = await service.getHistory(GROUP, undefined, USER);
 
       // Without the repair, 3-0 (the 6th) falls in a window open from the 3rd and is dropped.
       expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '3-0']);
@@ -275,7 +285,7 @@ describe('a history read names who asked', () => {
     it('a concurrent repair that stored it first: the table is re-read, and no repair is claimed', async () => {
       withRepairableTable(at('2026-10-05T00:00:00Z'), false);
 
-      const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
+      const page = await service.getHistory(GROUP, undefined, USER);
 
       expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '3-0']);
       expect(lines()).not.toContain('opened a missing interval');
@@ -284,7 +294,7 @@ describe('a history read names who asked', () => {
     it('a person with no roster row and a closed interval is still read as out', async () => {
       withRepairableTable(null, false);
 
-      const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
+      const page = await service.getHistory(GROUP, undefined, USER);
 
       expect(page.rows.map((r) => r['id'])).toEqual(['1-0']);
       expect(lines()).not.toContain('opened a missing interval');
@@ -292,7 +302,7 @@ describe('a history read names who asked', () => {
 
     it('counts a cursor followed only by withheld rows as caught up, not as a line per launch', async () => {
       stream.pop(); // the head is now 2-0, inside the window
-      await service.getHistoryBatch([{ groupId: GROUP, after: '1-0' }], USER, ADMIN);
+      await service.getHistoryBatch([{ groupId: GROUP, after: '1-0' }], USER);
 
       expect(lines()).not.toContain('[HISTORY] ');
       expect(lines()).toContain('caughtUp=1');
@@ -301,24 +311,192 @@ describe('a history read names who asked', () => {
     it('a failed window read answers THAT group empty and serves the rest of the batch', async () => {
       intervalFind.mockImplementation(async (_e: unknown, opts: { where: { groupId: string } }) => {
         if (opts.where.groupId === 'group-2') throw new Error('connection reset');
-        return [];
+        return [{ groupId: GROUP, joinedAt: new Date(0), leftAt: null }];
       });
       const groupRepo = (service as unknown as { groupRepo: { find: jest.Mock } }).groupRepo;
       groupRepo.find.mockResolvedValue([{ id: GROUP }, { id: 'group-2' }]);
 
-      const res = await service.getHistoryBatch(
-        [{ groupId: GROUP }, { groupId: 'group-2' }],
-        USER,
-        ADMIN
-      );
+      const res = await service.getHistoryBatch([{ groupId: GROUP }, { groupId: 'group-2' }], USER);
 
       expect(res.histories['group-2']).toEqual([]);
       expect(res.histories[GROUP].map((r) => r['id'])).toEqual(['1-0', '2-0', '3-0']);
       expect(lines()).toContain('[HISTORY_BATCH] user=user-9 device=unstated group=group-2 error=');
     });
 
+    /**
+     * A NEWCOMER READS NOTHING FROM BEFORE THEIR ARRIVAL (user, 2026-10-21), and the server's own
+     * stream is held to it too: the same `withheldWindows` the exclusions route answers, so the
+     * ciphertexts a member's answer withholds are not served to the newcomer by this route either.
+     */
+    describe("in a GROUP conversation, also what preceded the reader's arrival", () => {
+      /** The group row and the reader's earliest device row in it. */
+      const groupAndFirstDevice = (
+        group: { isGroup: boolean; createdAt: Date; distributionWorkspaceId?: string | null },
+        firstDeviceAt: Date | null
+      ) => {
+        const internals = service as unknown as {
+          groupRepo: { findOne: jest.Mock };
+          deviceGroupRepo: { createQueryBuilder: jest.Mock };
+        };
+        internals.groupRepo.findOne = jest
+          .fn()
+          .mockResolvedValue({ id: GROUP, distributionChannelId: null, ...group });
+        const qb: Record<string, unknown> = {
+          select: () => qb,
+          where: () => qb,
+          andWhere: () => qb,
+          getRawOne: async () => ({ firstDeviceAt }),
+        };
+        internals.deviceGroupRepo.createQueryBuilder = jest.fn(() => qb);
+      };
+
+      beforeEach(() => {
+        stream = [];
+        put(1, 2);
+        put(2, 4);
+        put(3, 6);
+      });
+
+      it('a newcomer added on the 5th is served nothing from before it', async () => {
+        intervalFind.mockResolvedValue([
+          { groupId: GROUP, joinedAt: at(day(5)), leftAt: null, admittedAt: null },
+        ]);
+        groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, at(day(5)));
+
+        const page = await service.getHistory(GROUP, undefined, USER);
+        const batch = await service.getHistoryBatch([{ groupId: GROUP }], USER);
+
+        expect(page.rows.map((r) => r['id'])).toEqual(['3-0']);
+        expect(batch.histories[GROUP].map((r) => r['id'])).toEqual(['3-0']);
+      });
+
+      it('the arrival is the EARLIER of the interval and the first device row (added = arrived)', async () => {
+        intervalFind.mockResolvedValue([
+          { groupId: GROUP, joinedAt: at(day(5)), leftAt: null, admittedAt: null },
+        ]);
+        groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, at(day(3)));
+
+        const page = await service.getHistory(GROUP, undefined, USER);
+
+        expect(page.rows.map((r) => r['id'])).toEqual(['2-0', '3-0']);
+      });
+
+      it('the person who arrived with the group is withheld nothing', async () => {
+        intervalFind.mockResolvedValue([
+          { groupId: GROUP, joinedAt: at(day(1)), leftAt: null, admittedAt: null },
+        ]);
+        groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, at(day(1)));
+
+        const page = await service.getHistory(GROUP, undefined, USER);
+
+        expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '2-0', '3-0']);
+      });
+
+      it('a 1:1 and a key group withhold no arrival span, as before', async () => {
+        intervalFind.mockResolvedValue([
+          { groupId: GROUP, joinedAt: at(day(5)), leftAt: null, admittedAt: null },
+        ]);
+        groupAndFirstDevice({ isGroup: false, createdAt: at(day(1)) }, at(day(5)));
+        expect((await service.getHistory(GROUP, undefined, USER)).rows.map((r) => r['id'])).toEqual(
+          ['1-0', '2-0', '3-0']
+        );
+
+        groupAndFirstDevice(
+          { isGroup: true, createdAt: at(day(1)), distributionWorkspaceId: 'ws-1' },
+          at(day(5))
+        );
+        expect((await service.getHistory(GROUP, undefined, USER)).rows.map((r) => r['id'])).toEqual(
+          ['1-0', '2-0', '3-0']
+        );
+      });
+
+      /**
+       * A MEMBER HOLDING NO INTERVAL (review of #2800): a roster member the enrolment failed to record
+       * is repaired - or, when nothing can be opened, served nothing rather than everything. Every
+       * caller reaching here is on the roster: no global admin is exempt (owner, 2026-11-02).
+       */
+      describe('a caller holding no interval at all', () => {
+        /** `openMissingIntervals`' transaction: the roster rows it finds, and what its insert opens. */
+        const repairOpens = (roster: { userId: string; joinedAt: Date }[]) => {
+          const chain = (end: Record<string, unknown>) => {
+            const qb: Record<string, unknown> = { ...end };
+            for (const k of [
+              'select',
+              'addSelect',
+              'where',
+              'andWhere',
+              'setLock',
+              'insert',
+              'into',
+              'values',
+              'orIgnore',
+              'returning',
+            ])
+              qb[k] = () => qb;
+            return qb;
+          };
+          const tx = {
+            getRepository: () => ({
+              createQueryBuilder: () => chain({ getRawMany: async () => roster }),
+            }),
+            createQueryBuilder: () => chain({ execute: async () => ({ raw: roster }) }),
+          };
+          const internals = service as unknown as {
+            groupRepo: { manager: { transaction?: unknown } };
+          };
+          internals.groupRepo.manager.transaction = async (fn: (m: typeof tx) => unknown) => fn(tx);
+        };
+        const windowsOf = (s: MessagingService) =>
+          (
+            s as unknown as {
+              ownWithheldWindows: (u: string, g: string) => Promise<unknown>;
+            }
+          ).ownWithheldWindows(USER, GROUP);
+
+        it('is repaired from the roster, and withheld what preceded that arrival', async () => {
+          intervalFind
+            .mockResolvedValueOnce([])
+            .mockResolvedValue([
+              { groupId: GROUP, joinedAt: at(day(5)), leftAt: null, admittedAt: null },
+            ]);
+          repairOpens([{ userId: USER, joinedAt: at(day(5)) }]);
+          groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, null);
+
+          await expect(windowsOf(service)).resolves.toEqual([
+            { from: 0, until: at(day(5)).getTime() },
+          ]);
+          expect(lines()).toContain('opened a missing interval');
+        });
+
+        it('fails closed when nothing can be opened: every row withheld, said at ERROR', async () => {
+          intervalFind.mockResolvedValue([]);
+          repairOpens([]);
+          groupAndFirstDevice({ isGroup: true, createdAt: at(day(1)) }, null);
+
+          await expect(windowsOf(service)).resolves.toEqual([{ from: 0, until: null }]);
+          expect(lines()).toContain('withheld whole rather than served unfiltered');
+        });
+      });
+
+      /**
+       * NO PLATFORM-ADMIN BYPASS ON CONVERSATION DATA (owner, 2026-11-02). The admin outside the group
+       * used to read its whole stream here, unnarrowed; it is now refused like any non-member, on
+       * both routes, whatever its `x-global-admin` header says - the service no longer reads it.
+       */
+      it('a global admin who is not a member is refused like any non-member', async () => {
+        seatFind.mockResolvedValue([]);
+
+        await expect(service.getHistory(GROUP, undefined, 'platform-admin')).rejects.toBeInstanceOf(
+          ForbiddenException
+        );
+        const batch = await service.getHistoryBatch([{ groupId: GROUP }], 'platform-admin');
+        expect(batch.histories[GROUP]).toEqual([]);
+        expect(redis.xrange).not.toHaveBeenCalled();
+      });
+    });
+
     it('reads the windows of the CALLER, never of anybody else', async () => {
-      await service.getHistory(GROUP, undefined, USER, ADMIN);
+      await service.getHistory(GROUP, undefined, USER);
 
       expect(intervalFind).toHaveBeenCalledWith(
         expect.anything(),
@@ -328,13 +506,13 @@ describe('a history read names who asked', () => {
   });
 
   it('names the user nginx authenticated and the device the client claims', async () => {
-    await service.getHistory(GROUP, undefined, USER, ADMIN, undefined, undefined, DEVICE);
+    await service.getHistory(GROUP, undefined, USER, undefined, undefined, DEVICE);
 
     expect(lines()).toContain(`[HISTORY] user=${USER} device=${DEVICE} group=${GROUP}`);
   });
 
   it('names them on the batch route too, which is where a catch-up starts', async () => {
-    await service.getHistoryBatch([{ groupId: GROUP }], USER, ADMIN, DEVICE);
+    await service.getHistoryBatch([{ groupId: GROUP }], USER, DEVICE);
 
     expect(lines()).toContain(`[HISTORY] user=${USER} device=${DEVICE} group=${GROUP}`);
     expect(lines()).toContain(`[HISTORY_BATCH] user=${USER} device=${DEVICE} groups=1`);
@@ -348,12 +526,12 @@ describe('a history read names who asked', () => {
   it('counts a caught-up group on the batch route and prints the bound it was asked', async () => {
     redis.xrevrange.mockResolvedValue([['9-0', ['content', 'ciphertext']]]);
 
-    await service.getHistoryBatch([{ groupId: GROUP, after: '9-0' }], USER, ADMIN, DEVICE);
+    await service.getHistoryBatch([{ groupId: GROUP, after: '9-0' }], USER, DEVICE);
     expect(lines()).not.toContain('[HISTORY] ');
     expect(lines()).toContain('groups=1 authorized=1 caughtUp=1');
 
     log.mockClear();
-    await service.getHistoryBatch([{ groupId: GROUP, after: '8-0' }], USER, ADMIN, DEVICE);
+    await service.getHistoryBatch([{ groupId: GROUP, after: '8-0' }], USER, DEVICE);
     expect(lines()).toContain(`group=${GROUP} after=8-0 until=none head=9-0`);
     expect(lines()).toContain('caughtUp=0');
   });
@@ -363,7 +541,7 @@ describe('a history read names who asked', () => {
    * says "nobody told us", which is a different fact from "somebody told us something unusable".
    */
   it('says so when the caller sent no device, rather than inventing one', async () => {
-    await service.getHistory(GROUP, undefined, USER, ADMIN);
+    await service.getHistory(GROUP, undefined, USER);
 
     expect(lines()).toContain(`[HISTORY] user=${USER} device=unstated group=${GROUP}`);
   });
@@ -380,7 +558,6 @@ describe('a history read names who asked', () => {
       GROUP,
       undefined,
       USER,
-      ADMIN,
       undefined,
       undefined,
       'a\n[HISTORY] user=victim device=forged group=elsewhere'

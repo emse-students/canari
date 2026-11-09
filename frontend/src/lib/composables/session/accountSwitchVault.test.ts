@@ -7,7 +7,10 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
-vi.mock('$lib/stores/auth', () => ({ getToken: vi.fn().mockResolvedValue('') }));
+vi.mock('$lib/stores/auth', () => ({
+  getToken: vi.fn().mockResolvedValue(''),
+  signOutGeneration: () => 0,
+}));
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -60,12 +63,18 @@ function mlsBinIsAlices(): void {
   invoke.mockImplementation((cmd: string, args?: { deviceKeyB64?: string }) => {
     if (cmd === 'sauvegarder_mls_et_persister') return Promise.resolve([1, 2, 3]);
     if (cmd !== 'initialiser_mls') return Promise.resolve(undefined);
-    if (args?.deviceKeyB64 !== ALICES_KEY) return Promise.reject(new Error('STATE_UNDECRYPTABLE'));
+    if (args?.deviceKeyB64 !== ALICES_KEY) {
+      return Promise.reject({
+        code: 'STATE_UNDECRYPTABLE',
+        message: 'aead::Error',
+      });
+    }
     return currentUser === ALICE
       ? Promise.resolve(undefined)
-      : Promise.reject(
-          new Error(`IDENTITY_MISMATCH: expected ${currentUser} but state contains ${ALICE}`)
-        );
+      : Promise.reject({
+          code: 'IDENTITY_MISMATCH',
+          message: `expected ${currentUser} but state contains ${ALICE}`,
+        });
   });
 }
 let currentUser = '';

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { RefreshCw, Upload, Download } from '@lucide/svelte';
   import {
     globalSession as session,
@@ -26,7 +27,6 @@
   // the user already holds it. Dropped from the screen by "I have saved the code" or by leaving.
   let shownCode: string | null = $state(null);
   let shownNote: string | null = $state(null);
-  let codeCopied = $state(false);
 
   // Decision 4 of 2026-10-22: after the move to the hardware-held key, earlier backups no longer
   // open on this phone, so a new one is asked for until it is made. Read again after each export.
@@ -86,7 +86,6 @@
   async function handleExport() {
     outcome = null;
     shownCode = null;
-    codeCopied = false;
     outcome = await session.handleExport(appendLog);
     shownCode = outcome?.recoveryCode ?? null;
     shownNote = outcome?.codeNote ?? null;
@@ -94,13 +93,12 @@
   }
 
   async function copyCode() {
-    if (shownCode) codeCopied = await copyText(shownCode, 'backup recovery code');
+    if (shownCode) await copyText(shownCode, { what: 'code' });
   }
 
   function forgetShownCode() {
     shownCode = null;
     shownNote = null;
-    codeCopied = false;
   }
 </script>
 
@@ -177,20 +175,12 @@
           {shownCode}
         </p>
         <div class="mt-3 flex gap-2">
-          <button
-            type="button"
-            onclick={copyCode}
-            class="border-cn-border rounded-xl border px-3 py-2 text-sm font-bold"
-          >
-            {codeCopied ? m.profile_backup_code_copied() : m.profile_backup_code_copy()}
-          </button>
-          <button
-            type="button"
-            onclick={forgetShownCode}
-            class="bg-cn-yellow text-cn-dark rounded-xl px-3 py-2 text-sm font-bold"
-          >
+          <Button variant="secondary" onclick={copyCode}>
+            {m.profile_backup_code_copy()}
+          </Button>
+          <Button onclick={forgetShownCode}>
             {m.profile_backup_code_done()}
-          </button>
+          </Button>
         </div>
       </div>
     {/if}
@@ -217,20 +207,12 @@
           class="border-cn-border bg-cn-surface text-text-main mt-2 w-full rounded-xl border px-3 py-2 font-mono text-sm"
         />
         <div class="mt-3 flex gap-2">
-          <button
-            type="button"
-            onclick={cancelCode}
-            class="border-cn-border rounded-xl border px-3 py-2 text-sm font-bold"
-          >
+          <Button variant="secondary" onclick={cancelCode}>
             {m.profile_backup_code_cancel()}
-          </button>
-          <button
-            type="submit"
-            disabled={session.isImporting}
-            class="bg-cn-yellow text-cn-dark rounded-xl px-3 py-2 text-sm font-bold disabled:opacity-50"
-          >
+          </Button>
+          <Button type="submit" disabled={session.isImporting}>
             {m.profile_backup_code_submit()}
-          </button>
+          </Button>
         </div>
       </form>
     {/if}

@@ -45,7 +45,7 @@ agenda route, so the shell refuses that account as well. `access.test.ts` pins t
 | `/admin/moderation` | Reports, hidden posts, mutes | Content moderator or platform admin |
 | `/admin/read-access` | Two tabs: named readers (platform admin only) and public-document reviewers ([below](#read-access-adminread-access)) | BDE super-admin (reviewers tab only) or platform admin |
 | `/admin/carte` | Carte de la Vie Asso | BDE super-admin or platform admin |
-| `/admin/spaces` | Spaces & audiences: three sections (associations, lists, institutions), the BDE star | Platform admin |
+| `/admin/spaces` | Every association, list and institution (searched, filtered, paged), its spaces, the BDE star, and the create form ([below](#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)) | Platform admin |
 | `/admin/platform` | Maintenance, minimum client version | Platform admin |
 | `/admin/users` | User list, admin flag | Platform admin |
 | `/admin/status` | Presence and connections | Platform admin |
@@ -132,6 +132,20 @@ The decisions, taken by the user on 2026-10-16:
   reviewers' writes are tracked per person, so an undo for one never waits on an add for another.
 - **A failed add keeps the person in the search field** (`onAdd` answers whether it succeeded).
 
+**"Voit les commentaires", one switch per person (owner, 2026-11-04: "un truc clair et propre, le
+plus user-friendly possible").** At the foot of the same sheet, under the campuses: the shared
+`Toggle`, labelled "Voit les commentaires", with ONE line under it saying what the reader will and
+will not see in its current state (OFF: reads the posts, watches the lives and reacts, without the
+comments, the chat of lives or who reacted or voted; ON: reads and writes the comments and the chat
+of lives, sees who reacted or voted - the lives' chat joined the same switch on 2026-11-04). OFF is the default,
+for every named reader already there too. It saves at once and offers "Annuler" like a box
+(`PUT /read-grants/comments`, the inverse write as undo, journalled `cmt_show`/`cmt_hide` and drawn
+in the journal in words); while it saves it is `busy` (the `Toggle`'s new prop: `aria-busy` +
+`aria-disabled`, a click does nothing - never `disabled`, for the focus-trap reason above). The card
+says the state in one muted line under the chips. Unticking a reader's LAST box also turns their
+switch back OFF on the server (journalled `cmt_hide`), so a reader granted again starts OFF. What it changes for the reader, and why:
+[profiles-and-access](../../profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08).
+
 Tests: `readAccess.test.ts` (grouping, "200+", the server's page size), `ReadGrantCard.svelte.test.ts`
 (chips), `ReadAccessPanel.svelte.test.ts` (save at once, undo = inverse write, the re-read race -
 checked to FAIL with the sequence guard removed - busy box, undo in the sheet, failed save inside
@@ -140,7 +154,105 @@ undo re-grants, the in-force label, a failed add keeps the person picked and the
 on success - checked to FAIL when the field clears unconditionally; the readers' "Ajouter" opens
 the sheet, then clears; `src/test/pickUser.ts` picks through the real search), `routes/admin/read-access/page.tabs.svelte.test.ts` (two tabs
 for a global admin, the reviewers alone and no read-grants request for a BDE super-admin, the hub
-for anyone else).
+for anyone else). The comments switch: `ReadGrantCard.svelte.test.ts` (the state line),
+`ReadAccessPanel.svelte.test.ts` (OFF by default with its line, saves at once, undo = inverse
+write, a click while busy is put back and sends nothing, a switch line of the journal in words).
+
+## The catalogue and the create form (`/admin/spaces`, owner 2026-11-02)
+
+**The platform admin reaches EVERY entity here, member or not.** The page reads
+`GET /api/associations/admin/catalogue?type=&q=&after=&limit=` (`AdminAssociationsController`, guarded
+`NginxAuthGuard` + `GlobalAdminGuard` + a per-user throttle), never the reader's directory. A BDE is
+refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own campus
+([association-permissions](../../association-permissions.md#creating-an-entity-two-routes-two-tiers)).
+
+- **Every row has two links**: the public page and the management hub, both under the base of its kind
+  (`entityBase`: `/lists` for a list, `/associations` otherwise). The management page admits a non-member
+  platform admin (`canEdit = isGlobalAdmin() || ...`, then `editRights`, which reads `isGlobalAdmin`
+  first). The zero-member audit of 2026-11-02 read every tab and found no tab that needs a membership.
+  Every row also shows its member count, so an empty entity reads "0 membre".
+- **Search, type filter, keyset pages.** One request per visible kind, ordered `(name, id)` and paged on
+  that pair (`(a.name, a.id) > cursor`). A page costs the same at any depth, and a row created meanwhile
+  never shifts the next page. The search runs on the server, over the name or slug, ignoring case
+  AND accents ("ecole" finds the name with its acute accent). The fold is `foldSql` in
+  `search-fold.ts`, a `translate` table. It is not `unaccent`: no social-service migration installs that
+  extension, only core-service creates it at boot. Search answers are numbered when sent, so an
+  answer older than the one on screen is dropped. "Afficher plus" asks with the cursor the last page
+  gave AND the query that cursor was read for. A cursor is a position in one result set, so a click
+  during the search pause never mixes the old cursor with the new query. A cursor the server did not
+  write is the typed `ADMIN_ASSOCIATION_BAD_CURSOR`, never a 500: a malformed shape, an id that is not
+  a UUID, and a NUL are all refused this way. Each row carries its audience rules, which
+  replaced the whole-table `GET /api/associations/spaces/audiences` read (kept for old builds until
+  floor `1.6.6` retired it, [legacy-compatibility](../../legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08)).
+  Measured 2026-11-02, read-only: production holds 97 entities (49 associations, 44 lists, 4
+  institutions; 49 of them already have no member), dev holds 10. The paging is there so that the
+  count does not matter.
+- **The governor star and the reach box are two axes** (reform 2.5, WP-D1). The star designates a
+  space's governor - an association, or an institution (D3), never a list - and since WP-D1 writes no
+  audience rule; the reach box beside it is a box like any other, a governor's included. A refused
+  designation is worded by its typed code (`dependencyRefusalMessage`).
+- **The Dependencies panel** (`AdminDependenciesPanel.svelte`, `GET`/`PUT
+  /api/associations/spaces/dependencies[/:id]`, reform 2.7): each BDE with the entities that depend on
+  it, then the entities attached to a non-BDE (orphaned), those with no BDE, and the institutions,
+  apart; each mismatch of 2.5 beside its entity. **Layout (2026-11-07):** one line per entity (name,
+  type chip, quiet "shown under X" hint, `archived` tag when the name is greyed, action); a mismatch
+  is a small labelled warning icon (`aria-label` and `title` carry the sentence), and a BDE whose
+  children have `reaches_outside_parent` heads its list with one summary and a toggle narrowing the
+  family to them (a view filter only, no server call); children are split into Associations and
+  Lists. WP-D2 (#3115) changes governance to read the parent, not this mismatch's meaning: the
+  sentence stays a statement about the audience, no longer one about who governs. A platform admin changes a parent, and a list's
+  display label (G3), here; the server journals it and refuses what the two-level rule forbids. The
+  panel reads the axis again after every governor designation (`revision`). The arrangement is
+  `groupDependencies` (`$lib/associations/dependencies.ts`), which puts every entity in exactly one
+  group.
+- **The create form** (`AdminEntityCreateForm.svelte`, `POST /api/associations/admin`) asks for exactly
+  four things:
+  - a name;
+  - a kind;
+  - its spaces (`CellPicker`, written as `toRules(cells)`);
+  - an OPTIONAL first admin, picked from the accounts and given `firstAdminPresetFor(kind)`. It carries
+    NO role: the row takes the column's default, like any member added without a title. A label
+    typed by this code would be a locale string stored as data. This is
+    the kind's admin preset, except for an institution. **An institution's members are managed by
+    the platform admin only** (owner, 2026-11-02), so its first admin never holds `MANAGE_MEMBERS`.
+    The server refuses that bit on an institution with `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`
+    (400, rolled back with the row), and never strips it silently - the same rule and code as every
+    member write, judged in `insertMembership`, the one member writer. `MANAGE_MEMBERS` also gates the profile, the logo
+    and the tags (`PATCH :id`), so the platform admin keeps those as well.
+
+  **The default is no member at all, and the creating admin never becomes one.** Logo, description and
+  cotisations stay on the management page. The server writes the row, its rules and the first admin in
+  ONE transaction, through `AssociationsService.create` with a placement: no second creation path
+  exists. A first admin that names no account is the typed `ADMIN_ASSOCIATION_FIRST_ADMIN_UNKNOWN` and
+  leaves no row behind. An `everyone` rule on an association or a list is refused with
+  `AUDIENCE_EVERYONE_INSTITUTION_ONLY`, as on every audience write. The explicit spaces replace the
+  creator-campus default, so a platform admin with no campus on their profile can still create.
+- **The slug preview is the server's answer** (`GET /api/associations/admin/slug-preview?name=`,
+  `previewDerivedSlug`). It walks the same `slugCandidates`, skipping a taken slug or a cotisation-stem
+  collision, so `-2` and `-3` appear as the create would take them. It reads every stem ONCE
+  (`stemCollidesElsewhere`, where a slug is its own base stem) and ASKS the same predicate the create's
+  `assertCotisationStemFree` applies. It never catches that refusal, which would WARN on every
+  keystroke for a collision nobody committed. A test asserts that a preview logs no warning, and a
+  control that catches the refusal again fails it. It is asked once the name has
+  rested for 300 ms and is numbered like the search. The create stays the authority: a concurrent
+  create may move the slug on by one suffix, and the link follows what the create answered.
+
+Tests:
+- `admin-create.integration.spec.ts` (PostgreSQL): no member; a first admin; an unknown admin rolls the
+  row back; `-2`, with the preview naming it first; the stem walk; explicit spaces; the `everyone`
+  refusal; a BDE `MANAGE_ASSO` holder refused; keyset paging over tied names, search and counts; a forged
+  cursor. A control removing the platform-admin check and loosening the keyset to `>=` fails two cases.
+- `admin-associations.controller.spec.ts`: the guards, and the one creation call.
+- `AdminEntityCreateForm.svelte.test.ts`: the preview and the stale answer it drops, which a control
+  without the guard fails; the default with no member; the spaces and the first admin's preset; a typed
+  refusal; a blank name. `editSections.test.ts`: `firstAdminPresetFor` (no `MANAGE_MEMBERS` on an
+  institution) and `entityBase`. The integration file also refuses an institution first admin holding
+  `MANAGE_MEMBERS`.
+- `page.catalogue.svelte.test.ts`: both links per row and the member count; "show more"; the server
+  search; the type filter; opening the form.
+  - A search answer older than the one on screen is dropped.
+  - "Show more" during the search pause asks with its cursor's own query.
+  - A control without each guard fails its test.
 
 ## Cercle top-ups (`/admin/cercle`)
 

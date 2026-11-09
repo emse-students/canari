@@ -28,7 +28,7 @@ import {
   wasmGraineSignatureEngine,
   detectRuntimeDeviceOs,
   SavedStateUnopenedError,
-  noPinOpensState,
+  recoveryOfStateLoadFailure,
   VaultOwnerUnprovenError,
   type MlsInitOptions,
 } from '$lib/mls-client';
@@ -47,7 +47,7 @@ import {
   isEphemeralFrame,
   isHeartbeatFrame,
 } from '$lib/mls-client/channelEventTypes';
-import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { liveMlsFrameMessage } from '$lib/mls-client/liveFrame';
 import {
   loadMlsState,
   saveMlsState,
@@ -56,7 +56,6 @@ import {
   type MlsStateWriteLatch,
   toBase64,
   toHex,
-  fromBase64,
   tagMlsSnapshot,
   propagateMlsSnapshotVersion,
 } from '$lib/utils/hex';
@@ -518,6 +517,7 @@ export class WebMlsService extends BaseMlsService {
       socket.onopen = () => {
         clearTimeout(timeout);
         resolved = true;
+        this.noteSocketOpened();
         this.startHeartbeat();
         console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(deviceId)}`);
         resolve();
@@ -680,37 +680,17 @@ export class WebMlsService extends BaseMlsService {
       return;
     }
     if (msg.proto && this.messageCallback) {
-      const ciphertext = fromBase64(msg.proto as string);
-      const ratchetTreeBytes =
-        typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
-          ? fromBase64(msg.ratchetTree as string)
-          : undefined;
-
-      if (ciphertext.length > 0) {
+      const queued = liveMlsFrameMessage(msg);
+      if (queued) {
         // The payload frame's own fields, where they are known to exist - the half of the
         // entry line above that only this branch can honestly print.
         console.log(
-          `[WS RCV] payload: sender=${sanitizeForLog((msg.senderId as string) || 'unknown')},` +
-            ` welcome=${msg.isWelcome === true}, commit=${msg.isCommit === true},` +
-            ` bytes=${ciphertext.length}`
+          `[WS RCV] payload: sender=${sanitizeForLog(queued.senderId)},` +
+            ` welcome=${queued.isWelcome}, commit=${queued.isCommit},` +
+            ` bytes=${queued.ciphertext.length}`
         );
         // Queue the message for sequential processing
-        this.enqueueMessage(
-          {
-            senderId: (msg.senderId as string) || 'unknown',
-            senderDeviceId: (msg.senderDeviceId as string) || undefined,
-            ciphertext,
-            groupId: (msg.groupId as string) || undefined,
-            isWelcome: msg.isWelcome === true,
-            isCommit: msg.isCommit === true,
-            ratchetTreeBytes,
-            queuedMessageId: (msg.queuedMessageId as string) || undefined,
-            queuedCreatedAt: parseServerTimestampMs(msg.createdAt),
-            // Forwarded by the gateway since step A (history-answer-addressing, rule 4).
-            addressed: msg.addressed === true,
-          },
-          'live'
-        );
+        this.enqueueMessage(queued, 'live');
       }
     } else if (msg.proto && !this.messageCallback) {
       console.warn(
@@ -849,10 +829,10 @@ export class WebMlsService extends BaseMlsService {
       endBootSpan('mls-load-state', { recovered: false });
     } catch (e) {
       endBootSpan('mls-load-state', { recovered: true });
-      // If init fails AND a saved state existed, the state is to blame
-      // (credential mismatch, partial corruption, invalid key…).
-      // → systematic fresh-start to avoid blocking the user indefinitely.
-      // If state == null and error → real crash (no state to blame) → rethrow.
+      // A failed load is answered by WHAT IS KNOWN about the state (`recoveryOfStateLoadFailure`):
+      // rotated away only when no PIN can open it, or when it may be a PIN rotated elsewhere and
+      // the caller did not ask to pause; never for a cause that proves nothing about the bytes.
+      // With no state there is nothing to blame, and the failure propagates as itself.
       let cause = this.classifyStateLoadFailure(e);
 
       // A KEY OF UNPROVEN OWNER IS REFUSED BEFORE ANY RECOVERY CAN RUN - same reasoning as
@@ -913,17 +893,20 @@ export class WebMlsService extends BaseMlsService {
         throw new SavedStateUnopenedError('unreadable_now', e);
       }
 
-      if (noPinOpensState(cause) || state != null) {
-        // ANYTHING NO PIN CAN OPEN IS ROTATED, EVERYTHING ELSE IS WORTH PAUSING FOR - same
-        // reasoning as `TauriMlsService`, and the same reason it is written as a negation: `unknown`
-        // must not be rotated away. The browser keeps one state per account, so it has no owner
-        // record to consult.
-        if (opts?.noFreshStart && !noPinOpensState(cause)) {
-          throw new SavedStateUnopenedError(
-            cause === 'rotated' || cause === 'undecryptable' ? cause : 'unknown',
-            e
-          );
-        }
+      // THE SAME ONE DECISION AS `TauriMlsService` (`recoveryOfStateLoadFailure`): `unknown` and an
+      // empty keystore are never rotated away, whatever the caller passed. The browser keeps one
+      // state per account, so it has no owner record to consult.
+      const recovery = recoveryOfStateLoadFailure(
+        cause,
+        state != null,
+        opts?.noFreshStart === true
+      );
+      if (recovery === 'pause') {
+        throw new SavedStateUnopenedError(
+          cause === 'rotated' || cause === 'undecryptable' ? cause : 'unknown',
+          e
+        );
+      } else if (recovery === 'rotate') {
         if (cause === 'altered') {
           console.error(
             `[MLS] The saved state was ALTERED under the key its header names - no PIN opens it; rotating the device identity: ${String(e).slice(0, 200)}`
@@ -936,7 +919,10 @@ export class WebMlsService extends BaseMlsService {
             : `loaded state unusable (${cause}): ${String(e).slice(0, 200)}`
         );
       } else {
-        console.error('[MLS] WASM init failed:', e);
+        // ONE LINE PER FAILURE: an `unknown` cause was already accused - at its boundary
+        // (`mlsStateLoadErrorOf`) or, for an error no boundary built, by `classifyStateLoadFailure` -
+        // and a second line here was the same failure logged twice.
+        if (cause !== 'unknown') console.error('[MLS] WASM init failed:', e);
         throw e;
       }
     }
@@ -1481,6 +1467,11 @@ export class WebMlsService extends BaseMlsService {
     return this.client.export_group_info(groupId) as Uint8Array;
   }
 
+  /** WASM client wrapper - `external_join_is_a_further_device`. */
+  protected async isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean> {
+    return this.client.external_join_is_a_further_device(groupInfoBytes);
+  }
+
   /** WASM client wrapper - builds an external commit from a served GroupInfo and stages it. Returns
    *  [group_id, commit] from the WASM boundary. */
   protected async joinByExternalCommit(
@@ -1667,6 +1658,14 @@ export class WebMlsService extends BaseMlsService {
     });
   }
 
+  /**
+   * See {@link BaseMlsService.heldGroupsKnown}: the WASM module is read live, so the list is known
+   * exactly when a client exists - before one, `getLocalGroups()` answers `[]`, which says nothing.
+   */
+  override heldGroupsKnown(): boolean {
+    return this.client !== null && this.client !== undefined;
+  }
+
   /** WASM client wrapper - returns all MLS group IDs known to the WASM module via `this.client.get_groups`. */
   getLocalGroups(): string[] {
     if (!this.client) return [];
@@ -1696,6 +1695,13 @@ export class WebMlsService extends BaseMlsService {
     if (!this.client)
       throw new Error(`[MLS] WASM client not ready - cannot read ${groupId}'s tree`);
     return Array.from(this.client.get_member_identities(groupId) as Iterable<string>);
+  }
+
+  /** WASM client wrapper - classifies a group for the admission rule. */
+  async setAdmissionPolicy(groupId: string, policy: 'closed' | 'open'): Promise<void> {
+    if (!this.client)
+      throw new Error(`[MLS] WASM client not ready - cannot classify ${groupId} (${policy})`);
+    this.client.set_admission_policy(groupId, policy);
   }
 
   /** WASM client wrapper - the tree's signature key for one leaf, or null when it has none. */

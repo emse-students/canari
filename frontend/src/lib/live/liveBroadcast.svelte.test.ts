@@ -9,6 +9,7 @@ import { LiveRefusalError } from './api';
 import { LiveBroadcast, startProblemOf } from './liveBroadcast.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { fakeCamera, fakeDeps, LIMITS, LIVE_ID, KEY } from './liveBroadcast.test-helper';
+import { CameraAccessError } from '$lib/reels/cameraAccess';
 import { fragment, initSegment, join, readTimes } from './fmp4.test-helper';
 import {
   LIVE_BACKLOG_MARGIN_SEGMENTS,
@@ -91,7 +92,7 @@ describe('LiveBroadcast - preview and start', () => {
   it('goes on air: the generated key and the association reach the server, a recorder runs on the open camera, the screen is held', async () => {
     const { b, deps, recorders, cam } = await ready('asso-1');
     await b.start();
-    expect(deps.startLive).toHaveBeenCalledWith(KEY, 'asso-1', undefined);
+    expect(deps.startLive).toHaveBeenCalledWith(KEY, 'asso-1', undefined, null);
     expect(b.phase).toBe('live');
     expect(b.liveId).toBe(LIVE_ID);
     expect(recorders).toHaveLength(1);
@@ -138,6 +139,11 @@ describe('LiveBroadcast - preview and start', () => {
     ).toBe('association-forbidden');
     expect(
       startProblemOf(
+        new LiveRefusalError(403, 'LIVE_ASSOCIATION_ARCHIVED', '', 'refused', null, null, null)
+      )
+    ).toBe('association-archived');
+    expect(
+      startProblemOf(
         new LiveRefusalError(429, 'LIVE_START_RATE', '', 'rate-limited', null, null, null)
       )
     ).toBe('rate-limited');
@@ -163,7 +169,7 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
     expect(b.rulesPending).toBe(false);
     expect(b.canStart).toBe(true);
     await b.start();
-    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, 1);
+    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, 1, null);
     expect(b.phase).toBe('live');
   });
 
@@ -171,7 +177,7 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
     const { b, deps } = await ready();
     expect(b.rulesPending).toBe(false);
     await b.start();
-    expect(deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined);
+    expect(deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null);
   });
 
   it('the rules changed since (accepted v1, now v2): shown again', async () => {
@@ -194,7 +200,7 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
     b.acceptRules();
     expect(b.startProblem).toBeNull();
     await b.start();
-    expect(deps.startLive).toHaveBeenLastCalledWith(KEY, undefined, 2);
+    expect(deps.startLive).toHaveBeenLastCalledWith(KEY, undefined, 2, null);
   });
 
   it('LIVE_RULES_NOT_ACCEPTED with the re-read failing: the limits Retry, Start waits', async () => {
@@ -372,6 +378,27 @@ describe('LiveBroadcast - on air', () => {
     await ending;
     expect(deps.endLive).toHaveBeenCalledTimes(1);
     expect(b.phase).toBe('ended');
+  });
+
+  it('End settles the screen BEFORE the request resolves, and an unanswered end is retried when the link is back, then answered once', async () => {
+    const { b, deps, reconnect, reconnectListeners } = await ready();
+    await b.start();
+    let fail!: (e: unknown) => void;
+    deps.endLive.mockImplementationOnce(() => new Promise((_, rej) => (fail = rej)) as never);
+    await b.end();
+    // Settled with the request still pending.
+    expect(b.phase).toBe('ended');
+    expect(b.endCause).toBe('broadcaster');
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    // A transport failure is no answer: it waits for the link, it does not retry on a clock.
+    fail(new TypeError('offline'));
+    await vi.waitFor(() => expect(reconnectListeners.size).toBe(1));
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    reconnect();
+    await vi.waitFor(() => expect(reconnectListeners.size).toBe(0));
+    expect(deps.endLive).toHaveBeenCalledTimes(2);
+    reconnect();
+    expect(deps.endLive).toHaveBeenCalledTimes(2);
   });
 
   it('leaving while the end waits for the network ends the live once, and the wait does nothing after', async () => {
@@ -657,5 +684,255 @@ describe('LiveBroadcast - leaving the screen', () => {
     const { b, deps } = await ready();
     b.dispose();
     expect(deps.endLive).not.toHaveBeenCalled();
+  });
+});
+
+describe('LiveBroadcast - the screen as the source (owner, 2026-10-31)', () => {
+  /** A preview where the browser can share a screen and the camera is open. */
+  async function desktop() {
+    const f = fakeDeps();
+    f.deps.screenShareAvailable.mockReturnValue(true);
+    const cam = fakeCamera();
+    const b = new LiveBroadcast(cam.session, null, f.deps);
+    await cam.session.start();
+    await b.loadLimits();
+    return { ...f, cam, b };
+  }
+
+  it('offers the screen only where the browser can share one', async () => {
+    const phone = await ready();
+    expect(phone.b.canShareScreen).toBe(false);
+    await phone.b.chooseSource('screen');
+    expect(phone.b.source).toBe('camera');
+    expect(phone.deps.openScreen).not.toHaveBeenCalled();
+    expect(await desktop().then((d) => d.b.canShareScreen)).toBe(true);
+  });
+
+  it('choosing the screen opens it instead of the camera, and the camera comes back on request', async () => {
+    const { b, cam, deps } = await desktop();
+    expect(cam.control.opened).toHaveLength(1);
+    await b.chooseSource('screen');
+    expect(b.source).toBe('screen');
+    expect(deps.openScreen).toHaveBeenCalledTimes(1);
+    expect(cam.session.phase).toBe('live');
+    await b.chooseSource('camera');
+    expect(b.source).toBe('camera');
+    expect(cam.control.opened).toHaveLength(2);
+    expect(deps.openScreen).toHaveBeenCalledTimes(1);
+  });
+
+  it('a dismissed picker returns to the camera at once, on the camera and not on a fault', async () => {
+    const { b, cam, deps } = await desktop();
+    deps.openScreen.mockRejectedValueOnce(new CameraAccessError('denied', 'dismissed'));
+    await b.chooseSource('screen');
+    expect(b.source).toBe('camera');
+    expect(cam.session.phase).toBe('live');
+    expect(cam.session.fault).toBeNull();
+    expect(cam.control.opened).toHaveLength(2);
+  });
+
+  it('the source cannot change once the live started', async () => {
+    const { b, deps } = await desktop();
+    await b.start();
+    await b.chooseSource('screen');
+    expect(b.source).toBe('camera');
+    expect(deps.openScreen).not.toHaveBeenCalled();
+  });
+
+  it('a share stopped WHILE THE LIVE IS STARTING ends it the moment the start lands', async () => {
+    const { b, deps, cam } = await desktop();
+    await b.chooseSource('screen');
+    const real = deps.startLive.getMockImplementation()!;
+    let land: () => void = () => {};
+    deps.startLive.mockImplementationOnce(
+      (...args: Parameters<typeof real>) =>
+        new Promise((resolve) => {
+          land = () => resolve(real(...args));
+        })
+    );
+    const starting = b.start();
+    await vi.waitFor(() => expect(b.phase).toBe('starting'));
+    await b.screenShareStopped();
+    expect(deps.endLive).not.toHaveBeenCalled();
+    land();
+    await starting;
+    await vi.waitFor(() => expect(b.phase).toBe('ended'));
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    expect(cam.session.phase).not.toBe('starting');
+  });
+
+  it('a stop remembered during a start that FAILS does not end the next start', async () => {
+    const { b, deps } = await desktop();
+    await b.chooseSource('screen');
+    const real = deps.startLive.getMockImplementation()!;
+    let fail: (e: unknown) => void = () => {};
+    deps.startLive.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)));
+    const first = b.start();
+    await vi.waitFor(() => expect(b.phase).toBe('starting'));
+    await b.screenShareStopped();
+    fail(new Error('network'));
+    await first;
+    expect(b.phase).toBe('preview');
+    deps.startLive.mockImplementation(real);
+    await b.start();
+    expect(b.phase).toBe('live');
+    expect(deps.endLive).not.toHaveBeenCalled();
+  });
+
+  it('makes the mixing context synchronously inside the choice, before any await', async () => {
+    const { b, deps } = await desktop();
+    let sync = false;
+    deps.createAudioContext.mockImplementation(() => {
+      sync = true;
+      return null;
+    });
+    const choosing = b.chooseSource('screen');
+    expect(sync).toBe(true);
+    await choosing;
+    expect(deps.openScreen).toHaveBeenCalledWith(null);
+  });
+
+  it('the source choice is locked while the picker is open', async () => {
+    const { b, deps } = await desktop();
+    let answer: (s: MediaStream) => void = () => {};
+    deps.openScreen.mockImplementationOnce(() => new Promise<MediaStream>((r) => (answer = r)));
+    const choosing = b.chooseSource('screen');
+    await vi.waitFor(() => expect(b.choosingSource).toBe(true));
+    await b.chooseSource('camera');
+    expect(b.source).toBe('screen');
+    answer({
+      getTracks: () => [],
+      getVideoTracks: () => [],
+      getAudioTracks: () => [],
+    } as unknown as MediaStream);
+    await choosing;
+    expect(b.choosingSource).toBe(false);
+  });
+
+  it('a hidden page does not pause a screen share, and does pause a camera', async () => {
+    const screen = await desktop();
+    await screen.b.chooseSource('screen');
+    await screen.b.start();
+    screen.setHidden(true);
+    screen.b.appHidden();
+    expect(screen.b.phase).toBe('live');
+    expect(screen.cam.session.phase).toBe('live');
+
+    const camera = await desktop();
+    await camera.b.start();
+    camera.setHidden(true);
+    camera.b.appHidden();
+    expect(camera.b.phase).toBe('away');
+  });
+
+  it('a share stopped from the browser ends the live cleanly, once, and a camera never does', async () => {
+    const { b, deps, cam } = await desktop();
+    await b.chooseSource('screen');
+    await b.start();
+    await b.screenShareStopped();
+    expect(b.phase).toBe('ended');
+    expect(b.endCause).toBe('broadcaster');
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    await b.screenShareStopped();
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    expect(cam.session.phase).not.toBe('starting');
+
+    const camera = await desktop();
+    await camera.b.start();
+    await camera.b.screenShareStopped();
+    expect(camera.b.phase).toBe('live');
+  });
+});
+
+describe('LiveBroadcast - the title and the preview image (owner, 2026-11-07)', () => {
+  it('sends the trimmed title with the start, and none when blank', async () => {
+    const first = await ready();
+    first.b.title = '  Soirée  ';
+    await first.b.start();
+    expect(first.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, 'Soirée');
+    expect(first.b.title).toBe('Soirée');
+
+    const second = await ready();
+    second.b.title = '   ';
+    await second.b.start();
+    expect(second.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null);
+  });
+
+  it('edits the title on air, keeps the old one on a refusal and says why', async () => {
+    const { b, deps } = await ready();
+    b.title = 'Avant';
+    await b.start();
+    await expect(b.saveTitle('Après')).resolves.toBe(true);
+    expect(deps.setLiveTitle).toHaveBeenCalledWith(LIVE_ID, 'Après');
+    expect(b.title).toBe('Après');
+
+    deps.setLiveTitle.mockRejectedValueOnce(
+      new LiveRefusalError(400, 'LIVE_TITLE_INVALID', '', 'refused', null, null, null)
+    );
+    await expect(b.saveTitle('x'.repeat(200))).resolves.toBe(false);
+    expect(b.title).toBe('Après');
+    expect(b.titleProblem).toBe('invalid');
+
+    deps.setLiveTitle.mockRejectedValueOnce(new TransportFailureError(new TypeError('offline')));
+    await expect(b.saveTitle('Encore')).resolves.toBe(false);
+    expect(b.titleProblem).toBe('offline');
+  });
+
+  it('sends a preview on the SEGMENT cadence - index 0, then once per period - sealed under the POSTER key', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveLimits.mockResolvedValue({
+      ...LIMITS,
+      previewPeriodMs: 10_000, // 5 segments of 2 s
+      posterMaxBytes: 1_000,
+    });
+    const cam = fakeCamera();
+    const b = new LiveBroadcast(cam.session, null, f.deps);
+    await cam.session.start();
+    await b.loadLimits();
+    const frame = new Uint8Array([0xff, 0xd8, 1, 2]);
+    b.setPosterCapture(async () => frame);
+    await b.start();
+    for (let i = 0; i < 6; i++) await chunk(f.recorders[0], join(initSegment(), fragment()));
+    await vi.waitFor(() => expect(f.deps.putLivePoster).toHaveBeenCalledTimes(2));
+    // Derived once from the live key, and the live key itself never seals a preview.
+    expect(f.deps.derivePosterKey).toHaveBeenCalledTimes(1);
+    expect(f.deps.derivePosterKey).toHaveBeenCalledWith(KEY, LIVE_ID);
+    expect(f.deps.sealPoster).toHaveBeenCalledWith('pk'.repeat(32), LIVE_ID, frame);
+    expect(f.deps.sealPoster).not.toHaveBeenCalledWith(KEY, LIVE_ID, frame);
+    // The live ends: no preview after it.
+    f.uploaders[0].options.onStopped!(ended());
+    expect(b.phase).toBe('ended');
+    expect(f.deps.putLivePoster).toHaveBeenCalledTimes(2);
+  });
+
+  it('a poster key that failed to derive is derived AGAIN at the next turn, not re-thrown for the live', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveLimits.mockResolvedValue({
+      ...LIMITS,
+      previewPeriodMs: 10_000, // 5 segments of 2 s
+      posterMaxBytes: 1_000,
+    });
+    f.deps.derivePosterKey.mockRejectedValueOnce(new DOMException('no HKDF', 'NotSupportedError'));
+    const cam = fakeCamera();
+    const b = new LiveBroadcast(cam.session, null, f.deps);
+    await cam.session.start();
+    await b.loadLimits();
+    b.setPosterCapture(async () => new Uint8Array([0xff, 0xd8]));
+    await b.start();
+    for (let i = 0; i < 6; i++) await chunk(f.recorders[0], join(initSegment(), fragment()));
+    // Segment 0's turn met the rejection and sent nothing; segment 5's derived again and sent.
+    await vi.waitFor(() => expect(f.deps.putLivePoster).toHaveBeenCalledTimes(1));
+    expect(f.deps.derivePosterKey).toHaveBeenCalledTimes(2);
+    expect(f.deps.sealPoster).toHaveBeenCalledTimes(1);
+  });
+
+  it('captures nothing when the server serves no poster numbers (an older server)', async () => {
+    const { b, deps, recorders } = await ready();
+    const capture = vi.fn(async () => new Uint8Array([1]));
+    b.setPosterCapture(capture);
+    await b.start();
+    await chunk(recorders[0], join(initSegment(), fragment()));
+    expect(capture).not.toHaveBeenCalled();
+    expect(deps.putLivePoster).not.toHaveBeenCalled();
   });
 });

@@ -19,6 +19,13 @@
 # 08:47, 12:37 and 14:10 UTC on seven consecutive days, and GitHub DROPS the slots a cron misses
 # rather than queueing them.
 #
+# THE ONE DELIBERATE EXCEPTION IS A MONITOR (`upstream`, every 15 minutes). A monitor's value is
+# its latency, so it cannot be a daily floor; it still belongs in this file because it has no other
+# host (the estate cannot watch its own front door from inside it), and it is the same kind of
+# thing - nobody watches when it runs. It honours the rule above in the way that matters: a
+# delayed or dropped slot is a LATE report, never a wrong outcome, and a late report beats none.
+# It reports through an issue, not a red run, so one outage is one issue and not one email per slot.
+#
 # HOW A RUN KNOWS WHICH JOB IT IS. `github.event.schedule` carries the cron string that fired,
 # verbatim, so each job names its own. That string is the whole routing mechanism, which makes a
 # typo a job that never runs and says nothing - so `scheduled.test.sh` reads the crons declared
@@ -47,15 +54,23 @@ on:
     # Adding a job here means editing this line too: a schedule serves whichever `if:` names it, and
     # a comment naming one hides the rest.
     - cron: '0 4 * * 1'
+    # Every 15 minutes, as a request GitHub may delay or drop, and ONE job reads it: do the public
+    # names the estate depends on answer? The deliberate exception to "a daily floor" - see the
+    # header and the `upstream` job.
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       job:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, backups, log-retention, analysis, alerts, caches, ghcr-cleanup, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh]
+        options: [all, hosts, backups, log-retention, resolver, analysis, alerts, caches, ghcr-cleanup, upstream, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh]
+      upstream_targets:
+        description: "upstream only: replace the probed targets (name|url lines) - for a drill; with dry_run unchecked it really opens and closes issues"
+        type: string
+        default: ''
       dry_run:
-        description: 'dev-reset only: report what would happen and change nothing'
+        description: 'dev-reset and upstream: report what would happen and change nothing'
         type: boolean
         default: false
 
@@ -185,6 +200,89 @@ jobs:
 
       - name: Prune the log archive and judge the live logs
         run: bash infrastructure/deploy/log-retention-report.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # DID DOCKER'S DNS FAIL THE TWO PROXIES?
+  #
+  # Since the replica lists became variable targets (2026-11-02), every request the frontend proxies
+  # and every connection the edge relays waits on Docker's resolver for its target, and a resolver
+  # that fails fails the request after `resolver_timeout`. Counts the edge's and the frontend's
+  # `could not be resolved` lines of the last day and goes RED on any no design explains: a timeout
+  # or server failure (the DNS itself), an overlap service or a take-out's container name not found.
+  # An exclusive service's own gap is printed, counted. infrastructure/lib/resolver-report.sh;
+  # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to.
+  #
+  # ON THE SELF-HOSTED RUNNER because the logs are the local daemon's, as for `log-retention`.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  resolver:
+    name: DNS failures at the two proxies
+    if: >
+      github.event.schedule == '30 7 * * *' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "resolver"]'), inputs.job))
+    runs-on: self-hosted
+    timeout-minutes: 15
+    # Its own group, at the job level, for the reason `hosts` gives.
+    concurrency:
+      group: resolver-report
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Count the proxies' DNS failures of the last day
+        run: bash infrastructure/deploy/resolver-report.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # DO THE PUBLIC NAMES THE ESTATE DEPENDS ON STILL ANSWER?
+  #
+  # 2026-11-05: two outages, 25 minutes and five hours, were a public name whose tunnel had no live
+  # connector, and nothing reported either. One reader (`upstream-reachability-report.sh`) asks every
+  # name from OUTSIDE, in parallel, and classes each reading; a second script
+  # (`upstream-issues.sh`) turns readings into issues: the first failure is only a suspect, the
+  # second consecutive one opens "Upstream <name> is down", the first success closes it with the
+  # downtime. An issue reaches everyone watching the repository, once; a red run reaches only whoever
+  # last edited the cron line, once per slot. So the RUN IS GREEN while an outage is recorded, and
+  # red only when this reporter cannot report (a refused gh call, a missing reading).
+  # docs/wiki/infrastructure/upstream-reachability.md.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  upstream:
+    name: Public names answer
+    if: >
+      github.event.schedule == '*/15 * * * *' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "upstream"]'), inputs.job))
+    runs-on: ubuntu-latest
+    # Probed in parallel: the worst case is one target's three attempts (about 65 s), far under this.
+    timeout-minutes: 5
+    # A slow run waits for the previous one instead of stacking; two runs deciding at once could
+    # both open the same issue.
+    concurrency:
+      group: upstream-monitor
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      # The report IS an issue. It is the only thing this job writes.
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Ask every upstream
+        env:
+          UPSTREAM_RESULTS: ${{ runner.temp }}/upstream-results.tsv
+          UPSTREAM_TARGETS: ${{ inputs.upstream_targets }}
+        run: |
+          # An empty input must mean "the default targets", which the script reads from an UNSET
+          # variable (an empty one is "no target" and exits 2).
+          [ -n "$UPSTREAM_TARGETS" ] || unset UPSTREAM_TARGETS
+          bash .github/scripts/upstream-reachability-report.sh
+
+      - name: Suspect, open or close the issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          UPSTREAM_RESULTS: ${{ runner.temp }}/upstream-results.tsv
+          UPSTREAM_DRY_RUN: ${{ inputs.dry_run == true && '1' || '0' }}
+        run: bash .github/scripts/upstream-issues.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE NIGHTLY SECURITY PASS

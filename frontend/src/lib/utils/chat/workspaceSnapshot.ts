@@ -1,3 +1,4 @@
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import type {
   ChannelSidebarItem,
   ChannelSidebarWorkspace,
@@ -37,7 +38,7 @@ import type {
  * is erased by a sign-out and by a change of account (`stores/user.ts`), like the feed verdict.
  */
 
-const KEY_PREFIX = 'canari_workspace_snapshot:v1:';
+const KEY_PREFIX = ACCOUNT_KEY.workspaceSnapshot('');
 
 /** One salon row as stored - the fields the hub draws, and nothing the server must re-decide. */
 interface StoredSalon {
@@ -66,7 +67,7 @@ interface StoredSnapshot {
 
 /** The key one account's snapshot lives under. */
 function keyFor(userId: string): string {
-  return `${KEY_PREFIX}${userId}`;
+  return ACCOUNT_KEY.workspaceSnapshot(userId);
 }
 
 /** The salon fields worth a copy, read off a sidebar row. */

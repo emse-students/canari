@@ -119,6 +119,8 @@ describe('the three halves agree', () => {
   });
 
   it('is handed the user id by the component that knows it', () => {
-    expect(avatarSvelte).toContain('resolveUserAvatarDisplayUrl(httpUrl, userId)');
+    // The component names the PERSON (`subject` is its `userId`); the cache mirrors under that id.
+    expect(avatarSvelte).toContain('const subject = userId;');
+    expect(avatarSvelte).toContain('resolveUserAvatarDisplay(subject)');
   });
 });

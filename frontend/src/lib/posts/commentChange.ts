@@ -19,10 +19,12 @@ export type CommentChange =
 
 /**
  * How many comments the post carries: the server's total when it sent one, never fewer than the
- * rows held (a server older than the field sends none).
+ * rows held (a server older than the field sends none). A moderation tombstone is held as a row of
+ * the thread but is not a comment, so it counts on neither side (the server's total excludes it).
  */
 export function commentCountOf(post: Pick<PostEntity, 'comments' | 'commentCount'>): number {
-  return Math.max(post.commentCount ?? 0, post.comments?.length ?? 0);
+  const held = (post.comments ?? []).filter((c) => c.removedByModeration !== true).length;
+  return Math.max(post.commentCount ?? 0, held);
 }
 
 /** `post` with its count moved by `delta` - left absent when the server never sent one. */
@@ -43,7 +45,9 @@ export function applyCommentChange(post: PostEntity, change: CommentChange): Pos
     const next = held
       ? comments.map((c) => (c.id === change.comment.id ? change.comment : c))
       : [...comments, change.comment];
-    return withCommentCountDelta({ ...post, comments: next }, held ? 0 : 1);
+    // A tombstone is held as a row but never counted (`commentCountOf`).
+    const counted = !held && change.comment.removedByModeration !== true;
+    return withCommentCountDelta({ ...post, comments: next }, counted ? 1 : 0);
   }
   const gone = new Set(change.ids);
   const next = comments.filter((c) => !gone.has(c.id) && !(c.parentId && gone.has(c.parentId)));

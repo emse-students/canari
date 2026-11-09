@@ -16,6 +16,9 @@ export const NOTIFICATION_CATEGORIES = [
   'reactions',
   'events',
   'forms',
+  'follows',
+  'bookings',
+  'birthdays',
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];

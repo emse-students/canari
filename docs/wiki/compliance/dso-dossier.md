@@ -58,8 +58,28 @@ recueilli par un autre moyen que l'application, et MiTV doit en conserver la pre
 principal est le traitement des visages de personnes non membres** : Immich détecte et regroupe
 tous les visages des photos, y compris ceux de personnes qui n'ont jamais été sollicitées. Nous
 demandons votre avis sur les mesures proposées, et sur la nécessité d'une consultation préalable de
-la CNIL (art. 36) si le risque résiduel reste élevé. Document :
+la CNIL (art. 36) si le risque résiduel reste élevé.
+
+**Décision du 2026-10-24 (option C), pas encore construite :** la reconnaissance sort d'Immich.
+MiGallery calcule, photo par photo, les empreintes des visages dans son propre traitement, avec une
+image d'apprentissage automatique figée, et les range dans sa propre base chiffrée. **Aucun
+regroupement, aucune « personne »** : un membre retrouve ses photos en comparant sa propre référence
+au moment de la recherche. Les empreintes vivent aussi longtemps que la photo et sont exclues des
+sauvegardes. Rien n'est construit avant une comparaison des modèles candidats. Le responsable
+assume la question de l'article 9 qui demeure : les empreintes des personnes non membres sont
+calculées et conservées tant que leur photo existe, mais ne sont jamais regroupées en une identité.
+Votre avis sur ce choix nous importe. Document :
 [dpia-migallery-faces](dpia-migallery-faces.md).
+
+**Mise à jour du 2026-11-01 :** l'option C est déployée dans MiGallery (v2.18.0, 2026-11-01) et la
+graine initiale a tourné en production le 2026-11-01 (172 612 médias, 600 003 visages, 312 membres
+référencés) ; la bascule a eu lieu le 2026-11-01 (le modèle buffalo_l est
+gardé, les correspondances sont enregistrées plutôt que calculées à la recherche, l'analyse passe
+par le service d'apprentissage automatique d'Immich sur un réseau interne dédié). La bascule
+a supprimé les visages, personnes et empreintes d'Immich (reconnaissance désactivée), avec une copie
+chiffrée gardée jusqu'au 2026-12-01
+puis supprimée. Le responsable a décidé d'aller au bout sans attendre votre avis, qu'il sollicite
+toujours ; l'AIPD a été mise à jour sur les faits, et son évaluation reste à refaire par lui.
 
 ## 3. Le registre et les destinataires
 

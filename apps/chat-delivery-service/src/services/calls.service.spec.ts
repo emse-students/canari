@@ -551,6 +551,28 @@ describe('CallsService', () => {
       );
     });
 
+    it.each([
+      ['a review account ringing members', 'caller'],
+      ['a member ringing a review account', 'callee-android'],
+    ])('refuses %s with REVIEW_COHORT_BOUNDARY and rings nobody', async (_case, reviewer) => {
+      const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = reviewer;
+      try {
+        const err = await service
+          .ringGroup('caller', 'group-1', 'call-1', false)
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect((err as ForbiddenException).getResponse()).toMatchObject({
+          code: 'REVIEW_COHORT_BOUNDARY',
+        });
+        expect(fcmSend).not.toHaveBeenCalled();
+        expect(apnsVoip.sendVoipPush).not.toHaveBeenCalled();
+      } finally {
+        if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+      }
+    });
+
     it('routes each platform to its ring transport and never rings the caller', async () => {
       pushTokenRepo.find.mockResolvedValue([
         {
@@ -630,6 +652,26 @@ describe('CallsService', () => {
         const answerBy = Number(redisStore.get('call:room:call-1:answer_by'));
         expect(payload.ringUntil).toBe(String(answerBy));
         expect(expiresAtSec).toBe(Math.floor(answerBy / 1000));
+      });
+
+      it('carries the media kind the caller asked for (audio and video)', async () => {
+        await ringAndSettle(service, 'caller', 'group-1', 'call-1', false);
+        expect(apnsVoip.sendVoipPush.mock.calls[0][1].hasVideo).toBe('false');
+        apnsVoip.sendVoipPush.mockClear();
+        await ringAndSettle(service, 'caller', 'group-1', 'call-1', true);
+        expect(apnsVoip.sendVoipPush.mock.calls[0][1].hasVideo).toBe('true');
+      });
+
+      it('never announces video when calls_mode is audio only (B2): refused, no VoIP push', async () => {
+        callsMode = 'audio';
+        apnsVoip.sendVoipPush.mockClear();
+        const refusal = await service
+          .ringGroup('caller', 'group-1', 'call-3', true)
+          .catch((e: unknown) => e);
+        expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+          code: 'CALLS_VIDEO_DISABLED',
+        });
+        expect(apnsVoip.sendVoipPush).not.toHaveBeenCalled();
       });
 
       it('is withheld once the ring has ended', async () => {
@@ -714,8 +756,14 @@ describe('CallsService', () => {
 
       const sent = (token: string) =>
         fcmSend.mock.calls.map((c) => c[0]).find((m) => m.token === token);
-      // Android keeps the names its native layer reads.
-      expect(sent('fcm-a').data).toHaveProperty('callerName');
+      // Android is handed ids only: its ring names the caller from the phone's own copy (decision 6).
+      expect(sent('fcm-a').data).toEqual({
+        type: 'call_ring',
+        groupId: 'group-1',
+        callId: 'call-1',
+        callerId: 'caller',
+        hasVideo: 'false',
+      });
       // The iPhone is told only that a call is coming, in its own language (base locale when unknown).
       expect(sent('fcm-c').apns.payload.aps.alert).toEqual({
         title: 'Canari',
@@ -739,7 +787,7 @@ describe('CallsService', () => {
       // Android's ttl is the same window and carries no APNs header.
       expect(sent('fcm-a').android.ttl).toBe(60_000);
       // Neither the data nor the APNs payload keys carry a name: FCM merges the first into the second.
-      for (const token of ['fcm-c', 'fcm-d']) {
+      for (const token of ['fcm-a', 'fcm-c', 'fcm-d']) {
         const message = sent(token);
         for (const key of ['callerName', 'senderName', 'groupName']) {
           expect(message.data).not.toHaveProperty(key);
@@ -1015,6 +1063,48 @@ describe('CallsService', () => {
       );
 
       now.mockReturnValue(1_000_000 + CALL_RING_TIMEOUT_SEC * 1000 + 1);
+      await expect(service.requestRoomToken('callee', 'group-1', roomId)).rejects.toThrow(
+        GoneException
+      );
+    });
+
+    /**
+     * A ring `ring-end` recorded as over refuses an answer INSIDE the window: a native answer whose
+     * intent outlived its call (cancelled by the caller, declined, taken by a sibling) must not join.
+     */
+    it.each(['cancelled', 'answered', 'ended'] as const)(
+      'answers 410 once ring-end recorded the ring %s, inside the window',
+      async (reason) => {
+        const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+        jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+        jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+        const { roomId } = await service.initiateCall('caller', 'group-1');
+        await ring(roomId);
+        await expect(service.requestRoomToken('callee', 'group-1', roomId)).resolves.toHaveProperty(
+          'roomToken'
+        );
+
+        await service.endRing('caller', 'group-1', roomId, reason);
+
+        await expect(service.requestRoomToken('callee', 'group-1', roomId)).rejects.toThrow(
+          GoneException
+        );
+        expect(captured(log)).toContain(`the ring ended (${reason})`);
+      }
+    );
+
+    /** The answering device asks for its token before its own `ring-end answered`: never refused. */
+    it('gives the answering device its token before its own ring-end, and its sibling none after', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+      await ring(roomId);
+
+      await expect(service.requestRoomToken('callee', 'group-1', roomId)).resolves.toHaveProperty(
+        'roomToken'
+      );
+      await service.endRing('callee', 'group-1', roomId, 'answered');
       await expect(service.requestRoomToken('callee', 'group-1', roomId)).rejects.toThrow(
         GoneException
       );

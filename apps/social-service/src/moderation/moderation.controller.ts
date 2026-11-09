@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Get,
   Headers,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -14,10 +15,17 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { ModerationService } from './moderation.service';
 import { AssociationsService } from '../associations/associations.service';
 import { CreateReportDto, MuteUserDto, ReviewReportDto } from './dto/moderation.dto';
+import { MODERATOR_REQUIRED } from '../spaces/bde-moderation';
+import { mayRemoveAsModerator, type CommentViewer } from '../posts/comment-identity';
 
 /**
  * Moderation endpoints: content reporting (all authenticated users)
  * and admin actions (BDE MODERATE flag or global admin).
+ *
+ * SCOPED SINCE 2026-11-02 (owner): a global admin acts everywhere; a BDE `MODERATE` holder opens
+ * these routes (`assertModerator`, the door) but reads and acts only within the spaces its BDE
+ * governs (`spaces/bde-moderation.ts`) - the queue and the muted list are narrowed, and an act on a
+ * target outside that scope is a 403 `MODERATION_OUT_OF_SCOPE`.
  */
 @Controller('moderation')
 export class ModerationController {
@@ -31,8 +39,22 @@ export class ModerationController {
     // One predicate, shared with the post controls that give the same people the same reach.
     const canModerate = await this.assocService.isContentModerator(userId, { isGlobalAdmin });
     if (!canModerate) {
-      throw new ForbiddenException('BDE MODERATE permission or global admin required');
+      throw new ForbiddenException({
+        code: MODERATOR_REQUIRED,
+        message: 'BDE MODERATE permission or global admin required',
+      });
     }
+  }
+
+  /** Refuses (typed 403) unless the caller moderates `targetUserId` as a person: a mute, an unmute. */
+  private async assertModeratesUser(
+    userId: string,
+    isGlobalAdmin: boolean,
+    targetUserId: string
+  ): Promise<void> {
+    await this.assertModerator(userId, isGlobalAdmin);
+    if (await this.assocService.mayModerateUser(userId, targetUserId, { isGlobalAdmin })) return;
+    await this.assocService.refuseModeration(userId, { kind: 'user', id: targetUserId });
   }
 
   // ── Public (authenticated) reports ───────────────────────────────────────
@@ -64,11 +86,25 @@ export class ModerationController {
     @Query('limit') limit?: string,
     @Query('offset') offset?: string
   ) {
-    await this.assertModerator(userId, ga === 'true');
-    return this.service.listAllReports(
+    const isGlobalAdmin = ga === 'true';
+    await this.assertModerator(userId, isGlobalAdmin);
+    const reports = await this.service.listAllReports(
+      { userId, isGlobalAdmin },
       limit ? Math.min(parseInt(limit, 10) || 50, 200) : 50,
       offset ? parseInt(offset, 10) || 0 : 0
     );
+    // Which person on each row this caller may mute: a BDE mutes the people of its own spaces only,
+    // and a reporter or an author may live elsewhere than the content they touched.
+    const mutable = await this.assocService.moderatedUserIds(
+      userId,
+      reports.flatMap((r) => [r.reporterId, r.reportedUserId ?? '']),
+      { isGlobalAdmin }
+    );
+    return reports.map((r) => ({
+      ...r,
+      canMuteReporter: mutable.has(r.reporterId),
+      canMuteReportedUser: !!r.reportedUserId && mutable.has(r.reportedUserId),
+    }));
   }
 
   /** Marks a report as reviewed or dismissed. Requires MODERATE or global admin. */
@@ -80,7 +116,11 @@ export class ModerationController {
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: ReviewReportDto
   ) {
-    await this.assertModerator(userId, ga === 'true');
+    const isGlobalAdmin = ga === 'true';
+    await this.assertModerator(userId, isGlobalAdmin);
+    if (!(await this.assocService.mayModerateReport(userId, reportId, { isGlobalAdmin }))) {
+      await this.assocService.refuseModeration(userId, { kind: 'report', id: reportId });
+    }
     return this.service.reviewReport(reportId, userId, dto.action);
   }
 
@@ -95,7 +135,7 @@ export class ModerationController {
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: MuteUserDto
   ) {
-    await this.assertModerator(callerUserId, ga === 'true');
+    await this.assertModeratesUser(callerUserId, ga === 'true', targetUserId);
     return this.service.muteUser(targetUserId, callerUserId, dto.reason);
   }
 
@@ -107,7 +147,7 @@ export class ModerationController {
     @Headers('x-user-id') callerUserId: string,
     @Headers('x-global-admin') ga: string | undefined
   ) {
-    await this.assertModerator(callerUserId, ga === 'true');
+    await this.assertModeratesUser(callerUserId, ga === 'true', targetUserId);
     return this.service.unmuteUser(targetUserId);
   }
 
@@ -118,8 +158,9 @@ export class ModerationController {
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
-    await this.assertModerator(userId, ga === 'true');
-    return this.service.listMutedUsers();
+    const isGlobalAdmin = ga === 'true';
+    await this.assertModerator(userId, isGlobalAdmin);
+    return this.service.listMutedUsers({ userId, isGlobalAdmin });
   }
 
   /** Returns the mute status of the calling user (called by post-guard middleware). */
@@ -129,7 +170,10 @@ export class ModerationController {
     return this.service.getUserMuteStatus(userId);
   }
 
-  /** Deletes a reported comment (and replies). Requires MODERATE or global admin. */
+  /**
+   * Deletes a reported comment and the descendants this moderator may delete; a reply it may not
+   * delete stays under a tombstone. Requires MODERATE over the comment, or global admin.
+   */
   @UseGuards(NginxAuthGuard)
   @Post('comments/:commentId/delete')
   async deleteReportedComment(
@@ -137,7 +181,31 @@ export class ModerationController {
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined
   ) {
-    await this.assertModerator(userId, ga === 'true');
-    return this.service.deleteCommentById(commentId);
+    const isGlobalAdmin = ga === 'true';
+    await this.assertModerator(userId, isGlobalAdmin);
+    // A comment is judged by the post it sits under AND by who publishes it (`mayModerateComment`,
+    // owner 2026-11-03) - never by its replies; a missing one stays the service's 404.
+    const postId = await this.service.findPostIdForComment(commentId);
+    if (!postId) throw new NotFoundException('Comment not found');
+    if (
+      !(await this.assocService.mayModerateComment(userId, postId, commentId, { isGlobalAdmin }))
+    ) {
+      await this.assocService.refuseModeration(userId, { kind: 'comment', id: commentId, postId });
+    }
+    // Each descendant the delete meets is judged by the same rule: a reply in a name this moderator
+    // does not moderate stays, under a tombstone of what it answered (lead, 2026-11-04).
+    const comments = await this.service.commentsOfPost(postId);
+    const viewer: CommentViewer = {
+      viewerId: userId,
+      isGlobalAdmin,
+      isModerator: true,
+      managedAssociationIds: new Set(),
+      moderatedAssociationIds: await this.assocService.moderatedAssociationIds(
+        userId,
+        comments.map((c) => c.associationId ?? '').filter(Boolean),
+        { isGlobalAdmin }
+      ),
+    };
+    return this.service.deleteCommentById(commentId, (c) => mayRemoveAsModerator(c, viewer));
   }
 }

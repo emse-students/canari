@@ -6,7 +6,7 @@ Default permissions for the system-components plugin.
 
 - Full control of the native tab bar (`configure_tab_bar`,
   `remove_tab_bar`, `show_tab_bar`, `hide_tab_bar`, `select_tab`,
-  `set_badge`, `get_tab_bar_insets`).
+  `set_badge`, `get_tab_bar_insets`, and Canari's `set_tab_bar_interactive`).
 - Native overlay components (`create_component`, `update_component`,
   `remove_component`).
 - `register_listener` / `remove_listener` — required for `onTabSelected` /
@@ -20,6 +20,7 @@ Default permissions for the system-components plugin.
 - `allow-remove-tab-bar`
 - `allow-show-tab-bar`
 - `allow-hide-tab-bar`
+- `allow-set-tab-bar-interactive`
 - `allow-select-tab`
 - `allow-set-badge`
 - `allow-get-tab-bar-insets`
@@ -404,6 +405,32 @@ Enables the set_badge command without any pre-configured scope.
 <td>
 
 Denies the set_badge command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`system-components:allow-set-tab-bar-interactive`
+
+</td>
+<td>
+
+Enables the set_tab_bar_interactive command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`system-components:deny-set-tab-bar-interactive`
+
+</td>
+<td>
+
+Denies the set_tab_bar_interactive command without any pre-configured scope.
 
 </td>
 </tr>

@@ -5,10 +5,34 @@ import {
   MESSAGE_ROWS_PER_STATEMENT,
   SEALED_SWAP_COLUMNS,
   SEALED_SWAP_ROWS_PER_STATEMENT,
+  ORDER_AT_FILL_COLUMNS,
+  ORDER_AT_FILL_ROWS_PER_STATEMENT,
   chunk,
   messageInsertSql,
+  orderAtFillStatement,
   sealedSwapStatement,
 } from './sqliteBatch';
+
+describe('orderAtFillStatement', () => {
+  it('keys only the rows still pending and clears their flag, placeholders in the order they appear', () => {
+    const { sql, params } = orderAtFillStatement([
+      { id: 'a', orderAt: 10 },
+      { id: 'b', orderAt: 20 },
+    ]);
+    expect(sql).toBe(
+      'UPDATE messages SET order_at = CASE id WHEN $1 THEN $2 WHEN $3 THEN $4 END, order_pending = NULL ' +
+        'WHERE order_pending = 1 AND id IN ($5, $6)'
+    );
+    expect(params).toEqual(['a', 10, 'b', 20, 'a', 'b']);
+  });
+
+  it('never exceeds the parameter ceiling and refuses an empty batch', () => {
+    expect(ORDER_AT_FILL_ROWS_PER_STATEMENT * ORDER_AT_FILL_COLUMNS).toBeLessThanOrEqual(
+      MAX_BOUND_PARAMETERS
+    );
+    expect(() => orderAtFillStatement([])).toThrow();
+  });
+});
 
 describe('sealedSwapStatement', () => {
   const swap = (id: string) => ({
@@ -47,6 +71,11 @@ describe('sealedSwapStatement', () => {
     expect(order).toEqual(params.map((_, i) => i + 1));
   });
 
+  it('raises the revision of a re-sealed MESSAGE, so a compare-and-set that read it retries', () => {
+    expect(sealedSwapStatement('messages', [swap('x')]).sql).toContain(', rev = rev + 1 WHERE');
+    expect(sealedSwapStatement('graine', [swap('x')]).sql).not.toContain('rev');
+  });
+
   it('fits a full batch under the bound-parameter ceiling', () => {
     expect(SEALED_SWAP_ROWS_PER_STATEMENT * SEALED_SWAP_COLUMNS).toBeLessThanOrEqual(
       MAX_BOUND_PARAMETERS
@@ -65,8 +94,18 @@ describe('sealedSwapStatement', () => {
 describe('messageInsertSql', () => {
   it('numbers placeholders across the whole statement, not per tuple', () => {
     expect(messageInsertSql(2)).toBe(
-      'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text) VALUES ' +
-        '($1, $2, $3, $4, $5), ($6, $7, $8, $9, $10)'
+      'INSERT INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ' +
+        '($1, $2, $3, $4, $5, $6, $7), ($8, $9, $10, $11, $12, $13, $14)' +
+        ' ON CONFLICT(id) DO UPDATE SET conversation_id = excluded.conversation_id, timestamp = excluded.timestamp, ' +
+        'iv = excluded.iv, cipher_text = excluded.cipher_text, order_at = excluded.order_at, ' +
+        'order_pending = excluded.order_pending, rev = messages.rev + 1'
+    );
+  });
+
+  it('raises the revision of a row it replaces, never resets it - and IGNORE stays an insert', () => {
+    expect(messageInsertSql(1)).not.toContain('OR REPLACE');
+    expect(messageInsertSql(1, 'ignore')).toBe(
+      'INSERT OR IGNORE INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending) VALUES ($1, $2, $3, $4, $5, $6, $7)'
     );
   });
 

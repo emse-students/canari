@@ -1,4 +1,5 @@
 import { Throttle } from '@nestjs/throttler';
+import { mayCollect } from './collection-policy';
 import {
   BadRequestException,
   Body,
@@ -14,6 +15,7 @@ import {
   Patch,
   Post,
   Put,
+  GoneException,
   Query,
   Res,
   SetMetadata,
@@ -25,6 +27,7 @@ import type { Response } from 'express';
 import { isUUID } from 'class-validator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { isInReviewCohort, profileOpenAcrossCohort } from '../review-cohort';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { CONFIRM_PAYMENT_PER_MINUTE } from '../forms/forms.controller';
 import {
@@ -35,12 +38,13 @@ import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-su
 import { ReviewerAccessGuard } from './guards/reviewer-access.guard';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { toAssociationView } from './association.projection';
+import { SpacesService } from '../spaces/spaces.service';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
 import { assertInternalSecret } from '../internal/internal-secret.util';
 import { FollowsService } from '../follows/follows.service';
-import { AssociationPushMutesService } from '../follows/association-push-mutes.service';
+import { AccountBellsService } from '../follows/account-bells.service';
 import {
   AddMemberDto,
   CreateAssociationDto,
@@ -51,6 +55,7 @@ import {
   CreateAssociationCalendarEventDto,
   CreateProductDto,
   GrantCotisantDto,
+  ClosePaidNotGrantedDto,
   GrantProductPurchaseDto,
   GrantTagDto,
   ListCotisantsQueryDto,
@@ -72,6 +77,11 @@ import { UserProfileService } from './user-profile.service';
 import { CreateRoleHistoryDto, UpdateRoleHistoryDto } from './dto/user-profile.dto';
 import { buildAggregatedCalendarIcs } from './calendar-ics.util';
 import { sanitizeLog } from '../common/log.utils';
+import {
+  ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY,
+  ASSOCIATION_FIELD_RIGHT_MISSING,
+  rightsAskedBy,
+} from './association-update-rights';
 import { wholeCentsOf } from '../common/core-payment-error';
 import {
   AGENDA_SELECTION_REQUIRED,
@@ -79,16 +89,28 @@ import {
   parseDirectoryQuery,
   parseSpaceSelection,
 } from './directory-query';
-import { isInternalSecret } from '../internal/is-internal-secret.util';
+import {
+  EVENT_ICS_REFUSED_TAG,
+  eventIcsSignatureMatches,
+  withEventIcsSig,
+} from './agenda-signature';
 
 const LOGO_UPLOAD_MB = 2;
 
 /**
- * Writes of a Lydia Business key per user AND association per minute. A wrong key is only found
- * by the first callback it fails to verify, so the route must not become a loop; a manager
- * correcting a paste needs a handful.
+ * The `code` of the 410 the retired key-paste route answers to the old store builds that still
+ * show the field (docs/wiki/legacy-compatibility.md).
  */
-export const LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE = 5;
+export const LYDIA_KEY_PASTE_RETIRED = 'LYDIA_KEY_PASTE_RETIRED';
+
+/**
+ * Per user and association, the retired paste route's throttle - the one the live route had, so a
+ * stuck old screen retrying cannot flood the WARN its hits are counted by.
+ */
+export const LYDIA_KEY_PASTE_SHIM_PER_MINUTE = 5;
+
+/** The `code` of the 403 a BDE caller gets deleting an institution: the global admin's alone (2026-11-02). */
+export const INSTITUTION_DELETE_ADMIN_ONLY = 'INSTITUTION_DELETE_ADMIN_ONLY';
 
 /** Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products. */
 @Controller('associations')
@@ -102,7 +124,8 @@ export class AssociationsController {
     private readonly followsService: FollowsService,
     private readonly userTagService: UserTagService,
     private readonly userProfileService: UserProfileService,
-    private readonly pushMutes: AssociationPushMutesService
+    private readonly pushMutes: AccountBellsService,
+    private readonly spaces: SpacesService
   ) {}
 
   // ── Document reviewers & cross-association review ────────────────────────────
@@ -194,11 +217,13 @@ export class AssociationsController {
   ) {
     const query = parseDirectoryQuery({ type, scope, campus, formation });
     return (
-      await this.service.list(query.type, {
-        viewerId: query.scope === 'directory' ? userId?.trim() : undefined,
-        campus: query.campus,
-        formation: query.formation,
-      })
+      await this.service
+        .list(query.type, {
+          viewerId: query.scope === 'directory' ? userId?.trim() : undefined,
+          campus: query.campus,
+          formation: query.formation,
+        })
+        .then((rows) => this.service.withPaymentsReady(rows))
     ).map((row) => toAssociationView(row));
   }
 
@@ -206,14 +231,17 @@ export class AssociationsController {
   @UseGuards(NginxAuthGuard)
   @Get('slug/:slug')
   async findBySlug(@Param('slug') slug: string) {
-    return toAssociationView(await this.service.findBySlug(slug));
+    const [row] = await this.service.withPaymentsReady([await this.service.findBySlug(slug)]);
+    return toAssociationView(row);
   }
 
   /** Returns all associations the calling user is a member of, with the caller's own permissions. */
   @UseGuards(NginxAuthGuard)
   @Get('me/list')
   async myAssociations(@Headers('x-user-id') userId: string) {
-    return (await this.service.listByUser(userId)).map((row) => toAssociationView(row));
+    return (await this.service.withPaymentsReady(await this.service.listByUser(userId))).map(
+      (row) => toAssociationView(row)
+    );
   }
 
   /**
@@ -227,7 +255,8 @@ export class AssociationsController {
   @Get('me/bde-reach')
   async myBdeReach(@Headers('x-user-id') userId: string) {
     const [validateEvents, manageAsso] = await Promise.all([
-      this.service.associationsUnderBdeFlag(userId, AssociationPermissionFlag.VALIDATE_EVENTS),
+      // The agenda rule (owner, 2026-11-03): an institution's events are in it, its management is not.
+      this.service.associationsUnderBdeAgendaRight(userId),
       this.service.associationsUnderBdeFlag(userId, AssociationPermissionFlag.MANAGE_ASSO),
     ]);
     return { validateEvents, manageAsso };
@@ -240,22 +269,42 @@ export class AssociationsController {
     return this.followsService.listFollowedAssociations(userId);
   }
 
-  /** The associations the calling user muted (push only) - the notification settings list. */
+  /**
+   * LEGACY (engagement WP-3, L8): the associations whose bell the caller set to `none`, read from
+   * `account_bells`. Kept for builds older than the bell control - docs/wiki/legacy-compatibility.md.
+   */
   @UseGuards(NginxAuthGuard)
   @Get('me/push-mutes')
   myPushMutes(@Headers('x-user-id') userId: string) {
     return this.pushMutes.listMuted(userId);
   }
 
-  /** Public - current association memberships for a user profile. */
+  /**
+   * Current association memberships for a user profile. Empty across the review cohort's boundary
+   * (`profileOpenAcrossCohort`).
+   *
+   * SIGNED-IN ONLY SINCE 2026-11-02: a person's profile is not something the public showcase
+   * (portail-etu.emse.fr) shows, and nothing Canari serves without an account may go further than
+   * it does ([anonymous-surface](../../../../docs/wiki/anonymous-surface.md)).
+   */
+  @UseGuards(NginxAuthGuard)
   @Get('users/:userId/memberships')
-  listUserMemberships(@Param('userId') userId: string) {
+  async listUserMemberships(
+    @Param('userId') userId: string,
+    @Headers('x-user-id') viewerId: string
+  ) {
+    if (!profileOpenAcrossCohort(viewerId, userId)) return [];
     return this.userProfileService.listMemberships(userId);
   }
 
-  /** Public - past/honorary association roles for a user profile. */
+  /** Past/honorary association roles for a user profile, gated like the memberships. */
+  @UseGuards(NginxAuthGuard)
   @Get('users/:userId/role-history')
-  listUserRoleHistory(@Param('userId') userId: string) {
+  async listUserRoleHistory(
+    @Param('userId') userId: string,
+    @Headers('x-user-id') viewerId: string
+  ) {
+    if (!profileOpenAcrossCohort(viewerId, userId)) return [];
     return this.userProfileService.listRoleHistory(userId);
   }
 
@@ -303,17 +352,10 @@ export class AssociationsController {
     @Headers('x-global-admin') ga?: string,
     @Query('campus') campus?: string,
     @Query('formation') formation?: string,
-    @Query('sig') sig?: string,
-    @Headers('x-internal-secret') internalSecret?: string
+    @Query('sig') sig?: string
   ) {
     const selection = parseSpaceSelection({ campus, formation });
-    assertAgendaAccess({
-      selection,
-      associationId,
-      sig,
-      signedIn: Boolean(userId?.trim()),
-      trusted: isInternalSecret(internalSecret),
-    });
+    assertAgendaAccess({ selection, associationId, sig, signedIn: Boolean(userId?.trim()) });
     // includePending is opt-in (the PDF export does not set it -> validated events only).
     // Honoured only for users allowed to propose (any asso), BDE admins, or global admins.
     let include = false;
@@ -323,11 +365,13 @@ export class AssociationsController {
         (await this.service.canViewPendingCalendarEvents(userId.trim())) ||
         (await this.service.isUserBdeAdmin(userId.trim()));
     }
-    return this.service.listAggregatedCalendarFeed(from, to, associationId, {
-      includePending: include,
-      viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
-      selection,
-    });
+    return withEventIcsSig(
+      await this.service.listAggregatedCalendarFeed(from, to, associationId, {
+        includePending: include,
+        viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
+        selection,
+      })
+    );
   }
 
   /**
@@ -337,11 +381,13 @@ export class AssociationsController {
    * subscribed URL is saved once by the calendar app and re-polled forever with no way to ever
    * add query params to it.
    *
-   * `eventId` (optional) keeps only that event of the window - see the filter below.
+   * `eventId` (optional) keeps only that event of the window - see the filter below. Its `sig` is
+   * the EVENT's signature (`signEventIcs`, served on the event as `icsSig`): an unsigned or wrongly
+   * signed one is a BODYLESS 403, logged `[AGENDA_ICS_REFUSED]` (owner, 2026-11-02).
    *
    * `campus` / `formation` (D40, optional): ONE FEED PER SELECTION - only the events a space of that
-   * campus / formation reaches. An anonymous read with neither (and no `associationId` / `eventId`)
-   * is REFUSED with a 400 `AGENDA_SELECTION_REQUIRED`; an unknown value is a 400 too.
+   * campus / formation reaches. An anonymous read with neither (and no `associationId`) is REFUSED
+   * with a 400 `AGENDA_SELECTION_REQUIRED`; an unknown value is a 400 too.
    *
    * **NO PROMO CUTOFF HERE, AND THAT IS NOT A HOLE.** A calendar app sends no identity and never
    * will, so there is no promo to cut at; and the cutoff is a relevance limit on a public agenda,
@@ -360,12 +406,24 @@ export class AssociationsController {
     @Query('sig') sig?: string
   ) {
     const selection = parseSpaceSelection({ campus, formation });
-    // `.ics` is always anonymous: a calendar app sends no identity.
-    assertAgendaAccess({ selection, associationId, eventId, sig, signedIn: false });
+    const wanted = eventId?.trim();
+    if (wanted) {
+      // ONE EVENT'S LINK IS SIGNED FOR THAT EVENT. A refusal has no body: the browser that opened it
+      // has nothing to render, and the tag is what counts the old unsigned links still in use.
+      if (!eventIcsSignatureMatches(wanted, sig)) {
+        this.logger.warn(
+          `${EVENT_ICS_REFUSED_TAG} event=${sanitizeLog(wanted.slice(0, 36))} signed=${Boolean(sig?.trim())}`
+        );
+        res.status(403);
+        return '';
+      }
+    } else {
+      // `.ics` is always anonymous: a calendar app sends no identity.
+      assertAgendaAccess({ selection, associationId, sig, signedIn: false });
+    }
     const all = await this.service.listAggregatedCalendarFeed(from, to, associationId, {
       selection,
     });
-    const wanted = eventId?.trim();
     // `eventId` narrows the feed to ONE event: the link a phone's browser opens to hand a single
     // evening to the calendar app (iOS Safari shows its "Add to Calendar" sheet for a text/calendar
     // response; Android downloads it for whichever calendar app owns .ics). Same route, same
@@ -438,13 +496,18 @@ export class AssociationsController {
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
+    // A review account reads only the rosters it belongs to; nobody else but an admin reads a
+    // review account on one (review-cohort-reach.ts, review-cohort.ts).
+    await this.service.assertReviewerMayReadRoster(userId, id);
     const includePermissions = await this.service.mayAct(
       userId,
       id,
       AssociationPermissionFlag.MANAGE_MEMBERS,
       { isGlobalAdmin: ga === 'true' }
     );
-    return this.service.listMembers(id, { includePermissions, callerId: userId });
+    const members = await this.service.listMembers(id, { includePermissions, callerId: userId });
+    if (ga === 'true' || isInReviewCohort(userId)) return members;
+    return members.filter((m) => !isInReviewCohort(m.userId));
   }
 
   /** Updates the display order of members. Requires MANAGE_MEMBERS. */
@@ -459,6 +522,10 @@ export class AssociationsController {
    * Returns scheduled events for the association (optional `from` / `to` ISO date bounds).
    * Cut at the caller's own promo, exactly as the aggregated feed is - a limit only one of the two
    * honoured would be no limit at all, since this route lists the same rows.
+   *
+   * WITHOUT A SESSION IT ANSWERS AN EMPTY LIST (owner, 2026-11-02): no event is published to an
+   * anonymous reader (`AssociationsService.isAnonymousAgendaRead`); a signed-in reader keeps their
+   * spaces. Each validated event carries `icsSig`, the signature of its own `.ics` link.
    */
   @Get(':id/events')
   async listCalendarEvents(
@@ -489,11 +556,13 @@ export class AssociationsController {
         includeRej = await this.service.canPostAs(uid, id, { isGlobalAdmin: ga === 'true' });
       }
     }
-    return this.service.listCalendarEvents(id, from, to, {
-      includePending: include,
-      includeRejected: includeRej,
-      viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
-    });
+    return withEventIcsSig(
+      await this.service.listCalendarEvents(id, from, to, {
+        includePending: include,
+        includeRejected: includeRej,
+        viewer: { userId: userId?.trim(), isGlobalAdmin: ga === 'true' },
+      })
+    );
   }
 
   /** Returns whether the calling user is following the specified association. */
@@ -518,7 +587,12 @@ export class AssociationsController {
     const ok = await this.service.canManagePayoutAccount(userId, id, {
       isGlobalAdmin: ga === 'true',
     });
-    return { ok };
+    if (ok) return { ok };
+    // A list or an institution holds no Lydia account of its own (G5): refused with a typed code
+    // BEFORE core-service calls Lydia's `business/create`, never after the link fails.
+    const code = await this.service.payoutAccountRefusal(id);
+    if (code) this.logger.warn(`[PERM] payout account refused on ${sanitizeLog(id)}: ${code}`);
+    return code ? { ok, code } : { ok };
   }
 
   /**
@@ -548,6 +622,8 @@ export class AssociationsController {
   /**
    * Whether the association's Lydia Business private token is stored - `{ set }` and NOTHING else,
    * ever: the key is write-only. MANAGE_PAYOUT_ACCOUNT only, like the payout account it belongs to.
+   * Read by the paste field of the old store builds alone since enrolment lot 1; it goes with the
+   * paste shim below (legacy-compatibility.md).
    */
   @UseGuards(NginxAuthGuard)
   @Get(':id/lydia-business-key')
@@ -561,24 +637,30 @@ export class AssociationsController {
   }
 
   /**
-   * Stores the association's Lydia Business private token (encrypted at rest), the key its Lydia
-   * callbacks are verified with. MANAGE_PAYOUT_ACCOUNT only. Answers `{ set: true }` - never the
-   * value, which no route returns to a browser. Replaces any key already stored. Throttled per
-   * user and association (`LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE`): nothing checks the key against
-   * Lydia here, the first callback it verifies is what proves it.
+   * RETIRED (enrolment lot 1): the key is captured at `business/create` and a pasted one is no
+   * longer stored. A SHIM kept for the store builds that still show the paste field
+   * (legacy-compatibility.md): it reads no body, writes nothing and answers the typed 410
+   * `LYDIA_KEY_PASTE_RETIRED`, which those screens show as their own "could not save" line. The
+   * hit is logged at WARN - an old client in use - with the association and never a value. It keeps
+   * the old route's throttle and MANAGE_PAYOUT_ACCOUNT check, so the WARN counts the managers still on
+   * an old build and not anonymous noise: anyone else gets the 403 they always got.
    */
   @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
-  @Throttle({ default: { limit: LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE, ttl: 60_000 } })
+  @Throttle({ default: { limit: LYDIA_KEY_PASTE_SHIM_PER_MINUTE, ttl: 60_000 } })
   @Put(':id/lydia-business-key')
-  async setLydiaBusinessKey(
+  async retiredLydiaBusinessKeyPaste(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { businessPrivateToken?: unknown }
-  ): Promise<{ set: true }> {
-    await this.assertPayoutAccountManager(userId, ga, id, 'Business key write');
-    await this.service.setLydiaBusinessKey(id, body?.businessPrivateToken, userId);
-    return { set: true };
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<never> {
+    await this.assertPayoutAccountManager(userId, ga, id, 'retired Business key paste');
+    this.logger.warn(
+      `[LYDIA] retired key paste refused on association ${sanitizeLog(id)} by ${sanitizeLog(userId)} - an old client in use`
+    );
+    throw new GoneException({
+      code: LYDIA_KEY_PASTE_RETIRED,
+      message: 'The Lydia Business key is captured at enrolment; pasting one is retired',
+    });
   }
 
   /** Refuses anyone but a MANAGE_PAYOUT_ACCOUNT holder of the association (403). */
@@ -605,7 +687,10 @@ export class AssociationsController {
     return this.service.getCalendarLinkCandidates(id);
   }
 
-  /** Whether the calling user muted this association's push notifications. */
+  /**
+   * LEGACY (engagement WP-3, L8): whether the caller's bell on this association is at `none`. A
+   * build older than the bell control asks it - docs/wiki/legacy-compatibility.md.
+   */
   @UseGuards(NginxAuthGuard)
   @Get(':id/push-mute')
   async pushMuteStatus(
@@ -615,7 +700,10 @@ export class AssociationsController {
     return { muted: await this.pushMutes.isMuted(userId, id) };
   }
 
-  /** Silences this association's PUSH for the caller only; the feed is untouched. Idempotent. */
+  /**
+   * LEGACY (engagement WP-3, L8): sets the caller's bell on this association to `none`; the feed is
+   * untouched. Idempotent. Kept for builds older than the bell control.
+   */
   @UseGuards(NginxAuthGuard)
   @Put(':id/push-mute')
   muteAssociationPush(
@@ -625,7 +713,10 @@ export class AssociationsController {
     return this.pushMutes.mute(userId, id);
   }
 
-  /** Lifts the caller's mute of this association. Idempotent. */
+  /**
+   * LEGACY (engagement WP-3, L8): back to posts and lives (the bell row deleted). Idempotent. Kept for
+   * builds older than the bell control.
+   */
   @UseGuards(NginxAuthGuard)
   @Delete(':id/push-mute')
   unmuteAssociationPush(
@@ -639,7 +730,8 @@ export class AssociationsController {
   @UseGuards(NginxAuthGuard)
   @Get(':id')
   async findOne(@Param('id') id: string) {
-    return toAssociationView(await this.service.findById(id));
+    const [row] = await this.service.withPaymentsReady([await this.service.findById(id)]);
+    return toAssociationView(row);
   }
 
   // ── Authenticated ─────────────────────────────────────────────────────────
@@ -699,12 +791,18 @@ export class AssociationsController {
    * hide the whole Danger panel behind the stricter of its two controls, so a BDE administrator
    * saw neither this nor the archive beside it.
    *
-   * Archiving stays the reversible answer and is a `PATCH` at `MANAGE_MEMBERS`; this is the one
+   * Archiving stays the reversible answer and is a `PATCH { archived }` at `MANAGE_MEMBERS`; this is the one
    * that does not come back, which is why the caller reaches `remove` rather than the service
    * being trusted to identify them.
    *
-   * SCOPED SINCE WP6c STEP 2: the BDE must GOVERN this association (`isAssociationSuperAdminOf`, a
-   * space it reaches); `MANAGE_ASSO` in the BDE of another space no longer ends it.
+   * SCOPED TO THE PARENT SINCE WP-D2 (E3, owner 2026-11-02): the BDE must GOVERN this association
+   * (`isAssociationSuperAdminOf`: `MANAGE_ASSO` in its parent BDE); another BDE, whatever spaces the
+   * association's audience reaches, does not end it, and an association with no parent is the
+   * platform admin's to delete.
+   *
+   * AN INSTITUTION IS THE GLOBAL ADMIN'S TO DELETE (owner, 2026-11-02), as it is theirs to create
+   * (D20): a BDE that governs one is refused 403 `INSTITUTION_DELETE_ADMIN_ONLY`, and keeps
+   * deleting the associations and lists it governs.
    */
   @UseGuards(NginxAuthGuard)
   @Delete(':id')
@@ -713,27 +811,41 @@ export class AssociationsController {
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined
   ) {
-    if (ga !== 'true' && !(await this.service.isAssociationSuperAdminOf(userId, id))) {
-      this.logger.debug(
-        `[PERM] delete association refused: no BDE MANAGE_ASSO over ${sanitizeLog(id)}`
-      );
-      throw new ForbiddenException(
-        "Global admin or MANAGE_ASSO in the BDE of the association's space required"
-      );
+    if (ga !== 'true') {
+      if (!(await this.service.isAssociationSuperAdminOf(userId, id))) {
+        this.logger.debug(
+          `[PERM] delete association refused: no BDE MANAGE_ASSO over ${sanitizeLog(id)}`
+        );
+        throw new ForbiddenException(
+          "Global admin or MANAGE_ASSO in the association's parent BDE required"
+        );
+      }
+      const target = await this.service.findById(id);
+      if (target.type === 'institution') {
+        this.logger.log(
+          `[PERM] delete institution ${sanitizeLog(id)} refused to a BDE caller: global admin only`
+        );
+        throw new ForbiddenException({
+          code: INSTITUTION_DELETE_ADMIN_ONLY,
+          message: 'Only a global admin may delete an institution',
+        });
+      }
     }
-    return this.service.remove(id, userId);
+    return this.service.remove(id, userId, ga === 'true');
   }
 
-  // ── Global Admin OR Association Admin (MANAGE_MEMBERS) ───────────────────
+  // ── Association details: each field asks its own right (UPDATE_FIELD_RIGHTS) ──
 
   /**
-   * Updates association details.
-   * `documentQuotaBytes` is silently ignored unless the caller is a global admin.
-   * Cotisation config fields (`cotisationEnabled`/`cotisationMode`/`cotisationExpiresAt`) require
-   * MANAGE_PRODUCTS (D5), stricter than this endpoint's baseline MANAGE_MEMBERS. When enabling,
-   * the canonical cotisation product is provisioned/synced (see `provisionCotisationProduct`).
+   * Updates association details. NOT ONE FLAG (owner, 2026-11-02): the guard admits a member, the
+   * association's super-admin or the platform admin, and each field then asks the right
+   * `UPDATE_FIELD_RIGHTS` names for it - `EDIT_PROFILE` for the profile, `MANAGE_MEMBERS` for
+   * `archived`, `MANAGE_PRODUCTS` for the cotisation settings (D5), the platform admin alone for
+   * `documentQuotaBytes` and a list's `parentAssociationId`. A body asks every right its fields
+   * ask; one missing refuses the whole write (403, typed, naming the fields), so nothing is half
+   * saved. When enabling a cotisation, the canonical product is provisioned/synced
+   * (`provisionCotisationProduct`).
    */
-  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Patch(':id')
   async update(
@@ -742,33 +854,71 @@ export class AssociationsController {
     @Headers('x-global-admin') ga: string | undefined,
     @Body() dto: UpdateAssociationDto
   ) {
-    const patch = { ...dto };
+    let patch = { ...dto };
     const isGlobalAdmin = ga === 'true';
-    if (!isGlobalAdmin) {
-      // Only global admins may adjust document quota
-      delete patch.documentQuotaBytes;
-    }
-
-    const touchesCotisation =
-      patch.cotisationEnabled !== undefined ||
-      patch.cotisationMode !== undefined ||
-      patch.cotisationExpiresAt !== undefined;
-    if (touchesCotisation) {
-      const canManageProducts = await this.service.mayAct(
-        userId,
-        id,
-        AssociationPermissionFlag.MANAGE_PRODUCTS,
-        { isGlobalAdmin }
+    const asked = rightsAskedBy(patch);
+    this.logger.debug(
+      `[ASSO] update ${sanitizeLog(id)} fields=${Object.keys(patch).join(',') || '(none)'}`
+    );
+    if (asked.unknown.length > 0) {
+      // The whitelisting ValidationPipe strips undeclared keys, so this is a DTO field nobody
+      // placed in the table - a defect here, never a client's.
+      this.logger.error(
+        `[PERM] update ${sanitizeLog(id)}: no right for ${asked.unknown.join(',')}`
       );
-      if (!canManageProducts) {
-        throw new ForbiddenException(
-          'MANAGE_PRODUCTS permission required to edit cotisation settings'
+      throw new ForbiddenException({
+        code: ASSOCIATION_FIELD_RIGHT_MISSING,
+        message: `No right is defined for ${asked.unknown.join(', ')}`,
+      });
+    }
+    if (asked.platformAdmin.length > 0 && !isGlobalAdmin) {
+      // No screen sends these to anyone but a platform administrator: a request that does is a
+      // client defect or a hand-made call, and both are worth an accusing line.
+      this.logger.error(
+        `[PERM] update ${sanitizeLog(id)} refused for ${sanitizeLog(userId)}: ${asked.platformAdmin.join(',')} is platform-admin only`
+      );
+      throw new ForbiddenException({
+        code: ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY,
+        message: `${asked.platformAdmin.join(', ')} may be changed by a platform administrator only`,
+        fields: asked.platformAdmin,
+      });
+    }
+    for (const [flag, fields] of asked.flags) {
+      if (!(await this.service.mayAct(userId, id, flag, { isGlobalAdmin }))) {
+        const name = AssociationPermissionFlag[flag];
+        this.logger.warn(
+          `[PERM] update ${sanitizeLog(id)} refused for ${sanitizeLog(userId)}: ${fields.join(',')} asks ${name}`
         );
+        throw new ForbiddenException({
+          code: ASSOCIATION_FIELD_RIGHT_MISSING,
+          message: `${name} permission required to change ${fields.join(', ')}`,
+          right: name,
+          fields,
+        });
+      }
+    }
+    if (asked.flags.size === 0 && asked.platformAdmin.length === 0) {
+      throw new BadRequestException('Nothing to update');
+    }
+    const touchesCotisation = asked.flags.has(AssociationPermissionFlag.MANAGE_PRODUCTS);
+
+    if ('parentAssociationId' in patch) {
+      // Only a platform admin reaches here with it (refused above otherwise). The governing parent
+      // is a DEPENDENCY (reform 2.7): its rules and its journal live in ONE place, so a change made
+      // from the profile form is judged and recorded exactly as one made on the Dependencies panel.
+      const { parentAssociationId, ...rest } = patch;
+      await this.spaces.setParent(id, parentAssociationId ?? null, { userId });
+      patch = rest;
+      if (Object.keys(patch).length === 0) {
+        return toAssociationView(await this.service.findById(id));
       }
     }
 
     const updated = await this.service.update(id, patch);
-    if (touchesCotisation && updated.cotisationEnabled) {
+    // A cotisation stored enabled on an entity that may not collect NOW (an institution, a list
+    // whose delegation was revoked) stays as it is: its product is not (re)provisioned, so the save
+    // above is never followed by a refusal.
+    if (touchesCotisation && updated.cotisationEnabled && mayCollect(updated)) {
       await this.productsService.provisionCotisationProduct(updated);
     }
     return toAssociationView(updated);
@@ -784,7 +934,7 @@ export class AssociationsController {
    * the literal `second` is the primary slot: an unknown value must not silently write the other
    * one.
    */
-  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.EDIT_PROFILE)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: LOGO_UPLOAD_MB * 1024 * 1024 } }))
   @Post(':id/logo')
@@ -808,7 +958,7 @@ export class AssociationsController {
   }
 
   /** Removes a stored logo from an association; `?slot=second` clears the second theme's. */
-  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.EDIT_PROFILE)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/logo')
   async deleteLogo(
@@ -829,8 +979,16 @@ export class AssociationsController {
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/members')
-  addMember(@Param('id') id: string, @Body() dto: AddMemberDto) {
-    return this.service.addMember({ associationId: id, ...dto });
+  addMember(
+    @Param('id') id: string,
+    @Headers('x-user-id') callerId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Body() dto: AddMemberDto
+  ) {
+    return this.service.addMember(
+      { associationId: id, ...dto },
+      { userId: callerId.trim(), isGlobalAdmin: ga === 'true' }
+    );
   }
 
   /** Updates the role or permission bitmask of an existing association member. */
@@ -845,10 +1003,31 @@ export class AssociationsController {
     @Body() dto: UpdateMemberRoleDto
   ) {
     const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(callerId, id);
+    // A MANAGEMENT question (the last-admin guard), so the management predicate: no BDE over an
+    // institution - never the agenda rule, which reaches an institution's events.
+    const isBde = isGlobalAdmin
+      ? false
+      : await this.service.holdsBdeFlagOver(
+          callerId,
+          id,
+          AssociationPermissionFlag.VALIDATE_EVENTS
+        );
     return this.service.updateMemberRole(id, targetUserId, dto.role, dto.permissions, {
+      granter: { userId: callerId.trim(), isGlobalAdmin },
       bypassLastAdmin: isGlobalAdmin || isBde,
     });
+  }
+
+  /**
+   * THE "QUITTER" BUTTON (owner, 2026-11-03): the caller leaves the association. Any member, no role
+   * guard - the only row it can touch is the caller's own, named by the vouched `x-user-id`, never by
+   * a parameter. Refused `ASSOCIATION_LAST_MEMBER_MANAGER` for its last holder of `MANAGE_MEMBERS`.
+   * Declared BEFORE `:id/members/:userId` so `me` is never read as a user id.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id/members/me')
+  leaveAssociation(@Param('id') id: string, @Headers('x-user-id') callerId: string) {
+    return this.service.leaveAssociation(id, callerId.trim());
   }
 
   /** Removes a member from the association. */
@@ -862,8 +1041,19 @@ export class AssociationsController {
     @Headers('x-global-admin') ga?: string
   ) {
     const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.mayValidateEventsOf(callerId, id);
-    return this.service.removeMember(id, targetUserId, { bypassLastAdmin: isGlobalAdmin || isBde });
+    // A MANAGEMENT question (the last-admin guard), so the management predicate: no BDE over an
+    // institution - never the agenda rule, which reaches an institution's events.
+    const isBde = isGlobalAdmin
+      ? false
+      : await this.service.holdsBdeFlagOver(
+          callerId,
+          id,
+          AssociationPermissionFlag.VALIDATE_EVENTS
+        );
+    return this.service.removeMember(id, targetUserId, {
+      granter: { userId: callerId.trim(), isGlobalAdmin },
+      bypassLastAdmin: isGlobalAdmin || isBde,
+    });
   }
 
   // ── Calendar (PROPOSE_EVENT flag) ─────────────────────────────────────────
@@ -1168,8 +1358,9 @@ export class AssociationsController {
   }
 
   /**
-   * Manually grants a cotisation tag to a user (cash payment or admin override).
-   * Requires MANAGE_MEMBERS flag.
+   * Manually grants a cotisation tag to a user (cash payment or admin override): one of THIS
+   * association's tier tags, granted like the roster's manual add (`grantTagForAssociation`); the
+   * derived expiry applies unless one is given. Requires MANAGE_MEMBERS flag.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
@@ -1179,12 +1370,11 @@ export class AssociationsController {
     @Headers('x-user-id') grantedBy: string,
     @Body() dto: GrantTagDto
   ) {
-    return this.userTagService.grantOrRenew({
+    return this.userTagService.grantTagForAssociation(id, {
       userId: dto.userId,
       tagName: dto.tagName,
-      issuingAssocId: id,
       grantedBy,
-      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
     });
   }
 
@@ -1238,6 +1428,12 @@ export class AssociationsController {
    * cotisation on payment does exactly what that button does, so it cannot be a cheaper way in. The
    * tier list itself is readable by any signed-in user, because a membership tier's NAME is already
    * public on the association page.
+   *
+   * `tierKeyFromLabel` is a CAPABILITY, not a setting: this social-service derives a new tier's
+   * `variantKey` from its label (`deriveVariantKey` on create). The admin screen offers tier
+   * creation only when it reads it, because an older server strips the unknown flag and would
+   * create a BASE tier instead of the named one asked for. Always `true` from this release on; its
+   * absence is what an older server looks like.
    */
   @UseGuards(NginxAuthGuard)
   @Get(':id/cotisation-options')
@@ -1253,7 +1449,11 @@ export class AssociationsController {
       AssociationPermissionFlag.MANAGE_MEMBERS,
       { isGlobalAdmin: globalAdmin === 'true' }
     );
-    return { tiers: tiers.map(({ variantKey, name }) => ({ variantKey, name })), mayGrant };
+    return {
+      tiers: tiers.map(({ variantKey, name }) => ({ variantKey, name })),
+      mayGrant,
+      tierKeyFromLabel: true as const,
+    };
   }
 
   /**
@@ -1321,14 +1521,15 @@ export class AssociationsController {
   }
 
   /**
-   * Returns active products for this association (shown on the public association page).
+   * Returns active products for this association (its shop section).
    *
-   * `x-user-id` is optional - nginx sets it only for a signed-in caller, and this page is public.
-   * It is passed through so a gridded product quotes the price THIS person pays rather than the
-   * "everyone else" cell; a guest legitimately resolves to that cell.
+   * `x-user-id` is passed through so a gridded product quotes the price THIS person pays rather
+   * than the "everyone else" cell. Signed-in only since 2026-11-02: the public showcase shows no
+   * shop ([anonymous-surface](../../../../docs/wiki/anonymous-surface.md)).
    */
+  @UseGuards(NginxAuthGuard)
   @Get(':id/products')
-  listAssociationProducts(@Param('id') id: string, @Headers('x-user-id') userId?: string) {
+  listAssociationProducts(@Param('id') id: string, @Headers('x-user-id') userId: string) {
     return this.productsService.listByAssoc(id, userId);
   }
 
@@ -1357,6 +1558,30 @@ export class AssociationsController {
     this.sendXlsxDownload(res, buffer, title, 'achats');
   }
 
+  /**
+   * Closes a payment marked `paid_not_granted` by recording which outcome settled it - `refunded`
+   * or `granted` (the closing grants the tier by hand). Once per payment; the mark stays as history
+   * and the hourly report stops counting it. Requires MANAGE_PRODUCTS, like the rest of this list.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Post(':id/purchases/:purchaseId/close')
+  closePaidNotGranted(
+    @Param('id') id: string,
+    @Param('purchaseId', ParseUUIDPipe) purchaseId: string,
+    @Headers('x-user-id') closedBy: string,
+    @Body() dto: ClosePaidNotGrantedDto
+  ) {
+    return this.productsService.closePaidNotGranted(
+      id,
+      purchaseId,
+      closedBy,
+      dto.outcome,
+      // Validated present for `granted` (`ClosePaidNotGrantedDto`); a refund reads no tier.
+      dto.expectDelivered ?? false
+    );
+  }
+
   /** Lists buyers for a boutique product. Requires MANAGE_PRODUCTS flag. */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
@@ -1379,6 +1604,21 @@ export class AssociationsController {
     @Body() dto: GrantProductPurchaseDto
   ) {
     return this.productsService.grantProductPurchase(id, productId, grantedBy, dto);
+  }
+
+  /**
+   * The amount a cash sale of this product to `userId` records when the cashier types none, so the
+   * cashier sees it before the sale. Requires MANAGE_PRODUCTS flag, like the sale itself.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/products/:productId/grant-quote')
+  quoteCashSale(
+    @Param('id') id: string,
+    @Param('productId') productId: string,
+    @Query('userId', ParseUUIDPipe) userId: string
+  ) {
+    return this.productsService.quoteCashSale(id, productId, userId);
   }
 
   /**
@@ -1697,15 +1937,16 @@ export class AssociationsController {
 
   /**
    * Parent accounting access: lists a delegated child's completed purchases (boutique + paid
-   * forms). `:id` is the parent; the guard proves parent-admin, then the service verifies the
-   * approved link. Requires MANAGE_PRODUCTS.
+   * forms). `:id` is the parent; the guard proves parent-admin, then `childAccountingScope` reads
+   * what it may see: everything while approved, the payments its Business took once the delegation
+   * ended. Requires MANAGE_PRODUCTS.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Get(':id/payment-delegation/children/:childId/purchases')
   async listChildPurchases(@Param('id') id: string, @Param('childId') childId: string) {
-    await this.service.assertIsApprovedParentOf(id, childId);
-    return this.productsService.listAssociationPurchases(childId);
+    const { onlyRecordIds } = await this.service.childAccountingScope(id, childId);
+    return this.productsService.listAssociationPurchases(childId, onlyRecordIds);
   }
 
   /** Parent accounting access: XLSX export of a delegated child's purchases. `:id` is the parent. Requires MANAGE_PRODUCTS. */
@@ -1717,35 +1958,57 @@ export class AssociationsController {
     @Param('childId') childId: string,
     @Res() res: Response
   ) {
-    await this.service.assertIsApprovedParentOf(id, childId);
-    const { buffer, title } = await this.productsService.exportAssociationPurchases(childId);
+    const { onlyRecordIds } = await this.service.childAccountingScope(id, childId);
+    const { buffer, title } = await this.productsService.exportAssociationPurchases(
+      childId,
+      onlyRecordIds
+    );
     this.sendXlsxDownload(res, buffer, title, 'achats');
   }
 
   /**
-   * Approves a child's pending delegation request. `:id` is the parent. Requires MANAGE_PRODUCTS.
+   * Approves a child's pending delegation request. `:id` is the parent. Requires MANAGE_PRODUCTS,
+   * and the service narrows it: only the receiver's OWN shop managers or the platform administrator
+   * accept, never a BDE governing it, and the acceptance is recorded (owner, 2026-11-02).
    *
    * The child can now take payments through the parent's account, so the products it had to leave
-   * off sale for want of one go on sale - see `releaseWithheldProducts`. Composed here rather than
-   * inside `approvePaymentDelegation` for the same reason `provisionCotisationProduct` is: the
-   * products service already depends on the associations service, and the reverse edge would be a
-   * cycle.
+   * off sale for want of one go back on sale IN THE SAME TRANSACTION as the approval
+   * (`approvePaymentDelegation`, owner review of #2967): a commit never leaves one withheld.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/payment-delegation/children/:childId/approve')
-  async approvePaymentDelegation(@Param('id') id: string, @Param('childId') childId: string) {
-    const result = await this.service.approvePaymentDelegation(id, childId);
-    await this.productsService.releaseWithheldProducts(childId);
-    return result;
+  async approvePaymentDelegation(
+    @Param('id') id: string,
+    @Param('childId') childId: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined
+  ) {
+    return this.service.approvePaymentDelegation(id, childId, {
+      userId,
+      isGlobalAdmin: ga === 'true',
+    });
   }
 
-  /** Rejects a pending request or revokes an approved child's delegation. `:id` is the parent. Requires MANAGE_PRODUCTS. */
+  /**
+   * Rejects a pending request or revokes an approved child's delegation. `:id` is the parent.
+   * Requires MANAGE_PRODUCTS, and the service narrows it as for acceptance: the receiver's OWN shop
+   * managers or the platform administrator, never a BDE governing it
+   * (`DELEGATION_REVOKE_RECEIVER_ONLY`).
+   */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/payment-delegation/children/:childId/reject')
-  rejectPaymentDelegation(@Param('id') id: string, @Param('childId') childId: string) {
-    return this.service.rejectPaymentDelegation(id, childId);
+  rejectPaymentDelegation(
+    @Param('id') id: string,
+    @Param('childId') childId: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined
+  ) {
+    return this.service.rejectPaymentDelegation(id, childId, {
+      userId,
+      isGlobalAdmin: ga === 'true',
+    });
   }
 
   // ── Internal (called by core-service) ───────────────────────────────────────
@@ -1755,38 +2018,47 @@ export class AssociationsController {
   // only accepts genuine server-to-server calls from core-service.
 
   /**
-   * Sets the Lydia Business vendor_token (and dashboard URL, if given) for an association; called
-   * internally by core-service.
+   * Links the Business core-service's onboarding just created: its vendor_token, dashboard URL and
+   * private token (confirmed by Lydia, stored encrypted); called internally by core-service.
+   * Refused with the typed 409 `LYDIA_ACCOUNT_ALREADY_LINKED` while a Business is linked.
    *
    * Answers `{ ok: true }` and nothing of the row: it returned the raw entity, vault key included,
    * and its one caller (core-service `createOnboarding`) never read the body.
    */
   @Post(':id/lydia-account')
   async setLydiaAccount(
-    @Param('id') id: string,
-    @Body() body: { lydiaAccountId: string; lydiaDashboardUrl?: string },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body()
+    body: { lydiaAccountId?: unknown; lydiaDashboardUrl?: unknown; businessPrivateToken?: unknown },
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
-    await this.service.setLydiaAccountId(id, body.lydiaAccountId, body.lydiaDashboardUrl);
+    await this.service.setLydiaAccountId(
+      id,
+      body?.lydiaAccountId,
+      body?.lydiaDashboardUrl,
+      body?.businessPrivateToken
+    );
     return { ok: true as const };
   }
 
   /**
-   * Marks Lydia onboarding as complete for an association; called internally by core-service.
-   *
-   * Releases withheld products exactly like the removed `stripe-complete` did: which provider is active decides
-   * which pair of columns `resolvePaymentTarget` reads, never whether a product waiting on an
-   * account should be released.
+   * The global admin's "Valider l'onboarding", called internally by core-service: the SAME path as
+   * Lydia's `BUSINESS_VALIDATED` (`ProductsService.markLydiaReady`, cause `admin`) - one writer of
+   * the readiness, the transition logged and the managers told once, withheld products released on
+   * every call. Refused when no Business is linked (nothing to validate).
    */
   @Post(':id/lydia-complete')
   async markLydiaComplete(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
-    await this.service.markLydiaOnboardingComplete(id);
-    await this.productsService.releaseWithheldForAssociationAndDelegates(id);
+    const vendorToken = await this.service.lydiaVendorTokenOf(id);
+    if (!vendorToken) {
+      throw new BadRequestException('No Lydia account is linked to this association');
+    }
+    await this.productsService.markLydiaReady(vendorToken, 'admin', { path: 'admin', id });
   }
 
   /** Unlinks the association's Lydia Business; called internally by core-service. */

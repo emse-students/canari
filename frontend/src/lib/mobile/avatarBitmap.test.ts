@@ -8,11 +8,22 @@ function recordingContext() {
   const ctx = new Proxy({} as Record<string, unknown>, {
     get(target, key: string) {
       if (key in target) return target[key];
+      if (key === 'createLinearGradient') {
+        return (...args: number[]) => {
+          calls.push(`createLinearGradient(${args.join(',')})`);
+          return { addColorStop: (at: number, c: string) => calls.push(`stop${at}=${c}`) };
+        };
+      }
       return (...args: unknown[]) => {
         calls.push(`${key}(${args.filter((a) => typeof a === 'string').join(',')})`);
       };
     },
     set(target, key: string, value) {
+      if (key === 'fillStyle' && typeof value === 'object') {
+        calls.push('fillStyle=gradient');
+        target[key] = value;
+        return true;
+      }
       target[key] = value;
       if (key === 'fillStyle') calls.push(`fillStyle=${value}`);
       return true;
@@ -86,6 +97,49 @@ describe('renderedAvatarPng', () => {
     await renderedAvatarPng(root);
     expect(calls).toContain('fillStyle=rgb(16, 24, 48)');
     expect(calls).toContain('fillText(CT)');
+  });
+
+  it('paints a placeholder as the CSS gradient, stops read from the resolved tokens', async () => {
+    const root = document.createElement('span');
+    const disc = document.createElement('div');
+    disc.className = 'avatar-placeholder';
+    disc.dataset.hue = '3';
+    disc.style.setProperty('--avatar-hue-from', ' #3b82f6');
+    disc.style.setProperty('--avatar-hue-to', '#1d4ed8 ');
+    disc.style.color = 'rgb(255, 255, 255)';
+    const initials = document.createElement('span');
+    initials.textContent = 'GR';
+    disc.appendChild(initials);
+    root.appendChild(disc);
+    document.body.appendChild(root);
+    await renderedAvatarPng(root);
+    expect(calls).toContain('createLinearGradient(0,0,96,96)');
+    expect(calls).toContain('stop0=#3b82f6');
+    expect(calls).toContain('stop1=#1d4ed8');
+    expect(calls).toContain('fillStyle=gradient');
+    expect(calls).toContain('fillText(GR)');
+  });
+
+  it('paints the gradient under a glyph placeholder too (a group with no name)', async () => {
+    const root = document.createElement('span');
+    root.className = 'avatar-placeholder';
+    root.style.setProperty('--avatar-hue-from', '#16a34a');
+    root.style.setProperty('--avatar-hue-to', '#15803d');
+    root.innerHTML = '<svg width="16" height="16"></svg>';
+    document.body.appendChild(root);
+    vi.stubGlobal(
+      'Image',
+      class {
+        src = '';
+        decode() {
+          return Promise.resolve();
+        }
+      }
+    );
+    await renderedAvatarPng(root);
+    vi.unstubAllGlobals();
+    expect(calls).toContain('stop0=#16a34a');
+    expect(calls.some((c) => c.startsWith('drawImage'))).toBe(true);
   });
 
   it('adds the presence dot when the web shows one', async () => {

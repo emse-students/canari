@@ -1,6 +1,8 @@
 mod addressing;
 mod audience;
+mod census;
 mod handlers;
+mod log_repeat;
 mod models;
 mod presence;
 mod state;
@@ -19,7 +21,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::audience::PresenceAudience;
 use crate::handlers::ws_handler;
-use crate::presence::{get_admin_presence, get_presence};
+use crate::presence::{
+    get_admin_presence, get_admin_presence_history, get_presence, post_presence,
+};
 use crate::state::AppState;
 
 /// Liveness probe endpoint - returns `200 OK` with body `"OK"`.
@@ -163,7 +167,7 @@ async fn main() {
     let service_url = |name: &str| {
         std::env::var(name).unwrap_or_else(|_| {
             tracing::error!(
-                "{} is not set - GET /api/presence will answer 503 to every viewer",
+                "{} is not set - every /api/presence read will answer 503 to every viewer",
                 name
             );
             String::new()
@@ -174,7 +178,7 @@ async fn main() {
     let internal_secret = std::env::var("INTERNAL_SECRET").unwrap_or_default();
     if internal_secret.is_empty() {
         tracing::error!(
-            "INTERNAL_SECRET is not set - GET /api/presence will answer 503 to every viewer"
+            "INTERNAL_SECRET is not set - every /api/presence read will answer 503 to every viewer"
         );
     }
     let audience = PresenceAudience::new(delivery_url, social_url, internal_secret);
@@ -187,6 +191,9 @@ async fn main() {
         app_state.connected_users.clone(),
         app_state.session_caps.clone(),
     );
+
+    // ── Anonymous census: one sample a minute, idempotent across replicas ─
+    census::spawn_sampler(app_state.clone());
 
     // ── CORS configuration ────────────────────────────────────────────────
     // An UNSET variable means someone is running the binary by hand, and the wildcard keeps that
@@ -207,8 +214,14 @@ async fn main() {
     let app = Router::new()
         .route("/api/health", get(health_check))
         .route("/api/ws", get(ws_handler))
-        .route("/api/presence", get(get_presence))
+        // POST carries the ids in its body; GET is the legacy shim for installed clients
+        // (docs/wiki/legacy-compatibility.md, "the presence ids in a URL").
+        .route("/api/presence", get(get_presence).post(post_presence))
         .route("/api/admin/presence", get(get_admin_presence))
+        .route(
+            "/api/admin/presence/history",
+            get(get_admin_presence_history),
+        )
         .layer(cors)
         .with_state(app_state);
 
@@ -478,6 +491,41 @@ mod tests {
                 .unwrap(),
             "7200"
         );
+    }
+
+    /// The presence read is a POST since 2026-10-28 (the ids left the URL): a phone app's
+    /// preflight asks for POST with a JSON body and a Bearer, and must be answered for each.
+    #[tokio::test]
+    async fn answers_the_preflight_of_a_presence_post() {
+        let response = router(PRODUCTION_ALLOW_ORIGIN)
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/api/presence")
+                    .header(header::ORIGIN, "tauri://localhost")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .header(
+                        header::ACCESS_CONTROL_REQUEST_HEADERS,
+                        "authorization,content-type",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let header_of = |name| {
+            response
+                .headers()
+                .get(name)
+                .map(|v: &HeaderValue| v.to_str().unwrap().to_ascii_lowercase())
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            header_of(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            "tauri://localhost"
+        );
+        assert!(header_of(header::ACCESS_CONTROL_ALLOW_METHODS).contains("post"));
+        assert!(header_of(header::ACCESS_CONTROL_ALLOW_HEADERS).contains("content-type"));
     }
 
     #[tokio::test]

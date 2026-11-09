@@ -169,8 +169,8 @@ fi
 
 # And the store numbers, which are the values a half-bump loses most expensively: a versionCode that
 # did not move is refused by Play outright ("Version code N has already been used").
-CODE_LINE="$(grep -o '"versionCode": [0-9]*' "$WT/frontend/src-tauri/tauri.conf.json" 2>/dev/null | head -1)"
-PLIST_LINE="$(grep -A1 CFBundleVersion "$WT/frontend/src-tauri/gen/apple/canari_iOS/Info.plist" 2>/dev/null | grep -o '[0-9]\{4,\}' | head -1)"
+CODE_LINE="$(grep -o '"versionCode": [0-9]*' "$WT/frontend/src-tauri/tauri.conf.json" 2>/dev/null | sed -n 1p)"
+PLIST_LINE="$(grep -A1 CFBundleVersion "$WT/frontend/src-tauri/gen/apple/canari_iOS/Info.plist" 2>/dev/null | grep -o '[0-9]\{4,\}' | sed -n 1p)"
 # 9.87.65 -> (9*1e6 + 87*1e3 + 65) * 100 + 99, the band with a stable's rank.
 EXPECTED_CODE=$(( (9 * 1000000 + 87 * 1000 + 65) * 100 + 99 ))
 
@@ -199,7 +199,7 @@ printf '\nthe release notes are promoted, and only for a stable\n'
 # THE DATE IS MATCHED AS A SHAPE, NEVER AGAINST TODAY. Asserting the wall clock would make this
 # suite fail on the UTC midnight it happened to straddle, and it is the promotion under test, not
 # `date`.
-HEADS="$(grep -n '^## \[' "$WT/CHANGELOG.md" | head -2)"
+HEADS="$(grep -n '^## \[' "$WT/CHANGELOG.md" | sed -n 1,2p)"
 FIRST="$(printf '%s\n' "$HEADS" | sed -n '1s/^[0-9]*://p')"
 SECOND="$(printf '%s\n' "$HEADS" | sed -n '2s/^[0-9]*://p')"
 

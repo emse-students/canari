@@ -70,6 +70,7 @@ const makeDeps = (connect: ReturnType<typeof vi.fn>) => {
     gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
     socketFence: () => 0,
     onDisconnect: vi.fn(),
+    isDestroyed: () => false,
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     sendDisconnect: vi.fn(),
   } as unknown as IMlsService;
@@ -79,6 +80,7 @@ const makeDeps = (connect: ReturnType<typeof vi.fn>) => {
     deviceKeyB64: 'k',
     scheduleReconnect: vi.fn(),
     setIsWsConnected,
+    onCaughtUp: vi.fn(),
     setReconnectAttempts,
     processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
     log: vi.fn(),
@@ -187,7 +189,8 @@ describe('openGatewayConnection handed a handshake already in flight', () => {
     expect(deps.scheduleReconnect).not.toHaveBeenCalled();
     expect(consoleError).not.toHaveBeenCalled();
     const logged = (deps.log as ReturnType<typeof vi.fn>).mock.calls.flat().join(' | ');
-    expect(logged).not.toContain('Gateway inaccessible');
+    // The gateway-failure line, in BOTH its spellings (the link-down one goes through `log`).
+    expect(logged).not.toContain('Gateway connection failed');
     expect(logged).toContain('the session has ended');
   });
 

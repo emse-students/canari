@@ -36,6 +36,7 @@ import {
   mintedKeyPackageVettedNarration,
   admissionJoinerNarration,
   admissionMemberNarration,
+  atLevels,
   bigRowNarration,
   REVOKED_SIGN_OUT_NARRATION,
   revokedLogoutOnce,
@@ -74,6 +75,9 @@ const CASES = [
   // The two withdrawal branches, pinned TOGETHER because the risk in classifying them is that one
   // rule swallows both: they share a prefix, an id and the word "withdrawn", and they mean opposite
   // things about what the peers hold. Landed in `unexplained` on MUT-19's first green run.
+  ['log', '[11:53:48] [GRAINE] community 9b4e7436 distribution group agrees with its roster - 11 leaf/leaves, nobody to remove', 'benign'],
+  ['log', '[11:53:48] [GRAINE] community 9b4e7436 distribution group agrees with its roster - 11 leaf/leaves, nobody to remove (the revocation answer of an unchanged tree reused)', 'benign'],
+  ['log', '[11:53:48] [GRAINE] community 9b4e7436 distribution group agrees with its roster - 11 leaf/leaves, nobody to remove (2 still to remove)', 'unexplained'],
   ['log', '[11:11:10] [OUTBOX] a721e695… withdrawn from the queue before it was ever sent', 'benign'],
   ['log', '[11:11:10] [OUTBOX] a721e695… withdrawn from the queue before this tab sent it', 'benign'],
   // A group exit settling its queue (GRP-6): clean only when nothing was lost.
@@ -373,9 +377,11 @@ const CASES = [
   // A commit race lost and answered (#2416, #2414), verbatim from the two pull requests, and the
   // controls: a reason outside the enum, and the same sentence saying something WAS committed.
   ['log', '[04:00:00] [PENDING] Add of web-c71e1a5b-mvn2mrrz-j6mu to 46163138... abandoned before its stage (tree-unconfirmed) - nothing committed', 'notable'],
-  ['log', '[04:00:00] [SYNC] the Add was abandoned before its stage (removed-meanwhile) - nobody added', 'notable'],
+  ['log', '[04:00:00] [GROUP] an invitation added nobody (removed-meanwhile) in 46163138...: AddAbortedError: The Add in 46163138... was abandoned before its stage (removed-meanwhile): w5 left the roster or the tree while the Add was rebuilt', 'notable'],
+  ['log', '[04:00:00] [GROUP] an invitation added nobody (removed-meanwhile) in 46163138...: AddAbortedError: The Add in 46163138... was abandoned before its stage (removed-meanwhile): w4, w5 left the roster or the tree while the Add was kept', 'notable'],
+  ['log', '[04:00:00] [GROUP] an invitation added nobody (commit-race-lost) in 46163138... (the invitation lost at epoch 2, re-planned): AddAbortedError: The Add in 46163138... was abandoned before its stage (premise-unreadable): no roster baseline to rebuild on', 'notable'],
   ['log', '[04:00:00] [PENDING] Add of web-c71e1a5b-mvn2mrrz-j6mu to 46163138... abandoned before its stage (gave-up) - nothing committed', 'unexplained'],
-  ['log', '[04:00:00] [SYNC] the Add was abandoned before its stage (removed-meanwhile) - half of them added', 'unexplained'],
+  ['log', '[04:00:00] [GROUP] an invitation added nobody (removed-meanwhile) in 46163138...: AddAbortedError: The Add in 46163138... was abandoned before its stage (gave-up): x', 'unexplained'],
   // FRAMES REFUSED FOR LACK OF A ROW (#2414/#2416 round 4): normal only where a row provokes them, so
   // UNEXPLAINED by default - the generic `/epoch|GAP/` rule must NOT claim them (REFUSED_FOR_LACK_OF_ROW_NARRATION).
   ['log', "[04:00:00] [COMMIT_RACE] 46163138… not caught up: frames refused for lack of a row are still queued and bring the missing epochs - their pull is asked, the tree is unconfirmed", 'unexplained'],
@@ -1509,6 +1515,26 @@ const FORGIVE_CASES = [
     OWNER_DEVICE_NOTICE_NARRATION,
     { clean: false, unmatched: 3 },
   ],
+  // A BUDGETED NEEDLE forgives as many lines as the decisions it stands for, and the next one is dirt:
+  // a sentence said in a loop is a finding even when each copy reads as narration.
+  [
+    'a budgeted needle forgives up to its budget',
+    [
+      ['log', '[10:01:02] [GRAINE] REMOVE community 11111111: committing it from this device'],
+      ['log', '[10:01:03] [GRAINE] REMOVE community 11111111: committing it from this device'],
+    ],
+    [atLevels(['log'], /^\[GRAINE\] REMOVE community 11111111: committing it from this device$/, 2)],
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'a budgeted needle said once more than its budget leaves that line dirt',
+    [
+      ['log', '[10:01:02] [GRAINE] REMOVE community 11111111: committing it from this device'],
+      ['log', '[10:01:03] [GRAINE] REMOVE community 11111111: committing it from this device'],
+    ],
+    [atLevels(['log'], /^\[GRAINE\] REMOVE community 11111111: committing it from this device$/, 1)],
+    { clean: false, unmatched: 0 },
+  ],
   [
     "a contact's device notice, forgiven at its levels",
     [
@@ -1792,7 +1818,6 @@ const FORGIVE_CASES = [
     "an Add refused whole in the row's group, in a row that plays it (ADM-3), forgiven",
     [
       ['log', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
-      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (not-admitted) - nobody added'],
       ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 21a3145f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
     ],
     admissionMemberNarration(ADM_G, { admitted: true, declined: true, addRefused: true }),
@@ -1802,7 +1827,6 @@ const FORGIVE_CASES = [
     'control: the same three lines in a row where no gate refusal is expected (ADM-2) stay dirt',
     [
       ['log', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
-      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (not-admitted) - nobody added'],
       ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 21a3145f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
     ],
     admissionMemberNarration(ADM_G, { declined: true }),
@@ -1814,7 +1838,6 @@ const FORGIVE_CASES = [
     'control: the two group-naming lines about ANOTHER group stay dirt, even in ADM-10',
     [
       ['log', '[14:29:37.561] [COMMIT_RACE] 098bfb7f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
-      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (not-admitted) - nobody added'],
       ['log', '[14:29:37.644] [JOIN_REQUEST] approve of 223bc34e… in 098bfb7f... did not happen - the server settled the ask meanwhile (the Add did not happen (removed-meanwhile))'],
     ],
     admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
@@ -1822,56 +1845,56 @@ const FORGIVE_CASES = [
   ],
   [
     "a Decline that won the race, narrated by the approver at info with the group named, in a row that plays it (ADM-3), forgiven",
-    [['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…']],
+    [['info', '[14:29:37.644] [GROUP] an invitation added nobody (removed-meanwhile) in 21a3145f...: AddAbortedError: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…']],
     admissionMemberNarration(ADM_G, { admitted: true, declined: true, addRefused: true }),
-    { clean: true, unmatched: 9 },
+    { clean: true, unmatched: 8 },
   ],
   [
     'control: that line in a row that plays no refusal (ADM-2), for another group, or at warn, stays dirt',
     [
-      ['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
+      ['info', '[14:29:37.644] [GROUP] an invitation added nobody (removed-meanwhile) in 21a3145f...: AddAbortedError: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
     ],
     admissionMemberNarration(ADM_G, { declined: true }),
     { clean: false, unmatched: 4 },
   ],
   [
     'an ask settled before the Add, narrated at info with the group named, in a row that plays it (ADM-10), forgiven',
-    [['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built']],
+    [['info', '[14:29:37.644] [GROUP] an invitation added nobody (removed-meanwhile) in 21a3145f...: AddAbortedError: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built']],
     admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
-    { clean: true, unmatched: 8 },
+    { clean: true, unmatched: 7 },
   ],
   [
     'control: that line in a row that plays no refusal stays dirt',
-    [['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built']],
+    [['info', '[14:29:37.644] [GROUP] an invitation added nobody (removed-meanwhile) in 21a3145f...: AddAbortedError: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built']],
     admissionMemberNarration(ADM_G, { declined: true }),
     { clean: false, unmatched: 4 },
   ],
   [
     'control: the settled-ask line naming ANOTHER group, or at warn, stays dirt in ADM-10',
     [
-      ['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 098bfb7f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built'],
-      ['warning', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built'],
+      ['info', '[14:29:37.644] [GROUP] an invitation added nobody (removed-meanwhile) in 098bfb7f...: AddAbortedError: The Add in 098bfb7f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built'],
+      ['warning', '[14:29:37.644] [GROUP] an invitation added nobody (removed-meanwhile) in 21a3145f...: AddAbortedError: The Add in 21a3145f... was abandoned before its stage (removed-meanwhile): the ask of joe was settled before the Add was built'],
     ],
     admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
-    { clean: false, unmatched: 9, warnings: 1 },
+    { clean: false, unmatched: 8, warnings: 1 },
   ],
   [
     'control: the same line naming ANOTHER group, or logged at warn (a read failure), stays dirt in ADM-10',
     [
-      ['info', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 098bfb7f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
-      ['warning', '[14:29:37.644] [SYNC] processBulkAddition: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
+      ['info', '[14:29:37.644] [GROUP] an invitation added nobody (removed-meanwhile) in 098bfb7f...: AddAbortedError: The Add in 098bfb7f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
+      ['warning', '[14:29:37.644] [GROUP] an invitation added nobody (removed-meanwhile) in 21a3145f...: AddAbortedError: The Add in 21a3145f... was abandoned before its stage (not-admitted): the gate refused to admit 223bc34e…'],
     ],
     admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
-    { clean: false, unmatched: 9, warnings: 1 },
+    { clean: false, unmatched: 8, warnings: 1 },
   ],
   [
     'control: an Add abandoned for a reason nobody declared, or the refusal at warn, is not forgiven in ADM-10',
     [
-      ['log', '[14:29:37.644] [SYNC] the Add was abandoned before its stage (lost) - nobody added'],
+      ['info', '[14:29:37.644] [GROUP] an invitation added nobody (lost) in 21a3145f...'],
       ['warning', '[14:29:37.561] [COMMIT_RACE] 21a3145f... the gate refused to admit every person the Add offered (223bc34e…) - nobody added'],
     ],
     admissionMemberNarration(ADM_G, { declined: true, addRefused: true }),
-    { clean: false, unmatched: 9, warnings: 1 },
+    { clean: false, unmatched: 8, warnings: 1 },
   ],
   [
     "the joiner's wait and both endings in the row's group, forgiven",
@@ -1953,6 +1976,23 @@ for (const [what, lines, needles, want] of FORGIVE_CASES) {
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'forgive'.padEnd(12)} ${what}`);
   if (!ok) console.log(`       want=${JSON.stringify(want)} got=${JSON.stringify(got)} rep=${JSON.stringify({ severe: rep.severe, errors: rep.errors, unexplained: rep.unexplained })}`);
+}
+// ONE CALL SURFACED TWICE (the same millisecond - `timelineOf`'s own rule) is one decision against a
+// budget of one; the same sentence a second later is two.
+{
+  const line = '[10:01:02] [GRAINE] REMOVE community 11111111: committing it from this device';
+  const needle = atLevels(['debug'], /^\[GRAINE\] REMOVE community 11111111: committing it from this device$/, 1);
+  const ev = (at) => ({ method: 'Runtime.consoleAPICalled', params: { type: 'debug', timestamp: at, args: [{ value: line }] } });
+  const t0 = 1_786_710_000_000;
+  const once = ignoringExpectedLog(await report({ cx: { events: [ev(t0), ev(t0)] }, label: 'selftest' }), [needle]);
+  const twice = ignoringExpectedLog(await report({ cx: { events: [ev(t0), ev(t0 + 1000)] }, label: 'selftest' }), [needle]);
+  for (const [what, ok] of [
+    ['a budget counts the double surfacing of one call once', once.clean],
+    ['a budget counts the same sentence a second later twice', !twice.clean && twice.unexplained.some((l) => l.includes('[said 2 times, budget 1]'))],
+  ]) {
+    if (!ok) failures++;
+    console.log(`${ok ? 'ok  ' : 'FAIL'} ${'forgive'.padEnd(12)} ${what}`);
+  }
 }
 /**
  * A PATH RULE MUST FORGIVE THE SAME REQUEST WHATEVER ESTATE IT WAS MADE AGAINST.

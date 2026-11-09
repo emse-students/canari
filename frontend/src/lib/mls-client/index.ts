@@ -18,7 +18,10 @@ export {
   SavedStateUnopenedError,
   SavedStateOfAnotherAccountError,
   noPinOpensState,
+  recoveryOfStateLoadFailure,
   isKeystoreKeyUnavailable,
+  isMlsManagerAbsent,
+  MlsSessionVacantError,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
   GroupDrainAbandonedError,
@@ -65,8 +68,6 @@ export {
   getIsTabLeader,
   setTabLeaderPromotedHandler,
   setTabLeaderDemotedHandler,
-  releaseLeadership,
-  requestLeadershipTakeover,
   markPromotionReload,
 } from './tabLeader';
 export {

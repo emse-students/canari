@@ -8,8 +8,12 @@
  * Contract: docs/wiki/services/lives.md, "The API contract".
  */
 
-/** Why a live ended - the row's `endReason` (`LiveEndReason` on the server). */
-export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased' | 'cut';
+/**
+ * Why a live ended - the row's `endReason` (`LiveEndReason` on the server). `max_duration` is no
+ * longer written (the 60-minute cap is gone) but stays READABLE: rows ended before it was removed
+ * still carry it until the retention purge deletes them.
+ */
+export type LiveEndReason = 'broadcaster' | 'dropped' | 'erased' | 'cut' | 'max_duration';
 
 /**
  * A live as `POST /api/lives` (201) and `GET /api/lives/:id` answer it: the KEY included (L2, Q4).
@@ -24,14 +28,51 @@ export interface LiveView {
   lastSegmentAt: string | null;
   nextIndex: number;
   key: string;
+  /** The live's optional title (owner, 2026-11-07); absent from an older server. */
+  title?: string | null;
+  /**
+   * On `GET /api/lives/:id` only: the reader moderates this live as a BDE (2026-11-02), as on the
+   * list. Absent (the broadcaster's own view, an older server) reads as false.
+   */
+  viewerModerates?: boolean;
+  /**
+   * On `GET /api/lives/:id` only: the chat is withheld from this reader - a named reader watching an
+   * association's live through a read grant alone, "voit les commentaires" off (owner, 2026-11-04).
+   * Absent (an older server) reads as false; every poll's chat block then says it again.
+   */
+  chatWithheld?: boolean;
 }
 
-/** One open live in `GET /api/lives` (newest first, at most 50) - no key; the key is read by opening it. */
+/**
+ * One open live in `GET /api/lives` (newest first, at most 50). The list TAKES NO SEAT (owner,
+ * 2026-11-07): it carries what the feed card draws - the title, the viewer count, the newest preview
+ * image and, with that image only, the key that opens it. Each new field is optional: an older
+ * server sends none, and the card then reads as it did ("X est en direct", no picture).
+ */
 export interface LiveListItem {
   id: string;
   broadcasterId: string;
   associationId: string | null;
   startedAt: string;
+  /**
+   * The reader moderates this live as a BDE (its governed spaces hold it, 2026-11-02): draws the
+   * staff hide button. Absent from an older server, read as false.
+   */
+  viewerModerates?: boolean;
+  /** The live's optional title (plain text), null or absent for none. */
+  title?: string | null;
+  /** How many watch; null when the count did not answer (no number shown). */
+  viewers?: number | null;
+  /**
+   * The newest preview image: `name` under the segments' public route, `ageMs` on the SERVER's
+   * clock (`now() - posterAt`), so the card never compares a server stamp with the device's clock.
+   */
+  poster?: { name: string; ageMs: number } | null;
+  /**
+   * The PREVIEW key, served with a poster only: HKDF of the live key (`deriveLivePosterKey`), so it
+   * opens the picture and nothing else - never a segment, never the chat. Never logged.
+   */
+  posterKey?: string | null;
 }
 
 /**
@@ -100,12 +141,27 @@ export interface LiveChatBlock {
   messagesCursor: number;
   reactions: LiveReactionWindow[];
   reactionsCursor: number;
+  /**
+   * `true` when the chat is withheld from this reader (owner, 2026-11-04): `messages` is empty and
+   * the message cursor is not the reader's to keep; the reactions are served as to anyone.
+   */
+  withheld?: true;
+  /**
+   * THE ARRIVAL LINES ("X a rejoint", owner, 2026-11-07): the accounts that arrived since the last
+   * poll - at most 3, never the reader and never an account blocked either way - the count folded
+   * behind them, and the cursor to pass back. Absent from a withheld reader's block and from an older
+   * server's, so an arrival line is drawn only where the server sent one.
+   */
+  arrivals?: { userId: string; seq: number }[];
+  arrivalsMore?: number;
+  arrivalsCursor?: number;
 }
 
 /** What a poll asks of the chat: absent cursors on the first poll (the newest 50, no reaction backlog). */
 export interface LiveChatQuery {
   messagesAfter?: number;
   reactionsAfter?: number;
+  arrivalsAfter?: number;
 }
 
 /** `POST /api/lives/:id/messages/:messageId/hide`. */
@@ -120,6 +176,18 @@ export interface LiveIngestResult {
   index: number;
   name: string;
   nextIndex: number;
+}
+
+/** `PUT /api/lives/:id/poster` (owner, 2026-11-07): the stored preview image's name and time. */
+export interface LivePosterResult {
+  name: string;
+  posterAt: string;
+}
+
+/** `PATCH /api/lives/:id`: the title as the server now holds it. */
+export interface LiveTitleResult {
+  id: string;
+  title: string | null;
 }
 
 /** `POST /api/lives/:id/end`. */
@@ -180,9 +248,7 @@ export interface LiveRemovedViewer {
 export interface LiveLimits {
   segmentMaxBytes: number;
   reconnectWindowMs: number;
-  maxDurationMs: number;
   manifestWindow: number;
-  byteBudget: number;
   segmentMinDurationMs: number;
   segmentBurst: number;
   startsPerHour: number;
@@ -198,6 +264,19 @@ export interface LiveLimits {
   reactionWindowMs: number;
   reactionBurstsPerWindow: number;
   reactionTapsPerWindow: number;
+  /**
+   * The longest title, in characters (code points), owner 2026-11-07. Absent from a server before
+   * the titles: the screen then offers no title field.
+   */
+  titleMaxChars?: number;
+  /** The largest sealed preview image, in bytes. Absent from an older server: no preview is sent. */
+  posterMaxBytes?: number;
+  /**
+   * THE ONE PERIOD of the preview, in ms: the broadcaster sends a poster every
+   * `round(previewPeriodMs / LIVE_SEGMENT_MS)` segments, and a feed card on screen re-reads the list
+   * once per period. Absent: no preview is sent, and the card refreshes with the feed only.
+   */
+  previewPeriodMs?: number;
 }
 
 /**
@@ -221,6 +300,7 @@ export type LiveRefusalCode =
   | 'LIVE_MUTED'
   | 'LIVE_RULES_NOT_ACCEPTED'
   | 'LIVE_ASSOCIATION_FORBIDDEN'
+  | 'LIVE_ASSOCIATION_ARCHIVED'
   | 'LIVE_ALREADY_OPEN'
   | 'LIVE_WITHDRAWAL_FORBIDDEN'
   | 'LIVE_WITHDRAWAL_NOT_DUE'
@@ -239,8 +319,13 @@ export type LiveRefusalCode =
   | 'LIVE_SEGMENT_RESERVATION_LOST'
   | 'LIVE_SEGMENT_TOO_FAST'
   | 'LIVE_SEGMENT_EMPTY'
-  | 'LIVE_BUDGET_EXHAUSTED'
   | 'LIVE_STORE_UNAVAILABLE'
+  | 'LIVE_TITLE_INVALID'
+  | 'LIVE_POSTER_EMPTY'
+  | 'LIVE_POSTER_TOO_LARGE'
+  | 'LIVE_POSTER_TOO_FAST'
+  | 'LIVE_POSTER_IN_PROGRESS'
+  | 'LIVE_POSTER_RESERVATION_LOST'
   | 'LIVE_INGEST_BUSY'
   | 'LIVE_INDEX_INVALID'
   | 'LIVE_FROM_INVALID'

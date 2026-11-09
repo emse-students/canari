@@ -14,12 +14,20 @@ import {
   isForegroundPlaying,
   pausePlayback,
 } from '$lib/actions/playbackArbiter';
-import { followVideoSound, playWhileVisible } from '$lib/actions/playWhileVisible';
+import { followVideoSound, holdPlayback, playWhileVisible } from '$lib/actions/playWhileVisible';
+import { reportCallSoundPhase, resetCallSoundGateForTest } from '$lib/utils/callSoundGate';
 
 const runtime = vi.hoisted(() => ({ mobile: false }));
 vi.mock('$lib/utils/appVersion', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/appVersion')>()),
   isMobileTauriRuntime: () => runtime.mobile,
+}));
+
+/** What the arbiter told the audio session (`audioSession.ts`), in order. */
+const audible = vi.hoisted(() => ({ reports: [] as boolean[] }));
+vi.mock('$lib/utils/audioSession', () => ({
+  armAudioSession: () => {},
+  reportAudibleMedia: (playing: boolean) => audible.reports.push(playing),
 }));
 
 type Fake<T extends HTMLMediaElement> = T & { startPlaying(): void; position: number };
@@ -77,6 +85,43 @@ afterEach(() => {
   runtime.mobile = false;
   Reflect.deleteProperty(document, 'visibilityState');
   Reflect.deleteProperty(window, '__canariForeground');
+});
+
+it('tells the audio session when an UNMUTED media plays, and when none does any more', () => {
+  audible.reports.length = 0;
+  const feed = video(true);
+  feed.muted = true;
+  feed.startPlaying();
+  // A muted feed video makes no sound: the session stays ambient.
+  expect(audible.reports.every((r) => r === false)).toBe(true);
+  const note = voice();
+  note.startPlaying();
+  expect(audible.reports.at(-1)).toBe(true);
+  note.pause();
+  expect(audible.reports.at(-1)).toBe(false);
+  // A muted reel the reader unmutes is an explicit request: `volumechange` reports it.
+  const reel = video();
+  reel.muted = true;
+  reel.startPlaying();
+  expect(audible.reports.at(-1)).toBe(false);
+  reel.muted = false;
+  reel.dispatchEvent(new Event('volumechange'));
+  expect(audible.reports.at(-1)).toBe(true);
+  // A volume of 0 is silence, like `muted`.
+  reel.volume = 0;
+  reel.dispatchEvent(new Event('volumechange'));
+  expect(audible.reports.at(-1)).toBe(false);
+});
+
+it('a new source on a playing element (emptied, no pause event) is reported quiet', () => {
+  audible.reports.length = 0;
+  const note = voice();
+  note.startPlaying();
+  expect(audible.reports.at(-1)).toBe(true);
+  // The load algorithm resets `paused` without a `pause` event.
+  Object.defineProperty(note, 'paused', { configurable: true, get: () => true });
+  note.dispatchEvent(new Event('emptied'));
+  expect(audible.reports.at(-1)).toBe(false);
 });
 
 it('video <-> video: starting one pauses the other, which keeps its position and ends nothing', () => {
@@ -207,6 +252,92 @@ it('a viewer opening pauses an inline video, and closing it gives the feed back'
   expect(inline.paused, 'what the reader started inline stays paused').toBe(true);
 });
 
+it('a hold pauses videos only: a voice note plays on, and a viewer video registered after it keeps playing', () => {
+  const feed = fake(document.createElement('video'));
+  feed.muted = true;
+  const observer = playWhileVisible(feed);
+  teardown.push(() => observer.destroy?.());
+  observed.at(-1)!([{ isIntersecting: true }]);
+  const lightbox = video();
+  lightbox.startPlaying();
+  // The lightbox video is foreground and took the playback from the feed; both are videos.
+  const note = voice();
+  note.startPlaying();
+  expect(lightbox.paused, 'the voice note took the playback from the video').toBe(true);
+  const clip = video();
+  clip.startPlaying();
+  note.startPlaying();
+  expect(feed.paused && clip.paused).toBe(true);
+
+  const release = holdPlayback('test viewer');
+  expect(note.paused, 'an audio-only media is never paused by a hold').toBe(false);
+
+  const viewer = fake(document.createElement('video'));
+  const action = followVideoSound(viewer, 'local');
+  viewer.startPlaying();
+  expect(viewer.paused, 'the viewer video registered after the hold stays playing').toBe(false);
+  expect(note.paused, 'and, as ever, claimed the playback from the voice note').toBe(true);
+  action.destroy();
+  release();
+});
+
+it('a hold pauses the feed video, blocks scroll-in starts, and its release resumes it only because it was playing', () => {
+  const feed = fake(document.createElement('video'));
+  feed.muted = true;
+  const observer = playWhileVisible(feed);
+  teardown.push(() => observer.destroy?.());
+  observed.at(-1)!([{ isIntersecting: true }]);
+  expect(feed.paused).toBe(false);
+
+  const release = holdPlayback('test viewer');
+  expect(feed.paused, 'the feed stops before any viewer player exists').toBe(true);
+  observed.at(-1)!([{ isIntersecting: false }]);
+  observed.at(-1)!([{ isIntersecting: true }]);
+  expect(feed.paused, 'a card scrolling into view does not start under the viewer').toBe(true);
+  release();
+  release();
+  expect(feed.paused, 'it was playing before the hold: it returns').toBe(false);
+});
+
+it('a release starts no video that was not playing when the hold was taken', () => {
+  const feed = fake(document.createElement('video'));
+  const observer = playWhileVisible(feed);
+  teardown.push(() => observer.destroy?.());
+  const release = holdPlayback('test viewer');
+  // Scrolled into view under the viewer: held back, and nothing was playing when the hold began.
+  observed.at(-1)!([{ isIntersecting: true }]);
+  expect(feed.paused).toBe(true);
+  release();
+  expect(feed.paused, 'nothing was playing before the hold: nothing starts after it').toBe(true);
+});
+
+it('a voice note keeps playing across a hold, and the feed stays down while it plays after the release', () => {
+  const feed = fake(document.createElement('video'));
+  const observer = playWhileVisible(feed);
+  teardown.push(() => observer.destroy?.());
+  observed.at(-1)!([{ isIntersecting: true }]);
+  const note = voice();
+  note.startPlaying();
+  expect(feed.paused).toBe(true);
+  const release = holdPlayback('test viewer');
+  release();
+  expect(note.paused, 'untouched by the hold').toBe(false);
+  expect(feed.paused, 'a foreground media plays: the feed does not start over it').toBe(true);
+});
+
+it('two holds: the feed stays down until the last one is released', () => {
+  const feed = fake(document.createElement('video'));
+  const observer = playWhileVisible(feed);
+  teardown.push(() => observer.destroy?.());
+  observed.at(-1)!([{ isIntersecting: true }]);
+  const first = holdPlayback('first');
+  const second = holdPlayback('second');
+  first();
+  expect(feed.paused).toBe(true);
+  second();
+  expect(feed.paused).toBe(false);
+});
+
 it('the recorder silences every playing media, and the media can play again afterwards', () => {
   const a = voice();
   const b = video();
@@ -254,4 +385,28 @@ it('on Android, the app leaving the screen pauses every media, the voice note in
   expect(note.paused).toBe(true);
   setForeground(true);
   expect(note.paused, 'coming back resumes nothing the reader chose').toBe(true);
+});
+
+it('a call holds the sound: what plays with sound is paused when it starts, a muted video plays on', () => {
+  const note = voice();
+  note.startPlaying();
+  reportCallSoundPhase('call-service-test', 'calling');
+  try {
+    expect(note.paused, 'the voice note is paused by the call').toBe(true);
+
+    const feed = video(true);
+    feed.muted = true;
+    feed.startPlaying();
+    expect(feed.paused, 'a muted video makes no sound and plays on').toBe(false);
+
+    const reel = video();
+    void reel.play();
+    expect(reel.paused, 'a reel starting with sound during the call is paused').toBe(true);
+
+    feed.muted = false;
+    feed.dispatchEvent(new Event('volumechange'));
+    expect(feed.paused, 'a muted video unmuted during the call is paused').toBe(true);
+  } finally {
+    resetCallSoundGateForTest();
+  }
 });

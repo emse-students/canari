@@ -18,7 +18,7 @@
 |---|---|
 | Associations (`associations`, the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication |
 | Suivis (`followed`) | Posts from the associations and members the reader follows (never an anonymous post), and what a followed association republished, placed at that republication |
-| Tout (`all`) | Every post the reader may see |
+| Mon espace (`all`, "Tout" until 1.6; the identifier is unchanged) | Every post the reader may see through their spaces, campus and formation. The three tabs are explained once by the guided hint `hint-feed-tabs` (it replaced the (i) button, [guided-help](../guided-help.md)) |
 
 **A republication is an association publishing, so the feeds of what associations publish carry it
 (user, 2026-10-24).** The Associations and Suivis arms of `listPosts` read `posts."associationId"`
@@ -39,8 +39,8 @@ Visibility of the post itself is untouched (`postVisibleToUserSql` already lets 
 audience read it), and since a member's post can now be in the Associations arm, `blockedAuthorSql`
 applies there as in the others. Proven against PostgreSQL by
 `republished-feed-sql.integration.spec.ts`. The card still shows the post's own `publishedAt`; only
-its place is the repost's. What a republication still does not move is in
-[backlog](../../backlog.md#p3---what-a-republication-still-does-not-move-in-the-feeds-review-of-2384-2026-10-24).
+its place is the repost's. A republication does not move the promo cutoff (it reads `publishedAt`) nor the "new" marker (it compares
+`publishedAt`): as built, and final.
 
 Posts are loaded via `GET /api/posts` (social-service), paginated with infinite scroll (`IntersectionObserver`).
 
@@ -75,6 +75,17 @@ The user's two decisions, for posts, reels and comments alike:
   header. This replaced the 2026-09-17 shape (real name and photo, an "Anonyme" badge by the time).
   Component tests per state: `PostHeader.anonymous`, `CommentItem.anonymous`, `CommentsPreview`,
   `ReelSlide`. **Read by tests only; no phone has looked at it.**
+
+**The row is ONE floating glass pill, not a band (owner, 2026-10-31, iPhone: unequal margins, a grey
+band "in the middle of nowhere").** The three tabs are a segmented control inside one `.glass-chrome`
+pill (the conversation header's recipe and tokens: `--glass-chrome-*`, nothing new) and the CanaReels
+entry is the matching round glass button (the `ui-icon-button` box: 44 px touch, 38 px pointer; the pill follows the same split with `h-11` and `md:pointer-fine:h-9.5`, never a size on the button itself, which `iconButtonScale.test.ts` forbids). The sticky wrapper has NO background and
+no horizontal inset, so both edges are the feed column's own gutters and cards scroll under the glass;
+it is `pointer-events-none` with its buttons `auto`, so the gaps stay the feed's. The glass is drawn at
+every width, unlike the phone-only conversation chrome (`usesGlassChrome`), because on desktop the row
+floats over scrolling cards too, and a desktop-only opaque twin would be a second look for one
+control. The active tab keeps its amber fill, plus `font-semibold`; chips have the `tap-target` 44 px
+hit box on touch. The reveal logic below is unchanged.
 
 **The tab row collapses like Instagram's header (member report, 2026-10-22: the tabs were reachable
 only at the very top).** The wrapper in `routes/posts/+page.svelte` is `sticky top-0` in
@@ -116,6 +127,28 @@ A poll can be created **anonymous** (`PollInputDto.anonymous`), fixed at creatio
 
 The price, stated: after a reload an anonymous voter sees THAT they voted and the results, but not
 which option they picked - the server does not know.
+
+## Who voted: a capped hover, and an info button that opens the full list (2026-10-24)
+
+`PostPolls.svelte` is the ONE poll card, for a post poll and a channel poll (`ChannelPoll` wraps
+it), so this is one implementation. The voter list used to be a hover tooltip on the vote count,
+reached on a phone only by a long press (hard to hold without voting) and as tall as the voter list
+(45 names overflowed the screen).
+
+- **Hover (mouse only)** on the info button shows `POLL_TOOLTIP_MAX_VOTERS` (10) names, then
+  "+ N autres personnes" (`post_poll_voters_more`, plural), and its `max-height` follows the room
+  above the anchor. A touch pointer never opens it (`pointerType === 'mouse'`).
+- **The info button** (Users icon, 44 px) is a SIBLING of the vote button, never a child: the old
+  count badge was a `role=button` nested in the vote button and relied on `stopPropagation`. It
+  opens `PollVotersSheet.svelte` - `Modal`, so a bottom sheet on a phone and a dialog on desktop,
+  with the focus trap, Escape, the back gesture and focus return. The sheet scrolls and, with
+  two options or more, switches option through a row of toggle buttons (`aria-pressed`; a `tablist` is reserved by `sectionMenus.test.ts`).
+- **Anonymous polls and empty options get no button**: the server sends an anonymous poll no voter
+  ids (a tally), and an option with 0 voters has nobody to list. The server is unchanged.
+- Helpers (cap, name resolution) are in `posts/pollVoters.ts`.
+- **Not verifiable without a phone**: the sheet's height and scroll under the keyboard-aware
+  overlay, and that a scroll starting on the info button never votes (it cannot by construction -
+  the button has no vote handler - but nothing here ran on the Mi 9T).
 
 ## Post creation (EditPostForm.svelte)
 
@@ -254,6 +287,230 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   box's black shows instead. The composer's paused preview keeps no poster: one would hide the
   first frame `#t=0.1` decodes.
 
+## The background publish queue
+
+Owner decisions of 2026-11-06 ([backlog](../../backlog.d/p2-uploads-of-several-photos-are-slow-on-a-bad-network-and-stop-in-the-background.md)):
+Publish closes the composer AT ONCE, the send goes on in the background behind a discreet progress
+line with a Retry, and the post is never lost. Code: `lib/posts/publishQueue/`.
+
+**The composer only queues.** `CreatePostForm.publishPost` answers every refusal it can from its own
+state (`localPublishBlocker`, the attachment cap), mints the post's id (`crypto.randomUUID()`), and
+hands the payload plus the RAW files to `enqueuePost`. It closes only once `enqueuePost` resolves,
+which means the post and every file were written in ONE IndexedDB transaction; a failed write (a
+full disk: `publish_queue_enqueue_storage_full`) keeps the composer and everything in it.
+
+**The durable state** (`publishQueueStore.ts`): one database per account, `CanariDBPublish_<userId>`,
+two stores - `posts` (the record: payload, landing feed, one entry per media with its prepared shape,
+its open upload session and, once uploaded, its media ref) and `files` (`<postId>/<index>`, the
+original bytes, REPLACED by the prepared bytes in the same transaction that records the prepared
+shape, so a media is never prepared twice and never uploaded from the wrong bytes). An `update` of a
+post the member deleted meanwhile writes nothing and says so, so nothing resurrects. The store
+closes itself on `versionchange`, so the device wipe's `deleteDatabase` never blocks. Like the
+composer draft, it is not sealed by the device key.
+
+**Whose it is, and how long it stays.** A plain sign-out KEEPS the queue, as it keeps the message
+database: the next sign-in of that account resumes it, and no other account can read it (the queue
+runs only for the signed-in account, and every request it makes is checked to carry that account's
+token). The account's deletion or revocation DELETES it (`accountIndexedDbNames`, review of #3061:
+the queued photos are in the clear, and outliving the account was the defect). What that means on a
+SHARED BROWSER: a member who signs out with posts still queued leaves those posts and their media on
+that browser until they sign in there again or delete their account - the same as their messages.
+Deleting the queued post (or letting it publish) before signing out is what removes them. The
+composer and comment drafts are per-account keys of the same kind (`ACCOUNT_KEY.postComposerDraft`,
+`postCommentDraft`, `workspaceSnapshot`), deleted with the account since the same review.
+
+**The pass** (`publishQueue.ts`, one at a time per account across tabs through `navigator.locks`),
+oldest post first, media in order, ONE file at a time:
+
+1. the mute check, before the first byte leaves;
+2. per media: prepare (the same `preparePostMedia` as before: the image pipeline, or the video
+   transcode under the upload ceiling), record it; then upload it RESUMABLY
+   (`MediaService.uploadResumably`, 1 MiB parts, `retentionClass: 'archive'`), the open session
+   recorded at each step so a reload or a kill resumes from the server's list of received parts
+   (`GET /api/media/upload/session/:id`), never from byte 0; what `writesSegmented` names (a video,
+   writer on) goes `segmented-v1`, everything else `single-block` (see
+   [media-streaming-upload](../../services/media-streaming-upload.md#33-session-routes-media-service-additive---the-old-chunk-routes-stay-untouched)
+   - the link preview reads only single-block images);
+3. `createPost` with the client id, `createSent` written to the record BEFORE the request leaves.
+   **The id is the idempotency key**: a create whose answer was lost is sent again with the same id
+   and the server answers with the post it already holds
+   ([social-service](../../services/social-service.md#a-post-created-twice-is-the-same-post-2026-11-06)).
+   Then the record and its files are deleted.
+
+**Between every two steps, and before the create, a checkpoint**: the pass stops if the member
+paused or deleted the post or signed out, and goes on only if the access token's subject is the
+queue's account (`assertAccount`; the upload's own token getter refuses the same way). A token of
+another account (a sign-in in another tab) or a session that ended HALTS the pass with nothing
+recorded - the post waits for its own account, and is never sent as anybody else. The create and
+the withdrawal go through `apiFetch`, whose own guard refuses a token of another account than the
+session's (`IdentitySplitError`, also `halt`).
+
+**Nothing is sent to an estate that cannot take it.** A stable reaches both stores before production
+deploys, so a new phone build meets the OLD services for days: they drop the client id (a lost
+answer then duplicates the post), refuse `single-block` (`400`) and answer the withdrawal `404`.
+core-service's `/api/version` carries the capability `publishQueue: true` (the three services are
+built from one tag and deployed together, as for `presencePost`), read by `serverPublishQueue()`;
+until it is `true` - an older estate, or no answer yet - the pass sends nothing, its rows wait, and
+it ENDS rather than climb the retry ladder (re-reading the same local value is no retry). The
+`/api/version` answer that turns it `true` starts the next pass (an `$effect` on
+`serverPublishQueue()`), so a post never sits out a rung for it.
+
+**A 2xx that is not JSON is an edge answer.** The post API's request helper types it at the throw
+(`ApiRefusalError`, `origin: 'edge'`), so a captive portal's `200` page waits instead of stopping
+the post on the `SyntaxError` of `json()`.
+
+**What stops it, and what starts it again** (`classifyPublishFailure`, by WHO answered):
+
+| What came back | Verdict | What the queue does |
+| --- | --- | --- |
+| A transport failure; an EDGE page (the host's proxy, a non-JSON answer) with no refusal cause - from an upload or the post API alike (`ApiRefusalError.origin`, as `MediaUploadError` carries it) | `wait` | waits on the ladder (`PUBLISH_RETRY_LADDER_MS`, 2 s to 60 s), cut short by any wake: a reconnect, `online`, the page visible, the app foreground |
+| The APP's `5xx`, `408`, `425`, `429`; a resumable session it lost and could not reopen (`sessionLost`) | `busy` | asked again over the ladder ONCE (a counter no wake resets), then stops with a Retry |
+| A `401`; `SessionExpiredError`; a token of another account (`PublishAccountMismatchError`, `TokenAccountChangedError`, `IdentitySplitError`) | `halt` | the pass ends, nothing recorded: the app's auth is the one authority on a 401, the queue never spins on one |
+| Anything else: moderation, a `4xx`, a `410` (a deleted id), a video that cannot be prepared, a refused media | `failed` | stops the post with its sentence, logged by `console.error`; only Retry, Pause or Delete moves it |
+
+**A post that stopped is left out of the pass, whatever it was doing.** That includes a withdrawal
+that was refused: before the review of #3061 the pass picked any `withdrawn` post first, failure or
+not, and a `403` or `404` withdrawal was asked 51 times in a few milliseconds and starved the queue.
+A refused withdrawal shows as a stopped row with Retry and Delete, each of which asks once more.
+
+Read on the local estate on 2026-11-06: before `busy` existed, a create that kept answering `500`
+was asked every minute for ever, and the review of #3061 found the same for media-service's own
+`5xx` and a lost session (which re-uploaded every part each time). The ladder is a cadence, never a
+correctness bound: what makes a resend safe is the recorded session and the client id.
+
+**What the member can do to a queued post.**
+
+- **Pause** (the cross on a row being worked on): the transfer stops, `paused` is written, the post is
+  kept and skipped; "Reprendre" clears it. This replaces the composer's old cancel of a video being
+  prepared, which the queue had dropped.
+- **Retry** a stopped post.
+- **Delete: the post exists NOWHERE afterwards.** `withdrawn` is written and the pass takes the post
+  back before forgetting it, in ONE idempotent request whether or not the create left:
+  `POST /api/posts/:id/withdraw {mediaIds}` retires the id (a create still on its way is then refused
+  `410`), deletes the post if it landed, and deletes the media the queue uploaded for it EXCEPT any a
+  live post or comment cites ([social-service](../../services/social-service.md#a-post-created-twice-is-the-same-post-2026-11-06)).
+  Then every open session is released. The citation check is made on the server because neither the
+  client nor media-service can make it: an uploader's own `archive` objects include the media of
+  posts already published (an association's among them), and the client route that once deleted
+  them by owner and class alone was the review's P2 - a former admin could strip an association's
+  images with it. `archive` is exempt from the idle sweep, so an uncited one would otherwise stay
+  for ever. **A Delete pressed while the create is on the wire wins**: the create's answer is
+  followed by a read of the store, so there is no "published" toast, and the withdrawal takes the
+  just-created post down. **A Pause pressed then does not**: a landed post cannot be paused, so it
+  is published and its row goes.
+
+**The member's marks are never erased by the runner.** `withdrawn` and `paused` are written by
+`PublishQueueStore.mark` alone, in one transaction; every runner write (`update`) takes them from
+the STORED record (`runnerWrite`) and hands them back to the runner's copy, so the next checkpoint
+sees them. Before the review of #3061, `update` wrote the runner's whole copy, read before the
+member acted: a Delete from another tab during an upload's `persist` was erased, and the post was
+published. And a SEND failure the runner writes as the member deletes the post is dropped
+(`runnerWrite`: a withdrawn post keeps only a `withdraw` failure) - kept, it would have left the
+post out of the pass and the Delete would never have run.
+
+**Several tabs.** One tab runs the pass (the Web Lock). Every tab draws the rows from the STORE at
+start (`refreshViews`, no lock needed), and the runner broadcasts its rows on a `BroadcastChannel`
+(`canari-publish-queue-<userId>`). Only the runner's rows are broadcast: rows read from the store
+carry no progress, and a tab's own `refreshViews` used to overwrite the runner's progress in every
+other tab. A Retry, Pause or Delete in a tab that is not the runner writes
+the store and NUDGES the runner on the same channel: it aborts that post's transfer at once (pause,
+delete) or ends its wait (retry) instead of acting at its next rung. A tab still behind its PIN draws nothing: the
+queue starts with the session (`globalSession.isLoggedIn`), never before. Read on the local estate on
+2026-11-06: a second tab, unlocked, drew the first tab's row at 4 %, its pause stopped the first
+tab's transfer at once, and its Resume finished the post from the recorded sessions - one create.
+
+**Backgrounding, without native code.** A native shell emits `canari:foreground` when the app comes
+back; the queue then ABORTS the transfer in flight (it was frozen with the webview and its socket is
+likely dead) and starts the pass again, which resumes from the server's part list. On the web, a
+background tab keeps uploading. A native Android foreground service and an iOS background
+`URLSession`, so the send goes on WHILE the app is away, are a later step (the backlog entry).
+
+**The composer forgets the media it handed over.** `holdPostComposerMedia([])` is called before
+`onPostCreated`: the hold `$effect` would only have run on its next flush, after the parent had
+unmounted the composer, so the next open brought the published photos back and a second Publish
+posted them again (read on the local estate, 2026-11-06; the test unmounts in `onPostCreated` as the
+parent does).
+
+**"Post publie".** When a queued post lands, a discreet in-app toast says so (owner, 2026-11-06,
+`publish_queue_published`). It exists only while the app runs: a post published by a pass that ran
+after the app came back says so then, and nothing is shown while the app is closed.
+
+**The line** (`PublishQueueBanner.svelte`, in the root layout's banner column under the offline
+banner): one row per queued post, the media being worked on 1-based, its percentage, a progress bar
+over the whole post, a pause cross while it is worked on, and Resume or Retry plus Delete on a
+paused, waiting or stopped post. The feed refreshes when a queued
+post is published (`onPostPublished`), and a toast says so.
+
+**Release order, and why it holds by itself.** core-service, media-service and social-service (with
+migration 135) ship from one tag and are deployed together; the client waits for their
+`publishQueue` capability, so a client older than the estate is harmless and a client newer than
+the estate sends nothing until the estate catches up. An older media-service refuses a
+`single-block` session (`400`) and has no `internal/own-archive-delete`; an older social-service
+strips the `id` (a duplicate on a lost answer) and has no withdrawal.
+
+### What a post sends, measured (2026-11-06, local estate, desktop Chrome)
+
+Synthetic inputs standing in for a phone's: a 4032x3024 JPEG at 3.78 MB (the size of a 12 MP phone
+photo) and a 16 s 1080p H.264 video at 16 Mb/s (45.5 MB). Read from the queue's own log lines
+(`prepared: ... in N ms`, `uploaded ... in N ms`) and the network panel. A desktop CPU: a phone's
+prepare times are owed (the Mi 9T reading of the backlog entry).
+
+| Media | In | Prepared (what is encrypted and sent) | Prepare | Requests | Upload, no throttle | Upload, Slow 3G (400 ms RTT, 50 kB/s) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Photo | JPEG 3.78 MB | WebP 2048 px q0.92, **436 KB** (8.7x smaller) | 370-670 ms (1 s once, under a reload) | 3: open, 1 part, complete | 100-140 ms | **~10 s** |
+| Video | MP4 45.5 MB | MP4 720p ~2.5 Mb/s target, **2.83 MB** (16x) | 1.6-2.1 s (WebCodecs) | 5: open, 3 parts, complete | 0.8 s | **~57 s** of transfer |
+
+What follows from it:
+
+- **The bytes are already the prepared ones**: a photo leaves at ~11 % of its size and a video at
+  ~6 %. On a weak link the time is the uplink, ~10 s per photo at 50 kB/s - which no client work
+  can hide, only shrink.
+- **The session costs two round trips per photo** (open and complete around the single part):
+  ~0.8 s on a 400 ms RTT link against ~9 s of body, about 9 %. It buys resume and the one-by-one
+  order; kept.
+- **Encryption is not a cost worth chasing**: AES-GCM of 436 KB or 2.8 MB is inside the upload
+  figures above, which are dominated by the network even unthrottled.
+
+**Reductions proposed, none taken** (each changes what a reader sees, so each is the owner's call
+on these numbers):
+
+1. **Photo quality 0.92 -> 0.85 at 2048 px**, or **2048 -> 1600 px** at 0.92. Both cut the 436 KB,
+   neither was measured here; measure them on the same inputs before deciding.
+2. **Prepare media N+1 while media N uploads** (no quality change): saves the prepare time of every
+   media but the first - ~0.5 s per photo here, several seconds per video on a phone.
+3. **A feed thumbnail** (WP-W7 of the weak-network page): the feed would download a small preview,
+   not the 2048 px image. Sending side unchanged.
+
+## The header's Publish and search are commands, stripped BEFORE they act (2026-10-28)
+
+The phone's app header reaches the feed with a link: `/posts?compose=1` (Publish) or
+`/posts?search=1`. The feed strips the parameter with a `goto(..., { replace: true })`, so no
+history entry carries it, and only then opens the composer or the search field.
+
+The order is the whole fix. The strip is a navigation, and the root layout's `beforeNavigate`
+closes every open overlay first (`drainHistoryOverlayStack`). Kit 2 kept the arriving navigation
+open through `await commit_promise; await tick(); await tick();`, and `_before_navigate` skips every
+callback while one is open, so a strip fired by the arriving page ran no hook and drained nothing.
+Kit 3 ends the navigation as soon as the page has settled (`finish_navigation`), so the strip runs
+the hooks. Since #2613 a composer opened in the same tick was therefore closed as it opened. A
+replace issued while an overlay's own history entry is under the pointer would also overwrite that
+entry: a second reason to strip first.
+
+Whether the strip landed is read off the page, never off the error. Kit rejects an overtaken
+navigation with an untyped `Error('navigation aborted')`. A strip overtaken by another navigation
+drops the command with an info line, and only a strip that failed on the feed itself is logged as
+an error.
+
+On the Mi 9T the sequence was read over CDP: the overlay pushed at 130 ms, the dialog mounted at
+134, unmounted at 164 with no popstate, and the router's replace at 180, which also overwrote the
+overlay's own history entry. No Live chip could be reached, so LIVE-WEB-2 and LIVE-STALL-1 could
+not run. The search field is not an overlay and was never closed.
+
+`page.feedCommand.svelte.test.ts` mounts the route with a `goto` double in kit 3's order (a
+microtask, the drain, the new URL). It fails on the old order. It cannot see the real router or
+the WebView's history: the phone reading is what proves the router keeps that order. The drain now
+logs how many overlays a navigation closes, which was silent.
+
 ## Key components
 
 | Component | Role |
@@ -338,7 +595,7 @@ refusals and the proof are on
 [profiles-and-access](../../profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built).
 On the card, three served fields:
 
-- `canRequestRepublication` draws "Republier au nom d'une association", which opens
+- `canRequestRepublication` draws "Demander à republier", which opens
   `RepublishDialog` in `request` mode (`personalRequestCandidates`).
 - `republicationRequests` draws "Demande envoyee au nom de X" under the header and "Annuler la
   demande de X" in the menu (`withdrawProposal`).
@@ -347,6 +604,31 @@ On the card, three served fields:
 A refused request is read by its typed `code` (`personalRequestRefusalMessage`), never its message.
 The author answers in `/notifications/requests`, reached from the notification, its push
 (`fr.emse.canari://republication-requests`) and a link on `/notifications` while one waits.
+
+## The bell re-checks the post (review of #2965, 2026-11-03)
+
+A bell row about a post is shown only while its recipient still SEES that post: `bellRowShownSql`
+(`post-notifications.service.ts`) re-checks `postVisibleToViewerSql` for every type in
+`POST_BOUND_NOTIFICATION_TYPES`, so a withdrawn republication, a member who left, an archived
+carrier or a hidden post takes the row out on the next read. A push already delivered to a device
+cannot be recalled. A row bound to no post is left alone.
+
+A mention is held to the read's rule when it is WRITTEN, since #2947: only who may open the post
+(`mentionRecipientsOf`, the read's gate), a post's mentions told by `PostAnnounceScheduler` alone
+under its one-shot claim, so a scheduled post tells nobody before its time.
+
+**The cost, and the query shape.** The check is a correlated subquery per row. Measured on
+production, read-only, 2026-11-03: 24,136 rows over the 90-day retention, 517 recipients, per
+recipient p50 52, p90 55, p99 99, max 149 rows; by type association_post 22,927, reaction 580,
+event_validated 311. `bellPageQuery` keeps the predicate and the `LIMIT` in one SELECT with no join,
+ordered by `createdAt DESC`, and migration 126 adds ("recipientId", "createdAt" DESC), so the plan
+walks the reader's rows newest first and stops once the page is full: the check runs on about one
+page. `bell-page.integration.spec.ts` asserts that plan with `EXPLAIN ANALYZE` (the index, no sort,
+at most a page read) on a reader seeded with 600 rows among 6,000. The page is bounded too:
+`?limit=` is `bellPageLimit` - 30 by default, held to 1..50, a typed 400
+`NOTIFICATIONS_LIMIT_INVALID` for anything not a whole number. The entity declares the index under
+the migration's name, so a `TYPEORM_SYNCHRONIZE=1` boot keeps it (TypeORM cannot say DESC, and
+does not compare order).
 
 ## The search stops where the feed stops (2026-10-04)
 
@@ -552,6 +834,51 @@ Facebook / Instagram / Messenger shape, decided by one pure helper,
 
 The chat has no equivalent grid (one attachment per message), and the composer's previews are
 already fixed `aspect-square` thumbnails in a scrolling row.
+
+### Several documents: compact rows, and a cap of ten attachments (owner, 2026-11-02)
+
+A post of five PDFs was a column of five first-page previews, up to 22rem each. Images were already
+compacted into the gallery; documents were not.
+
+- **One document is a card, several are a list.** `usesCompactDocumentRows`
+  (`utils/posts/documentRows.ts`, the ONE rule) counts a post's `file` media: exactly one keeps the
+  file row plus the first-page preview; from two on EVERY file is a compact row - icon, name, size,
+  download, NO preview - passed to `PostMedia` as `compact`. Audio is not a document and keeps its
+  player. Images keep the gallery, unchanged; the rows sit under it as the cards did. The rule is
+  read by `PostContent` (the feed, the post page, community and channel posts via `PostCard`, the
+  moderation preview) and by `EditPostForm`'s strip of existing attachments.
+- **A compact row downloads nothing until it is asked.** It is drawn from the metadata the post
+  already holds (`PostMedia`, `compactFile`); the row and the full card are ONE snippet
+  (`fileCard`). What a tap does (`activate`):
+  - **Feedback**: while the fetch runs the card is `aria-busy` and the download icon is a spinner.
+  - **The first request wins**: a second tap while one is pending is ignored (it used to overwrite it).
+  - **An open** runs as soon as the file is in (showing the viewer needs no gesture). **A save does
+    not**: a download started from an effect, after the tap, is what WKWebView and Tauri may refuse,
+    so the row turns "ready - tap to save" and the save runs on that second tap. The iPhone reading
+    is owed ([device-verification](../../device-verification.md#m-bis-several-documents-in-a-post-compact-rows-and-the-save-that-needs-its-own-tap---owed-on-iphone)).
+  - **A failure drops the pending request.** "Reessayer" fetches again and the row is then simply
+    ready: the next tap acts at once, the old request never comes back by itself.
+  - **A tap beats `deferred`**: a row far from the viewport still fetches when tapped.
+- **The cap is ten attachments per post, images and documents together.** The constant is stated
+  three times and pinned by one file, `libs/contracts/post-attachments.json` (`max`, `code`):
+  `posts/post-attachment-cap.ts` (social-service), `lib/posts/attachmentCap.ts` (frontend), each
+  spec asserting equality with it.
+  - **Measured 2026-11-02**: production holds 213 posts and none has more than 10 attachments (the
+    maximum is 6); dev has none either. So there is **no escape hatch for old posts**: every write
+    over ten is refused, create or edit alike. Reading is untouched - a stored post renders whatever
+    it holds.
+  - **Server.** `PostsService.createPost` and `updatePost`, the single write funnel, refuse past it
+    with a `400` carrying `code: POST_ATTACHMENTS_TOO_MANY` (and `max`); it is checked there and not
+    by an `@ArrayMaxSize` because the global `ValidationPipe` answers a message list with no code.
+    `media` wins over the legacy `images` when both are sent. **Behaviour change**: on an edit, a
+    `media: null` used to write null over the stored attachments; it now falls through to `images`,
+    and with neither leaves them alone (tested in `posts.service.attachment-cap.spec.ts`).
+  - **Composer.** `PostComposerBar` takes `attachmentCount`, disables its chips at ten and shows
+    "n/10"; `CreatePostForm` and `EditPostForm` (kept media counted) pass every route - picker,
+    camera, drop, paste, and a restored draft - through `admitAttachments`, which takes as many files
+    as fit, in order, and toasts how many were left out (a Paraglide plural in fr and en). Both
+    also refuse BEFORE the upload loop, so no blob is sent only to be refused. The server's code is
+    mapped to the same sentence in `publishFailureMessage`, by code and never by message.
 
 ## PDF previews, and the in-app reader
 
@@ -1096,6 +1423,24 @@ one-video-at-a-time, which `followVideoSound` already gives every element it is 
 correction to "one per reel": a mounted player CLAIMS playback, so the viewer mounts ONE, for the
 reel on screen, and its neighbours draw the poster.
 
+## A reply to a reply starts with a mention token (2026-11-07)
+
+**What a mention is.** Only the stored token `@[<64-hex user id>]` (`formatMentionToken`) is a mention:
+`MentionComposerInput` draws it as a chip and serialises a chip back to it, `PostMentionLink` renders it
+as a profile link, and social-service resolves it (`extractMentionUserIds`, `mentionRecipientsOf`) to
+notify its target. Top-level comments and replies share every one of those paths (`CommentComposer`,
+`CommentItem`, the server): a mention PICKED in either works the same. A typed `@First Last` is plain
+text everywhere.
+
+**The defect.** `PostComments.initiateReply` pre-filled `@${name} ` as text when replying to a reply,
+so every such reply carried a dead name. Fixed by `replyMentionPrefill` (`posts/commentAuthor.ts`),
+which pre-fills the token instead; `cancelReply` undoes it only while untouched.
+
+**Anonymous and association parents (decision, 2026-11-07).** Nothing is pre-filled: an anonymous
+author is never named or mentioned, even for the writer or a moderator who is served the account, and
+an association has no person to mention. A reply to a top-level comment pre-fills nothing either (the
+"in reply to" line names it). Pinned by `PostComments.thread.svelte.test.ts`.
+
 ## Comment media (image + GIF)
 
 A comment can carry one image or GIF (encrypted + uploaded via `MediaService.encryptAndUpload`,
@@ -1609,6 +1954,64 @@ preview and republication cards read it; the client shows `post.publishedAt` (`P
 scheduled and keep `createdAt`. Notifications carry their own `createdAt` (written at announce time,
 which is already publication time).
 
+## A write or a notification follows the read's predicate (2026-11-02)
+
+**The rule: whatever acts on a post, or tells someone about it, asks the gate the read by id asks.**
+That gate is ONE function, `readPostOpenVerdict` (`apps/social-service/src/posts/post-openable.ts`),
+and its terms are the read's, in the read's order: an expired reel; the audience
+(`postVisibleToViewerSql`); hidden by moderation (the only `403`, and only after the audience term
+passed, so it confirms nothing to an outsider); scheduled later, unless the reader wrote it; a block
+either way with the author of a personal, non-anonymous post (an association or anonymous post is
+exempt, [moderation-and-blocking](../../moderation-and-blocking.md#hiding-a-post-must-not-become-a-way-to-ask-who-wrote-it)).
+Every other refusal is a `404`, typed at the throw.
+
+Before 2026-11-02 the write paths asked the audience term alone, so they honoured less than the read:
+
+- **React, comment, like a comment, the comment page, the calendar link** go through
+  `PostsService.assertVisible`, which is now `getById`'s gate (`assertOpenable`) and not a second
+  copy of part of it. A reaction on a post its author's block hides, or a comment on a hidden post,
+  was accepted until then. The route hands the row it loaded to the write, so a reaction reads the
+  post once.
+- **`allowHidden` is the platform admin's (`x-global-admin`), on the read by id and the comment page
+  only.** A platform admin reads a hidden post and its comments, and never reacts, comments or likes
+  a comment on it: no write route passes the flag, by intent - a hidden post is held for review, not
+  for conversation. A scoped BDE moderator predicate (`mayModeratePost` or its equivalent) is being
+  built on a separate branch; **whichever of the two pull requests lands second derives
+  `allowHidden` on `getById` and `listComments` from that predicate** instead of the header alone.
+- **A mention** (a post's, or a comment's) is told only to a recipient who may open the post, and
+  with no block either way with whoever wrote the mentioning text
+  (`PostNotificationsService.mentionRecipientsOf`). It reached anyone but the review cohort - a reader
+  outside the audience, someone who blocked the author - and pushed them the text. A dropped mention
+  is counted at debug (`[MENTION] ... N of M mention(s) dropped`), never named.
+- **A post's mentions have ONE teller: `PostAnnounceScheduler`**, under its conditional
+  `feedNotifiedAt` claim (never reset), when it first publishes the post - within a sweep (a minute
+  at most) for a post published at once, at its date for a scheduled one. The write paths only STORE
+  `mentions`. A first version had two tellers (the write for an immediate post, the sweep for a
+  scheduled one), and their overlap was a defect both ways: toggling the schedule pushed the
+  mentions again each time, and un-scheduling a post after its date but before its sweep lost them
+  (review of #2947). A post hidden before its sweep is not swept until it is unhidden - its mentions
+  are told then - and never while it stays hidden. An edit of the text after the sweep tells nobody.
+  The claim (`CLAIM_POST_ANNOUNCEMENT_SQL`) carries the publication predicate itself - unstamped,
+  not hidden, `scheduledAt` null or past - and what is told is the row it locked, never the sweep's
+  earlier `find`: a post hidden or re-scheduled between the two is not claimed (re-review of #2947,
+  proven in `post-announce.integration.spec.ts`).
+- **A comment's mentions are asked when it is written**, through the same gate. On a post not yet
+  published only its author may comment, nobody else may open it, so such a comment's mentions are
+  DROPPED, not deferred - deferring them would need a second teller for comments, the overlap above.
+- **A report** on a post or a comment
+  ([moderation-and-blocking](../../moderation-and-blocking.md#a-report-follows-the-reads-predicate-2026-11-02)).
+  The client says `404 CONTENT_NOT_FOUND` as "Cette publication n'est plus disponible" and closes
+  the dialog (`ModerationApiError.isContentNotFound`, `posts/reportComment.ts`: `reportPost`,
+  `reportComment`).
+
+Proven against PostgreSQL in `post-openable.integration.spec.ts` (a reader who may open it, one
+outside the audience, a block both ways, a hidden post, a scheduled one, an anonymous one; the
+follower, member-repost and read-grant readers are the shared audience code's, proven in their own
+integration specs); the routes in `posts.controller.write-gate.spec.ts`; the wiring in
+`posts.service.visibility.spec.ts`, `post-notifications.mention-gate.spec.ts`,
+`post-announce.scheduler.spec.ts`, `posts.service.anonymous-mention.spec.ts` and
+`moderation.service.spec.ts`; the client in `reportComment.test.ts`.
+
 ## A navigation never waits on data: the post page and the root layout (WP-NAV-1, 2026-10-10)
 
 Audit in [offline-and-weak-network](../offline-and-weak-network.md) (section 13.2, on the upload PR): in this
@@ -1827,7 +2230,7 @@ key would fail to open on every later read.
 was measured on the desktop: a bench page (scratch, not committed) replaying exactly the read
 `loadStoredFeed` makes - a fresh IndexedDB connection, one `get`, AES-256-GCM decryption, `JSON.parse`
 and the rights strip - on a synthetic page shaped like a real one (a 600-character body, five
-comments, thirty reactions, a media ref, a poll on every fourth post). Chrome on OXYGEN, 7 reads,
+comments, thirty reactions, a media ref, a poll on every fourth post). Chrome on the workstation, 7 reads,
 median (max):
 
 | page | sealed size | CPU 1x | CPU 6x |
@@ -1944,10 +2347,9 @@ console line names the post - `[POSTS] card <id> failed to draw` - which the lay
 since a production Svelte error carries only its code. That boundary is a containment, not the fix;
 the line it writes is an error and must be explained when it appears.
 
-**Not changed, noted:** every feed arm orders by `pinned DESC, "publishedAt" DESC` with no unique
-tie-breaker, so two posts sharing a `publishedAt` may swap across an `OFFSET` page boundary. The next
-page's merge (`loadMorePosts`) already drops an id it holds, so this can skip a post, never duplicate
-one.
+Every feed arm orders by `pinned DESC, "publishedAt" DESC` and then `posts.id`, a unique
+tie-breaker, so a page boundary never swaps two posts. The next page's merge (`loadMorePosts`) still
+drops an id it holds.
 
 ## Comment sheet rework (2026-10-21)
 
@@ -1965,7 +2367,7 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 
 - `AddCommentDto` gains `associationId` (needs `POST_AS_ASSO`, `canPostAs`, else 403 BEFORE any write) and `anonymous` (any member). Exclusive, the association wins. The real `userId` is ALWAYS stored (mute, report, erasure act on the account); an anonymous or association comment stores NO name.
 - `comment-identity.ts` is the one statement: `commentRights` (who may edit/delete, used to ENFORCE and to SERVE `canEdit`/`canDelete` per reader) and `serveComment` (withholds `userId` from everyone but the writer of an anonymous comment, a content moderator and a platform admin; an association comment's writer is not special; serves `association` card; `byPostAuthor` on a personal post only - the post author has NO privilege of revelation). Fields are only added: an older client keeps working on ordinary comments.
-- Edit/delete: ordinary = writer (delete also a platform admin); anonymous = writer to edit, writer/admin/content moderator to delete; association = any `POST_AS_ASSO` holder or platform admin.
+- Edit/delete: the author alone edits (the writer; any `POST_AS_ASSO` holder for an association's comment); the author, a platform admin or a moderator of the post deletes, whatever the kind of comment (2026-11-02, [profiles-and-access](../../profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02)).
 - Served in every path: feed windows and count (`serveRows`, BEFORE the post's own shaping since `byPostAuthor` reads `authorId`), `getById`, the paged route, and the like/edit/add responses.
 - Notices are masked at the WRITE: anonymous -> actor `''` / "Anonyme", association -> its name. A reply to an association comment notifies every holder (`listFlagHolders`), to an anonymous one the real account.
 - A report on a comment takes `reportedUserId` from the stored comment, never from the client.
@@ -1991,6 +2393,7 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 - **Paging.** `PostCommentThread.loadMore()` reads the next page of `GET /posts/:id/comments` (20 whole threads, newest first) and ADDS it: **a row already held is never replaced by a page's copy** (a heart tapped while the page was in flight is newer), and **a comment removed meanwhile - here, or announced by another surface (`noteRemoved`) - stays gone** though the page was read before the deletion answered. `hasMore` is the server's answer and decides the "view older comments" button; before any page, the server's count against the rows held does. A failure is SAID (`post_comment_load_older_error`), never silent. When a fresher feed row replaces the card's, **the older pages already read are kept** (`keepHeld`: the row's own copy of a comment wins, nothing is read again) - the thread does not collapse to the newest few under the reader's thumb. The whole-thread read (`loadAll`, `GET /posts/:id`) and the ledger "hold" it needed are gone.
 - **The sorts.** "Récents" is the order the pages come in; "Anciens" and "Aimés" are about the WHOLE thread, so they read the remaining pages first (up to 25) or "oldest" would be the oldest of what happens to be loaded; a page that brings nothing ends the wait.
 - **Shared with the reel sheet.** `ReelCommentsSheet` mounts the same `PostComments` and the same `loadMore`; `CommentAuthorAvatar` is drawn by the thread and by the preview, so they cannot disagree about who wrote a comment.
+- **The preview draws the comment's picture and its like (2026-10-31).** The collapsed preview used to render only the author and `text`, so a comment that was only a GIF (empty `text`, a `media` ref) showed as a name in an empty bubble; only the thread drew `media`. Both surfaces now share `CommentMedia` (`compact` is the preview's thumbnail) and `CommentLikeButton` (the heart, `aria-pressed`, the count, the `tap-target` 44 px box). The card hands the preview `thread.like`, the SAME write path as the sheet, so the two hearts read one comment and cannot drift (pinned in `PostCard.commentSync`); a pending row's heart is withheld, as in the thread. A like never opens the sheet (`openFromComment` ignores a `button`). A comment has one text and at most one picture; a mention is a markdown link and a reply is never the preview's comment, so there is no other kind to draw.
 - **Fixed on the way.** The thread's list scrolled sideways: the 44 px hit box a small control gets (`tap-target`, the heart at the row's right end) stuck out of the scroller by a few pixels. The scroller now reaches the sheet's edges (`-mx-4 px-4`), so the box stays inside it.
 
 **Seen** at 390 px in a headless Chrome on a fixture card (the preview, the open sheet, the viewport cut to 480 px). **NOT seen on a phone**: the real keyboard (iOS resizes the visual viewport, Android the layout one - the overlay is built for the first and the layout rule serves both, but only a phone settles it), the back gesture, and the focus handed back to the comment button on close.
@@ -2002,3 +2405,36 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 ### The thread on a phone is the CanaReels drawer, with nothing quoted above it (user, 2026-10-23, phones only)
 
 `PostCommentsSheet` picks by `phoneViewport()` (below `md`): the shared `shared/CommentsDrawer` - the very component `ReelCommentsSheet` is built on - rising over the interface on `motion-sheet-in` over a dimmed, tappable backdrop, closed by a drag down on its grabber/title, Back (one history entry), Escape, the X or a tap above. Over the page (`scrim`) it is portalled to the body, `aria-modal`, `focusTrap`ped, and the opener (read at initialisation, BEFORE `focusTrap` moves the focus) gets the focus back. It rides the keyboard (`keyboard-aware-bottom`, capped at `--app-viewport-height`) exactly as the reels sheet does. From `md` up the dialog (`Modal`) is unchanged. **The quoted-post reminder (avatar, author, two lines of text) under the title is REMOVED everywhere**, dialog included; the sheet no longer takes a `post` prop. Tests: `PostCard.drawer.svelte.test.ts` (phone) and `PostCard.sheet.svelte.test.ts` (wide). Only a phone confirms the entrance feel and the soft-keyboard behaviour.
+
+## The formatting row keeps the keyboard and the footer's height (2026-11-06)
+
+The owner reported that on a phone the keyboard closed as soon as text was selected to be formatted, and
+that the screen kept moving. Decided: the keyboard stays open while selecting and while tapping the
+toolbar, the toolbar is pinned above the keyboard, and nothing jumps.
+
+**Read on the benches, and NOT reproduced** (real post composer, test accounts, nothing published):
+- iPhone 12, iOS 27.0.1, installed build, taps through WebDriverAgent: double tap on a word (selection
+  and handles), "Aa", Bold, a handle dragged across "world", twelve line breaks so the editor scrolls,
+  then Bold on a selection in the last line. The keyboard stayed up at every step, the selection
+  survived Bold, the scroll position held, the toolbar stayed on the keyboard.
+- Mi 9T, Tauri app, AOSP LatinIME and the ADB keyboard: long press, "Aa", Bold: `mInputShown=true`
+  throughout, toolbar pinned.
+- Desktop emulation: Bold fires no `focusout`; the editor is rebuilt by `renderPlainTextToMentionEditor`
+  (one burst of childList mutations) and the selection is restored after it, which is why the keyboard
+  survives. The rebuild is therefore NOT the cause on these engines and was left alone.
+
+**What was real and is fixed:** "Aa" swapped the attachment chips (two rows on the Mi 9T, THREE on the
+iPhone 12) for one row of icons, so the footer shrank and the text area above it grew by 148 pt in the
+middle of a selection. Holding the old height under a single icon row left a blank band, so the
+formatting actions are now LABELLED CHIPS of the attachment chips' own class, wrapping the same way:
+`MarkdownComposerToolbar`'s `chipClass` prop draws icon + word (Paraglide `md_toolbar_*`, lucide icons,
+the bar's `chipClass`/`idleChip` tokens), and "Aa" is a same-size content swap with nothing empty.
+`PostComposerBar` also binds the chip row's height while it is drawn and keeps it as the slot's floor,
+for the few points two wrappings can differ by. `PostComposerBar.svelte.test.ts` pins both (eight
+labelled chips of the chips' class, wrapping; the floor).
+
+**Owed:** a read on Gboard (the Mi 9T has no Gboard, only AOSP), on the iPhone with a finger rather than
+WebDriverAgent's synthetic touches (a real long press and real handle drags), and on mobile web
+(Chrome Android, Safari iOS), where the overlay's `top 180ms` transition follows a visual-viewport pan
+and was not measured. If the keyboard still drops there, the first thing to log is `focusout` on the
+editor and the `visualViewport` height around it.

@@ -1,7 +1,9 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { Log } from '$lib/utils/Log';
+  import { copyText } from '$lib/utils/clipboard';
   import { refusalCode } from '$lib/utils/apiRefusal';
   import { describeRefusalCode } from '$lib/utils/refusalCodes';
   import {
@@ -17,8 +19,10 @@
     Link2,
     Shield,
     Camera,
+    Tag,
   } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
+  import ProfileLink from '../shared/ProfileLink.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import UserName from '../shared/UserName.svelte';
   import Modal from '../shared/Modal.svelte';
@@ -31,6 +35,7 @@
   import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
   import { joiningRows, membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
   import NotificationLevelControl from './NotificationLevelControl.svelte';
+  import NicknamesPanel from './NicknamesPanel.svelte';
   import CallPermissionControl from './CallPermissionControl.svelte';
   import { callsAvailable } from '$lib/utils/callsAvailability';
   import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
@@ -74,6 +79,11 @@
     onGroupLeave?: () => void;
     /** Callback to invite new members by user ID array. */
     onInviteMembers?: (ids: string[]) => void;
+    /**
+     * Queues a `nickname` frame in this conversation ("Modifier les pseudos"); absent, the screen is
+     * not offered. Its answer is whether the durable queue took the frame.
+     */
+    onSendNickname?: (userId: string, nickname: string | null, at: number) => Promise<boolean>;
   }
 
   let {
@@ -92,7 +102,15 @@
     onGroupDelete,
     onGroupLeave,
     onInviteMembers,
+    onSendNickname,
   }: Props = $props();
+
+  // ── Nicknames ("Modifier les pseudos") ──────────────────────────────────────
+  // A DM's two people are its members too: Messenger names both sides of a conversation.
+  let showNicknames = $state(false);
+  const nicknameMembers = $derived(
+    isGroupConversation ? groupMembers : [currentUserId, contactName].filter(Boolean)
+  );
 
   let confirmDelete = $state(false);
   let confirmLeave = $state(false);
@@ -103,7 +121,10 @@
   // Optimistic rows: invitees still in flight and not yet in the authoritative member list.
   // THE NAMES THE REMOVE CONTROL ANNOUNCES. Every other cell of a member row renders a resolved
   // name; the control announced the raw id, which is the one surface that exists to be read out.
-  const memberNames = userDisplayNames(() => groupMembers);
+  const memberNames = userDisplayNames(
+    () => groupMembers,
+    () => groupId || null
+  );
   // Read by family name (user, 2026-10-05), each row frozen in place once its profile settles.
   const memberOrder = membersByFamilyName(() => groupMembers);
   const orderedMembers = $derived(memberOrder.current);
@@ -217,7 +238,6 @@
   let shareLink = $state('');
   let shareLoading = $state(false);
   let shareError = $state('');
-  let shareCopied = $state(false);
 
   /** Generates a shareable group invite link and copies it to the clipboard. */
   async function generateShareLink() {
@@ -227,18 +247,19 @@
     }
     shareLoading = true;
     shareError = '';
-    shareCopied = false;
-    try {
+    const id = groupId;
+    // THE LINK IS MINTED ON THE TAP, so it is handed to `copyText` as a PROMISE, synchronously:
+    // WebKit refuses a clipboard write after an awaited round trip. A refusal is toasted by the
+    // helper; the link stays visible for a manual copy.
+    const link = (async () => {
       const { createGroupInvite } = await import('$lib/mls/groupInvites');
       const { publicAppUrl } = await import('$lib/utils/publicAppUrl');
-      const { token } = await createGroupInvite(groupId);
+      const { token } = await createGroupInvite(id);
       shareLink = publicAppUrl(`/g/join/${token}`);
-      try {
-        await navigator.clipboard.writeText(shareLink);
-        shareCopied = true;
-      } catch {
-        /* clipboard blocked; link shown for manual copy */
-      }
+      return shareLink;
+    })();
+    try {
+      await copyText(link, { what: 'link' });
     } catch (e) {
       Log.d('chatGroupPanel.generateShareLink failed', e);
       shareError = describeRefusalCode(refusalCode(e)) ?? m.chat_group_link_generation_error();
@@ -264,7 +285,6 @@
     confirmDelete = false;
     confirmLeave = false;
     shareLink = '';
-    shareCopied = false;
     shareError = '';
   });
 
@@ -320,7 +340,7 @@
         title={m.chat_group_change_photo_label()}
         class="group/avatar squircle relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
       >
-        <GroupAvatar {imageMediaId} name={effectiveDisplayName} variant="group" fill />
+        <GroupAvatar id={groupId} {imageMediaId} name={effectiveDisplayName} fill />
         <span
           class="absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 transition-opacity group-hover/avatar:opacity-100"
         >
@@ -381,14 +401,10 @@
           onkeydown={handleRenameKey}
           class="text-text-main bg-cn-surface min-w-0 flex-1 rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
         />
-        <button
-          onclick={submitRename}
-          class="text-cn-ink inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-3 font-bold shadow-sm shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
-          aria-label={m.chat_group_validate_rename_label()}
-        >
+        <Button onclick={submitRename} aria-label={m.chat_group_validate_rename_label()}>
           <Check size={16} strokeWidth={3} />
           {m.common_validate_button()}
-        </button>
+        </Button>
       </div>
     </div>
   {/if}
@@ -422,6 +438,18 @@
     </div>
   {/if}
 
+  {#if groupId && onSendNickname}
+    <Button
+      variant="secondary"
+      class="w-full justify-start"
+      data-open-nicknames
+      onclick={() => (showNicknames = true)}
+    >
+      <Tag size={16} />
+      {m.chat_nicknames_open_button()}
+    </Button>
+  {/if}
+
   <!--
     Invite link section.
 
@@ -452,19 +480,10 @@
             value={shareLink}
             class="border-cn-border text-text-main min-w-0 flex-1 rounded-xl border bg-(--cn-surface) px-3 py-2 text-xs"
           />
-          <button
-            type="button"
-            onclick={generateShareLink}
-            class="border-cn-border hover:bg-cn-bg shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold"
-          >
+          <Button variant="secondary" size="compact" class="shrink-0" onclick={generateShareLink}>
             {m.chat_group_regenerate_button()}
-          </button>
+          </Button>
         </div>
-        {#if shareCopied}
-          <p class="text-green-ok text-xs font-semibold">
-            {m.chat_group_link_copied_label()}
-          </p>
-        {/if}
       {:else}
         <button
           type="button"
@@ -522,8 +541,12 @@
                   : ''}"
               >
                 <div class="flex min-w-0 items-center gap-3">
-                  <Avatar userId={member} size="sm" />
-                  <UserName userId={member} class="text-text-main truncate text-sm font-semibold" />
+                  <ProfileLink userId={member}><Avatar userId={member} size="sm" /></ProfileLink>
+                  <UserName
+                    userId={member}
+                    scope={groupId || null}
+                    class="text-text-main truncate text-sm font-semibold"
+                  />
                   {#if currentUserId && member.toLowerCase() === currentUserId.toLowerCase()}
                     <span
                       class="text-2xs shrink-0 rounded-md bg-amber-500/10 px-1.5 py-0.5 font-bold text-amber-500"
@@ -570,6 +593,7 @@
                   <Avatar userId={pending} size="sm" />
                   <UserName
                     userId={pending}
+                    scope={groupId || null}
                     class="text-text-main truncate text-sm font-semibold"
                   />
                 </div>
@@ -598,15 +622,16 @@
     >
       <!-- A direct message has no group to leave: it is deleted, never left. -->
       {#if isGroupConversation && onGroupLeave && !confirmLeave && !confirmDelete}
-        <button
+        <Button
+          variant="danger-outline"
+          class="w-full"
           onclick={() => {
             confirmLeave = true;
           }}
-          class="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-orange-500/20 bg-orange-500/10 px-4 py-3.5 text-sm font-bold text-orange-600 transition-all outline-none hover:bg-orange-500/20 focus-visible:ring-2 focus-visible:ring-orange-500 active:scale-[0.98] dark:text-orange-400"
         >
           <LogOut size={18} strokeWidth={2.5} />
           {m.chat_group_leave_button()}
-        </button>
+        </Button>
       {/if}
 
       {#if confirmLeave}
@@ -615,14 +640,15 @@
             {m.chat_group_leave_confirm_question()}
           </p>
           <div class="flex gap-3">
-            <button
+            <Button
+              variant="secondary"
+              class="flex-1"
               onclick={() => {
                 confirmLeave = false;
               }}
-              class="text-text-main focus-visible:ring-text-muted bg-cn-surface flex-1 rounded-2xl border border-black/10 px-4 py-3.5 font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-[0.98] dark:border-white/10 dark:hover:bg-white/10"
             >
               {m.common_cancel_button()}
-            </button>
+            </Button>
             <button
               onclick={() => {
                 onGroupLeave?.();
@@ -638,40 +664,43 @@
 
       {#if onGroupDelete && !confirmLeave}
         {#if !confirmDelete}
-          <button
+          <Button
+            variant="danger-outline"
+            class="w-full"
             onclick={() => {
               confirmDelete = true;
             }}
-            class="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3.5 text-sm font-bold text-red-600 transition-all outline-none hover:bg-red-500/20 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-[0.98] dark:text-red-400"
           >
             <Trash2 size={18} strokeWidth={2.5} />
             {isGroupConversation
               ? m.chat_group_delete_group_button()
               : m.chat_group_delete_dm_button()}
-          </button>
+          </Button>
         {:else}
           <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
             <p class="text-center text-xs font-bold tracking-wider text-red-500 uppercase">
               {m.chat_group_delete_confirm_question()}
             </p>
             <div class="flex gap-3">
-              <button
+              <Button
+                variant="secondary"
+                class="flex-1"
                 onclick={() => {
                   confirmDelete = false;
                 }}
-                class="text-text-main focus-visible:ring-text-muted bg-cn-surface flex-1 rounded-2xl border border-black/10 px-4 py-3.5 font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-[0.98] dark:border-white/10 dark:hover:bg-white/10"
               >
                 {m.common_cancel_button()}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="danger"
+                class="flex-1"
                 onclick={() => {
                   onGroupDelete?.();
                   closePanel();
                 }}
-                class="flex-1 rounded-2xl bg-red-500 px-4 py-3.5 font-bold text-white shadow-md shadow-red-500/20 transition-all outline-none hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-[0.98]"
               >
                 {m.common_delete_button()}
-              </button>
+              </Button>
             </div>
           </div>
         {/if}
@@ -679,6 +708,16 @@
     </div>
   {/if}
 </div>
+
+{#if groupId && onSendNickname}
+  <NicknamesPanel
+    open={showNicknames}
+    members={nicknameMembers}
+    viewerId={currentUserId}
+    place={{ kind: 'group', scope: groupId, send: onSendNickname }}
+    onClose={() => (showNicknames = false)}
+  />
+{/if}
 
 <!-- Group photo cropper -->
 <Modal
@@ -726,12 +765,8 @@
       }}
     />
 
-    <button
-      onclick={handleInviteMembers}
-      disabled={newMembers.length === 0}
-      class="text-cn-ink mt-2 w-full rounded-2xl bg-amber-500 py-3.5 font-bold shadow-lg shadow-amber-500/20 transition-all duration-200 outline-none hover:-translate-y-0.5 hover:bg-amber-400 focus-visible:ring-4 focus-visible:ring-amber-500/50 active:translate-y-0 disabled:transform-none disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
-    >
+    <Button class="mt-2 w-full" onclick={handleInviteMembers} disabled={newMembers.length === 0}>
       {m.chat_group_send_invite_button()}{newMembers.length > 0 ? ` (${newMembers.length})` : ''}
-    </button>
+    </Button>
   </div>
 </Modal>

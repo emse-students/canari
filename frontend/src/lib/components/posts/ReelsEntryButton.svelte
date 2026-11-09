@@ -12,11 +12,13 @@
    * the viewer's own first page, not a second request (`reelsAfterFirstPage`).
    */
   import { Clapperboard } from '@lucide/svelte';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import ReelsEmptyState from './ReelsEmptyState.svelte';
   import type { PostEntity } from '$lib/posts/api';
   import { REEL_PAGE, listAllReels, reelsAfterFirstPage } from '$lib/reels/allReels';
+  import { expandFrom, type ExpandOrigin } from '$lib/reels/expandFrom';
   import { showToast } from '$lib/stores/toast.svelte';
   import { isTransportFailure } from '$lib/utils/transportFailure';
   import { currentUserId } from '$lib/stores/userState.svelte';
@@ -32,10 +34,14 @@
   let opening = $state(false);
   let firstPage = $state<PostEntity[] | null>(null);
   let emptyOpen = $state(false);
+  let entry = $state<HTMLButtonElement | null>(null);
+  /** Where the viewer grows from when the View Transitions API is absent (`expandFrom`). */
+  let expandOrigin = $state<ExpandOrigin | null>(null);
 
   async function open() {
-    if (opening) return;
+    if (opening || firstPage) return;
     opening = true;
+    let handedOff = false;
     console.debug('[reels-entry] opening the viewer at the newest reel');
     try {
       const page = await listAllReels(0, REEL_PAGE);
@@ -44,7 +50,17 @@
         emptyOpen = true;
         return;
       }
-      firstPage = page;
+      const opened = page;
+      // `opening` stays up until the viewer's page is SET: a view transition runs its commit a
+      // moment later, and a second tap in between would open a second viewer.
+      handedOff = true;
+      const commit = (origin: ExpandOrigin | null) => {
+        expandOrigin = origin;
+        firstPage = opened;
+        opening = false;
+      };
+      if (entry) expandFrom(entry, commit);
+      else commit(null);
     } catch (err) {
       // No answer (offline, a dead network) is the member's situation, not a defect: said, not
       // accused. An ANSWER that refused is a defect and is logged as one.
@@ -55,20 +71,22 @@
       }
       showToast(m.posts_reels_open_error(), 'error');
     } finally {
-      opening = false;
+      if (!handedOff) opening = false;
     }
   }
 </script>
 
 <button
   type="button"
+  bind:this={entry}
   data-reels-entry
+  use:guideAnchor={'posts.reels'}
   aria-label={m.posts_reels_open()}
   title={m.posts_reels_open()}
   aria-haspopup="dialog"
   aria-busy={opening}
   onclick={open}
-  class="ui-icon-button border-cn-border text-text-muted hover:text-text-main rounded-full border focus-visible:ring-2 focus-visible:ring-amber-500 {opening
+  class="glass-chrome ui-icon-button text-text-muted hover:text-text-main rounded-full focus-visible:ring-2 focus-visible:ring-amber-500 {opening
     ? 'opacity-60'
     : ''}"
 >
@@ -81,6 +99,7 @@
     {authToken}
     loadPage={reelsAfterFirstPage(firstPage)}
     likerId={currentUserId() ?? undefined}
+    {expandOrigin}
     onClose={() => (firstPage = null)}
   />
 {/if}

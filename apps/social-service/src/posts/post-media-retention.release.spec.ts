@@ -6,6 +6,7 @@
  * set each one hands over, because the interesting failures are all partial: a post that releases
  * its own pictures but not its comments', or a comment that releases its own but not its replies'.
  */
+import { lockedCommentsManager } from './locked-comments.it-fixture';
 import { PostsService } from './posts.service';
 import { PostInteractionsService } from './post-interactions.service';
 import type { CommentIdentityService } from './comment-identity';
@@ -38,6 +39,8 @@ describe('PostsService.deletePost', () => {
       {} as FollowsService,
       {
         isContentModerator: () => Promise.resolve(false),
+        moderatedPostIds: () => Promise.resolve(new Set<string>()),
+        mayModeratePost: () => Promise.resolve(false),
       } as unknown as AssociationsService,
       {} as PostNotificationsService,
       { release } as unknown as PostMediaRetentionService
@@ -57,6 +60,19 @@ describe('PostsService.deletePost', () => {
 
     expect(release).toHaveBeenCalledTimes(1);
     expect(release).toHaveBeenCalledWith([POST_MEDIA, COMMENT_MEDIA]);
+  });
+
+  it('does NOT release the ids a withdrawal deletes itself: released, they would no longer be deletable', async () => {
+    const { service, release } = makeService({
+      id: 'post-1',
+      authorId: AUTHOR,
+      media: [{ mediaId: POST_MEDIA }, { mediaId: OTHER_MEDIA }],
+      comments: [{ id: 'c1', media: { mediaId: COMMENT_MEDIA } }],
+    } as Partial<Post>);
+
+    await service.deletePost('post-1', AUTHOR, false, { keep: [POST_MEDIA, OTHER_MEDIA] });
+
+    expect(release).toHaveBeenCalledWith([COMMENT_MEDIA]);
   });
 
   it('releases AFTER the row is gone, never as a precondition of deleting it', async () => {
@@ -109,6 +125,7 @@ describe('PostInteractionsService.deleteComment', () => {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
       save: jest.fn(() => Promise.resolve(post)),
+      manager: lockedCommentsManager(post),
     };
     const service = new PostInteractionsService(
       postRepo as unknown as Repository<Post>,
@@ -158,7 +175,9 @@ describe('PostInteractionsService.deleteComment', () => {
       { id: 'c1', userId: 'somebody-else', media: { mediaId: COMMENT_MEDIA } },
     ]);
 
-    await expect(service.deleteComment('post-1', 'c1', AUTHOR)).rejects.toThrow('Not your comment');
+    await expect(service.deleteComment('post-1', 'c1', AUTHOR)).rejects.toMatchObject({
+      response: { code: 'COMMENT_DELETE_FORBIDDEN' },
+    });
     expect(release).not.toHaveBeenCalled();
   });
 });

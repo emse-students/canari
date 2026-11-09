@@ -18,7 +18,9 @@ use super::background::{
     parse_outbox_entries_json, process_welcome_background_with_key,
     send_messages_background_with_key, GrainePush, PushFrame,
 };
-use super::proto_fields::{build_read_watermark_app_message, build_text_app_message};
+use super::proto_fields::{
+    build_call_hangup_app_message, build_read_watermark_app_message, build_text_app_message,
+};
 use super::push_text::PushLanguage;
 
 fn json_to_c_string(value: serde_json::Value) -> *mut c_char {
@@ -273,6 +275,10 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
 /// directory both the app and the extension read the mirror from. FFI mirror of the Android JNI
 /// `nativeStoreGraineSeeds`, and the same implementation behind it. `cache_key_b64` as for
 /// [`canari_native_open_graine_push`]; with none, nothing is written (-1).
+///
+/// The count of seeds STORED only: the extension opens a salon push's single `seedFrame`, never a
+/// bundle, so no seed it hands over is ever relayed and none is left to the app (the Android JNI
+/// reports that count apart).
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_store_graine_seeds(
     data_dir: *const c_char,
@@ -284,11 +290,23 @@ pub unsafe extern "C" fn canari_native_store_graine_seeds(
         return -1;
     }
     let cache_key = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64));
-    crate::commands::push::store_graine_seeds_json(
+    match crate::commands::push::store_graine_seeds_json(
         &path_from_c_str(data_dir),
         cache_key.as_ref(),
         &str_from_c_str(seeds_json),
-    )
+    ) {
+        Some(outcome) => {
+            if outcome.left_to_the_app > 0 {
+                // Not expected here (see above): said, since it would read as seeds lost in Swift.
+                log::error!(
+                    "[GRAINE_PUSH] the extension handed over {} relayed seed(s) - left to the app",
+                    outcome.left_to_the_app
+                );
+            }
+            i32::try_from(outcome.stored).unwrap_or(i32::MAX)
+        }
+        None => -1,
+    }
 }
 
 /// Whether the seed mirror under `data_dir` holds a session: 1 yes, 0 no, -1 it cannot be read.
@@ -344,10 +362,12 @@ pub unsafe extern "C" fn canari_native_seal_cache_line(
 }
 
 /// Claims the `ownDeviceAdded` keys of a decrypt answer in the device-notice ledger under
-/// `data_dir` (the App Group directory, which the app's own claim uses too) and returns the keys
-/// nobody announced before as a JSON array - free with `canari_free_string`. NULL arguments claim
-/// nothing and answer `[]`. FFI mirror of the Android JNI `nativeClaimDeviceNotices`, and the same
-/// implementation behind it (`mobile::device_notice`).
+/// `data_dir` (the App Group directory, which the app's own claim uses too) and answers
+/// `{"claimed": [keys nobody announced before], "held": n}` - `held` counting the keys of an
+/// account the app has not pre-claimed since the update - free with `canari_free_string`. NULL
+/// arguments claim nothing and answer an empty claim. FFI mirror of the Android JNI
+/// `nativeClaimDeviceNotices`, and the same gated implementation behind it
+/// (`mobile::device_notice::engine_claim_device_notices`).
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_claim_device_notices(
     data_dir: *const c_char,
@@ -355,13 +375,14 @@ pub unsafe extern "C" fn canari_native_claim_device_notices(
 ) -> *mut c_char {
     if data_dir.is_null() || keys_json.is_null() {
         log::error!("[DEVICE_NOTICE] ffi: null argument - nothing claimed");
-        return json_to_c_string(serde_json::json!([]));
+        return json_to_c_string(serde_json::json!({ "claimed": [], "held": 0 }));
     }
-    let claimed = super::device_notice::claim_device_notices_json(
+    let claim = super::device_notice::engine_claim_device_notices_json(
         &path_from_c_str(data_dir),
         &str_from_c_str(keys_json),
     );
-    let value = serde_json::from_str(&claimed).unwrap_or_else(|_| serde_json::json!([]));
+    let value = serde_json::from_str(&claim)
+        .unwrap_or_else(|_| serde_json::json!({ "claimed": [], "held": 0 }));
     json_to_c_string(value)
 }
 
@@ -542,7 +563,35 @@ pub unsafe extern "C" fn canari_native_build_text_message_proto(
 /// cross-device notification-cancel path instead of a peer push.
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_build_read_watermark_proto(at: i64) -> *mut c_char {
-    let bytes = build_read_watermark_app_message(at);
+    // iOS carries no server time down to its shade yet (chat.md, "Not done, owed"): the stamped shape.
+    let bytes = build_read_watermark_app_message(at, 0);
+    CString::new(STANDARD.encode(&bytes))
+        .unwrap_or_else(|_| CString::new("").expect("static empty"))
+        .into_raw()
+}
+
+/// Builds the call hangup (base64, heap-allocated C string) the CallKit Decline sends - the frame
+/// the in-app Decline sends, so the caller's ring ends at once ([`build_call_hangup_app_message`]).
+/// `end_reason` is the wire value of `CallEndReason` (DECLINED = 2). Empty on a null argument.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_build_call_hangup_proto(
+    message_id: *const c_char,
+    sent_at: i64,
+    call_id: *const c_char,
+    device_id: *const c_char,
+    end_reason: u32,
+) -> *mut c_char {
+    if message_id.is_null() || call_id.is_null() || device_id.is_null() {
+        log::error!("[CALL_DECLINE] canari_native_build_call_hangup_proto: null argument");
+        return CString::new("").unwrap().into_raw();
+    }
+    let bytes = build_call_hangup_app_message(
+        &str_from_c_str(message_id),
+        sent_at,
+        &str_from_c_str(call_id),
+        &str_from_c_str(device_id),
+        end_reason,
+    );
     CString::new(STANDARD.encode(&bytes))
         .unwrap_or_else(|_| CString::new("").expect("static empty"))
         .into_raw()
@@ -569,6 +618,98 @@ pub unsafe extern "C" fn canari_native_cleanup_pending_db(files_dir: *const c_ch
 pub extern "C" fn canari_ios_on_resume() {
     mark_foreground_active();
     log::debug!("[iOS] canari_ios_on_resume: garde foreground rafraichie");
+}
+
+/// Whether the page rings an incoming call itself (it holds the gateway socket) - `page_ring`. The
+/// CallKit ring of an app in front stands back only when this is true.
+#[no_mangle]
+pub extern "C" fn canari_ios_page_rings_in_app() -> bool {
+    crate::page_ring::page_rings_in_app()
+}
+
+/// Whether the page holds a loaded MLS manager in this process - the fact that makes it the one that
+/// sends. A notification quick reply is then handed to the page (`pending_quick_replies.ndjson`)
+/// instead of being encrypted natively, which the foreground guard would refuse and the page's next
+/// outbox mirror would erase.
+#[no_mangle]
+pub extern "C" fn canari_ios_page_holds_mls() -> bool {
+    crate::concurrency::live_manager_in_process()
+}
+
+/// Seals one `pending_quick_replies.ndjson` line (`native_cache`, purpose `QuickReply`) and returns
+/// it as a heap C string to free with `canari_free_string`, or NULL when there is no usable key - in
+/// which case the caller writes NOTHING. Never a reply in the clear.
+///
+/// # Safety
+/// Both arguments must be null or valid null-terminated C strings for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn canari_native_seal_quick_reply_line(
+    cache_key_b64: *const c_char,
+    line: *const c_char,
+) -> *mut c_char {
+    if cache_key_b64.is_null() || line.is_null() {
+        log::error!("[QUICK_REPLY] ffi: null argument");
+        return std::ptr::null_mut();
+    }
+    let Some(key) = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64)) else {
+        return std::ptr::null_mut();
+    };
+    let sealed = crate::native_cache::seal_line(
+        &key,
+        crate::native_cache::Purpose::QuickReply,
+        &str_from_c_str(line),
+    );
+    match std::ffi::CString::new(sealed) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Registers the native listener told what became of a quick reply the page was handed - its
+/// `QuickReplyOutcome` code (`commands::push::acknowledge_quick_reply`). Registered by
+/// `CanariPushSetup` rather than linked, since this crate is linked into the notification extension.
+#[no_mangle]
+pub extern "C" fn canari_ios_set_quick_reply_ack_listener(
+    listener: Option<crate::commands::push::QuickReplyAckListener>,
+) {
+    crate::commands::push::set_quick_reply_ack_listener(listener);
+}
+
+/// Registers the native shell's two leave-flush listeners (`commands::background_flush`): begin a
+/// background task for the page's last work before suspension, and end it when the page says so.
+/// Registered by `CanariPushSetup` rather than linked, like the quick reply's acknowledgement.
+#[no_mangle]
+pub extern "C" fn canari_ios_set_background_flush_listeners(
+    begin: Option<crate::commands::background_flush::BeginListener>,
+    end: Option<crate::commands::background_flush::EndListener>,
+) {
+    crate::commands::background_flush::set_background_flush_listeners(begin.zip(end));
+}
+
+/// Whether the page is ringing `call_id` itself right now (its `CallService` is `incoming` on it) -
+/// `page_ring`. The handover ends an UNANSWERED CallKit ring only when this is true: a page holding
+/// the socket may still have skipped that call's invite, and its CallKit ring is then the only one.
+///
+/// # Safety
+/// `call_id` must be null or a valid null-terminated C string for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn canari_ios_page_rings_call(call_id: *const c_char) -> bool {
+    if call_id.is_null() {
+        log::error!("[CALL_RING] canari_ios_page_rings_call: a null call id - rings no call");
+        return false;
+    }
+    crate::page_ring::page_rings_call(&str_from_c_str(call_id))
+}
+
+/// Registers the native listener told when the page STARTS ringing a call (`page_ring`): the
+/// iPhone ends that call's unanswered CallKit ring when the app is active. Registered by
+/// `CanariCallKitSetup` rather than linked, since this crate is linked into the notification
+/// extension too, where that function does not exist.
+#[no_mangle]
+pub extern "C" fn canari_ios_set_page_ringing_listener(
+    listener: Option<crate::page_ring::PageRingingListener>,
+) {
+    crate::page_ring::set_page_ringing_listener(listener);
 }
 
 /// Signals the move to background (diagnostic log).

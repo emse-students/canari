@@ -7,7 +7,10 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
-vi.mock('$lib/stores/auth', () => ({ getToken: vi.fn().mockResolvedValue('') }));
+vi.mock('$lib/stores/auth', () => ({
+  getToken: vi.fn().mockResolvedValue(''),
+  signOutGeneration: () => 0,
+}));
 
 import { SavedStateUnopenedError } from '$lib/mls-client';
 import { TauriMlsService } from './TauriMlsService';
@@ -90,7 +93,10 @@ describe('TauriMlsService init - the state that is on disk and never crosses the
     const svc = makeService();
     invoke.mockImplementation((cmd: string) =>
       cmd === 'initialiser_mls'
-        ? Promise.reject(new Error('STATE_UNDECRYPTABLE'))
+        ? Promise.reject({
+            code: 'STATE_UNDECRYPTABLE',
+            message: 'aead::Error',
+          })
         : Promise.resolve(undefined)
     );
 
@@ -108,7 +114,10 @@ describe('TauriMlsService init - the state that is on disk and never crosses the
       if (cmd !== 'initialiser_mls') return Promise.resolve(undefined);
       attempts += 1;
       return attempts === 1
-        ? Promise.reject(new Error('STATE_UNDECRYPTABLE'))
+        ? Promise.reject({
+            code: 'STATE_UNDECRYPTABLE',
+            message: 'aead::Error',
+          })
         : Promise.resolve(undefined);
     });
 
@@ -132,7 +141,7 @@ describe('TauriMlsService init - the state that is on disk and never crosses the
       if (cmd !== 'initialiser_mls') return Promise.resolve(undefined);
       attempts += 1;
       return attempts === 1
-        ? Promise.reject(new Error('IDENTITY_MISMATCH'))
+        ? Promise.reject({ code: 'IDENTITY_MISMATCH', message: 'u:a vs u:b' })
         : Promise.resolve(undefined);
     });
 

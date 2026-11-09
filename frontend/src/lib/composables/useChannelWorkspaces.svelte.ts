@@ -1,5 +1,6 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { slugify } from '$lib/utils/textFold';
+import { conversationBeingRead } from '$lib/utils/chat/arrivalRuntime';
 import {
   clearSalonUnreadLocally,
   communityUnreadUpTo,
@@ -7,7 +8,11 @@ import {
 } from '$lib/utils/chat/salonUnread';
 import { flushSalonReadMarks } from '$lib/utils/chat/salonReadMarkQueue';
 import { ChannelApiError, ChannelService } from '$lib/services/ChannelService';
-import { RefreshFailedError, SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
+import {
+  SessionExpiredError,
+  SignOutInProgressError,
+  TransientAnswerError,
+} from '$lib/stores/auth';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
@@ -52,7 +57,14 @@ import {
   ensureCommunityDistributionGroup,
   enterPrivateSalonGroup,
 } from '$lib/utils/graine/distributionGroup';
-import { leaveKeyGroupToMainTab } from '$lib/utils/graine/followerTabKeyGroup';
+import {
+  enterKeyGroupOnGesture,
+  leaveKeyGroupToMainTab,
+} from '$lib/utils/graine/followerTabKeyGroup';
+import {
+  abandonDelegatedCommits,
+  type DelegatedCommitExecutors,
+} from '$lib/utils/chat/tabCommitDelegation';
 import { requestCommunityHistory } from '$lib/utils/graine/repair';
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
@@ -350,9 +362,10 @@ export function useChannelWorkspaces() {
   function isRetryableLoadError(error: unknown): boolean {
     // The server answered. Only its own 5xx is worth asking again; a 4xx is a decision about us.
     if (error instanceof ApiRefusalError) return error.status >= 500;
-    // The refresh endpoint answered something that is not a verdict on the session - transient by
-    // construction, since 401 and 403 leave as `SessionExpiredError` instead.
-    if (error instanceof RefreshFailedError) return true;
+    // The refresh endpoint answered something that is NOT A VERDICT (a 5xx, 408, 429, an edge's
+    // answer): typed at its throw as `TransientAnswerError`. Its base, a plain `RefreshFailedError`,
+    // is the app's own 4xx refusal of the refresh - a verdict, asked again for nothing.
+    if (error instanceof TransientAnswerError) return true;
     // NOBODY ANSWERED: the one predicate, by type (`transportFailure.ts`). It is what reads Tauri's
     // `error sending request for url ...` as the network failure it is - that bare string used to
     // fall through every test here and give up as `non-retryable` (Mi 9T, `v1.2.7-alpha.1`).
@@ -579,9 +592,7 @@ export function useChannelWorkspaces() {
         viewerHasAccess,
         ensureMls: ctx.ensureMls,
         log: ctx.log,
-      }).catch((e: unknown) =>
-        leaveKeyGroupToMainTab(e, `the salon ${actualId}`, { gesture: false, log: ctx.log })
-      );
+      }).catch((e: unknown) => leaveKeyGroupToMainTab(e, `the salon ${actualId}`, ctx.log));
       assertListingSession(session, `the salon ${actualId}`);
       // ENTERED: a send typed into this salon before the walk reached it goes now (`salonSendGate`).
       openSalonSendGate(actualId);
@@ -622,10 +633,7 @@ export function useChannelWorkspaces() {
     // group. Said by the caller (`loadCommunitySalons`), which asks the same question after this.
     if (goneSinceRequest()) return;
     await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log).catch((e: unknown) =>
-      leaveKeyGroupToMainTab(e, `the key group of ${workspaceId}`, {
-        gesture: false,
-        log: ctx.log,
-      })
+      leaveKeyGroupToMainTab(e, `the key group of ${workspaceId}`, ctx.log)
     );
   }
 
@@ -1210,42 +1218,84 @@ export function useChannelWorkspaces() {
     // group, and the community's still carries every public salon of the same community. The join
     // itself is idempotent and coalesced per scope (`ensureDistributionGroupFor`), so a second
     // channel joined in the same session costs one shared promise and no second external commit.
-    // A follower tab may enter neither group: said once to the member, and the join goes on without.
-    try {
-      await enterJoinedChannelGroups(channelId, workspaceId, isPrivate, ensureMls, log);
-    } catch (e) {
-      leaveKeyGroupToMainTab(e, `the salon ${channelId}`, { gesture: true });
+    // A FOLLOWER TAB HANDS BOTH ENTRIES TO THE LEADER (`enterKeyGroupOnGesture`), in the same order,
+    // and a refused community entry ENDS the gesture: the member has been told once, and the salon's
+    // entry would meet the same refusal and say it again.
+    if (ensureMls) {
+      const entered = await enterKeyGroupOnGesture(
+        { kind: 'enter-community-key-group', workspaceId },
+        async () => {
+          const mls = await ensureMls();
+          await ensureCommunityDistributionGroup(mls, service, workspaceId, log);
+        }
+      );
+      if (!entered) {
+        log(
+          `[GRAINE] ${channelId.slice(0, 8)}...: the community's key group was refused - the salon's is not asked`
+        );
+        return;
+      }
     }
+    await enterKeyGroupOnGesture(
+      { kind: 'enter-salon-group', workspaceId, channelId, isPrivate },
+      () => enterSalonGroupWithAccess(workspaceId, channelId, isPrivate, ensureMls, log)
+    );
   }
 
-  /** The two groups {@link enterJoinedChannel} enters, in order. */
-  async function enterJoinedChannelGroups(
-    channelId: string,
+  /**
+   * A salon's own key group, entered by a member who HAS ACCESS - having just joined or created it is
+   * the access, so nothing here can be a salon the viewer merely sees.
+   *
+   * A PRIVATE SALON JOINED IN-SESSION NEEDS ITS GROUP BEFORE THE FIRST SEND, exactly as one loaded
+   * at startup does, and nothing else would fetch it until the next full reload.
+   *
+   * THE LOG IS A PARAMETER BECAUSE IT USED TO BE `console.info`. This is the one of the three
+   * entries with no `ChannelWorkspaceContext` to hand, and reaching for the console meant a salon
+   * joined in-session left nothing in the log every other GRAINE line lands in - including the
+   * declined-salon line a stale-tree diagnosis reads.
+   */
+  async function enterSalonGroupWithAccess(
     workspaceId: string,
+    channelId: string,
     isPrivate: boolean,
     ensureMls: (() => IMlsService | Promise<IMlsService>) | undefined,
     log: (message: string) => void
   ): Promise<void> {
-    if (ensureMls) {
-      const mls = await ensureMls();
-      await ensureCommunityDistributionGroup(mls, service, workspaceId, log);
-    }
-
-    // A PRIVATE SALON JOINED IN-SESSION NEEDS ITS GROUP BEFORE THE FIRST SEND, exactly as one
-    // loaded at startup does, and nothing else would fetch it until the next full reload - the
-    // same window this function was written to close for the channel-to-community map.
-    //
-    // THE LOG IS A PARAMETER BECAUSE IT USED TO BE `console.info`. This is the one of the three
-    // entries with no `ChannelWorkspaceContext` to hand, and reaching for the console meant a salon
-    // joined in-session left nothing in the log every other GRAINE line lands in - including the
-    // declined-salon line a stale-tree diagnosis reads.
     await enterPrivateSalonGroup(service, workspaceId, channelId, {
       isPrivate,
-      // Having just joined IS the access; nothing here can be a salon the viewer merely sees.
       viewerHasAccess: true,
       ensureMls,
       log,
     });
+  }
+
+  /**
+   * THE LEADER HALF of the key-group entries a follower tab hands over (`tabCommitDelegation.ts`):
+   * the same idempotent entries this tab's own gestures run, on its own state. `ctxOf` is read at
+   * each execution: the session is not up when they are registered.
+   */
+  function delegatedKeyGroupExecutors(
+    ctxOf: () => ChannelWorkspaceContext
+  ): Pick<DelegatedCommitExecutors, 'enter-community-key-group' | 'enter-salon-group'> {
+    return {
+      'enter-community-key-group': async ({ workspaceId }) => {
+        const ctx = ctxOf();
+        if (!ctx.ensureMls)
+          throw new Error('the leader tab has no MLS client to enter a key group');
+        await ensureCommunityDistributionGroup(
+          await ctx.ensureMls(),
+          service,
+          workspaceId,
+          ctx.log
+        );
+        return 'entered';
+      },
+      'enter-salon-group': async ({ workspaceId, channelId, isPrivate }) => {
+        const ctx = ctxOf();
+        await enterSalonGroupWithAccess(workspaceId, channelId, isPrivate, ctx.ensureMls, ctx.log);
+        return 'entered';
+      },
+    };
   }
 
   // ---------- API operations ----------
@@ -1258,7 +1308,8 @@ export function useChannelWorkspaces() {
   function refreshSalonUnread(ctx: ChannelWorkspaceContext, reason: string): Promise<void> {
     return reconcileSalonUnreadFromServer({
       conversations: ctx.conversations,
-      selectedId: ctx.getSelectedConversationId?.() ?? null,
+      // The salon being READ, not the bare selection (`conversationBeingRead`).
+      selectedId: conversationBeingRead(ctx.getSelectedConversationId?.()),
       userId: currentUserId() ?? '',
       fetchCounts: () => service.listUnreadCounts(),
       settleOwedMarks: () =>
@@ -1379,6 +1430,11 @@ export function useChannelWorkspaces() {
     resetSalonSendGate();
     const abandoned = abandonMlsReadyWaiters('signed out');
     if (abandoned > 0) log(`[WORKSPACE-LOAD] signed out: ${abandoned} key-group wait(s) abandoned`);
+    // A gesture this tab handed to the main tab belongs to the session that just ended: never run
+    // for the next one (`tabCommitDelegation.ts`).
+    const handedOver = abandonDelegatedCommits('signed out');
+    if (handedOver > 0)
+      log(`[TAB-COMMIT] signed out: ${handedOver} handed-over gesture(s) abandoned`);
     if (channelWorkspaces.length > 0) {
       log(`[WORKSPACE-SNAPSHOT] signed out: ${channelWorkspaces.length} community(ies) forgotten`);
     }
@@ -1682,11 +1738,11 @@ export function useChannelWorkspaces() {
     // unknown conversation. Never fatal - a community that fails to prepare must still appear in the
     // sidebar, and `ensureCommunityDistributionGroup` logs the cause.
     if (workspaceId && ctx.ensureMls) {
-      const mls = await ctx.ensureMls();
-      await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log).catch(
-        (e: unknown) =>
-          leaveKeyGroupToMainTab(e, `the key group of ${workspaceId}`, { gesture: true })
-      );
+      const ensureMls = ctx.ensureMls;
+      await enterKeyGroupOnGesture({ kind: 'enter-community-key-group', workspaceId }, async () => {
+        const mls = await ensureMls();
+        await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
+      });
     }
 
     // Immediately load the channels the backend created (e.g. the default "general" channel)
@@ -1788,13 +1844,9 @@ export function useChannelWorkspaces() {
       // The salon was created private, so social-service has already minted its group; this device
       // is the one that initialises the MLS state on it, and it must do so before the first send.
       // Creating it IS the access.
-      await enterPrivateSalonGroup(service, workspaceId, actualId, {
-        isPrivate,
-        viewerHasAccess: true,
-        ensureMls: ctx.ensureMls,
-        log: ctx.log,
-      }).catch((e: unknown) =>
-        leaveKeyGroupToMainTab(e, `the salon ${actualId}`, { gesture: true })
+      await enterKeyGroupOnGesture(
+        { kind: 'enter-salon-group', workspaceId, channelId: actualId, isPrivate },
+        () => enterSalonGroupWithAccess(workspaceId, actualId, isPrivate, ctx.ensureMls, ctx.log)
       );
       openSalonSendGate(actualId);
 
@@ -1815,6 +1867,7 @@ export function useChannelWorkspaces() {
           id: channelId,
           lifecycle: 'active',
           identity: { contactName: channelId, displayName: normalizedChannelName },
+          lastMessageAt: Date.now(), // creation moment, see groupCreation
         })
       );
       await ctx.saveConversation(channelId);
@@ -2571,9 +2624,39 @@ export function useChannelWorkspaces() {
    * Applies what a role grants NOW, from the server: either its own answer to an edit, or the
    * announcement of somebody else's.
    */
-  function handleRolePermissionsChanged(event: { roleId: string; permissions: string[] }) {
+  function handleRolePermissionsChanged(event: {
+    roleId: string;
+    permissions: string[];
+    label?: string | null;
+  }) {
     if (!event.roleId) return;
     rolePermissions = { ...rolePermissions, [event.roleId]: [...event.permissions] };
+    // Absent leaves the name where it was; null is the community resetting it to the default.
+    if (event.label !== undefined) {
+      roleLabels = { ...roleLabels, [event.roleId]: event.label };
+    }
+  }
+
+  /**
+   * The community's own display name for each role, keyed by role id (null / absent: the localized
+   * default). Same shape and reasons as `rolePermissions`: the panel fills it from the listing it
+   * loads, and the server's `workspace.role.permissions` announcement - which carries the name -
+   * keeps it current for every member without a reload. LABELS ONLY: nothing decides on these.
+   */
+  let roleLabels = $state<Record<string, string | null>>({});
+
+  /**
+   * Applies ONE role's name as the server's own answer to a rename gave it. Idempotent with the
+   * announcement of the same write (same value either way), so a publish that never arrives cannot
+   * leave a saved name looking reverted.
+   */
+  function setRoleLabel(roleId: string, label: string | null) {
+    roleLabels = { ...roleLabels, [roleId]: label };
+  }
+
+  /** Replaces what is known about role names - what the panel does when it lists a community's roles. */
+  function setRoleLabels(all: Record<string, string | null>) {
+    roleLabels = { ...all };
   }
 
   function handleWorkspaceUpdated(event: {
@@ -2614,6 +2697,8 @@ export function useChannelWorkspaces() {
   }
 
   return {
+    /** The leader half of a follower tab's key-group entries (`tabCommitDelegation`). */
+    delegatedKeyGroupExecutors,
     /** Reactive array of workspace entries shown in the sidebar. */
     get channelWorkspaces() {
       return channelWorkspaces;
@@ -2704,6 +2789,12 @@ export function useChannelWorkspaces() {
     setRolePermissions,
     /** Applies an incoming real-time change to what a role grants (this device's or anybody's). */
     handleRolePermissionsChanged,
+    /** The community's own role names, keyed by role id - see the state's own note. */
+    get roleLabels() {
+      return roleLabels;
+    },
+    setRoleLabels,
+    setRoleLabel,
 
     handleWorkspaceUpdated,
     /** Applies an incoming real-time workspace-deleted event (an admin deleted the community). */

@@ -1,11 +1,25 @@
 import type { PostNotification } from './api';
+import type { AppPath } from '$lib/utils/internalPath';
+import { BOOKINGS_HREF } from '$lib/bookings/routes';
 import { formResponsesRoute } from '$lib/forms/responsesLink';
 
 /**
  * The author's inbox of republication requests (D38b) - where a `repost_personal_requested`
  * notification and its push (`fr.emse.canari://republication-requests`) both land.
  */
-export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests';
+export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests' satisfies AppPath;
+
+/**
+ * The reader's inbox of follow requests (WP-F4) - where a `follow_request` notification and its push
+ * (`fr.emse.canari://follow-requests`) both land.
+ */
+export const FOLLOW_REQUESTS_ROUTE = '/notifications/follow-requests' satisfies AppPath;
+
+/**
+ * The help page a new Lydia cashier is sent to (enrolment lot 3): what Lydia Pro is, what the role
+ * allows, and what to do with Lydia's SMS. Also linked from the association's "Caissiers" section.
+ */
+export const LYDIA_PRO_HELP_ROUTE = '/help/lydia-pro' satisfies AppPath;
 
 /**
  * WHERE A NOTIFICATION GOES WHEN IT IS OPENED - the one answer, for both surfaces.
@@ -22,7 +36,9 @@ export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests';
  * validated. That is also why an event notification lands on a list rather than on the event: the
  * thing the reader has to do is act on it, and the queue is where acting happens.
  */
-export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'>): string | null {
+export function notificationHref(
+  notif: Pick<PostNotification, 'type' | 'postId' | 'meta'>
+): AppPath | null {
   switch (notif.type) {
     case 'form_reminder':
       return `/forms/${notif.postId}`;
@@ -43,20 +59,48 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'event_deleted':
     case 'event_pending':
       return '/calendar';
+    // The same type reaches the organiser, the partners AND the validators; the validators' row
+    // (meta.audience, written with the push's 'proposed' action) opens the validation queue like
+    // an event proposal, everybody else the agenda.
+    case 'event_pending_coorganiser':
+      return notif.meta?.audience === 'validators' ? '/admin/agenda' : '/calendar';
     // The answer to a profile correction request: `postId` holds the REQUEST's id, which has no page
     // of its own - the profile is where the corrected data, or the request's state, is shown.
     case 'profile_correction_applied':
     case 'profile_correction_refused':
       return '/profile';
+    // An association refunded the reader (Lydia refunds, lot 4): their purchases, where the payment
+    // now reads as refunded. `postId` is the association's id, which that page does not need.
+    case 'lydia_refund_issued':
+      return '/account/purchases';
     // The association's proposal queue is reached by SLUG, which this synchronous function cannot
     // look up: `resolveNotificationHref` owns these two.
+    // A member was added as a Lydia cashier: the page saying what Lydia Pro is and what to do next.
+    case 'lydia_cashier_added':
+      return LYDIA_PRO_HELP_ROUTE;
     case 'repost_proposed':
     case 'coorganise_proposed':
+    case 'lydia_payments_active':
+    case 'lydia_payments_paused':
+    case 'delegation_revoked':
+    case 'delegation_receiver_not_ready':
+    case 'delegation_resumed':
       return null;
     // D38b: the author was asked to let an association carry a personal post. Their inbox is where
     // the answer is given; `postId` is the post, which the inbox row links to.
     case 'repost_personal_requested':
       return REPUBLICATION_REQUESTS_ROUTE;
+    // A person asks to follow the reader (WP-F4): the inbox where it is answered. `postId` is the
+    // ASKER's id, never a post.
+    case 'follow_request':
+      return FOLLOW_REQUESTS_ROUTE;
+    // The person the reader asked accepted: their profile. `postId` is that person's id.
+    case 'follow_accepted':
+      return `/profile/${encodeURIComponent(notif.postId)}`;
+    // A followed person's birthday: their profile, where the reader can wish it. `postId` is that
+    // person's id (docs/wiki/birthdays.md).
+    case 'birthday':
+      return `/profile/${encodeURIComponent(notif.postId)}`;
     // The types whose `postId` IS a post.
     case 'comment':
     case 'reply':
@@ -65,6 +109,8 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'association_post':
     case 'followed_post':
     case 'association_repost':
+    // WP-F6: a person the reader follows reposted the post.
+    case 'member_repost':
     // D38b: the proposer was told the author's answer - the post shows it (carried, or not).
     case 'repost_personal_accepted':
     case 'repost_personal_refused':
@@ -76,6 +122,15 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'live_suspended':
     case 'live_withdrawn':
       return null;
+    // The bookings' notices (WP-N): `postId` is the BOOKING, which has no page of its own - the
+    // reader's bookings are listed on Reservations (a cancelled one there too, marked).
+    case 'booking_cancelled':
+    case 'booking_withdrawn':
+    case 'booking_added':
+    case 'booking_reminder':
+    case 'booking_changed':
+    case 'booking_removed':
+      return BOOKINGS_HREF;
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
     default:
@@ -97,6 +152,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'association_post',
   'followed_post',
   'association_repost',
+  'member_repost',
   'repost_proposed',
   'coorganise_proposed',
   'repost_personal_requested',
@@ -108,11 +164,28 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'event_updated',
   'event_deleted',
   'event_pending',
+  'event_pending_coorganiser',
   'profile_correction_applied',
   'profile_correction_refused',
   'live_cut',
   'live_suspended',
   'live_withdrawn',
+  'follow_request',
+  'follow_accepted',
+  'birthday',
+  'booking_cancelled',
+  'booking_withdrawn',
+  'booking_added',
+  'booking_reminder',
+  'booking_changed',
+  'booking_removed',
+  'lydia_payments_active',
+  'lydia_payments_paused',
+  'lydia_cashier_added',
+  'lydia_refund_issued',
+  'delegation_revoked',
+  'delegation_receiver_not_ready',
+  'delegation_resumed',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */
@@ -143,6 +216,15 @@ export function reportUnknownNotificationType(type: string): void {
 const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
   repost_proposed: 'republications',
   coorganise_proposed: 'republications',
+  // An association's Lydia payments became active / were paused: its payments section.
+  lydia_payments_active: 'payments',
+  lydia_payments_paused: 'payments',
+  // An entity collecting through a payment delegation (a list) was paused or resumed: its
+  // delegation section, where it picks a receiver (`/associations/<slug>/edit` of a list forwards
+  // to the list route, section kept).
+  delegation_revoked: 'delegation',
+  delegation_receiver_not_ready: 'delegation',
+  delegation_resumed: 'delegation',
 };
 
 /**
@@ -153,9 +235,9 @@ const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
  * notification could not be opened, rather than sending the reader somewhere else.
  */
 export async function resolveNotificationHref(
-  notif: Pick<PostNotification, 'type' | 'postId'>,
+  notif: Pick<PostNotification, 'type' | 'postId' | 'meta'>,
   lookupSlug: (associationId: string) => Promise<string>
-): Promise<string | null> {
+): Promise<AppPath | null> {
   const section = ASSOCIATION_QUEUE_TYPES[notif.type];
   if (!section) return notificationHref(notif);
   const slug = await lookupSlug(notif.postId);

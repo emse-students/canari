@@ -8,13 +8,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository, type EntityManager } from 'typeorm';
+import { In, IsNull, MoreThan, Repository, type EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
 import { Association } from '../associations/entities/association.entity';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { isDeadlock, isExclusionViolation } from '../common/pg-errors';
 import { frontendBaseUrl } from '../common/frontend-url';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
+import { associationVisibleTo, sameCampusAs } from '../spaces/viewer-visibility';
 import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
 import {
   answerSelections,
@@ -24,14 +26,26 @@ import {
   type ConditionalItem,
 } from '../forms/visibility';
 import { BookingSpace } from './entities/booking-space.entity';
+import {
+  ReviewCohortBoundaryException,
+  reviewCohort,
+  sameSideOfReviewCohort,
+} from '../review-cohort';
 import { BookingResource } from './entities/booking-resource.entity';
 import { BookingParticipant } from './entities/booking-participant.entity';
 import { Booking } from './entities/booking.entity';
 import { BookingBlock } from './entities/booking-block.entity';
 import { BookingSlotsService, type SlotView } from './booking-slots.service';
-import { availabilityWindows, checkRangeShape, datesAround, type Range } from './slots';
+import {
+  availabilityWindows,
+  checkRangeShape,
+  datesAround,
+  rangeLengthRefusal,
+  type Range,
+} from './slots';
 import { checkBookingWindow, checkQuotas, participantMayWithdraw } from './booking-rules';
 import {
+  bookingRevision,
   bookingView,
   privateInfoFor,
   relationTo,
@@ -39,19 +53,89 @@ import {
   type BookingView,
 } from './booking-views';
 import { BookingFilesService } from './booking-files.service';
+import { BookingNotificationsService } from './booking-notifications.service';
 import { fileAnswersOf, type FileAnswer } from '../forms/form-files.service';
+import {
+  isQuestionAnswered,
+  withNormalisedGridAnswers,
+  type FormAnswerValue,
+  type GridItem,
+} from '../forms/answer-bounds';
 import { bookingsWorkbook, type BookingExportLabels } from './booking-export';
 import {
   bookingCalendarPath,
   bookingCalendarSignatureMatches,
   bookingIcs,
 } from './booking-calendar';
-import type { CreateBlockDto, CreateBookingDto } from './dto/booking.dto';
+import type { CreateBlockDto, CreateBookingDto, EditBookingDto } from './dto/booking.dto';
+import { localDate } from './zoned-time';
+import { DELETED_ACCOUNT } from '../internal/account-erasure';
 
 /** Who is asking: the account nginx authenticated, and whether it is a global admin. */
 export interface Actor {
   userId: string;
   isGlobalAdmin: boolean;
+}
+
+/**
+ * What kind of rule a booking broke, typed where the rule is judged (`bookingRuleVerdict`):
+ * another booking or a block is in the way (`conflict`), a per-person ceiling (`quota`, D17), a
+ * setting of the space - shape, availability, window, people ceiling (`outside-rules`) - or the
+ * people named (`people`: an unknown account, a block between people, D21).
+ */
+export type BookingRuleFamily = 'conflict' | 'quota' | 'outside-rules' | 'people';
+
+/** One refusal of the shared booking rules: its family, its precise code and its HTTP status. */
+export interface BookingRuleRefusal {
+  family: BookingRuleFamily;
+  code: string;
+  status: 400 | 403 | 409;
+  extra?: Record<string, unknown>;
+}
+
+/**
+ * THE CODES AN EDIT IS REFUSED WITH (owner, 2026-11-02), one per family the owner named. The
+ * precise rule rides beside it as `reason` - the code a booking would have been refused with - so
+ * a screen words the family and may add the rule, and nobody reads a sentence.
+ */
+export const BOOKING_EDIT_CONFLICT = 'BOOKING_EDIT_CONFLICT';
+export const BOOKING_EDIT_QUOTA = 'BOOKING_EDIT_QUOTA';
+export const BOOKING_EDIT_OUTSIDE_RULES = 'BOOKING_EDIT_OUTSIDE_RULES';
+export const BOOKING_EDIT_FORBIDDEN = 'BOOKING_EDIT_FORBIDDEN';
+
+const EDIT_CODE_OF: Record<Exclude<BookingRuleFamily, 'people'>, string> = {
+  conflict: BOOKING_EDIT_CONFLICT,
+  quota: BOOKING_EDIT_QUOTA,
+  'outside-rules': BOOKING_EDIT_OUTSIDE_RULES,
+};
+
+/** The exception of one HTTP status, its body the typed refusal. */
+function httpRefusal(status: 400 | 403 | 409, body: Record<string, unknown>) {
+  if (status === 400) return new BadRequestException(body);
+  if (status === 403) return new ForbiddenException(body);
+  return new ConflictException(body);
+}
+
+/** A booking's refusal, as `book` has always answered it: the precise code, its extras. */
+export function ruleRefusalException(r: BookingRuleRefusal) {
+  return httpRefusal(r.status, { code: r.code, ...r.extra });
+}
+
+/**
+ * An edit's refusal: the family's `BOOKING_EDIT_*` code, the precise rule as `reason`. A refusal
+ * about the PEOPLE named keeps the code a booking answers (`unknown-account`,
+ * `participant-blocked`): it says nothing of the new time, and the screens already word it.
+ */
+export function editRefusalException(r: BookingRuleRefusal) {
+  if (r.family === 'people') return ruleRefusalException(r);
+  return httpRefusal(r.status, { code: EDIT_CODE_OF[r.family], reason: r.code, ...r.extra });
+}
+
+/** What one edit changed, for its notices (`BookingNotificationsService.edited`). */
+export interface BookingEditChange {
+  timeChanged: boolean;
+  added: string[];
+  removed: string[];
 }
 
 /** A unit of the grid as one viewer receives it (D9): a booking's names only when allowed. */
@@ -141,7 +225,8 @@ export class BookingsService {
     private readonly slots: BookingSlotsService,
     private readonly associations: AssociationsService,
     private readonly pricingFacts: PricingFactsService,
-    private readonly bookingFiles: BookingFilesService
+    private readonly bookingFiles: BookingFilesService,
+    private readonly notices: BookingNotificationsService
   ) {}
 
   // -- Rights ------------------------------------------------------------------------------------
@@ -178,12 +263,80 @@ export class BookingsService {
   /**
    * Refuses an account the space is not open to (D6, D31): enforced on every read and write, never
    * by hiding the space alone - a 'link' space is reached by its link, its audience still holds.
+   * Before the audience, the CAMPUS (`assertSpaceVisible`): a space outside the reader's spaces
+   * answers 404 `space-not-found`, exactly like one that does not exist. `use` says whether the
+   * caller only READS the space (`getSpace`, `spaceSlots`) or WRITES to it (`book`, `uploadFile`):
+   * only a read lets the account linked to one of its resources across the campus.
    */
-  private async assertMayUse(space: BookingSpace, actor: Actor, canManage: boolean) {
-    if (canManage || !space.audience) return;
+  private async assertMayUse(
+    space: BookingSpace,
+    actor: Actor,
+    canManage: boolean,
+    use: 'read' | 'write'
+  ) {
+    this.assertSameSideAsSpace(space, [actor.userId]);
+    if (canManage) return;
+    await this.assertSpaceVisible(space, actor.userId, use);
+    if (!space.audience) return;
     if (matchesCondition(space.audience, await this.factsFor(space, actor.userId))) return;
     this.logger.debug(`[BOOKINGS] refused by audience space=${space.id.slice(0, 8)}`);
     throw new ForbiddenException({ code: 'audience' });
+  }
+
+  /**
+   * Refuses (404 `space-not-found`) a space outside the reader's spaces (owner, 2026-10-31): an
+   * ASSOCIATION space when its association is not visible to them (`associationVisibleToViewerSql`:
+   * a member of it, D21, or its rules reach one of their spaces - the directory's predicate, the one
+   * `listedSpaces` filters on); a PERSONAL space when they are not on its owner's CAMPUS
+   * (`sameCampusAsViewerSql` - the campus, not a space, so staff with no cursus keep theirs). Its
+   * manager - the owner of a personal space - never reaches here (`assertMayUse`).
+   *
+   * ON A READ ONLY, the account linked to one of its resources (D10) is not refused here: the
+   * organiser named it - an alumnus holding a column of an association space, a colleague on
+   * another campus - so `getSpace` and `spaceSlots` pass this check for it. That is ALL it is
+   * granted: the audience (D6) is still asked next, so a linked account outside the audience is
+   * still refused (403 `audience`) and reads nothing; the space is not LISTED to it; and a WRITE -
+   * booking (`book`) or uploading a file answer (`uploadFile`) - from outside the campus answers 404
+   * like any other reader's, since the space never opened its columns to that campus. The one write
+   * left open to it is `addBlock` on ITS OWN column (D10), which does not go through this check: the
+   * linked account marks its own resource "Indisponible", gated on that column alone
+   * (`resource.linkedUserId`), and it books nothing, so no campus rule is crossed.
+   */
+  private async assertSpaceVisible(space: BookingSpace, userId: string, use: 'read' | 'write') {
+    const visible =
+      space.associationId !== null
+        ? await associationVisibleTo(this.spaces.manager, space.associationId, userId)
+        : await sameCampusAs(this.spaces.manager, space.ownerId, userId);
+    if (visible) return;
+    if (
+      use === 'read' &&
+      (await this.resources.exists({ where: { spaceId: space.id, linkedUserId: userId } }))
+    ) {
+      this.logger.debug(
+        `[BOOKINGS] space=${space.id.slice(0, 8)} open to ${userId.slice(0, 8)} outside its campus: ` +
+          'a read by the account linked to one of its resources (D10)'
+      );
+      return;
+    }
+    this.logger.log(
+      `[BOOKINGS] space=${space.id.slice(0, 8)} refused: outside the spaces of ${userId.slice(0, 8)} ` +
+        `(${space.associationId !== null ? 'association' : 'personal'} space)`
+    );
+    throw new NotFoundException({ code: 'space-not-found' });
+  }
+
+  /**
+   * Refuses (403 `REVIEW_COHORT_BOUNDARY`) anybody in `people` on the other side of the review
+   * cohort's boundary from the space's creator (`review-cohort.ts`): a review account uses only a
+   * review account's space, and nobody else uses one - a link reaches the space, never across. Asked
+   * before the audience and before management, both ways, on every read and write a use goes through.
+   */
+  private assertSameSideAsSpace(space: BookingSpace, people: readonly string[]) {
+    if (people.every((id) => sameSideOfReviewCohort(id, space.ownerId))) return;
+    this.logger.log(
+      `[REVIEW_COHORT] booking space=${space.id.slice(0, 8)} refused: across the review cohort's boundary`
+    );
+    throw new ReviewCohortBoundaryException();
   }
 
   // -- Reads -------------------------------------------------------------------------------------
@@ -193,7 +346,7 @@ export class BookingsService {
     this.logger.debug(`[BOOKINGS] getSpace space=${spaceId}`);
     const space = await this.loadSpace(spaceId);
     const canManage = await this.mayManage(space, actor);
-    await this.assertMayUse(space, actor, canManage);
+    await this.assertMayUse(space, actor, canManage, 'read');
     const resources = await this.resources.find({
       where: { spaceId },
       order: { position: 'ASC', createdAt: 'ASC' },
@@ -223,6 +376,8 @@ export class BookingsService {
       maxPeople: space.maxPeople,
       // How long a file answer is kept after the slot (D8), said under the file picker.
       retentionDays: space.retentionDays,
+      // The space's default reminder delay (Q-R1), offered as the booker's own in the sheet.
+      reminderMinutes: space.reminderMinutes,
       poster: space.poster,
       canManage,
       resources: resources.map((r) => ({
@@ -239,7 +394,7 @@ export class BookingsService {
     this.logger.debug(`[BOOKINGS] spaceSlots space=${spaceId} ${from}..${to}`);
     const space = await this.loadSpace(spaceId);
     const canManage = await this.mayManage(space, actor);
-    await this.assertMayUse(space, actor, canManage);
+    await this.assertMayUse(space, actor, canManage, 'read');
     const grid = await this.slots.spaceSlots(spaceId, from, to);
 
     const bookingIds = [
@@ -352,15 +507,18 @@ export class BookingsService {
       const space = resource && spaceById.get(resource.spaceId);
       if (!resource || !space) return [];
       const relation = relationTo(b, people, actor.userId, false, resource.linkedUserId);
-      const withdrawn = people.some(
-        (p) => p.bookingId === b.id && p.userId === actor.userId && p.withdrawnAt !== null
-      );
+      const own = people.find((p) => p.bookingId === b.id && p.userId === actor.userId);
+      const withdrawn = own !== undefined && own.withdrawnAt !== null;
       return [
         {
           ...bookingView(b, people, relation, space.nameVisibility, actor.userId),
           withdrawn: b.holderId !== actor.userId && withdrawn,
           holder: b.holderId === actor.userId,
           linked: resource.linkedUserId === actor.userId,
+          // THIS person's reminder delay (Q-R1): the holder's on the booking, a participant's on
+          // their own row; null = none. A linked account that is neither has none to set.
+          reminderMinutes:
+            b.holderId === actor.userId ? b.reminderMinutes : (own?.reminderMinutes ?? null),
           space: { id: space.id, name: space.name, timeZone: space.timeZone },
           resource: { id: resource.id, name: resource.name },
           privateInfo: privateInfoFor(relation, b.cancelledAt !== null, space, resource),
@@ -373,9 +531,14 @@ export class BookingsService {
    * The spaces a member may book from the Reservations page (D16, D31), by name, at most
    * {@link LISTED_SPACES_LIMIT} - the limit is the SQL's, so the page never reads more:
    * - a LISTED space only: a 'link' space is never listed, whoever asks (the psychologist case);
-   * - an association space only while its association is not ARCHIVED;
+   * - an association space only while its association is not ARCHIVED, and only when that
+   *   association is VISIBLE to the reader (`associationVisibleToViewerSql`, the directory's
+   *   predicate: a member of it, D21, or its rules reach one of their spaces - owner, 2026-10-31);
+   *   opened by its id, such a space answers 404 (`assertSpaceVisible`);
    * - a PERSONAL space only to its OWNER (D43): a person's free text is never published on the
-   *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code.
+   *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code;
+   * - a space a REVIEW ACCOUNT owns only to the review cohort, and to a review account only such a
+   *   space (`review-cohort.ts`): a store reviewer and a member never list each other's spaces.
    *
    * The audience (D6) is judged here with the facts `assertMayUse` judges a read with, so a listed
    * space always opens - but built ONCE for the page, never per space: the rights in one bulk
@@ -390,18 +553,26 @@ export class BookingsService {
    */
   async listedSpaces(actor: Actor) {
     this.logger.debug(`[BOOKINGS] listedSpaces user=${actor.userId.slice(0, 8)}`);
-    const rows = await this.spaces
+    const listed = this.spaces
       .createQueryBuilder('s')
       .leftJoin(Association, 'a', 'a.id = s.associationId')
       .where("s.discoverability = 'listed'")
       .andWhere(
-        '((s.associationId IS NULL AND s.ownerId = :me) OR (s.associationId IS NOT NULL AND a.archived = false))',
+        `((s.associationId IS NULL AND s.ownerId = :me) OR (s.associationId IS NOT NULL AND a.archived = false
+          AND ${associationVisibleToViewerSql('"s"."associationId"', ':me')}))`,
         { me: actor.userId }
       )
       .orderBy('s.name', 'ASC')
       .addOrderBy('s.id', 'ASC')
-      .limit(LISTED_SPACES_LIMIT)
-      .getMany();
+      .limit(LISTED_SPACES_LIMIT);
+    const cohort = reviewCohort();
+    if (cohort.length > 0) {
+      const inCohort = cohort.includes(actor.userId);
+      listed.andWhere(`s.ownerId ${inCohort ? 'IN' : 'NOT IN'} (:...reviewCohort)`, {
+        reviewCohort: [...cohort],
+      });
+    }
+    const rows = await listed.getMany();
     if (rows.length === 0) return [];
 
     const associationIds = [
@@ -552,16 +723,21 @@ export class BookingsService {
    * D20). `offset` is the position in that order; `nextOffset` is null on the last page. `ids`
    * narrows it to those bookings - the ones a D29 refusal named, which the organiser's screen lists
    * with their cancel button; an id of another space is simply not found.
+   *
+   * `fromMs` (WP-R5, D50) narrows it to what is STILL TO COME: the LIVE bookings (never cancelled)
+   * that end after that instant - the one under way included - so the dashboard's first page is
+   * the next ones, not the oldest of the space's whole history.
    */
   async spaceBookings(
     spaceId: string,
     actor: Actor,
     offset = 0,
     limit = SPACE_BOOKINGS_PAGE,
-    ids?: readonly string[]
+    ids?: readonly string[],
+    fromMs?: number
   ) {
     this.logger.debug(
-      `[BOOKINGS] spaceBookings space=${spaceId} offset=${offset} ids=${ids?.length ?? 'all'}`
+      `[BOOKINGS] spaceBookings space=${spaceId} offset=${offset} ids=${ids?.length ?? 'all'} from=${fromMs ?? 'all'}`
     );
     const space = await this.loadSpace(spaceId);
     if (!(await this.mayManage(space, actor))) {
@@ -571,7 +747,13 @@ export class BookingsService {
     const resources = await this.resources.findBy({ spaceId });
     if (resources.length === 0 || ids?.length === 0) return { items: [], nextOffset: null };
     const rows = await this.bookings.find({
-      where: { resourceId: In(resources.map((r) => r.id)), ...(ids ? { id: In([...ids]) } : {}) },
+      where: {
+        resourceId: In(resources.map((r) => r.id)),
+        ...(ids ? { id: In([...ids]) } : {}),
+        ...(fromMs !== undefined
+          ? { cancelledAt: IsNull(), endsAt: MoreThan(new Date(fromMs)) }
+          : {}),
+      },
       order: { startsAt: 'ASC', id: 'ASC' },
       skip: offset,
       take: take + 1,
@@ -669,17 +851,21 @@ export class BookingsService {
     m: EntityManager,
     spaceId: string,
     persons: string[],
-    sinceMs: number
+    sinceMs: number,
+    replacing: string | null
   ): Promise<Map<string, Range[]>> {
+    // `replacing`: the booking an edit replaces is not one of anyone's OTHER bookings - the new
+    // range is counted in its place, never on top of it.
     const rows: { person: string; startsAt: Date; endsAt: Date }[] = await m.query(
       `SELECT x.person, b."startsAt", b."endsAt"
          FROM unnest($2::varchar[]) AS x(person)
          JOIN bookings b ON b."cancelledAt" IS NULL AND b."endsAt" > $3
+                        AND ($4::uuid IS NULL OR b.id <> $4::uuid)
          JOIN booking_resources r ON r.id = b."resourceId" AND r."spaceId" = $1
         WHERE b."holderId" = x.person OR EXISTS (
               SELECT 1 FROM booking_participants p
                WHERE p."bookingId" = b.id AND p."userId" = x.person AND p."withdrawnAt" IS NULL)`,
-      [spaceId, persons, new Date(sinceMs)]
+      [spaceId, persons, new Date(sinceMs), replacing]
     );
     const out = new Map<string, Range[]>(persons.map((p) => [p, []]));
     for (const r of rows) {
@@ -695,19 +881,22 @@ export class BookingsService {
   private async validAnswers(
     space: BookingSpace,
     holderId: string,
-    answers: Record<string, string | string[] | number>
-  ): Promise<Record<string, string | string[] | number> | null> {
-    const items = (space.items ?? []) as (ConditionalItem & { required?: boolean })[];
+    raw: Record<string, FormAnswerValue>
+  ): Promise<Record<string, FormAnswerValue> | null> {
+    const items = (space.items ?? []) as (ConditionalItem & GridItem)[];
     if (items.length === 0) return null;
+    // A grid's answer judged against its rows and columns and stripped of its empty rows, the
+    // forms' rule (`answer-bounds.ts`) - the DTO accepts the shape for both since 2026-11-06.
+    const answers = withNormalisedGridAnswers(items, raw);
     // Keyed by the space's own question ids only: a `__proto__` key off the body never reaches
     // a map (`answerSelections`, the forms' rule).
     const selections = answerSelections(items, answers);
     const visible = visibleItemIds(items, await this.factsFor(space, holderId, selections));
-    const kept: Record<string, string | string[] | number> = {};
+    const kept: Record<string, FormAnswerValue> = {};
     for (const item of items) {
       if (!visible.has(item.id)) continue;
       const value = answers[item.id];
-      const present = Array.isArray(value) ? value.length > 0 : value !== undefined && value !== '';
+      const present = isQuestionAnswered(item, value);
       if (item.required && !present) {
         throw new BadRequestException({ code: 'answer-required', itemId: item.id });
       }
@@ -737,6 +926,131 @@ export class BookingsService {
   }
 
   /**
+   * THE ONE VALIDATOR OF A BOOKING'S RULES, shared by `book` and `edit` (owner, 2026-11-02: never
+   * two copies of the rules). Run INSIDE the caller's transaction, after `lockResource`: every
+   * setting it reads is the one the space and resource locks hold. In this order, the first that
+   * fails answering:
+   * - D4 the people ceiling (`too-many-people`), holder included - unless `onlyReduces`;
+   * - when `rangeChanged`: the shape (D3: `rangeLengthRefusal` from the settings alone, then
+   *   `checkRangeShape` against the availability), the window (D26) when `judgeWindow`, a block
+   *   over the range;
+   * - every account of `mustExist` exists (`unknown-account`) - the names returned are snapshots;
+   * - D21: no block between `blockSources` and a NEWCOMER (`participant-blocked`);
+   * - D17: each person of `quotaPersons` against their OTHER live bookings of the space, the one
+   *   `replacing` excepted - so an edit counts its booking as REPLACED, never as added.
+   *
+   * `onlyReduces` (an edit that only shrinks its range inside the old one and/or only removes
+   * people, review of #2945): such an edit asks for LESS than the booking already holds, so a
+   * setting tightened since (`maxPeople`, a quota, the window) never refuses it - the caller then
+   * also passes no `quotaPersons` and `judgeWindow: false`.
+   *
+   * The overlap with another booking is NOT judged here: the exclusion constraint is its last word
+   * (`23P01`), at the write, under the same locks. Answers a typed refusal rather than throwing it,
+   * so each caller words it its way (`ruleRefusalException`, `editRefusalException`).
+   */
+  private async bookingRuleVerdict(
+    m: EntityManager,
+    input: {
+      space: BookingSpace;
+      resource: BookingResource;
+      range: Range;
+      rangeChanged: boolean;
+      judgeWindow: boolean;
+      onlyReduces: boolean;
+      holderId: string;
+      participantIds: string[];
+      newcomers: string[];
+      mustExist: string[];
+      blockSources: string[];
+      quotaPersons: string[];
+      replacing: string | null;
+      nowMs: number;
+    }
+  ): Promise<{ refusal: BookingRuleRefusal } | { names: Map<string, string> }> {
+    const { space, resource, range, nowMs } = input;
+    const refuse = (
+      family: BookingRuleFamily,
+      code: string,
+      status: 400 | 403 | 409,
+      extra?: Record<string, unknown>
+    ) => {
+      this.logger.debug(`[BOOKINGS] rules refused ${family}/${code} space=${space.id.slice(0, 8)}`);
+      return { refusal: { family, code, status, ...(extra ? { extra } : {}) } };
+    };
+    const people = [input.holderId, ...input.participantIds];
+    if (!input.onlyReduces && space.maxPeople !== null && people.length > space.maxPeople) {
+      return refuse('outside-rules', 'too-many-people', 400, { maxPeople: space.maxPeople });
+    }
+
+    if (input.rangeChanged) {
+      // The shape (D3): one slot, or 1..maxSteps consecutive steps of one opening. The length
+      // bound comes first, from the settings alone: an over-long range is refused before any
+      // window is built.
+      const tooLong = rangeLengthRefusal(space, range);
+      if (tooLong) return refuse('outside-rules', tooLong, 400);
+      const [from, to] = datesAround(range, space.timeZone);
+      const [rules, exceptions] = await Promise.all([
+        m.query(
+          `SELECT weekday, "onDate"::text AS "onDate", "startTime"::text AS "startTime", "endTime"::text AS "endTime"
+             FROM booking_availability_rules WHERE "resourceId" = $1`,
+          [resource.id]
+        ),
+        m.query(
+          `SELECT "fromDate"::text AS "fromDate", "toDate"::text AS "toDate"
+             FROM booking_availability_exceptions WHERE "resourceId" = $1`,
+          [resource.id]
+        ),
+      ]);
+      const shape = checkRangeShape(
+        space,
+        availabilityWindows(space, rules, exceptions, from, to),
+        range
+      );
+      if (shape) return refuse('outside-rules', shape, 400);
+
+      const window = input.judgeWindow ? checkBookingWindow(space, range, nowMs) : null;
+      if (window) return refuse('outside-rules', window, 409);
+
+      const blocked: unknown[] = await m.query(
+        `SELECT 1 FROM booking_blocks WHERE "resourceId" = $1 AND "startsAt" < $3 AND "endsAt" > $2 LIMIT 1`,
+        [resource.id, new Date(range.startMs), new Date(range.endMs)]
+      );
+      if (blocked.length) return refuse('conflict', 'blocked', 409);
+    }
+
+    // Every account named must exist; names are snapshots taken now (D15).
+    const names = await this.namesOf(m, input.mustExist);
+    if (input.mustExist.some((id) => !names.has(id))) {
+      return refuse('people', 'unknown-account', 400);
+    }
+
+    // D21: a block between the one who adds and the one added, or the holder and them. Which of
+    // the two blocked is never said.
+    if (await this.anyBlocked(m, input.blockSources, input.newcomers)) {
+      return refuse('people', 'participant-blocked', 403);
+    }
+
+    // D17: each person against their own live bookings of this space - under the space lock, so
+    // no concurrent booking of theirs elsewhere in the space can slip in.
+    if (input.quotaPersons.length) {
+      const ranges = await this.liveRangesOf(
+        m,
+        space.id,
+        input.quotaPersons,
+        Math.min(nowMs, range.startMs) - QUOTA_LOOKBACK_MS,
+        input.replacing
+      );
+      for (const person of input.quotaPersons) {
+        const quota = checkQuotas(space, ranges.get(person) ?? [], range, nowMs);
+        if (quota) {
+          return refuse('quota', quota, 409, { holder: person === input.holderId });
+        }
+      }
+    }
+    return { names };
+  }
+
+  /**
    * Books a range of one resource (D4, D7, D12, D17, D20, D21, D26, D33). The organiser may book on
    * behalf of an account (`holderId`), outside the quotas (D17, D20); the window (D26) binds
    * everyone, the organiser included - D26 names no exemption.
@@ -753,7 +1067,7 @@ export class BookingsService {
     const holderId = (dto.holderId ?? actor.userId).trim().toLowerCase();
     const onBehalf = holderId !== actor.userId;
     if (onBehalf && !canManage) throw new ForbiddenException({ code: 'not-manager' });
-    if (!onBehalf) await this.assertMayUse(before, actor, canManage);
+    if (!onBehalf) await this.assertMayUse(before, actor, canManage, 'write');
     const range = this.parseRange(dto.startsAt, dto.endsAt);
 
     const participantIds = [
@@ -762,83 +1076,51 @@ export class BookingsService {
     if (participantIds.includes(holderId)) {
       throw new BadRequestException({ code: 'holder-is-participant' });
     }
+    const people = [holderId, ...participantIds];
+    // The holder a manager books for, and every participant, as much as the actor.
+    this.assertSameSideAsSpace(before, [actor.userId, ...people]);
     const answers = await this.validAnswers(before, holderId, dto.answers ?? {});
     const fileAnswers = this.fileAnswersIn(before, answers);
-    const people = [holderId, ...participantIds];
 
     try {
-      return await this.bookings.manager.transaction(async (m) => {
+      const booked = await this.bookings.manager.transaction(async (m) => {
         const { space, resource } = await this.lockResource(m, spaceId, dto.resourceId);
         if (JSON.stringify(space.items ?? []) !== JSON.stringify(before.items ?? [])) {
           throw new ConflictException({ code: 'space-changed' });
         }
-        if (space.maxPeople !== null && people.length > space.maxPeople) {
-          throw new BadRequestException({ code: 'too-many-people', maxPeople: space.maxPeople });
-        }
-
-        // The shape (D3): one slot, or 1..maxSteps steps of one window.
-        const [from, to] = datesAround(range, space.timeZone);
-        const [rules, exceptions] = await Promise.all([
-          m.query(
-            `SELECT weekday, "onDate"::text AS "onDate", "startTime"::text AS "startTime", "endTime"::text AS "endTime"
-               FROM booking_availability_rules WHERE "resourceId" = $1`,
-            [resource.id]
-          ),
-          m.query(
-            `SELECT "fromDate"::text AS "fromDate", "toDate"::text AS "toDate"
-               FROM booking_availability_exceptions WHERE "resourceId" = $1`,
-            [resource.id]
-          ),
-        ]);
-        const shape = checkRangeShape(
+        // THE ONE VALIDATOR a booking and an edit share (`bookingRuleVerdict`), read under the lock.
+        const verdict = await this.bookingRuleVerdict(m, {
           space,
-          availabilityWindows(space, rules, exceptions, from, to),
-          range
-        );
-        if (shape) throw new BadRequestException({ code: shape });
+          resource,
+          range,
+          rangeChanged: true,
+          judgeWindow: true,
+          onlyReduces: false,
+          holderId,
+          participantIds,
+          newcomers: participantIds,
+          mustExist: people,
+          // D21: a block between the one who adds and the one added, or the holder and them.
+          blockSources: onBehalf ? [actor.userId, holderId] : [actor.userId],
+          // D17: an organiser booking on someone's behalf is exempt (D20).
+          quotaPersons: onBehalf ? [] : people,
+          replacing: null,
+          nowMs,
+        });
+        if ('refusal' in verdict) throw ruleRefusalException(verdict.refusal);
+        const names = verdict.names;
 
-        const window = checkBookingWindow(space, range, nowMs);
-        if (window) throw new ConflictException({ code: window });
-
-        const blocked: unknown[] = await m.query(
-          `SELECT 1 FROM booking_blocks WHERE "resourceId" = $1 AND "startsAt" < $3 AND "endsAt" > $2 LIMIT 1`,
-          [resource.id, new Date(range.startMs), new Date(range.endMs)]
-        );
-        if (blocked.length) throw new ConflictException({ code: 'blocked' });
-
-        // Every account named must exist; names are snapshots taken now (D15).
-        const names = await this.namesOf(m, people);
-        if (people.some((id) => !names.has(id))) {
-          throw new BadRequestException({ code: 'unknown-account' });
-        }
-
-        // D21: a block between the one who adds and the one added, or the holder and them. Which of
-        // the two blocked is never said.
-        const sources = onBehalf ? [actor.userId, holderId] : [actor.userId];
-        if (await this.anyBlocked(m, sources, participantIds)) {
-          throw new ForbiddenException({ code: 'participant-blocked' });
-        }
-
-        // D17: each person of the booking against their own live bookings of this space - under
-        // the space lock, so no concurrent booking of theirs elsewhere in the space can slip in.
-        if (!onBehalf) {
-          const ranges = await this.liveRangesOf(
-            m,
-            spaceId,
-            people,
-            Math.min(nowMs, range.startMs) - QUOTA_LOOKBACK_MS
-          );
-          for (const person of people) {
-            const quota = checkQuotas(space, ranges.get(person) ?? [], range, nowMs);
-            if (quota) {
-              throw new ConflictException({ code: quota, holder: person === holderId });
-            }
-          }
-        }
-
+        // Each person's reminder delay (Q-R1): the space's default, or the booker's own choice
+        // for themselves - never for an account booked on behalf of, who chooses theirs later.
+        // Chosen NOW, which is what Q-R6 reads: a booking made inside its delay gets no reminder.
+        const holderReminder =
+          !onBehalf && dto.reminderMinutes !== undefined
+            ? dto.reminderMinutes
+            : space.reminderMinutes;
         const [row]: { id: string }[] = await m.query(
-          `INSERT INTO bookings ("resourceId", "holderId", "holderName", "bookedById", "startsAt", "endsAt", answers)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          `INSERT INTO bookings ("resourceId", "holderId", "holderName", "bookedById", "startsAt", "endsAt", answers,
+                                 "reminderMinutes", "reminderSetAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
           [
             resource.id,
             holderId,
@@ -847,13 +1129,21 @@ export class BookingsService {
             new Date(range.startMs),
             new Date(range.endMs),
             answers === null ? null : JSON.stringify(answers),
+            holderReminder,
+            new Date(nowMs),
           ]
         );
         if (participantIds.length) {
           await m.query(
-            `INSERT INTO booking_participants ("bookingId", "userId", "userName")
-             SELECT $1, u, n FROM unnest($2::varchar[], $3::varchar[]) AS x(u, n)`,
-            [row.id, participantIds, participantIds.map((p) => names.get(p))]
+            `INSERT INTO booking_participants ("bookingId", "userId", "userName", "reminderMinutes", "reminderSetAt")
+             SELECT $1, u, n, $4::int, $5::timestamptz FROM unnest($2::varchar[], $3::varchar[]) AS x(u, n)`,
+            [
+              row.id,
+              participantIds,
+              participantIds.map((p) => names.get(p)),
+              space.reminderMinutes,
+              new Date(nowMs),
+            ]
           );
         }
         // D7: each file answer must be the ACTOR's own upload for this space and question; taken in
@@ -864,6 +1154,9 @@ export class BookingsService {
         );
         return { id: row.id };
       });
+      // After the commit, best-effort (`BookingNotificationsService`): the people added are told.
+      await this.notices.added(booked.id, actor.userId);
+      return booked;
     } catch (err) {
       if (isExclusionViolation(err)) {
         this.logger.log(`[BOOKINGS] slot taken resource=${dto.resourceId.slice(0, 8)}`);
@@ -902,10 +1195,13 @@ export class BookingsService {
    *
    * WHO is judged BEFORE the booking's state: booking ids are published in the grid, so a stranger
    * must learn nothing of a booking's state from the refusal - only `not-yours`.
+   *
+   * Once committed, its people are told (D53, Q-R2), the one who cancelled excepted; `message` is
+   * the organiser's optional word (Q-R3), quoted by the notice and stored nowhere.
    */
-  async cancel(bookingId: string, actor: Actor, nowMs: number) {
+  async cancel(bookingId: string, actor: Actor, nowMs: number, message?: string) {
     this.logger.debug(`[BOOKINGS] cancel booking=${bookingId}`);
-    return this.bookings.manager.transaction(async (m) => {
+    const done = await this.bookings.manager.transaction(async (m) => {
       const { booking, space } = await this.lockBooking(m, bookingId);
       const isHolder = booking.holderId === actor.userId;
       if (!isHolder && !(await this.mayManage(space, actor))) {
@@ -921,18 +1217,269 @@ export class BookingsService {
         actor.userId,
       ]);
       this.logger.log(`[BOOKINGS] cancelled id=${bookingId.slice(0, 8)} byHolder=${isHolder}`);
-      return { ok: true };
+      return { isHolder };
     });
+    // Only the organiser's word is Q-R3's: a holder cancelling their own booking sends none.
+    await this.notices.cancelled(bookingId, actor.userId, done.isHolder ? undefined : message);
+    return { ok: true };
+  }
+
+  /**
+   * EDITS A COMING BOOKING (owner, 2026-11-02, "Modifier la réservation"): its range, on the SAME
+   * local day and the same resource, and its other people. Nothing else: the holder, the answers
+   * and the files stay, and changing the day or the resource is still a cancellation and a new
+   * booking. This supersedes D36 ("a holder can only cancel") and D20's "no move".
+   *
+   * WHO: exactly who may `cancel` - its holder, or whoever manages the space (a global admin
+   * included); anyone else is refused `BOOKING_EDIT_FORBIDDEN` before anything of the booking's
+   * state is said, and before any lock is taken. A holder who does not manage the space is also
+   * asked the campus and the audience, as when booking (`assertMayUse`, 'write'). A manager editing
+   * someone else's booking is exempt from the quotas, as when booking on their behalf (D17, D20).
+   *
+   * LESS IS NEVER REFUSED: an edit whose range sits inside the old one and that adds nobody skips
+   * the quotas, the people ceiling and the window - a setting tightened since cannot forbid giving
+   * back. The window (D26) reads the start alone, so it is judged only when the start moves out of
+   * the old range.
+   *
+   * ALL OR NOTHING, AND THE ORIGINAL IS NEVER RELEASED: one transaction takes the space, the
+   * resource and then the booking row (`FOR UPDATE`, the order every colliding write takes), runs
+   * the ONE validator a booking runs (`bookingRuleVerdict`, its own range counted as replaced), and
+   * UPDATEs the row in place. The exclusion constraint checks the new range against every OTHER
+   * live booking at that UPDATE; a `23P01` rolls the whole edit back - the old range, which was
+   * never freed, is still the booking's - and answers `BOOKING_EDIT_CONFLICT`. A concurrent
+   * booking of the same slot waits on the same resource lock, so exactly one of the two wins.
+   *
+   * People: the request carries the WHOLE new set. A person removed is marked `withdrawnAt` (the
+   * row stays, D15, and every reader already treats them as gone: their view, their calendar link,
+   * the reminder, the quotas); a person added is inserted, or their old row brought back. An erased
+   * account's tombstone is never touched. A request that changes nothing changes nothing and tells
+   * nobody (a retry after a lost answer).
+   *
+   * STALE VIEWS ARE REFUSED: the request carries the `revision` its sheet read (`bookingRevision`:
+   * the range and the live people, derived, no column). Any other state under the lock - a
+   * participant withdrew, another edit landed - answers `BOOKING_EDIT_CONFLICT` / `stale` and
+   * changes nothing, so an edit never puts back a person who left (review of #2945).
+   *
+   * Reminders: when the START moves, every person still on the booking is re-armed as if they had
+   * chosen their delay now (`reminderSentAt` cleared, `reminderSetAt` = now): a reminder already
+   * sent for the old time is owed again for the new one, and a new start already inside the delay
+   * gets none (Q-R6). An end-only edit re-arms nothing: a reminder due and not yet claimed is
+   * still sent. Each keeps their own delay; a newcomer starts at the space's default, as at
+   * booking time. The `.ics` is read live from the row, so "Ajouter a mon calendrier" gives the new
+   * time - an entry a calendar already imported is replaced by re-adding it (same UID).
+   *
+   * Once committed, best-effort (`BookingNotificationsService.edited`): those added, those removed,
+   * and - when the time changed - those who stay are told, the one who edited excepted.
+   */
+  async edit(bookingId: string, dto: EditBookingDto, actor: Actor, nowMs: number) {
+    this.logger.debug(`[BOOKINGS] edit booking=${bookingId}`);
+    const range = this.parseRange(dto.startsAt, dto.endsAt);
+    const participantIds = [...new Set(dto.participantIds.map((p) => p.trim().toLowerCase()))];
+    // Where the booking is and whose it is, read before the locks: they are taken space first,
+    // then resource, and the RIGHTS are judged before any of them (as `book` does) - `mayManage`
+    // may ask the associations, which a held lock must not wait on.
+    const [place]: { resourceId: string; spaceId: string; holderId: string }[] =
+      await this.bookings.manager.query(
+        `SELECT b."resourceId", r."spaceId", b."holderId" FROM bookings b
+           JOIN booking_resources r ON r.id = b."resourceId" WHERE b.id = $1`,
+        [bookingId]
+      );
+    if (!place) throw new NotFoundException({ code: 'booking-not-found' });
+    const before = await this.loadSpace(place.spaceId);
+    const manages = await this.mayManage(before, actor);
+    if (place.holderId !== actor.userId && !manages) {
+      this.logger.log(`[BOOKINGS] edit refused: not the holder nor a manager`);
+      throw new ForbiddenException({ code: BOOKING_EDIT_FORBIDDEN, reason: 'not-yours' });
+    }
+    // A holder editing their own booking WRITES to the space, as when booking: the campus and the
+    // audience are asked again (review of #2945) - a holder the space no longer admits may still
+    // cancel, never move or grow their booking.
+    if (!manages) await this.assertMayUse(before, actor, false, 'write');
+
+    try {
+      const outcome = await this.bookings.manager.transaction(async (m) => {
+        const { space, resource } = await this.lockResource(m, place.spaceId, place.resourceId);
+        const [booking]: Booking[] = await m.query(
+          `SELECT * FROM bookings WHERE id = $1 FOR UPDATE`,
+          [bookingId]
+        );
+        // Deleted between the two reads (its space deleted, an account erased): as if never there.
+        if (!booking) throw new NotFoundException({ code: 'booking-not-found' });
+        // The holder never changes, so the rights judged above still hold; the row says so again.
+        const isHolder = booking.holderId === actor.userId;
+        if (!isHolder && !manages) {
+          this.logger.error(`[BOOKINGS] edit refused: holder changed under the lock`);
+          throw new ForbiddenException({ code: BOOKING_EDIT_FORBIDDEN, reason: 'not-yours' });
+        }
+        if (booking.cancelledAt) throw new ConflictException({ code: 'already-cancelled' });
+        const oldRange = {
+          startMs: new Date(booking.startsAt).getTime(),
+          endMs: new Date(booking.endsAt).getTime(),
+        };
+        if (oldRange.startMs <= nowMs) throw new ConflictException({ code: 'history-frozen' });
+        if (participantIds.includes(booking.holderId)) {
+          throw new BadRequestException({ code: 'holder-is-participant' });
+        }
+        this.assertSameSideAsSpace(space, [actor.userId, ...participantIds]);
+        // The day is not editable (owner, 2026-11-02): another day is a new booking.
+        if (
+          localDate(range.startMs, space.timeZone) !== localDate(oldRange.startMs, space.timeZone)
+        ) {
+          this.logger.debug(
+            `[BOOKINGS] edit refused: another day booking=${bookingId.slice(0, 8)}`
+          );
+          throw new BadRequestException({ code: BOOKING_EDIT_OUTSIDE_RULES, reason: 'other-day' });
+        }
+
+        const live: { userId: string }[] = await m.query(
+          `SELECT "userId" FROM booking_participants
+            WHERE "bookingId" = $1 AND "withdrawnAt" IS NULL FOR UPDATE`,
+          [bookingId]
+        );
+        const present = new Set(live.map((p) => p.userId).filter((id) => id !== DELETED_ACCOUNT));
+        const added = participantIds.filter((p) => !present.has(p));
+        const removed = [...present].filter((p) => !participantIds.includes(p));
+        const startMoved = range.startMs !== oldRange.startMs;
+        const timeChanged = startMoved || range.endMs !== oldRange.endMs;
+        if (!timeChanged && added.length === 0 && removed.length === 0) {
+          this.logger.debug(`[BOOKINGS] edit changes nothing booking=${bookingId.slice(0, 8)}`);
+          return null;
+        }
+        // Built on another state than this one (a participant withdrew, another edit landed): the
+        // set it carries would put back who left. Refused whole, nothing changed (review of #2945).
+        // Judged after "changes nothing", so a retry of an edit that landed stays a no-op.
+        const revision = bookingRevision(
+          booking.startsAt,
+          booking.endsAt,
+          live.map((p) => p.userId)
+        );
+        if (dto.revision !== revision) {
+          this.logger.log(`[BOOKINGS] edit refused: stale view booking=${bookingId.slice(0, 8)}`);
+          throw new ConflictException({ code: BOOKING_EDIT_CONFLICT, reason: 'stale' });
+        }
+        // An edit that asks for LESS than the booking holds - its range inside the old one, nobody
+        // added - is never refused by a setting tightened since (review of #2945).
+        const inside = range.startMs >= oldRange.startMs && range.endMs <= oldRange.endMs;
+        const onlyReduces = inside && added.length === 0;
+
+        const verdict = await this.bookingRuleVerdict(m, {
+          space,
+          resource,
+          range,
+          rangeChanged: timeChanged,
+          // The window (D26) reads the START alone: judged only when it moves outside the old
+          // range - a later start inside it is further from now, never closer.
+          judgeWindow: startMoved && !inside,
+          onlyReduces,
+          holderId: booking.holderId,
+          participantIds,
+          newcomers: added,
+          mustExist: added,
+          blockSources: isHolder ? [actor.userId] : [actor.userId, booking.holderId],
+          // A manager editing someone else's booking is exempt (D17, D20), and so is an edit that
+          // only reduces. Otherwise a NEWCOMER always counts; the people already on it only when
+          // the time changes - the same range replacing itself costs nobody anything.
+          quotaPersons:
+            !isHolder || onlyReduces
+              ? []
+              : timeChanged
+                ? [booking.holderId, ...participantIds]
+                : added,
+          replacing: bookingId,
+          nowMs,
+        });
+        if ('refusal' in verdict) {
+          this.logger.log(
+            `[BOOKINGS] edit refused ${verdict.refusal.family}/${verdict.refusal.code} booking=${bookingId.slice(0, 8)}`
+          );
+          throw editRefusalException(verdict.refusal);
+        }
+
+        const at = new Date(nowMs);
+        if (timeChanged) {
+          // In place: the exclusion constraint judges the new range against every OTHER live
+          // booking here, and a 23P01 rolls everything back to the old range.
+          await m.query(`UPDATE bookings SET "startsAt" = $2, "endsAt" = $3 WHERE id = $1`, [
+            bookingId,
+            new Date(range.startMs),
+            new Date(range.endMs),
+          ]);
+        }
+        if (startMoved) {
+          // The reminders read the START alone (Q-R6): re-armed only when it moves. An end-only
+          // edit leaves them be, so a reminder due and not yet claimed is still sent.
+          await m.query(
+            `UPDATE bookings SET "reminderSetAt" = $2, "reminderSentAt" = NULL WHERE id = $1`,
+            [bookingId, at]
+          );
+          await m.query(
+            `UPDATE booking_participants SET "reminderSetAt" = $2, "reminderSentAt" = NULL
+              WHERE "bookingId" = $1 AND "withdrawnAt" IS NULL`,
+            [bookingId, at]
+          );
+        }
+        if (removed.length) {
+          await m.query(
+            `UPDATE booking_participants SET "withdrawnAt" = $3
+              WHERE "bookingId" = $1 AND "userId" = ANY($2) AND "withdrawnAt" IS NULL`,
+            [bookingId, removed, at]
+          );
+        }
+        if (added.length) {
+          // A person who was on it before (withdrew, or was removed) has a row: it is brought
+          // back, one row per (booking, account) being a unique index.
+          const back: { userId: string }[] = await m.query(
+            // In a CTE: TypeORM answers a bare UPDATE ... RETURNING as [rows, count].
+            `WITH back AS (
+               UPDATE booking_participants p
+                  SET "withdrawnAt" = NULL, "userName" = x.n, "reminderMinutes" = $4::int,
+                      "reminderSetAt" = $5, "reminderSentAt" = NULL
+                 FROM unnest($2::varchar[], $3::varchar[]) AS x(u, n)
+                WHERE p."bookingId" = $1 AND p."userId" = x.u
+            RETURNING p."userId")
+             SELECT "userId" FROM back`,
+            [bookingId, added, added.map((p) => verdict.names.get(p)), space.reminderMinutes, at]
+          );
+          const returned = new Set(back.map((r) => r.userId));
+          const fresh = added.filter((p) => !returned.has(p));
+          if (fresh.length) {
+            await m.query(
+              `INSERT INTO booking_participants ("bookingId", "userId", "userName", "reminderMinutes", "reminderSetAt")
+               SELECT $1, u, n, $4::int, $5::timestamptz FROM unnest($2::varchar[], $3::varchar[]) AS x(u, n)`,
+              [bookingId, fresh, fresh.map((p) => verdict.names.get(p)), space.reminderMinutes, at]
+            );
+          }
+        }
+        this.logger.log(
+          `[BOOKINGS] edited id=${bookingId.slice(0, 8)} byHolder=${isHolder} timeChanged=${timeChanged} ` +
+            `added=${added.length} removed=${removed.length}`
+        );
+        return { timeChanged, added, removed } satisfies BookingEditChange;
+      });
+      if (outcome) await this.notices.edited(bookingId, actor.userId, outcome);
+      return { ok: true, changed: outcome !== null };
+    } catch (err) {
+      if (isExclusionViolation(err)) {
+        this.logger.log(`[BOOKINGS] edit refused: slot taken booking=${bookingId.slice(0, 8)}`);
+        throw new ConflictException({ code: BOOKING_EDIT_CONFLICT, reason: 'slot-taken' });
+      }
+      if (isDeadlock(err)) {
+        this.logger.error(`[BOOKINGS] deadlock while editing booking=${bookingId.slice(0, 8)}`);
+        throw new ConflictException({ code: 'try-again' });
+      }
+      throw err;
+    }
   }
 
   /**
    * A participant leaves a coming booking alone (D4), until the space's minimum delay before the
    * start (D5 as the user decided on 2026-10-17); the row stays, marked (D15). Whether the actor is
-   * a participant still in is judged first, for the reason `cancel` gives.
+   * a participant still in is judged first, for the reason `cancel` gives. Once committed, the
+   * holder is told (Q-R2).
    */
   async withdraw(bookingId: string, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] withdraw booking=${bookingId}`);
-    return this.bookings.manager.transaction(async (m) => {
+    await this.bookings.manager.transaction(async (m) => {
       const { booking, space } = await this.lockBooking(m, bookingId);
       const mine: unknown[] = await m.query(
         `SELECT 1 FROM booking_participants
@@ -952,7 +1499,53 @@ export class BookingsService {
         [bookingId, actor.userId, new Date(nowMs)]
       );
       this.logger.log(`[BOOKINGS] withdrawn booking=${bookingId.slice(0, 8)}`);
-      return { ok: true };
+    });
+    await this.notices.withdrawn(bookingId, actor.userId);
+    return { ok: true };
+  }
+
+  /**
+   * Sets THIS person's reminder delay on a booking (Q-R1): its holder on the booking, a participant
+   * still in on their own row; `null` = no reminder. Refused on a cancelled or started booking -
+   * nothing is left to remind. Choosing re-arms: the claim is cleared and `reminderSetAt` is now, so
+   * an instant already past when chosen sends nothing (Q-R6), and one still to come sends once.
+   * WHO is judged before the booking's state, for the reason `cancel` gives.
+   */
+  async setReminder(bookingId: string, minutes: number | null, actor: Actor, nowMs: number) {
+    this.logger.debug(`[BOOKINGS] setReminder booking=${bookingId} minutes=${minutes}`);
+    return this.bookings.manager.transaction(async (m) => {
+      const { booking } = await this.lockBooking(m, bookingId);
+      const isHolder = booking.holderId === actor.userId;
+      if (!isHolder) {
+        const mine: unknown[] = await m.query(
+          `SELECT 1 FROM booking_participants
+            WHERE "bookingId" = $1 AND "userId" = $2 AND "withdrawnAt" IS NULL FOR UPDATE`,
+          [bookingId, actor.userId]
+        );
+        if (mine.length === 0) throw new ForbiddenException({ code: 'not-yours' });
+      }
+      if (booking.cancelledAt) throw new ConflictException({ code: 'already-cancelled' });
+      if (new Date(booking.startsAt).getTime() <= nowMs) {
+        throw new ConflictException({ code: 'history-frozen' });
+      }
+      const set = `"reminderMinutes" = $2, "reminderSetAt" = $3, "reminderSentAt" = NULL`;
+      if (isHolder) {
+        await m.query(`UPDATE bookings SET ${set} WHERE id = $1`, [
+          bookingId,
+          minutes,
+          new Date(nowMs),
+        ]);
+      } else {
+        await m.query(
+          `UPDATE booking_participants SET ${set}
+            WHERE "bookingId" = $1 AND "userId" = $4 AND "withdrawnAt" IS NULL`,
+          [bookingId, minutes, new Date(nowMs), actor.userId]
+        );
+      }
+      this.logger.log(
+        `[BOOKINGS] reminder set booking=${bookingId.slice(0, 8)} holder=${isHolder} minutes=${minutes}`
+      );
+      return { ok: true, reminderMinutes: minutes };
     });
   }
 
@@ -1075,7 +1668,7 @@ export class BookingsService {
   ) {
     this.logger.debug(`[BOOKINGS] uploadFile space=${spaceId} item=${itemId}`);
     const space = await this.loadSpace(spaceId);
-    await this.assertMayUse(space, actor, await this.mayManage(space, actor));
+    await this.assertMayUse(space, actor, await this.mayManage(space, actor), 'write');
     return this.bookingFiles.upload(space, itemId, file, actor.userId);
   }
 

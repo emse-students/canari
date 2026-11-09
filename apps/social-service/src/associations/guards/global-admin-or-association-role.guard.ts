@@ -45,7 +45,7 @@ export class GlobalAdminOrAssociationRoleGuard implements CanActivate {
 
     if (requiredFlag === 0) {
       if (isGlobalAdmin) return true;
-      // The super-admin OF this association (a BDE governing a space it reaches), never any BDE.
+      // The super-admin OF this association (MANAGE_ASSO in its parent BDE, WP-D2), never any BDE.
       if (await this.associationsService.isAssociationSuperAdminOf(userId, associationId)) {
         return true;
       }

@@ -16,12 +16,23 @@
  */
 import { HttpStatus } from '@nestjs/common';
 import Redis from 'ioredis';
-import type { RedisService } from '../common/redis';
-import { LIVE_SEAT_LEASE_MS, LIVE_VIEWER_CAP } from './live.constants';
+import { RedisService } from '../common/redis';
+import {
+  LIVE_ARRIVALS_LOG_MAX,
+  LIVE_ARRIVALS_PAGE,
+  LIVE_ARRIVALS_TTL_MS,
+  LIVE_SEAT_LEASE_MS,
+  LIVE_VIEWER_CAP,
+} from './live.constants';
 import {
   COUNT_LIVE_SEATS_LUA,
+  COUNT_MANY_LIVE_SEATS_LUA,
+  FORGET_ARRIVALS_LUA,
   LIVE_SEATS_KEY,
   LiveSeats,
+  NOTE_ARRIVAL_LUA,
+  READ_ARRIVALS_LUA,
+  arrivalKeys,
   RELEASE_LIVE_SEATS_LUA,
   RELEASE_SEAT_LUA,
   TAKE_SEAT_LUA,
@@ -96,6 +107,43 @@ describe('the viewer cap, as the service types it', () => {
     }
   });
 
+  it("reads the feed card's counts of several lives with ONE script, in the order asked", async () => {
+    const OTHER = '22222222-2222-4222-8222-222222222222';
+    const { seats, calls } = seatsAnswering(async () => [3, 0]);
+    const counts = await seats.watchingMany([LIVE, OTHER]);
+    expect([...counts!.entries()]).toEqual([
+      [LIVE, 3],
+      [OTHER, 0],
+    ]);
+    expect(calls).toEqual([
+      {
+        script: COUNT_MANY_LIVE_SEATS_LUA,
+        keys: [LIVE_SEATS_KEY],
+        args: [LIVE_SEAT_LEASE_MS, `${LIVE}:`, `${OTHER}:`],
+      },
+    ]);
+    // An empty list asks nothing.
+    const quiet = seatsAnswering(async () => []);
+    expect((await quiet.seats.watchingMany([]))?.size).toBe(0);
+    expect(quiet.calls).toHaveLength(0);
+  });
+
+  it('answers no counts for the list, never wrong ones, when Redis fails or answers nonsense', async () => {
+    for (const reply of [
+      async () => {
+        throw new Error('ECONNREFUSED');
+      },
+      async () => 'OK',
+      async () => [1],
+      async () => [1, -1],
+    ]) {
+      const { seats } = seatsAnswering(reply);
+      await expect(
+        seats.watchingMany([LIVE, '22222222-2222-4222-8222-222222222222'])
+      ).resolves.toBeNull();
+    }
+  });
+
   it('keys a seat by the live id lower-cased, so a leave spelled in upper case frees the take', () => {
     expect(seatMember('ABCDEF00-0000-4000-8000-000000000000', 'bob')).toBe(
       'abcdef00-0000-4000-8000-000000000000:bob'
@@ -108,6 +156,38 @@ describe('the viewer cap, as the service types it', () => {
     expect(calls).toEqual([
       { script: RELEASE_LIVE_SEATS_LUA, keys: [LIVE_SEATS_KEY], args: [`${LIVE}:`] },
     ]);
+  });
+
+  it('notes an arrival with the live-keyed scripts, and reads it back typed', async () => {
+    const noted = seatsAnswering(async () => 1);
+    await expect(noted.seats.noteArrival(LIVE.toUpperCase(), 'bob')).resolves.toBe(true);
+    expect(noted.calls).toEqual([
+      {
+        script: NOTE_ARRIVAL_LUA,
+        keys: arrivalKeys(LIVE),
+        args: ['bob', LIVE_ARRIVALS_TTL_MS, LIVE_ARRIVALS_LOG_MAX],
+      },
+    ]);
+    const read = seatsAnswering(async () => [3, 'bob', '2', 'eve', '3']);
+    await expect(read.seats.readArrivals(LIVE, 1)).resolves.toEqual({
+      top: 3,
+      rows: [
+        { userId: 'bob', seq: 2 },
+        { userId: 'eve', seq: 3 },
+      ],
+    });
+    const [, counter, log] = arrivalKeys(LIVE);
+    expect(read.calls[0]).toMatchObject({ keys: [counter, log], args: [1, LIVE_ARRIVALS_PAGE] });
+    const first = seatsAnswering(async () => [3]);
+    await first.seats.readArrivals(LIVE, null);
+    expect(first.calls[0].args).toEqual([-1, LIVE_ARRIVALS_PAGE]);
+  });
+
+  it('refuses an arrivals reply it did not write, rather than guess', async () => {
+    for (const reply of ['OK', [1, 'bob'], [Number.NaN, 'bob', '1']]) {
+      const { seats } = seatsAnswering(async () => reply);
+      await expect(seats.readArrivals(LIVE, 0)).rejects.toThrow('unreadable');
+    }
   });
 
   it('refuses a full host with 503 LIVE_FULL and the cap - the "live complet" screen', async () => {
@@ -233,6 +313,126 @@ maybe('the seat script against a real Redis', () => {
     expect(await takeReply(seatMember(LIVE, 'c'), 5)).toEqual([1, 2, 1]);
     // A refusal at the cap carries no count.
     expect(await takeReply(seatMember(LIVE, 'd'), 2)).toEqual([0, 2]);
+  });
+
+  it("counts several lives in one read, each as the broadcaster's read counts it", async () => {
+    const OTHER = '22222222-2222-4222-8222-222222222222';
+    const NONE = '33333333-3333-4333-8333-333333333333';
+    await takeReply(seatMember(LIVE, 'a'), 5);
+    await takeReply(seatMember(LIVE, 'b'), 5);
+    await takeReply(seatMember(OTHER, 'a'), 5);
+    // A lapsed seat is not counted, and the read writes nothing.
+    await redis.zadd(key, 0, seatMember(OTHER, 'z'));
+    const reply = (await redis.eval(
+      COUNT_MANY_LIVE_SEATS_LUA,
+      1,
+      key,
+      30_000,
+      seatMember(LIVE, ''),
+      seatMember(OTHER, ''),
+      seatMember(NONE, '')
+    )) as number[];
+    expect(reply).toEqual([2, 1, 0]);
+    expect(reply[0]).toBe(await watching(LIVE));
+    expect(await redis.zscore(key, seatMember(OTHER, 'z'))).toBe('0');
+  });
+
+  /**
+   * THROUGH THE REAL `RedisService.evalScript` (its argument order, its key count): what the service
+   * methods send is what the scripts expect. A KNOWN (non-fresh) note must still refresh the TTL -
+   * the dedupe set lives as long as anybody takes a seat.
+   */
+  it('notes, reads and forgets arrivals through LiveSeats and the real RedisService', async () => {
+    const saved = process.env.REDIS_URL;
+    process.env.REDIS_URL = URL!;
+    const service = new RedisService();
+    if (saved === undefined) delete process.env.REDIS_URL;
+    else process.env.REDIS_URL = saved;
+    const seats = new LiveSeats(service);
+    const keys = arrivalKeys(LIVE);
+    try {
+      await redis.del(...keys);
+      await expect(seats.noteArrival(LIVE, 'bob')).resolves.toBe(true);
+      // A shortened TTL, then a KNOWN viewer's note: not fresh, and the TTL is back to full.
+      for (const k of keys) await redis.pexpire(k, 1_000);
+      await expect(seats.noteArrival(LIVE.toUpperCase(), 'bob')).resolves.toBe(false);
+      for (const k of keys) {
+        expect(await redis.pttl(k)).toBeGreaterThan(1_000);
+        expect(await redis.pttl(k)).toBeLessThanOrEqual(LIVE_ARRIVALS_TTL_MS);
+      }
+      await seats.noteArrival(LIVE, 'eve');
+      await expect(seats.readArrivals(LIVE, null)).resolves.toEqual({ top: 2, rows: [] });
+      await expect(seats.readArrivals(LIVE, 1)).resolves.toEqual({
+        top: 2,
+        rows: [{ userId: 'eve', seq: 2 }],
+      });
+      await seats.forgetArrivals(LIVE);
+      expect(await redis.exists(...keys)).toBe(0);
+      // The three keys share ONE hash tag: one slot on a cluster.
+      expect(new Set(keys.map((k) => /\{([^}]+)\}/.exec(k)?.[1])).size).toBe(1);
+    } finally {
+      await redis.del(...keys);
+      await service.onModuleDestroy();
+    }
+  });
+
+  /**
+   * THE ARRIVAL LOG (owner, 2026-11-07): once per viewer per live, ascending, a first poll reading
+   * only the top, the log trimmed to its newest entries, every key expiring.
+   */
+  describe('the arrival log', () => {
+    const keys = arrivalKeys(LIVE);
+    const note = (viewer: string, max = 100) =>
+      redis.eval(NOTE_ARRIVAL_LUA, 3, ...keys, viewer, 60_000, max) as Promise<number>;
+    const read = (after: number, page = 50) =>
+      redis.eval(READ_ARRIVALS_LUA, 2, keys[1], keys[2], after, page) as Promise<
+        (string | number)[]
+      >;
+    beforeEach(async () => {
+      await redis.del(...keys);
+    });
+    afterAll(async () => {
+      await redis.del(...keys);
+    });
+
+    it('notes a viewer ONCE and numbers the arrivals in order', async () => {
+      expect(await note('a')).toBe(1);
+      expect(await note('b')).toBe(1);
+      expect(await note('a')).toBe(0);
+      expect(await read(0)).toEqual([2, 'a', '1', 'b', '2']);
+    });
+
+    it('a first poll reads the top and no history; a cursor reads only what is after it', async () => {
+      await note('a');
+      await note('b');
+      expect(await read(-1)).toEqual([2]);
+      expect(await read(1)).toEqual([2, 'b', '2']);
+      expect(await read(2)).toEqual([2]);
+    });
+
+    it('keeps the newest entries only, the counter going on', async () => {
+      for (const v of ['a', 'b', 'c', 'd']) await note(v, 2);
+      expect(await read(0)).toEqual([4, 'c', '3', 'd', '4']);
+    });
+
+    it('every key expires, and the forget script deletes the three at once', async () => {
+      await note('a');
+      for (const k of keys) expect(await redis.pttl(k)).toBeGreaterThan(0);
+      expect(await redis.eval(FORGET_ARRIVALS_LUA, 3, ...keys)).toBe(3);
+      expect(await redis.exists(...keys)).toBe(0);
+    });
+
+    it('is per live: another live has its own log and counter', async () => {
+      const OTHER = arrivalKeys('22222222-2222-4222-8222-222222222222');
+      await note('a');
+      await redis.eval(NOTE_ARRIVAL_LUA, 3, ...OTHER, 'a', 60_000, 100);
+      expect(await redis.eval(READ_ARRIVALS_LUA, 2, OTHER[1], OTHER[2], 0, 50)).toEqual([
+        1,
+        'a',
+        '1',
+      ]);
+      await redis.del(...OTHER);
+    });
   });
 
   it('lets the whole set expire once nobody renews it', async () => {

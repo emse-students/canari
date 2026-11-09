@@ -33,6 +33,47 @@ export interface OngoingCallSpec {
   connectedAtMs: number | null;
   /** The loudspeaker (true) or the earpiece / a headset (false). */
   speaker: boolean;
+  /** The other party's user id: its photo is the CallStyle person's icon. Null when there is none. */
+  peerUserId: string | null;
+  /** The user's own microphone mute: the notification's mute action shows the way back. */
+  muted: boolean;
+  /**
+   * Whether `speaker` is the user's own tap (true) or only the call's default (false). A default
+   * loudspeaker yields to a connected headset natively (`pickCallOutput`); a tap does not.
+   */
+  speakerChosen: boolean;
+}
+
+/**
+ * WHERE A CALL'S VOICE STARTS: on the loudspeaker for a VIDEO call (the phone is held in front of
+ * the face), on the earpiece - or a headset, which the native route prefers when one is connected -
+ * for an AUDIO call, held to the ear like a phone call. The owner's first production audio call
+ * started on the loudspeaker (`speaker=true` at connecting and live), which no phone dialler does.
+ */
+export function callStartsOnSpeaker(video: boolean): boolean {
+  return video;
+}
+
+/**
+ * The call's DEFAULT output as the call goes on: {@link callStartsOnSpeaker} once the call holds the
+ * microphone (`current` null), then the loudspeaker as soon as video shows - an audio call that turns
+ * into a video call is held in front of the face too. Never back to the earpiece when video stops: a
+ * voice that jumped to the ear while the phone is on the table would go unheard. A user's own tap
+ * always wins over this (`speakerChosen`).
+ */
+export function nextSpeakerDefault(current: boolean | null, video: boolean): boolean {
+  if (current === null) return callStartsOnSpeaker(video);
+  return current || video;
+}
+
+/** What {@link ongoingCallSpec} describes, besides the state: the page's facts about the call. */
+export interface OngoingCallFacts {
+  title: string;
+  peerUserId: string | null;
+  connectedAtMs: number | null;
+  speaker: boolean;
+  speakerChosen: boolean;
+  muted: boolean;
 }
 
 /**
@@ -44,6 +85,65 @@ export interface AndroidCallBridge {
   update(json: string): void;
   stop(callId: string, reason: string): void;
   pageLoaded(): void;
+  /**
+   * Rings the incoming call natively, Canari's ring on the RINGTONE stream (`utils/callRing.ts`).
+   * Takes {@link NativeRingFacts} as JSON: what the native CallStyle ring needs off screen.
+   */
+  ringStart(json: string): void;
+  /** Stops that ring, and the native ring it was handed over to off screen. */
+  ringStop(callId: string, reason: string): void;
+  /**
+   * True while the old calls channel's Do Not Disturb grant is owed to the user - until
+   * {@link AndroidCallBridge.dndRegrantAnswered}, so an ask the user never saw is asked again.
+   */
+  isDndRegrantOwed(): boolean;
+  /** The user answered the ask (`settings` or `dismissed`): it is not asked again. */
+  dndRegrantAnswered(how: string): void;
+  /** Opens the calls channel's system settings. */
+  openCallChannelSettings(): void;
+}
+
+/** What `ringStart` carries: the call, and what the native ring posts off screen. */
+export interface NativeRingFacts {
+  callId: string;
+  groupId: string;
+  callerId: string;
+  hasVideo: boolean;
+  /** The app's own "sounds" setting: off, the phone only vibrates. */
+  appSounds: boolean;
+}
+
+/** How long the Do Not Disturb ask stays up: it asks for a trip to the settings, not a glance. */
+export const DND_REGRANT_TOAST_MS = 15_000;
+
+/**
+ * Called once per page load on Android, AFTER the user is in (logged in and past the PIN), never on
+ * the login screen. Canari's ring moved to a new channel (`canari_calls_v2`), and the "override Do
+ * Not Disturb" a user had granted the old one cannot be carried by the app - only the user grants
+ * it. Native records that the grant is owed when it deletes the old channel; this asks, with a
+ * button to the channel's settings, until the user ANSWERS - the button, or closing the notice. A
+ * notice that only timed out was maybe never seen, and is asked again at the next launch.
+ */
+export function askCallChannelDndIfOwed(
+  host: AndroidCallHost,
+  show: (message: string, action: { label: string; run: () => void }, onClose: () => void) => void
+): void {
+  const bridge = host.canariCall;
+  if (!bridge?.isDndRegrantOwed()) return;
+  appendLog(
+    '[Call] the old calls channel overrode Do Not Disturb - asking the user to grant it again'
+  );
+  show(
+    m.call_dnd_regrant_message(),
+    {
+      label: m.call_dnd_regrant_action(),
+      run: () => {
+        bridge.dndRegrantAnswered('settings');
+        bridge.openCallChannelSettings();
+      },
+    },
+    () => bridge.dndRegrantAnswered('dismissed')
+  );
 }
 
 /**
@@ -61,7 +161,10 @@ export type NativeCallEvent = { callId: string } & (
   | { kind: 'failed'; code: NativeCallRefusal; reason: string }
   | { kind: 'stopped'; reason: string }
   | { kind: 'hangup' }
+  | { kind: 'mute' }
   | { kind: 'foreground' }
+  /** The output the service APPLIED: the loudspeaker or not, null when the platform routes. */
+  | { kind: 'output'; speaker: boolean | null }
 );
 
 /**
@@ -70,7 +173,13 @@ export type NativeCallEvent = { callId: string } & (
  */
 export function parseNativeCallEvent(detail: unknown): NativeCallEvent | null {
   if (typeof detail !== 'object' || detail === null) return null;
-  const d = detail as { kind?: unknown; reason?: unknown; code?: unknown; callId?: unknown };
+  const d = detail as {
+    kind?: unknown;
+    reason?: unknown;
+    code?: unknown;
+    callId?: unknown;
+    speaker?: unknown;
+  };
   if (typeof d.callId !== 'string' || d.callId === '') return null;
   const callId = d.callId;
   const reason = typeof d.reason === 'string' ? d.reason : '';
@@ -79,8 +188,13 @@ export function parseNativeCallEvent(detail: unknown): NativeCallEvent | null {
       return { callId, kind: 'started' };
     case 'hangup':
       return { callId, kind: 'hangup' };
+    case 'mute':
+      return { callId, kind: 'mute' };
     case 'foreground':
       return { callId, kind: 'foreground' };
+    case 'output':
+      if (d.speaker !== undefined && typeof d.speaker !== 'boolean') return null;
+      return { callId, kind: 'output', speaker: d.speaker ?? null };
     case 'failed':
       if (d.code !== 'off-screen' && d.code !== 'refused') return null;
       return { callId, kind: 'failed', code: d.code, reason };
@@ -104,20 +218,20 @@ export function parseNativeCallEvent(detail: unknown): NativeCallEvent | null {
 export function ongoingCallSpec(
   kind: CallStatusKind,
   micHeld: boolean,
-  title: string,
-  connectedAtMs: number | null,
-  speaker: boolean
+  facts: OngoingCallFacts
 ): OngoingCallSpec | null {
   if (!micHeld) return null;
+  const { title, peerUserId, connectedAtMs, speaker, speakerChosen, muted } = facts;
+  const base = { title, peerUserId, speaker, speakerChosen, muted };
   switch (kind) {
     case 'ringing':
-      return { title, text: m.call_ringing_label(), connectedAtMs: null, speaker };
+      return { ...base, text: m.call_ringing_label(), connectedAtMs: null };
     case 'connecting':
-      return { title, text: m.call_connecting_label(), connectedAtMs: null, speaker };
+      return { ...base, text: m.call_connecting_label(), connectedAtMs: null };
     case 'live':
-      return { title, text: m.call_audio_only_label(), connectedAtMs, speaker };
+      return { ...base, text: m.call_audio_only_label(), connectedAtMs };
     case 'reconnecting':
-      return { title, text: m.call_reconnecting(), connectedAtMs, speaker };
+      return { ...base, text: m.call_reconnecting(), connectedAtMs };
     case 'idle':
     case 'incoming':
     case 'ended':
@@ -158,19 +272,36 @@ export interface AndroidCallSession {
   dispose(): void;
 }
 
-/**
- * Opens the session for one call. `onHangUp` is what the notification's button does: the service has
- * already left the foreground, and the page ends the call. `onRoute` is told whether the service can
- * route the audio right now: false while a start waits for the app to come back on screen, and once
- * the service is refused or gone for this call - the speaker toggle reads it, so it is never a button
- * that does nothing. `callId` names this call on the bridge; drawn per session.
- */
+/** What the notification and the service hand back to the call ({@link openAndroidCallSession}). */
+export interface AndroidCallHandlers {
+  /** The notification's hang-up: the service has already left the foreground, the page ends the call. */
+  onHangUp: () => void;
+  /**
+   * The notification's mute action: the page toggles its microphone, and the next `publish` carries
+   * the new `muted`, which redraws the action from the call's own state.
+   */
+  onMute?: () => void;
+  /**
+   * Whether the service can route the audio right now: false while a start waits for the app to come
+   * back on screen, and once the service is refused or gone for this call - the speaker toggle reads
+   * it, so it is never a button that does nothing.
+   */
+  onRoute?: (available: boolean) => void;
+  /**
+   * The output the service APPLIED: true on the loudspeaker, false on the earpiece or a headset, null
+   * when the platform routes. A loudspeaker DEFAULT yields to a headset natively, so this - not what
+   * the page asked - is what the speaker toggle shows.
+   */
+  onOutput?: (speaker: boolean | null) => void;
+}
+
+/** Opens the session for one call. `callId` names this call on the bridge; drawn per session. */
 export function openAndroidCallSession(
   host: AndroidCallHost,
-  onHangUp: () => void,
-  onRoute: (available: boolean) => void = () => {},
+  handlers: AndroidCallHandlers,
   callId: string = crypto.randomUUID()
 ): AndroidCallSession {
+  const { onHangUp, onMute = () => {}, onRoute = () => {}, onOutput = () => {} } = handlers;
   const bridge = host.canariCall;
   if (!bridge) {
     appendLog(
@@ -200,7 +331,7 @@ export function openAndroidCallSession(
     if (json === lastSent) return;
     lastSent = json;
     const payload = JSON.stringify({ ...spec, callId });
-    const facts = `${why}; connected=${spec.connectedAtMs !== null} speaker=${spec.speaker}`;
+    const facts = `${why}; connected=${spec.connectedAtMs !== null} speaker=${spec.speaker} chosen=${spec.speakerChosen} muted=${spec.muted} peer=${spec.peerUserId !== null}`;
     if (!started) {
       started = true;
       appendLog(`[Call] ongoing-call service start (${facts})`);
@@ -276,6 +407,23 @@ export function openAndroidCallSession(
         over = true;
         appendLog('[Call] hang-up from the ongoing-call notification');
         onHangUp();
+        return;
+      case 'output':
+        appendLog(
+          `[Call] the service routed the voice to ${event.speaker === null ? 'the platform choice' : event.speaker ? 'the loudspeaker' : 'the earpiece or a headset'}`
+        );
+        onOutput(event.speaker);
+        return;
+      case 'mute':
+        // The service stays: only the microphone changes, and the next publish redraws the action.
+        if (!started) {
+          appendLog(
+            '[Call] mute from the ongoing-call notification with no service started - ignored'
+          );
+          return;
+        }
+        appendLog('[Call] microphone toggled from the ongoing-call notification');
+        onMute();
         return;
     }
   };

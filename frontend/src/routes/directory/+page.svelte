@@ -10,6 +10,7 @@
   import { searchDirectory, type DirectoryUserRow } from '$lib/profile/api';
   import { listAssociations, type Association } from '$lib/associations/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+  import FollowChip from '$lib/components/follows/FollowChip.svelte';
   import { Search, Users, GraduationCap, LoaderCircle } from '@lucide/svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { currentUserId } from '$lib/stores/user';
@@ -53,7 +54,7 @@
 
   onMount(async () => {
     if (!currentUserId()) {
-      await goto(resolve('/login?returnTo=/directory'), { replaceState: true });
+      await goto(resolve('/login?returnTo=/directory'), { replace: true });
       return;
     }
     try {
@@ -224,10 +225,10 @@
       {:else}
         <ul class="space-y-2">
           {#each results as user (user.id)}
-            <li>
+            <li class="flex items-center gap-2">
               <a
                 href="/profile/{encodeURIComponent(user.id)}"
-                class="border-cn-border hover:border-cn-yellow/40 bg-cn-surface flex items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
+                class="border-cn-border hover:border-cn-yellow/40 bg-cn-surface flex min-w-0 flex-1 items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
               >
                 <div class="h-11 w-11 shrink-0 overflow-hidden rounded-full">
                   <Avatar userId={user.id} fill shape="circle" />
@@ -256,6 +257,7 @@
                   {/if}
                 </div>
               </a>
+              <FollowChip kind="user" targetId={user.id} name={displayName(user)} />
             </li>
           {/each}
         </ul>

@@ -39,7 +39,7 @@ describe('AssociationsService.findCalendarEventByLinkedPost feed shape', () => {
     };
     const coOwnerRepo = { find: jest.fn(async () => []) };
 
-    // POSITIONAL, THIRTEEN LONG - see associations.service.never-auto-validates.spec.ts.
+    // POSITIONAL, FOURTEEN LONG - see associations.service.never-auto-validates.spec.ts.
     const service = new AssociationsService(
       assoRepo as never,
       undefined as never, // memberRepo
@@ -53,7 +53,8 @@ describe('AssociationsService.findCalendarEventByLinkedPost feed shape', () => {
       undefined as never, // redis
       undefined as never, // httpService
       undefined as never, // notifications
-      undefined as never // userTagService
+      undefined as never, // userTagService
+      { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
     );
     return service;
   }

@@ -29,9 +29,11 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   chat_group_remove_member_confirm,
   chat_system_removed_from_group,
+  chat_unopenable_start_again_failed,
   common_remove_label,
 } from '$lib/paraglide/messages';
 import { showConfirm } from '$lib/stores/confirm.svelte';
+import { showToast } from '$lib/stores/toast.svelte';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
 import { notifNav } from '$lib/stores/notifNav.svelte';
@@ -73,14 +75,18 @@ import {
   inviteMembersToGroup,
   replanLostInvitation,
   startNewConversation as startConversation,
+  delegationCreationRefusal,
   type ConversationOutcome,
 } from '$lib/utils/chat/groupCreation';
 import type { OwedInvitationReplanner } from '$lib/mls-client/owedInvitations';
+import { drainOwedRemovalNotices, forgetRemovalNotices } from '$lib/utils/chat/removalNotice';
 import {
   makeLostInvitationReplanner,
   makeUnrecordedInvitationTeller,
 } from '$lib/utils/chat/lostInvitationReplanner';
 import { requestReAdd } from '$lib/utils/chat/recovery';
+import { hideUnopenable } from '$lib/utils/chat/noHolder.svelte';
+import { captureGroupReadyAnnouncer } from '$lib/utils/chat/groupReadyAnnouncer';
 import {
   findConversationKeyByGroupId,
   loadExistingConversations,
@@ -91,17 +97,29 @@ import {
 } from '$lib/utils/chat/conversations';
 import { readLandingPreview } from '$lib/utils/chat/landingPreview';
 import {
-  reportBulkAdditionRefusal,
+  reportBulkAdditionOutcome,
+  reportDelegationRefusal,
   reportFollowerTabRefusal,
   reportLostInvitation,
+  reportMemberRemovalEnding,
   reportMemberRemovalFailure,
 } from '$lib/utils/chat/conversationRefusalMessage';
+import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import {
+  delegateCommitToLeader,
+  type DelegatedCommitExecutors,
+  type DelegatedOutcome,
+  type DelegatedRemovalResult,
+} from '$lib/utils/chat/tabCommitDelegation';
+import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { MemberRemovalNotCommittedError } from '$lib/utils/chat/memberRemovalError';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
+import { comparePageKeys, oldestPageKey } from '$lib/db/messagePayload';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
 import { nextEchoMessages } from '$lib/utils/chat/salonEcho';
 import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
+import { conversationBeingRead } from '$lib/utils/chat/arrivalRuntime';
 import { noteSalonOpened, reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
 import {
   flushSalonReadMarks,
@@ -110,6 +128,7 @@ import {
   salonMarksAfterLoad,
 } from '$lib/utils/chat/salonReadMarkQueue';
 import { drainOutboxForExit } from '$lib/utils/chat/outbox';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 
 /** Salons whose "decoded after entry was decided" decision was already logged this session. */
 const salonEntryDecisionNoted = new SvelteSet<string>();
@@ -180,6 +199,8 @@ export function useConversations() {
 
   // ── UI state ──────────────────────────────────────────────────────────────
   let selectedContact = $state<string | null>(null);
+  /** `handleStartAgainWithSamePeople` is creating a group: a second tap is ignored. */
+  let startingAgainInFlight = false;
   let isConversationDrawerOpen = $state(false);
   /**
    * WHICH conversation side panel is open, and there is only ever one.
@@ -197,6 +218,8 @@ export function useConversations() {
     isMobileOverlayLayout() ? null : 'members'
   );
   let groupMembers = $state<string[]>([]);
+  /** The conversation `groupMembers` belongs to, so a switch can drop the previous one's list. */
+  let groupMembersFor = '';
   // Optimistic invite feedback: user IDs with an add-member operation in flight,
   // keyed by group so a mid-invite conversation switch never leaks pending rows.
   let pendingInvites = $state<{ groupId: string; ids: string[] } | null>(null);
@@ -339,7 +362,8 @@ export function useConversations() {
     const { channelService } = await import('$lib/services/ChannelService');
     await reconcileSalonUnreadFromServer({
       conversations,
-      selectedId: selectedContact,
+      // The salon being READ, not the bare selection (`conversationBeingRead`).
+      selectedId: conversationBeingRead(selectedContact),
       userId: ctx.userId,
       fetchCounts: () => channelService.listUnreadCounts(),
       settleOwedMarks: () =>
@@ -569,6 +593,18 @@ export function useConversations() {
       return;
     }
 
+    // A FOLLOWER TAB DOES NOT DECRYPT A GROUP ITS MLS COPY DOES NOT HOLD - one the leader created
+    // or joined for it after this tab loaded (`tabCommitDelegation.ts`). Its copy was loaded once and
+    // will never hold that group, so a replay here could only fail every frame; the leader decrypts,
+    // stores and relays (`message_added`), and this tab draws what the leader stored.
+    if (getTabLeadership() === 'follower' && !holdsGroupState(ctx.ensureMls(), id)) {
+      ctx.log(
+        `[HISTORY] ${id.slice(0, 8)}... not held by this follower tab's copy - the leader's stored page is drawn, nothing replayed`
+      );
+      await renderStoredPage(contactName, id, ctx);
+      return;
+    }
+
     const isSelected = selectedContact === contactName;
     if (isSelected) {
       isLoadingHistory = true;
@@ -739,7 +775,13 @@ export function useConversations() {
       ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
       ...(m.isDeleted ? { isDeleted: true } : {}),
     }));
+    // THE PARENT ROW FIRST: `messages.conversation_id` is a foreign key onto `conversations`, and the
+    // salon listing builds a salon's conversation in MEMORY only (`useChannelWorkspaces`), so the row
+    // of a salon this device meets for the first time is not on disk yet when its first page lands
+    // (measured on the iPhone 12, 2026-10-30: `FOREIGN KEY constraint failed` right after a new
+    // device's placeholder).
     try {
+      await saveConversation(channelConversationId, ctx);
       await ctx.storage.deleteMessagesForConversation(channelConversationId);
       if (rows.length > 0) await ctx.storage.saveMessages(rows, ctx.deviceKeyB64);
     } catch (e) {
@@ -1140,10 +1182,94 @@ export function useConversations() {
     queuedCtx: ConversationContext | null;
     /** How many asks the queued restore carries, reported once when it starts rather than per ask. */
     queuedAsks: number;
+    /** Conversations whose archive replay a restore skipped on a link known down (`oweArchiveReplays`). */
+    owedArchives: Set<string>;
+    /** Unsubscribes the one reconnect listener that replays {@link owedArchives}; null when none is armed. */
+    owedReconnectOff: (() => void) | null;
   }
 
   function newRestoreGeneration(id: number): RestoreGeneration {
-    return { id, retired: false, running: null, queued: null, queuedCtx: null, queuedAsks: 0 };
+    return {
+      id,
+      retired: false,
+      running: null,
+      queued: null,
+      queuedCtx: null,
+      queuedAsks: 0,
+      // A `SvelteSet` only because the lint asks for one in a `.svelte.ts`; nothing renders it.
+      owedArchives: new SvelteSet(),
+      owedReconnectOff: null,
+    };
+  }
+
+  /**
+   * THE ARCHIVES A RESTORE SKIPPED ON A LINK KNOWN DOWN ARE REPLAYED ON THE NEXT RECONNECT, ONCE.
+   *
+   * The restore runs at boot and on a Welcome only, so a replay it skipped (`loadExistingConversations`,
+   * `onArchiveReplaysSkipped`) would otherwise wait for the conversation's next OPEN - days on a
+   * phone, against a mailbox that keeps 14. An EVENT, never a clock: `connectivity.onReconnect`
+   * fires on `online` and when a request is answered after a transport failure; an edge that comes
+   * while the server is still not proven (`isOffline`) leaves the listener armed for the next one.
+   * Idempotent by the durable stream cursor: a conversation already replayed meanwhile (opened, or a
+   * later restore) costs one `limit=1` probe. Bound to its generation: a sign-out drops it.
+   */
+  function oweArchiveReplays(
+    gen: RestoreGeneration,
+    ctx: ConversationContext,
+    ids: string[]
+  ): void {
+    for (const id of ids) gen.owedArchives.add(id);
+    if (gen.owedReconnectOff) return;
+    gen.owedReconnectOff = connectivity.onReconnect(() => {
+      if (connectivity.isOffline) return;
+      gen.owedReconnectOff?.();
+      gen.owedReconnectOff = null;
+      const owed = [...gen.owedArchives];
+      gen.owedArchives.clear();
+      if (gen.retired || owed.length === 0) return;
+      void replayOwedArchives(gen, ctx, owed);
+    });
+  }
+
+  /**
+   * Replays each owed archive in turn - serialised, as the restore's own phase 2 is.
+   *
+   * A LINK THAT DROPS AGAIN MID-REPLAY RE-OWES WHAT IS LEFT: each id is checked against
+   * `connectivity.isOffline` before its read, and the remainder goes back to
+   * {@link oweArchiveReplays} for the next answered reconnect, said once. Without it every remaining
+   * id would send its probe into the dead link, and `loadHistoryForConversation` - to which an
+   * unanswered read is an empty page, not a throw - would drop each one silently.
+   */
+  async function replayOwedArchives(
+    gen: RestoreGeneration,
+    ctx: ConversationContext,
+    ids: string[]
+  ): Promise<void> {
+    ctx.log(`[CATCHUP] link back - replaying ${ids.length} archive(s) skipped while it was down`);
+    for (let i = 0; i < ids.length; i++) {
+      if (gen.retired) return;
+      if (connectivity.isOffline) {
+        const rest = ids.slice(i);
+        ctx.log(
+          `[CATCHUP] the link dropped again - ${rest.length} archive replay(s) owed to the next reconnect`
+        );
+        oweArchiveReplays(gen, ctx, rest);
+        return;
+      }
+      const id = ids[i];
+      // Left since (a leave, a delete): nothing to replay into.
+      if (!conversations.has(id)) continue;
+      try {
+        await loadHistoryForConversation(id, id, ctx);
+      } catch (e) {
+        // REACHABLE, AND NOT FROM THE NETWORK: the replay's own failures are caught and logged
+        // inside, but its fast path (the stream cursor read from `localStorage`, the stored page
+        // read and drawn) runs outside that catch and throws out. Logged, and the loop goes on - this
+        // runs under `void`, so an escape would be an unhandled rejection that ends the replay of
+        // every id after it. This archive waits for the conversation's next open.
+        ctx.log(`[CATCHUP] owed archive replay of ${id.slice(0, 8)} failed: ${String(e)}`);
+      }
+    }
   }
 
   let restoreGeneration = newRestoreGeneration(0);
@@ -1159,11 +1285,16 @@ export function useConversations() {
   function invalidateRestores(): void {
     const retired = restoreGeneration;
     retired.retired = true;
+    retired.owedReconnectOff?.();
+    retired.owedReconnectOff = null;
+    retired.owedArchives.clear();
     restoreGeneration = newRestoreGeneration(retired.id + 1);
     // The re-planner re-plans into THIS session's map: the next account must not inherit it. Its
     // entries stay in the leaving account's own record.
     replannerMls?.setOwedInvitationReplanner(null);
     replannerMls = null;
+    // An answered removal ("no instant") is this account's, this session's: the next asks afresh.
+    forgetRemovalNotices();
     // The map is cleared beside this call, so it is no longer "restored": the flag is the NEXT
     // session's to set, and a reader asking before then (the share-sheet suggestions, a deep-link
     // landing) must wait for that session's restore rather than trust the one that left.
@@ -1263,6 +1394,7 @@ export function useConversations() {
         historyBaseUrl: ctx.historyBaseUrl,
         log: ctx.log,
         onArchivedIdsChange: () => {},
+        onArchiveReplaysSkipped: (ids) => oweArchiveReplays(gen, ctx, ids),
       });
       restored = true;
     } finally {
@@ -1283,6 +1415,20 @@ export function useConversations() {
             makeUnrecordedInvitationTeller({ conversations, report: reportLostInvitation })
           );
           replannerMls = mlsService;
+          // A removal line owed by an earlier session (its instant unanswered then): the retired row
+          // receives no further evidence, so the restore is what asks again.
+          const owedOf = mlsService;
+          void drainOwedRemovalNotices({
+            ownerId: ctx.userId,
+            conversations,
+            askRemovedAt: (groupId) => owedOf.ownRemovalAt(groupId),
+            addMessageToChat: ctx.addMessageToChat,
+            log: ctx.log,
+            // A late answer must not land in the next account's map: the sign-out retires `gen`.
+            isCurrent: () => !gen.retired,
+          }).catch((e: unknown) =>
+            console.error(`[EVICT] the owed removal notices could not be drained: ${String(e)}`)
+          );
         }
       }
     }
@@ -1433,20 +1579,20 @@ export function useConversations() {
     const convo = conversations.get(contactName);
     if (!convo) return false;
 
-    const timestamps = convo.messages.map((m) =>
-      m.timestamp instanceof Date
-        ? m.timestamp.getTime()
-        : new SvelteDate(m.timestamp as any).getTime()
-    );
-    const beforeTimestamp = timestamps.length > 0 ? Math.min(...timestamps) : undefined;
+    // The cursor is WHERE THE STORE'S PAGES STOP: the lowest `(orderAt, id)` among the rows a store
+    // page handed back (`oldestPageKey`), the pair the store pages on. Never the oldest row in
+    // memory: a row that reached it another way (live, from a bundle, an own pending send) may sit
+    // far below the last stored page, and paging below it skipped every stored row in between - as
+    // did a cursor on the key alone, which dropped the rows tied with the boundary (review of #2824,
+    // P2-4). No row from the store yet: the store's newest page, which the merge below deduplicates.
+    const before = oldestPageKey(convo.messages);
 
     const older = await ctx.storage.getMessagesPage(
       convo.id,
       ctx.deviceKeyB64,
       OLDER_MESSAGES_PAGE,
-      beforeTimestamp
+      before
     );
-    if (older.length === 0) return false;
 
     const mapped = await retroactivelyResolveHexIds(
       mapStoredMessagesToChatMessages(older, ctx.userId),
@@ -1458,13 +1604,25 @@ export function useConversations() {
     const current = conversations.get(contactName);
     if (!current) return false;
 
-    const existingIds = new SvelteSet(current.messages.map((m) => m.id));
-    const merged = [...mapped.filter((m) => !existingIds.has(m.id)), ...current.messages].sort(
-      compareMessageOrder
-    );
+    // A held row the store handed back again takes its fresh position. Below a PROVISIONAL boundary
+    // the store re-read everything at or above it, once keyed for real: a held store row it did not
+    // hand back has no position left to vouch for, and keeping its old one would make every later
+    // page re-read the window again.
+    const fresh = new SvelteMap(mapped.map((m) => [m.id, m]));
+    const held = current.messages.map((m) => {
+      const again = fresh.get(m.id)?.pageKey;
+      if (again) return { ...m, pageKey: again };
+      if (before?.provisional && m.pageKey) return { ...m, pageKey: undefined };
+      return m;
+    });
+    const heldIds = new SvelteSet(held.map((m) => m.id));
+    const merged = [...mapped.filter((m) => !heldIds.has(m.id)), ...held].sort(compareMessageOrder);
 
     conversations.set(contactName, { ...current, messages: merged });
-    return older.length === OLDER_MESSAGES_PAGE;
+    const below = before
+      ? older.filter((m) => m.pageKey && comparePageKeys(m.pageKey, before) < 0).length
+      : older.length;
+    return below === OLDER_MESSAGES_PAGE;
   }
 
   /**
@@ -1541,6 +1699,13 @@ export function useConversations() {
     } catch (e) {
       ctx.log(`[HISTORY_RANGE] could not reach the service: ${String(e).slice(0, 120)}`);
       return 'no-peer';
+    }
+    if (outcome?.refused) {
+      // Refused on membership: nobody was elected, so no range request is sent to nobody.
+      ctx.log(
+        `[HISTORY_RANGE] the service refused the ask for ${convo.id.slice(0, 8)}… (${outcome.refused})`
+      );
+      return 'unavailable';
     }
     if (outcome?.noPeerOnline) return 'no-peer';
 
@@ -1724,6 +1889,10 @@ export function useConversations() {
       ctx.log(`[VERIFY] Roster of ${id.slice(0, 8)}… not requested - conversation retired`);
       return;
     }
+    // Another conversation's members are never shown while this one's are fetched: the @mention
+    // picker would offer group A's people in group B. The same group's refresh keeps its list.
+    if (groupMembersFor !== id) groupMembers = [];
+    groupMembersFor = id;
     try {
       groupMembers = await fetchGroupRoster(ctx.ensureMls(), id, opts);
     } catch (e) {
@@ -1766,6 +1935,8 @@ export function useConversations() {
       conversations,
       groupId: convo.id,
       evidence,
+      askRemovedAt: () => ctx.ensureMls().ownRemovalAt(convo.id),
+      ownerId: ctx.userId,
       saveConversation: (key) => saveConversation(key, ctx),
       addMessageToChat: ctx.addMessageToChat,
       log: ctx.log,
@@ -1878,6 +2049,7 @@ export function useConversations() {
               if (id) selectConversationWithCtx(id, ctx);
             },
             saveConversation: (name: string) => saveConversation(name, ctx),
+            onGroupReady: captureGroupReadyAnnouncer(),
             log: ctx.log,
           });
           console.log(`[VERIFY] Direct conversation ${convo.id} recovery triggered`);
@@ -2064,6 +2236,14 @@ export function useConversations() {
     nameRaw: string,
     ctx: ConversationContext
   ): Promise<ConversationOutcome> {
+    // A FOLLOWER TAB HANDS THE CREATION TO THE LEADER, which alone may commit (`tabCommitDelegation`).
+    if (getTabLeadership() === 'follower') {
+      return createThroughLeader(
+        () => delegateCommitToLeader({ kind: 'create-group', name: nameRaw }),
+        ctx,
+        false
+      );
+    }
     return createGroup(nameRaw, {
       mlsService: ctx.ensureMls(),
       storage: ctx.storage,
@@ -2075,6 +2255,156 @@ export function useConversations() {
       saveConversation: (name) => saveConversation(name, ctx),
       log: ctx.log,
     });
+  }
+
+  /**
+   * A creation a FOLLOWER tab handed to the leader (`tabCommitDelegation.ts`): the leader created the
+   * conversation in its own map and store, and this tab draws it from the store - which both tabs
+   * share - then selects it unless `silent`. A refusal of the hand-over is a creation refusal like
+   * any other, said by the modal (`delegationCreationRefusal`).
+   *
+   * THIS TAB'S MLS COPY DOES NOT HOLD THE NEW GROUP, and never will before a reload: it was loaded
+   * once. That is the condition every follower is already in for a group the leader joined after the
+   * load, and it is safe because a follower neither encrypts (its sends go through the leader's
+   * outbox) nor decrypts a group it does not hold ({@link loadHistoryForConversation}).
+   */
+  async function createThroughLeader(
+    delegate: () => Promise<DelegatedOutcome<'create-group'> | DelegatedOutcome<'start-direct'>>,
+    ctx: ConversationContext,
+    silent: boolean
+  ): Promise<ConversationOutcome> {
+    const answer = await delegate();
+    if (answer.status === 'refused') {
+      ctx.log(`[TAB-COMMIT] a creation handed to the leader tab was refused (${answer.reason})`);
+      return { ok: false, reason: delegationCreationRefusal(answer.reason) };
+    }
+    const outcome = answer.value;
+    if (!outcome.ok || outcome.key === null) return outcome;
+    await adoptConversationFromStore(outcome.key, ctx);
+    if (!silent && conversations.has(outcome.key)) selectConversationWithCtx(outcome.key, ctx);
+    return outcome;
+  }
+
+  /**
+   * Draws a conversation the LEADER tab created for this one, from the store the leader wrote it to
+   * before answering (its executor saves it first, see {@link delegatedCommitExecutors}). A row this
+   * map already holds (a relay, a restore) is left as it is.
+   */
+  async function adoptConversationFromStore(key: string, ctx: ConversationContext): Promise<void> {
+    if (conversations.has(key)) return;
+    if (!ctx.storage) {
+      console.warn(
+        `[TAB-COMMIT] ${key.slice(0, 8)}... created by the leader tab, but this tab has no store open - not drawn`
+      );
+      return;
+    }
+    const read = await readLandingPreview({
+      storage: ctx.storage,
+      deviceKeyB64: ctx.deviceKeyB64,
+      userId: ctx.userId,
+      targetId: key,
+    });
+    if (typeof read === 'string') {
+      // The leader saved it before answering, so this is a defect upstream, said as one.
+      console.error(
+        `[TAB-COMMIT] ${key.slice(0, 8)}... created by the leader tab is not readable from the store (${read}) - not drawn`
+      );
+      return;
+    }
+    if (conversations.has(key)) return;
+    conversations.set(key, read.row);
+    ctx.log(`[TAB-COMMIT] ${key.slice(0, 8)}... created by the leader tab, drawn from the store`);
+  }
+
+  /** The conversation key whose row carries group `groupId`, if this map holds one. */
+  function conversationKeyOfGroup(groupId: string): string | null {
+    if (conversations.get(groupId)?.id === groupId) return groupId;
+    for (const [key, convo] of conversations) if (convo.id === groupId) return key;
+    return null;
+  }
+
+  /**
+   * THE LEADER HALF of the gestures a follower tab hands over (`tabCommitDelegation.ts`): each runs
+   * the very path this tab's own gesture runs, on this tab's authoritative state, and answers by
+   * value. Nothing here selects or opens anything - the member is looking at the OTHER tab.
+   *
+   * `ctxOf` is read at each execution, never at registration: the session (store, device key) is
+   * not up when the executors are registered. Nothing here WAITS for it: the server runs a request
+   * only once this tab's session is live (`setDelegationReadiness`), and answers it otherwise.
+   */
+  function delegatedCommitExecutors(
+    ctxOf: () => ConversationContext
+  ): Pick<DelegatedCommitExecutors, 'create-group' | 'start-direct' | 'invite' | 'remove'> {
+    /** A created conversation is in the STORE before the follower is told to read it from there. */
+    const savedFirst = async (
+      outcome: ConversationOutcome,
+      ctx: ConversationContext
+    ): Promise<ConversationOutcome> => {
+      if (outcome.ok && outcome.key !== null) await saveConversation(outcome.key, ctx);
+      return outcome;
+    };
+    const depsOf = (ctx: ConversationContext) => ({
+      mlsService: ctx.ensureMls(),
+      storage: ctx.storage,
+      userId: ctx.userId,
+      deviceKeyB64: ctx.deviceKeyB64,
+      historyBaseUrl: ctx.historyBaseUrl,
+      conversations,
+      selectConversation: () => {},
+      saveConversation: (name: string) => saveConversation(name, ctx),
+      log: ctx.log,
+    });
+    return {
+      'create-group': async ({ name }) => {
+        const ctx = ctxOf();
+        return savedFirst(await createGroup(name, depsOf(ctx)), ctx);
+      },
+      'start-direct': async ({ contact }) => {
+        const ctx = ctxOf();
+        return savedFirst(await startConversation(contact, { ...depsOf(ctx), silent: true }), ctx);
+      },
+      invite: async ({ groupId, memberIds }) => {
+        const ctx = ctxOf();
+        const key = conversationKeyOfGroup(groupId);
+        const convo = key ? conversations.get(key) : undefined;
+        if (!convo) {
+          console.warn(
+            `[TAB-COMMIT] invite into ${groupId.slice(0, 8)}...: the leader tab holds no such conversation - nothing added`
+          );
+          return { kind: 'not-added', reason: 'failed' };
+        }
+        return inviteMembersToGroup(memberIds, convo, {
+          ...depsOf(ctx),
+          addMessageToChat: ctx.addMessageToChat,
+        });
+      },
+      remove: async ({ groupId, memberId }): Promise<DelegatedRemovalResult> => {
+        const ctx = ctxOf();
+        const key = conversationKeyOfGroup(groupId);
+        if (!key) {
+          console.warn(
+            `[TAB-COMMIT] remove from ${groupId.slice(0, 8)}...: the leader tab holds no such conversation - nothing recorded`
+          );
+          return 'not-removed';
+        }
+        try {
+          return await removeMemberAndBroadcast({
+            mlsService: ctx.ensureMls(),
+            groupId,
+            memberId,
+            userId: ctx.userId,
+            deviceKeyB64: ctx.deviceKeyB64,
+            ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
+          });
+        } catch (e) {
+          // Classified by TYPE, as the gesture in this tab does (`handleRemoveMember`).
+          ctx.log(`[TAB-COMMIT] removal of ${memberId.slice(0, 8)} not complete: ${String(e)}`);
+          return e instanceof MemberRemovalNotCommittedError
+            ? 'recorded-not-committed'
+            : 'not-removed';
+        }
+      },
+    };
   }
 
   /** Invites one or more users (by ID) to the currently selected group, then refreshes the member list. No-op for DMs or channels. */
@@ -2091,6 +2421,26 @@ export function useConversations() {
     // (device fetch + bulk commit + welcomes) takes several seconds.
     pendingInvites = { groupId: convo.id, ids: normalized };
     try {
+      // A FOLLOWER TAB HANDS THE INVITATION TO THE LEADER (`tabCommitDelegation.ts`) and reports
+      // the leader's answer exactly as its own.
+      if (getTabLeadership() === 'follower') {
+        const answer = await delegateCommitToLeader({
+          kind: 'invite',
+          groupId: convo.id,
+          memberIds: normalized,
+        });
+        if (answer.status === 'refused') {
+          reportDelegationRefusal(answer.reason);
+          return;
+        }
+        void reportBulkAdditionOutcome(answer.value).catch((e: unknown) =>
+          console.warn(
+            `[GROUP] the outcome of an invitation could not be told: ${String(e).slice(0, 120)}`
+          )
+        );
+        await loadGroupMembers(convo.id, ctx, { fresh: true });
+        return;
+      }
       const outcome = await inviteMembersToGroup(normalized, convo, {
         mlsService: ctx.ensureMls(),
         storage: ctx.storage,
@@ -2103,8 +2453,13 @@ export function useConversations() {
         addMessageToChat: ctx.addMessageToChat,
         log: ctx.log,
       });
-      // NEVER A SILENT REFUSAL: the member is the only one who can retry an invitation.
-      if (outcome.kind === 'not-added') reportBulkAdditionRefusal(outcome.reason);
+      // NEVER A SILENT REFUSAL, NOR A SILENT PARTIAL ADD: the member is the only one who can retry an
+      // invitation, for everybody or for the people it left out.
+      void reportBulkAdditionOutcome(outcome).catch((e: unknown) =>
+        console.warn(
+          `[GROUP] the outcome of an invitation could not be told: ${String(e).slice(0, 120)}`
+        )
+      );
       // FRESH: a roster read begun before the commit's write must not be joined (pre-Add roster).
       await loadGroupMembers(convo.id, ctx, { fresh: true });
     } catch (e) {
@@ -2214,6 +2569,13 @@ export function useConversations() {
     ctx: ConversationContext,
     opts?: { silent?: boolean }
   ): Promise<ConversationOutcome> {
+    if (getTabLeadership() === 'follower') {
+      return createThroughLeader(
+        () => delegateCommitToLeader({ kind: 'start-direct', contact: contactNameRaw }),
+        ctx,
+        opts?.silent ?? false
+      );
+    }
     return startConversation(contactNameRaw, {
       mlsService: ctx.ensureMls(),
       storage: ctx.storage,
@@ -2335,6 +2697,75 @@ export function useConversations() {
     ctx.log(`[DELETE_LOCAL] Local conversation deleted: ${contactKey.slice(0, 8)}…`);
   }
 
+  /**
+   * "Recommencer avec les mêmes personnes" (D5 of docs/wiki/protocols/mls-availability-no-holder.md):
+   * a conversation this device can no longer open is not repaired - RFC 9420 offers no entry and the
+   * server never resurrects a group - so a NEW group is created under the same name and the same
+   * people are invited to it. The old conversation is left as it is: if a device that held it ever
+   * comes back, it opens again.
+   *
+   * GROUPS ONLY. A direct conversation is keyed by its peer (`startNewConversation` finds the existing
+   * one first), so a second one would be a duplicate on the peer's side; the banner does not offer it.
+   */
+  async function handleStartAgainWithSamePeople(ctx: ConversationContext) {
+    // ONE AT A TIME (review of #2832): a second tap while the first is creating would mint a second
+    // group with the same people.
+    if (startingAgainInFlight) {
+      ctx.log('[NO_HOLDER] start again: already under way - this tap is ignored');
+      return;
+    }
+    const key = selectedContact;
+    if (!key) return;
+    const convo = conversations.get(key);
+    if (!convo || (convo.conversationType ?? 'group') !== 'group') return;
+    startingAgainInFlight = true;
+    try {
+      let people: string[];
+      try {
+        people = (await fetchGroupRoster(ctx.ensureMls(), convo.id, { fresh: true })).filter(
+          (id) => id !== ctx.userId
+        );
+      } catch (e) {
+        ctx.log(
+          `[NO_HOLDER] start again: the roster of ${convo.id.slice(0, 8)}... could not be read: ${String(e)}`
+        );
+        showToast(chat_unopenable_start_again_failed(), 'error');
+        return;
+      }
+      ctx.log(
+        `[NO_HOLDER] start again: a new group for the ${people.length} other member(s) of ${convo.id.slice(0, 8)}...`
+      );
+      const outcome = await createNewGroup(convo.name, ctx);
+      if (!outcome.ok || !outcome.key) {
+        ctx.log(
+          `[NO_HOLDER] start again: the new group was not created (${outcome.ok ? 'no key' : outcome.reason})`
+        );
+        showToast(chat_unopenable_start_again_failed(), 'error');
+        return;
+      }
+      // `createNewGroup` selected the new group, so the invitation goes to it.
+      if (people.length > 0) await inviteMembersToCurrentGroup(people, ctx);
+    } catch (e) {
+      ctx.log(`[NO_HOLDER] start again failed: ${String(e)}`);
+      showToast(chat_unopenable_start_again_failed(), 'error');
+    } finally {
+      startingAgainInFlight = false;
+    }
+  }
+
+  /**
+   * Takes the selected conversation off this account's list (D5) - nothing deleted, here or on the
+   * server, and it is listed again the moment it opens (`isHiddenFromList`).
+   */
+  function handleHideUnopenable(ctx: ConversationContext) {
+    const key = selectedContact;
+    if (!key) return;
+    const convo = conversations.get(key);
+    if (!convo) return;
+    hideUnopenable(ctx.userId, convo.id);
+    selectedContact = null;
+  }
+
   /** Sends a "memberLeft" broadcast, de-registers from the server, forgets local MLS state, deletes the DB entry, and clears the selection. */
   async function handleLeaveGroup(ctx: ConversationContext) {
     if (!selectedContact) return;
@@ -2390,24 +2821,10 @@ export function useConversations() {
     // commit is owed (`MemberRemovalNotCommittedError`): the person is out either way. Outside the
     // `try`, so a failed reread is never reported as a failed removal.
     let recorded: boolean;
-    try {
-      // `already-out` is a complete removal too (another commit took their leaves): no error.
-      const outcome = await removeMemberAndBroadcast({
-        mlsService: ctx.ensureMls(),
-        groupId: convo.id,
-        memberId,
-        userId: ctx.userId,
-        deviceKeyB64: ctx.deviceKeyB64,
-        ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
-      });
-      recorded = true;
-      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} removed from the group (${outcome})`);
-    } catch (e) {
-      // NEVER A LOG LINE ALONE: every ending reaches the person who asked, classified by TYPE.
-      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} not fully removed: ${String(e)}`);
-      // Recorded or not is the error's TYPE; the sentence is the follower tab's when that is why.
-      recorded = e instanceof MemberRemovalNotCommittedError;
-      if (!reportFollowerTabRefusal(e)) reportMemberRemovalFailure(e);
+    if (getTabLeadership() === 'follower') {
+      recorded = await removeThroughLeader(convo.id, memberId, ctx);
+    } else {
+      recorded = await removeHere(convo.id, key, memberId, ctx);
     }
     if (!recorded) return;
     membershipCache.delete(convo.id);
@@ -2417,9 +2834,62 @@ export function useConversations() {
     );
   }
 
+  /** {@link handleRemoveMember} in the LEADER tab: whether the server recorded the removal. */
+  async function removeHere(
+    groupId: string,
+    key: string,
+    memberId: string,
+    ctx: ConversationContext
+  ): Promise<boolean> {
+    try {
+      // `already-out` is a complete removal too (another commit took their leaves): no error.
+      const outcome = await removeMemberAndBroadcast({
+        mlsService: ctx.ensureMls(),
+        groupId,
+        memberId,
+        userId: ctx.userId,
+        deviceKeyB64: ctx.deviceKeyB64,
+        ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
+      });
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} removed from the group (${outcome})`);
+      return true;
+    } catch (e) {
+      // NEVER A LOG LINE ALONE: every ending reaches the person who asked, classified by TYPE.
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} not fully removed: ${String(e)}`);
+      // A tab demoted between the role read and the commit is refused by the service: said as such.
+      if (!reportFollowerTabRefusal(e)) reportMemberRemovalFailure(e);
+      // Recorded or not is the error's TYPE.
+      return e instanceof MemberRemovalNotCommittedError;
+    }
+  }
+
+  /**
+   * {@link handleRemoveMember} in a FOLLOWER tab: handed to the leader (`tabCommitDelegation.ts`),
+   * whose answer is told exactly as this tab's own removal would be. Whether the server recorded it.
+   */
+  async function removeThroughLeader(
+    groupId: string,
+    memberId: string,
+    ctx: ConversationContext
+  ): Promise<boolean> {
+    const answer = await delegateCommitToLeader({ kind: 'remove', groupId, memberId });
+    if (answer.status === 'refused') {
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} not removed: ${answer.reason}`);
+      reportDelegationRefusal(answer.reason);
+      return false;
+    }
+    ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} removal by the leader tab: ${answer.value}`);
+    if (answer.value === 'committed' || answer.value === 'already-out') return true;
+    const ending = answer.value === 'recorded-not-committed' ? 'recorded' : 'not-removed';
+    reportMemberRemovalEnding(ending);
+    return ending === 'recorded';
+  }
+
   // ── Exposed API ───────────────────────────────────────────────────────────
 
   return {
+    /** The leader half of a follower tab's gestures - registered by the session (`tabCommitDelegation`). */
+    delegatedCommitExecutors,
     /** Reactive SvelteMap of all conversations keyed by conversation name. */
     conversations,
     /** True once the initial IndexedDB restore finished; the map is then authoritative. */
@@ -2585,6 +3055,8 @@ export function useConversations() {
     handleDeleteGroup,
     /** Removes only the local conversation entry (no server call). Used when the group was deleted remotely. */
     handleDeleteGroupLocally,
+    handleStartAgainWithSamePeople,
+    handleHideUnopenable,
     /** Leaves the currently selected group and clears the UI. */
     handleLeaveGroup,
     /** Removes a member from the currently selected group. */

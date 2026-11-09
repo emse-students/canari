@@ -4,6 +4,8 @@ import type {
   IMlsService,
   UserGroupRow,
   DeviceMembershipRow,
+  BaseRefreshOutcome,
+  WelcomeRequestAnswer,
 } from '$lib/mls-client/IMlsService';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import type { IStorage } from '$lib/db';
@@ -27,6 +29,7 @@ import { readWelcomeOwedFromRow, type WelcomeOwedReading } from './welcomeOwed';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { isNeverAdmitted } from './admissionState';
 import { readGroupSweepSnapshot } from './groupSweep';
+import { noteNoHolderReading, readNoHolder, releaseHiddenOnceActive } from './noHolder.svelte';
 
 /**
  * Minimum interval between two recovery attempts for the same not-ready group (throttle + cadence).
@@ -195,8 +198,26 @@ async function reAskTheElection(groupId: string, deps: RecoveryDeps): Promise<vo
       `[READD] ${groupId.slice(0, 8)}... re-ask of the base-refresh election did not reach the ` +
         `server: ${String(e).slice(0, 120)} - the dead end stands, nothing was learnt`
     );
+    // Unknown, never "nobody": the banner comes down until an answer says otherwise.
+    noteNoHolderReading(groupId, 'unknown', deps.log);
     return;
   }
+  if (asked.refused) {
+    // A REFUSAL IS NOT AN ELECTION: nobody was asked to republish, so the record stands, and the
+    // line says what the server said rather than "a member is reachable again". It carries no
+    // no-holder facts either: unknown, never "nobody".
+    noteNoHolderReading(groupId, 'unknown', deps.log);
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... the base-refresh re-ask was REFUSED (${asked.refused}) - ` +
+        `no member was elected, the dead end stands`
+    );
+    return;
+  }
+  noteNoHolderReading(
+    groupId,
+    asked.noPeerOnline ? readNoHolder(asked.facts) : 'unknown',
+    deps.log
+  );
   if (asked.noPeerOnline) return;
   noRepairerAt.delete(groupId);
   deps.log(
@@ -226,6 +247,14 @@ export interface RecoveryDeps {
   saveConversation: (key: string) => Promise<void>;
   deleteConversation?: (key: string) => Promise<void>;
   log: (msg: string) => void;
+  /**
+   * The group just became sendable through an external join: the SAME seam a processed Welcome
+   * raises (`sessionAuth`'s `announceGroupReady`), so the messages held for the group are resumed at
+   * once. REQUIRED, so the compiler names every caller: every bag passes
+   * `captureGroupReadyAnnouncer()`, read once where it is built, so a join landing after its session
+   * ended announces nothing into the next one.
+   */
+  onGroupReady: (groupId: string) => void;
 }
 
 /**
@@ -586,10 +615,21 @@ export async function requestReAdd(
         await stopRecovering(groupId, 'the server lists no seat for this account', deps);
         return;
       }
+    } else if (seat.row.deviceMembership == null && seat.row.awaitingAdmission === true) {
+      // THE ACCOUNT'S SEAT IS AN ASK AND THIS DEVICE HOLDS NO ROW (a joiner's second device, review
+      // of #2442): the list says so, so the door is a member's Add, read here rather than learnt from
+      // the base's 409.
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... no row for this device, the account's seat awaits a member's admission`
+      );
+      reading = 'awaiting-admission';
     } else {
       // The account is seated. The list carries this device's seat too when the server has one, read
       // AFTER the memberships above - so it reclassifies the pass rather than being discarded; with no
       // seat there, this device's door is its own, as an `active` row's.
+      // NO SEAT FOR THIS DEVICE AT ALL, ON EITHER READ, goes on to the join below like any other:
+      // whether it is a further device of a member is read off the tree its commit would be built
+      // on (`asAFurtherDevice`), never off the server's rows.
       const listed = seat.row.deviceMembership;
       if (listed) {
         deps.log(
@@ -731,7 +771,11 @@ export async function requestReAdd(
   deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin…`);
   let outcome: ExternalJoinOutcome;
   try {
-    outcome = await deps.mlsService.externalJoin(groupId);
+    // A FURTHER DEVICE OF A MEMBER (2026-10-27) - the tree holds a leaf of its user and none of its
+    // own - is not let in by its own commit: the join answers `further_device` and the device asks
+    // a member below, whose device shows it and its key. Read off the very GroupInfo the commit
+    // would be built on, so an honest device never makes the entry members say as nobody's.
+    outcome = await deps.mlsService.externalJoin(groupId, { asAFurtherDevice: 'ask' });
   } catch (e) {
     // A STATUS CODE IS AN ANSWER. The server holds no membership row for us, so there is no base to
     // join and no point asking a member to re-add us - the group's own roster is what refused. This
@@ -746,6 +790,53 @@ export async function requestReAdd(
     // silent on the path a real outage would take.
     deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin threw: ${String(e).slice(0, 120)}`);
     outcome = { joined: false, reason: 'unreachable' };
+  }
+  // A FURTHER DEVICE ASKS FIRST, AND LETS ITSELF IN WHEN NOBODY CAN ANSWER (owner, 2026-10-31, D1 of
+  // docs/wiki/protocols/mls-availability-no-holder.md). A member online is shown the ask and Adds the
+  // device - its Welcome is the door, and the cadence asks again until it lands. But a `stored`
+  // answer is the server's own verdict that NO member device is online, and waiting for one strands
+  // the device in every quiet conversation (the account's other device may never come back). So in
+  // the same pass the device joins on the base it was refused on - no new timer, no second round.
+  //
+  // ONE DOOR PER ANSWER. The ask carries its intent (`selfJoinIfNobody`): with no member online the
+  // server stores, queues and wakes NOTHING - an Android member's background Add answering a wake
+  // would otherwise race this join - and withdraws an ask an earlier pass stored. On a stale base the
+  // server keeps the stored ask instead, and the join below reads that base and does not join. The
+  // join re-reads this device's seat WITH the base (`welcomeOwed: 'ask'`), so an Add already under
+  // way is waited for; were two doors still to meet, the strict epoch gate accepts exactly one and
+  // the loser rebuilds (`mls-core/tests/further_device_door.rs`). The entry is announced to every
+  // member as an ordinary added device of the account (D2), and its history follows rule 2 (D3).
+  if (!outcome.joined && outcome.reason === 'further_device') {
+    const answer = await askAMemberToReAddUs(
+      groupId,
+      deps,
+      "a further device of a member - a member's Add first",
+      { selfJoinIfNobody: true }
+    );
+    if (answer?.status !== 'stored') return;
+    // THE SERVER HOLDS THE DOOR SHUT until every member client reads such an entry as an ordinary
+    // added device (`FURTHER_DEVICE_SELF_JOIN_OPEN`, the gate of mls-availability-no-holder.md): it
+    // says so in the answer, so no join is attempted and no base fetched only to be refused.
+    // Said by `askAMemberToReAddUs`, in its one line for this answer.
+    if (answer.selfJoin !== true) return;
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... no member device online to Add this one - joining by itself in this pass (D1)`
+    );
+    try {
+      outcome = await deps.mlsService.externalJoin(groupId, { welcomeOwed: 'ask' });
+    } catch (e) {
+      if (e instanceof NotAGroupMemberError) {
+        await stopRecovering(groupId, 'server holds no membership row for us', deps);
+        return;
+      }
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... further-device self-join threw: ${String(e).slice(0, 120)}`
+      );
+      return;
+    }
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... further-device self-join -> ${outcome.joined ? 'joined' : outcome.reason}`
+    );
   }
   // The REASON is logged, not just the verdict. A chat group falls back to welcome_request for every
   // refusal - a peer can Welcome us where a distribution group has nobody to ask - so the branch
@@ -840,6 +931,10 @@ export async function requestReAdd(
       // event that announces it.
       deps.mlsService.notifyConversationAvailable(groupId);
     }
+    // THE GROUP IS SENDABLE NOW, AND THIS PATH NEVER SAID SO: the row went `active` and nothing
+    // resumed what the outbox held for it, so a message written while the device was out waited for
+    // its own backoff timer (review, 2026-10-31). Raised whether or not the row moved - the group did.
+    deps.onGroupReady(groupId);
     // An external join lands at the current epoch WITHOUT the pre-join history, which only a member
     // can re-encrypt. Nothing has to decide whether anything is actually missing any more - this
     // very path also runs for a device that merely rotated its MLS identity and whose store, keyed
@@ -881,16 +976,26 @@ export async function requestReAdd(
       `[READD] ${groupId.slice(0, 8)}... the published base is at epoch ${outcome.baseEpoch} and the group ` +
         `is at ${outcome.serverEpoch} - asking a member to REPUBLISH it, not to re-add us`
     );
-    const asked = await deps.mlsService.sendBaseRefreshRequest(groupId).catch((e) => {
-      deps.log(
-        `[READD] ${groupId.slice(0, 8)}... base-refresh request did not reach the server: ` +
-          `${String(e).slice(0, 120)}`
-      );
-      // A request that never arrived proves NOTHING about who is reachable, and reading silence as
-      // "nobody" would stop a repair on a dropped packet. The next pass asks again.
-      return { noPeerOnline: false };
-    });
-    if (!asked.noPeerOnline) return;
+    const asked = await deps.mlsService
+      .sendBaseRefreshRequest(groupId)
+      .catch((e): BaseRefreshOutcome => {
+        deps.log(
+          `[READD] ${groupId.slice(0, 8)}... base-refresh request did not reach the server: ` +
+            `${String(e).slice(0, 120)}`
+        );
+        // A request that never arrived proves NOTHING about who is reachable, and reading silence as
+        // "nobody" would stop a repair on a dropped packet. The next pass asks again.
+        return { noPeerOnline: false };
+      });
+    // EVERY ANSWER IS READ FOR THE BANNER, and only a `no_peer_online` one can carry its facts
+    // (`noHolder.svelte.ts`): anything else - an election, a refusal, a request that never arrived -
+    // is unknown.
+    noteNoHolderReading(
+      groupId,
+      asked.noPeerOnline ? readNoHolder(asked.facts) : 'unknown',
+      deps.log
+    );
+    if (!asked.refused && !asked.noPeerOnline) return;
     // THE PAIR THE VERDICT WAS TAKEN AGAINST IS THE JOIN'S OWN, not the one read at the top of this
     // pass: `externalJoin` is the call the gate actually refused, and the two numbers it reports are
     // the ones that refused it. Reading the older pair would record a proof against a state nothing
@@ -899,6 +1004,22 @@ export async function requestReAdd(
       baseEpoch: outcome.baseEpoch,
       activeEpoch: outcome.serverEpoch,
     });
+    if (asked.refused) {
+      // REFUSED, NOT ELECTED: nobody will republish, and nothing this device does changes that while
+      // the pair stands - a seat is given back or admitted by a COMMIT, which moves `activeEpoch`. So
+      // it is recorded the way "no member online" is: the next passes skip the three known answers
+      // and re-ask only the election ({@link reAskTheElection}, one call, which keeps the record on
+      // a second refusal), instead of repeating the whole four-call pass every minute.
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... the base-refresh request was REFUSED (${asked.refused}) - ` +
+          `no member was asked to republish` +
+          (provenAt === undefined
+            ? ''
+            : `; recorded against ${provenAt}, waiting for either epoch to move`)
+      );
+      if (provenAt !== undefined) noRepairerAt.set(groupId, provenAt);
+      return;
+    }
     if (provenAt === undefined) return;
     noRepairerAt.set(groupId, provenAt);
     deps.log(
@@ -927,6 +1048,17 @@ export async function requestReAdd(
     return;
   }
 
+  // THE FURTHER-DEVICE SELF-JOIN READ AN ADD UNDER WAY ON THE SEAT SERVED WITH ITS BASE (D1): that
+  // Welcome is the door, and it is waited for, never asked for again (DUP-2).
+  if (outcome.reason === 'welcome_owed') {
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... not joining by itself: ${outcome.reading} on the seat served with the base - waiting for that Welcome`
+    );
+    return;
+  }
+  // A SEAT THAT DID NOT ANSWER IS UNKNOWN, and guessing which door is ours is what the seat exists to
+  // stop; `externalJoin` already said so at a level that accuses. The cadence reads it again.
+  if (outcome.reason === 'seat_unreadable') return;
   // THE SERVER REFUSED THIS ACCOUNT'S COMMITS FOR A WHILE (`429`, `commitRateLimit.ts`): the base is
   // fine and nobody needs to re-add us, so asking a member for a Welcome would mutate the tree to
   // work around a wait. The watchdog's next pass joins again once the wait has passed.
@@ -1048,6 +1180,17 @@ function classifyOwnSeat(
           `a member is asked, no self-service join`
       );
     }
+    if (reading === 'unhonoured-seat' && admittedAt === null) {
+      // NO COMMIT ADMITTED THIS SEAT SINCE IT WAS LAST WRITTEN - which is NOT "never admitted": the
+      // server clears `admittedAtEpoch` on every transition, the demotions included (a kick, the
+      // stale-device sweep), so a device coming back and one never admitted read the same. Not an
+      // anomaly, and not a door by itself: the join decides it on the tree of the GroupInfo it is
+      // built on, the one every member's verdict reads (`asAFurtherDevice`).
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... pending seat no commit admitted since it was written - the join's tree decides whose door it is`
+      );
+      return 'unhonoured-seat';
+    }
     if (reading === 'unhonoured-seat') {
       // THIS LINE IS THE DEFECT'S NAME, and it accuses. A roster seat with no Welcome and no Add in
       // flight is the population `reportStrandedDeviceMemberships` names hourly; reaching it here
@@ -1162,17 +1305,47 @@ async function endOnTheGroupsOwnAnswer(
 async function askAMemberToReAddUs(
   groupId: string,
   deps: RecoveryDeps,
-  context: string
-): Promise<void> {
-  deps.log(`[READD] ${groupId.slice(0, 8)}... sendWelcomeRequest… (${context})`);
-  await deps.mlsService
-    .sendWelcomeRequest(groupId)
-    .catch((e) =>
-      deps.log(`[READD] welcome_request failed for ${groupId.slice(0, 8)}...: ${String(e)}`)
-    );
-  deps.log(
-    `[READD] welcome_request sent for ${groupId.slice(0, 8)}... (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
+  context: string,
+  opts?: { selfJoinIfNobody?: boolean }
+): Promise<WelcomeRequestAnswer> {
+  const short = groupId.slice(0, 8);
+  deps.log(`[READD] ${short}... sendWelcomeRequest… (${context})`);
+  let answer: WelcomeRequestAnswer;
+  try {
+    answer = opts
+      ? await deps.mlsService.sendWelcomeRequest(groupId, opts)
+      : await deps.mlsService.sendWelcomeRequest(groupId);
+  } catch (e) {
+    deps.log(`[READD] welcome_request failed for ${short}...: ${String(e)}`);
+    noteNoHolderReading(groupId, 'unknown', deps.log);
+    return null;
+  }
+  // The banner is read off THIS answer alone (`noHolder.svelte.ts`, D5): only a `stored` one can
+  // carry the facts that decide it, and every other answer takes it down.
+  noteNoHolderReading(
+    groupId,
+    answer?.status === 'stored' ? readNoHolder(answer.facts) : 'unknown',
+    deps.log
   );
+  // WHAT THE SERVER DID, NOT "SENT": a request that reached nobody used to read exactly like one a
+  // member holds. Neither answer is a durable ask - a forwarded one lives on one member's screen, a
+  // stored one is drained to a member's screen at its next connection - so the cadence asks again.
+  deps.log(
+    answer?.status === 'refused'
+      ? `[READD] welcome_request for ${short}... REFUSED (${answer.reason}) - nothing was put to any member`
+      : !answer
+        ? `[READD] welcome_request for ${short}... got no answer - nothing is known to be put; asked again on the cadence (${RECOVERY_TIMEOUT_MS / 1000}s)`
+        : answer.status === 'stored'
+          ? opts?.selfJoinIfNobody === true
+            ? answer.selfJoin === true
+              ? `[READD] welcome_request for ${short}... no member online - kept for a member only if the base cannot let this device in (selfJoinIfNobody)`
+              : // ONE LINE PER PASS while the gate is shut: both facts, said once (the D1 branch
+                // returns without a line of its own).
+                `[READD] welcome_request for ${short}... no member device online - waiting for a member's Add (the server holds the self-join shut)`
+            : `[READD] welcome_request for ${short}... stored for every member's next connection - no member online`
+          : `[READD] welcome_request for ${short}... forwarded to one online member (cadence ${RECOVERY_TIMEOUT_MS / 1000}s)`
+  );
+  return answer;
 }
 
 /**
@@ -1331,4 +1504,8 @@ export function cancelReAdd(groupId: string): void {
   // outlive the thing it describes. Every caller of this function reaches it because the group is
   // healthy again - a Welcome landed, an external join succeeded, or WASM already holds the tree.
   noRepairerAt.delete(groupId);
+  // And so has the banner that said it could not be opened here (D5), and the user's choice to take
+  // it off the list while it could not open.
+  noteNoHolderReading(groupId, 'unknown', console.log);
+  releaseHiddenOnceActive(groupId);
 }

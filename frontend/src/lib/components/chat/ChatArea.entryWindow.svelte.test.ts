@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ChatArea from './ChatArea.svelte';
+import { OLDER_TRIGGER_PX } from '$lib/utils/chat/renderWindow';
 import type { ChatMessage, Conversation } from '$lib/types';
 
 /** Sender heads ask for a name and an avatar over HTTP; neither is what the entry window is about. */
@@ -18,8 +19,8 @@ vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
   resolveUserDisplayName: async (id: string) => id,
 }));
 vi.mock('$lib/utils/userAvatarCache', () => ({
-  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
-  releaseUserAvatarDisplayUrl: () => {},
+  resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplay: () => {},
 }));
 
 const PANE_PX = 700;
@@ -42,10 +43,26 @@ function modelGeometry() {
   const proto = HTMLElement.prototype;
   const sh = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollHeight');
   const ch = Object.getOwnPropertyDescriptor(Element.prototype, 'clientHeight');
+  // A BROWSER NEVER REPORTS A `scrollHeight` BELOW THE PANE'S `clientHeight`: a short list reads as
+  // the pane's own height. The model clamps the same way, so the fill is tested against geometry
+  // the DOM can produce (an unclamped model let a fill that measured nothing pass).
   Object.defineProperty(proto, 'scrollHeight', {
     configurable: true,
     get(this: HTMLElement) {
-      return this.querySelectorAll(ROW_SELECTOR).length * rowPx;
+      return Math.max(this.querySelectorAll(ROW_SELECTOR).length * rowPx, PANE_PX);
+    },
+  });
+  // Rows are stacked from the top of the scroller, `rowPx` each: what the fill measures.
+  const rect = Object.getOwnPropertyDescriptor(Element.prototype, 'getBoundingClientRect');
+  Object.defineProperty(Element.prototype, 'getBoundingClientRect', {
+    configurable: true,
+    value(this: HTMLElement) {
+      if (!this.matches(ROW_SELECTOR)) return rect!.value.call(this);
+      const rows = [
+        ...(this.closest('[class*="overflow-y"]')?.querySelectorAll(ROW_SELECTOR) ?? []),
+      ];
+      const top = rows.indexOf(this) * rowPx;
+      return { top, bottom: top + rowPx, left: 0, right: 0, width: 0, height: rowPx, x: 0, y: top };
     },
   });
   Object.defineProperty(proto, 'clientHeight', { configurable: true, get: () => PANE_PX });
@@ -54,22 +71,23 @@ function modelGeometry() {
     delete (proto as unknown as Record<string, unknown>).clientHeight;
     if (sh) Object.defineProperty(Element.prototype, 'scrollHeight', sh);
     if (ch) Object.defineProperty(Element.prototype, 'clientHeight', ch);
+    if (rect) Object.defineProperty(Element.prototype, 'getBoundingClientRect', rect);
   });
 }
 
-function conversationOf(count: number): Conversation {
+function conversationOf(count: number, id = 'g1'): Conversation {
   const base = Date.UTC(2026, 9, 14, 8, 0, 0);
   const messages: ChatMessage[] = Array.from({ length: count }, (_, i) => ({
-    id: `m${String(i).padStart(4, '0')}`,
+    id: `${id}m${String(i).padStart(4, '0')}`,
     senderId: i % 2 ? 'alice' : 'bob',
     content: `message ${i}`,
     timestamp: new Date(base + i * 1000),
     isOwn: false,
   }));
   return {
-    id: 'g1',
+    id,
     name: 'Salon',
-    contactName: 'g1',
+    contactName: id,
     messages,
     lifecycle: 'active',
     mlsStateHex: null,
@@ -85,6 +103,7 @@ function mountArea(count: number) {
       conversation: conversationOf(count),
       messageText: '',
       onMessageChange: () => {},
+      bindDraftWriter: () => () => {},
       onSend: () => {},
       onInviteMembers: () => {},
     },
@@ -95,6 +114,45 @@ function mountArea(count: number) {
     target.remove();
   });
   return target;
+}
+
+/** The same mount with a conversation the test can switch, as the parent page does. */
+function mountSwitchable(count: number) {
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const props = $state({
+    conversation: conversationOf(count, 'g1'),
+    messageText: '',
+    onMessageChange: () => {},
+    bindDraftWriter: () => () => {},
+    onSend: () => {},
+    onInviteMembers: () => {},
+  });
+  const app = mount(ChatArea, { target, props });
+  flushSync();
+  mounted.push(() => {
+    void unmount(app);
+    target.remove();
+  });
+  return { target, props };
+}
+
+/** Records the rows mounted at the moment the scroller is next shown (`opacity-100`). */
+function rowsAtNextReveal(target: HTMLElement): { readonly rows: number | null; stop(): void } {
+  const scroller = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
+  let rows: number | null = null;
+  const observer = new MutationObserver(() => {
+    if (rows === null && scroller.classList.contains('opacity-100')) {
+      rows = target.querySelectorAll(ROW_SELECTOR).length;
+    }
+  });
+  observer.observe(scroller, { attributes: true, attributeFilter: ['class'] });
+  return {
+    get rows() {
+      return rows;
+    },
+    stop: () => observer.disconnect(),
+  };
 }
 
 /**
@@ -142,14 +200,111 @@ describe('ChatArea entry window (F6)', () => {
     expect(rows.size).toBe(20);
   });
 
-  it('a thread of one-line rows settles on the 60-row entry window, never on more', async () => {
-    // 20 one-line rows (720 px) do not exceed a 700 px pane by the 40 px fillViewportThenPin wants,
-    // so it steps to the full entry size in the hidden frame; the widen then has nothing to add.
+  it('a thread of one-line rows fills the pane by its own measure, then widens to 60 after the reveal', async () => {
+    // 20 one-line rows (720 px) miss the 700 + 120 px the fill aims for by 100 px. The hidden frame
+    // adds what the measure asks for (the 4-group floor), NOT the full 60 - which was one 260 ms task
+    // on the Mi 9T - and the widen brings the rest after the reveal, a few rows per task.
     rowPx = 36;
     modelGeometry();
     const target = mountArea(THREAD);
     await vi.advanceTimersByTimeAsync(0);
-    expect(target.querySelectorAll(ROW_SELECTOR).length).toBeGreaterThan(0);
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(24);
+    await settleEntry();
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
+  });
+
+  it.each([34, 36, 37, 40, 44])(
+    'rows of %i px: the revealed pane sits past the pagination trigger, so the reveal paginates nothing',
+    async (px) => {
+      // Pinned to the bottom, scrollTop = overflow. Inside OLDER_TRIGGER_PX the reveal's own scroll
+      // event would call loadOlderGroups: one more task of 140 groups.
+      rowPx = px;
+      modelGeometry();
+      const target = mountArea(THREAD);
+      await vi.advanceTimersByTimeAsync(0);
+      const el = target
+        .querySelector<HTMLElement>(ROW_SELECTOR)!
+        .closest<HTMLElement>('[class*="overflow-y"]')!;
+      expect(el.scrollHeight - PANE_PX).toBeGreaterThanOrEqual(OLDER_TRIGGER_PX);
+      await settleEntry();
+      expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
+    }
+  );
+
+  it('reveals the entry frame alone: the widen comes after, never in the reveal flush', async () => {
+    // The full-window floor used to come back the moment `entering` fell, so the reveal's own flush
+    // clamped the window to 60 and mounted the 40 rows the stepped widen exists to spread out - 60
+    // rows at the reveal on the salon-mount bench, 2026-11-07, and the reveal frame paid for them.
+    rowPx = 48; // 20 rows = 960 px: the viewport is filled, no fill step.
+    modelGeometry();
+    const target = mountArea(THREAD);
+    const scroller = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
+    expect(scroller.classList.contains('opacity-0')).toBe(true);
+    let rowsAtReveal: number | null = null;
+    const observer = new MutationObserver(() => {
+      if (rowsAtReveal === null && scroller.classList.contains('opacity-100')) {
+        rowsAtReveal = target.querySelectorAll(ROW_SELECTOR).length;
+      }
+    });
+    observer.observe(scroller, { attributes: true, attributeFilter: ['class'] });
+    await settleEntry();
+    observer.disconnect();
+    expect(rowsAtReveal).toBe(20);
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
+  });
+
+  it('a switch during the reveal frame: the retired reveal shows nothing, the new entry reveals 20', async () => {
+    // The reveal callback of the FIRST conversation is queued for the next frame; the switch lands
+    // before it. That stale callback used to drop `entering` for the NEW conversation with both
+    // flags false, so its floor was 60 and its 40 rows mounted in the reveal's flush.
+    rowPx = 48;
+    modelGeometry();
+    const { target, props } = mountSwitchable(THREAD);
+    await vi.advanceTimersByTimeAsync(0); // the first entry's fill: its reveal waits on a frame
+    props.conversation = conversationOf(THREAD, 'g2');
+    flushSync();
+    const reveal = rowsAtNextReveal(target);
+    await settleEntry();
+    reveal.stop();
+    expect(reveal.rows).toBe(20);
+    const rows = [...target.querySelectorAll(ROW_SELECTOR)];
+    expect(rows.length).toBe(60);
+    expect(rows.every((r) => r.id.startsWith('msg-g2'))).toBe(true);
+  });
+
+  it('a switch after the first widen step: the new conversation still reaches 60', async () => {
+    // The retired widen leaves `entryWidening` to the entry that retired it; a flag stuck true
+    // would hold the next conversation at the 20-row floor for good.
+    rowPx = 48;
+    modelGeometry();
+    const { target, props } = mountSwitchable(THREAD);
+    for (let i = 0; i < 40 && target.querySelectorAll(ROW_SELECTOR).length < 30; i++) {
+      await vi.advanceTimersByTimeAsync(1);
+    }
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(30);
+    props.conversation = conversationOf(THREAD, 'g2');
+    flushSync();
+    await settleEntry();
+    const rows = [...target.querySelectorAll(ROW_SELECTOR)];
+    expect(rows.length).toBe(60);
+    expect(rows.every((r) => r.id.startsWith('msg-g2'))).toBe(true);
+  });
+
+  it('the widen takes no step while a finger is on the thread, and resumes when it lifts', async () => {
+    // A step writes `scrollTop`; under a finger that fights the drag (iOS WebKit can cancel it).
+    rowPx = 48;
+    modelGeometry();
+    const target = mountArea(THREAD);
+    const scroller = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
+    const touch = (type: string, left: number) => {
+      const e = new Event(type);
+      Object.defineProperty(e, 'touches', { value: { length: left } });
+      scroller.dispatchEvent(e);
+    };
+    touch('touchstart', 1);
+    await settleEntry();
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(20);
+    touch('touchend', 0);
     await settleEntry();
     expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
   });

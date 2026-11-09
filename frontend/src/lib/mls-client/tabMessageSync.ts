@@ -1,14 +1,20 @@
 import type { ChatMessage } from '$lib/types';
+import type { ReadClock } from '$lib/utils/chat/readState';
+import { currentUserId } from '$lib/stores/userState.svelte';
+import type { UnsentReason } from '$lib/db/types';
 import { getIsTabLeader } from '$lib/mls-client/tabLeader';
+import type { PublishedReelUpload } from '$lib/reels/publishReel';
 
 const TAB_MESSAGES_CHANNEL = 'canari-tab-messages';
 
-export type TabMessageEvent =
+/** What a tab says about a conversation; {@link TabMessageEvent} is it stamped with its account. */
+export type TabMessageBody =
   | {
       type: 'message_added';
       conversationId: string;
       message: ChatMessage;
-      lastMessageAt: number;
+      /** Absent when the batch carried notices only: a notice is not activity, so no seed moves. */
+      lastMessageAt?: number;
       unreadCount: number;
       /**
        * The client UUID sealed inside an OWN salon message: the tab that composed it is showing an
@@ -20,7 +26,8 @@ export type TabMessageEvent =
       type: 'messages_batch';
       conversationId: string;
       messages: ChatMessage[];
-      lastMessageAt: number;
+      /** Absent when the batch carried notices only: a notice is not activity, so no seed moves. */
+      lastMessageAt?: number;
       unreadCount: number;
     }
   /**
@@ -41,7 +48,8 @@ export type TabMessageEvent =
       type: 'own_message_composed';
       conversationId: string;
       message: ChatMessage;
-      lastMessageAt: number;
+      /** Absent when the batch carried notices only: a notice is not activity, so no seed moves. */
+      lastMessageAt?: number;
     }
   /**
    * This tab just marked a conversation read, announced to every other tab of this account.
@@ -56,13 +64,57 @@ export type TabMessageEvent =
       type: 'conversation_read';
       conversationId: string;
       readAt: number;
+      /**
+       * The mark the reading tab took, on its clock. Present when a READING moved it (the receipt
+       * effect), absent when the event is a SELECTION, which zeroes the badge and moves no mark. A
+       * receiver advances its own watermark with it, so the thread it draws (the unread divider, the
+       * scroll button) agrees with the badge on its list instead of only the badge falling.
+       */
+      mark?: { at: number; clock: ReadClock };
+    }
+  /**
+   * ONE read mark the LEADER just moved on a received event: a peer's receipt, this account's read
+   * on another device (`read_watermark`, `channel.read`), or one restated by a history bundle.
+   * Leader-gated like `message_added`: only the leader has a socket, so without this a follower tab
+   * never learned either fact and kept its badge, and drew no "Vu", until it was reloaded. Only the
+   * entry that moved travels; a follower recounts its badge only when the entry is its own.
+   */
+  | {
+      type: 'read_state';
+      conversationId: string;
+      userId: string;
+      at: number;
+      clock: ReadClock;
+    }
+  /**
+   * Salon counts the LEADER just took from the server (`unread-counts`: a socket that came back, a
+   * community cleared on another device), the keys that moved and nothing else. Each carries the
+   * leader's OWN read mark of that salon at the moment it applied the count: a follower whose own
+   * mark is newer read that salon after the answer was counted, and keeps its own count.
+   */
+  | {
+      type: 'unread_counts';
+      counts: Record<string, { count: number; mark: number }>;
     };
+
+/**
+ * A tab event as it travels: stamped with the account of the tab that published it. The channel and
+ * the leader lock are per BROWSER, not per account, so a tab signed into another account hears the
+ * same channel; a receiver drops every event its own account did not publish
+ * (`tabReadRelay.routeTabReadEvent`), once, before anything reads it.
+ */
+export type TabMessageEvent = TabMessageBody & {
+  /** The publishing tab's account (`currentUserId()`), stamped by {@link post}. */
+  account?: string;
+};
 
 const MESSAGE_EVENT_TYPES = new Set<string>([
   'message_added',
   'messages_batch',
   'own_message_composed',
   'conversation_read',
+  'read_state',
+  'unread_counts',
 ]);
 
 /**
@@ -76,15 +128,25 @@ const MESSAGE_EVENT_TYPES = new Set<string>([
  */
 export type TabOutboxEvent =
   | { type: 'outbox_flush_request' }
-  | { type: 'outbox_entry_sent'; messageId: string; content?: string }
+  | { type: 'outbox_entry_sent'; messageId: string; content?: string; receivedAt?: number }
   | { type: 'outbox_entry_cancelled'; messageId: string }
-  | { type: 'outbox_entry_failed'; messageId: string; serverErrors: number };
+  | { type: 'outbox_entry_failed'; messageId: string; serverErrors: number }
+  | { type: 'outbox_entry_retired'; messageId: string; reason: UnsentReason }
+  /** A follower's write to a chat-reel take (RC-13), done by the leader: see {@link forwardReelTakeWrite}. */
+  | { type: 'outbox_reel_send_deleted'; messageId: string }
+  | { type: 'outbox_reel_take_adopt'; takeId: string; uploaded: PublishedReelUpload }
+  /** The leader took a forwarded adoption: the follower owes nothing more for it. */
+  | { type: 'outbox_reel_take_adopt_ack'; takeId: string };
 
 const OUTBOX_EVENT_TYPES = new Set<string>([
   'outbox_flush_request',
   'outbox_entry_sent',
   'outbox_entry_cancelled',
   'outbox_entry_failed',
+  'outbox_entry_retired',
+  'outbox_reel_send_deleted',
+  'outbox_reel_take_adopt',
+  'outbox_reel_take_adopt_ack',
 ]);
 
 let messageChannel: BroadcastChannel | null = null;
@@ -96,10 +158,21 @@ function ensureChannel(): BroadcastChannel | null {
   return messageChannel;
 }
 
+/**
+ * THE ONE WAY A CONVERSATION EVENT LEAVES THIS TAB: stamped with this tab's account, so a tab of
+ * another account in the same browser can tell it is not addressed to it (see {@link TabMessageEvent}).
+ */
+function post(event: TabMessageBody): void {
+  ensureChannel()?.postMessage({
+    ...event,
+    account: currentUserId() ?? '',
+  } satisfies TabMessageEvent);
+}
+
 /** Publishes a conversation update from the leader tab to follower tabs. */
-export function publishTabMessageUpdate(event: TabMessageEvent): void {
+export function publishTabMessageUpdate(event: TabMessageBody): void {
   if (!getIsTabLeader()) return;
-  ensureChannel()?.postMessage(event);
+  post(event);
 }
 
 /**
@@ -112,9 +185,9 @@ export function publishTabMessageUpdate(event: TabMessageEvent): void {
  * the receivers to deduplicate. The role is read here rather than at the call site so that the
  * reason lives next to the rule.
  */
-export function publishComposedMessage(event: TabMessageEvent & { type: 'own_message_composed' }) {
+export function publishComposedMessage(event: TabMessageBody & { type: 'own_message_composed' }) {
   if (getIsTabLeader()) return;
-  ensureChannel()?.postMessage(event);
+  post(event);
 }
 
 /**
@@ -124,12 +197,36 @@ export function publishComposedMessage(event: TabMessageEvent & { type: 'own_mes
  * `lastMessageAt` at the moment it was cleared, so a receiver can tell a read that is still
  * current from one a newer message has already overtaken.
  */
-export function publishConversationRead(conversationId: string, readAt: number): void {
-  ensureChannel()?.postMessage({
+export function publishConversationRead(
+  conversationId: string,
+  readAt: number,
+  mark?: { at: number; clock: ReadClock }
+): void {
+  post({
     type: 'conversation_read',
     conversationId,
     readAt,
-  } satisfies TabMessageEvent);
+    ...(mark ? { mark } : {}),
+  });
+}
+
+/**
+ * From the leader tab: `userId`'s mark in `conversationId` moved to `at` on a RECEIVED event (see
+ * `read_state`). Leader-gated, a no-op in a follower: a follower receives no such event.
+ */
+export function publishReadState(
+  conversationId: string,
+  userId: string,
+  at: number,
+  clock: ReadClock
+): void {
+  publishTabMessageUpdate({ type: 'read_state', conversationId, userId, at, clock });
+}
+
+/** From the leader tab: the salon counts a server answer just moved (see `unread_counts`). */
+export function publishUnreadCounts(counts: Record<string, { count: number; mark: number }>): void {
+  if (Object.keys(counts).length === 0) return;
+  publishTabMessageUpdate({ type: 'unread_counts', counts });
 }
 
 /** Subscribes follower tabs to leader-originated message updates. */
@@ -162,17 +259,55 @@ export function requestLeaderOutboxFlush(): void {
 }
 
 /**
+ * From a follower tab: hands a write to a chat-reel TAKE ROW (RC-13) to the leader, which does it.
+ *
+ * ONLY THE LEADER WRITES A TAKE ROW: its sends are marked sent there, under a lock that lives in
+ * that tab's memory, so a follower writing the same row would overwrite a `sent` mark it never saw
+ * (and could give back a file recipients still cite). The row is shared (IndexedDB), the lock is
+ * not - so the follower forwards the INSTRUCTION, as {@link requestLeaderOutboxFlush} does. A no-op
+ * in the leader, which writes for itself.
+ */
+export function forwardReelTakeWrite(
+  event: Extract<TabOutboxEvent, { type: 'outbox_reel_send_deleted' | 'outbox_reel_take_adopt' }>
+): void {
+  if (getIsTabLeader()) return;
+  ensureChannel()?.postMessage(event satisfies TabOutboxEvent);
+}
+
+/**
+ * From the leader tab: a follower's forwarded adoption ({@link forwardReelTakeWrite}) was taken. The
+ * follower would otherwise end its publish step not knowing, and says so with its cost.
+ */
+export function acknowledgeReelTakeAdoption(takeId: string): void {
+  if (!getIsTabLeader()) return;
+  ensureChannel()?.postMessage({
+    type: 'outbox_reel_take_adopt_ack',
+    takeId,
+  } satisfies TabOutboxEvent);
+}
+
+/**
  * From the leader tab: tells the follower that composed a message that it went out, so the
  * follower can settle its optimistic echo. Without it the echo keeps the `pending` clock for as
  * long as that tab lives - the follower never runs the flush that would have patched the status,
  * and status is derived rather than persisted, so nothing else would ever correct it.
  */
-export function publishOutboxEntrySent(messageId: string, content?: string): void {
+export function publishOutboxEntrySent(
+  messageId: string,
+  content?: string,
+  /**
+   * The server's receive time the send answered. The follower's echo is ordered by it like the
+   * leader's copy (`messageOrder.ts`): without it the echo would leave the "awaiting its server
+   * time" tier at its `sentAt`, a place no other device draws it.
+   */
+  receivedAt?: number | null
+): void {
   if (!getIsTabLeader()) return;
   ensureChannel()?.postMessage({
     type: 'outbox_entry_sent',
     messageId,
     ...(content ? { content } : {}),
+    ...(typeof receivedAt === 'number' ? { receivedAt } : {}),
   } satisfies TabOutboxEvent);
 }
 
@@ -187,6 +322,20 @@ export function publishOutboxEntryFailed(messageId: string, serverErrors: number
     type: 'outbox_entry_failed',
     messageId,
     serverErrors,
+  } satisfies TabOutboxEvent);
+}
+
+/**
+ * From the leader tab: a queued attachment was retired UNSENT for the group's sake (deleted, or this
+ * device no longer a member). A follower draws the failed bubble with that reason; it never flushes,
+ * so it would otherwise keep the queued spinner until its next reload.
+ */
+export function publishOutboxEntryRetired(messageId: string, reason: UnsentReason): void {
+  if (!getIsTabLeader()) return;
+  ensureChannel()?.postMessage({
+    type: 'outbox_entry_retired',
+    messageId,
+    reason,
   } satisfies TabOutboxEvent);
 }
 
@@ -206,6 +355,37 @@ export function publishOutboxEntryCancelled(messageId: string): void {
     type: 'outbox_entry_cancelled',
     messageId,
   } satisfies TabOutboxEvent);
+}
+
+/**
+ * A commit a follower tab hands to the leader (`tabCommitDelegation.ts`), on the same channel.
+ *
+ * Like the outbox nudge, ONLY THE SIGNAL CROSSES THE CHANNEL: the request and its outcome live in a
+ * durable record (the account's IndexedDB), committed BEFORE the signal is posted, so a signal lost
+ * to a tab that was not listening yet costs the next drain and nothing else.
+ * `tab_commit_requested` goes follower -> leader, `tab_commit_settled` leader -> follower; both carry
+ * the request id and the account whose store holds the record - nothing of the request itself.
+ */
+export type TabCommitEvent =
+  | { type: 'tab_commit_requested'; id: string; account: string }
+  | { type: 'tab_commit_settled'; id: string; account: string };
+
+const COMMIT_EVENT_TYPES = new Set<string>(['tab_commit_requested', 'tab_commit_settled']);
+
+/** Posts a commit-delegation signal to the other tabs (see {@link TabCommitEvent}). */
+export function postTabCommitEvent(event: TabCommitEvent): void {
+  ensureChannel()?.postMessage(event satisfies TabCommitEvent);
+}
+
+/** Subscribes this tab to the commit-delegation signals of the other tabs. */
+export function subscribeTabCommitEvents(handler: (event: TabCommitEvent) => void): () => void {
+  const ch = ensureChannel();
+  if (!ch) return () => {};
+  const onMessage = (ev: MessageEvent<TabCommitEvent>) => {
+    if (COMMIT_EVENT_TYPES.has(ev.data?.type)) handler(ev.data);
+  };
+  ch.addEventListener('message', onMessage);
+  return () => ch.removeEventListener('message', onMessage);
 }
 
 /** Subscribes this tab to outbox coordination events from the other tabs of this account. */

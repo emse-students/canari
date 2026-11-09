@@ -8,6 +8,7 @@ import {
   VirtualColumn,
 } from 'typeorm';
 import { isBdeAssociationSql } from '../../spaces/bde';
+import type { LydiaReadinessCause } from '../lydia-readiness';
 
 /** TypeORM entity representing a student association with optional payout account (Lydia). */
 @Entity('associations')
@@ -48,12 +49,55 @@ export class Association {
   lydiaOnboardingComplete: boolean;
 
   /**
+   * Why `lydiaOnboardingComplete` last changed (migration 118): `webhook-validated`, `admin`,
+   * `request-refused` (Lydia's error 5 on a real `request/do`) or `request-blocked` (error 2701).
+   * Written ONLY by `AssociationsService.setLydiaReadiness`, in the statement that flips the flag.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true, insert: false, update: false })
+  lydiaReadinessCause: LydiaReadinessCause | null;
+
+  /** When `lydiaReadinessCause` was written (migration 118). */
+  @Column({ type: 'timestamptz', nullable: true, insert: false, update: false })
+  lydiaReadinessAt: Date | null;
+
+  /**
+   * The durable "enrolment in flight" marker (migration 118): set atomically BEFORE
+   * `business/create`, cleared by the link or a typed refusal, left set by an unconfirmed create so
+   * a second Business cannot be created until a global admin clears it. Raw SQL writes only.
+   */
+  @Column({ type: 'timestamptz', nullable: true, insert: false, update: false })
+  lydiaEnrolmentStartedAt: Date | null;
+
+  /**
+   * The Responsable step's "in flight" marker (migration 118): claimed atomically before
+   * `business/addcashier` (`AssociationsService.claimLydiaResponsable`), cleared by the record, a
+   * typed refusal, the unlink or a global admin. Raw SQL writes only.
+   */
+  @Column({ type: 'timestamptz', nullable: true, insert: false, update: false })
+  lydiaResponsableStartedAt: Date | null;
+
+  /**
+   * The random token written with that claim (migration 119): only a release or a record carrying
+   * it clears the claim. Never returned to a client. Raw SQL writes only.
+   */
+  @Column({ type: 'uuid', nullable: true, insert: false, update: false, select: false })
+  lydiaCashierClaimToken: string | null;
+
+  /**
+   * The vendor token `business/create` answered while the enrolment is in flight, recorded BEFORE
+   * the key check and the link (migration 118): the one unknown token a `BUSINESS_VALIDATED` may be
+   * retried for. Cleared by the link and every release of the marker. Raw SQL writes only.
+   */
+  @Column({ type: 'varchar', length: 256, nullable: true, insert: false, update: false })
+  lydiaEnrolmentVendorToken: string | null;
+
+  /**
    * The Lydia Business private token, ENCRYPTED (`common/secret-box.ts`, migration 100), that
-   * verifies this association's `request/do` callbacks. Write-only from a browser's side: set by a
-   * MANAGE_PAYOUT_ACCOUNT holder, answered decrypted to core-service alone. Kept out of every
+   * verifies this association's `request/do` callbacks. Never reaches a browser: captured at
+   * `business/create` (enrolment lot 1), answered decrypted to core-service alone. Kept out of every
    * TypeORM SELECT/INSERT/UPDATE (so no association read names it before migration 100 runs, and
    * no entity serialisation can ever carry it) - read and written by raw SQL only
-   * (`AssociationsService.setLydiaBusinessKey`, `lydiaCallbackKey`).
+   * (`AssociationsService.setLydiaAccountId`, `lydiaCallbackKey`).
    */
   @Column({ type: 'text', nullable: true, select: false, insert: false, update: false })
   lydiaBusinessKeyCiphertext?: string | null;
@@ -120,18 +164,11 @@ export class Association {
   color: string | null;
 
   /**
-   * Primary thematic category (managed table {@link AssociationCategory}), used to group the
-   * association on the "Carte de la Vie Asso" poster and directory. Loose uuid (no FK
-   * constraint, matching the other reference columns here); nulled server-side when the
-   * referenced category is deleted. Null = uncategorised.
-   */
-  @Column({ type: 'uuid', nullable: true })
-  @Index()
-  categoryId: string | null;
-
-  /**
-   * Discriminates a regular association from a promo "list". Lists behave like
-   * associations (members, events) minus the banking/shop/vault features.
+   * Discriminates a regular association from a promo "list" and an institution. A list keeps the
+   * shop, its cotisation, paid forms and the vault, but holds NO Lydia account of its own: it
+   * collects only through an accepted payment delegation (`paymentParentAssociationId`). An
+   * institution sells nothing. The table is `TYPE_EXCLUDED_FLAGS`, read by `collection-policy.ts`
+   * (owner, 2026-11-02).
    */
   @Column({ type: 'varchar', length: 20, default: 'association' })
   type: 'association' | 'list' | 'institution';
@@ -140,9 +177,23 @@ export class Association {
   @Column({ type: 'int', nullable: true })
   promo: number | null;
 
-  /** Lists only: optional parent association (e.g. the owning BDE). Null otherwise. */
+  /**
+   * THE GOVERNING PARENT (WP-D1, reform 2.2): the BDE this association or list depends on, or null
+   * (the platform admin's). A BDE and an institution never have one, and a parent is always an
+   * association governing at least one space - asked by `SpacesService.setParent` and enforced by
+   * migration 131's triggers. Written by the platform admin only, journaled (`dependency_journal`).
+   * ADDITIVE in WP-D1: nothing reads it for governance until WP-D2.
+   */
   @Column({ type: 'uuid', nullable: true })
   parentAssociationId: string | null;
+
+  /**
+   * A DISPLAY-ONLY label (G3, migration 129): the body a list was made "for" when that body governs
+   * no space (the BDS, the BDA) - shown as "liste pour le BDS" and granting no right. Distinct from
+   * the governing parent above, which never names a body that governs nothing.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  displayParentAssociationId: string | null;
 
   /**
    * Lists only: optional second theme name. Some lists run two themes at once
@@ -158,6 +209,14 @@ export class Association {
   /** When true, the association is archived: shown under "Anciennes", hidden from "Mes associations". */
   @Column({ default: false })
   archived: boolean;
+
+  /**
+   * When this association's last live was ANNOUNCED (migration 139, WP-1b): the 6-hour limit on
+   * live announcements reads and writes it in segment 0's claim (`LivesService.confirm`), because a
+   * live row is deleted at its end. `select: false`: an internal clock, never served.
+   */
+  @Column({ type: 'timestamptz', nullable: true, select: false })
+  lastLiveAnnouncedAt: Date | null;
 
   /** Public contact e-mail, shown on the trombinoscope export and the association page. */
   @Column({ type: 'varchar', length: 255, nullable: true })

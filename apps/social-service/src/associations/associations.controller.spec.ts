@@ -3,24 +3,32 @@ import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
-import { AssociationsController } from './associations.controller';
+import { AssociationsController, INSTITUTION_DELETE_ADMIN_ONLY } from './associations.controller';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
 import { FollowsService } from '../follows/follows.service';
 import { UserTagService } from '../users/user-tag.service';
 import { UserProfileService } from './user-profile.service';
-import { signAgendaSelection } from './agenda-signature';
+import { signAgendaSelection, signEventIcs, withEventIcsSig } from './agenda-signature';
+import { AssociationPermissionFlag } from './entities/association-member.entity';
+import { assertReviewerReachesAssociation } from './review-cohort-reach';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 
 describe('AssociationsController cotisation config gating (D5)', () => {
   function makeController() {
     const service = {
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
       // The controller asks ONE predicate now; the three tiers it folds in are tested against the
       // real implementation in associations.service.may-act.spec.ts.
       mayAct: jest.fn(() => Promise.resolve(false)),
       update: jest.fn((_id: string, patch: unknown) =>
-        Promise.resolve({ id: 'asso1', cotisationEnabled: false, ...(patch as object) })
+        Promise.resolve({
+          id: 'asso1',
+          type: 'association',
+          cotisationEnabled: false,
+          ...(patch as object),
+        })
       ),
     };
     const productsService = {
@@ -38,6 +46,7 @@ describe('AssociationsController cotisation config gating (D5)', () => {
       followsService as FollowsService,
       userTagService as UserTagService,
       userProfileService as UserProfileService,
+      {} as never,
       {} as never
     );
 
@@ -89,12 +98,32 @@ describe('AssociationsController cotisation config gating (D5)', () => {
     expect(productsService.provisionCotisationProduct).toHaveBeenCalled();
   });
 
+  it('saves a list whose cotisation was stored enabled without provisioning a product, so no 403 follows the write', async () => {
+    const { controller, service, productsService } = makeController();
+    service.mayAct.mockResolvedValue(true);
+    service.update.mockImplementation((_id: string, patch: unknown) =>
+      Promise.resolve({ id: 'asso1', type: 'list', cotisationEnabled: true, ...(patch as object) })
+    );
+
+    await controller.update('asso1', 'user1', undefined, { cotisationMode: 'dated' });
+
+    expect(service.update).toHaveBeenCalled();
+    expect(productsService.provisionCotisationProduct).not.toHaveBeenCalled();
+  });
+
   it('does not check MANAGE_PRODUCTS for updates that do not touch cotisation fields', async () => {
     const { controller, service, productsService } = makeController();
+    service.mayAct.mockResolvedValue(true);
 
     await controller.update('asso1', 'user1', undefined, { name: 'New name' });
 
-    expect(service.mayAct).not.toHaveBeenCalled();
+    expect(service.mayAct).toHaveBeenCalledTimes(1);
+    expect(service.mayAct).not.toHaveBeenCalledWith(
+      'user1',
+      'asso1',
+      AssociationPermissionFlag.MANAGE_PRODUCTS,
+      expect.anything()
+    );
     expect(service.update).toHaveBeenCalled();
     expect(productsService.provisionCotisationProduct).not.toHaveBeenCalled();
   });
@@ -109,6 +138,35 @@ describe('AssociationsController cotisation config gating (D5)', () => {
  * private column here carries a recognisable value, and each route that answers a row must carry
  * none of them, by value or by key name.
  */
+describe('AssociationsController cotisation options capability', () => {
+  it('says it derives a new tier key from its label, so a client may offer tier creation', async () => {
+    const service = { mayAct: jest.fn(() => Promise.resolve(false)) };
+    const userTagService = {
+      listCotisationTiers: jest.fn(() =>
+        Promise.resolve([{ variantKey: null, name: 'Cotisation', tagName: 'cotisant:bde' }])
+      ),
+    };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      userTagService as unknown as UserTagService,
+      {} as UserProfileService,
+      {} as never,
+      {} as never
+    );
+
+    const out = await controller.cotisationOptions('asso1', 'user1', undefined);
+
+    expect(out).toEqual({
+      tiers: [{ variantKey: null, name: 'Cotisation' }],
+      mayGrant: false,
+      tierKeyFromLabel: true,
+    });
+  });
+});
+
 describe('AssociationsController response shape', () => {
   const VENDOR_TOKEN = 'vendor_tok_LEAK_9f8e7d';
   const DASHBOARD_URL = 'https://lydia.example/dashboard/LEAK';
@@ -132,6 +190,7 @@ describe('AssociationsController response shape', () => {
 
   function makeController() {
     const service = {
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
       list: jest.fn(() => Promise.resolve([row])),
       findBySlug: jest.fn(() => Promise.resolve(row)),
       findById: jest.fn(() => Promise.resolve(row)),
@@ -140,6 +199,7 @@ describe('AssociationsController response shape', () => {
       update: jest.fn(() => Promise.resolve(row)),
       setLogoFromUpload: jest.fn(() => Promise.resolve(row)),
       clearStoredLogo: jest.fn(() => Promise.resolve(row)),
+      mayAct: jest.fn(() => Promise.resolve(true)),
       callerHasAnyBdeFlag: jest.fn(() => Promise.resolve(true)),
     };
     return new AssociationsController(
@@ -149,6 +209,7 @@ describe('AssociationsController response shape', () => {
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
   }
@@ -196,12 +257,22 @@ describe('AssociationsController response shape', () => {
       service.setLydiaAccountId = jest.fn(() => Promise.resolve(row));
       const result = await controller.setLydiaAccount(
         'asso1',
-        { lydiaAccountId: VENDOR_TOKEN, lydiaDashboardUrl: DASHBOARD_URL },
+        {
+          lydiaAccountId: VENDOR_TOKEN,
+          lydiaDashboardUrl: DASHBOARD_URL,
+          businessPrivateToken: 'throwaway-business-key',
+        },
         'internal-secret-for-tests'
       );
       expect(result).toEqual({ ok: true });
       const body = JSON.stringify(result);
-      for (const secret of [VENDOR_TOKEN, DASHBOARD_URL, VAULT_KEY, NOTES]) {
+      for (const secret of [
+        VENDOR_TOKEN,
+        DASHBOARD_URL,
+        VAULT_KEY,
+        NOTES,
+        'throwaway-business-key',
+      ]) {
         expect(body).not.toContain(secret);
       }
     } finally {
@@ -255,6 +326,7 @@ describe('AssociationsController payout account read', () => {
 
   function makeController(allowed: boolean) {
     const service = {
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
       canManagePayoutAccount: jest.fn(() => Promise.resolve(allowed)),
       getPayoutAccount: jest.fn(() => Promise.resolve(account)),
     };
@@ -265,6 +337,7 @@ describe('AssociationsController payout account read', () => {
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, service };
@@ -306,7 +379,10 @@ describe('AssociationsController payout account read', () => {
  */
 describe('AssociationsController directory scope (D37)', () => {
   function makeController() {
-    const service = { list: jest.fn(() => Promise.resolve([])) };
+    const service = {
+      list: jest.fn(() => Promise.resolve([])),
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
+    };
     const controller = new AssociationsController(
       service as unknown as AssociationsService,
       {} as ProductsService,
@@ -314,6 +390,7 @@ describe('AssociationsController directory scope (D37)', () => {
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, service };
@@ -386,10 +463,15 @@ describe('AssociationsController read guards', () => {
  * AND.
  */
 describe('AssociationsController delete tier', () => {
-  function makeController(governs: boolean) {
+  function makeController(
+    governs: boolean,
+    type: 'association' | 'list' | 'institution' = 'association'
+  ) {
     const service = {
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
       remove: jest.fn(() => Promise.resolve({ ok: true })),
       isAssociationSuperAdminOf: jest.fn(() => Promise.resolve(governs)),
+      findById: jest.fn(() => Promise.resolve({ id: 'asso1', type })),
     };
     const controller = new AssociationsController(
       service as unknown as AssociationsService,
@@ -398,6 +480,7 @@ describe('AssociationsController delete tier', () => {
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, service };
@@ -423,7 +506,7 @@ describe('AssociationsController delete tier', () => {
     await controller.remove('asso1', 'user-42', undefined);
 
     expect(service.isAssociationSuperAdminOf).toHaveBeenCalledWith('user-42', 'asso1');
-    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42');
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42', false);
   });
 
   it('refuses MANAGE_ASSO in the BDE of a space the association does not reach', async () => {
@@ -441,7 +524,37 @@ describe('AssociationsController delete tier', () => {
     await controller.remove('asso1', 'admin', 'true');
 
     expect(service.isAssociationSuperAdminOf).not.toHaveBeenCalled();
-    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin');
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin', true);
+  });
+
+  // Owner, 2026-11-02: an institution is the global admin's to delete, as it is theirs to create.
+  it('refuses a BDE that governs an INSTITUTION, with a typed 403', async () => {
+    const { controller, service } = makeController(true, 'institution');
+
+    const refusal = await controller.remove('asso1', 'user-42', undefined).catch((e: unknown) => e);
+
+    expect(refusal).toBeInstanceOf(ForbiddenException);
+    expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+      code: INSTITUTION_DELETE_ADMIN_ONLY,
+    });
+    expect(service.remove).not.toHaveBeenCalled();
+  });
+
+  it('still lets that BDE delete a list it governs', async () => {
+    const { controller, service } = makeController(true, 'list');
+
+    await controller.remove('asso1', 'user-42', undefined);
+
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42', false);
+  });
+
+  it('lets a global admin delete an institution', async () => {
+    const { controller, service } = makeController(false, 'institution');
+
+    await controller.remove('asso1', 'admin', 'true');
+
+    expect(service.findById).not.toHaveBeenCalled();
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'admin', true);
   });
 });
 
@@ -466,6 +579,10 @@ describe('AssociationsController calendar event writes', () => {
       deleteCalendarEvent: jest.fn(() => Promise.resolve({ ok: true })),
       setEventImageFromUpload: jest.fn(() => Promise.resolve({ id: 'ev1' })),
       clearEventImage: jest.fn(() => Promise.resolve({ id: 'ev1' })),
+      // The event's row, for the side (E2): its organiser is the association every case routes through.
+      calendarRepo: {
+        findOne: jest.fn(() => Promise.resolve({ id: 'ev1', associationId: 'asso1' })),
+      },
       logger: { debug: jest.fn() },
     });
     const controller = new AssociationsController(
@@ -475,6 +592,7 @@ describe('AssociationsController calendar event writes', () => {
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, service };
@@ -504,6 +622,7 @@ describe('AssociationsController calendar event writes', () => {
     expect(service.setEventImageFromUpload).toHaveBeenCalledWith('asso1', 'ev1', file, 'Bearer t', {
       isGlobalAdmin: false,
       isBde: false,
+      side: 'organiser',
     });
   });
 
@@ -514,6 +633,7 @@ describe('AssociationsController calendar event writes', () => {
     expect(service.clearEventImage).toHaveBeenCalledWith('asso1', 'ev1', 'Bearer t', {
       isGlobalAdmin: true,
       isBde: false,
+      side: 'organiser',
     });
   });
 
@@ -555,6 +675,7 @@ describe('AssociationsController calendar event writes', () => {
 describe('AssociationsController event verdicts and deposits (WP6c step 2)', () => {
   function makeController(governsEvent: boolean, governsTarget = governsEvent) {
     const service = {
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
       mayValidateEvent: jest.fn(() => Promise.resolve(governsEvent)),
       mayValidateEventsOf: jest.fn(() => Promise.resolve(governsTarget)),
       validateCalendarEvent: jest.fn(() => Promise.resolve({ id: 'ev1' })),
@@ -568,6 +689,7 @@ describe('AssociationsController event verdicts and deposits (WP6c step 2)', () 
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     return { controller, service };
@@ -670,6 +792,7 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
   }
@@ -696,7 +819,7 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       args.formation,
       args.sig
     );
-  const json = (args: { campus?: string; userId?: string; internal?: string; sig?: string }) =>
+  const json = (args: { campus?: string; userId?: string; sig?: string }) =>
     makeController().aggregatedCalendarFeed(
       undefined,
       undefined,
@@ -706,15 +829,8 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       undefined,
       args.campus,
       undefined,
-      args.sig,
-      args.internal
+      args.sig
     );
-
-  it('keeps only the named event, UNSIGNED, so a phone can add ONE evening to its calendar', async () => {
-    const body = await ics(makeController(), { eventId: 'ev2' });
-    expect(body).toContain('UID:ev2@canari');
-    expect(body).not.toContain('UID:ev1@canari');
-  });
 
   it('hands a SIGNED selection to the feed, and refuses an unknown campus with a 400 (D40)', async () => {
     const controller = makeController();
@@ -739,7 +855,7 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
     expect(body).toContain('UID:ev2@canari');
   });
 
-  it('REFUSES the bare public feed with a typed 400 (D40), but not one event', async () => {
+  it('REFUSES the bare public feed with a typed 400 (D40)', async () => {
     await expect(ics(makeController(), {})).rejects.toMatchObject({
       response: { code: 'AGENDA_SELECTION_REQUIRED' },
     });
@@ -748,7 +864,6 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
     });
     // A signed-in reader is narrowed to their own spaces, so the JSON feed answers them.
     await expect(json({ userId: 'u1' })).resolves.toBeDefined();
-    await expect(ics(makeController(), { eventId: 'ev1' })).resolves.toContain('BEGIN:VCALENDAR');
   });
 
   describe('the signature (2026-10-06)', () => {
@@ -825,13 +940,53 @@ describe('AssociationsController feed.ics eventId and the signed selection', () 
       }
     });
 
-    it('lets the server-internal caller (the SEO page) read a selection with no signature', async () => {
-      await expect(
-        json({ campus: 'gardanne', internal: 'internal-secret-for-tests' })
-      ).resolves.toBeDefined();
-      await expect(json({ campus: 'gardanne', internal: 'wrong' })).rejects.toMatchObject({
+    it('grants the internal secret nothing: no anonymous read of the feed is unsigned (2026-11-02)', async () => {
+      // `json` no longer takes the header: the route does not read it.
+      await expect(json({ campus: 'gardanne' })).rejects.toMatchObject({
         response: { code: 'AGENDA_SIGNATURE_REQUIRED' },
       });
+    });
+  });
+
+  describe("one event's signed .ics link (2026-11-02)", () => {
+    it('serves the event to a link signed for THAT event', async () => {
+      const body = await ics(makeController(), { eventId: 'ev2', sig: signEventIcs('ev2') });
+      expect(body).toContain('UID:ev2@canari');
+      expect(body).not.toContain('UID:ev1@canari');
+    });
+
+    it('refuses an unsigned or wrongly signed link with a BODYLESS 403, and reads no feed', async () => {
+      for (const sig of [undefined, signEventIcs('ev1'), sigOf('gardanne')]) {
+        const controller = makeController();
+        const status = jest.fn();
+        const body = await controller.aggregatedCalendarFeedIcs(
+          undefined,
+          undefined,
+          undefined,
+          'ev2',
+          { setHeader: jest.fn(), status } as never,
+          undefined,
+          undefined,
+          sig
+        );
+        expect(status).toHaveBeenCalledWith(403);
+        expect(body).toBe('');
+        const service = (
+          controller as unknown as { service: { listAggregatedCalendarFeed: jest.Mock } }
+        ).service;
+        expect(service.listAggregatedCalendarFeed).not.toHaveBeenCalled();
+      }
+    });
+
+    it('serves the signature on each validated event, never on another', () => {
+      const served = withEventIcsSig([
+        { id: 'ev1', status: 'validated' },
+        { id: 'ev2', status: 'pending' },
+      ]);
+      expect(served[0].icsSig).toBe(signEventIcs('ev1'));
+      expect(served[1]).not.toHaveProperty('icsSig');
+      // An event's signature opens that event only, and is no selection's signature.
+      expect(signEventIcs('ev1')).not.toBe(signEventIcs('ev2'));
     });
   });
 });
@@ -854,6 +1009,7 @@ describe('AssociationsController POST calendar/feed-signature (2026-10-06)', () 
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     await expect(
@@ -885,6 +1041,7 @@ describe('AssociationsController POST products/:productId/checkout - the free am
       {} as FollowsService,
       {} as UserTagService,
       {} as UserProfileService,
+      {} as never,
       {} as never
     );
     const warn = jest.spyOn((controller as any).logger, 'warn').mockImplementation(() => undefined);
@@ -925,5 +1082,65 @@ describe('AssociationsController POST products/:productId/checkout - the free am
       undefined
     );
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A ROSTER NEVER CROSSES THE REVIEW COHORT (review-cohort.ts, review-cohort-reach.ts): a review
+ * account reads only the roster of an association it belongs to, and nobody but an admin reads a
+ * review account on any roster.
+ */
+describe('AssociationsController.listMembers and the review cohort', () => {
+  const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+    else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+  });
+
+  function makeController(reviewerMemberships: string[]) {
+    const manager = {
+      query: <T>() =>
+        Promise.resolve(reviewerMemberships.map((associationId) => ({ associationId })) as T),
+    };
+    const service = {
+      withPaymentsReady: jest.fn((rows: unknown[]) => Promise.resolve(rows)),
+      assertReviewerMayReadRoster: (userId: string, id: string) =>
+        assertReviewerReachesAssociation(manager, userId, id, 'member list'),
+      mayAct: jest.fn(() => Promise.resolve(false)),
+      listMembers: jest.fn(() => Promise.resolve([{ userId: 'member' }, { userId: 'reviewer' }])),
+    };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService,
+      {} as never,
+      {} as never
+    );
+    return { controller, service };
+  }
+
+  it("refuses a review account a real association's roster, typed, and reads nothing", async () => {
+    process.env.SERVICE_ACCOUNT_USER_ID = 'reviewer';
+    const { controller, service } = makeController([]);
+    await expect(controller.listMembers('asso1', 'reviewer')).rejects.toMatchObject({
+      response: { code: 'REVIEW_COHORT_BOUNDARY' },
+    });
+    expect(service.listMembers).not.toHaveBeenCalled();
+  });
+
+  it('gives a review account the whole roster of an association it belongs to', async () => {
+    process.env.SERVICE_ACCOUNT_USER_ID = 'reviewer';
+    const { controller } = makeController(['asso-demo']);
+    expect(await controller.listMembers('asso-demo', 'reviewer')).toHaveLength(2);
+  });
+
+  it('never shows a review account on a roster to a member, and does to an admin', async () => {
+    process.env.SERVICE_ACCOUNT_USER_ID = 'reviewer';
+    const { controller } = makeController([]);
+    expect(await controller.listMembers('asso1', 'member')).toEqual([{ userId: 'member' }]);
+    expect(await controller.listMembers('asso1', 'admin', 'true')).toHaveLength(2);
   });
 });

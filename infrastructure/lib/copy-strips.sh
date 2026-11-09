@@ -59,6 +59,7 @@ COPY_STRIPS_MEDIA_RESIDUE_SQL="SELECT
   + (SELECT count(*) FROM posts WHERE \"images\" <> '[]'::jsonb)
   + (SELECT count(*) FROM posts p WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(p.\"comments\") c WHERE c ? 'media'))
   + (SELECT count(*) FROM channel_messages WHERE \"attachments\" <> '[]'::jsonb)
+  + (SELECT count(*) FROM channel_messages m WHERE to_jsonb(m) ->> 'reelMediaId' IS NOT NULL)
   + (SELECT count(*) FROM association_documents);"
 
 # Applies every strip. $1 = name of the guarded sql function, $2 = database, $3 = log prefix.
@@ -109,7 +110,27 @@ apply_copy_strips() {
   # the same live identifier as `associations.lydiaAccountId`. Guarded on the table, because a dump
   # taken before migration 101 reached production has no such table.
   "$sql" "DO \$\$ BEGIN IF to_regclass('product_checkouts') IS NOT NULL THEN UPDATE product_checkouts SET \"requestUuid\" = NULL, \"requestId\" = NULL, \"vendorToken\" = '' WHERE \"requestUuid\" IS NOT NULL OR \"requestId\" IS NOT NULL OR \"vendorToken\" <> ''; END IF; END \$\$;" "$database"
-  printf '%s   payment identifiers cleared: 12 columns across users, associations, purchase_records, submissions, product_checkouts\n' "$prefix"
+  # Why and when readiness last changed, and the two in-flight markers (migration 118): the copy is
+  # not onboarded (above), so it carries no cause for a readiness it does not have, and no marker for
+  # a `business/create` or `business/addcashier` it never sent. Guarded on the column, like the key.
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'associations' AND column_name = 'lydiaReadinessCause') THEN UPDATE associations SET \"lydiaReadinessCause\" = NULL, \"lydiaReadinessAt\" = NULL, \"lydiaEnrolmentStartedAt\" = NULL, \"lydiaResponsableStartedAt\" = NULL, \"lydiaEnrolmentVendorToken\" = NULL WHERE \"lydiaReadinessCause\" IS NOT NULL OR \"lydiaReadinessAt\" IS NOT NULL OR \"lydiaEnrolmentStartedAt\" IS NOT NULL OR \"lydiaResponsableStartedAt\" IS NOT NULL OR \"lydiaEnrolmentVendorToken\" IS NOT NULL; END IF; END \$\$;" "$database"
+  # A Lydia cashier's phone, SEALED under production's secret (migration 118), and the Business it is
+  # a cashier of: personal data and a live identifier, blanked like the key above ("unreadable today"
+  # is a property of a secret). "vendorToken" is NOT NULL, so it is blanked rather than nulled.
+  # Guarded on the table: a dump taken before migration 118 reached production has none.
+  "$sql" "DO \$\$ BEGIN IF to_regclass('lydia_cashiers') IS NOT NULL THEN UPDATE lydia_cashiers SET \"phoneSealed\" = NULL, \"vendorToken\" = '' WHERE \"phoneSealed\" IS NOT NULL OR \"vendorToken\" <> ''; END IF; END \$\$;" "$database"
+  # Migration 119: the claim's token (the copy holds no claim, like the marker above) and a
+  # Responsable's OTHER number, sealed like `phoneSealed`. Guarded on the columns: a dump taken
+  # before migration 119 reached production has neither.
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'associations' AND column_name = 'lydiaCashierClaimToken') THEN UPDATE associations SET \"lydiaCashierClaimToken\" = NULL WHERE \"lydiaCashierClaimToken\" IS NOT NULL; END IF; END \$\$;" "$database"
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'lydia_cashiers' AND column_name = 'previousPhoneSealed') THEN UPDATE lydia_cashiers SET \"previousPhoneSealed\" = NULL WHERE \"previousPhoneSealed\" IS NOT NULL; END IF; END \$\$;" "$database"
+  # A refund's Lydia transaction (migration 120): the order_ref and Business a form answer was paid
+  # through, and the same pair on each refund row. Live identifiers like `product_checkouts`' above;
+  # the refund rows' columns are NOT NULL, so they are blanked rather than nulled. Guarded on the
+  # column and the table: a dump taken before migration 120 reached production has neither.
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'submissions' AND column_name = 'lydiaOrderRef') THEN UPDATE submissions SET \"lydiaOrderRef\" = NULL, \"lydiaVendorToken\" = NULL WHERE \"lydiaOrderRef\" IS NOT NULL OR \"lydiaVendorToken\" IS NOT NULL; END IF; END \$\$;" "$database"
+  "$sql" "DO \$\$ BEGIN IF to_regclass('lydia_refunds') IS NOT NULL THEN UPDATE lydia_refunds SET \"orderRef\" = '', \"vendorToken\" = '' WHERE \"orderRef\" <> '' OR \"vendorToken\" <> ''; END IF; END \$\$;" "$database"
+  printf '%s   payment identifiers cleared: 25 columns across users, associations, purchase_records, submissions, product_checkouts, lydia_cashiers, lydia_refunds\n' "$prefix"
 
   # (c) platform_config.payment_provider is left ALONE, and that is a decision rather than an
   # oversight. Its type is 'stripe' | 'lydia' with no third value, so there is no way to say
@@ -168,6 +189,10 @@ apply_copy_strips() {
   # cosmetic oddity in a copy; an orphaned reply is a broken tree in one.
   "$sql" "UPDATE posts SET \"comments\" = coalesce((SELECT jsonb_agg(c - 'media' ORDER BY ord) FROM jsonb_array_elements(\"comments\") WITH ORDINALITY AS t(c, ord)), '[]'::jsonb) WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(\"comments\") c WHERE c ? 'media');" "$database"
   "$sql" "UPDATE channel_messages SET \"attachments\" = '[]'::jsonb WHERE \"attachments\" <> '[]'::jsonb;" "$database"
+  # A salon message's DECLARED reel file (migration 122, RC-14): an id of an object the copy never
+  # received. Guarded, like the Lydia columns above, because a production older than 122 has no such
+  # column; the residue count reads it through `to_jsonb` for the same reason.
+  "$sql" "DO \$\$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'channel_messages' AND column_name = 'reelMediaId') THEN UPDATE channel_messages SET \"reelMediaId\" = NULL WHERE \"reelMediaId\" IS NOT NULL; END IF; END \$\$;" "$database"
   # `association_documents` is DELETED rather than nulled, because its `mediaId` is NOT NULL: the row
   # has no way to express "the file is gone", nothing holds a foreign key to it (checked), and a row
   # whose entire content is a download that 404s is not a state a real user can be in.

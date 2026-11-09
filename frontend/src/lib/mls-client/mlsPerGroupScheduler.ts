@@ -29,6 +29,14 @@ export interface MlsQueuedMessage {
    * because the same row can be offered by both routes and only the dedup decides which one counts.
    */
   channel?: DeliveryChannel;
+  /**
+   * A LIVE copy that arrived before a pull had listed the whole mailbox on this link - stamped by
+   * `enqueueMessage` at ARRIVAL, the one moment that says it. The scheduler is an arrival-order
+   * FIFO, so such a frame sits AHEAD of every row the reconnect's pull lists after it, and the
+   * pull's own copy of it is dropped as a repeat: by the time the frame is handled the mailbox may
+   * read as listed while the frames queued before it on the server are still behind it here.
+   */
+  aheadOfMailbox?: boolean;
 }
 
 /** `web`: Welcome at front of each group's message list. `tauri`: separate control/welcome tiers. */
@@ -264,6 +272,24 @@ export class MlsPerGroupScheduler {
       n += b.control.length + b.welcome.length + b.messages.length;
     }
     return n;
+  }
+
+  /**
+   * Whether a frame admitted by `channel` is still waiting here - in a group's queue, runnable or
+   * held back by a commit, or parked behind a Welcome. Not "runnable work": a frame a commit holds
+   * is not runnable and is still unacknowledged, and a pull issued past it would list it again.
+   * Read from the queues themselves, so no count can drift from them.
+   */
+  hasQueuedFrom(channel: DeliveryChannel): boolean {
+    for (const b of this.buckets.values()) {
+      for (const tier of [b.control, b.welcome, b.messages]) {
+        if (tier.some((m) => m.channel === channel)) return true;
+      }
+    }
+    for (const buffered of this.pendingWelcomeGroups.values()) {
+      if (buffered.some((m) => m.channel === channel)) return true;
+    }
+    return false;
   }
 
   /** Queue stats for logging. */

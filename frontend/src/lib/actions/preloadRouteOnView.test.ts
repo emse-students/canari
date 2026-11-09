@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const preloadCode = vi.fn((_path: string) => Promise.resolve());
 vi.mock('$app/navigation', () => ({ preloadCode: (path: string) => preloadCode(path) }));
+vi.mock('$app/paths', () => ({ match: (path: string) => Promise.resolve({ id: path }) }));
 
 import { preloadRouteOnView } from './preloadRouteOnView';
 import { resetRouteCodePreloadsForTests } from '$lib/navigation/routeCodePreload';
@@ -81,10 +82,11 @@ describe('preloadRouteOnView', () => {
     warn.mockRestore();
   });
 
-  it('follows a changed route and stops observing when the link goes', () => {
+  it('follows a changed route and stops observing when the link goes', async () => {
     const action = preloadRouteOnView(document.createElement('a'), '/posts');
     action.update('/chat');
     FakeObserver.all[0].enter();
+    await flushMacrotask();
     expect(preloadCode).toHaveBeenCalledWith('/chat');
     action.destroy();
     expect(FakeObserver.all[0].disconnected).toBe(true);

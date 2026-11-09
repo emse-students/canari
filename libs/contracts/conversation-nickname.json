@@ -1,0 +1,107 @@
+{
+  "$comment": [
+    "THE RULE FOR A PER-CONVERSATION NICKNAME, written once and asserted by both implementations:",
+    "the frontend's `normalizeNickname` (frontend/src/lib/utils/users/nicknameRules.ts), which every",
+    "MLS group frame goes through on the way out and on the way in, and social-service's",
+    "(apps/social-service/src/channels/community-nicknames.ts), which a community's column goes",
+    "through. Each side's spec walks these cases, so the two cannot drift apart.",
+    "",
+    "Mirrors the profile's name fields (owner, 2026-10-14: the limits of a nickname are the profile's):",
+    "NFKC, every control and format character dropped (zero-width, bidi overrides), trimmed, and at",
+    "most `maxLength` CODE POINTS - the unit PostgreSQL's varchar counts, and the profile form's",
+    "`maxlength` of 100. A value that is empty once normalized means NO nickname (a reset), never an",
+    "empty one. `expected` null is that reset; `error` names the typed refusal.",
+    "",
+    "The emoji glue (U+200D, the tag characters U+E0020-U+E007F) stays inside a grapheme holding a",
+    "pictographic or starting with U+1F3F4, as #3175's role labels judge it; U+200C and U+200D stay",
+    "between two letters or marks (Persian, Indic). Anywhere else they are dropped."
+  ],
+  "maxLength": 100,
+  "tooLongCode": "nickname_too_long",
+  "cases": [
+    {
+      "input": "Bob",
+      "expected": "Bob"
+    },
+    {
+      "input": "  Capitaine  ",
+      "expected": "Capitaine"
+    },
+    {
+      "input": "",
+      "expected": null
+    },
+    {
+      "input": "   ",
+      "expected": null
+    },
+    {
+      "input": "A\u200bB",
+      "expected": "AB"
+    },
+    {
+      "input": "\u202eevil",
+      "expected": "evil"
+    },
+    {
+      "input": "\ufb01n",
+      "expected": "fin"
+    },
+    {
+      "input": "Line\nbreak",
+      "expected": "Linebreak"
+    },
+    {
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expected": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "error": "nickname_too_long"
+    },
+    {
+      "input": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "expected": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+    },
+    {
+      "input": "\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67",
+      "expected": "\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67"
+    },
+    {
+      "input": "\ud83c\udff3\ufe0f\u200d\ud83c\udf08",
+      "expected": "\ud83c\udff3\ufe0f\u200d\ud83c\udf08"
+    },
+    {
+      "input": "\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f",
+      "expected": "\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f"
+    },
+    {
+      "input": "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645",
+      "expected": "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645"
+    },
+    {
+      "input": "\u0915\u094d\u200d\u0937",
+      "expected": "\u0915\u094d\u200d\u0937"
+    },
+    {
+      "input": "\u200dX",
+      "expected": "X"
+    },
+    {
+      "input": "X\u200c",
+      "expected": "X"
+    },
+    {
+      "input": "A\udb40\udc67B",
+      "expected": "AB"
+    },
+    {
+      "input": "A\u2028B",
+      "expected": "AB"
+    },
+    {"input": "B\u200cob", "expected": "Bob"},
+    {"input": "B\u200dob", "expected": "Bob"},
+    {"input": "\ud83d\ude00\udb40\udc41\udb40\udc42\udb40\udc43", "expected": "\ud83d\ude00"},
+    {"input": "Bob\ud83d\ude00\u200d", "expected": "Bob\ud83d\ude00"}
+  ]
+}

@@ -13,7 +13,12 @@
     type LinkedPostSummary,
   } from '$lib/associations/api';
   import type { AgendaExportEvent } from '$lib/calendar/agendaExport';
-  import { eventOwners, eventSummary, type EventOwnerIdentity } from '$lib/calendar/feedEvents';
+  import {
+    eventOwners,
+    eventSummary,
+    isNeutralEvent,
+    type EventOwnerIdentity,
+  } from '$lib/calendar/feedEvents';
   import { CalendarDays, ClipboardList, Newspaper, Pencil, Trash2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
@@ -73,7 +78,9 @@
    */
   let linkedPost = $state<LinkedPostSummary | null>(null);
   $effect(() => {
-    const eventId = open ? event?.id : undefined;
+    // A neutral event has no post: a post names its association, which the event hides (the server
+    // refuses the link and the reverse read alike), so nothing is asked.
+    const eventId = open && event && !isNeutralEvent(event) ? event.id : undefined;
     if (!eventId) {
       linkedPost = null;
       return;
@@ -123,10 +130,16 @@
       description: ev.description,
       startsAt: ev.startsAt,
       endsAt: ev.endsAt,
+      // A neutral event has no association page to point at - and must not name one: the agenda.
       sourceUrl: origin
-        ? `${origin}/associations/${encodeURIComponent(ev.associationSlug)}`
+        ? isNeutralEvent(ev)
+          ? `${origin}/calendar`
+          : `${origin}/associations/${encodeURIComponent(ev.associationSlug)}`
         : undefined,
-      icsUrl: ev.status === 'validated' ? eventIcsAbsoluteUrl(ev.id, ev.startsAt) : undefined,
+      icsUrl:
+        ev.status === 'validated'
+          ? eventIcsAbsoluteUrl(ev.id, ev.startsAt, ev.icsSig) || undefined
+          : undefined,
     };
   }
 </script>
@@ -158,13 +171,36 @@
       {#if identityLinks.length > 0}
         <div class="flex flex-wrap items-center gap-1.5" data-event-organisers>
           {#each identityLinks as link (link.associationId)}
-            <a
-              href="/associations/{encodeURIComponent(link.slug)}"
-              class="border-cn-border text-text-main inline-flex max-w-full items-center gap-1.5 rounded-full border bg-(--cn-surface) py-0.5 pr-2.5 pl-0.5 text-xs font-semibold hover:underline"
-            >
-              <AssociationAvatar name={link.name} logoUrl={link.logoUrl} size="sm" shape="circle" />
-              <span class="truncate">{link.name}</span>
-            </a>
+            {#if link.neutral}
+              <!-- A neutral event's "Campus": no association, so nothing to open. -->
+              <span
+                class="border-cn-border text-text-main inline-flex max-w-full items-center gap-1.5 rounded-full border bg-(--cn-surface) py-0.5 pr-2.5 pl-0.5 text-xs font-semibold"
+                data-event-neutral
+              >
+                <AssociationAvatar
+                  id={link.associationId}
+                  name={link.name}
+                  logoUrl={null}
+                  size="sm"
+                  shape="circle"
+                />
+                <span class="truncate">{link.name}</span>
+              </span>
+            {:else}
+              <a
+                href="/associations/{encodeURIComponent(link.slug)}"
+                class="border-cn-border text-text-main inline-flex max-w-full items-center gap-1.5 rounded-full border bg-(--cn-surface) py-0.5 pr-2.5 pl-0.5 text-xs font-semibold hover:underline"
+              >
+                <AssociationAvatar
+                  id={link.associationId}
+                  name={link.name}
+                  logoUrl={link.logoUrl}
+                  size="sm"
+                  shape="circle"
+                />
+                <span class="truncate">{link.name}</span>
+              </a>
+            {/if}
           {/each}
         </div>
       {/if}

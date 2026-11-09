@@ -11,10 +11,16 @@ import type { Conversation } from '$lib/types';
 const sendPostLinkInApp = vi.fn();
 const copyPostLink = vi.fn();
 const sharePostLinkOut = vi.fn();
+const repostToMyFollowers = vi.fn(async (_id: string) => true);
+const undoMyRepost = vi.fn(async (_id: string) => false);
 vi.mock('$lib/posts/sharePost', () => ({
   sendPostLinkInApp: (...a: unknown[]) => sendPostLinkInApp(...a),
   copyPostLink: (...a: unknown[]) => copyPostLink(...a),
   sharePostLinkOut: (...a: unknown[]) => sharePostLinkOut(...a),
+  repostToMyFollowers: (id: string) => repostToMyFollowers(id),
+  undoMyRepost: (id: string) => undoMyRepost(id),
+  toggleMyRepost: (id: string, reposted: boolean) =>
+    reposted ? undoMyRepost(id) : repostToMyFollowers(id),
 }));
 
 let native = false;
@@ -56,10 +62,10 @@ afterEach(() => {
   native = false;
 });
 
-function open(onClose = vi.fn()) {
+function open(onClose = vi.fn(), onSentInApp?: () => void) {
   const instance = mount(PostShareSheet, {
     target: document.body,
-    props: { open: true, postId: 'p1', onClose },
+    props: { open: true, postId: 'p1', onClose, onSentInApp },
   });
   mounted.push(() => unmount(instance));
   flushSync();
@@ -78,6 +84,38 @@ function button(text: string): HTMLButtonElement {
   return found as HTMLButtonElement;
 }
 
+describe('PostShareSheet - the member repost row (WP-F6)', () => {
+  function openWith(props: Record<string, unknown>) {
+    const instance = mount(PostShareSheet, {
+      target: document.body,
+      props: { open: true, postId: 'p1', onClose: vi.fn(), ...props },
+    });
+    mounted.push(() => unmount(instance));
+    flushSync();
+  }
+
+  it('is not drawn when the server offers no repost', () => {
+    openWith({});
+    expect(document.querySelector('[data-repost-row]')).toBeNull();
+  });
+
+  it('reposts, and hands the host the answer', async () => {
+    const onRepostChange = vi.fn();
+    openWith({ canRepost: true, onRepostChange });
+    button('Republier pour mes abonnés').click();
+    expect(repostToMyFollowers).toHaveBeenCalledWith('p1');
+    await vi.waitFor(() => expect(onRepostChange).toHaveBeenCalledWith('p1', true));
+  });
+
+  it('takes a repost back when the reader reposted it', async () => {
+    const onRepostChange = vi.fn();
+    openWith({ repostedByMe: true, onRepostChange });
+    button('Annuler ma republication').click();
+    expect(undoMyRepost).toHaveBeenCalledWith('p1');
+    await vi.waitFor(() => expect(onRepostChange).toHaveBeenCalledWith('p1', false));
+  });
+});
+
 describe('PostShareSheet', () => {
   it('lists the conversations newest first', () => {
     open();
@@ -91,11 +129,48 @@ describe('PostShareSheet', () => {
     expect(sendPostLinkInApp).toHaveBeenCalledWith('p1', 'g-new');
   });
 
+  it('says the link was sent in the app only when its landing was published', () => {
+    const onSentInApp = vi.fn();
+    sendPostLinkInApp.mockReturnValueOnce(false);
+    open(vi.fn(), onSentInApp);
+    button('New').click();
+    expect(onSentInApp).not.toHaveBeenCalled();
+    sendPostLinkInApp.mockReturnValueOnce(true);
+    button('Old').click();
+    expect(onSentInApp).toHaveBeenCalledOnce();
+  });
+
   it('copies the link from the bottom row', () => {
     const onClose = open();
     button('Copier le lien').click();
     expect(copyPostLink).toHaveBeenCalledWith('p1');
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('acts on its post even when closing it clears the id it was given (the reel viewer)', () => {
+    // The reel viewer passes `postId={shareFor}` and closes with `shareFor = null`: a row that
+    // read `postId` after the close acted on null and did nothing (Mi 9T, 2026-10-28).
+    native = true;
+    const props = $state({
+      open: true,
+      postId: 'p1' as string,
+      onClose: () => {
+        props.postId = null as unknown as string;
+      },
+    });
+    const instance = mount(PostShareSheet, { target: document.body, props });
+    mounted.push(() => unmount(instance));
+    flushSync();
+    button('New').click();
+    expect(sendPostLinkInApp).toHaveBeenCalledWith('p1', 'g-new');
+    props.postId = 'p1';
+    flushSync();
+    button('Copier le lien').click();
+    expect(copyPostLink).toHaveBeenCalledWith('p1');
+    props.postId = 'p1';
+    flushSync();
+    button('Partager via').click();
+    expect(sharePostLinkOut).toHaveBeenCalledWith('p1');
   });
 
   it('offers the system sheet only where there is one', () => {

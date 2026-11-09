@@ -6,7 +6,22 @@
   import { goto } from '$app/navigation';
   import { fetchUserProfile, type UserProfile, getSavedUserId } from '$lib/stores/user';
   import { PROFILE_SELF_SEGMENT } from '$lib/profile/profileSections';
-  import { followUser, unfollowUser, getUserFollowStatus } from '$lib/posts/api';
+  import { getFollowStatus, type FollowStatus } from '$lib/follows/api';
+  import {
+    askPerson,
+    followEpoch,
+    leavePerson,
+    recordPersonStatus,
+    withdrawPerson,
+  } from '$lib/follows/followState.svelte';
+  import AccountBell from '$lib/components/follows/AccountBell.svelte';
+  import {
+    describeFollowRefusal,
+    followActionOf,
+    followLabel,
+    optimisticStatusAfter,
+  } from '$lib/follows/followButton';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import { listBlockedUsers, blockUser, unblockUser } from '$lib/users/blocks';
   import { createReport, ModerationApiError } from '$lib/moderation/api';
   import type { ReportReason } from '$lib/moderation/reasons';
@@ -22,6 +37,7 @@
     MessageCircle,
     UserPlus,
     UserCheck,
+    UserRoundCheck,
     Users,
     Flag,
     Ban,
@@ -32,6 +48,7 @@
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
   import ProfileMinesweeperBadge from '$lib/components/profile/ProfileMinesweeperBadge.svelte';
+  import ProfileBirthdayLine from '$lib/components/profile/ProfileBirthdayLine.svelte';
   import {
     fetchUserMemberships,
     fetchUserRoleHistory,
@@ -48,7 +65,8 @@
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
   let error = $state('');
-  let following = $state(false);
+  /** Where the reader stands with this person: a request, a follow, or neither (WP-F4). */
+  let followStatus = $state<FollowStatus | null>(null);
   let followLoading = $state(false);
   let memberships = $state<UserMembershipRow[]>([]);
   let roleHistory = $state<UserRoleHistoryRow[]>([]);
@@ -68,10 +86,21 @@
 
   /** Loads a profile and its extras, ignoring the result if a newer load has since started. */
   async function loadProfile(userId: string, token: number) {
+    const readAt = followEpoch();
     try {
       const [prof, status, blocks] = await Promise.all([
         fetchUserProfile(userId),
-        getUserFollowStatus(userId).catch(() => ({ following: false })),
+        getFollowStatus(userId)
+          .then((read) => {
+            // The ledger learns what this page read (a chip elsewhere agrees with it) - unless the
+            // reader changed while it was out.
+            recordPersonStatus(userId, read, readAt);
+            return read;
+          })
+          .catch((e: unknown) => {
+            Log.d('profile.loadFollowStatus failed', e);
+            return null;
+          }),
         // A blocked person is hidden from search but their profile stays reachable - by url, or
         // from the blocked list itself - so this page has to know, or it would offer to block
         // somebody who already is.
@@ -82,7 +111,7 @@
       ]);
       if (token !== loadToken) return;
       profile = prof;
-      following = status.following;
+      followStatus = status;
       blocked = blocks.some((b) => b.userId === userId);
       extrasLoading = true;
       try {
@@ -142,7 +171,7 @@
     // `me` is the segment of the reader's own sections (`/profile/me/<section>`), never a user id:
     // a typed `/profile/me` is the reader's own profile too.
     if (userId === PROFILE_SELF_SEGMENT || (currentUserId && userId === currentUserId)) {
-      goto(resolve('/profile'), { replaceState: true });
+      goto(resolve('profile'), { replace: true });
       return;
     }
 
@@ -156,8 +185,8 @@
 
   const displayFallbackName = $derived.by(() => {
     if (profile?.displayName) return profile.displayName;
-    if (profile?.id) return getUserDisplayNameSync(profile.id, 'Membre Canari');
-    return 'Membre Canari';
+    if (profile?.id) return getUserDisplayNameSync(profile.id, m.profile_public_default_name());
+    return m.profile_public_default_name();
   });
 
   function handleSendMessage() {
@@ -167,20 +196,39 @@
     }
   }
 
+  /**
+   * Asks, withdraws or unfollows, by where the reader stands (`followButton.ts`). Unfollowing asks
+   * first: every personal account is private, so following again means asking again.
+   */
   async function handleFollowToggle() {
     if (!profile?.id || followLoading) return;
-    // THE LABEL IS A LOCAL BOOLEAN AND IT FLIPS ON THE TAP. It used to flip after the round trip
-    // while `followLoading` held the button disabled, so on a bad link the reader pressed
-    // "Suivre", got a dead control, and had nothing to read for seconds. A refusal puts it back.
-    const wasFollowing = following;
-    following = !wasFollowing;
+    const action = followActionOf(followStatus);
+    if (action === 'unfollow') {
+      const confirmed = await showConfirm(
+        m.profile_unfollow_confirm({ name: displayFallbackName }),
+        {
+          confirmLabel: m.profile_unfollow_confirm_btn(),
+        }
+      );
+      if (!confirmed) return;
+    }
+    // THE LABEL FLIPS ON THE TAP. It used to flip after the round trip while `followLoading` held
+    // the button disabled, so on a bad link the reader pressed "Suivre", got a dead control, and
+    // had nothing to read for seconds. A refusal puts it back and says why.
+    const was = followStatus;
+    followStatus = optimisticStatusAfter(action);
     followLoading = true;
+    actionMessage = '';
+    Log.d('profile.handleFollowToggle', `${action} from ${was ?? 'none'}`);
     try {
-      if (wasFollowing) await unfollowUser(profile.id);
-      else await followUser(profile.id);
+      if (action === 'ask') followStatus = await askPerson(profile.id);
+      // A withdraw answers where the pair stands NOW: a request accepted meanwhile stays a follow.
+      else if (action === 'withdraw') followStatus = await withdrawPerson(profile.id);
+      else await leavePerson(profile.id);
     } catch (err) {
       Log.d('profile.handleFollowToggle failed', err);
-      following = wasFollowing;
+      followStatus = was;
+      actionMessage = describeFollowRefusal(refusalCode(err));
     } finally {
       followLoading = false;
     }
@@ -215,7 +263,7 @@
         await blockUser(profile.id);
         blocked = true;
         // The server severs both follows as part of blocking; reflect it rather than re-fetching.
-        following = false;
+        followStatus = null;
         actionMessage = m.profile_block_done();
       }
     } catch (err) {
@@ -292,6 +340,7 @@
           </h1>
           <ProfileMinesweeperBadge userId={profile.id} />
           <ProfileChips {profile} />
+          <ProfileBirthdayLine userId={profile.id} />
         </div>
 
         <!-- Actions -->
@@ -299,16 +348,27 @@
           <button
             onclick={handleFollowToggle}
             disabled={followLoading}
-            class="focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-60 {following
+            data-follow-status={followStatus ?? 'none'}
+            class="focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-60 {followStatus
               ? 'text-text-main bg-cn-surface border border-black/10 hover:border-red-500/20 hover:bg-red-500/10 hover:text-red-600 dark:border-white/10 '
               : 'bg-cn-yellow/10 border-cn-yellow/20 dark:text-cn-yellow hover:bg-cn-yellow/20 border text-amber-700'}"
           >
-            {#if following}
-              <UserCheck size={18} strokeWidth={2.5} /> {m.profile_public_following_btn()}
+            {#if followStatus === 'accepted'}
+              <UserCheck size={18} strokeWidth={2.5} />
+            {:else if followStatus === 'pending'}
+              <UserRoundCheck size={18} strokeWidth={2.5} />
             {:else}
-              <UserPlus size={18} strokeWidth={2.5} /> {m.profile_public_follow_btn()}
+              <UserPlus size={18} strokeWidth={2.5} />
             {/if}
+            {followLabel(followStatus)}
           </button>
+          <!--
+            THE BELL (engagement WP-3, L7): offered once the reader FOLLOWS this person (accepted) -
+            a bell on someone whose posts the reader is not told of would be a second, silent follow.
+          -->
+          {#if followStatus === 'accepted'}
+            <AccountBell kind="user" targetId={profile.id} />
+          {/if}
           <button
             onclick={handleSendMessage}
             class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95"

@@ -46,7 +46,9 @@ export function mlsFrameEpoch(protoBase64: string): number | null {
  * `proposals<V> || optional<UpdatePath>` - and RFC 9420 section 12.4.3.2 makes the path mandatory
  * there, so the joiner's `LeafNode`, and the BasicCredential identity in it, is readable without a
  * key (`leafIdentity`). An external commit with no path, or a non-basic credential, is refused:
- * no conforming client sends one.
+ * no conforming client sends one. Its proposals are in the clear too, and the index of every
+ * Remove among them is read (`removedLeaves`), because RFC 9420 lets an external commit remove only
+ * the joiner's own prior leaf; anything but an inline ExternalInit or Remove is refused.
  *
  * WHAT IT PROVES AND WHAT IT DOES NOT: the bytes CLAIM a shape; this server holds no key to check
  * the signature. The commit gate pairs the claim with who may commit, the leaf identity with the
@@ -70,6 +72,8 @@ export function readCommitFrame(protoBase64: string): CommitFrame | null {
   // committer's new LeafNode.
   const proposals = readMlsOpaque(bytes, offset + 1);
   if (!proposals) return null;
+  const removedLeaves = readExternalCommitRemovals(proposals.bytes);
+  if (!removedLeaves) return null;
   if (bytes.length < proposals.next + 1 || bytes.readUInt8(proposals.next) !== 1) return null;
   const leaf = readLeafNodeHead(bytes, proposals.next + 1);
   if (!leaf) return null;
@@ -78,16 +82,80 @@ export function readCommitFrame(protoBase64: string): CommitFrame | null {
     epoch: header.epoch,
     external: true,
     leafIdentity: leaf.identity,
+    removedLeaves,
   };
+}
+
+/** RFC 9420 `ProposalOrRefType.proposal` - an inline proposal. */
+const PROPOSAL_INLINE = 1;
+/** RFC 9420 `ProposalType.remove`. */
+const PROPOSAL_REMOVE = 3;
+/** RFC 9420 `ProposalType.external_init`. */
+const PROPOSAL_EXTERNAL_INIT = 6;
+
+/**
+ * The leaf indices an external commit's Remove proposals name, read from its `proposals<V>`
+ * contents - or null for any proposal a Canari external commit never carries.
+ *
+ * A Canari external commit holds one inline ExternalInit (`kem_output<V>`) and, when the joiner is
+ * replacing its own prior leaf, one inline Remove (`removed`, a u32) - OpenMLS's external-commit
+ * builder adds nothing else. A pre-shared key, a proposal by reference or any other type is
+ * therefore not the shape this estate sends, and it is refused like every other malformed commit.
+ */
+function readExternalCommitRemovals(proposals: Buffer): number[] | null {
+  const removed: number[] = [];
+  let offset = 0;
+  while (offset < proposals.length) {
+    if (proposals.length < offset + 3 || proposals.readUInt8(offset) !== PROPOSAL_INLINE) {
+      return null;
+    }
+    const type = proposals.readUInt16BE(offset + 1);
+    offset += 3;
+    if (type === PROPOSAL_EXTERNAL_INIT) {
+      const kemOutput = readMlsOpaque(proposals, offset);
+      if (!kemOutput) return null;
+      offset = kemOutput.next;
+    } else if (type === PROPOSAL_REMOVE) {
+      if (proposals.length < offset + 4) return null;
+      removed.push(proposals.readUInt32BE(offset));
+      offset += 4;
+    } else {
+      return null;
+    }
+  }
+  return removed;
 }
 
 /**
  * A commit's clear header, as `readCommitFrame` reads it. Only an external commit carries
- * `leafIdentity`: a member commit is a `PrivateMessage`, whose content this server cannot read.
+ * `leafIdentity` and `removedLeaves`: a member commit is a `PrivateMessage`, whose content this
+ * server cannot read. `removedLeaves` is the leaf index of every Remove the commit carries - empty
+ * for a first join, one index for a joiner replacing its own prior leaf.
  */
 export type CommitFrame =
   | { groupId: string; epoch: number; external: false }
-  | { groupId: string; epoch: number; external: true; leafIdentity: string };
+  | {
+      groupId: string;
+      epoch: number;
+      external: true;
+      leafIdentity: string;
+      removedLeaves: number[];
+    };
+
+/**
+ * Whether `protoBase64` is an MLS 1.0 `PublicMessage` (wire format 1) - a handshake frame in the
+ * clear, which in this estate is only ever an external commit.
+ *
+ * THE SEND ROUTES RELAY ONLY PRIVATE (APPLICATION) FRAMES; A PUBLIC HANDSHAKE FRAME GOES THROUGH THE
+ * COMMIT ROUTE. Every client sender seals through `create_message` in `mls-core`, and no group here
+ * sets a wire-format policy, so openmls's default `PURE_CIPHERTEXT` makes every application frame
+ * and proposal a `PrivateMessage`; external commits go to `POST /mls/commit`, where
+ * {@link readCommitFrame} and the gate read them. A public frame on a send route would reach
+ * members without that gate, so `clientSendRefusal` and the background send refuse it.
+ */
+export function isPublicMlsFrame(protoBase64: string): boolean {
+  return framedWireFormat(Buffer.from(protoBase64, 'base64')) === 1;
+}
 
 /** The wire format of a framed MLS 1.0 message - `PublicMessage` (1) or `PrivateMessage` (2) - or null. */
 function framedWireFormat(bytes: Buffer): 1 | 2 | null {
@@ -129,4 +197,51 @@ export const MLS_MAX_PAST_EPOCHS = 2;
  */
 export function isBeyondPastEpochWindow(frameEpoch: number, activeEpoch: number): boolean {
   return frameEpoch < activeEpoch - MLS_MAX_PAST_EPOCHS;
+}
+
+/**
+ * Whether an application frame sealed at `frameEpoch` was sealed BEFORE the commit that admitted
+ * `seat`, so the seat's device can never open it.
+ *
+ * A device admitted by a commit built on base epoch B holds the group from B + 1: a Welcome and an
+ * external join both start with no secrets of an earlier epoch, so a frame sealed at B or below is
+ * unreadable to it however it is delivered. A member that has not applied the join yet still seals
+ * at B after the join is accepted - the ordinary race of a send crossing a join - and that frame
+ * used to be queued and pushed to the newcomer anyway, which acknowledged it as
+ * `past-epoch-application`, counted it a loss and asked its peers for a seed it was never owed
+ * (rig log 2026-10-25: `msg_epoch=5 group_epoch=6` right after `externalJoin ... base epoch 5`).
+ *
+ * A key group's PUBLISHER is recorded by {@link publisherAdmissionBase} - the base that leads to
+ * the epoch it holds - so a frame a peer seals at that epoch reaches it. The publish records an
+ * admission on ANY active seat that has none, not only the creator's, so recording the held epoch
+ * itself would withhold frames a member can read; and past the creation's publish (epoch 0) the
+ * value is written INFERRED, so it never withholds at all - such a member may have been in the tree
+ * long before it published. A conversation's CREATOR is recorded at 0, the
+ * epoch it holds: one epoch too strict, which drops nothing, because no other device ever holds
+ * the epoch a group was created at, so nothing is sealed there for it.
+ *
+ * An INFERRED floor (`admissionInferred`) is no admission - it may be later than the real one - so
+ * it never withholds a frame, and no recorded admission (null) never does either.
+ */
+export function sealedBeforeAdmission(
+  frameEpoch: number,
+  seat: { admittedByBaseEpoch: number | null; admissionInferred: boolean }
+): boolean {
+  if (seat.admittedByBaseEpoch === null || seat.admittedByBaseEpoch === undefined) return false;
+  if (seat.admissionInferred) return false;
+  return frameEpoch <= seat.admittedByBaseEpoch;
+}
+
+/**
+ * The admission recorded for a key group's PUBLISHER, which holds `heldEpoch` and was admitted by
+ * no commit this server saw (the creator, or a member whose seat carries no admission yet).
+ *
+ * An admission is a commit's BASE - the device holds the group from base + 1 - so a device that
+ * holds `heldEpoch` is recorded at `heldEpoch - 1`: it is then neither withheld a frame sealed at
+ * the epoch it holds ({@link sealedBeforeAdmission}) nor refused the time of the commit that led
+ * there, the same floor an external join at that base would have set. Never below 0, the base of
+ * the first commit.
+ */
+export function publisherAdmissionBase(heldEpoch: number): number {
+  return Math.max(0, heldEpoch - 1);
 }

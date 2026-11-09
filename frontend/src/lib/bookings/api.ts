@@ -32,6 +32,11 @@ export interface SpaceSettings {
   slotMode: SlotMode;
   stepMinutes: number | null;
   maxSteps: number | null;
+  /**
+   * How long one fixed slot lasts, on a 'slots' space only (migration 116); null on a step space
+   * and on a slots space created before the length was stored, whose painter reads it from the lines.
+   */
+  slotMinutes: number | null;
   nameVisibility: NameVisibility;
   discoverability: Discoverability;
   audience: AudienceCondition | null;
@@ -47,6 +52,8 @@ export interface SpaceSettings {
   participantWithdrawMinMinutes: number;
   maxPeople: number | null;
   retentionDays: number;
+  /** The default reminder delay of the space's people, in minutes; null = none (WP-N, Q-R1). */
+  reminderMinutes: number | null;
 }
 
 /** A resource as the editor reads it, with its whole availability. */
@@ -92,7 +99,8 @@ export interface ResourceFields {
 /**
  * A refused bookings call. `bookingIds` is set on `bookings-inside-change` and
  * `bookings-inside-block` (D29): the coming bookings the change would strand, which the organiser
- * cancels before retrying. Empty otherwise.
+ * cancels before retrying. Empty otherwise. `reason` is the precise rule beside a family code - an
+ * edit's `BOOKING_EDIT_*` (owner, 2026-11-02) - and null otherwise.
  */
 export class BookingsApiError extends SocialApiError {
   constructor(
@@ -100,7 +108,8 @@ export class BookingsApiError extends SocialApiError {
     code: string | null,
     status: number,
     readonly bookingIds: string[],
-    amountBounds: AmountBounds | null = null
+    amountBounds: AmountBounds | null = null,
+    readonly reason: string | null = null
   ) {
     super(message, code, status, amountBounds);
     this.name = 'BookingsApiError';
@@ -120,7 +129,8 @@ async function refusal(res: Response, what: string): Promise<BookingsApiError> {
     code,
     res.status,
     ids,
-    amountBoundsOf(body)
+    amountBoundsOf(body),
+    typeof body.reason === 'string' ? body.reason : null
   );
 }
 
@@ -142,12 +152,30 @@ export function listManagedSpaces(associationId: string | null): Promise<Managed
   return call('listManagedSpaces', `/managed${query}`);
 }
 
-/** A new space with a name; every other setting starts at the server's default. */
-export function createSpace(name: string, associationId: string | null): Promise<{ id: string }> {
+/** What a creation carries besides its name and owner: any setting, and a poster already uploaded. */
+export type CreateSpaceFields = Partial<Omit<SpaceSettings, 'name'>> & { poster?: SpacePoster };
+
+/**
+ * A new space with its ONE default column (D44), named after it. The server writes both in one
+ * transaction, with the column's first hours when `availability` is given, so no half-made space
+ * is ever left behind. `fields` are the settings the creation wizard asked (D52, `wizard.ts`);
+ * every setting absent starts at the server's default.
+ */
+export function createSpace(
+  name: string,
+  associationId: string | null,
+  availability?: { lines: StoredLine[]; exceptions: Closure[] },
+  fields: CreateSpaceFields = {}
+): Promise<{ id: string; resourceId: string }> {
   return call(
     'createSpace',
     '/spaces',
-    json('POST', associationId ? { name, associationId } : { name })
+    json('POST', {
+      ...fields,
+      name,
+      ...(associationId ? { associationId } : {}),
+      ...(availability ? { availability } : {}),
+    })
   );
 }
 
@@ -222,6 +250,12 @@ export function deleteResource(resourceId: string): Promise<unknown> {
   });
 }
 
+/** One person of a booking: the id carries the photo, the name is the snapshot taken at booking. */
+export interface BookingPerson {
+  id: string;
+  name: string;
+}
+
 /** One booking as its viewer may read it (D9): names only when allowed, answers to the organiser. */
 export interface BookingView {
   id: string;
@@ -232,7 +266,17 @@ export interface BookingView {
   /** The viewer is the holder or a participant still in. */
   mine: boolean;
   holderName?: string;
+  /** Sent exactly when `holderName` is: the booker's photo is shown only where the name is. */
+  holderId?: string;
   participantNames?: string[];
+  /** The people of the booking OTHER than the viewer (holder first); sent where the names are. */
+  others?: BookingPerson[];
+  /**
+   * What an edit of it is built on, echoed by `editBooking`: a booking changed since (a participant
+   * withdrew, another edit) refuses the edit `BOOKING_EDIT_CONFLICT` / `stale`. Sent where the
+   * names are, so always to whoever may edit it.
+   */
+  revision?: string;
   answers?: Record<string, unknown> | null;
   /** With `answers`: the name each FILE answer's file was uploaded under, by file id (WP-B6). */
   fileNames?: Record<string, string>;
@@ -253,9 +297,54 @@ export async function namedSpaceBookings(spaceId: string, ids: string[]): Promis
   return page.items;
 }
 
-/** The holder or the organiser cancels a coming booking (D5); nobody is notified in v1 (D13). */
-export function cancelBooking(bookingId: string): Promise<unknown> {
-  return call('cancelBooking', `/${encodeURIComponent(bookingId)}/cancel`, { method: 'POST' });
+/** One row of the organiser's list: the view, and how it was made (WP-B3). */
+export interface OrganiserBooking extends BookingView {
+  /** The organiser booked it for its holder (D20). */
+  bookedOnBehalf: boolean;
+  cancelledByHolder: boolean;
+}
+
+/** One page of the organiser's list; `nextOffset` is null on the last page. */
+export interface OrganiserBookingsPage {
+  items: OrganiserBooking[];
+  nextOffset: number | null;
+}
+
+/**
+ * The dashboard's "coming" list (WP-R5, D50): the space's LIVE bookings that end after `fromMs` -
+ * the one under way included - by start, `limit` at a time from `offset`.
+ */
+export function upcomingSpaceBookings(
+  spaceId: string,
+  fromMs: number,
+  offset = 0,
+  limit = 50
+): Promise<OrganiserBookingsPage> {
+  const query = `?from=${encodeURIComponent(new Date(fromMs).toISOString())}&offset=${offset}&limit=${limit}`;
+  return call<OrganiserBookingsPage>(
+    'upcomingSpaceBookings',
+    `/spaces/${encodeURIComponent(spaceId)}/bookings${query}`
+  );
+}
+
+/**
+ * The holder or the organiser cancels a coming booking (D5). `message` is the organiser's optional
+ * word to its people (Q-R3), carried by their notice alone - sent only while notices are live.
+ */
+export function cancelBooking(bookingId: string, message?: string): Promise<unknown> {
+  const path = `/${encodeURIComponent(bookingId)}/cancel`;
+  return message
+    ? call('cancelBooking', path, json('POST', { message }))
+    : call('cancelBooking', path, { method: 'POST' });
+}
+
+/** Sets THE READER's own reminder delay on a booking they are one of the people of (Q-R1). */
+export function setBookingReminder(bookingId: string, minutes: number | null): Promise<unknown> {
+  return call(
+    'setBookingReminder',
+    `/${encodeURIComponent(bookingId)}/reminder`,
+    json('PATCH', { minutes })
+  );
 }
 
 /** Replaces the resource's WHOLE availability (D11); refused over coming bookings (D29). */
@@ -315,6 +404,8 @@ export interface BookerSpace {
   maxPeople: number | null;
   /** Days a FILE answer's file is kept after the END of its slot (D8, D41), said under the picker. */
   retentionDays: number;
+  /** The space's default reminder delay, the booker's own unless they pick another (Q-R1). */
+  reminderMinutes: number | null;
   poster: SpacePoster | null;
   /** The reader manages the space: they book on behalf, block, cancel any coming booking. */
   canManage: boolean;
@@ -359,6 +450,8 @@ export interface MyBooking extends BookingView {
   resource: { id: string; name: string };
   /** The "after booking" texts (D32): only for a live booking the reader is one of the people of. */
   privateInfo: { spacePrivateInfo: string | null; resourcePrivateInfo: string | null } | null;
+  /** THE READER's own reminder delay on it, in minutes; null = none (WP-N, Q-R1). */
+  reminderMinutes: number | null;
 }
 
 /** What a booking request carries (D4, D7, D20); instants are ISO with their zone. */
@@ -370,6 +463,8 @@ export interface BookingRequest {
   answers?: Record<string, unknown>;
   /** Booking ON BEHALF of this account: the organiser only. */
   holderId?: string;
+  /** The booker's own reminder delay (Q-R1); absent = the space's default, null = none. */
+  reminderMinutes?: number | null;
 }
 
 /** "Indisponible" over a range of a resource (D10, D20). */
@@ -397,6 +492,30 @@ export function getSlots(spaceId: string, from: string, to: string): Promise<Res
 
 export function book(spaceId: string, request: BookingRequest): Promise<{ id: string }> {
   return call('book', `/spaces/${encodeURIComponent(spaceId)}/bookings`, json('POST', request));
+}
+
+/**
+ * What an edit sends (owner, 2026-11-02): the NEW range, on the booking's own day, and the WHOLE
+ * set of its other people after the edit - not a delta.
+ */
+export interface BookingEditRequest {
+  startsAt: string;
+  endsAt: string;
+  participantIds: string[];
+  /** The `revision` of the booking view the sheet was opened on. */
+  revision: string;
+}
+
+/**
+ * Edits a coming booking: its holder or the organiser, as for a cancellation. All or nothing on
+ * the server: refused, the booking is exactly as it was (`BOOKING_EDIT_*`, `refusals.ts`).
+ * `changed` is false when the request matched the booking already (a retry).
+ */
+export function editBooking(
+  bookingId: string,
+  request: BookingEditRequest
+): Promise<{ ok: true; changed: boolean }> {
+  return call('editBooking', `/${encodeURIComponent(bookingId)}`, json('PATCH', request));
 }
 
 /** A participant leaves a coming booking, until the space's delay (D5). */

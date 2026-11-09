@@ -181,11 +181,9 @@ compute_garage_admin_host_port() {
   if [ "$ENVIRONMENT" = "dev" ]; then printf '19101'; else printf '19011'; fi
 }
 
-# THE LIVE SWITCH (docs/wiki/services/lives.md): the live routes open on dev, where the chantier is
-# built and read on phones, and stay closed on production until the user decides otherwise - so a
-# stable release reaches no live route whatever client calls it. Computed rather than a template
-# default, for the reason the ports above are: one place decides, per estate.
-compute_live_enabled() {
+# The Lydia reconciliation sweep (docs/wiki/lydia-api.md section 7): ON on dev, OFF on production
+# until the amount format Lydia signs in a request/state answer is measured on a sandbox Business.
+compute_lydia_reconcile_enabled() {
   if [ "$ENVIRONMENT" = "dev" ]; then printf 'true'; else printf 'false'; fi
 }
 
@@ -204,6 +202,20 @@ min_length() {
   # Seals each live's key at rest (migration 110); shorter, social-service refuses every live start
   # with 503 LIVE_KEY_SEALING_UNAVAILABLE.
   LIVE_KEY_ENCRYPTION_SECRET) printf '32' ;;
+  # Signs the viewer-bound avatar token (core-service, avatar-token.ts); shorter, core-service mints
+  # none and every avatar URL goes unsigned.
+  AVATAR_TOKEN_SECRET) printf '32' ;;
+  esac
+}
+
+# ── Public values ─────────────────────────────────────────────────────────────
+# A value that is long enough and still no secret: the local stack's default, written in a PUBLIC
+# repository (infrastructure/local/docker-compose.yml). An estate holding it signs every agenda link
+# with a key anybody can read, so it is refused here, naming the secret. deploy-env.test.sh reads the
+# literal back from the compose file, so the two cannot drift. Prints the value, or nothing.
+public_default() {
+  case "$1" in
+  AGENDA_SIGNING_KEY) printf 'dev-agenda-signing-key-change-me-0123456789abcdef' ;;
   esac
 }
 
@@ -265,7 +277,7 @@ while IFS=$'\t' read -r key prod dev source note; do
     FRONTEND_HOST_PORT) value="$(compute_frontend_host_port)" ;;
     GARAGE_API_HOST_PORT) value="$(compute_garage_api_host_port)" ;;
     GARAGE_ADMIN_HOST_PORT) value="$(compute_garage_admin_host_port)" ;;
-    LIVE_ENABLED) value="$(compute_live_enabled)" ;;
+    LYDIA_RECONCILE_ENABLED) value="$(compute_lydia_reconcile_enabled)" ;;
     *)
       printf 'render-env: %s is marked computed and nothing computes it\n' "$key" >&2
       exit 2
@@ -299,6 +311,14 @@ while IFS=$'\t' read -r key prod dev source note; do
   if [ -n "$minimum" ] && [ "${#value}" -lt "$minimum" ] && [ "$disposition" = "required" ]; then
     printf '::error::%s is set for the %s environment but is only %s characters, %s needs at least %s - %s
 '       "$key" "$ENVIRONMENT" "${#value}" "$key" "$minimum" "$note" >&2
+    MISSING=1
+    continue
+  fi
+
+  public="$(public_default "$key")"
+  if [ -n "$public" ] && [ "$value" = "$public" ]; then
+    printf '::error::%s is set for the %s environment to the local stack'"'"'s PUBLIC default (infrastructure/local/docker-compose.yml) - generate one with openssl rand -hex 32 - %s
+'       "$key" "$ENVIRONMENT" "$note" >&2
     MISSING=1
     continue
   fi

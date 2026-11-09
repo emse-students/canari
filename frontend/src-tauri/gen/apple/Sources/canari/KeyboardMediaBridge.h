@@ -22,4 +22,6 @@ WKWebView *_Nullable CanariFindWebView(void);
 ///
 /// Call `CanariKeyboardMediaStart(wkWebView)` once after the WKWebView is created (post-bootstrap).
 /// The bridge pauses polling automatically when the app resigns active and resumes on become-active.
-void CanariKeyboardMediaStart(WKWebView *webView);
+/// Nil is the ordinary call (`canari_ios.mm`, before wry has made the WebView): the bridge then
+/// finds it itself.
+void CanariKeyboardMediaStart(WKWebView *_Nullable webView);

@@ -24,7 +24,7 @@ the bench build is [mobile](frontend/mobile.md#a-build-for-the-phone-on-the-benc
 | `phone-any.mjs` | `CANARI_PHONE=ios` picks `phone-ios.mjs`, unset keeps `phone.mjs`; a row switches by its import line |
 | `device.mjs` | `--device I1` arms the iPhone (`armIfPhone`), so the atoms resolve it like A1 |
 | `webkit-console.mjs` + `watch.mjs` | the iPhone's console (`Console.messageAdded`) reaches the classifier as `Log.entryAdded` - without it every iPhone window would read clean by construction |
-| `tools/ios-device/ios.mjs` | `state`, `active`, `terminate`, `locked`, `unlock`, `flat` (now with each element's `label` and `value`, which is how a switch is read), `longPressAt`, and since C1 `perform` (one W3C touch sequence), `webviewRect`, `openUrl`, `type -` (stdin, for a secret); asking about the app, swiping, typing or opening a URL never launches it |
+| `tools/ios-device/ios.mjs` | `state`, `active`, `terminate`, `locked`, `unlock`, `flat` (now with each element's `label` and `value`, which is how a switch is read), `longPressAt`, and since C1 `perform` (one W3C touch sequence), `webviewRect`, `openUrl`, `type -` (stdin, for a secret; clears the field, sets it in one call, reads it back - exact, or by length for a secure field - never prints it; `--submit` presses Return after the read-back, `--keys` is raw events for the device passcode keypad only; a newline or backspace in the text is refused); `tap <text>` taps a Button/Link over a same-named label, refuses an ambiguity, and refuses a tap in the KEYBOARD BAND while a text field is the focused element (`--over-keyboard` is the caller's per-call opt-out and logs each use; `--no-guard=<reason>` skips the check entirely, for taps inside a FOREIGN process - Settings, Control Centre, system alerts, the shade - and logs the reason; a notification reply is typed with `--keys`, a foreign field has no `element/active` to read back; a value that is itself `--submit` or `--keys` must come through stdin). **The band is an iPhone 12 PORTRAIT measurement** (the keyboard starts at 519 of 844 pt, `KEYBOARD_TOP = 0.615`); the keyboard is another process and absent from the accessibility tree, so presence is read from the focused element, and WebKit keeps that focus after the keyboard is dismissed (a visible refusal, never a silent pass). The 2026-11-04 `gammag` and 25-bullet defects were taps on a button the keyboard covered, which pressed a key; the harness opts out only for the sign-in field taps and a reply's Send ([self-test](../../tools/cross-client-harness/archive/ios-device-selftest.mjs)); asking about the app, swiping, typing or opening a URL never launches it |
 | `webkit-input.mjs` (C1) | the WebView's input: under `CANARI_PHONE=ios`, the connection `cdp.mjs`'s `connect()` opens on `PORTS.I1` performs every `Input.*` frame as a WDA touch or key - see [C1](#c1---the-input-seam-done) |
 | `phone-ios.mjs`, second half | the WDA-only observables O3, O6-O11 below, each ending in a proof read back from the device |
 | `login.mjs --device I1` | the launcher click through C1, then `signInThroughSheet` (O9); the proof is the app holding a session, as on every other client |
@@ -34,6 +34,15 @@ the bench build is [mobile](frontend/mobile.md#a-build-for-the-phone-on-the-benc
 **The bench before a run**: a BENCH build (`ios.yml` with `local_url` - it adds `tauri/devtools`, so the
 WKWebView is inspectable; a store build is not), `python tools/ios-device/wda-daemon.py`,
 `pymobiledevice3 webinspector cdp --port 9444`, then `bun phone.mjs`-style arming through `--device I1`.
+
+**On a STORE build the app's own log is still readable, and one WDA query HANGS the daemon doing it**
+(Tier A E6, `1.5.1-alpha.8`, 2026-10-30). The route: Settings > About > the save-the-log button writes
+the file to Files ("On my iPhone"); open it there, tap Quick Look's search, `ios.mjs type` the
+query, and read the hit with `ios.mjs shot`. **Never `tree`, `find`, `flat` or a `value` read while
+Quick Look shows a large log**: WDA serialises the whole text view, the call never returns and every
+later call queues behind it - the daemon must be stopped and restarted (`wda-daemon.py`), and a
+blind recovery tap can land on the home button. The search plus a screenshot reads the same line in
+seconds. That is how E6's receive half was read from the iPhone's own `CALL_REPORT`.
 
 ## C1 - the input seam (DONE)
 
@@ -156,7 +165,7 @@ the fixtures assume:
 
 Bench build of `main` at `4af29a0a0` (`ios.yml` run 36865179190, `local_url` = the workstation's LAN address, port 8081),
 signed and installed by `sign-install.mjs`, iOS 27.0.1. `PYMOBILEDEVICE3` must name the exe when it
-is not on `PATH` (on OXYGEN it is in the user's Python `Scripts` directory).
+is not on `PATH` (on the workstation it is in the user's Python `Scripts` directory).
 
 **Confirmed on the device:**
 
@@ -243,6 +252,13 @@ is proven is everything from the scheme onward.
   non-URL; this pass adds the completion handler of the `openURL` (`success=0` means the system
   declined). The next real tap on a TestFlight or sandbox-credentialed build reads: `[CanariPush]
   notification tap type=... deepLink=...`, then `openURL completed success=...`.
+- **SUPERSEDED 2026-11-01.** The real tap was read on `v1.5.4-alpha.1` and `canari_push.mm` never
+  saw it: `tauri-plugin-notification` held the notification delegate slot and dropped every remote
+  push. Canari takes the slot back at launch and the tap no longer `openURL`s: it waits in
+  `pending_notification_tap.json` for the page ([mobile](frontend/mobile.md#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01)).
+  A tap now reads `[CanariPush] notification tap type=... deepLink=...`, `notification tap queued
+  for the page: ...`, then `the page was told` (or `waits before the WebView` on a cold start), and
+  on the page `[NotifTap] native tap taken: ...` followed by `[hooks] Processing URL`.
 
 ## Every row
 

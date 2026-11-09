@@ -1,9 +1,13 @@
+import { m } from '$lib/paraglide/messages';
 import type { FormItem } from './api';
 import {
+  allRequiredAnswered,
   firstMissingAnswer,
   initialSelections,
   isItemAnswered,
+  missingAnswerMessage,
   pricedQuestionsAwaitingAnswer,
+  selectionsFromAnswers,
   visibleAnswers,
   visibleItems,
 } from './fillAnswers';
@@ -37,7 +41,11 @@ describe('isItemAnswered and firstMissingAnswer agree', () => {
 
   it('names the first required question left empty, and skips optional ones', () => {
     const items = [q({ id: 'a' }), q({ id: 'b', required: true, label: 'Nom' })];
-    expect(firstMissingAnswer(items, { a: '', b: '' })).toEqual({ kind: 'answer', label: 'Nom' });
+    expect(firstMissingAnswer(items, { a: '', b: '' })).toEqual({
+      itemId: 'b',
+      kind: 'answer',
+      label: 'Nom',
+    });
   });
 
   it('asks for a selection on an empty choice list', () => {
@@ -45,14 +53,89 @@ describe('isItemAnswered and firstMissingAnswer agree', () => {
     expect(firstMissingAnswer(items, { m: [] })?.kind).toBe('select');
   });
 
-  it('names the row of a matrix left empty', () => {
+  // D5 (decided 2026-11-06): a required grid wants ONE row, unless it asks for every row.
+  it('takes a required grid answered by one row', () => {
     const item = q({ id: 'g', type: 'matrix_single', required: true, rows: ['r1', 'r2'] });
+    expect(firstMissingAnswer([item], { g: { r1: 'x', r2: '' } })).toBeNull();
+    expect(isItemAnswered(item, { r1: 'x', r2: '' })).toBe(true);
+    expect(firstMissingAnswer([item], { g: { r1: '', r2: '' } })).toEqual({
+      itemId: 'g',
+      kind: 'matrix',
+      label: 'g',
+    });
+  });
+
+  it('names the row left empty of a grid that asks for every row', () => {
+    const item = q({
+      id: 'g',
+      type: 'matrix_single',
+      required: true,
+      rows: ['r1', 'r2'],
+      requireEveryRow: true,
+    });
     expect(firstMissingAnswer([item], { g: { r1: 'x', r2: '' } })).toEqual({
+      itemId: 'g',
       kind: 'row',
       label: 'g',
       row: 'r2',
     });
     expect(isItemAnswered(item, { r1: 'x', r2: '' })).toBe(false);
+  });
+
+  it('holds a priced grid until one unit is ordered, and starts it as an empty order', () => {
+    const grid = q({ id: 'pg', type: 'product_grid', required: true, label: 'Sweat' });
+    expect(initialSelections([grid])).toEqual({ pg: {} });
+    expect(isItemAnswered(grid, {})).toBe(false);
+    expect(isItemAnswered(grid, { 'r:c': 0 })).toBe(false);
+    expect(firstMissingAnswer([grid], { pg: {} })).toEqual({ itemId: null, kind: 'order' });
+    expect(isItemAnswered(grid, { 'r:c': 2 })).toBe(true);
+    expect(firstMissingAnswer([grid], { pg: { 'r:c': 2 } })).toBeNull();
+    expect(visibleAnswers([grid], { pg: {} })).toEqual({});
+    expect(visibleAnswers([grid], { pg: { 'r:c': 2 } })).toEqual({ pg: { 'r:c': 2 } });
+  });
+
+  it('asks one unit of the ORDER, never of each grid: an untouched grid of two is no fault', () => {
+    const sweat = q({ id: 'sweat', type: 'product_grid', required: true, label: 'Sweat' });
+    const veste = q({ id: 'veste', type: 'product_grid', required: true, label: 'Veste' });
+    const name = q({ id: 'nom', type: 'short_text', required: true, label: 'Nom' });
+    const items = [name, sweat, veste];
+    const empty = initialSelections(items);
+    // A required question is still named first, on its card...
+    expect(firstMissingAnswer(items, empty)).toEqual({
+      itemId: 'nom',
+      kind: 'answer',
+      label: 'Nom',
+    });
+    // ...then the empty order, the form's and no card's.
+    const named = { ...empty, nom: 'Ada' };
+    const missing = firstMissingAnswer(items, named);
+    expect(missing).toEqual({ itemId: null, kind: 'order' });
+    expect(missingAnswerMessage(missing!)).toBe(m.form_view_error_order_empty());
+    // One unit in EITHER grid sends the form; the untouched grid is left out of the payload.
+    const veste1 = { ...named, veste: { 'r:c': 1 } };
+    expect(firstMissingAnswer(items, veste1)).toBeNull();
+    expect(visibleAnswers(items, veste1)).toEqual({ nom: 'Ada', veste: { 'r:c': 1 } });
+  });
+
+  it('gates the end of the form on the ORDER, never on each grid', () => {
+    const sweat = q({ id: 'sweat', type: 'product_grid', required: true });
+    const veste = q({ id: 'veste', type: 'product_grid', required: true });
+    expect(allRequiredAnswered([sweat, veste], { sweat: {}, veste: {} })).toBe(false);
+    expect(allRequiredAnswered([sweat, veste], { sweat: {}, veste: { 'r:c': 1 } })).toBe(true);
+  });
+
+  it('asks no order of a form whose grids are all hidden from this person', () => {
+    const name = q({ id: 'nom', type: 'short_text', required: true, label: 'Nom' });
+    expect(firstMissingAnswer([name], { nom: 'Ada' })).toBeNull();
+  });
+
+  it('asks to update the app for a required question of a type it does not know', () => {
+    const item = q({ id: 'p', type: 'gift_card', required: true, label: 'Carte' });
+    expect(firstMissingAnswer([item], { p: { a: 1 } })).toEqual({
+      itemId: 'p',
+      kind: 'update',
+      label: 'Carte',
+    });
   });
 });
 
@@ -98,5 +181,40 @@ describe('pricedQuestionsAwaitingAnswer', () => {
     expect(pricedQuestionsAwaitingAnswer([promo], ['promo'], { promo: '' }).size).toBe(0);
     expect(pricedQuestionsAwaitingAnswer([], ['formation'], { formation: '' }).size).toBe(0);
     expect(pricedQuestionsAwaitingAnswer([formation], [], { formation: '' }).size).toBe(0);
+  });
+});
+
+describe('visibleAnswers sends only what is answered (D1, D3)', () => {
+  it('leaves out empty questions and a grid with no answered row, and strips empty rows', () => {
+    const items = [
+      q({ id: 't' }),
+      q({ id: 'm', type: 'multiple_choice' }),
+      q({ id: 'n', type: 'linear_scale' }),
+      q({ id: 'g', type: 'matrix_single', rows: ['r1', 'r2'] }),
+      q({ id: 'e', type: 'matrix_multiple', rows: ['r1'] }),
+    ];
+    const sent = visibleAnswers(items, {
+      t: '',
+      m: [],
+      n: 0,
+      g: { r1: 'c1', r2: '' },
+      e: { r1: [] },
+    });
+    expect(sent).toEqual({ n: 0, g: { r1: 'c1' } });
+  });
+
+  it('sends no key for a form of many unanswered questions', () => {
+    const items = Array.from({ length: 80 }, (_, i) => q({ id: `q${i}` }));
+    expect(visibleAnswers(items, initialSelections(items))).toEqual({});
+  });
+});
+
+describe('selectionsFromAnswers', () => {
+  it('seeds the rows a stored grid answer left out, so every row input binds', () => {
+    const items = [q({ id: 'g', type: 'matrix_single', rows: ['r1', 'r2'] }), q({ id: 't' })];
+    expect(selectionsFromAnswers(items, { g: { r1: 'c1' } })).toEqual({
+      g: { r1: 'c1', r2: '' },
+      t: '',
+    });
   });
 });

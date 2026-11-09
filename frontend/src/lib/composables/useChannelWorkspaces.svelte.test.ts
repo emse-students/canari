@@ -4,7 +4,12 @@ import { TransportFailureError } from '$lib/utils/transportFailure';
 import { SvelteMap } from 'svelte/reactivity';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import { ChannelApiError } from '$lib/services/ChannelService';
-import { RefreshFailedError, SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
+import {
+  RefreshFailedError,
+  SessionExpiredError,
+  SignOutInProgressError,
+  TransientAnswerError,
+} from '$lib/stores/auth';
 import { GraineNotReadyError } from '$lib/utils/graine/runtime';
 import { GraineUnknownChannelError } from '$lib/utils/graine/channelSeal';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -467,7 +472,7 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
    */
   it('retries a refresh that failed for a transient reason', async () => {
     listUserWorkspaces
-      .mockRejectedValueOnce(new RefreshFailedError(502))
+      .mockRejectedValueOnce(new TransientAnswerError(502))
       .mockResolvedValueOnce([makeWorkspaceDto('ws1', 'Community', 'community')]);
     listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
 
@@ -480,6 +485,20 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
 
     expect(store.workspacesLoadError).toBeNull();
     expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not ask again after the app's own 4xx refusal of the refresh - a verdict", async () => {
+    listUserWorkspaces.mockRejectedValue(new RefreshFailedError(404));
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    const promise = store.loadChannelWorkspacesFromBackend(ctx);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await tick();
+    await promise;
+
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+    expect(store.workspacesLoadError).not.toBeNull();
   });
 
   it('gives up at once on a dead session and reports it as one', async () => {
@@ -2084,5 +2103,25 @@ describe('useChannelWorkspaces - the history rule moving under an open session',
     store.handleWorkspaceUpdated({ workspaceId: 'ws1', imageMediaId: 'img-2' });
 
     expect(requestCommunityHistory).not.toHaveBeenCalled();
+  });
+
+  it("keeps the community's own role names current from the announcement, and resets on null", () => {
+    const store = useChannelWorkspaces();
+    store.setRoleLabels({ r1: 'Presidence', r2: null });
+
+    // A permission edit announced by an older server carries no name: the name stays.
+    store.handleRolePermissionsChanged({ roleId: 'r1', permissions: ['workspace.manage'] });
+    expect(store.roleLabels).toEqual({ r1: 'Presidence', r2: null });
+
+    store.handleRolePermissionsChanged({ roleId: 'r2', permissions: [], label: 'Musicien' });
+    expect(store.roleLabels.r2).toBe('Musicien');
+
+    store.handleRolePermissionsChanged({ roleId: 'r1', permissions: [], label: null });
+    expect(store.roleLabels.r1).toBeNull();
+
+    // The server's own answer to a rename applies idempotently, announcement or not.
+    store.setRoleLabel('r2', 'Bureau');
+    store.setRoleLabel('r2', 'Bureau');
+    expect(store.roleLabels.r2).toBe('Bureau');
   });
 });

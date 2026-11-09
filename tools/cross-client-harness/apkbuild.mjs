@@ -116,6 +116,19 @@ export function recordApkBuild(repo = REPO, artefact = {}, state = treeState(rep
   return record;
 }
 
+/**
+ * Writes down a build this rig did NOT make: a Play tester build whose provenance `testerbuild.mjs`
+ * read from its release and accepted (`a1tester.mjs`). Same file, same `builtAt` key, so every
+ * reader keeps one join; `source: 'play-tester'` says where the facts came from.
+ *
+ * @param {object} record the record `testerBuildVerdict` returned
+ */
+export function recordTesterBuild(record) {
+  if (record?.source !== 'play-tester' || !record.builtAt) throw new Error('recordTesterBuild: not a tester build record');
+  appendFileSync(FILE, `${JSON.stringify(record)}\n`);
+  return record;
+}
+
 /** Every recorded build, oldest first; a truncated line is skipped, never fatal. */
 export function apkBuilds() {
   if (!existsSync(FILE)) return [];

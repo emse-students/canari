@@ -20,6 +20,8 @@ export const PAYMENT_STATUSES = [
   'cancelled',
   'expired',
   'paid_over_capacity',
+  // Written by a refund from Canari (`refunds.service.ts`): the money went back, the seat is free.
+  'refunded',
 ] as const;
 
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
@@ -38,6 +40,7 @@ export function statusLabel(status: string): string {
   if (status === 'cancelled') return m.form_status_cancelled();
   if (status === 'expired') return m.form_status_expired();
   if (status === 'paid_over_capacity') return m.form_status_paid_over_capacity();
+  if (status === 'refunded') return m.form_status_refunded();
   return status;
 }
 
@@ -53,6 +56,9 @@ export function statusClass(status: string): string {
   if (status === 'free') return 'bg-cn-border/40 text-text-muted';
   if (status === 'pending' || status === 'pending_cash')
     return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300';
+  // Settled the other way: nothing to do, and not an error - its own colour, the mockup's blue.
+  if (status === 'refunded')
+    return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';
   return 'bg-red-err/20 text-red-err';
 }
 

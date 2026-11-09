@@ -14,7 +14,9 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.PowerManager
 import android.util.Base64
-import android.util.Log
+// THE SERVICE'S `Log` ALSO FEEDS THE IN-APP LOG: every WARN and ERROR line reaches the file the page
+// takes (`NativePushLog`, 2026-11-04) - a member's exported log can say why a banner went up blind.
+import fr.emse.canari.FcmLog as Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
@@ -29,10 +31,17 @@ import androidx.work.WorkManager
 import androidx.work.WorkRequest
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
+import fr.emse.canari.call.RingClosed
 import fr.emse.canari.push.BackgroundWelcomeAnswer
+import fr.emse.canari.push.BlindBannerReport
+import fr.emse.canari.push.CallSoundHold
 import fr.emse.canari.push.ChannelBannerAttribution
+import fr.emse.canari.push.ChannelBannerAuthor
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
@@ -42,6 +51,9 @@ import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
 import fr.emse.canari.push.RepostAlert
 import fr.emse.canari.push.SeedFrameLadder
+import fr.emse.canari.push.WakeAnswer
+import fr.emse.canari.push.WakeOrder
+import fr.emse.canari.push.FixedNotifIds
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONArray
@@ -86,6 +98,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          */
         external fun nativeSealCacheLine(cacheKeyB64: String, line: String): String?
 
+        /**
+         * Whether the page holds the gateway socket the caller's MLS invite arrives on, and so rings
+         * an incoming call itself (Rust `page_ring`, stated by the page's socket setter, voided by
+         * every new document).
+         */
+        private external fun nativePageRingsInApp(): Boolean
+
+        /**
+         * WHETHER THE OPEN APP RINGS THIS CALL ITSELF - the one question the native ring asks before
+         * it stands back. The app being in front is not the answer: at the PIN gate the page holds
+         * no socket, the server skips the caller's invite (a transport frame, delivered to an online
+         * device only), and nothing rang at all while the push was dropped for the app being in
+         * front (Mi 9T, 1.5.2-alpha.3, 2026-10-31). A signed-in page in front holds the socket and
+         * rings from the invite; ringing natively too would ring the call twice.
+         */
+        private fun foregroundPageRings(): Boolean = MainActivity.isInForeground && nativePageRingsInApp()
+
         /** The `open_graine_push` refusals that accuse somebody, rather than miss a seed. */
         private val GRAINE_V2_REFUSALS =
             setOf("author-mismatch", "signature-missing", "signature-refused")
@@ -99,7 +128,84 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * unbounded thread-per-push it exists to prevent, wearing a queue as a disguise.
          */
         private val MLS_PUSH_LANE: ExecutorService =
-            Executors.newSingleThreadExecutor { r -> Thread(r, "canari-fcm-mls") }
+            Executors.newSingleThreadExecutor { r -> Thread(r, "canari-fcm-mls").also { mlsLaneThread = it } }
+
+        /**
+         * The lane's one thread, so [runSerializedWithWakeLock] knows a RE-QUEUE OF THE SAME FRAME
+         * behind its Welcome, made on the lane, which goes straight back to it - everything else,
+         * new work a lane task spawns included, takes a [WAKE_ORDER] ticket.
+         */
+        @Volatile private var mlsLaneThread: Thread? = null
+
+        /**
+         * Where wake-up fetches run - OFF [MLS_PUSH_LANE], which they would otherwise hold for a
+         * network round trip each. Four threads: a burst fetches in parallel, and the frames are
+         * still dispatched in arrival order by [WAKE_ORDER]. Bounded, so a burst queues here rather
+         * than becoming a thread per push. Companion-scoped for the reason the lane is.
+         */
+        private val WAKE_FETCH_POOL: ExecutorService =
+            Executors.newFixedThreadPool(4) { r -> Thread(r, "canari-fcm-wake") }
+
+        /**
+         * Where the HTTP call of a wake fetch runs, so the fetch thread can hold it to
+         * [WAKE_FETCH_DEADLINE_MS] as a WHOLE: `connectTimeout` does not cover the DNS lookup, and
+         * `readTimeout` bounds each read, not the response. A call past its deadline is disconnected
+         * and abandoned; a DNS lookup cannot be interrupted, so its thread ends with the lookup -
+         * which is why this pool is not the fetch pool.
+         */
+        private val WAKE_HTTP_POOL: ExecutorService =
+            Executors.newCachedThreadPool { r -> Thread(r, "canari-fcm-wake-http") }
+
+        /**
+         * THE BOUND OF ONE WAKE TICKET, COUNTED FROM THE PUSH'S ARRIVAL: queueing for a fetch thread,
+         * DNS, connect and the last byte all fit in it, and the ticket is settled when it runs out
+         * whatever the fetch is doing ([WAKE_ORDER]'s deadline). Twice the 5 s connect + 5 s read a
+         * healthy call is allowed. Past it the wake is a failure, logged at ERROR, never retried.
+         */
+        private const val WAKE_FETCH_DEADLINE_MS = 20_000L
+
+        /** The wake lock of one fetch is what is left of its budget, plus this, to settle its ticket. */
+        private const val WAKE_FETCH_WAKELOCK_MARGIN_MS = 10_000L
+
+        /**
+         * What the FETCH may spend of its ticket's [WAKE_FETCH_DEADLINE_MS], strictly less than all
+         * of it: the fetch gives up first and settles its own ticket with the phase it stalled in,
+         * so a timeout is one accusing line (the fetch's), and the deadline is left to settle only
+         * a fetch that never got a thread. The 2 s between them are for the fetch to settle.
+         */
+        private const val WAKE_FETCH_BUDGET_MS = WAKE_FETCH_DEADLINE_MS - 2_000L
+
+        /**
+         * Where every wake ticket's deadline fires, [WAKE_FETCH_DEADLINE_MS] after the push ARRIVED.
+         * One thread: a deadline only settles a ticket, which is a map write and the release of
+         * whatever is now at the head - nothing here waits on the network.
+         */
+        private val WAKE_DEADLINES: java.util.concurrent.ScheduledExecutorService =
+            Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "canari-fcm-wake-deadline") }
+
+        /**
+         * The ARRIVAL ORDER of every push bound for [MLS_PUSH_LANE], wake-up or full, kept across the
+         * wake-ups' parallel fetches - and bounded: no wake ticket stays unsettled longer than
+         * [WAKE_FETCH_DEADLINE_MS] after it arrived, so nothing waits longer than that behind the
+         * latest wake ahead of it. See [WakeOrder].
+         */
+        private val WAKE_ORDER = WakeOrder(WAKE_FETCH_DEADLINE_MS) { delayMs, task ->
+            WAKE_DEADLINES.schedule({
+                // A scheduled executor swallows what a task throws; this is the only place it shows.
+                try {
+                    task()
+                } catch (e: Throwable) {
+                    Log.e(TAG, "[PUSH_WAKE] an action released by a deadline threw: ${e.javaClass.simpleName}", e)
+                }
+            }, delayMs, TimeUnit.MILLISECONDS)
+        }
+
+        /**
+         * The ONE id every "could not be loaded" notification is posted under: a burst of failed
+         * fetches is one notification that says so, not one per frame - they all say the same thing
+         * and all open the same place.
+         */
+        private const val WAKE_UNAVAILABLE_NOTIF_ID = FixedNotifIds.WAKE_UNAVAILABLE
 
         /**
          * How many Welcomes for each group are queued on [MLS_PUSH_LANE] and not yet finished.
@@ -111,9 +217,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * this single thread. Measured on NOTIF-21, 2026-09-28: two key-group frames spent ten
          * seconds each asleep in front of their own Welcome, which joined 24 s after it arrived.
          *
-         * Counted when the push is RECEIVED (before it is queued) and released when its task
-         * ENDS, whatever the outcome - so a count above zero means "a Welcome for this group is
-         * behind you on the lane", and a frame re-queued then runs after it. One re-queue per
+         * Counted when the task is HANDED TO THE LANE - inside its [WakeOrder] release, right
+         * before `execute` - and released when its task ENDS, whatever the outcome. So a count above
+         * zero means "a Welcome for this group is ON the lane behind you", and a frame re-queued
+         * then runs after it; a Welcome still waiting on an earlier wake is not counted, because
+         * nothing behind it on the lane can be waiting for it. One re-queue per
          * Welcome at most: by the time the re-queued frame runs, the Welcome has released it.
          */
         private val WELCOMES_ON_LANE = java.util.concurrent.ConcurrentHashMap<String, Int>()
@@ -127,8 +235,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** Normal-priority channel: form reminders (silent). */
         const val CHANNEL_FORMS    = "canari_forms"
 
-        /** Max-priority channel: incoming call rings (WP-XP-5, ringtone + bypass-DND request). */
-        const val CHANNEL_CALLS    = "canari_calls"
+        /**
+         * Max-priority channel: incoming call rings (WP-XP-5, ringtone + bypass-DND request), with
+         * Canari's own ring since 2026-11-01 - a new id, because a channel's sound is immutable. The
+         * id lives in the pure [fr.emse.canari.call.IncomingRing], where its JVM test holds it.
+         */
+        const val CHANNEL_CALLS    = fr.emse.canari.call.IncomingRing.CHANNEL_ID
 
         /** High-priority channel: messages that @-mention the user (WP-XP-5, bypass-DND request). */
         const val CHANNEL_MENTIONS = "canari_mentions_v2"
@@ -164,20 +276,28 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * [CanariNotificationActionReceiver.sendReadWatermark] for why a lookup was wrong.
          */
         const val EXTRA_SENT_AT      = "sentAt"
+        /**
+         * The SERVER's `createdAt` of that same message, in ms, 0 when the notification does not
+         * know it. The conversation is ordered and read on the server's clock (readState.ts, owner
+         * 2026-10-31), so the shade's read mark states it beside [EXTRA_SENT_AT]: the frame carries
+         * it as `serverAt` and `read_watermarks.ndjson` as a second field.
+         */
+        const val EXTRA_SERVER_AT    = "serverAt"
         const val KEY_TEXT_REPLY     = "canari_quick_reply_text"
 
         /** Incoming-call ring (WP-XP-5): decline action + extras for the ring notification. */
         const val ACTION_CALL_DECLINE = "fr.emse.canari.ACTION_CALL_DECLINE"
         const val EXTRA_CALL_ID       = "callId"
+        /** `CallEndReason.CALL_END_REASON_DECLINED` in libs/proto/canari.proto: the callee refused the ring. */
+        const val CALL_END_REASON_DECLINED = 2
 
         /**
          * Mirrors CALLS_NATIVE_RING_COMPILED in frontend/src/lib/features.ts (CALLS_COMPILED until
-         * 2026-10-21) - the native ring as the store binaries carry it, held off until it has been
-         * run on hardware (WP-C5, K6/K7/K8). Duplicated
-         * rather than read from the webview because this service handles pushes while no webview
-         * exists. Flip both in the same commit, and restore USE_FULL_SCREEN_INTENT in
-         * AndroidManifest.xml with them - Play gates that permission on the app being a calling
-         * app, exactly as App Review gates the iOS `voip` background mode.
+         * 2026-10-21) - the native ring as the store binaries carry it, ON since the owner's
+         * decision of 2026-10-30 (1.5.2). Duplicated rather than read from the webview because this
+         * service handles pushes while no webview exists. It moves with USE_FULL_SCREEN_INTENT in
+         * AndroidManifest.xml - Play gates that permission on the app being a calling app, exactly
+         * as App Review gates the iOS `voip` background mode.
          * `callsCompiled.test.ts` fails if any of the four ring switches disagrees with features.ts.
          *
          * It gates the native RING and nothing else. It used to decide whether a silent push was
@@ -185,20 +305,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * turning calls on would have reopened that lane; the silent guard in `handleMlsFrame` no
          * longer reads it (2026-10-18), and says why.
          */
-        private const val CALLS_ENABLED = false
+        private const val CALLS_ENABLED = true
 
         /** A ring is abandoned after 60s (same order as the OS phone app). */
-        private const val CALL_RING_TIMEOUT_MS = 60_000L
+        /** How long a ring lasts at most; the call screen bounds itself by it too. */
+        internal const val CALL_RING_TIMEOUT_MS = 60_000L
 
         /** Distinct ID range for ring notifications (stable per callId, far above the counters). */
         private const val CALL_NOTIF_ID_BASE = 700_000
 
-        /**
-         * callIds currently ringing. Dedupe between the two ring sources: the cleartext
-         * `call_ring` push (fast path) and the decrypted MLS `call_invite` (fallback for
-         * pre-WP-XP-5 callers) can both arrive for the same call.
-         */
-        private val activeCallRings = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+        // The calls whose native ring is up live in `CallRingPlayer.rings` ([RingSequencer]), the one
+        // state the native ring and the in-app player share: a ring delivered twice (FCM may
+        // redeliver) rings once, and a call the app rings, or one that ended, is never posted.
 
         // Starts at 10_000 to avoid overlapping the stable IDs (1000-9998) or the summary (9999).
         private val notificationIdCounter = java.util.concurrent.atomic.AtomicInteger(10_000)
@@ -275,13 +393,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         private const val GROUP_KEY_MESSAGES = "canari_messages_group"
 
         /** Reserved ID for the group summary notification (must not collide with getStableNotifId). */
-        private const val GROUP_SUMMARY_ID   = 9999
+        private const val GROUP_SUMMARY_ID   = FixedNotifIds.GROUP_SUMMARY
 
         /** Reserved ID for the "messages pending sync" notification (messages channel -> auto-cleared on open). */
-        private const val PENDING_SYNC_NOTIF_ID = 9998
+        private const val PENDING_SYNC_NOTIF_ID = FixedNotifIds.PENDING_SYNC
 
         /** Reserved ID for the "a new device was added to your account" notification. */
-        private const val NEW_DEVICE_NOTIF_ID = 9996
+        private const val NEW_DEVICE_NOTIF_ID = FixedNotifIds.NEW_DEVICE
 
         /** App-private cleartext mirror of the outbox (written by the TS) drained by the background send. */
         private const val OUTBOX_PENDING_FILE = "outbox_pending.ndjson"
@@ -374,10 +492,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         manager.cancel(sbn.id)
                     }
                 }
-                // Ring dedupe entries die with their notifications, so a re-ring can post again.
-                activeCallRings.clear()
+                // Ring dedupe entries die with their notifications, so a re-ring can post again -
+                // and so does each ring's call screen, which must never outlive its ring. Under the
+                // rings' lock, so a post cannot land between the snapshot above and this clear.
+                CallRingPlayer.rings.clearNative { ringing ->
+                    manager.cancel(callNotifId(ringing))
+                    IncomingCallActivity.finishFor(ringing, "the app came to the foreground")
+                }
+                CallRingAnswer.forgetAll(context)
                 // So do the real posts the generic-banner ledger remembered for refused pushes.
                 synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
+                // The one "could not be loaded" notice of the wake-up push: the app is open, so the
+                // queue it asked to drain is draining. Named, not left to the channel sweep above,
+                // which an API below 26 does not filter by channel and a channel move would miss.
+                manager.cancel(WAKE_UNAVAILABLE_NOTIF_ID)
             } catch (e: Exception) {
                 Log.w(TAG, "cancelAllMessageNotifications: ${e.message}")
             }
@@ -495,6 +623,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             groupId: String,
             notifId: Int,
             sentAt: Long,
+            serverAt: Long,
         ): NotificationCompat.Action {
             val remoteInput = RemoteInput.Builder(KEY_TEXT_REPLY)
                 .setLabel(res.getString(R.string.notif_action_reply))
@@ -503,6 +632,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 action = ACTION_QUICK_REPLY
                 putExtra(EXTRA_GROUP_ID, groupId)
                 putExtra(EXTRA_SENT_AT, sentAt)
+                putExtra(EXTRA_SERVER_AT, serverAt)
             }
             val pendingIntent = PendingIntent.getBroadcast(
                 context, notifId, intent,
@@ -520,11 +650,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             groupId: String,
             notifId: Int,
             sentAt: Long,
+            serverAt: Long,
         ): NotificationCompat.Action {
             val intent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
                 action = ACTION_MARK_READ
                 putExtra(EXTRA_GROUP_ID, groupId)
                 putExtra(EXTRA_SENT_AT, sentAt)
+                putExtra(EXTRA_SERVER_AT, serverAt)
             }
             // A distinct requestId (notifId + 1) so this PendingIntent does not collide/merge with
             // the reply action's (same notifId would make FLAG_UPDATE_CURRENT overwrite one with
@@ -559,6 +691,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             groupId: String,
             replyText: String,
             sentAt: Long,
+            serverAt: Long,
         ) {
             try {
                 val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -604,8 +737,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     .setGroup(GROUP_KEY_MESSAGES)
                     .setOnlyAlertOnce(true)
                 if (groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-                    builder.addAction(buildReplyAction(context, res, groupId, notifId, sentAt))
-                    builder.addAction(buildMarkReadAction(context, res, groupId, notifId, sentAt))
+                    builder.addAction(buildReplyAction(context, res, groupId, notifId, sentAt, serverAt))
+                    builder.addAction(buildMarkReadAction(context, res, groupId, notifId, sentAt, serverAt))
                 }
                 manager.notify(notifId, builder.build())
                 Log.i(TAG, "repostReplyPending: re-posted group=${groupId.take(8)} - spinner cleared, actions restored")
@@ -745,7 +878,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
                 val existing = prefs.getInt(groupId, -1)
                 if (existing != -1) return@synchronized existing
-                val next = prefs.getInt("__counter__", 1000)
+                // A fixed id ([FixedNotifIds]) is never handed to a conversation: the counter only
+                // grows, and would otherwise walk into them. An id already stored above is kept.
+                val next = FixedNotifIds.skipReserved(prefs.getInt("__counter__", 1000))
                 // commit() guarantees the counter is incremented before exiting the synchronized block.
                 prefs.edit().putInt(groupId, next).putInt("__counter__", next + 1).commit()
                 next
@@ -854,6 +989,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             messageId: String,
             text: String,
             sentAt: Long,
+            /**
+             * The `receivedAt` the reply's POST answered, in ms: the row's `serverTimestamp`, so it is
+             * placed where the server accepted it, as a foreground send is. 0 when unknown (another
+             * drain delivered it, or the answer carried none) - said here, and the row keeps `sentAt`.
+             */
+            serverTimestamp: Long,
         ) {
             if (messageId.isEmpty() || selfUserId.isEmpty()) {
                 Log.w(TAG, "writeSentMessageToCache: missing messageId/userId -> entry ignored")
@@ -866,7 +1007,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 put("senderName", "")
                 put("content",    text)
                 put("timestamp",  sentAt)
+                if (serverTimestamp > 0L) put("serverTimestamp", serverTimestamp)
                 put("type",       "text")
+            }
+            if (serverTimestamp <= 0L) {
+                Log.w(TAG, "writeSentMessageToCache: no receive time for msg=${messageId.take(8)} - the row is placed by its sentAt until the app dates it")
             }
             appendFcmCacheEntry(context, entry, messageId, groupId)
         }
@@ -881,11 +1026,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * badge. Without it the user acknowledged a conversation from the shade, opened the app and
          * found it unread - which looks exactly like the action having done nothing.
          *
-         * ONE LINE PER CONVERSATION, keeping the larger `at`: the merge on the far side is `max`
-         * anyway, so collapsing here bounds the file by the number of conversations instead of by a
-         * ring-buffer cap that could drop the very entry it was written for.
+         * ONE LINE PER CONVERSATION, keeping the larger `at` and the larger `serverAt`: the merge on
+         * the far side is `max` anyway, so collapsing here bounds the file by the number of
+         * conversations instead of by a ring-buffer cap that could drop the very entry it was
+         * written for. `serverAt` (the server's `createdAt` of the same message, 0 when unknown) is
+         * the mark on the clock the conversation is ordered by; `at` stays, for the stamped map and
+         * for [shadeReadWatermark].
          */
-        internal fun appendReadWatermark(context: Context, groupId: String, at: Long) {
+        internal fun appendReadWatermark(context: Context, groupId: String, at: Long, serverAt: Long) {
             if (groupId.isEmpty() || at <= 0L) {
                 Log.w(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at -> nothing to record")
                 return
@@ -895,18 +1043,44 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 CACHE_LOCK.lock()
                 try {
                     val byGroup = parseReadWatermarks(file)
-                    byGroup[groupId] = maxOf(byGroup[groupId] ?: 0L, at)
+                    val held = byGroup[groupId]
+                    byGroup[groupId] = ShadeReadMark(
+                        maxOf(held?.at ?: 0L, at),
+                        maxOf(held?.serverAt ?: 0L, serverAt),
+                    )
                     file.writeText(
-                        byGroup.entries.joinToString("\n") { (g, a) ->
-                            JSONObject().apply { put("groupId", g); put("at", a) }.toString()
+                        byGroup.entries.joinToString("\n") { (g, mark) ->
+                            JSONObject().apply {
+                                put("groupId", g)
+                                put("at", mark.at)
+                                if (mark.serverAt > 0L) put("serverAt", mark.serverAt)
+                            }.toString()
                         } + "\n"
                     )
                 } finally {
                     CACHE_LOCK.unlock()
                 }
-                Log.d(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at recorded for the next boot")
+                Log.d(TAG, "appendReadWatermark: group=${groupId.take(8)} at=$at serverAt=$serverAt recorded for the next boot")
             } catch (e: Exception) {
                 Log.w(TAG, "appendReadWatermark: failed: ${e.message}")
+            }
+        }
+
+        /** One conversation's line of `read_watermarks.ndjson`: the stamped mark and the server one (0 = unknown). */
+        internal data class ShadeReadMark(val at: Long, val serverAt: Long)
+
+        /**
+         * A push's ISO 8601 `createdAt` as ms, 0 when absent or unreadable. An unreadable one is
+         * logged: the shade's read mark then falls back to the stamped clock alone, and a format
+         * drift on the server must not stay invisible.
+         */
+        internal fun serverInstantOf(iso: String?): Long {
+            if (iso.isNullOrEmpty()) return 0L
+            return try {
+                java.time.Instant.parse(iso).toEpochMilli().coerceAtLeast(0L)
+            } catch (e: Exception) {
+                Log.w(TAG, "serverInstantOf: unreadable createdAt '${iso.take(40)}': ${e.message}")
+                0L
             }
         }
 
@@ -918,8 +1092,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * Parses `read_watermarks.ndjson` into groupId -> highest `at`. Caller holds [CACHE_LOCK].
          * An unparsable line is dropped and said so; a missing file is an empty map.
          */
-        private fun parseReadWatermarks(file: File): LinkedHashMap<String, Long> {
-            val byGroup = LinkedHashMap<String, Long>()
+        private fun parseReadWatermarks(file: File): LinkedHashMap<String, ShadeReadMark> {
+            val byGroup = LinkedHashMap<String, ShadeReadMark>()
             if (!file.exists()) return byGroup
             for (line in file.readLines()) {
                 if (line.isBlank()) continue
@@ -927,7 +1101,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val o = JSONObject(line)
                     val g = o.optString("groupId")
                     val a = o.optLong("at", 0L)
-                    if (g.isNotEmpty() && a > 0L) byGroup[g] = maxOf(byGroup[g] ?: 0L, a)
+                    val s = o.optLong("serverAt", 0L).coerceAtLeast(0L)
+                    if (g.isNotEmpty() && a > 0L) {
+                        val held = byGroup[g]
+                        byGroup[g] = ShadeReadMark(maxOf(held?.at ?: 0L, a), maxOf(held?.serverAt ?: 0L, s))
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "parseReadWatermarks: unparsable line dropped: ${e.message}")
                 }
@@ -946,89 +1124,298 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * notification without the reply line. Once the app has merged the file its own
          * conversation row carries the watermark, and `notifyInbound` asks the same question there.
          */
-        internal fun shadeReadWatermark(context: Context, groupId: String): Long {
-            if (groupId.isEmpty()) return 0L
+        internal fun shadeReadWatermark(context: Context, groupId: String): ShadeReadMark {
+            val none = ShadeReadMark(0L, 0L)
+            if (groupId.isEmpty()) return none
             return try {
                 CACHE_LOCK.lock()
                 try {
-                    parseReadWatermarks(readWatermarksFile(context))[groupId] ?: 0L
+                    parseReadWatermarks(readWatermarksFile(context))[groupId] ?: none
                 } finally {
                     CACHE_LOCK.unlock()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "shadeReadWatermark: unreadable for group=${groupId.take(8)}: ${e.message}")
-                0L
+                none
             }
         }
+
+        /**
+         * Whether a message is covered by what the user read from the shade. ON THE SERVER'S CLOCK
+         * when both sides carry it - the message's `serverAt` and the mark's - because that is the
+         * clock the conversation is ordered and read by (owner 2026-10-31): a sender whose phone
+         * runs late stamps a NEW message below a mark taken on a newer one, and the stamped
+         * comparison swallowed its banner. On the sender's stamps otherwise, as before: a mark
+         * written by a build that did not record `serverAt`, or a message whose push carried none.
+         */
+        internal fun coveredByShadeMark(sentAt: Long, serverAt: Long, mark: ShadeReadMark): Boolean =
+            if (serverAt > 0L && mark.serverAt > 0L) serverAt <= mark.serverAt else sentAt <= mark.at
 
         /** Stable ring-notification ID for a callId (distinct range, no counter collision). */
         private fun callNotifId(callId: String): Int =
             CALL_NOTIF_ID_BASE + (callId.hashCode() and 0xFFFF)
 
         /**
+         * What one read of `display_names.json` answered: the `names` map, or why there is none.
+         *
+         * @property names  the map, null whenever [unusable] is set.
+         * @property unusable null when the file names this account; otherwise the token
+         *   [ChannelBannerAuthor.NameBook.Unusable] carries: `no-account`, `no-name-file`,
+         *   `other-account`, `no-names`, `unreadable`.
+         * @property detail the exception message of an `unreadable` file, for its log line.
+         */
+        internal class DisplayNamesRead(val names: JSONObject?, val unusable: String?, val detail: String? = null)
+
+        /**
+         * Reads `display_names.json` for [me] once, keeping the REASON when it cannot be used - absent,
+         * unreadable, or written for another account (the file is one per install, two accounts may
+         * sign in on one phone). Written by `store_display_names` (Rust, `commands/display_names.rs`)
+         * with every name the WebView resolved for this account. Says nothing: each caller logs the
+         * answer at the level its own question deserves ([loadDisplayNames], the salon author).
+         */
+        internal fun readDisplayNames(context: Context, me: String?): DisplayNamesRead {
+            if (me == null) return DisplayNamesRead(null, "no-account")
+            val file = File(MlsContextLoader.tauriDataDir(context), "display_names.json")
+            if (!file.exists()) return DisplayNamesRead(null, "no-name-file")
+            return try {
+                val root = JSONObject(file.readText())
+                if (!root.optString("userId").equals(me, ignoreCase = true)) {
+                    DisplayNamesRead(null, "other-account")
+                } else {
+                    root.optJSONObject("names")?.let { DisplayNamesRead(it, null) }
+                        ?: DisplayNamesRead(null, "no-names")
+                }
+            } catch (e: Exception) {
+                DisplayNamesRead(null, "unreadable", e.message)
+            }
+        }
+
+        /** [read] as the pure salon-author rule takes it. */
+        internal fun nameBookOf(read: DisplayNamesRead): ChannelBannerAuthor.NameBook =
+            read.names?.let { names -> ChannelBannerAuthor.NameBook.Held { id -> names.optString(id).takeIf { it.isNotBlank() } } }
+                ?: ChannelBannerAuthor.NameBook.Unusable(read.unusable ?: "no-names")
+
+        /**
+         * The `names` map of `display_names.json`, or null when it cannot be used - see
+         * [readDisplayNames]. [label] says which banner asked; the reason is logged under it.
+         */
+        internal fun loadDisplayNames(context: Context, me: String?, label: String): JSONObject? =
+            logDisplayNamesRead(readDisplayNames(context, me), label).names
+
+        /**
+         * Logs why a read of `display_names.json` names nobody, under [label]; returns [read]. An
+         * unreadable file is a WARN: a writer produced it. The rest are states a banner meets.
+         */
+        internal fun logDisplayNamesRead(read: DisplayNamesRead, label: String): DisplayNamesRead {
+            when (read.unusable) {
+                null, "no-account" -> Unit
+                "no-name-file" -> Log.d(TAG, "$label no display_names.json yet - nobody is named")
+                "other-account" -> Log.d(TAG, "$label display_names.json belongs to another account - not used")
+                "unreadable" -> Log.w(TAG, "$label display_names.json unreadable: ${read.detail}")
+                // This account's file with no map in it: a writer produced it, like an unreadable one.
+                "no-names" -> Log.w(TAG, "$label display_names.json names nobody (no-names)")
+                else -> Log.d(TAG, "$label display_names.json names nobody (${read.unusable})")
+            }
+            return read
+        }
+
+        /**
+         * THE CALLER, NAMED FROM THE PHONE'S OWN COPY, NEVER FROM THE PUSH (decision 6, WP-C5): the
+         * `call_ring` payload carries ids only. Null for a caller this phone never named: the ring
+         * then reads "Appel Canari" / "Canari call", the iPhone's word for the same case
+         * (`CanariCallerDisplayName`), and shows no photo either.
+         */
+        private fun knownCallerName(context: Context, callerId: String): String? {
+            val me = MlsContextLoader.loadUserId(context)?.lowercase()
+            val name = callerId.lowercase().takeIf { it.isNotEmpty() }
+                ?.let { loadDisplayNames(context, me, "[CALL_NAME]")?.optString(it) }
+                ?.takeIf { it.isNotBlank() }
+            Log.d(TAG, "[CALL_NAME] caller named=${name != null}")
+            return name
+        }
+
+        /** Whether [callId] still rings on this device - the call screen asks before it shows. */
+        internal fun isRinging(callId: String): Boolean = callId.isNotEmpty() && CallRingPlayer.rings.nativeRinging(callId)
+
+        /**
+         * Whether a call holds the phone's sound - the ongoing-call service holds one, or a call rings
+         * natively ([CallSoundHold]). Every notification posted while it is true is posted silent.
+         */
+        internal fun callHoldsSound(): Boolean =
+            CallSoundHold.held(CallForegroundService.running, CallRingPlayer.rings.nativeCount(), CallRingPlayer.ringingCallId != null)
+
+        /**
          * Shows the full-priority incoming-call notification (WP-XP-5): CallStyle on API 31+
          * (system call UI with Answer/Decline), classic high-priority notification with the same
-         * actions below. Rings on the CHANNEL_CALLS ringtone channel, carries a full-screen
-         * intent (shown immediately on a locked/idle device when the OS grants USE_FULL_SCREEN_INTENT)
-         * and self-expires after [CALL_RING_TIMEOUT_MS]. Deduped per callId: the cleartext
-         * `call_ring` push and the decrypted MLS `call_invite` may both arrive.
+         * actions below. Rings on the CHANNEL_CALLS ringtone channel, carries a full-screen intent
+         * that opens [IncomingCallActivity] (shown at once on a locked or idle device when the OS
+         * grants USE_FULL_SCREEN_INTENT), names the caller from this phone's copy, draws the photo
+         * once it is read, and self-expires after [CALL_RING_TIMEOUT_MS]. Called by the server's
+         * `call_ring` push, and by [CallRingPlayer] when the app leaves the screen while it rings -
+         * always OFF the main thread (the photo is a Keystore read and a fetch).
+         *
+         * THE CLAIM AND THE POST ARE ONE CRITICAL SECTION ([RingSequencer.claimNative]): a call the
+         * app rings, one already posted, or one answered, ended or silenced is refused and logged;
+         * and an in-app start cannot fall between the claim and `notify`, which is how a late post
+         * used to leave two rings of one call.
+         *
+         * [silent]: the call was SILENCED by the power button while the app rang it
+         * ([RingSequencer.leftScreen]). The notice is posted with no sound, no vibration and no
+         * full-screen screen - only so a locked phone can still answer or decline it, as the system
+         * dialler leaves a silenced call.
          */
         internal fun showIncomingCallNotification(
             context: Context,
             groupId: String,
             callId: String,
-            callerName: String,
-            groupName: String,
+            callerId: String,
             hasVideo: Boolean,
+            silent: Boolean = false,
         ) {
-            // ONE choke point for both callers (cleartext call_ring push, decrypted MLS invite):
-            // a peer on an older build can still ring this device, and a system call UI for a call
-            // the webview will refuse to join is worse than no ring at all.
+            // The switch is checked here, at the one ring: a system call UI for a call the webview
+            // would refuse to join is worse than no ring at all.
             if (!CALLS_ENABLED) {
                 Log.d(TAG, "showIncomingCallNotification: calls disabled -> ignoring ring call=$callId")
                 return
             }
-            if (MainActivity.isInForeground) {
-                Log.d(TAG, "showIncomingCallNotification: app foreground -> WS/CallOverlay rings, skip")
+            if (foregroundPageRings()) {
+                Log.d(TAG, "showIncomingCallNotification: the page in front holds the socket -> it rings in-app, skip call=$callId")
                 return
             }
-            if (!activeCallRings.add(callId)) {
-                Log.d(TAG, "showIncomingCallNotification: already ringing call=$callId -> dedupe")
-                return
+            if (MainActivity.isInForeground) {
+                Log.i(TAG, "showIncomingCallNotification: app in front with no socket (PIN gate) -> the native ring is the only one call=$callId")
             }
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             CanariApplication.ensureChannels(context, manager)
             val res = appLocaleContext(context)
             val notifId = callNotifId(callId)
+            val name = knownCallerName(context, callerId)
+            val title = name ?: res.getString(R.string.notif_call_unknown_caller)
+            val body = res.getString(if (hasVideo) R.string.notif_incoming_video_call else R.string.notif_incoming_call)
+            // A caller this phone never named is not shown by face either (decision 6): the photo
+            // is fetched, here and on the call screen, only for a caller the phone has named.
+            val photoOf = if (name != null) callerId else ""
 
-            // Answer = deep link into the conversation with an accept marker: the frontend
-            // auto-accepts the call once the user has unlocked (PIN) and the invite arrived via WS.
-            val videoFlag = if (hasVideo) 1 else 0
-            val answerIntent = Intent(context, MainActivity::class.java).apply {
-                action = Intent.ACTION_VIEW
-                setData(Uri.parse("fr.emse.canari://chat/$groupId?acceptCall=$callId&video=$videoFlag"))
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            }
-            val answerPending = PendingIntent.getActivity(
-                context, notifId, answerIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val declineIntent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
-                action = ACTION_CALL_DECLINE
-                putExtra(EXTRA_GROUP_ID, groupId)
-                putExtra(EXTRA_CALL_ID, callId)
-            }
-            val declinePending = PendingIntent.getBroadcast(
-                context, notifId + 1, declineIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+            // Refused (and said so by the sequencer): a call the app rings, one already up, or one
+            // that may not ring again.
+            val (answerP, declineP, fullScreenP) = CallRingPlayer.rings.claimNative(callId, silent) {
+                // Answer = the conversation's link (navigation only) plus a PRIVATE answer: the call id
+                // and this ring's nonce as extras, which [CallRingAnswer.takeAnswer] turns into the
+                // pending accept from the facts recorded here. The webview joins on those facts once
+                // unlocked and caught up, never waiting for the caller's MLS invite (calls.md, "An
+                // answer from the ring joins on the ring's facts").
+                val answerNonce = CallRingAnswer.record(context, groupId, callId, callerId, hasVideo)
+                val answerIntent = Intent(context, MainActivity::class.java).apply {
+                    action = Intent.ACTION_VIEW
+                    setData(Uri.parse("fr.emse.canari://chat/$groupId"))
+                    CallRingAnswer.putAnswer(this, callId, answerNonce)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
+                val answerPending = PendingIntent.getActivity(
+                    context, notifId, answerIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val declineIntent = Intent(context, CanariNotificationActionReceiver::class.java).apply {
+                    action = ACTION_CALL_DECLINE
+                    putExtra(EXTRA_GROUP_ID, groupId)
+                    putExtra(EXTRA_CALL_ID, callId)
+                }
+                val declinePending = PendingIntent.getBroadcast(
+                    context, notifId + 1, declineIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
 
-            val title = callerName.ifEmpty { res.getString(R.string.app_name) }
-            val body = buildString {
-                append(res.getString(if (hasVideo) R.string.notif_incoming_video_call else R.string.notif_incoming_call))
-                if (groupName.isNotEmpty()) append(" - ").append(groupName)
+                // THE FULL SCREEN IS A CALL SCREEN, NEVER THE ANSWER. It used to be [answerPending]: on a
+                // locked phone Android launches the full-screen intent BY ITSELF, which would have
+                // answered every call nobody touched. [IncomingCallActivity] shows over the lock screen
+                // and answers only on the user's tap.
+                val fullScreenPending = PendingIntent.getActivity(
+                    context, notifId + 2,
+                    IncomingCallActivity.intentFor(context, callId, photoOf, title, hasVideo, answerPending, declinePending),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+
+                // ANDROID 14+ GRANTS THE FULL SCREEN ONLY TO A CALLING APP THE PLAY CONSOLE DECLARED.
+                // Without the grant the same notification rings as a heads-up - Android's own behaviour,
+                // not a path of ours - and the log says which one this phone got, so a reading of a
+                // locked phone that did not light up names its cause.
+                if (!silent && android.os.Build.VERSION.SDK_INT >= 34) {
+                    val fsi = manager.canUseFullScreenIntent()
+                    if (fsi) Log.d(TAG, "showIncomingCallNotification: full-screen intent granted")
+                    else Log.w(TAG, "showIncomingCallNotification: full-screen intent NOT granted - the ring is a heads-up, not the locked-screen call screen")
+                }
+
+                val notif = buildIncomingCallNotification(
+                    context, title, body, hasVideo, answerPending, declinePending, fullScreenPending, avatar = null, res = res,
+                    silent = silent,
+                )
+                manager.notify(notifId, notif)
+                Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${groupId.take(8)} video=$hasVideo silent=$silent")
+                Triple(answerPending, declinePending, fullScreenPending)
+            } ?: return
+
+            // The ring's end is armed BEFORE the photo is fetched: a fetch on a slow radio must
+            // never delay it. Belt-and-braces with setTimeoutAfter (API 26+); it also drops the
+            // dedupe entry and closes the call screen.
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                cancelIncomingCallNotification(context, callId)
+            }, CALL_RING_TIMEOUT_MS)
+
+            // THE CALLER'S PHOTO, AFTER THE RING HAS STARTED: a cached one costs a file read, a
+            // fetched one a round trip on a cell radio waking up, and the ring never waits for a
+            // picture. Re-posted under the same id with `onlyAlertOnce`, so the ringtone does not
+            // restart; skipped when the ring already ended meanwhile. This runs on the push
+            // handler's own thread, never the main one.
+            if (photoOf.isEmpty()) {
+                Log.d(TAG, "showIncomingCallNotification: caller not named on this phone - no photo either")
+            } else {
+                val avatar = context.fetchAvatar(photoOf)
+                if (avatar == null) {
+                    Log.d(TAG, "showIncomingCallNotification: no caller photo - the ring keeps the name alone")
+                } else {
+                    // Re-posted only while the ring is still up, under the same lock as its end: a
+                    // photo must never bring back a ring that was taken down meanwhile.
+                    val drawn = CallRingPlayer.rings.whileNativeRinging(callId) {
+                        manager.notify(
+                            notifId,
+                            buildIncomingCallNotification(
+                                context, title, body, hasVideo, answerP, declineP, fullScreenP, avatar, res, silent,
+                            ),
+                        )
+                    }
+                    if (drawn) {
+                        Log.d(TAG, "showIncomingCallNotification: caller photo drawn on the ring")
+                    } else {
+                        Log.d(TAG, "showIncomingCallNotification: caller photo arrived after the ring ended - dropped")
+                    }
+                }
             }
-            val person = Person.Builder().setName(title).setImportant(true).build()
+        }
+
+        /**
+         * The ring notification itself: CallStyle on API 31+ (the system call screen with Answer and
+         * Decline), a classic high-priority notification with the same actions below. [avatar] is
+         * the CallStyle person's icon and the large icon, null until fetched.
+         *
+         * [silent] (a call the power button silenced): no sound, no vibration, no loop, and NO
+         * full-screen intent - so not CallStyle either, which Android refuses without one (or a
+         * foreground service): the classic layout's Answer and Decline, on the lock screen.
+         */
+        private fun buildIncomingCallNotification(
+            context: Context,
+            title: String,
+            body: String,
+            hasVideo: Boolean,
+            answerPending: PendingIntent,
+            declinePending: PendingIntent,
+            fullScreen: PendingIntent,
+            avatar: Bitmap?,
+            res: Context,
+            silent: Boolean = false,
+        ): android.app.Notification {
+            val person = Person.Builder().setName(title).setImportant(true)
+                .apply { avatar?.let { setIcon(IconCompat.createWithBitmap(it)) } }
+                .build()
 
             val builder = NotificationCompat.Builder(context, CHANNEL_CALLS)
                 .setSmallIcon(R.drawable.ic_notification)
@@ -1039,9 +1426,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setOngoing(true)
                 .setAutoCancel(false)
                 .setTimeoutAfter(CALL_RING_TIMEOUT_MS)
-                .setFullScreenIntent(answerPending, true)
-                .setContentIntent(answerPending)
-            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                .setContentIntent(fullScreen)
+            if (silent) builder.setSilent(true) else builder.setFullScreenIntent(fullScreen, true)
+            if (!silent && android.os.Build.VERSION.SDK_INT >= 31) {
                 builder.setStyle(
                     NotificationCompat.CallStyle.forIncomingCall(person, declinePending, answerPending)
                         .setIsVideo(hasVideo)
@@ -1063,25 +1450,39 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         ).build()
                     )
             }
+            if (avatar != null) builder.setLargeIcon(avatar)
+            // The photo's re-post must not restart the ringtone or re-launch the call screen.
+            builder.setOnlyAlertOnce(true)
             val notif = builder.build()
             // Loop the ringtone until the ring is answered, declined, cancelled or times out.
-            notif.flags = notif.flags or android.app.Notification.FLAG_INSISTENT
-            manager.notify(notifId, notif)
-            Log.d(TAG, "showIncomingCallNotification: ringing call=$callId group=${groupId.take(8)} video=$hasVideo")
-
-            // Belt-and-braces expiry: setTimeoutAfter is API 26+; also drop the dedupe entry.
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                cancelIncomingCallNotification(context, callId)
-            }, CALL_RING_TIMEOUT_MS)
+            if (!silent) notif.flags = notif.flags or android.app.Notification.FLAG_INSISTENT
+            return notif
         }
 
-        /** Stops an active ring (answered elsewhere, caller hung up, timeout, or user declined). */
-        internal fun cancelIncomingCallNotification(context: Context, callId: String) {
+        /**
+         * The call ENDED for this phone (the caller hung up, answered elsewhere, the timeout, a
+         * decline, the page left the incoming state): it may not ring again ([RingClosed.ENDED]),
+         * its in-app ring stops and its native ring goes, in one critical section of
+         * [CallRingPlayer.rings].
+         */
+        internal fun cancelIncomingCallNotification(context: Context, callId: String, reason: String = "the ring of this call ended") {
             if (callId.isEmpty()) return
-            if (!activeCallRings.remove(callId)) return
+            // The answer record dies with the ring, whether or not this process still shows it.
+            CallRingAnswer.forget(context, callId)
+            CallRingPlayer.rings.close(callId, RingClosed.ENDED, reason)
+        }
+
+        /**
+         * Takes the native ring of [callId] down - its notification and its call screen - WITHOUT
+         * ending the call: the app now rings it ([RingSequencer.startInApp]), or it ended
+         * ([RingSequencer.close]). Called under the rings' lock only.
+         */
+        internal fun takeDownRingNotification(context: Context, callId: String) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(callNotifId(callId))
-            Log.d(TAG, "cancelIncomingCallNotification: ring stopped call=$callId")
+            // The full-screen call screen goes with its ring, whoever ended it.
+            IncomingCallActivity.finishFor(callId, "the ring stopped")
+            Log.d(TAG, "takeDownRingNotification: native ring taken down call=$callId")
         }
 
         /**
@@ -1107,6 +1508,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return try {
                 val ids = manager.activeNotifications.filter { sbn ->
                     sbn.id != GROUP_SUMMARY_ID && sbn.id != PENDING_SYNC_NOTIF_ID &&
+                        sbn.id != WAKE_UNAVAILABLE_NOTIF_ID &&
                         (android.os.Build.VERSION.SDK_INT < 26 ||
                             sbn.notification.channelId == CHANNEL_MESSAGES ||
                             sbn.notification.channelId == CHANNEL_MENTIONS)
@@ -1184,7 +1586,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             context: Context,
             service: CanariFirebaseMessagingService,
             ctx: PushContext,
-        ): Int = synchronized(OUTBOX_LOCK) { drainOutboxLocked(context, service, ctx) }
+            /**
+             * Told of each entry THIS drain delivered, with the server's receive time its POST
+             * answered - how a quick reply learns the `receivedAt` its cache row is dated by.
+             */
+            onSent: (SentOutboxId) -> Unit = {},
+        ): Int = synchronized(OUTBOX_LOCK) { drainOutboxLocked(context, service, ctx, onSent) }
 
         /**
          * Serialises every read-modify-write of `outbox_pending.ndjson` in this process: the drain,
@@ -1211,11 +1618,50 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
+        /**
+         * Encrypts ONE transport frame and posts it now, WITHOUT the outbox mirror. Returns true
+         * when the server took it.
+         *
+         * For a frame that means something only at this moment - the native ring's Decline, which
+         * ends a ring that lasts a minute. The mirror is a durable queue: an entry that failed there
+         * would be retried, or adopted by the app at its next login, and a hangup delivered after its
+         * call ended is noise at best and, sent under a later call's id, wrong. So it is sent once,
+         * `silent` (it must never notify) and not `durable` (no copy in the shared log, exactly as the
+         * in-app `DELIVERY.transport` send), and a failure is logged and dropped: the caller then
+         * rings out its window, as it did before this existed.
+         *
+         * Under [OUTBOX_LOCK] so it never interleaves with a drain of this process.
+         */
+        internal fun sendTransportFrameNow(
+            context: Context,
+            service: CanariFirebaseMessagingService,
+            ctx: PushContext,
+            groupId: String,
+            messageId: String,
+            protoB64: String,
+        ): Boolean = synchronized(OUTBOX_LOCK) {
+            val secret = retrievePushSecret(context)
+            if (secret == null) {
+                Log.w(TAG, "sendTransportFrameNow: pushSecret absent -> frame id=${messageId.take(8)} not sent")
+                return@synchronized false
+            }
+            val entry = OutboxMirrorEntry(messageId, groupId, protoB64, System.currentTimeMillis(), silent = true, durable = false)
+            val ciphertext = encryptQueuedMessages(context, service, ctx, listOf(entry))?.get(messageId)
+            if (ciphertext == null) {
+                Log.w(TAG, "sendTransportFrameNow: encrypt failed id=${messageId.take(8)} group=${groupId.take(8)} -> not sent")
+                return@synchronized false
+            }
+            val sent = sendQueuedMessagePush(ctx, secret, groupId, ciphertext, messageId, silent = true, durable = false) != null
+            Log.d(TAG, "sendTransportFrameNow: id=${messageId.take(8)} group=${groupId.take(8)} sent=$sent")
+            sent
+        }
+
         /** The body of [drainOutboxBackground]; the caller holds [OUTBOX_LOCK]. */
         private fun drainOutboxLocked(
             context: Context,
             service: CanariFirebaseMessagingService,
             ctx: PushContext,
+            onSent: (SentOutboxId) -> Unit,
         ): Int {
             val entries = readOutboxMirror(context)
             if (entries.isEmpty()) return 0
@@ -1234,7 +1680,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return entries.size
             }
             val deadline = System.currentTimeMillis() + DRAIN_POST_BUDGET_MS
-            val sentIds = mutableListOf<String>()
+            // Each delivered id WITH the server's receive time it was answered (0 when the answer
+            // carried none): the app dates its own copy by it, as it does a foreground send.
+            val sentIds = mutableListOf<SentOutboxId>()
             val remaining = mutableListOf<OutboxMirrorEntry>()
             var checkpointed = 0
             var index = 0
@@ -1251,8 +1699,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     remaining.add(entry)
                     continue
                 }
-                if (sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id, entry.silent, entry.durable)) {
-                    sentIds.add(entry.id)
+                val receivedAt = sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id, entry.silent, entry.durable)
+                if (receivedAt != null) {
+                    val sent = SentOutboxId(entry.id, receivedAt)
+                    sentIds.add(sent)
+                    onSent(sent)
                     Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${entry.groupId.take(8)}")
                 } else {
                     remaining.add(entry)
@@ -1347,7 +1798,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
-        /** POSTs the ciphertext of a pending message to the PushSecret endpoint. Returns true if delivered. */
+        /**
+         * POSTs the ciphertext of a pending message to the PushSecret endpoint. Returns `null` when it
+         * was not delivered, else the server's receive time (`receivedAt`, 0 when the answer has none).
+         */
         private fun sendQueuedMessagePush(
             ctx: PushContext,
             secret: String,
@@ -1356,7 +1810,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             messageId: String,
             silent: Boolean,
             durable: Boolean,
-        ): Boolean {
+        ): Long? {
             return try {
                 val url = URL("${ctx.baseUrl}/api/mls/push/send")
                 val body = JSONObject().apply {
@@ -1380,13 +1834,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     conn.outputStream.use { it.write(body.toByteArray()) }
                     val code = conn.responseCode
                     Log.d(TAG, "sendQueuedMessagePush: HTTP $code group=${groupId.take(8)} msg=${messageId.take(8)}")
-                    code == 200 || code == 201
+                    if (code != 200 && code != 201) return null
+                    // THE SERVER'S RECEIVE TIME, the instant every recipient's copy is dated by: the
+                    // app orders this message by it (messageOrder.ts). An answer without it (an older
+                    // server, an unreadable body) still counts as sent, undated: 0.
+                    val receivedAt = try {
+                        JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optLong("receivedAt", 0L)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "sendQueuedMessagePush: sent, answer unreadable - no receive time msg=${messageId.take(8)}: ${e.message}")
+                        0L
+                    }
+                    if (receivedAt <= 0L) Log.w(TAG, "sendQueuedMessagePush: sent, the server answered no receive time msg=${messageId.take(8)}")
+                    receivedAt.coerceAtLeast(0L)
                 } finally {
                     conn.disconnect()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "sendQueuedMessagePush: exception: ${e.message}")
-                false
+                null
             }
         }
 
@@ -1532,12 +1997,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
-        /** Appends the delivered messageIds to the reconciliation log read by the TS at login. */
-        private fun appendOutboxSent(context: Context, ids: List<String>) {
+        /** One delivered entry: its id and the server's receive time (`receivedAt`, 0 when unknown). */
+        internal data class SentOutboxId(val id: String, val receivedAt: Long)
+
+        /**
+         * Appends the delivered messageIds to the reconciliation log read by the TS at login, one
+         * line each: `id` alone, or `id<TAB>receivedAt` when the server answered its receive time.
+         * The TS reads both shapes (`reconcileOutboxSent`, outboxMirror.ts), so a file an older
+         * build wrote still reconciles.
+         */
+        private fun appendOutboxSent(context: Context, ids: List<SentOutboxId>) {
             try {
                 val file = File(MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }, OUTBOX_SENT_FILE)
                 val existing = if (file.exists()) file.readText() else ""
-                file.writeText(existing + ids.joinToString("\n") + "\n")
+                val lines = ids.joinToString("\n") { if (it.receivedAt > 0L) "${it.id}\t${it.receivedAt}" else it.id }
+                file.writeText(existing + lines + "\n")
             } catch (e: Exception) {
                 Log.w(TAG, "appendOutboxSent: ${e.message}")
             }
@@ -1576,6 +2050,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setContentIntent(pendingIntent)
+                // A call holds the sound ([CallSoundHold]): shown, without its sound.
+                .setSilent(callHoldsSound())
                 .build()
             manager.notify(PENDING_SYNC_NOTIF_ID, notif)
             Log.d(TAG, "showPendingSyncNotification: nudge shown (id=$PENDING_SYNC_NOTIF_ID)")
@@ -1608,6 +2084,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setContentIntent(pendingIntent)
+                // A call holds the sound ([CallSoundHold]): shown, without its sound.
+                .setSilent(callHoldsSound())
                 .build()
             manager.notify(NEW_DEVICE_NOTIF_ID, notif)
             Log.d(TAG, "showNewDeviceNotification: shown (id=$NEW_DEVICE_NOTIF_ID)")
@@ -1674,6 +2152,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * @param covers how many inbound messages this ONE banner stands for (a catch-up flush
          *   raises a single banner for N). [GenericBannerLedger] answers up to that many refused
          *   pushes with it.
+         * @param authorProven whether the WebView's open PROVED the author - a salon row under a
+         *   Graine v2 session (`openChannelMessageProving`). Read for a salon only, through the same
+         *   rule the push applies to its own open ([ChannelBannerAuthor.of]).
          */
         @JvmStatic
         fun notifyMessageFromWebSocket(
@@ -1684,17 +2165,45 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             body: String,
             mentionsMe: Boolean,
             sentAt: Long,
+            serverAt: Long,
             covers: Int,
+            authorProven: Boolean,
         ): Boolean {
             val context = CanariApplication.appContext()
             if (context == null) {
                 Log.w(TAG, "notifyMessageFromWebSocket: no Application context - nothing posted")
                 return false
             }
-            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt covers=$covers")
+            Log.d(TAG, "notifyMessageFromWebSocket: queued groupId=${groupId.take(8)} mentionsMe=$mentionsMe sentAt=$sentAt serverAt=$serverAt covers=$covers authorProven=$authorProven")
             WS_NOTIF_LANE.execute {
                 try {
-                    val avatar = if (senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
+                    // ONE ANSWER PER MESSAGE, WHICHEVER TRIGGER ARRIVES FIRST. A salon frame takes the
+                    // push's rule ([ChannelBannerAuthor.of]) with the same three inputs: the message
+                    // is shown, the open's proof (the WebView's v2 open, the push's native one), and
+                    // the author the server named - and the same name file. So both triggers name
+                    // the same speaker, or nobody, with the same Person key and the same face rule.
+                    val salonAuthor = if (groupId.startsWith("channel_")) {
+                        val me = MlsContextLoader.loadPushContext(context)?.userId?.lowercase()
+                        ChannelBannerAuthor.of(showsMessage = true, authorProven = authorProven, authorId = senderId) {
+                            nameBookOf(readDisplayNames(context, me))
+                        }
+                    } else null
+                    salonAuthor?.let { logUnnamedSalonAuthor(it, groupId.removePrefix("channel_")) }
+                    // THE TITLE IS NOT THE PUSH'S. The push titles a salon `<Communaute> - #<salon>`
+                    // ([buildChannelPushTitle], from its payload's workspace name); the WebView's salon
+                    // row carries no community name, so this trigger titles it with the salon alone
+                    // (`notificationGroupName`). The line, its speaker and its face are one answer;
+                    // the title is the last trigger's wording.
+                    val salonLine = salonAuthor?.let {
+                        ChannelBannerAuthor.line(
+                            it, groupName,
+                            appLocaleContext(context).getString(R.string.notif_mention_someone).replaceFirstChar { c -> c.titlecase() },
+                        )
+                    }
+                    // A FACE ONLY FOR A NAMED SPEAKER, as on the push: beside "Someone" it would name
+                    // them by the back door.
+                    val drawsFace = salonAuthor == null || ChannelBannerAuthor.drawsFace(salonAuthor)
+                    val avatar = if (drawsFace && senderId.isNotEmpty()) context.fetchAvatar(senderId) else null
                     synchronized(GENERIC_BANNERS_LOCK) {
                         // THE REAL LINE REPLACES THE GENERIC ONE a refused push left for it.
                         val generics = GENERIC_BANNERS.realPosted(groupId, maxOf(covers, 1))
@@ -1702,13 +2211,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             Log.d(TAG, "notifyMessageFromWebSocket: replacing ${generics.size} generic banner(s) a refused push posted (groupId=${groupId.take(8)} covers=$covers)")
                         }
                         context.showMessageNotification(
-                            senderName = senderName,
-                            groupName = groupName,
+                            senderName = salonLine?.personName ?: senderName,
+                            groupName = salonLine?.conversationTitle ?: groupName,
+                            senderKey = salonLine?.personKey,
                             body = body,
-                            largeIcon = avatar ?: generateInitialsBitmap(senderName),
+                            largeIcon = avatar ?: generateInitialsBitmap(
+                                salonAuthor?.let { ChannelBannerAuthor.initialsSource(it) } ?: senderName
+                            ),
                             groupId = groupId,
                             channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
                             sentAt = sentAt,
+                            serverAt = serverAt,
                             // The WebView already decided this reader cannot see the message land.
                             suppressInForeground = false,
                             supersedes = generics.firstOrNull() ?: 0L,
@@ -1816,6 +2329,60 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
 
         /**
+         * The ONE line an unnamed salon speaker gets, from either trigger (the push and the socket
+         * frame), WARN for a fault and DEBUG for an ordinary state ([ChannelBannerAuthor.accuses]);
+         * nothing for a named or blind one.
+         */
+        internal fun logUnnamedSalonAuthor(author: ChannelBannerAuthor.Author, channelId: String) {
+            if (author !is ChannelBannerAuthor.Author.Unnamed) return
+            val line = "[SALON_AUTHOR] author UNNAMED reason=${author.reason} author=${author.id.take(8)} channel=$channelId -> 'someone' and a '?' disc"
+            if (ChannelBannerAuthor.accuses(author.reason)) Log.w(TAG, line) else Log.d(TAG, line)
+        }
+
+        /**
+         * The other party's photo for the call surfaces outside this class - the ongoing-call
+         * notification (`CallForegroundService`) and the incoming call screen
+         * ([IncomingCallActivity]); the ring notification calls [fetchAvatar] itself. The same
+         * [fetchAvatar] every message notification uses - CACHE FIRST (the 24 h file cache and its
+         * remembered absence), the push-secret route only on a miss - opened to more callers rather
+         * than copied. A miss is network I/O, so every caller runs it OFF the main thread.
+         */
+        fun callAvatar(context: Context, userId: String): Bitmap? {
+            Log.d(TAG, "callAvatar: for ${userId.take(8)}")
+            return context.fetchAvatar(userId)
+        }
+
+        /**
+         * The caller's photo for the incoming-call SCREEN, which draws it full-bleed (the blurred
+         * backdrop) and as a 144dp face - so the notification icon, circle-cropped at
+         * [notificationIconSizePx], is the wrong picture twice: a disc with transparent corners
+         * behind the blur, and an upscaled face. The ORIGINAL bytes are in [avatarCacheFile];
+         * [fetchAvatar] runs first only so a miss fills that cache by the one path that may
+         * (push secret, remembered absence). Decoded UNCROPPED, sampled to [targetPx] by
+         * [decodeSampled]; the screen crops the face itself, in drawing.
+         *
+         * @return null when the caller has no photo; a non-null with `uncropped = false` when only
+         *   the icon could be had (the cache file unreadable) - the screen then keeps its gradient
+         *   and shows the icon as the face. Network I/O on a miss: OFF the main thread.
+         */
+        fun callScreenPhoto(context: Context, userId: String, targetPx: Int): CallScreenPhoto? {
+            val icon = context.fetchAvatar(userId) ?: return null
+            val file = context.avatarCacheFile(userId)
+            val full = if (file.exists()) {
+                context.decodeSampled(targetPx) { BitmapFactory.decodeFile(file.absolutePath, it) }
+            } else {
+                null
+            }
+            if (full == null) {
+                Log.w(TAG, "callScreenPhoto: no readable original for ${userId.take(8)} (exists=${file.exists()}) - the icon is the face, no backdrop")
+                return CallScreenPhoto(icon, uncropped = false)
+            }
+            icon.recycle()
+            Log.d(TAG, "callScreenPhoto: ${full.width}x${full.height} uncropped for ${userId.take(8)} (target=$targetPx)")
+            return CallScreenPhoto(full, uncropped = true)
+        }
+
+        /**
          * ONE PATH FROM A URL TO A NOTIFICATION ICON: the 24h file cache, the bounded decode, the crop.
          *
          * Extracted from [fetchAvatar] when the association logo became a second caller. The cache
@@ -1914,9 +2481,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 } finally {
                     conn.disconnect()
                 }
+            } catch (e: java.io.IOException) {
+                // A transport failure - the bad Wi-Fi of 2026-10-01 - is not an answer either. Said
+                // at WARN: the picture is lost for this notification, and a run of these is a radio
+                // or a server worth reading about.
+                Log.w(TAG, "$label: transport failure for ${subject.take(8)} (${e.javaClass.simpleName}: ${e.message}) -> initials, not remembered")
+                null
             } catch (e: Exception) {
-                // A transport failure - the bad Wi-Fi of 2026-10-01 - is not an answer either.
-                Log.d(TAG, "$label: ${e.message} -> initials fallback, not remembered")
+                // Not the network: a defect in how this was called - a fetch on the main thread
+                // (`NetworkOnMainThreadException`, the review of #2877), a bad URL. It ACCUSES.
+                Log.e(TAG, "$label: ${e.javaClass.simpleName} fetching ${subject.take(8)} - a defect, not the network: ${e.message}")
                 null
             }
         }
@@ -2003,6 +2577,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              */
             sentAt: Long = 0L,
             /**
+             * The SERVER's `createdAt` of the same message, in ms ([EXTRA_SERVER_AT]): handed to the
+             * quick actions beside [sentAt] so the read mark they send is on the clock the
+             * conversation is ordered by. 0 when unknown, and the actions then send the stamped mark.
+             */
+            serverAt: Long = 0L,
+            /**
              * Whether a foregrounded app is on its own a reason not to post.
              *
              * TRUE for a PUSH, which knows nothing finer: the frame came from outside and the only
@@ -2041,8 +2621,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * Android's one-to-one shape, which names nobody above the other person's text (their
              * name is the title) and names US above our own reply: the user read that asymmetry as
              * a defect (2026-10-01). FALSE - the old shape, unchanged - for a reaction, whose line is
-             * a sentence about the actor and not a message by them, and for a salon, whose "sender"
-             * is the salon's own title: naming either above its line would print the title twice.
+             * a sentence about the actor and not a message by them, and for a BLIND salon banner,
+             * whose "sender" is the salon's own title: naming either above its line would print the
+             * title twice. A salon banner that proved its author passes the salon as [groupName]
+             * and the author as [senderName] instead, which is the group shape (2026-11-01).
              */
             namesEachSender: Boolean = false,
             /**
@@ -2052,18 +2634,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * TRUE everywhere a real text is handed in; the salon push says FALSE for a blind banner.
              */
             showsMessage: Boolean = true,
+            /**
+             * The sender Person's key, so two speakers that share a NAME never merge into one
+             * ("Quelqu'un" for two unnamed salon authors, or for a blind line). Null keeps Android's
+             * merge by name, which a DM or an MLS group has always had.
+             */
+            senderKey: String? = null,
         ): Long {
             if (suppressInForeground && MainActivity.isInForeground) {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
                 return 0L
             }
-            // ALREADY READ FROM THE SHADE IS NOT NEWS - see [shadeReadWatermark]. Only where the
-            // sender's stamp exists, the same condition the de-duplication below carries, and never
-            // against a supersede, which redraws a line that is already there.
+            // ALREADY READ FROM THE SHADE IS NOT NEWS - see [shadeReadWatermark], compared by
+            // [coveredByShadeMark]. Only where the sender's stamp exists, the same condition the
+            // de-duplication below carries, and never against a supersede, which redraws a line
+            // that is already there.
             if (sentAt > 0L && supersedes == 0L) {
                 val readUpTo = shadeReadWatermark(this, groupId)
-                if (sentAt <= readUpTo) {
-                    Log.d(TAG, "showMessageNotification: read from the shade up to $readUpTo -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt)")
+                if (coveredByShadeMark(sentAt, serverAt, readUpTo)) {
+                    Log.d(TAG, "showMessageNotification: read from the shade up to at=${readUpTo.at} serverAt=${readUpTo.serverAt} -> nothing posted (groupId=${groupId.take(8)} sentAt=$sentAt serverAt=$serverAt)")
                     return 0L
                 }
             }
@@ -2095,6 +2684,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val senderPerson = Person.Builder()
                 .setName(senderName.ifEmpty { res.getString(R.string.app_name) })
                 .setIcon(IconCompat.createWithBitmap(largeIcon))
+                .apply { senderKey?.let { setKey(it) } }
                 .build()
             // Our own Person carries our avatar too: Android attributes the inline reply to it while
             // the reply is in flight, so leaving it iconless is a blank face on the only message in
@@ -2196,18 +2786,28 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             // The repost after that cancel is a NEW post, which `setOnlyAlertOnce` does not silence -
             // see [RepostAlert].
-            val alertMode = RepostAlert.of(
+            val repostMode = RepostAlert.of(
                 redraw = alreadyPosted || supersedes != 0L,
                 switchesChannel = switchesChannel,
                 hasExistingPost = existingNotif != null,
             )
-            if (alertMode == RepostAlert.Mode.SILENT) {
+            if (repostMode == RepostAlert.Mode.SILENT) {
                 Log.d(TAG, "showMessageNotification: a re-draw is a new post -> reposted silent (groupId=${groupId.take(8)} channel=$channel existing=${existingNotif != null})")
             }
+            // A CALL HOLDS THE SOUND ([CallSoundHold]): the message is shown, without its sound.
+            val callHolds = callHoldsSound()
+            if (callHolds && repostMode != RepostAlert.Mode.SILENT) {
+                Log.i(TAG, "showMessageNotification: a call holds the sound -> posted silent (groupId=${groupId.take(8)} channel=$channel)")
+            }
+            val alertMode = CallSoundHold.alert(repostMode, callHolds)
 
             val isReactionNotif = channel == CHANNEL_REACTIONS
 
-            val conversationShortcutId = if (!isReactionNotif && (isGroup || namesEachSender)) {
+            // NO SHORTCUT FOR A SALON. Dynamic shortcuts share one platform cap with the DMs and the
+            // direct-share targets, and a busy salon posting one per message would evict them; the
+            // share sheet offers conversations, not salons (`sharing.md`). A salon keeps its large
+            // icon instead - the speaker's face or initials.
+            val conversationShortcutId = if (!isReactionNotif && !groupId.startsWith("channel_") && (isGroup || namesEachSender)) {
                 publishConversationShortcut(
                     this, groupId, if (isGroup) groupName else senderName, largeIcon, senderPerson, tapIntent
                 )
@@ -2229,8 +2829,30 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // is the header circle, with the app's small icon as the corner badge. Without one the
                 // header circle was the app's bird while the sender's face sat beside the line, two
                 // round pictures one above the other (user, 2026-10-05). The large icon is therefore
-                // set only where the old, shortcut-less shape is kept (reaction, salon).
-                .apply { if (conversationShortcutId != null) setShortcutId(conversationShortcutId) else setLargeIcon(largeIcon) }
+                // set only where the old, shortcut-less shape is kept (reaction, blind salon banner).
+                .apply {
+                    if (conversationShortcutId != null) {
+                        setShortcutId(conversationShortcutId)
+                    } else if (alreadyPosted) {
+                        // NEVER A BORROWED FACE. This call's line was NOT added - the other trigger
+                        // posted the same message first - so its icon describes nothing shown. The
+                        // face is the one of the last line SOMEBODY ELSE wrote: the reader's own
+                        // inline reply (the style's user, or a line with no Person) is never the
+                        // conversation's face.
+                        val shownFace = style.messages
+                            .lastOrNull { it.person != null && it.person?.name != selfPerson.name }
+                            ?.person?.icon?.toIcon(this@showMessageNotification)
+                        if (shownFace != null) {
+                            setLargeIcon(shownFace)
+                        } else {
+                            // No line by somebody else carries a face (an unnamed speaker's is drawn as
+                            // initials into the icon, so this is a line with no icon): no large icon.
+                            Log.d(TAG, "showMessageNotification: the shown line carries no face -> no large icon (groupId=${groupId.take(8)})")
+                        }
+                    } else {
+                        setLargeIcon(largeIcon)
+                    }
+                }
                 // The second trigger for a message already in the shade re-posts the same content,
                 // so it must not sound or vibrate a second time - which is the whole of what the
                 // user saw as "the same notification twice".
@@ -2253,14 +2875,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
             // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
             if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-                notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt))
-                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
+                notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt, serverAt))
+                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt, serverAt))
             } else if (quickActions && ChannelReadMark.offered(groupId, sentAt, showsMessage)) {
                 // A SALON offers "Mark as read" ONLY: its read state is a server row the receiver
                 // reaches with one PushSecret call. Reply stays off - the send is end-to-end
                 // encrypted under a Graine session the broadcast receiver cannot seal. And only on a
                 // banner that shows the message: the mark is the receipt the sender sees.
-                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
+                notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt, serverAt))
             }
 
             val notif = notifBuilder.build()
@@ -2332,16 +2954,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      *
      * `seedsJson` is the `seeds` array `nativeDecryptMessageWithKey` returns alongside
      * `reason=graine-key-material`: `[{channelId, sessionId, seedB64, createdAt}, ...]`. Returns
-     * how many entries were stored, or -1 when the payload could not be read at all or
-     * [cacheKeyB64] is empty: the mirror is sealed under that key (Rust `native_cache`) and is
-     * never written in the clear.
+     * `{"stored": n, "leftToApp": m}` - a relayed seed for a salon this account has no mirrored
+     * session of is LEFT TO THE APP, which checks it fully, and is not a seed lost - or null when
+     * the payload could not be read at all or [cacheKeyB64] is empty: the mirror is sealed under
+     * that key (Rust `native_cache`) and is never written in the clear.
      *
      * THE ONE FILE THIS PATH MAY WRITE. The background decrypt is read-only by construction - it
      * must never advance `mls.bin`, which the foreground owns - and this touches nothing else: the
      * mirror is a cache of key material the device is already entitled to, bounded per channel,
      * and rebuilt from the group's log whenever the app next runs.
      */
-    external fun nativeStoreGraineSeeds(dataDir: String, cacheKeyB64: String, seedsJson: String): Int
+    external fun nativeStoreGraineSeeds(dataDir: String, cacheKeyB64: String, seedsJson: String): String?
 
     /**
      * Whether the sealed mirror under [dataDir] holds a session: 1 yes, 0 no, -1 unreadable. The
@@ -2411,10 +3034,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     // what each answer means is [KeyGroupPushJoin]; the orchestration is [joinKeyGroupFromPush].
 
     /**
-     * Claims one attempt at [groupId]: `granted`, `attempted:<state>`, `full`, or `error`. The
-     * ledger is sealed under [cacheKeyB64]; an empty key answers `error` and nothing is written.
+     * Claims one attempt at [groupId] for [userId], the push's account: `granted`, `attempted:<state>`,
+     * `full`, `not-the-accounts-slot` (the app's MLS state slot holds another account's state, so
+     * nothing is written), or `error`. The ledger is sealed under [cacheKeyB64]; an empty key answers
+     * `error` and nothing is written.
      */
-    external fun nativeKeyGroupJoinClaim(filesDir: String, cacheKeyB64: String, groupId: String): String
+    external fun nativeKeyGroupJoinClaim(filesDir: String, cacheKeyB64: String, userId: String, groupId: String): String
 
     /**
      * Settles an attempt: [state] is `joined` ([a] = scope kind, [b] = scope id), `refused`, `lost`
@@ -2424,6 +3049,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     external fun nativeKeyGroupJoinSettle(
         filesDir: String,
         cacheKeyB64: String,
+        userId: String,
         groupId: String,
         state: String,
         a: String,
@@ -2448,11 +3074,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         senderId: String,
     ): String
 
-    /** Installs the staged state, refused if `mls.bin` changed since it was read. False = lost. */
-    external fun nativeFinishKeyGroupJoin(filesDir: String): Boolean
+    /**
+     * Installs [userId]'s staged state, refused if `mls.bin` changed since it was read or the slot is
+     * no longer that account's. False = lost.
+     */
+    external fun nativeFinishKeyGroupJoin(filesDir: String, userId: String): Boolean
 
-    /** Deletes the staged state of a commit the server did not accept. */
-    external fun nativeAbandonKeyGroupJoin(filesDir: String)
+    /** Deletes [userId]'s staged state of a commit the server did not accept - only from that account's slot. */
+    external fun nativeAbandonKeyGroupJoin(filesDir: String, userId: String)
 
     /**
      * Settles the Add staged in [stateBytes] (the mls.bin just loaded) for [groupId] on a DEFINITIVE
@@ -2539,7 +3168,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * merge by `max` across devices, so a fast clock would mark future messages read permanently
      * and unfixably. Returns "" only if the JVM could not allocate the string.
      */
-    external fun nativeBuildReadWatermarkProto(at: Long): String
+    external fun nativeBuildReadWatermarkProto(at: Long, serverAt: Long): String
+
+    /**
+     * Builds the plaintext call hangup (base64) the native ring's Decline sends - the same
+     * `CallMsg { hangup, end_reason }` the in-app Decline sends. [endReason] is the wire value of
+     * `CallEndReason` ([CALL_END_REASON_DECLINED]). Returns "" on failure.
+     */
+    external fun nativeBuildCallHangupProto(
+        messageId: String,
+        sentAt: Long,
+        callId: String,
+        deviceId: String,
+        endReason: Int,
+    ): String
 
     /**
      * A refused push frame leaves the state behind: the worker retries it on the next cycle. One
@@ -2614,6 +3256,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val data = remoteMessage.data
         Log.d(TAG, "onMessageReceived: type=${data["type"]} action=${data["action"]} groupId=${data["groupId"]} queuedMessageId=${data["queuedMessageId"]} hasInlineProto=${!data["proto"].isNullOrEmpty()}")
 
+        // A CONTENT-FREE WAKE-UP PUSH (`push_mode = wake`): Google carried only an opaque id. The
+        // frame is fetched from our server and then goes through EXACTLY the path below - one
+        // dispatcher, never a second handler that could drift from it.
+        if (data["type"] == WakeAnswer.WAKE_TYPE) {
+            onWakePush(data)
+            return
+        }
+        dispatchPush(data)
+    }
+
+    /**
+     * Everything a push's data map can ask of this service, whether it arrived in the push itself
+     * or was fetched for a wake-up push ([onWakePush]). The map is the same in both cases - the
+     * server builds both from one description (`describeQueuedFrame`).
+     *
+     * For a wake-up push it runs under [WAKE_ORDER]'s monitor ([onWakeFetched]): it must stay quick
+     * and must never wait - its MLS work goes to the lane, as it does from FCM's own thread.
+     */
+    private fun dispatchPush(data: Map<String, String>) {
         val msgType = data["type"]
 
         // A REACTION RIDES ON `social` WITHOUT BEING ONE. Its wire type stays `social` on purpose:
@@ -2656,28 +3317,30 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // notification, and posting one over a conversation you are reading is noise: the bubble on
         // screen already carries the reaction, delivered by the WebSocket. It is therefore suppressed
         // exactly like a message, which is what `showNotification` would do on its own anyway.
-        val showsWhileForeground = msgType == "form_reminder" || (msgType == "social" && !isReaction)
+        //
+        // A CALL RING TOUCHES NO mls.bin EITHER, and whether it shows in front is not this guard's
+        // question but `showIncomingCallNotification`'s: the page rings a call only while it holds
+        // the gateway socket, which a page at the PIN gate does not (`foregroundPageRings`).
+        val showsWhileForeground =
+            msgType == "form_reminder" || (msgType == "social" && !isReaction) || msgType == "call_ring"
         if (MainActivity.isInForeground && !showsWhileForeground) {
             Log.d(TAG, "App in foreground -> MLS handled by the foreground (WS), skip background processing")
             return
         }
 
         // Incoming-call ring (WP-XP-5): cleartext fan-out from POST /api/calls/ring. No MLS
-        // involved - instant CallStyle ring, no Argon2/decrypt latency. Foreground already
-        // returned above (WS/CallOverlay rings there).
+        // involved - instant CallStyle ring, no Argon2/decrypt latency. An app in front whose page
+        // holds the socket rings in-app; `showIncomingCallNotification` stands back for it.
         if (msgType == "call_ring") {
             val groupId = data["groupId"] ?: ""
             val callId = data["callId"] ?: ""
-            val callerName = data["callerName"]?.takeIf { it.isNotEmpty() }
-                ?: data["senderName"] ?: ""
+            // Ids only: the caller is named from this phone's own copy (decision 6).
+            val callerId = data["callerId"] ?: ""
             if (groupId.isEmpty() || callId.isEmpty()) {
                 Log.e(TAG, "call_ring: missing groupId/callId -> abort")
                 return
             }
-            showIncomingCallNotification(
-                this, groupId, callId, callerName,
-                data["groupName"] ?: "", data["hasVideo"] == "true",
-            )
+            showIncomingCallNotification(this, groupId, callId, callerId, data["hasVideo"] == "true")
             return
         }
         // Pending welcome request: an offline peer needs to be added to a group.
@@ -2710,8 +3373,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.e(TAG, "isWelcome: missing groupId -> abort")
                 return
             }
-            WELCOMES_ON_LANE.merge(groupId, 1, Int::plus)
-            runSerializedWithWakeLock("welcome_join", 90_000L) {
+            runSerializedWithWakeLock(
+                "welcome_join", 90_000L,
+                onLane = { WELCOMES_ON_LANE.merge(groupId, 1, Int::plus) },
+            ) {
                 try {
                     processReceivedWelcomeBackground(groupId, queuedMessageId, inlineProto)
                 } finally {
@@ -2857,6 +3522,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val senderId        = data["senderId"] ?: ""
         val queuedMessageId = data["queuedMessageId"]
         val inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() }
+        // The server's acceptance of this message (`queued_message.createdAt`, ISO 8601): the key the
+        // conversation is ordered and read on (readState.ts, owner 2026-10-31). Carried to the cache
+        // row and to the shade's actions. 0 when absent or unreadable, which is said.
+        val pushServerAt    = serverInstantOf(data["createdAt"])
 
         Log.d(TAG, "thread: groupId=$groupId named=${senderName.isNotEmpty()} silent=$silent inlineProto=${inlineProto != null}")
 
@@ -2892,8 +3561,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // rare silent `call_invite` among them. A ring does not need it: every current caller
         // rings through the cleartext `call_ring` push FIRST (POST /api/calls/ring is awaited
         // before the MLS invite leaves, and a refused ring ends the call), and stops it with
-        // `call_ring_end`. The MLS `call_invite` branch below serves only a NON-silent invite
-        // from a pre-WP-XP-5 caller.
+        // `call_ring_end`. A decrypted MLS `call_invite` never rings (see below).
         //
         // THE EXCEPTION IS KEY MATERIAL, AND THE SERVER NAMES IT RATHER THAN THIS DECRYPTING
         // TO FIND OUT. A Graine seed arrives as a silent frame like any other; dropped, the
@@ -2923,7 +3591,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // join - no retry, no clock, and no fallback banner for a message about to be readable.
         if (outcome is PushDecrypt.Refused && (WELCOMES_ON_LANE[groupId] ?: 0) > 0) {
             Log.d(TAG, "tryDecrypt refused group=${groupId.take(8)}: its Welcome is queued behind this frame -> re-queued after it")
-            runSerializedWithWakeLock("fcm_decrypt") { handleMlsFrame(data, silent) }
+            runSerializedWithWakeLock("fcm_decrypt", requeueOfThisFrame = true) { handleMlsFrame(data, silent) }
             return
         }
 
@@ -2962,15 +3630,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Everything below asks for the MESSAGE, and there is exactly one outcome that has one.
         val decrypted: DecryptedMessage? = (outcome as? PushDecrypt.Message)?.msg
 
-        // Call signaling over MLS (WP-XP-5). Invite -> ring (fallback for pre-WP-XP-5 callers
-        // that did not hit POST /api/calls/ring; deduped per callId with the cleartext ring).
-        // Control (answer/ICE/hangup/answered) -> never a message notification; hangup/answered
-        // additionally stops an active ring.
+        // Call signaling over MLS (WP-XP-5): never a message notification, and NEVER A RING.
+        // THE ONE NATIVE RING IS THE SERVER'S `call_ring`, because only the server applies what
+        // decides whether a phone may ring: `calls_mode`, the per-conversation call permission,
+        // the video rule and blocks. An invite decrypted here carries none of that, so ringing
+        // on it would ring past every one of them (the pre-WP-XP-5 "fallback" did; review of
+        // #2727). Control (answer/ICE/hangup/answered): hangup/answered stops an active ring.
         if (decrypted?.type == "call_invite") {
-            showIncomingCallNotification(
-                this, groupId, decrypted.callId ?: "mls-$groupId",
-                senderName, groupName, decrypted.hasVideo,
-            )
+            Log.d(TAG, "call_invite over MLS: not a ring - the server's call_ring is the only one")
             return
         }
         if (decrypted?.type == "call_control") {
@@ -3036,7 +3703,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (gate is NotificationLevelGate.Decision.Withhold) {
             Log.d(TAG, "[NOTIF] group=${groupId.take(8)} withheld: ${gate.reason}")
             if (decrypted != null) {
-                writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted)
+                writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted, pushServerAt)
             }
             if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
                 enqueueRefusedFrameWorker()
@@ -3082,7 +3749,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         if (decrypted != null) {
-            writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted)
+            writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted, pushServerAt)
         }
 
         val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
@@ -3107,7 +3774,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             } else {
                 val stamp = showMessageNotification(
                     senderName, groupName, body, largeIcon, groupId, media?.first, media?.second,
-                    channel, sentAt = decrypted?.sentAt ?: 0L, namesEachSender = true,
+                    channel, sentAt = decrypted?.sentAt ?: 0L, serverAt = pushServerAt,
+                    namesEachSender = true,
                 )
                 if (refusedForGood && stamp != 0L) {
                     GENERIC_BANNERS.genericPosted(groupId, stamp)
@@ -3185,19 +3853,64 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * The WakeLock is taken when the task STARTS rather than when it is queued, so a task waiting
      * its turn does not hold the CPU awake for the ones ahead of it.
      */
-    private fun runSerializedWithWakeLock(name: String, timeoutMs: Long = 60_000L, block: () -> Unit) {
-        MLS_PUSH_LANE.execute {
-            val wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
-                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:$name")
-            wl.acquire(timeoutMs)
-            try {
-                block()
-            } catch (e: Throwable) {
-                // A task that dies must not take the lane with it: the executor would keep running,
-                // but this is the only place the failure is visible at all.
-                Log.e(TAG, "$name: uncaught in the MLS push lane: ${e.message}", e)
-            } finally {
-                if (wl.isHeld) wl.release()
+    private fun runSerializedWithWakeLock(
+        name: String,
+        timeoutMs: Long = 60_000L,
+        requeueOfThisFrame: Boolean = false,
+        onLane: () -> Unit = {},
+        block: () -> Unit,
+    ) {
+        // IN ARRIVAL ORDER WITH THE WAKE-UPS. Work entering the lane takes a [WAKE_ORDER] ticket, so
+        // it cannot overtake a wake-up that arrived before it and is still fetching (a key-group
+        // Welcome sent as a wake, then the salon push sealed on it) - NEW work a lane task spawns
+        // (a key-group join queued behind its banner) included: from the lane it takes a ticket
+        // like an arrival, and the lane never waits on it, since a ticket that cannot run yet is
+        // stored and run later by whichever settlement releases it.
+        //
+        // Two kinds go straight to the lane. A RE-QUEUE OF THE SAME FRAME behind its Welcome
+        // ([requeueOfThisFrame], on the lane): its place was already taken on arrival, and it must
+        // land right behind the Welcome that is ON the lane. And work queued from inside a release
+        // (the fetched frame's own dispatch): [WakeOrder.inOrder] sees it is already in its turn.
+        if (requeueOfThisFrame && Thread.currentThread() === mlsLaneThread) {
+            executeOnLane(name, timeoutMs, onLane, block)
+            return
+        }
+        val now = WAKE_ORDER.inOrder { executeOnLane(name, timeoutMs, onLane, block) }
+        if (!now) Log.d(TAG, "$name: waits for ${WAKE_ORDER.waiting() - 1} earlier ticket(s), a wake-up still fetching ahead of them")
+    }
+
+    /**
+     * Queues [block] on [MLS_PUSH_LANE] under its own wake lock - the only place work enters it.
+     * [onLane] runs first, on the calling thread, right before the task is handed to the lane: what
+     * must count "this task is ON the lane" ([WELCOMES_ON_LANE]) counts from here, never earlier.
+     */
+    private fun executeOnLane(name: String, timeoutMs: Long, onLane: () -> Unit, block: () -> Unit) {
+        onLane()
+        // Through [WakeOrder.handOff]: inside a release batch, the lane is handed this task only once
+        // every action of the batch has run - so every [onLane] of the batch has counted before the
+        // lane can start any of its tasks.
+        WAKE_ORDER.handOff {
+            MLS_PUSH_LANE.execute {
+                var wl: PowerManager.WakeLock? = null
+                try {
+                    // INSIDE the try: a wake lock that cannot be taken must not skip [block], whose own
+                    // `finally` releases what [onLane] counted ([WELCOMES_ON_LANE]) - a count left
+                    // stranded would re-queue its group's frames for ever.
+                    wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:$name")
+                    wl.acquire(timeoutMs)
+                } catch (e: Throwable) {
+                    Log.e(TAG, "$name: wake lock NOT taken, running without it: ${e.javaClass.simpleName}", e)
+                }
+                try {
+                    block()
+                } catch (e: Throwable) {
+                    // A task that dies must not take the lane with it: the executor would keep running,
+                    // but this is the only place the failure is visible at all.
+                    Log.e(TAG, "$name: uncaught in the MLS push lane: ${e.message}", e)
+                } finally {
+                    if (wl?.isHeld == true) wl.release()
+                }
             }
         }
     }
@@ -3266,9 +3979,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         requesterDeviceId: String,
     ) {
         // File loads (read-only, outside the lock)
-        val ctx = MlsContextLoader.loadPushContext(this)
+        val ctxRead = MlsContextLoader.readPushContext(this)
+        val ctx = ctxRead.context
         if (ctx == null) {
-            Log.e(TAG, "processWelcomeRequestBackground: push_context.json absent -> abort")
+            Log.e(TAG, "processWelcomeRequestBackground: push_context.json ${ctxRead.verdict.describe()} -> abort")
             return
         }
         val secret = retrievePushSecret(this)
@@ -3332,7 +4046,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             if (!result.optBoolean("ok", false)) {
                 // A TOKEN, never prose: `stale-epoch-known`, `already-member`, `foreground-active`, ...
-                Log.w(TAG, "processWelcomeRequestBackground: not prepared reason=${result.optString("reason", "unspecified")} group=$groupId -> nothing sent")
+                // The ordinary ones are said quietly, only an unexpected one accuses
+                // ([BackgroundWelcomeAnswer.prepareRefusalLevel]).
+                val reason = result.optString("reason", "unspecified")
+                val line = "processWelcomeRequestBackground: not prepared reason=$reason group=$groupId -> nothing sent"
+                when (BackgroundWelcomeAnswer.prepareRefusalLevel(reason)) {
+                    BackgroundWelcomeAnswer.Level.DEBUG -> Log.d(TAG, line)
+                    BackgroundWelcomeAnswer.Level.WARN -> Log.w(TAG, line)
+                    BackgroundWelcomeAnswer.Level.ERROR -> Log.e(TAG, line)
+                }
                 return
             }
             val welcomePayload  = result.getString("welcome")
@@ -3717,9 +4439,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         // Load the push context (file read) before the lock - read-only, thread-safe.
-        val ctx = MlsContextLoader.loadPushContext(this)
+        val read = MlsContextLoader.readPushContext(this)
+        val ctx = read.context
         if (ctx == null) {
-            Log.e(TAG, "tryDecrypt: push_context.json absent or invalid -> abort")
+            Log.e(TAG, "tryDecrypt: push_context.json ${read.verdict.describe()} -> abort")
             return PushDecrypt.Refused
         }
 
@@ -3762,6 +4485,258 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } finally {
             MlsStateLock.LOCK.unlock()
         }
+    }
+
+    /**
+     * A CONTENT-FREE WAKE-UP PUSH: fetch what the server kept, then dispatch it as the full push
+     * (owner, 2026-11-02; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+     *
+     * THE FETCH IS OFF THE MLS LANE, THE DISPATCH ON IT, IN ARRIVAL ORDER - WITH EVERY OTHER PUSH. A
+     * ticket is taken here, on FCM's thread; every full push bound for the lane takes one too
+     * ([runSerializedWithWakeLock]). The fetch runs on [WAKE_FETCH_POOL], and [WAKE_ORDER] releases
+     * the results in ticket order - so a Welcome sent as a wake is still joined before the salon push
+     * that arrived after it, and the lane is never held by a round trip.
+     *
+     * THE DEADLINE COUNTS FROM ARRIVAL. [WakeOrder.arrive] schedules it here, [WAKE_FETCH_DEADLINE_MS]
+     * from now, so the ticket is settled within that bound whatever the fetch is doing - waiting for a
+     * thread, running, stuck - and a push behind it waits at most that long. One request, no retry:
+     * the fetch gets [WAKE_FETCH_BUDGET_MS] from the same arrival, strictly less, so it normally
+     * settles its own ticket first; the ticket is also settled here if the fetch cannot be scheduled,
+     * and at once if the deadline cannot. Both are counted in awake time (`System.nanoTime`).
+     *
+     * A FAILED FETCH IS NEVER DRAWN AS THE GENERIC TEXT. It is logged at ERROR with its stage, and a
+     * visible frame gets a notification that SAYS the message could not be loaded; a silent one gets
+     * the line only - its row stays queued and the next open drains it.
+     */
+    private fun onWakePush(data: Map<String, String>) {
+        val queuedMessageId = data["queuedMessageId"].orEmpty()
+        val silent = data["silent"] == "true"
+        // The conversation is kept at "mentions": a failure cannot know whether this frame mentions
+        // the user, so it must not ring for it (the bit Apple reads as `passive`).
+        val mentionsOnly = data["notifLevel"] == "mentions"
+        if (PushRegistrationEnd.isSignedOut(this)) {
+            Log.w(TAG, "[PUSH_WAKE] dropped queued=$queuedMessageId - this device is signed out, no account owns its pushes")
+            return
+        }
+        // The foreground engine drains the queue over its WebSocket; fetching here would only race it.
+        if (MainActivity.isInForeground) {
+            Log.d(TAG, "[PUSH_WAKE] app in foreground -> the WebSocket delivers queued=$queuedMessageId, nothing fetched")
+            return
+        }
+        if (queuedMessageId.isEmpty()) {
+            Log.e(TAG, "[PUSH_WAKE] a wake push without queuedMessageId - nothing to fetch (server defect) silent=$silent")
+            if (!silent) runWithWakeLock("fcm_wake_unavailable") { showWakeUnavailableNotification(mentionsOnly) }
+            return
+        }
+        // ONE CLOCK: the deadline's executor counts in `System.nanoTime`, so the fetch's budget does
+        // too - both stop in deep sleep, and neither can run out while the other has not.
+        val arrivedAtNs = System.nanoTime()
+        // THE TICKET IS BOUNDED FROM ARRIVAL: unless its fetch settles it first, its deadline does,
+        // [WAKE_FETCH_DEADLINE_MS] from now - whether the fetch is queued behind stuck ones, running,
+        // or never scheduled at all. Settled by the deadline, its one accusing line is
+        // [onWakeFetched]'s `stage=deadline`.
+        val ticket = WAKE_ORDER.arrive(
+            onScheduleFailed = { e ->
+                Log.e(TAG, "[PUSH_WAKE] deadline NOT scheduled queued=$queuedMessageId (${e.javaClass.simpleName}) - settled as not loaded at once")
+            },
+        ) {
+            onWakeFetched(queuedMessageId, silent, mentionsOnly, WakeAnswer.Outcome.Failed("deadline"))
+        }
+        val settle = { outcome: WakeAnswer.Outcome ->
+            try {
+                val released = WAKE_ORDER.settle(ticket) { onWakeFetched(queuedMessageId, silent, mentionsOnly, outcome) }
+                when {
+                    released != null ->
+                        Log.d(TAG, "[PUSH_WAKE] settled queued=$queuedMessageId ticket=$ticket released=$released waiting=${WAKE_ORDER.waiting()}")
+                    // Its deadline already accused it; a failure arriving after says nothing new.
+                    outcome is WakeAnswer.Outcome.Failed ->
+                        Log.d(TAG, "[PUSH_WAKE] late failure ignored queued=$queuedMessageId ticket=$ticket stage=${outcome.stage}")
+                    // A real answer lost to the deadline: the deadline's line said "not loaded", this
+                    // says the server had in fact answered - the frame stays queued for the next open.
+                    else ->
+                        Log.w(TAG, "[PUSH_WAKE] late result DROPPED queued=$queuedMessageId ticket=$ticket outcome=${outcome.javaClass.simpleName} " +
+                            "- its deadline settled it first; the frame stays queued for the next open")
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "[PUSH_WAKE] a released action threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
+            }
+        }
+        try {
+            WAKE_FETCH_POOL.execute {
+                var outcome: WakeAnswer.Outcome = WakeAnswer.Outcome.Failed("uncaught")
+                var wl: PowerManager.WakeLock? = null
+                try {
+                    // What is left of the fetch's budget: a fetch that waited its turn here gets the
+                    // remainder, and one whose budget already ran out is not started (its deadline
+                    // says so - no second line here).
+                    val remainingMs = WAKE_FETCH_BUDGET_MS - (System.nanoTime() - arrivedAtNs) / 1_000_000L
+                    if (remainingMs <= 0) {
+                        outcome = WakeAnswer.Outcome.Failed("deadline-queued")
+                    } else {
+                        wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:fcm_wake_fetch")
+                        wl.acquire(remainingMs + WAKE_FETCH_WAKELOCK_MARGIN_MS)
+                        outcome = fetchWakeFrameWithinDeadline(queuedMessageId, silent, remainingMs)
+                    }
+                } catch (e: Throwable) {
+                    Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.javaClass.simpleName}", e)
+                } finally {
+                    settle(outcome)
+                    if (wl?.isHeld == true) wl.release()
+                }
+            }
+        } catch (e: RejectedExecutionException) {
+            // Never expected (the pool is never shut down) - and if it ever is, the ticket is settled
+            // HERE, so no later push waits even for the deadline.
+            Log.e(TAG, "[PUSH_WAKE] fetch NOT scheduled queued=$queuedMessageId: ${e.message}")
+            settle(WakeAnswer.Outcome.Failed("not-scheduled"))
+        }
+    }
+
+    /**
+     * [fetchWakeFrame] held to [budgetMs] - what is left of [WAKE_FETCH_BUDGET_MS], itself short of
+     * the ticket's deadline - as a whole. Past it the connection is disconnected, the call abandoned
+     * on [WAKE_HTTP_POOL], and the fetch is `Failed("deadline-<phase>")`, accused once by
+     * [onWakeFetched] - the frame stays queued for the next open.
+     */
+    private fun fetchWakeFrameWithinDeadline(queuedMessageId: String, silent: Boolean, budgetMs: Long): WakeAnswer.Outcome {
+        val connection = AtomicReference<HttpURLConnection?>(null)
+        // Where the call was when the budget ran out: `connecting` covers the DNS lookup and the TCP
+        // and TLS handshakes, `awaiting-response` the request and the status line, `reading-body` the rest.
+        val phase = AtomicReference("queued")
+        val call = WAKE_HTTP_POOL.submit<WakeAnswer.Outcome> { fetchWakeFrame(queuedMessageId, silent, connection, phase) }
+        return try {
+            call.get(budgetMs, TimeUnit.MILLISECONDS)
+        } catch (e: TimeoutException) {
+            // No line here: the outcome carries the phase, and [onWakeFetched] says it once, at ERROR.
+            connection.get()?.disconnect()
+            call.cancel(true)
+            WakeAnswer.Outcome.Failed("deadline-${phase.get()}")
+        } catch (e: java.util.concurrent.ExecutionException) {
+            Log.e(TAG, "[PUSH_WAKE] fetch threw queued=$queuedMessageId: ${e.cause?.javaClass?.simpleName}", e.cause)
+            WakeAnswer.Outcome.Failed("uncaught")
+        }
+    }
+
+    /**
+     * What one wake fetch became, acted on IN ITS TURN: run inside [WAKE_ORDER]'s release, so the
+     * frame's own lane work ([dispatchPush] -> [runSerializedWithWakeLock]) enters the lane at the
+     * place this push ARRIVED, before anything that arrived after it.
+     *
+     * IT RUNS UNDER [WAKE_ORDER]'S MONITOR, on whichever thread settled the ticket (a fetch thread,
+     * the deadline thread). That is why [dispatchPush] must stay what `onMessageReceived` already
+     * needs it to be - quick and non-blocking, its MLS work queued on the lane, never done inline:
+     * anything slow here holds every other settlement, and anything that WAITED on the order here
+     * would wait on itself.
+     */
+    private fun onWakeFetched(queuedMessageId: String, silent: Boolean, mentionsOnly: Boolean, outcome: WakeAnswer.Outcome) {
+        when (outcome) {
+            is WakeAnswer.Outcome.Frame -> {
+                Log.d(TAG, "[PUSH_WAKE] fetched queued=$queuedMessageId type=${outcome.fields["type"]} silent=$silent -> dispatched as the full push")
+                dispatchPush(outcome.fields)
+            }
+            WakeAnswer.Outcome.Gone ->
+                Log.i(TAG, "[PUSH_WAKE] gone queued=$queuedMessageId - drained or acknowledged since the push, nothing to draw")
+            is WakeAnswer.Outcome.Failed -> {
+                Log.e(TAG, "[PUSH_WAKE] fetch FAILED queued=$queuedMessageId stage=${outcome.stage} silent=$silent mentionsOnly=$mentionsOnly - " +
+                    if (silent) "nothing drawn, the frame stays queued" else "drawn as not loaded")
+                if (!silent) showWakeUnavailableNotification(mentionsOnly)
+            }
+        }
+    }
+
+    /**
+     * `GET /api/mls/push/wake` for one queued row, with the device's own ids and PushSecret - the
+     * auth `fetch-proto` uses. The decision on what came back is [WakeAnswer.classify]'s.
+     */
+    private fun fetchWakeFrame(
+        queuedMessageId: String,
+        silent: Boolean,
+        connection: AtomicReference<HttpURLConnection?>,
+        phase: AtomicReference<String>,
+    ): WakeAnswer.Outcome {
+        val ctx = MlsContextLoader.loadPushContext(this) ?: return WakeAnswer.Outcome.Failed("no-push-context")
+        val secret = retrievePushSecret(this) ?: return WakeAnswer.Outcome.Failed("no-push-secret")
+        val url = URL(
+            "${ctx.baseUrl}/api/mls/push/wake" +
+                "?messageId=${java.net.URLEncoder.encode(queuedMessageId, "UTF-8")}" +
+                "&userId=${java.net.URLEncoder.encode(ctx.userId, "UTF-8")}" +
+                "&deviceId=${java.net.URLEncoder.encode(ctx.deviceId, "UTF-8")}" +
+                "&silent=$silent"
+        )
+        val conn = try {
+            (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5_000
+                readTimeout    = 5_000
+                requestMethod  = "GET"
+                useCaches      = false
+                setRequestProperty("Authorization", "PushSecret $secret")
+            }.also { connection.set(it) }
+        } catch (e: Exception) {
+            Log.e(TAG, "[PUSH_WAKE] cannot open the connection: ${e.javaClass.simpleName}")
+            return WakeAnswer.Outcome.Failed("transport")
+        }
+        try {
+            val code = try {
+                phase.set("connecting")
+                conn.connect()
+                phase.set("awaiting-response")
+                conn.responseCode
+            } catch (e: Exception) {
+                Log.e(TAG, "[PUSH_WAKE] no response (phase=${phase.get()}): ${e.javaClass.simpleName}")
+                return WakeAnswer.classify(null, null, null)
+            }
+            if (code != 200) return WakeAnswer.classify(code, null, null)
+            phase.set("reading-body")
+            val json = try {
+                JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+            } catch (e: Exception) {
+                Log.e(TAG, "[PUSH_WAKE] unreadable body: ${e.javaClass.simpleName}")
+                return WakeAnswer.Outcome.Failed("unreadable-body")
+            }
+            val fields = json.optJSONObject("fields")?.let { obj ->
+                buildMap { obj.keys().forEach { key -> (obj.opt(key) as? String)?.let { put(key, it) } } }
+            }
+            return WakeAnswer.classify(code, json.optString("status").takeIf { it.isNotEmpty() }, fields)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * The notification a visible wake-up gets when its message could not be fetched: it says so and
+     * asks to open Canari, which drains the queue. In the app's chosen language ([appLocaleContext]);
+     * the tap opens the app, since nothing here knows which conversation the message belongs to.
+     *
+     * ONE id for all of them ([WAKE_UNAVAILABLE_NOTIF_ID]): a burst of failures replaces one
+     * notification instead of stacking identical ones. SILENT for a mentions-only conversation
+     * ([mentionsOnly]): the frame may not mention the user, and a level they chose must not ring.
+     */
+    private fun showWakeUnavailableNotification(mentionsOnly: Boolean) {
+        val res = appLocaleContext(this)
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        ensureNotificationChannels(manager)
+        val notifId = WAKE_UNAVAILABLE_NOTIF_ID
+        val tapIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, notifId, tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val body = res.getString(R.string.notif_wake_unavailable)
+        val notification = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(res.getString(R.string.app_name))
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setOnlyAlertOnce(true)
+            .setSilent(mentionsOnly || callHoldsSound())
+            .build()
+        Log.d(TAG, "[PUSH_WAKE] not-loaded notification posted notifId=$notifId silent=${mentionsOnly || callHoldsSound()}")
+        manager.notify(notifId, notification)
     }
 
     private fun fetchProtoFromBackend(queuedMessageId: String, ctx: PushContext): String? {
@@ -3825,9 +4800,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         queuedMessageId: String?,
         inlineProto: String?,
     ) {
-        val ctx = MlsContextLoader.loadPushContext(this)
+        val ctxRead = MlsContextLoader.readPushContext(this)
+        val ctx = ctxRead.context
         if (ctx == null) {
-            Log.e(TAG, "processReceivedWelcomeBackground: push_context.json absent -> abort")
+            Log.e(TAG, "processReceivedWelcomeBackground: push_context.json ${ctxRead.verdict.describe()} -> abort")
             return
         }
 
@@ -3952,7 +4928,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * [answer] is a native answer (a push decrypt, an accepted background Add); its `ownDeviceAdded`
      * array holds the keys Rust found to be this account's owner alerts (`mobile/device_notice.rs`).
      * They are claimed in the ledger the app shares (`nativeClaimDeviceNotices`), so a push replaying
-     * the same commit, or the app having already shown it, announces nothing. In the FOREGROUND
+     * the same commit, or the app having already shown it, announces nothing; nor does a key of an
+     * account the app has not pre-claimed since the update (counted `held` in the answer). In the FOREGROUND
      * nothing is claimed or posted: the app takes the same event and shows its in-app alert, which is
      * the only alert a user looking at the app gets.
      */
@@ -3963,8 +4940,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "$where: ${keys.length()} device(s) added to this account - foreground, the app alerts")
             return
         }
-        val claimed = try {
-            JSONArray(nativeClaimDeviceNotices(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath, keys.toString()))
+        val claim = try {
+            JSONObject(nativeClaimDeviceNotices(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath, keys.toString()))
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "$where: native library not loaded - new-device notice not raised: ${e.message}")
             return
@@ -3972,8 +4949,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.e(TAG, "$where: new-device claim failed - notice not raised: ${e.message}")
             return
         }
+        val claimed = claim.optJSONArray("claimed") ?: JSONArray()
+        val held = claim.optInt("held", 0)
+        if (held > 0) {
+            Log.i(TAG, "$where: $held new-device key(s) held - the app has not pre-claimed this account since the update, its own pass decides")
+        }
         if (claimed.length() == 0) {
-            Log.d(TAG, "$where: device(s) added to this account were already announced")
+            if (held == 0) Log.d(TAG, "$where: device(s) added to this account were already announced")
             return
         }
         Log.i(TAG, "$where: ${claimed.length()} new device(s) on this account - local notification")
@@ -4062,6 +5044,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // error text here: no catch-up, no worker - see `PushDecrypt.RefusedForGood`.
                     Log.w(TAG, "$where: MLS refused it at an epoch this device holds kind=${json.optString("kind")} - no catch-up or retry can read it")
                     PushDecrypt.RefusedForGood
+                }
+                "mls-refused" -> {
+                    // `kind: EpochAhead` is READ FROM THE FRAME'S HEADER by Rust, never learnt from
+                    // a refusal: this path never writes mls.bin, so after any commit every push of
+                    // the group is ahead of it until the app drains, and the catch-up below is the
+                    // designed answer - not a failure (`epoch_ahead_of_held_state`, 2026-11-05).
+                    if (json.optString("kind") == "EpochAhead") {
+                        Log.d(TAG, "$where: frame ahead of the stored state - the commit catch-up reads it")
+                    } else {
+                        Log.w(TAG, "$where: no message to show, reason=$reason kind=${json.optString("kind")}")
+                    }
+                    PushDecrypt.Refused
                 }
                 else -> {
                     Log.w(TAG, "$where: no message to show, reason=$reason")
@@ -4218,9 +5212,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     private fun groupLocality(groupId: String): GroupLocality {
         if (groupId.isEmpty()) return GroupLocality.ABSENT
-        val ctx = MlsContextLoader.loadPushContext(this)
+        val read = MlsContextLoader.readPushContext(this)
+        val ctx = read.context
         if (ctx == null) {
-            Log.w(TAG, "groupLocality: push context absent group=${groupId.take(8)} -> UNKNOWN")
+            Log.w(TAG, "groupLocality: push context ${read.verdict.describe()} group=${groupId.take(8)} -> UNKNOWN")
             return GroupLocality.UNKNOWN
         }
         val locality = withMlsStateLock(5) {
@@ -4350,6 +5345,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupName: String,
         isGroup: Boolean?,
         msg: DecryptedMessage,
+        /** The push's `createdAt` in ms, 0 when unknown: the row's `serverTimestamp` (fcmCache.ts). */
+        serverAt: Long,
     ) {
         if (msg.messageId.isEmpty()) {
             Log.w(TAG, "writeFcmCache: messageId empty -> entry ignored")
@@ -4371,6 +5368,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             isGroup?.let { put("isGroup", it) }
             put("content",    msg.text)
             put("timestamp",  msg.sentAt)
+            if (serverAt > 0L) put("serverTimestamp", serverAt)
             put("type",       msg.type)
             msg.replyTo?.let { put("replyTo", it) }
             msg.mediaKind?.let { put("mediaKind", it) }
@@ -4549,6 +5547,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             this, notifId, tapIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        val callHolds = callHoldsSound()
         val notification = NotificationCompat.Builder(this, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
@@ -4558,8 +5557,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .apply { largeIcon?.let { setLargeIcon(it) } }
+            // A call holds the sound ([CallSoundHold]): shown, without its sound.
+            .setSilent(callHolds)
             .build()
-        Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null}")
+        Log.d(TAG, "showSimpleNotification: notifId=$notifId channel=$channel largeIcon=${largeIcon != null} silentForCall=$callHolds")
         manager.notify(notifId, notification)
     }
 
@@ -4641,7 +5642,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             is PostReactionGroup.Shape.Many ->
                 res.getString(R.string.notif_social_reaction_body_many, shape.a.name, shape.b.name, shape.others)
             null -> {
-                Log.e(TAG, "post reaction: empty ledger after adding ${newcomer.name} - nothing to say")
+                Log.e(TAG, "post reaction: empty ledger after adding actor=${newcomer.id.take(8)} - nothing to say")
                 return
             }
         }
@@ -4751,6 +5752,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_association_repost_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_association_repost_body) }
             )
+            // WP-F6: `actor` is the person who reposted.
+            "social_member_repost" -> Pair(
+                res.getString(R.string.notif_social_member_repost_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_member_repost_body) }
+            )
             "social_repost_proposed" -> Pair(
                 res.getString(R.string.notif_social_repost_proposed_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_repost_proposed_body) }
@@ -4772,6 +5778,31 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_live_started_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_live_started_body) }
             )
+            // A follow request and its acceptance (WP-F2): the person names the title, the body is
+            // a fixed sentence - the server sends no fragment for these keys.
+            "social_follow_request" -> Pair(
+                res.getString(R.string.notif_social_follow_request_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_follow_request_body) }
+            )
+            // A new person asks to join a conversation the reader is in: the person names the
+            // title, the conversation's name is the body (a fixed phrase when it has none).
+            // With no name to show (the lookup failed server-side) the title says "someone": an id
+            // never reaches a lock screen.
+            "chat_join_ask" -> Pair(
+                if (actor.isEmpty()) res.getString(R.string.notif_chat_join_ask_anon_title)
+                else res.getString(R.string.notif_chat_join_ask_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_chat_join_ask_body) }
+            )
+            "social_follow_accepted" -> Pair(
+                res.getString(R.string.notif_social_follow_accepted_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_follow_accepted_body) }
+            )
+            // A followed person's birthday: the person names the title, the body is the fixed
+            // sentence - the server sends no fragment for this key.
+            "social_birthday" -> Pair(
+                res.getString(R.string.notif_social_birthday_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_birthday_body) }
+            )
             // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences - no
             // actor (which moderator acted is not theirs to read) and no fragment.
             "social_live_cut" -> Pair(
@@ -4786,6 +5817,35 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_live_withdrawn_title),
                 res.getString(R.string.notif_social_live_withdrawn_body)
             )
+            // The bookings' notices (WP-N): who acted names the title - a person, or the
+            // association of the space - and the body is the place, the organiser's word for a
+            // cancellation, or a fixed sentence when the space is reached by its link only (Q-R5).
+            "social_booking_cancelled" -> Pair(
+                res.getString(R.string.notif_social_booking_cancelled_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_cancelled_body) }
+            )
+            "social_booking_withdrawn" -> Pair(
+                res.getString(R.string.notif_social_booking_withdrawn_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_withdrawn_body) }
+            )
+            "social_booking_added" -> Pair(
+                res.getString(R.string.notif_social_booking_added_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_added_body) }
+            )
+            // An edit (owner, 2026-11-02): the booking was moved, or the reader taken off it.
+            "social_booking_changed" -> Pair(
+                res.getString(R.string.notif_social_booking_changed_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_changed_body) }
+            )
+            "social_booking_removed" -> Pair(
+                res.getString(R.string.notif_social_booking_removed_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_removed_body) }
+            )
+            // The reminder: nobody acted, a fixed title; the body is the place and the time.
+            "social_booking_reminder" -> Pair(
+                res.getString(R.string.notif_social_booking_reminder_title),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_reminder_body) }
+            )
             "form_opening_soon" -> Pair(
                 res.getString(R.string.notif_form_opening_soon_title),
                 res.getString(R.string.notif_form_opening_soon_body)
@@ -4799,6 +5859,35 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             "form_paid_over_capacity" -> Pair(
                 res.getString(R.string.notif_form_paid_over_capacity_title),
                 res.getString(R.string.notif_form_paid_over_capacity_body, arg)
+            )
+            // An association's Lydia payments became active / were paused, to its payout managers:
+            // `arg` is the association's name, the only data the server sends.
+            "lydia_payments_active" -> Pair(
+                res.getString(R.string.notif_lydia_payments_active_title),
+                res.getString(R.string.notif_lydia_payments_active_body, arg)
+            )
+            "lydia_payments_paused" -> Pair(
+                res.getString(R.string.notif_lydia_payments_paused_title),
+                res.getString(R.string.notif_lydia_payments_paused_body, arg)
+            )
+            // A payer refunded by an association: `arg` is the association's name, the only data
+            // the server sends (no amount on a lock screen).
+            "lydia_refund_issued" -> Pair(
+                res.getString(R.string.notif_lydia_refund_issued_title),
+                res.getString(R.string.notif_lydia_refund_issued_body, arg)
+            )
+            // A delegate (a list) paused or resumed by its receiver: `arg` is its name only.
+            "delegation_revoked" -> Pair(
+                res.getString(R.string.notif_delegation_revoked_title),
+                res.getString(R.string.notif_delegation_revoked_body, arg)
+            )
+            "delegation_receiver_not_ready" -> Pair(
+                res.getString(R.string.notif_delegation_receiver_not_ready_title),
+                res.getString(R.string.notif_delegation_receiver_not_ready_body, arg)
+            )
+            "delegation_resumed" -> Pair(
+                res.getString(R.string.notif_delegation_resumed_title),
+                res.getString(R.string.notif_delegation_resumed_body, arg)
             )
             // The agenda's five. `arg` is the event's title for all of them; only `event_proposed`
             // also uses the actor, because it is the only one where WHO acted is the useful half.
@@ -4825,6 +5914,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             "event_pending" -> Pair(
                 res.getString(R.string.notif_event_pending_title),
                 res.getString(R.string.notif_event_pending_body, arg)
+            )
+            "event_pending_coorganiser" -> Pair(
+                res.getString(R.string.notif_event_pending_coorganiser_title),
+                res.getString(R.string.notif_event_pending_coorganiser_body, arg)
             )
             else -> {
                 Log.w(TAG, "unknown contentKey=$key - using the server's own wording")
@@ -4909,7 +6002,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             !graineSeedHeld(cacheKey, channelId, sessionId)
         ) {
             Log.d(TAG, "handleChannelMessage: the Welcome into key group ${seedGroupId.take(8)} is queued behind this push -> re-queued after it channel=$channelId index=$messageIndex")
-            runSerializedWithWakeLock("fcm_channel") { handleChannelMessage(data.toMap()) }
+            runSerializedWithWakeLock("fcm_channel", requeueOfThisFrame = true) { handleChannelMessage(data.toMap()) }
             return
         }
 
@@ -4938,13 +6031,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.w(TAG, "handleChannelMessage: seed absent -> generic banner, frame HELD for its key material channel=$channelId session=$sessionId index=$messageIndex")
         }
 
+        // A blind banner that reaches the shade is REPORTED by the post itself, whichever of its
+        // three callers drew it - see `postChannelNotification` and [BlindBannerReport].
         val stamp = postChannelNotification(cacheKey, data, seedHeld)
-        // COUNTED, NOT ONLY LOGGED: a blind banner that reached the shade is reported once, after
-        // it is up, so the fleet has a rate rather than a line on one phone. A held frame may still
-        // be redrawn - `held` says so, and the reader of the count subtracts nothing by guessing.
-        if (stamp != 0L && !seedHeld) {
-            reportBlindBanner(channelId, blindBannerMissing(data, seedHeld), held = openable)
-        }
         if (keyGroupAbsent) {
             // ON THE LANE, BEHIND THIS PUSH: the banner and its redraw claim below are not delayed
             // by the join's two round trips, and the join is serial with every other MLS write this
@@ -5079,7 +6168,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
 
         val claim = try {
-            KeyGroupPushJoin.readClaim(nativeKeyGroupJoinClaim(filesDir, cacheKey, groupId))
+            KeyGroupPushJoin.readClaim(nativeKeyGroupJoinClaim(filesDir, cacheKey, ctx.userId, groupId))
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "joinKeyGroupFromPush: native library not loaded: ${e.message}")
             return
@@ -5099,7 +6188,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // Anything thrown before the install is a join that did not happen; the staged state,
             // if any, is deleted so it can never be installed later by mistake.
             Log.e(TAG, "joinKeyGroupFromPush: exception group=$tag: ${e.message}")
-            nativeAbandonKeyGroupJoin(filesDir)
+            nativeAbandonKeyGroupJoin(filesDir, ctx.userId)
             KeyGroupPushJoin.Settlement.Retryable("exception")
         }
         if (settlement == null) {
@@ -5115,7 +6204,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             is KeyGroupPushJoin.Settlement.Retryable -> settlement.reason to ""
             is KeyGroupPushJoin.Settlement.Deferred -> settlement.reason to settlement.baseEpoch.toString()
         }
-        val written = nativeKeyGroupJoinSettle(filesDir, cacheKey, groupId, settlement.token, a, b)
+        val written = nativeKeyGroupJoinSettle(filesDir, cacheKey, ctx.userId, groupId, settlement.token, a, b)
         val level = when (settlement) {
             is KeyGroupPushJoin.Settlement.Joined -> Log.INFO
             is KeyGroupPushJoin.Settlement.Retryable -> Log.INFO
@@ -5204,14 +6293,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             base.baseEpoch,
         )
         if (step == KeyGroupPushJoin.AfterCommit.ABANDON) {
-            nativeAbandonKeyGroupJoin(filesDir)
+            nativeAbandonKeyGroupJoin(filesDir, ctx.userId)
             return refusal ?: KeyGroupPushJoin.Settlement.Retryable("commit-unsettled")
         }
         // ACCEPTED: the server now holds this device's leaf. The install is the one step whose
         // failure leaves a leaf with no secrets behind it - LOST, and the app's join replaces it.
         // A lock not taken is NOT a refusal: null, and the attempt is left unsettled.
-        val installed = withMlsStateLock(60) { nativeFinishKeyGroupJoin(filesDir) }
-        if (installed == false) nativeAbandonKeyGroupJoin(filesDir)
+        val installed = withMlsStateLock(60) { nativeFinishKeyGroupJoin(filesDir, ctx.userId) }
+        if (installed == false) nativeAbandonKeyGroupJoin(filesDir, ctx.userId)
         return KeyGroupPushJoin.afterInstall(installed, base)
     }
 
@@ -5271,6 +6360,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * @param seedHeld   whether the mirror holds this session's seed; false posts the generic body.
      * @param supersedes the instant of the line this post replaces; see `showMessageNotification`.
      * @return the instant of the line it posted, or 0 when nothing reached the shade.
+     *
+     * A BLIND BANNER THAT REACHES THE SHADE IS REPORTED HERE, ONCE PER POST, whichever caller drew
+     * it - the first post, the redraw that found the seed meanwhile, or the drain - with what the
+     * open lacked or why it refused ([BlindBannerReport]). A fallback is a signal, and one that
+     * reached a person's phone is the one the fleet must be able to count.
      */
     private fun postChannelNotification(
         cacheKey: String,
@@ -5302,11 +6396,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // language Rust words its own sentences in (empty when none was mirrored: the base locale).
         val pushCtx  = MlsContextLoader.loadPushContext(this)
         val myUserId = pushCtx?.userId
-        // The phone's names, read at most once for this banner: the author line and the tokens share it.
-        val nameBook = lazy { loadMentionNames(myUserId?.lowercase()) }
+        // The phone's names, read at most once for this banner: the speaker and the tokens share it.
+        // The read keeps its reason, said ONCE by whichever reader reads it first - see below.
+        val namesRead = lazy { readDisplayNames(this, myUserId?.lowercase()) }
         // Set only where the banner's body IS the decrypted text: every other branch below posts the
         // generic line, on which "Marquer comme lu" would move a receipt for an unseen message.
         var showsMessage = false
+        // Whether the open PROVED the author (`authorProven`: a v2 session's minter and signature
+        // checked). A v1 row opens for whoever the push names, so its author is never named.
+        var authorProven = false
+        // WHY AN OPEN THAT RAN DID NOT SHOW THE MESSAGE - the `refused=` term of the report. Null
+        // while the open never ran: `missing` says that case.
+        var refusal: String? = null
         val body: String = if (seedHeld && ciphertext != null && nonce != null && messageIndex != null) {
             try {
                 val json = JSONObject(
@@ -5325,24 +6426,40 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val text = json.optString("text").takeIf { it.isNotEmpty() }
                     if (text != null) {
                         showsMessage = true
-                        renderMentions(text, myUserId, res, nameBook).take(200)
+                        authorProven = ChannelBannerAuthor.authorProvenOf(json.opt("authorProven"))
+                        // Rendered BELOW, once the speaker has read (or not) the names: the reader that
+                        // reads the file first is the one that says why it names nobody.
+                        text
                     } else {
+                        // OPENED, AND NOTHING TO DRAW - which said nothing at all until 2026-11-04,
+                        // so this generic line was the one fallback no log could explain.
+                        Log.w(TAG, "handleChannelMessage: opened ok with no text type=${json.optString("type")} channel=$channelId session=$sessionId -> generic banner")
+                        refusal = BlindBannerReport.EMPTY_TEXT
                         buildChannelFallbackText(res, channelName)
                     }
                 } else {
+                    val reason = json.optString("reason").ifEmpty { BlindBannerReport.UNSTATED }
+                    // NOTHING TO ANNOUNCE IS NOT A FAILURE TO READ (a withdrawn reaction, an event
+                    // silenced by name): no banner. A redraw leaves the generic line it would have
+                    // replaced - the one case a held frame's line is not corrected, said here.
+                    if (BlindBannerReport.postsNothing(reason)) {
+                        Log.i(TAG, "handleChannelMessage: $reason - nothing to announce, no banner channel=$channelId session=$sessionId redraw=${supersedes != 0L}")
+                        return 0L
+                    }
                     // A v2 refusal ACCUSES the server or a member (channel-encryption 21.5), so it
                     // is said at ERROR; the rest are a missing or unreadable seed. The Rust line
                     // naming the check goes nowhere in a killed app, so this token is the witness.
-                    val reason = json.optString("reason")
                     if (reason in GRAINE_V2_REFUSALS) {
                         Log.e(TAG, "handleChannelMessage: REFUSED reason=$reason channel=$channelId session=$sessionId")
                     } else {
                         Log.w(TAG, "handleChannelMessage: decrypt ok=false reason=$reason channel=$channelId")
                     }
+                    refusal = reason
                     buildChannelFallbackText(res, channelName)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "handleChannelMessage: decrypt exception: ${e.message}")
+                Log.e(TAG, "handleChannelMessage: decrypt exception: ${e.javaClass.simpleName}: ${e.message}")
+                refusal = BlindBannerReport.EXCEPTION
                 buildChannelFallbackText(res, channelName)
             }
         } else {
@@ -5373,27 +6490,69 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (!showsMessage && (senderId.isNotEmpty() || serverSaysMentioned)) {
             Log.d(TAG, "handleChannelMessage: blind banner -> no author, no mention (server named sender=${senderId.take(8)} mentioned=$serverSaysMentioned) channel=$channelId")
         }
-        // A salon banner names no author (its "sender" is the salon's title), so a mention of this
-        // reader says WHO above the line - the iOS twin is the banner's subtitle (WP-MENTION-NAME).
-        val shownBody = if (mentionsMe) "${mentionAuthorLine(senderId, nameBook, res)}\n$body" else body
-        val avatarBitmap = attribution.authorId?.let { fetchAvatar(it) }
-        val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
+        // THE SPEAKER, NAMED FROM THE PHONE'S OWN COPY ONCE THE OPEN PROVED WHO IT IS - see
+        // `ChannelBannerAuthor`. Until 2026-11-01 the salon's title stood in as the "sender", so the
+        // banner named nobody and drew the SALON's letter as a face (owner, `v1.6.0`).
+        val author = ChannelBannerAuthor.of(showsMessage, authorProven, attribution.authorId) {
+            nameBookOf(namesRead.value)
+        }
+        logUnnamedSalonAuthor(author, channelId)
+        // THE NAMES' REASON IS SAID ONCE PER BANNER. When the speaker rule read the file, its line
+        // above already carries the reason; when it did not (a v1 row, a push naming nobody), the
+        // tokens are the first reader, and a broken or foreign file is said here - never twice.
+        val speakerReadNames = namesRead.isInitialized()
+        val nameBook = lazy {
+            namesRead.value.also { read ->
+                if (!speakerReadNames) logSalonNamesUnusable(read, channelId)
+            }.names
+        }
+        // RENDERED, NOT PRINTED. The decrypted text carries `@[<64 hex>]` tokens; taking it raw put a
+        // hex blob in the banner - see `renderMentions`. Truncated AFTER, so a token near the
+        // 200-character edge cannot be cut in half. A generic line has no tokens to render.
+        val shown = if (showsMessage) renderMentions(body, myUserId, res, nameBook).take(200) else body
+        val someone = res.getString(R.string.notif_mention_someone).replaceFirstChar { it.titlecase() }
         val title = buildChannelPushTitle(workspaceName, channelName)
-        Log.d(TAG, "handleChannelMessage: notification posted showsMessage=$showsMessage bodyChars=${body.length} mentionsMe=$mentionsMe")
-        return showMessageNotification(
-            // `senderName` IS the title here: with `groupName` empty, MessagingStyle sets no
-            // conversation title and the Person's name is what the banner shows. A salon has no
-            // human sender to name anyway - the server sends only `senderId`, for the avatar.
-            senderName = title,
-            groupName  = "",
-            body       = shownBody,
+        val line = ChannelBannerAuthor.line(author, title, someone)
+        // A FACE ONLY FOR A NAMED SPEAKER: a photo beside "Someone" would name them by the back door.
+        val avatarBitmap = attribution.authorId?.takeIf { ChannelBannerAuthor.drawsFace(author) }?.let { fetchAvatar(it) }
+        val largeIcon    = avatarBitmap ?: generateInitialsBitmap(ChannelBannerAuthor.initialsSource(author))
+        Log.d(TAG, "handleChannelMessage: notification posted showsMessage=$showsMessage bodyChars=${shown.length} mentionsMe=$mentionsMe speaker=${author.javaClass.simpleName} hasAvatar=${avatarBitmap != null}")
+        val stamp = showMessageNotification(
+            // ALWAYS THE GROUP SHAPE: the salon is the conversation and every line has a speaker with
+            // its own key, so a notification mixing named, unnamed and blind lines keeps each line's
+            // name - see `ChannelBannerAuthor.line`. The speaker is above the line, so a mention of
+            // this reader needs no "<name> mentioned you" prefix: the body says "@vous" itself.
+            senderName = line.personName,
+            groupName  = line.conversationTitle,
+            senderKey  = line.personKey,
+            body       = shown,
             largeIcon  = largeIcon,
             groupId    = conversationId,
             channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
             sentAt     = createdAt,
             supersedes = supersedes,
             showsMessage = showsMessage,
+            // The group shape even for a speaker whose name happens to equal the salon's title, which
+            // `isGroup` alone (`groupName != senderName`) would read as a one-to-one thread.
+            namesEachSender = true,
         )
+        // COUNTED, NOT ONLY LOGGED, and only once it is up: a foregrounded app or a line already
+        // read posts nothing (0) and is no fallback anybody saw.
+        if (stamp != 0L && !showsMessage) {
+            val openable = ciphertext != null && nonce != null && messageIndex != null
+            reportBlindBanner(channelId, BlindBannerReport.of(seedHeld, openable, blindBannerMissing(data, seedHeld), refusal))
+        }
+        return stamp
+    }
+
+    /**
+     * Why `display_names.json` names nobody, for a salon banner whose speaker rule did not read it -
+     * the tokens were its first reader. Same levels as `logUnnamedSalonAuthor`; nothing when it names.
+     */
+    private fun logSalonNamesUnusable(read: DisplayNamesRead, channelId: String) {
+        val reason = read.unusable ?: return
+        val line = "[SALON_AUTHOR] display_names.json names nobody reason=$reason channel=$channelId"
+        if (ChannelBannerAuthor.accuses(reason)) Log.w(TAG, line) else Log.d(TAG, line)
     }
 
     /**
@@ -5411,9 +6570,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /**
      * Tells the server a blind salon banner went up, and why (`POST /api/mls/push/blind-banner`,
      * PushSecret - a shut app has no session). Best-effort: a failure is logged and nothing retries,
-     * because the banner is already up and the count is a rate, not a ledger.
+     * because the banner is already up and the count is a rate, not a ledger. `refused` travels only
+     * when the open ran: a server older than 2026-11-04 ignores the field.
      */
-    private fun reportBlindBanner(channelId: String, missing: List<String>, held: Boolean) {
+    private fun reportBlindBanner(channelId: String, report: BlindBannerReport.Report) {
+        val missing = report.missing
+        val held = report.held
         val ctx = MlsContextLoader.loadPushContext(this)
         val secret = retrievePushSecret(this)
         if (ctx == null || secret == null) {
@@ -5428,6 +6590,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 put("platform", "android")
                 put("missing", org.json.JSONArray(missing))
                 put("held", held)
+                report.refused?.let { put("refused", it) }
             }.toString()
             val conn = (URL("${ctx.baseUrl}/api/mls/push/blind-banner").openConnection() as HttpURLConnection).apply {
                 connectTimeout = 5_000
@@ -5439,7 +6602,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             try {
                 conn.outputStream.use { it.write(body.toByteArray()) }
-                Log.d(TAG, "reportBlindBanner: HTTP ${conn.responseCode} channel=$channelId missing=${missing.joinToString(",")} held=$held")
+                Log.d(TAG, "reportBlindBanner: HTTP ${conn.responseCode} channel=$channelId missing=${missing.joinToString(",").ifEmpty { "none" }} held=$held refused=${report.refused ?: "none"}")
             } finally {
                 conn.disconnect()
             }
@@ -5461,7 +6624,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     private fun absorbGraineSeeds(cacheKey: String, seedsJson: String, groupId: String) {
         try {
-            val stored = nativeStoreGraineSeeds(
+            val outcome = nativeStoreGraineSeeds(
                 MlsContextLoader.tauriDataDir(this).absolutePath,
                 cacheKey,
                 seedsJson,
@@ -5472,9 +6635,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // `stored 0 seed(s)` at debug level on every frame while the lock under the writer
             // failed on Android, and nothing else said a word.
             val offered = try { JSONArray(seedsJson).length() } catch (e: Exception) { -1 }
+            val parsed = outcome?.let { try { JSONObject(it) } catch (e: Exception) { null } }
+            val stored = parsed?.optInt("stored", -1) ?: -1
+            // NOT A LOSS: a relayed seed for a salon this account never mirrored is the app's to
+            // check (Rust `store_graine_seeds_json`), so it is said apart and never counted as one.
+            val leftToApp = parsed?.optInt("leftToApp", 0) ?: 0
+            if (leftToApp > 0) {
+                Log.i(TAG, "absorbGraineSeeds: $leftToApp relayed seed(s) left to the app group=${groupId.take(8)}")
+            }
             if (stored < 0) {
                 Log.w(TAG, "absorbGraineSeeds: the native writer refused the payload group=${groupId.take(8)}")
-            } else if (offered > 0 && stored < offered) {
+            } else if (offered > 0 && stored + leftToApp < offered) {
                 Log.e(TAG, "absorbGraineSeeds: the native writer kept $stored of $offered seed(s) group=${groupId.take(8)} - the rest never reached the mirror")
                 if (stored > 0) drainPendingChannelFrames(cacheKey)
             } else {
@@ -5600,8 +6771,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * @param text the decrypted message body, possibly carrying tokens
      * @param myUserId this device's user id, or null when the push context could not be read
      * @param res the (locale-aware) context the strings are read from
-     * @param nameBook the phone's names, read once per BANNER: the salon path shares it with
-     *   [mentionAuthorLine], so naming the author and the tokens costs one file read
+     * @param nameBook the phone's names, read once per BANNER: the salon path shares it with its
+     *   speaker ([ChannelBannerAuthor]), so naming the speaker and the tokens costs one file read
      */
     private fun renderMentions(
         text: String,
@@ -5630,49 +6801,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     /**
-     * "Alice vous a mentionné" for a salon banner that mentions this reader (WP-MENTION-NAME,
-     * 2026-10-18): the AUTHOR, named from the phone's own copy of names - the same
-     * `display_names.json`, under the same owner rule, as the tokens - and "Quelqu'un" when the phone
-     * has never named them. Never from the push: a salon push carries only `senderId`, and the
-     * decision is that no name rides it.
-     *
-     * Salon only. An MLS (DM or group) banner already names its sender in the title or the line.
-     */
-    private fun mentionAuthorLine(senderId: String, nameBook: Lazy<JSONObject?>, res: Context): String {
-        val name = senderId.lowercase().takeIf { it.isNotEmpty() }
-            ?.let { nameBook.value?.optString(it) }
-            ?.takeIf { it.isNotBlank() }
-        Log.d(TAG, "[MENTION_NAME] author named=${name != null}")
-        // The placeholder opens the sentence in both languages, so the word is capitalised there.
-        val who = name ?: res.getString(R.string.notif_mention_someone).replaceFirstChar { it.titlecase() }
-        return res.getString(R.string.notif_social_mention_title, who)
-    }
-
-    /**
      * The `names` map of `display_names.json`, or null when it cannot be used: absent, unreadable,
      * or written for another account than [me] (the file is one per install, two accounts may sign
      * in on one phone). Written by `store_display_names` (Rust, `commands/display_names.rs`).
      */
-    private fun loadMentionNames(me: String?): JSONObject? {
-        if (me == null) return null
-        val file = File(MlsContextLoader.tauriDataDir(this), "display_names.json")
-        if (!file.exists()) {
-            Log.d(TAG, "[MENTION_NAME] no display_names.json yet - every other mention is 'someone'")
-            return null
-        }
-        return try {
-            val root = JSONObject(file.readText())
-            if (!root.optString("userId").equals(me, ignoreCase = true)) {
-                Log.d(TAG, "[MENTION_NAME] display_names.json belongs to another account - not used")
-                null
-            } else {
-                root.optJSONObject("names")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "[MENTION_NAME] display_names.json unreadable: ${e.message}")
-            null
-        }
-    }
+    private fun loadMentionNames(me: String?): JSONObject? = loadDisplayNames(this, me, "[MENTION_NAME]")
 
     private fun buildChannelFallbackText(res: Context, channelName: String): String =
         res.getString(R.string.notif_channel_new_message, channelName)

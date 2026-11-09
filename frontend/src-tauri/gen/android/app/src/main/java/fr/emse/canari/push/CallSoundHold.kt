@@ -1,0 +1,38 @@
+package fr.emse.canari.push
+
+/**
+ * A CALL HOLDS THE PHONE'S SOUND: a notification posted during one is posted SILENT, never dropped
+ * (owner, 2026-10-31 - a message banner sounded during an outgoing ring of a production call).
+ *
+ * What says a call is up is AUTHORITATIVE STATE of this process, never a clock or a flag a page left
+ * behind:
+ * - the ongoing-call foreground service holds a call (`CallForegroundService.running`): the page
+ *   started it once the microphone was held, so from the caller's ring out until the call's end, and
+ *   from the callee's answer until its end. It dies with the process, so it cannot go stale;
+ * - a native ring is up (`RingSequencer.nativeCount`, `CallRingPlayer.rings`): the CallStyle incoming
+ *   ring, from its `call_ring` until it is answered, declined, ended or expired;
+ * - the open app rings a call (`CallRingPlayer.ringingCallId`): the page's incoming screen, from the
+ *   invite until the answer, the decline or the end - the seconds before the answer, which neither
+ *   fact above covers.
+ *
+ * The message still arrives and is shown - only its sound and vibration go (`setSilent(true)`).
+ *
+ * Compiled by the JVM test project too, so nothing here may import Android - see
+ * [PushRecoveryLadder] for why that is the guard.
+ */
+object CallSoundHold {
+
+    /**
+     * Whether a call holds the sound.
+     *
+     * @param callInForeground the ongoing-call service is in the foreground with a call.
+     * @param nativeRings how many calls ring natively on this phone right now.
+     * @param appRings the open app's native player rings an incoming call.
+     */
+    fun held(callInForeground: Boolean, nativeRings: Int, appRings: Boolean): Boolean =
+        callInForeground || nativeRings > 0 || appRings
+
+    /** How a post alerts once the call is accounted for: SILENT while a call holds the sound. */
+    fun alert(mode: RepostAlert.Mode, held: Boolean): RepostAlert.Mode =
+        if (held) RepostAlert.Mode.SILENT else mode
+}

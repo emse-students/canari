@@ -9,7 +9,7 @@
 # until a restore needed day 10 - so this runs the real script, against stubs, and reads what each
 # purge did.
 #
-# HOW. A sandbox checkout holds backup.sh and backup-config.sh beside a fabricated
+# HOW. A sandbox checkout holds backup.sh, backup-config.sh and dump-auth-db.sh beside a fabricated
 # infrastructure/.env; `docker`, `ssh` and `rsync` are stubs on PATH. The local purge is the real
 # `find` over archives aged with `touch -d`; the offsite purge is the command line the ssh stub
 # received.
@@ -30,7 +30,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 mkdir -p "$TMP/repo/infrastructure/backup" "$TMP/bin"
-cp "$SRC/backup.sh" "$SRC/backup-config.sh" "$TMP/repo/infrastructure/backup/"
+cp "$SRC/backup.sh" "$SRC/backup-config.sh" "$SRC/dump-auth-db.sh" "$TMP/repo/infrastructure/backup/"
 
 # `docker compose version` answers, `exec` prints a dump, `run` writes the media_meta member into
 # the stage it was handed as `<stage>:/out`.
@@ -69,14 +69,14 @@ run() {
   (
     [ -n "$1" ] && export LOCAL_RETENTION_DAYS="$1"
     [ -n "$2" ] && export BACKUP_RETENTION_DAYS="$2"
-    export SSH_LOG="$TMP/ssh.log" PATH="$TMP/bin:$PATH" TMPDIR="$TMP"
+    export BACKUP_SSH_HOST=offsite-stub SSH_LOG="$TMP/ssh.log" PATH="$TMP/bin:$PATH" TMPDIR="$TMP"
     bash "$TMP/repo/infrastructure/backup/backup.sh" >"$TMP/run.log" 2>&1
   ) || { cat "$TMP/run.log"; return 1; }
 }
 
 kept() { [ -f "$TMP/backups/canari-backup-old-${1}d.tar.gz" ]; }
 survivors() { find "$TMP/backups" -maxdepth 1 -type f -printf '%f '; }
-offsite_mtime() { grep -o -- '-mtime +[0-9]*' "$TMP/ssh.log" | head -1; }
+offsite_mtime() { grep -o -- '-mtime +[0-9]*' "$TMP/ssh.log" | sed -n 1p; }
 
 printf '\nthe defaults: 7 days on the host, 14 offsite\n'
 # ═════════════════════════════════════════════════════════════════════════════

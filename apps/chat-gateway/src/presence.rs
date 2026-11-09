@@ -6,29 +6,39 @@
 // in-memory `connected_users` map.
 
 use axum::{
-    extract::{Query, State},
+    extract::{Query, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json},
 };
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::state::AppState;
 
-// ── Query types ───────────────────────────────────────────────────────────
+// ── Request types ─────────────────────────────────────────────────────────
 
-/// Query parameters for `GET /api/presence`.
+/// Body of `POST /api/presence`: the asked user ids, as a JSON array.
+#[derive(serde::Deserialize)]
+pub struct PresenceBody {
+    /// The user ids to check.
+    pub users: Vec<String>,
+}
+
+/// Query parameters of the LEGACY `GET /api/presence` ([`get_presence`]).
 #[derive(serde::Deserialize)]
 pub struct PresenceQuery {
     /// Comma-separated list of user IDs to check.
     pub users: String,
 }
 
-// ── GET /api/presence ─────────────────────────────────────────────────────
+// ── The question both routes ask ──────────────────────────────────────────
 
-/// The most user ids one `GET /api/presence` may ask about. The URL itself bounds an honest
-/// client well below this (a few hundred uuids fill nginx's header buffer); the bound exists so
-/// the audience question sent to the services is bounded by THIS service, not by a proxy setting.
+/// The most distinct user ids one presence request may ask about. A client splits a larger
+/// watchlist into requests of at most this many (`presenceStore.ts`), so an honest client never
+/// meets the 400. The bound exists so the audience question sent to the services is bounded by
+/// THIS service, and it is the number those services refuse above too
+/// (`libs/contracts/presence-audience.cases.json`).
 pub const MAX_PRESENCE_USERS: usize = 1000;
 
 /// The caller nginx identified - a non-empty `X-User-Id`, trimmed and lowercased (the spelling
@@ -47,16 +57,25 @@ fn caller_id(headers: &HeaderMap) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
-/// The ids a `users=` query names: trimmed, blanks dropped, duplicates collapsed, order kept.
-fn requested_ids(users: &str) -> Vec<String> {
+/// The asked ids, whichever route carried them: trimmed, blanks dropped, duplicates collapsed,
+/// order kept.
+fn requested_ids<'a>(users: impl Iterator<Item = &'a str>) -> Vec<String> {
     let mut seen = HashSet::new();
     users
-        .split(',')
         .map(str::trim)
         .filter(|id| !id.is_empty())
         .filter(|id| seen.insert(id.to_string()))
         .map(str::to_string)
         .collect()
+}
+
+/// A 401 for a caller nginx did not identify.
+fn unauthorized() -> axum::response::Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({"error": "Unauthorized"})),
+    )
+        .into_response()
 }
 
 /// A 503 with a JSON body. Never a 401/403: a client may only sign out on those, and "the gateway
@@ -69,8 +88,168 @@ fn unavailable(reason: &str) -> axum::response::Response {
         .into_response()
 }
 
+// ── POST /api/presence ────────────────────────────────────────────────────
+
+/// `POST /api/presence` with `{ "users": [id, ...] }` - THE presence read since 2026-10-28.
+///
+/// THE IDS TRAVEL IN THE BODY, NEVER IN THE URL. The legacy `GET ?users=` put every watched id in
+/// the request line, which every proxy on the way writes to its access log: a reverse-proxy log
+/// scanner flagged the very long query strings as an attack, the ids of everybody a member watches
+/// sat in logs of a host this project does not own, and a long enough watchlist outgrows a proxy's
+/// header buffer, which fails that member's presence silently. A body is in no access log, and its
+/// size is bounded by [`MAX_PRESENCE_USERS`] here and by the client's split.
+///
+/// Answered exactly as [`answer_presence`] says, after two refusals of its own: 401 for an
+/// anonymous caller, whatever its body, and 400 for a body that is not `{ "users": [string, ...] }`
+/// with a JSON `Content-Type`. The 401 is decided first, so an anonymous caller is never told what
+/// shape is expected - but the body has already been READ by then: the JSON extractor runs before
+/// this function, up to axum's body limit, and nginx bounds it before that
+/// (`client_max_body_size` on `location /api/presence`).
+pub async fn post_presence(
+    headers: HeaderMap,
+    State(state): State<Arc<AppState>>,
+    body: Result<Json<PresenceBody>, JsonRejection>,
+) -> axum::response::Response {
+    let Some(viewer) = caller_id(&headers) else {
+        return unauthorized();
+    };
+    let body = match body {
+        Ok(Json(body)) => body,
+        Err(rejection) => {
+            tracing::warn!(
+                "[presence] {} sent a body that is not {{ users: [string] }} - refused ({})",
+                viewer,
+                rejection_kind(&rejection)
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Expected { users: string[] }" })),
+            )
+                .into_response();
+        }
+    };
+    answer_presence(
+        &state,
+        &viewer,
+        requested_ids(body.users.iter().map(String::as_str)),
+    )
+    .await
+}
+
+/// What kind of refusal a body earned, and NOTHING of what it held. `JsonRejection::body_text()`
+/// quotes the offending input (serde's messages name the value they choke on), and a presence body
+/// is a list of user ids - which is precisely what this route exists to keep out of logs.
+fn rejection_kind(rejection: &JsonRejection) -> &'static str {
+    match rejection {
+        JsonRejection::JsonDataError(_) => "not { users: [string] }",
+        JsonRejection::JsonSyntaxError(_) => "not JSON",
+        JsonRejection::MissingJsonContentType(_) => "no JSON content-type",
+        JsonRejection::BytesRejection(_) => "body unreadable or over the limit",
+        _ => "unknown rejection",
+    }
+}
+
+// ── GET /api/presence (legacy) ────────────────────────────────────────────
+
+/// The LEGACY presence read, `GET /api/presence?users=a,b,c` - kept ONLY for clients installed
+/// before `POST /api/presence`, which keep calling it until they update (a store build is not
+/// reached by a deploy). Same audience, same cap, same answers as [`post_presence`].
+///
+/// Removal condition and the measurement it waits on: `docs/wiki/legacy-compatibility.md`
+/// ("the presence ids in a URL"). Every call is counted by [`LegacyGetTally`], which says how many
+/// calls from how many callers it served, once per [`LEGACY_GET_SUMMARY_WINDOW`] at most.
+pub async fn get_presence(
+    headers: HeaderMap,
+    Query(query): Query<PresenceQuery>,
+    State(state): State<Arc<AppState>>,
+) -> axum::response::Response {
+    let Some(viewer) = caller_id(&headers) else {
+        return unauthorized();
+    };
+    if let Some(summary) = state.legacy_presence_gets.record(&viewer, Instant::now()) {
+        tracing::info!(
+            "[presence] legacy GET /api/presence served {} calls from {} callers in the last {}s - \
+             clients older than POST /api/presence (docs/wiki/legacy-compatibility.md)",
+            summary.calls,
+            summary.callers,
+            summary.window.as_secs()
+        );
+    }
+    answer_presence(&state, &viewer, requested_ids(query.users.split(','))).await
+}
+
+/// How often at most [`LegacyGetTally`] reports. A REPORTING cadence and nothing else: a wrong
+/// value changes how many lines the log holds, never what any caller is answered.
+pub const LEGACY_GET_SUMMARY_WINDOW: Duration = Duration::from_secs(3600);
+
+/// What one closed window of legacy GETs held.
+#[derive(Debug, PartialEq, Eq)]
+pub struct LegacyGetSummary {
+    /// Legacy calls served in the window.
+    pub calls: u64,
+    /// Distinct callers among them - each one an install still older than the POST.
+    pub callers: usize,
+    /// How long the window actually lasted (at least [`LEGACY_GET_SUMMARY_WINDOW`]).
+    pub window: Duration,
+}
+
+/// Counts the legacy `GET /api/presence` calls so their removal is decided by a measurement.
+///
+/// ONE LINE PER WINDOW, NEVER ONE PER CALL: an old client polls every 10 s, so a line per call is
+/// exactly the noise this route's replacement exists to end. The window is closed by the first
+/// call that arrives after it has lasted [`LEGACY_GET_SUMMARY_WINDOW`], so there is no timer task:
+/// a gateway nobody calls the legacy way logs nothing, and that silence IS the zero being waited
+/// for. The callers' ids stay in memory for the window and are never logged.
+pub struct LegacyGetTally {
+    window: Mutex<LegacyGetWindow>,
+}
+
+struct LegacyGetWindow {
+    opened: Instant,
+    calls: u64,
+    callers: HashSet<String>,
+}
+
+impl LegacyGetTally {
+    /// A tally whose first window opens at `now`.
+    pub fn new(now: Instant) -> Self {
+        LegacyGetTally {
+            window: Mutex::new(LegacyGetWindow {
+                opened: now,
+                calls: 0,
+                callers: HashSet::new(),
+            }),
+        }
+    }
+
+    /// Counts one legacy call by `caller` at `now`. When the current window has lasted
+    /// [`LEGACY_GET_SUMMARY_WINDOW`], it is closed and returned - this call opening the next one -
+    /// so the caller logs exactly one line for it.
+    pub fn record(&self, caller: &str, now: Instant) -> Option<LegacyGetSummary> {
+        let mut w = self.window.lock().unwrap();
+        let elapsed = now.saturating_duration_since(w.opened);
+        let closed = (elapsed >= LEGACY_GET_SUMMARY_WINDOW).then(|| {
+            let summary = LegacyGetSummary {
+                calls: w.calls,
+                callers: w.callers.len(),
+                window: elapsed,
+            };
+            w.opened = now;
+            w.calls = 0;
+            w.callers.clear();
+            summary
+        });
+        w.calls += 1;
+        w.callers.insert(caller.to_string());
+        closed.filter(|s| s.calls > 0)
+    }
+}
+
+// ── The answer ────────────────────────────────────────────────────────────
+
 /// Return a JSON map of `{ userId -> bool }` - whether each user has at least one active device
-/// presence key in Redis - **for the asked users the caller may see, and for no one else.**
+/// presence key in Redis - **for the asked users the caller may see, and for no one else.** The
+/// one answer behind both routes; `viewer` is already identified and `asked` already distinct.
 ///
 /// WHO MAY SEE WHOSE PRESENCE (WP-PRESENCE, decided by the user 2026-10-18): the caller
 /// themself, and anyone who shares a live conversation or a community with the caller.
@@ -82,29 +261,21 @@ fn unavailable(reason: &str) -> axum::response::Response {
 /// map into its own, so an absent key simply never turns its dot on: it degrades quietly. A new
 /// client reads absence as "not visible" and drops the id from its map.
 ///
-/// THE OTHER ANSWERS: 401 for an anonymous caller (measured 2026-09-10: until then
-/// `auth_request` let a logged-OUT caller through, because `/api/auth/verify` answers 200 to
-/// signed-out pages too, and anybody could read whether a named person was online); 400 for more
-/// than [`MAX_PRESENCE_USERS`] ids; 503 when the audience or Redis cannot be read, because an
-/// empty map there would read as "nobody is visible" when nobody was asked.
+/// THE OTHER ANSWERS (the 401 for an anonymous caller is each route's, before this runs; measured
+/// 2026-09-10: until then `auth_request` let a logged-OUT caller through, because
+/// `/api/auth/verify` answers 200 to signed-out pages too, and anybody could read whether a named
+/// person was online): 400 for more than [`MAX_PRESENCE_USERS`] ids; 503 when the audience or
+/// Redis cannot be read, because an empty map there would read as "nobody is visible" when nobody
+/// was asked.
 ///
 /// Uses `SCAN` with a `user:online:{userId}:*` pattern rather than `KEYS` to
 /// avoid blocking Redis on large keyspaces - and only for the ids the caller may see, so a crafted
 /// id never reaches a SCAN pattern unless a service has matched it to a real membership.
-pub async fn get_presence(
-    headers: HeaderMap,
-    Query(query): Query<PresenceQuery>,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let Some(viewer) = caller_id(&headers) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error": "Unauthorized"})),
-        )
-            .into_response();
-    };
-
-    let asked = requested_ids(&query.users);
+async fn answer_presence(
+    state: &AppState,
+    viewer: &str,
+    asked: Vec<String>,
+) -> axum::response::Response {
     if asked.len() > MAX_PRESENCE_USERS {
         tracing::warn!(
             "[presence] {} asked about {} users (max {}) - refused",
@@ -120,7 +291,7 @@ pub async fn get_presence(
     }
 
     let lowered: Vec<String> = asked.iter().map(|id| id.to_lowercase()).collect();
-    let visible = match state.presence_audience.visible_to(&viewer, &lowered).await {
+    let visible = match state.presence_audience.visible_to(viewer, &lowered).await {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!(
@@ -198,128 +369,136 @@ pub async fn get_presence(
 
 // ── GET /api/admin/presence ───────────────────────────────────────────────
 
-/// Return a JSON list of every known device with its WebSocket and Redis presence status.
-///
-/// Requires the `X-Global-Admin: true` header (injected by Nginx after auth verification).
-/// Merges data from two sources:
-/// - In-memory `connected_users` map (live WebSocket connections).
-/// - Redis `user:online:*` keys (presence TTL state).
-///
-/// NOTE: Uses `KEYS user:online:*` which blocks Redis briefly; acceptable for a
-/// low-traffic admin debugging endpoint.
-pub async fn get_admin_presence(
-    headers: HeaderMap,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let is_admin = headers
+/// `true` when nginx vouched for a global admin (`X-Global-Admin`, injected after auth verification
+/// and never to be accepted from an untrusted client).
+fn is_global_admin(headers: &HeaderMap) -> bool {
+    headers
         .get("x-global-admin")
         .and_then(|v| v.to_str().ok())
         .map(|v| v == "true")
-        .unwrap_or(false);
+        .unwrap_or(false)
+}
 
-    if !is_admin {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error": "Forbidden"})),
-        )
-            .into_response();
-    }
-
-    // In-memory WS connections: conn_key -> tab count
-    let ws_map: std::collections::HashMap<String, usize> = {
-        let map = state.connected_users.lock().unwrap();
-        map.iter().map(|(k, v)| (k.clone(), v.len())).collect()
-    };
-
-    // Redis: scan all user:online:*:* keys with their TTL using SCAN to avoid blocking.
-    let mut redis_entries: Vec<(String, String, i64)> = Vec::new();
-    if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-        let mut cursor: u64 = 0;
-        loop {
-            match redis::cmd("SCAN")
-                .arg(cursor)
-                .arg("MATCH")
-                .arg("user:online:*:*")
-                .arg("COUNT")
-                .arg(100u64)
-                .query_async::<(u64, Vec<String>)>(&mut con)
-                .await
-            {
-                Ok((next_cursor, keys)) => {
-                    for key in &keys {
-                        // format: user:online:{userId}:{deviceId}
-                        // splitn(4) so deviceIds containing ":" are preserved
-                        let parts: Vec<&str> = key.splitn(4, ':').collect();
-                        if parts.len() == 4 {
-                            let ttl: i64 = redis::cmd("TTL")
-                                .arg(key)
-                                .query_async(&mut con)
-                                .await
-                                .unwrap_or(-1);
-                            redis_entries.push((parts[2].to_string(), parts[3].to_string(), ttl));
-                        }
-                    }
-                    cursor = next_cursor;
-                    if cursor == 0 {
-                        break;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("[admin/presence] SCAN failed: {}", e);
-                    break;
-                }
-            }
-        }
-    }
-
-    // Merge WS + Redis into one unified list
-    let mut all_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for k in ws_map.keys() {
-        all_keys.insert(k.clone());
-    }
-    for (user_id, device_id, _) in &redis_entries {
-        all_keys.insert(format!("{}:{}", user_id, device_id));
-    }
-
-    let mut devices: Vec<serde_json::Value> = all_keys
-        .iter()
-        .filter_map(|conn_key| {
-            let (user_id, device_id) = conn_key.split_once(':')?;
-            let ws_tabs = ws_map.get(conn_key).copied().unwrap_or(0);
-            let redis_entry = redis_entries
-                .iter()
-                .find(|(u, d, _)| u == user_id && d == device_id);
-            let (redis_online, redis_ttl) = match redis_entry {
-                Some((_, _, ttl)) => (true, *ttl),
-                None => (false, -1i64),
-            };
-            Some(serde_json::json!({
-                "userId": user_id,
-                "deviceId": device_id,
-                "wsConnected": ws_tabs > 0,
-                "wsTabs": ws_tabs,
-                "redisOnline": redis_online,
-                "redisTtl": redis_ttl,
-            }))
-        })
-        .collect();
-
-    devices.sort_by(|a, b| {
-        let ua = a["userId"].as_str().unwrap_or("");
-        let ub = b["userId"].as_str().unwrap_or("");
-        ua.cmp(ub).then_with(|| {
-            let da = a["deviceId"].as_str().unwrap_or("");
-            let db = b["deviceId"].as_str().unwrap_or("");
-            da.cmp(db)
-        })
-    });
-
-    let total = devices.len();
+/// A 403 for a caller that is not a global admin.
+fn forbidden() -> axum::response::Response {
     (
-        StatusCode::OK,
-        Json(serde_json::json!({ "devices": devices, "total": total })),
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({"error": "Forbidden"})),
     )
         .into_response()
+}
+
+/// `GET /api/admin/presence`: how many people and devices are connected RIGHT NOW, by platform and
+/// app version, and NOTHING ELSE - no user id, no device id, no per-person field
+/// ([`crate::census`]). Counted from the shared presence keys, so a device held by two gateway
+/// processes during a rolling deploy is one. Requires `X-Global-Admin: true`.
+///
+/// Answers 503 when the presence store cannot be read: an empty census would read as "nobody is
+/// online", which is a claim.
+pub async fn get_admin_presence(
+    headers: HeaderMap,
+    State(state): State<Arc<AppState>>,
+) -> axum::response::Response {
+    if !is_global_admin(&headers) {
+        return forbidden();
+    }
+    let mut con = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(con) => con,
+        Err(e) => {
+            tracing::warn!("[admin/presence] Redis unreachable - answering 503: {}", e);
+            return unavailable("Presence store unavailable");
+        }
+    };
+    match crate::census::read_census(&mut con).await {
+        Ok(census) => (StatusCode::OK, Json(census)).into_response(),
+        Err(e) => {
+            tracing::warn!(
+                "[admin/presence] the census read failed - answering 503: {}",
+                e
+            );
+            unavailable("Presence store unavailable")
+        }
+    }
+}
+
+/// Query of `GET /api/admin/presence/history`.
+#[derive(serde::Deserialize)]
+pub struct HistoryQuery {
+    /// `24h` (the default), `7d` or `30d`; anything else is a 400 ([`crate::census::Window`]).
+    window: Option<String>,
+}
+
+/// `GET /api/admin/presence/history?window=24h|7d|30d`: the census over the window, oldest first,
+/// and the two numbers the chart needs to draw a period nobody sampled as a gap (`intervalSecs`, the
+/// spacing of the points the window is served at, and `windowSecs`). 24 h is one sample per minute;
+/// 7 d is the 5-minute series (the peak of each 5 minutes); 30 d is that series rolled up to 30
+/// minutes (the peak of each half hour). The window is a CLOSED set: an unknown value is a 400, so a
+/// request cannot ask for an unbounded read. Requires `X-Global-Admin: true`; 503 when the series
+/// cannot be read.
+pub async fn get_admin_presence_history(
+    headers: HeaderMap,
+    Query(query): Query<HistoryQuery>,
+    State(state): State<Arc<AppState>>,
+) -> axum::response::Response {
+    if !is_global_admin(&headers) {
+        return forbidden();
+    }
+    let window = match query.window.as_deref() {
+        None => crate::census::Window::Day,
+        Some(raw) => match crate::census::Window::parse(raw) {
+            Some(window) => window,
+            None => {
+                tracing::debug!("[admin/presence/history] refused window {:?} - 400", raw);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "window must be 24h, 7d or 30d"})),
+                )
+                    .into_response();
+            }
+        },
+    };
+    let mut con = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(con) => con,
+        Err(e) => {
+            tracing::warn!(
+                "[admin/presence/history] Redis unreachable - answering 503: {}",
+                e
+            );
+            return unavailable("Presence store unavailable");
+        }
+    };
+    // REDIS's clock, the one the series is written against: nothing scored in the future is served.
+    let result = match crate::census::redis_now(&mut con).await {
+        Ok(now) => crate::census::read_window(
+            &mut con,
+            &state.census_key,
+            &state.census_coarse_key,
+            now,
+            window,
+        )
+        .await
+        .map(|samples| (now, samples)),
+        Err(e) => Err(e),
+    };
+    match result {
+        Ok((now, samples)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "now": now,
+                "intervalSecs": window.interval_secs(),
+                "windowSecs": window.secs(),
+                "samples": samples,
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::warn!(
+                "[admin/presence/history] the series read failed - answering 503: {}",
+                e
+            );
+            unavailable("Presence store unavailable")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -348,30 +527,56 @@ mod tests {
         let audience = PresenceAudience::new(base.clone(), base, SECRET.to_string());
         let state = Arc::new(AppState::new(client, "test-secret".to_string(), audience));
         let router = Router::new()
-            .route("/api/presence", get(get_presence))
+            .route("/api/presence", get(get_presence).post(post_presence))
             .with_state(state);
         (router, services)
     }
 
-    async fn ask(
-        services: FakeServices,
-        users: &str,
-        viewer: Option<&str>,
-    ) -> (StatusCode, String) {
+    /// Sends one request through the real router and returns its status and body.
+    async fn send(services: FakeServices, request: Request<Body>) -> (StatusCode, String) {
         let (router, _) = app(services).await;
-        let mut builder = Request::builder().uri(format!("/api/presence?users={users}"));
-        if let Some(value) = viewer {
-            builder = builder.header("x-user-id", value);
-        }
-        let response = router
-            .oneshot(builder.body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
         let status = response.status();
         let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
             .await
             .unwrap();
         (status, String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    /// A raw `POST /api/presence` with `body` as its JSON text.
+    fn post_raw(body: &str, viewer: Option<&str>) -> Request<Body> {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/api/presence")
+            .header("content-type", "application/json");
+        if let Some(value) = viewer {
+            builder = builder.header("x-user-id", value);
+        }
+        builder.body(Body::from(body.to_string())).unwrap()
+    }
+
+    /// THE presence read: `users` (comma-separated, for brevity here) sent as a JSON array.
+    async fn ask(
+        services: FakeServices,
+        users: &str,
+        viewer: Option<&str>,
+    ) -> (StatusCode, String) {
+        let ids: Vec<&str> = users.split(',').collect();
+        let body = serde_json::json!({ "users": ids }).to_string();
+        send(services, post_raw(&body, viewer)).await
+    }
+
+    /// The legacy read, ids in the query string.
+    async fn ask_legacy(
+        services: FakeServices,
+        users: &str,
+        viewer: Option<&str>,
+    ) -> (StatusCode, String) {
+        let mut builder = Request::builder().uri(format!("/api/presence?users={users}"));
+        if let Some(value) = viewer {
+            builder = builder.header("x-user-id", value);
+        }
+        send(services, builder.body(Body::empty()).unwrap()).await
     }
 
     fn sharing(conversations: &[&str], communities: &[&str]) -> FakeServices {
@@ -469,7 +674,204 @@ mod tests {
 
     #[test]
     fn requested_ids_trims_drops_blanks_and_collapses_duplicates() {
-        assert_eq!(requested_ids(" bob,,carol , bob,"), vec!["bob", "carol"]);
+        assert_eq!(
+            requested_ids(" bob,,carol , bob,".split(',')),
+            vec!["bob", "carol"]
+        );
+    }
+
+    // ── POST: the body, and what it refuses ──────────────────────────────
+
+    #[tokio::test]
+    async fn an_anonymous_post_is_refused_whatever_its_body() {
+        // A body that is not even JSON: the 401 is decided first, so a stranger learns nothing
+        // about the shape the route expects (the body has been READ by the extractor by then).
+        let services = sharing(&["bob"], &[]);
+        let (status, _) = send(services.clone(), post_raw("not json", None)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(services.hits(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_malformed_body_is_a_400_and_asks_nobody() {
+        for body in [
+            "not json",
+            "{}",
+            r#"{"users":"bob,carol"}"#,
+            r#"{"users":[1,2]}"#,
+            r#"["bob"]"#,
+        ] {
+            let services = sharing(&["bob"], &[]);
+            let (status, response) = send(services.clone(), post_raw(body, Some("alice"))).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body} -> {response}");
+            assert_eq!(services.hits(), 0, "{body} reached the audience");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_body_with_no_json_content_type_is_a_400() {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/presence")
+            .header("x-user-id", "alice")
+            .body(Body::from(r#"{"users":["bob"]}"#))
+            .unwrap();
+        let (status, _) = send(sharing(&["bob"], &[]), request).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn an_empty_list_is_an_empty_answer() {
+        let (status, body) = ask(sharing(&[], &[]), "", Some("alice")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "{}");
+    }
+
+    #[tokio::test]
+    async fn the_cap_counts_distinct_ids_so_repeats_are_not_refused() {
+        // A thousand copies of one id is ONE question, as on the legacy route.
+        let users = vec!["mallory"; MAX_PRESENCE_USERS + 1].join(",");
+        let (status, body) = ask(sharing(&[], &[]), &users, Some("alice")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "{}");
+    }
+
+    #[tokio::test]
+    async fn exactly_the_cap_is_answered() {
+        let services = sharing(&[], &[]);
+        let users: Vec<String> = (0..MAX_PRESENCE_USERS).map(|i| format!("u{i}")).collect();
+        let (status, _) = ask(services.clone(), &users.join(","), Some("alice")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(services.hits() > 0, "the audience was never asked");
+    }
+
+    /// The rejection a body earns, through the real extractor.
+    async fn rejection_of(body: &str, content_type: Option<&str>) -> JsonRejection {
+        use axum::extract::FromRequest;
+        let mut builder = Request::builder().method("POST").uri("/api/presence");
+        if let Some(value) = content_type {
+            builder = builder.header("content-type", value);
+        }
+        let request = builder.body(Body::from(body.to_string())).unwrap();
+        match Json::<PresenceBody>::from_request(request, &()).await {
+            Ok(_) => panic!("{body} was accepted"),
+            Err(rejection) => rejection,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refused_body_is_logged_by_its_kind_never_by_what_it_held() {
+        // serde names the value it chokes on, so the body text of these rejections would carry
+        // the very ids this route keeps out of logs.
+        let secret = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6abcd";
+        let json = Some("application/json");
+        for (body, content_type, kind) in [
+            (
+                format!(r#"{{"users":"{secret}"}}"#),
+                json,
+                "not { users: [string] }",
+            ),
+            (
+                format!(r#"{{"users":["{secret}",1]}}"#),
+                json,
+                "not { users: [string] }",
+            ),
+            (format!(r#"{{"users":["{secret}""#), json, "not JSON"),
+            (
+                format!(r#"{{"users":["{secret}"]}}"#),
+                None,
+                "no JSON content-type",
+            ),
+        ] {
+            let rejection = rejection_of(&body, content_type).await;
+            assert_eq!(rejection_kind(&rejection), kind, "{body}");
+        }
+        // The property the kind replaces: the raw text DOES quote the input.
+        let raw = rejection_of(&format!(r#"{{"users":"{secret}"}}"#), json).await;
+        assert!(raw.body_text().contains(secret), "{}", raw.body_text());
+    }
+
+    // ── GET: the legacy shim answers exactly as the POST does ────────────
+
+    #[tokio::test]
+    async fn the_legacy_get_keeps_the_same_answers() {
+        assert_eq!(
+            ask_legacy(sharing(&["bob"], &[]), "bob", None).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            ask_legacy(sharing(&["bob"], &["carol"]), "mallory", Some("alice")).await,
+            (StatusCode::OK, "{}".to_string())
+        );
+        // Past the audience, into the deliberately absent Redis.
+        assert_eq!(
+            ask_legacy(sharing(&["bob"], &[]), "bob,mallory", Some("alice"))
+                .await
+                .0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let services = sharing(&[], &[]);
+        let users: Vec<String> = (0..=MAX_PRESENCE_USERS).map(|i| format!("u{i}")).collect();
+        assert_eq!(
+            ask_legacy(services.clone(), &users.join(","), Some("alice"))
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(services.hits(), 0);
+    }
+
+    // ── The legacy tally: one line per window, never one per call ────────
+
+    #[test]
+    fn the_tally_reports_nothing_inside_a_window() {
+        let t0 = Instant::now();
+        let tally = LegacyGetTally::new(t0);
+        for i in 0..50 {
+            assert_eq!(
+                tally.record("alice", t0 + Duration::from_secs(i * 10)),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn the_tally_closes_a_window_on_the_first_call_after_it_and_counts_distinct_callers() {
+        let t0 = Instant::now();
+        let tally = LegacyGetTally::new(t0);
+        tally.record("alice", t0);
+        tally.record("alice", t0 + Duration::from_secs(10));
+        tally.record("bob", t0 + Duration::from_secs(20));
+        let closing = t0 + LEGACY_GET_SUMMARY_WINDOW + Duration::from_secs(5);
+        assert_eq!(
+            tally.record("carol", closing),
+            Some(LegacyGetSummary {
+                calls: 3,
+                callers: 2,
+                window: LEGACY_GET_SUMMARY_WINDOW + Duration::from_secs(5),
+            })
+        );
+        // The closing call opened the next window: it is counted there, once.
+        assert_eq!(
+            tally.record("carol", closing + LEGACY_GET_SUMMARY_WINDOW),
+            Some(LegacyGetSummary {
+                calls: 1,
+                callers: 1,
+                window: LEGACY_GET_SUMMARY_WINDOW,
+            })
+        );
+    }
+
+    #[test]
+    fn a_window_nobody_called_in_says_nothing() {
+        // The first legacy call a long time after boot closes an EMPTY window: that is no line,
+        // because a line reporting zero calls is exactly what silence already says.
+        let t0 = Instant::now();
+        let tally = LegacyGetTally::new(t0);
+        assert_eq!(
+            tally.record("alice", t0 + LEGACY_GET_SUMMARY_WINDOW * 5),
+            None
+        );
     }
 
     #[tokio::test]
@@ -493,5 +895,167 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn admin_history_refuses_a_non_admin() {
+        let client = redis::Client::open("redis://127.0.0.1:1/").expect("client construction");
+        let audience = PresenceAudience::new(String::new(), String::new(), String::new());
+        let state = Arc::new(AppState::new(client, "test-secret".to_string(), audience));
+        let app = Router::new()
+            .route(
+                "/api/admin/presence/history",
+                get(get_admin_presence_history),
+            )
+            .with_state(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/admin/presence/history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_history_window_is_a_400() {
+        let client = redis::Client::open("redis://127.0.0.1:1/").expect("client construction");
+        let audience = PresenceAudience::new(String::new(), String::new(), String::new());
+        let state = Arc::new(AppState::new(client, "test-secret".to_string(), audience));
+        let app = Router::new()
+            .route(
+                "/api/admin/presence/history",
+                get(get_admin_presence_history),
+            )
+            .with_state(state);
+        for window in ["1y", "", "9999d", "24h%20"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/api/admin/presence/history?window={window}"))
+                        .header("x-global-admin", "true")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{window:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_store_is_a_503_never_an_empty_census() {
+        let client = redis::Client::open("redis://127.0.0.1:1/").expect("client construction");
+        let audience = PresenceAudience::new(String::new(), String::new(), String::new());
+        let state = Arc::new(AppState::new(client, "test-secret".to_string(), audience));
+        let app = Router::new()
+            .route("/api/admin/presence", get(get_admin_presence))
+            .with_state(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/admin/presence")
+                    .header("x-global-admin", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// THE PRIVACY PIN, end to end against a real Redis (gated like `addressing::redis_it`): a
+    /// connected device whose user and device ids are known to the test answers counts, and neither
+    /// id - nor any per-person field name - appears in either admin route's body.
+    #[tokio::test]
+    async fn the_admin_routes_return_counts_and_never_an_id() {
+        let Ok(url) = std::env::var("GATEWAY_IT_REDIS_URL") else {
+            assert!(
+                std::env::var("CI").is_err(),
+                "GATEWAY_IT_REDIS_URL is unset under CI - the counts-only route would go untested"
+            );
+            return;
+        };
+        let client = redis::Client::open(url).expect("GATEWAY_IT_REDIS_URL");
+        let mut con = client.get_multiplexed_async_connection().await.unwrap();
+        let user = format!("it-secret-user-{}", uuid::Uuid::new_v4());
+        let device = format!("it-secret-device-{}", uuid::Uuid::new_v4());
+        let conn_key = format!("{user}:{device}");
+        redis::cmd("SET")
+            .arg(format!("user:online:{conn_key}"))
+            .arg("sessions-1")
+            .arg("EX")
+            .arg(60)
+            .query_async::<()>(&mut con)
+            .await
+            .unwrap();
+        let kind = crate::census::ClientKind::from_query(Some("ios"), Some("9.9.9"));
+        crate::census::note_client(&mut con, &conn_key, &kind, 60)
+            .await
+            .unwrap();
+        // The history route reads the state's series key, a key of THIS test's own - never the one
+        // production reads. A device of one person is on the wire, so its version can be looked for.
+        let census = crate::census::read_census(&mut con).await.unwrap();
+        let now = crate::census::redis_now(&mut con).await.unwrap();
+        let census_key = format!("it:monitor:{}", uuid::Uuid::new_v4());
+        crate::census::record_sample(&mut con, &census_key, now - now % 60, &census)
+            .await
+            .unwrap();
+
+        let coarse_key = format!("it:monitor:coarse:{}", uuid::Uuid::new_v4());
+        crate::census::record_coarse(&mut con, &coarse_key, now, &census)
+            .await
+            .unwrap();
+
+        let audience = PresenceAudience::new(String::new(), String::new(), String::new());
+        let mut state = AppState::new(client, "test-secret".to_string(), audience);
+        state.census_key = census_key;
+        state.census_coarse_key = coarse_key;
+        let state = Arc::new(state);
+        let app = Router::new()
+            .route("/api/admin/presence", get(get_admin_presence))
+            .route(
+                "/api/admin/presence/history",
+                get(get_admin_presence_history),
+            )
+            .with_state(state);
+        for path in [
+            "/api/admin/presence",
+            "/api/admin/presence/history",
+            "/api/admin/presence/history?window=7d",
+            "/api/admin/presence/history?window=30d",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header("x-global-admin", "true")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let body = String::from_utf8(bytes.to_vec()).unwrap();
+            assert!(!body.contains("it-secret"), "{path} leaked an id: {body}");
+            for field in ["userId", "deviceId", "ip"] {
+                assert!(
+                    !body.contains(&format!("\"{field}\"")),
+                    "{path} names a per-person field {field}"
+                );
+            }
+            assert!(
+                body.contains("9.9.9"),
+                "{path} did not count the device: {body}"
+            );
+        }
     }
 }

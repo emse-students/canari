@@ -41,6 +41,16 @@ describe('the notification tap listener is armed once and routed by a table', ()
     expect(post).not.toMatch(/onAction as unknown as/);
   });
 
+  it('registers through armPageTapListener, whose outcomes arm the resume hold', () => {
+    // `armPageTapListener` (`pageNotificationTap.ts`) owns every registration outcome and is driven
+    // by `resumeOpening.pageTapListener.svelte.test.ts`; the plugin's `onAction` must reach it, and
+    // nothing here may call it directly.
+    expect(code).toMatch(
+      /armPageTapListener\(\s*typeof onAction === 'function' \? \(onAction as unknown as RegisterPageTap\) : undefined,/
+    );
+    expect(code).not.toMatch(/\bonAction\(/);
+  });
+
   it('latches, so a second post does not add a second listener', () => {
     const fn = /function armNotificationTapListener\(\)[\s\S]*?\n {2}\}/.exec(source);
     expect(fn).not.toBeNull();
@@ -64,10 +74,11 @@ describe('the notification tap listener is armed once and routed by a table', ()
     );
   });
 
-  it('routes a channel target to the view that can show it', () => {
-    // `/chat` was hardcoded here. A community channel lives under `/communities`, so a tap on one
-    // landed on a view that structurally cannot display it - the same class of bug the landing
-    // itself was given `chatDeepLinkRoute` for.
-    expect(code).toMatch(/await goto\(chatDeepLinkRoute\(target\)\)/);
+  it('publishes the target and never navigates itself (the landing effect routes)', () => {
+    // A tap used to `goto` the target's route as well. On a layout where the conversation is an
+    // overlay, that navigation's `beforeNavigate` drained the overlay the landing effect had just
+    // opened (`shareLanding.ts`, 2026-10-27). The effect routes a channel to `/communities` itself.
+    expect(code).toMatch(/notifNav\.navigate\(target\)/);
+    expect(code).not.toMatch(/\bgoto\(/);
   });
 });

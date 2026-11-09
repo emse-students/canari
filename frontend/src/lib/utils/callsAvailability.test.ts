@@ -17,6 +17,14 @@ afterEach(() => {
   vi.doUnmock('$lib/features');
 });
 
+// THE FIRST IMPORT IS PAID HERE, NOT INSIDE A TEST'S 5 s BUDGET. `callsAvailability` pulls the
+// app-version store and its graph; transforming that took 1.8 s on a quiet machine, inside the
+// first test (measured 2026-10-30), and the transform queue is what a loaded machine stretches.
+// Collection has no test deadline, and the later `load()` calls re-evaluate the cached transforms
+// (~45 ms each).
+await load({ calls: true, video: true });
+vi.doUnmock('$lib/features');
+
 describe('callsAvailable', () => {
   it('needs the server open, whatever the build carries', async () => {
     const a = await load({ calls: true, video: true });

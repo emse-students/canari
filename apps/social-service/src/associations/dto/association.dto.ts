@@ -18,7 +18,14 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { AssociationCalendarEventKind } from '../entities/association-calendar-event.entity';
+import {
+  PURCHASE_CLOSING_OUTCOMES,
+  type PurchaseClosingOutcome,
+} from '../../users/entities/purchase-record-closing.entity';
+import {
+  AssociationCalendarEventKind,
+  AssociationCalendarEventPresentation,
+} from '../entities/association-calendar-event.entity';
 import { ALL_PERMISSION_FLAGS } from '../entities/association-member.entity';
 import { ASSOCIATION_IMAGE_URL_MAX_LENGTH } from '../association-image-url';
 
@@ -35,13 +42,18 @@ export class CreateAssociationDto {
   @MaxLength(100)
   name: string;
 
+  /**
+   * OPTIONAL since 2026-10-26: the server derives it from the name (a technical id is never typed
+   * by a person). Only an old client still sends one, and it is validated and refused if taken.
+   */
   @IsString()
+  @IsOptional()
   @IsNotEmpty()
   @MaxLength(60)
   @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
     message: 'slug must be lowercase alphanumeric with hyphens',
   })
-  slug: string;
+  slug?: string;
 
   @IsString()
   @IsOptional()
@@ -136,12 +148,6 @@ export class UpdateAssociationDto {
   @Matches(/^(#[0-9A-Fa-f]{6})?$/)
   color?: string | null;
 
-  /** Primary thematic category id (managed table). Pass `""`/`null` to clear (uncategorised). */
-  @IsOptional()
-  @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
-  @IsUUID()
-  categoryId?: string | null;
-
   /** When true, archives the association (moves it to "Anciennes", hides from "Mes associations"). */
   @IsBoolean()
   @IsOptional()
@@ -221,7 +227,7 @@ export class AddMemberDto {
   @Max(ALL_PERMISSION_FLAGS) // derived from the enum - never a literal, see the entity
   // Note: BDE-only flags (VALIDATE_EVENTS=32, MANAGE_ASSO=64, MODERATE=128) are silently
   // inert unless the association is the BDE of a space (`spaces/bde.ts`), and then reach only
-  // the associations that space governs (MODERATE excepted: global).
+  // what that space governs (MODERATE too since 2026-11-02, `spaces/bde-moderation.ts`).
   permissions: number;
 }
 
@@ -236,12 +242,6 @@ export class UpdateMemberRoleDto {
   @Max(ALL_PERMISSION_FLAGS)
   @IsOptional()
   permissions?: number;
-}
-
-export class AddMembersBatchDto {
-  @IsArray()
-  @IsString({ each: true })
-  userIds: string[];
 }
 
 export class CreateAssociationDocumentDto {
@@ -349,6 +349,15 @@ export class CreateAssociationCalendarEventDto {
   targetAssocId?: string;
 
   /**
+   * `association` (default) or `neutral`: shown as "Campus" with no association. Only a BDE's event
+   * may be neutral, and a neutral one has no co-organiser and no linked form
+   * (`event-presentation.ts`).
+   */
+  @IsOptional()
+  @IsEnum(AssociationCalendarEventPresentation)
+  presentation?: AssociationCalendarEventPresentation;
+
+  /**
    * Associations ASKED to co-organise this event (D39): each gets a `coorganise` proposal and
    * co-organises only once its publishers accept it. The array bound (10) is only a transport
    * sanity limit: THE CAP IS `MAX_CO_ORGANISERS`, enforced by the service so the refusal is a typed
@@ -403,6 +412,11 @@ export class UpdateAssociationCalendarEventDto {
   @ArrayMaxSize(10)
   @IsUUID('all', { each: true })
   coOwnerIds?: string[];
+
+  /** Changes how the event is presented; the organiser side only. Omit to leave it unchanged. */
+  @IsOptional()
+  @IsEnum(AssociationCalendarEventPresentation)
+  presentation?: AssociationCalendarEventPresentation;
 }
 
 /** Optional reason provided by the BDE when rejecting a pending calendar event. */
@@ -454,7 +468,7 @@ export class CreateProductDto {
 
   /** Reduced price in cents for cotisants (defaults to `amountCents` when omitted). */
   @IsInt()
-  @Min(0)
+  @Min(1)
   @IsOptional()
   amountCentsMember?: number;
 
@@ -463,6 +477,16 @@ export class CreateProductDto {
   @IsOptional()
   @MaxLength(100)
   variantKey?: string;
+
+  /**
+   * Membership only: derive a NEW named tier's `variantKey` from `name` on the server
+   * (`variantKeyFromLabel`), unique among the association's tiers. The admin screen sends this
+   * instead of a key, which no person types any more; refused alongside an explicit `variantKey`,
+   * which older clients still send and which is still honoured.
+   */
+  @IsBoolean()
+  @IsOptional()
+  deriveVariantKey?: boolean;
 
   /** Ordinal rank of this tier for future "tier >= N" checks (WP-COT-8). */
   @IsInt()
@@ -581,7 +605,7 @@ export class UpdateProductDto {
 
   /** Reduced price in cents for cotisants. Pass `null` to charge cotisants the same as everyone. */
   @IsInt()
-  @Min(0)
+  @Min(1)
   @IsOptional()
   amountCentsMember?: number | null;
 
@@ -682,6 +706,25 @@ export class GrantProductPurchaseDto {
   @Min(0)
   @IsOptional()
   amountCents?: number;
+}
+
+/**
+ * DTO for closing a payment marked `paid_not_granted`: which outcome settled it
+ * (`ProductsService.closePaidNotGranted`). Nothing else crosses: who closes it is the caller, and
+ * when is the server's own clock.
+ */
+export class ClosePaidNotGrantedDto {
+  @IsIn(PURCHASE_CLOSING_OUTCOMES)
+  outcome: PurchaseClosingOutcome;
+
+  /**
+   * For `granted`, what the purchases list showed: true when it said the tier is already delivered
+   * (`PurchaseListRow.delivered`, "nothing is granted"). The closing refuses
+   * `409 PURCHASE_CLOSING_CHANGED` when that is no longer so, rather than grant under that promise.
+   */
+  @ValidateIf((o: ClosePaidNotGrantedDto) => o.outcome === 'granted')
+  @IsBoolean()
+  expectDelivered?: boolean;
 }
 
 /** DTO for manually granting a cotisation tag to a user. */

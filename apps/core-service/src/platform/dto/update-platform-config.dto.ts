@@ -1,9 +1,13 @@
 import { IsBoolean, IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 import {
   CALLS_MODES,
+  CHECKPOINT_SKIP_MODES,
   LIVES_MODES,
+  PUSH_MODES,
   type CallsMode,
+  type CheckpointSkipMode,
   type LivesMode,
+  type PushMode,
 } from '../entities/platform-config.entity';
 
 /** Body for PATCH /api/users/admin/platform - partial platform settings update. */
@@ -37,4 +41,14 @@ export class UpdatePlatformConfigDto {
   @IsOptional()
   @IsIn(LIVES_MODES)
   livesMode?: LivesMode;
+
+  /** The push switch: `full` sends today's payloads, `wake` a content-free wake-up to capable devices. */
+  @IsOptional()
+  @IsIn(PUSH_MODES)
+  pushMode?: PushMode;
+
+  /** The checkpoint-skip switch: `off` checkpoints every drain, `on` lets a receive-only drain defer it. */
+  @IsOptional()
+  @IsIn(CHECKPOINT_SKIP_MODES)
+  checkpointSkipMode?: CheckpointSkipMode;
 }

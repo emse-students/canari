@@ -106,6 +106,83 @@
     canModerate = false,
   }: Props = $props();
 
+  /** One entry of the action row; `tone` is the colour of a special action. */
+  type SheetAction = {
+    key: string;
+    label: string;
+    icon: typeof Reply;
+    tone: string;
+    run: () => void;
+  };
+
+  const NEUTRAL_TONE = 'text-text-main hover:bg-black/5 dark:hover:bg-white/5';
+
+  /**
+   * The actions this message offers, in display order. Every gate that used to wrap one button
+   * lives here, so the row is data and a new action is one entry, not another hand-built button.
+   */
+  const actions = $derived.by<SheetAction[]>(() => {
+    if (isDeleted) return [];
+    const list: SheetAction[] = [];
+    if (canReply)
+      list.push({
+        key: 'reply',
+        label: m.msg_reply_label(),
+        icon: Reply,
+        tone: NEUTRAL_TONE,
+        run: () => onReply?.(),
+      });
+    if (onForward)
+      list.push({
+        key: 'forward',
+        label: m.msg_forward_label(),
+        icon: Forward,
+        tone: NEUTRAL_TONE,
+        run: onForward,
+      });
+    if (onCopy)
+      list.push({
+        key: 'copy',
+        label: m.msg_copy_label(),
+        icon: Copy,
+        tone: NEUTRAL_TONE,
+        run: onCopy,
+      });
+    if (onShare)
+      list.push({
+        key: 'share',
+        label: m.msg_share_label(),
+        icon: Share2,
+        tone: NEUTRAL_TONE,
+        run: onShare,
+      });
+    if (onPin)
+      list.push({
+        key: 'pin',
+        label: pinned ? m.msg_unpin_label() : m.msg_pin_label(),
+        icon: pinned ? PinOff : Pin,
+        tone: 'text-amber-600 hover:bg-amber-500/10 dark:text-amber-500',
+        run: onPin,
+      });
+    if (isOwn && !hasMedia && canEdit)
+      list.push({
+        key: 'edit',
+        label: m.common_edit_label(),
+        icon: Pencil,
+        tone: 'text-blue-500 hover:bg-blue-500/10',
+        run: () => onEdit?.(),
+      });
+    if ((isOwn || canModerate) && canDelete)
+      list.push({
+        key: 'delete',
+        label: m.common_delete_button(),
+        icon: Trash2,
+        tone: 'text-red-500 hover:bg-red-500/10',
+        run: () => onDelete?.(),
+      });
+    return list;
+  });
+
   let sheetEl = $state<HTMLDivElement | undefined>();
 
   /**
@@ -241,111 +318,29 @@
         </div>
       {/if}
 
-      <!-- Action buttons row. An own message can show one more button than a received one
-           (edit), which is enough to overflow a narrow phone screen at full width - wraps to a
-           second line instead, rather than spilling off both edges. -->
+      <!-- ONE ROW, ICONS ONLY (owner, 2026-11-08: "les actions possibles devraient tenir sur une
+           ligne, quitte a ne pas mettre les textes"). The name of each action is its accessible
+           name (aria-label) and its tooltip on a pointer device (title). The widest sheet is an
+           own text message with seven actions: the buttons share the row equally (flex-1, 44px
+           tall) and never wrap - 48px wide each from 360px, 42px at 320px. -->
       <div
-        class="bg-cn-surface flex max-w-[calc(100vw-2rem)] flex-wrap items-center justify-center gap-3 rounded-2xl border border-black/10 px-4 py-3 shadow-xl dark:border-white/10"
+        class="bg-cn-surface flex w-[calc(100vw-1rem)] max-w-96 items-center justify-between rounded-2xl border border-black/10 px-1 py-2 shadow-xl dark:border-white/10"
       >
-        {#if !isDeleted && canReply}
+        {#each actions as action (action.key)}
+          {@const Icon = action.icon}
           <button
+            type="button"
             onclick={() => {
-              onReply?.();
+              action.run();
               onClose?.();
             }}
-            class="text-text-main flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-transform hover:bg-black/5 active:scale-95 dark:hover:bg-white/5"
-            aria-label={m.msg_reply_label()}
+            class="flex h-11 min-w-0 flex-1 items-center justify-center rounded-xl transition-transform active:scale-95 {action.tone}"
+            aria-label={action.label}
+            title={action.label}
           >
-            <Reply size={20} />
-            <span class="text-text-muted text-2xs font-medium">{m.msg_reply_label()}</span>
+            <Icon size={22} />
           </button>
-        {/if}
-
-        {#if !isDeleted && onForward}
-          <button
-            onclick={() => {
-              onForward?.();
-              onClose?.();
-            }}
-            class="text-text-main flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-transform hover:bg-black/5 active:scale-95 dark:hover:bg-white/5"
-            aria-label={m.msg_forward_label()}
-          >
-            <Forward size={20} />
-            <span class="text-text-muted text-2xs font-medium">{m.msg_forward_label()}</span>
-          </button>
-        {/if}
-
-        {#if !isDeleted && onCopy}
-          <button
-            onclick={() => {
-              onCopy?.();
-              onClose?.();
-            }}
-            class="text-text-main flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-transform hover:bg-black/5 active:scale-95 dark:hover:bg-white/5"
-            aria-label={m.msg_copy_label()}
-          >
-            <Copy size={20} />
-            <span class="text-text-muted text-2xs font-medium">{m.msg_copy_label()}</span>
-          </button>
-        {/if}
-
-        {#if !isDeleted && onShare}
-          <button
-            onclick={() => {
-              onShare?.();
-              onClose?.();
-            }}
-            class="text-text-main flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-transform hover:bg-black/5 active:scale-95 dark:hover:bg-white/5"
-            aria-label={m.msg_share_label()}
-          >
-            <Share2 size={20} />
-            <span class="text-text-muted text-2xs font-medium">{m.msg_share_label()}</span>
-          </button>
-        {/if}
-
-        {#if !isDeleted && onPin}
-          <button
-            onclick={() => {
-              onPin?.();
-              onClose?.();
-            }}
-            class="flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-amber-600 transition-transform hover:bg-amber-500/10 active:scale-95 dark:text-amber-500"
-            aria-label={pinned ? m.msg_unpin_label() : m.msg_pin_label()}
-          >
-            {#if pinned}<PinOff size={20} />{:else}<Pin size={20} />{/if}
-            <span class="text-2xs font-medium"
-              >{pinned ? m.msg_unpin_label() : m.msg_pin_label()}</span
-            >
-          </button>
-        {/if}
-
-        {#if !isDeleted && isOwn && !hasMedia && canEdit}
-          <button
-            onclick={() => {
-              onEdit?.();
-              onClose?.();
-            }}
-            class="flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-blue-500 transition-transform hover:bg-blue-500/10 active:scale-95"
-            aria-label={m.common_edit_label()}
-          >
-            <Pencil size={20} />
-            <span class="text-2xs font-medium">{m.common_edit_label()}</span>
-          </button>
-        {/if}
-
-        {#if !isDeleted && (isOwn || canModerate) && canDelete}
-          <button
-            onclick={() => {
-              onDelete?.();
-              onClose?.();
-            }}
-            class="flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-red-500 transition-transform hover:bg-red-500/10 active:scale-95"
-            aria-label={m.common_delete_button()}
-          >
-            <Trash2 size={20} />
-            <span class="text-2xs font-medium">{m.common_delete_button()}</span>
-          </button>
-        {/if}
+        {/each}
       </div>
     </div>
   </div>

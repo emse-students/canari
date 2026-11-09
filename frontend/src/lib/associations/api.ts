@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import { Log } from '$lib/utils/Log';
 import { getToken } from '$lib/stores/auth';
 import { coreUrl, mediaUrl, socialUrl } from '$lib/utils/apiUrl';
 import { imageSrcOrNull } from '$lib/utils/imageSrc';
@@ -11,6 +12,7 @@ import { downloadDecryptedFile } from '$lib/utils/fileDownload';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { readApiJson } from '$lib/utils/apiJson';
 import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
 import type { PriceMatrix } from '$lib/pricing/priceMatrix';
@@ -34,6 +36,11 @@ export enum AssociationPermissionFlag {
   MANAGE_PAYOUT_ACCOUNT = 1 << 9,
   MANAGE_PARTNERSHIPS = 1 << 10,
   MANAGE_BOOKINGS = 1 << 11,
+  /**
+   * The public profile: name, texts, logos, colour, category, contact; a list's promo and second
+   * theme - never its parent (`updateFields.ts`), plus the logo routes.
+   */
+  EDIT_PROFILE = 1 << 12,
 }
 
 /**
@@ -48,7 +55,8 @@ export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.MANAGE_FORMS |
   AssociationPermissionFlag.MANAGE_PRODUCTS |
   AssociationPermissionFlag.MANAGE_PARTNERSHIPS |
-  AssociationPermissionFlag.MANAGE_BOOKINGS;
+  AssociationPermissionFlag.MANAGE_BOOKINGS |
+  AssociationPermissionFlag.EDIT_PROFILE;
 
 /** Default admin preset when adding a member (core flags + Stripe Connect). */
 export const ASSOCIATION_ADMIN_PRESET =
@@ -77,6 +85,20 @@ export const SUPER_ADMIN_EXCLUDED_FLAGS =
   AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT | AssociationPermissionFlag.POST_AS_ASSO;
 
 /**
+ * FLAGS NOBODY HOLDS ON AN ENTITY OF A GIVEN KIND, the platform administrator included - the client
+ * mirror of the backend `TYPE_EXCLUDED_FLAGS` (`association-member.entity.ts`), which carries the
+ * reasoning (owner, 2026-11-02): a LIST keeps its shop and collects through a payment delegation,
+ * so it never holds a payout account of its own; an INSTITUTION collects nothing. Asserted equal to
+ * the server's values by `permissions.test.ts`.
+ */
+export const TYPE_EXCLUDED_FLAGS: Readonly<Record<Association['type'], number>> = {
+  association: 0,
+  list: AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT,
+  institution:
+    AssociationPermissionFlag.MANAGE_PRODUCTS | AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT,
+};
+
+/**
  * Flags that only mean anything inside a BDE association - the server enforces `a.isBDE = true`
  * in every query that honours them, so granting one elsewhere is inert. Exported so the members
  * editor hides them from non-BDE associations without re-listing them by hand.
@@ -103,11 +125,43 @@ export const BDE_ONLY_FLAGS: ReadonlySet<AssociationPermissionFlag> = new Set([
  */
 export function mayActOnAssociation(
   flag: AssociationPermissionFlag,
-  ctx: { isGlobalAdmin: boolean; isSuperAdmin: boolean; memberPermissions?: number }
+  ctx: {
+    isGlobalAdmin: boolean;
+    isSuperAdmin: boolean;
+    memberPermissions?: number;
+    /** The entity's kind: a flag its kind excludes (`TYPE_EXCLUDED_FLAGS`) is held by nobody. */
+    assoType?: Association['type'];
+  }
 ): boolean {
+  if (ctx.assoType && (TYPE_EXCLUDED_FLAGS[ctx.assoType] & flag) !== 0) return false;
   if (ctx.isGlobalAdmin) return true;
   if (ctx.isSuperAdmin && (flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0) return true;
   return hasPermissionFlag(ctx.memberPermissions ?? 0, flag);
+}
+
+/** Every flag the enum defines, OR-ed together. Mirrors the backend `ALL_PERMISSION_FLAGS`. */
+export const ALL_PERMISSION_FLAGS = Object.values(AssociationPermissionFlag)
+  .filter((value): value is AssociationPermissionFlag => typeof value === 'number')
+  .reduce<number>((mask, flag) => mask | flag, 0);
+
+/** The refusal of a member write that changes a flag the writer does not hold itself. */
+export const MEMBER_FLAGS_BEYOND_GRANTER = 'MEMBER_FLAGS_BEYOND_GRANTER';
+
+/**
+ * The flags the viewer may grant OR revoke on a member of one association - the client mirror of
+ * the server's `grantCeiling` (`member-flag-ceiling.ts`), so the editor never offers a box the
+ * server would refuse. Every flag for the platform administrator AND for this association's BDE
+ * super-admin (owner, 2026-11-02: a BDE officer may seat themself with full rights in an association
+ * they also run - `SUPER_ADMIN_EXCLUDED_FLAGS` is about what the tier EXERCISES, not what it may
+ * write into a row); otherwise the viewer's own row.
+ */
+export function grantableFlags(ctx: {
+  isGlobalAdmin: boolean;
+  isSuperAdmin: boolean;
+  memberPermissions?: number;
+}): number {
+  if (ctx.isGlobalAdmin || ctx.isSuperAdmin) return ALL_PERMISSION_FLAGS;
+  return (ctx.memberPermissions ?? 0) & ALL_PERMISSION_FLAGS;
 }
 
 /**
@@ -162,6 +216,13 @@ export interface Association {
    * `getAssociationPayoutAccount`.
    */
   lydiaOnboardingComplete: boolean;
+  /**
+   * Whether its payments can be taken NOW, through its own Lydia Business or the one of the
+   * association it delegates to (APPROVED) - served by the member reads (`withPaymentsReady`). The
+   * ONE field a "can this entity take a payment" check reads (`canTakePayments`); never the row's
+   * own `lydiaOnboardingComplete`, which a delegating entity does not have.
+   */
+  paymentsReady?: boolean;
   /** True if this is the BDE association (unlocks BDE-only permission flags). */
   isBDE: boolean;
   /** Maximum vault storage in bytes (default 500 MiB). */
@@ -175,15 +236,21 @@ export interface Association {
   isAdmin?: boolean;
   /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend uses generateAvatarColor fallback. */
   color?: string | null;
-  /** Primary thematic category (managed table). Null when uncategorized. Used by the "Carte de la Vie Asso" poster. */
-  categoryId?: string | null;
   /** Discriminates a regular association from a promo list. */
   type: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year the list belongs to. */
   promo?: number | null;
-  /** Lists only: optional parent association (e.g. the owning BDE). */
+  /**
+   * The GOVERNING parent (reform 2.2, WP-D1): the BDE this entity depends on. An association or a
+   * list has at most one, a BDE and an institution none; set on `/admin/spaces` (Dependencies).
+   */
   parentAssociationId?: string | null;
-  /** Lists only: display name of the parent association, when resolved by the API. */
+  /**
+   * Lists only: the association a list is SHOWN under when it is not its governing parent (G3: a
+   * list "for the BDS" depends on the BDE). Display only - nothing governs through it.
+   */
+  displayParentAssociationId?: string | null;
+  /** Lists only: the name shown as the list's parent - the label when set, else the parent. */
   parentName?: string | null;
   /** Lists only: optional second theme name (some lists run two themes). */
   name2?: string | null;
@@ -203,9 +270,17 @@ export interface Association {
   updatedAt: string;
 }
 
+/**
+ * The `code` of the creation refused because no free slug could be derived from the name
+ * (social-service `SLUG_EXHAUSTED`): a name with no Latin letter or digit folds to `asso`, and the
+ * server walks at most fifty suffixes. Read from `SocialApiError.code`, never from the message.
+ */
+export const ASSOCIATION_SLUG_EXHAUSTED = 'ASSOCIATION_SLUG_EXHAUSTED';
+
 export interface CreateAssociationPayload {
   name: string;
-  slug: string;
+  /** Never sent by the app: the server derives it from the name (a technical id is never typed). */
+  slug?: string;
   description?: string;
   bioMarkdown?: string;
   logoUrl?: string;
@@ -214,7 +289,11 @@ export interface CreateAssociationPayload {
   type?: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year. */
   promo?: number;
-  /** Lists only: optional parent association. */
+  /**
+   * The BDE the new entity depends on (WP-D1): one where the creator holds `MANAGE_ASSO`, required
+   * when it holds it in several (`DEPENDENCY_PARENT_CHOICE_REQUIRED`). A named association that
+   * governs no space becomes the list's display label (G3) and the parent falls back to the default.
+   */
   parentAssociationId?: string;
   /** Lists only: optional second theme name. */
   name2?: string;
@@ -231,15 +310,13 @@ export interface UpdateAssociationPayload {
   documentQuotaBytes?: number;
   /** Hex color for calendar display. Pass `""` or `null` to revert to auto-generated color. */
   color?: string | null;
-  /** Primary thematic category id. Pass `""` or `null` to clear. */
-  categoryId?: string | null;
   /** Archive/unarchive the association. */
   archived?: boolean;
   /** Public contact e-mail. Pass `""` or `null` to clear. */
   contactEmail?: string | null;
   /** Lists only: the promotion year. */
   promo?: number | null;
-  /** Lists only: optional parent association. */
+  /** Lists only: optional parent association. Platform admin only (`UPDATE_FIELD_RIGHTS`). */
   parentAssociationId?: string | null;
   /** Lists only: optional second theme name. Pass `""` to clear. */
   name2?: string | null;
@@ -262,6 +339,15 @@ export type AssociationCalendarEventStatus = 'pending' | 'validated' | 'rejected
  *   events and not occupying an event slot (purely graphical).
  */
 export type AssociationCalendarEventKind = 'event' | 'break';
+
+/**
+ * Who a reader is told an event is from (owner, 2026-11-08): `association` is the owner as always;
+ * `neutral` is the generic "Campus" label and nothing else - a BDE files it, stays its owner on the
+ * server, and the server masks the owner fields (`associationId` `''`, no name, no logo, no
+ * `createdBy`) for every reader who does not manage that BDE's agenda. The label is drawn from THIS
+ * field, never from the blanks (`eventOwners`).
+ */
+export type AssociationCalendarEventPresentation = 'association' | 'neutral';
 
 /** Lean summary of an association co-owning a calendar event. */
 export interface CalendarEventCoOwner {
@@ -294,6 +380,8 @@ export interface AssociationCalendarEvent {
   createdAt: string;
   /** Visual kind: `event` (card) or `break` (full-day background band). */
   kind: AssociationCalendarEventKind;
+  /** `neutral`: shown as "Campus", with no association (see the type). */
+  presentation: AssociationCalendarEventPresentation;
   status: AssociationCalendarEventStatus;
   validatedAt: string | null;
   validatedBy: string | null;
@@ -317,6 +405,11 @@ export interface AssociationCalendarFeedEvent extends AssociationCalendarEvent {
   associationColor: string | null;
   /** Logo URL of the association (same-origin `/api/media/public/:id` path), or null. */
   associationLogoUrl: string | null;
+  /**
+   * The server's signature of THIS event's `.ics` link (validated events only, 2026-11-02): the
+   * link is refused without it. Absent means no "add to my calendar" link.
+   */
+  icsSig?: string;
 }
 
 export interface AssociationLinkCandidates {
@@ -335,6 +428,8 @@ export interface CreateAssociationCalendarEventPayload {
   targetAssocId?: string;
   /** Associations ASKED to co-organise this event (D39, max 10): each decides. */
   coOwnerIds?: string[];
+  /** A BDE's agenda managers only; a neutral event has no co-organiser and no linked form. */
+  presentation?: AssociationCalendarEventPresentation;
 }
 
 export interface UpdateAssociationCalendarEventPayload {
@@ -344,6 +439,8 @@ export interface UpdateAssociationCalendarEventPayload {
   endsAt?: string;
   /** `event` or `break` (a full-day background band). */
   kind?: AssociationCalendarEventKind;
+  /** Omitted unless the surface may decide it (`canSetPresentation`). */
+  presentation?: AssociationCalendarEventPresentation;
   linkedFormId?: string | null;
   /**
    * The co-organisers the form now names, accepted and pending included (D39): a new one is asked,
@@ -361,7 +458,10 @@ export async function listLinkableValidatedCalendarEvents(
   const now = new Date();
   const from = new Date(now.getFullYear(), now.getMonth() - 12, 1).toISOString();
   const to = new Date(now.getFullYear(), now.getMonth() + 24, 0, 23, 59, 59, 999).toISOString();
-  return listAssociationCalendarEvents(associationId, { from, to });
+  const events = await listAssociationCalendarEvents(associationId, { from, to });
+  // A post is published in the association's name, so it never links a neutral event - the server
+  // refuses one (`CALENDAR_NEUTRAL_LINKED_POST`), and offering it would be offering a refusal.
+  return events.filter((ev) => ev.presentation !== 'neutral');
 }
 
 /** Media API base for resolving `/api/media/…` paths (Tauri needs an absolute URL). */
@@ -419,11 +519,43 @@ export class SocialApiError extends ApiRefusalError {
      * The allowed amount range an `AMOUNT_OUT_OF_RANGE` refusal carries, in cents (`maxCents` null
      * = no upper bound). Typed numbers so the UI words the range itself instead of echoing prose.
      */
-    readonly amountBounds: AmountBounds | null = null
+    readonly amountBounds: AmountBounds | null = null,
+    /**
+     * How many people still hold the cotisation tier a `TIER_HAS_HOLDERS` refusal would not delete
+     * ({@link holderCountOf}), so the screen words the number itself.
+     */
+    readonly holderCount: number | null = null,
+    /**
+     * The question a form save's coded 400 is about (`itemId` in the body: every `PRODUCT_GRID_*`
+     * definition refusal names its grid), so the editor draws the refusal under that question
+     * instead of only in the page banner. Null when the body names none.
+     */
+    readonly itemId: string | null = null
   ) {
     super(status, code, message);
     this.name = 'SocialApiError';
   }
+}
+
+/**
+ * The body `code` of social-service's 409 when a manager deletes a cotisation tier people still
+ * hold: its `holderCount` rides beside it. They are moved to another tier (or revoked) first.
+ */
+export const TIER_HAS_HOLDERS = 'TIER_HAS_HOLDERS';
+
+/**
+ * The body `code` of social-service's 409 when a manager deletes a cotisation tier while one of its
+ * payments may still land (at most about 35 minutes after it was opened).
+ */
+export const TIER_CHECKOUT_OPEN = 'TIER_CHECKOUT_OPEN';
+
+/** Reads the whole, positive `holderCount` a `TIER_HAS_HOLDERS` body carries; `null` otherwise. */
+export function holderCountOf(body: unknown): number | null {
+  if (!body || typeof body !== 'object') return null;
+  const { holderCount } = body as Record<string, unknown>;
+  return typeof holderCount === 'number' && Number.isInteger(holderCount) && holderCount > 0
+    ? holderCount
+    : null;
 }
 
 /** The allowed range of an `AMOUNT_OUT_OF_RANGE` refusal, in cents (`maxCents` null = unbounded). */
@@ -459,6 +591,7 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
   let message = raw || res.statusText;
   let code: string | null = null;
   let amountBounds: AmountBounds | null = null;
+  let holderCount: number | null = null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (
@@ -480,10 +613,12 @@ export async function socialRefusal(res: Response): Promise<SocialApiError> {
     }
     // An amount refusal carries its allowed range beside the code, as numbers.
     amountBounds = amountBoundsOf(parsed);
+    // A tier delete refused for its holders carries how many, as a number.
+    holderCount = holderCountOf(parsed);
   } catch {
     // Ignore JSON parse failure: message is the raw error text and there is no code to read
   }
-  return new SocialApiError(message, code, res.status, amountBounds);
+  return new SocialApiError(message, code, res.status, amountBounds, holderCount);
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -754,6 +889,24 @@ export async function listEventCoOrganisers(
   );
 }
 
+/**
+ * Which side the signed-in caller writes an event from (owner decision E2): `organiser`, or
+ * `partner` - an accepted co-organiser, who edits the text and the poster and may withdraw, but
+ * never changes the date or the partner list and never deletes. The SERVER's answer, from the rule
+ * it enforces on the write, so the form hides exactly what the write would refuse.
+ */
+export type EventWriteSide = 'organiser' | 'partner';
+
+/** `GET .../events/:eventId/write-side`: the side the caller writes the event from through `associationId`. */
+export async function getEventWriteSide(
+  associationId: string,
+  eventId: string
+): Promise<{ side: EventWriteSide }> {
+  return request<{ side: EventWriteSide }>(
+    `/api/associations/${encodeURIComponent(associationId)}/events/${encodeURIComponent(eventId)}/write-side`
+  );
+}
+
 export async function deleteAssociationCalendarEvent(
   associationId: string,
   eventId: string
@@ -855,8 +1008,9 @@ export async function listAssociationLinkCandidates(
 }
 
 /**
- * Public - calendar event pointing to this post. Feed-shaped (association identity included),
- * because the caller opens the calendar's own detail modal with it, which renders that identity.
+ * Signed in - the calendar event pointing to this post, when the reader may see the post. Feed-shaped
+ * (association identity included, and its `icsSig`), because the caller opens the calendar's own
+ * detail modal with it, which renders that identity.
  */
 export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   linkedEvent: AssociationCalendarFeedEvent | null;
@@ -866,7 +1020,10 @@ export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   );
 }
 
-/** Public - the calendar event pointing at this form, if any. */
+/**
+ * Signed in - the calendar event pointing at this form, if any and if the reader's audience reaches
+ * it (`null` otherwise). Carries the event's `icsSig`.
+ */
 export async function getCalendarEventLinkedToForm(formId: string): Promise<{
   linkedEvent: AssociationCalendarEvent | null;
 }> {
@@ -924,14 +1081,15 @@ export function invalidateMyAssociations(): void {
   myMemberships.invalidate();
   myBdeReach.invalidate();
   myAssociationsProbe = null;
+  myAssociationsProbeFailed = false;
 }
 
 /**
  * The associations whose BDE grants the caller each SCOPED power (WP6c step 2), as the server's
  * own predicate computes them: `validateEvents` (validate, edit, deposit on, declare a break for)
- * and `manageAsso` (administer as a super-admin). A BDE governs the associations reaching its
- * space, never all of them, so "is a BDE somewhere" (`holdsBdeFlag`) cannot draw a control on ONE
- * association. A global admin holds every power and is not in these lists - callers OR that tier.
+ * and `manageAsso` (administer as a super-admin: MANAGE_ASSO in its parent BDE, or itself when a
+ * BDE, WP-D2). A BDE governs its children, never all associations, so "is a BDE somewhere"
+ * (`holdsBdeFlag`) cannot draw a control on ONE association. A global admin holds every power and is not in these lists - callers OR that tier.
  */
 export interface BdeReach {
   validateEvents: string[];
@@ -953,13 +1111,53 @@ export async function getMyBdeReach(): Promise<BdeReach> {
 
 /** Session cache for the membership probe; deduplicates concurrent callers. */
 let myAssociationsProbe: Promise<Association[]> | null = null;
+/** Whether the probe above ended in a failure (its list is then `[]`, which is NOT "belongs to nothing"). */
+let myAssociationsProbeFailed = false;
+/** The one-shot reconnect subscription that owes a failed probe its retry; null when none is owed. */
+let stopProbeReconnect: (() => void) | null = null;
+
+/**
+ * Whether the membership probe FAILED: its `[]` then says nothing about what the reader belongs to.
+ * For a caller that must not act on "no memberships" when that is only a failure (the follow chip
+ * offers nothing it cannot tell is not the reader's own).
+ */
+export function didMyAssociationsProbeFail(): boolean {
+  return myAssociationsProbeFailed;
+}
 
 // The probe is not a SharedCache - it is one promise holding three derived flags - so it enrols
 // itself. The list beside it does so through its own `perReader` option, and both have to go: a
 // probe kept across a sign-in answers `isAssociationSuperAdmin()` for the previous account.
 registerPerReaderCache(() => {
   myAssociationsProbe = null;
+  myAssociationsProbeFailed = false;
 });
+
+/**
+ * Re-asks a FAILED membership probe, once, and does nothing when the last probe did not fail.
+ *
+ * A FAILURE IS A STATE, NOT AN ANSWER. Fail-closed is right for the moment (every BDE flag denied),
+ * but the `[]` it hands back must not outlive the cause: it stays held only so that callers do not
+ * each re-ask a server that just refused, and two EVENTS - never a clock - lift it: the
+ * connectivity reconnect ({@link ensureMyAssociations} arms it) and the next navigation (the root
+ * layout calls this from `beforeNavigate`). A retry that fails again is held and armed again; one
+ * in flight is shared by whoever asks meanwhile, because the failed state is already cleared.
+ */
+export async function retryFailedMyAssociationsProbe(): Promise<void> {
+  if (!myAssociationsProbeFailed) return;
+  console.info('[associations] membership probe failed earlier, asking again');
+  await ensureMyAssociations(true);
+}
+
+/** Arms the one reconnect that retries a failed probe; one subscription however many failures. */
+function owedProbeRetryOnReconnect(): void {
+  if (stopProbeReconnect) return;
+  stopProbeReconnect = connectivity.onReconnect(() => {
+    stopProbeReconnect?.();
+    stopProbeReconnect = null;
+    void retryFailedMyAssociationsProbe();
+  });
+}
 
 /**
  * Loads the caller's memberships once per session and publishes EVERY BDE-derived flag from that
@@ -969,8 +1167,16 @@ registerPerReaderCache(() => {
  * admin layout wants the super-admin and the moderator tier in the same breath - and two caches
  * over the same endpoint would drift the moment one is force-refreshed and the other is not.
  *
- * A failure is a refusal of every flag, and it is logged: a silently empty membership list is
- * indistinguishable from a user who belongs to nothing, and would hide a control with no trace.
+ * A failure is a refusal of every flag, logged at WARN with the status, and it is a FAILED STATE
+ * ({@link didMyAssociationsProbeFail}) retried on the next reconnect or navigation
+ * ({@link retryFailedMyAssociationsProbe}); a silently empty membership list is indistinguishable
+ * from a user who belongs to nothing, and would hide a control with no trace.
+ *
+ * What each caller does with that `[]`: `ensureMayOpenAdmin` reads the three flags (all denied, so
+ * the admin shell stays shut until the retry); the three `ensure*` flag probes below return false;
+ * the dashboard draws no membership entries; the follow chip asks {@link didMyAssociationsProbeFail}
+ * and offers nothing it cannot tell is not the reader's own. A retry that succeeds publishes the
+ * flags through the same user-state setters, which the reactive callers read.
  */
 export async function ensureMyAssociations(force = false): Promise<Association[]> {
   if (force) invalidateMyAssociations();
@@ -983,7 +1189,13 @@ export async function ensureMyAssociations(force = false): Promise<Association[]
         return assos;
       })
       .catch((err) => {
-        console.error('[associations] membership probe failed, every BDE flag denied', err);
+        const status = err instanceof ApiRefusalError ? err.status : 'no answer';
+        console.warn(
+          `[associations] membership probe failed (${status}), every BDE flag denied until the next reconnect or navigation`,
+          err
+        );
+        myAssociationsProbeFailed = true;
+        owedProbeRetryOnReconnect();
         setAssociationSuperAdmin(false);
         setContentModerator(false);
         setEventValidator(false);
@@ -1045,42 +1257,6 @@ export async function unfollowAssociation(associationId: string): Promise<{ ok: 
   return request<{ ok: boolean }>(`/api/associations/${encodeURIComponent(associationId)}/follow`, {
     method: 'DELETE',
   });
-}
-
-/**
- * The PUSH mute of one association: it silences that association's push notifications for the
- * caller and nothing else - the post stays in the feed and the bell. A separate fact from
- * following, which only decides what the feed's "followed" view shows.
- */
-export async function getAssociationPushMuteStatus(
-  associationId: string
-): Promise<{ muted: boolean }> {
-  return request<{ muted: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/push-mute`
-  );
-}
-
-export async function muteAssociationPush(associationId: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/push-mute`,
-    { method: 'PUT' }
-  );
-}
-
-export async function unmuteAssociationPush(associationId: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/push-mute`,
-    { method: 'DELETE' }
-  );
-}
-
-/** The associations the caller muted - the unmute list of the notification settings. */
-export async function listMutedAssociations(): Promise<
-  Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]
-> {
-  return request<Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]>(
-    '/api/associations/me/push-mutes'
-  );
 }
 
 export async function createAssociation(payload: CreateAssociationPayload): Promise<Association> {
@@ -1227,6 +1403,25 @@ export async function removeMember(
   invalidateMyAssociations();
   return result;
 }
+
+/**
+ * THE "QUITTER" BUTTON (owner, 2026-11-03): the signed-in user leaves the association. Acts on the
+ * caller's own row only. Refused with `SocialApiError.code === LEAVE_REFUSAL.LAST_MEMBER_MANAGER`
+ * for its last holder of `MANAGE_MEMBERS`.
+ */
+export async function leaveAssociation(associationId: string): Promise<void> {
+  Log.d('associations.leave', { associationId });
+  await request<{ ok: boolean }>(
+    `/api/associations/${encodeURIComponent(associationId)}/members/me`,
+    { method: 'DELETE' }
+  );
+  invalidateMyAssociations();
+}
+
+/** The typed refusals of {@link leaveAssociation}, read from `SocialApiError.code`. */
+export const LEAVE_REFUSAL = {
+  LAST_MEMBER_MANAGER: 'ASSOCIATION_LAST_MEMBER_MANAGER',
+} as const;
 
 /** Updates the display order of members. Requires MANAGE_MEMBERS. `userIds` must be the full ordered list. */
 export async function reorderMembers(associationId: string, userIds: string[]): Promise<void> {
@@ -1434,22 +1629,47 @@ export interface ReadGrant {
   createdAt: string;
 }
 
-/** One line of the journal of grants and revocations. */
+/**
+ * One line of the journal: a cell granted or revoked, or the person's switch "voit les commentaires"
+ * turned on (`cmt_show`) or off (`cmt_hide`) - a switch line names no cell (`campus` null).
+ */
 export interface ReadGrantJournalEntry {
   userId: string;
-  campus: string;
+  campus: string | null;
   formation: string | null;
-  action: 'grant' | 'revoke';
+  action: 'grant' | 'revoke' | 'cmt_show' | 'cmt_hide';
   actor: string;
   at: string;
 }
 
-/** Current read grants and the recent journal. Global admins only. */
+/** A named reader's switch "voit les commentaires", once set. A person absent from the list is OFF. */
+export interface ReadGrantReader {
+  userId: string;
+  seesComments: boolean;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+/** Current read grants, the readers' switches and the recent journal. Global admins only. */
 export async function listReadGrants(): Promise<{
   grants: ReadGrant[];
+  /** Absent from a server older than the switch (2026-11-04): everybody reads as OFF. */
+  readers?: ReadGrantReader[];
   journal: ReadGrantJournalEntry[];
 }> {
   return request('/api/associations/read-grants');
+}
+
+/**
+ * Turns one named reader's switch "voit les commentaires" on or off (owner, 2026-11-04). Idempotent;
+ * global admins only. OFF (the default) hides from them the comments, and who reacted or voted, of
+ * every post only their grant shows them.
+ */
+export async function setReadGrantComments(userId: string, seesComments: boolean): Promise<void> {
+  await request('/api/associations/read-grants/comments', {
+    method: 'PUT',
+    body: JSON.stringify({ userId, seesComments }),
+  });
 }
 
 /** Grants or revokes one (account x campus x formation) cell. Idempotent; global admins only. */
@@ -1643,6 +1863,12 @@ export interface CotisationOptions {
    * add needs, because a form that grants a cotisation on payment does the same thing.
    */
   mayGrant: boolean;
+  /**
+   * CAPABILITY: this social-service derives a new tier's key from its label (`deriveVariantKey`).
+   * Absent on an older server, which would strip the flag and create a BASE tier instead - so the
+   * admin screen offers tier creation only when this is `true` (`mayCreateTier`).
+   */
+  tierKeyFromLabel?: boolean;
 }
 
 /**
@@ -1745,6 +1971,33 @@ export interface AssociationProduct {
    */
   viewerActiveTier?: string | null;
   /**
+   * Where this cotisation tier stands against the tier the viewer holds ACTIVE for the same
+   * association: `none` (not a tier, or nothing held - buyable), `higher` (a rise - buyable),
+   * `held` (that very tier - refused, `PRODUCT_ALREADY_PURCHASED`), `lower` (same or lower product
+   * price - refused, `TIER_NOT_A_RISE`), `unranked` (a tier is held and one of the two has no fixed
+   * price - refused, `TIER_NOT_RANKABLE`). Set by the shop and per-association listings.
+   */
+  viewerTierRelation?: 'none' | 'higher' | 'held' | 'lower' | 'unranked';
+  /**
+   * Cents a checkout would charge THIS viewer now - the admin's preferential price
+   * (`amountCentsMember`) when the viewer qualifies, else the full price, or the grid's cell. Null
+   * when the product is not buyable at a price the server can name (a refused tier, a grid that does
+   * not sell this combination, a free amount). Display it; never recompute money client-side.
+   * Purchase caps and tag gates are NOT folded in. Set by the shop and per-association listings.
+   */
+  viewerDueCents?: number | null;
+  /**
+   * A membership product whose association's cotisations are disabled: the checkout refuses it
+   * (`COTISATION_DISABLED`). Set by the shop and per-association listings.
+   */
+  cotisationDisabled?: boolean;
+  /**
+   * The `variantKey` of the tier `memberPriceTag` names, as the server reads the tag - what a
+   * preferential price is worded "for holders of". Absent when there is no tag, when it names no
+   * tier, or when the server did not read the viewer's tiers. Never re-derived from the tag here.
+   */
+  memberPriceTierKey?: string | null;
+  /**
    * The pricing grid: the criteria this product discriminates on, and one price per combination.
    * Null means one price for everybody - `amountCents`, plus the `memberPriceTag` pair.
    *
@@ -1818,6 +2071,8 @@ export interface AssociationPurchase {
   source: 'form' | 'product';
   productId: string | null;
   formId: string | null;
+  /** The form answer this payment paid for; null for a boutique purchase (and older servers). */
+  submissionId?: string | null;
   productName: string;
   amountCents: number;
   /** `stripe` is the historic value of rows written before the processor left: it means online. */
@@ -1825,7 +2080,46 @@ export interface AssociationPurchase {
   paidAt: string;
   firstName: string | null;
   lastName: string | null;
+  /**
+   * Money received for something NOT delivered: a boutique tier the settlement did not grant (no
+   * longer a rise over the tier held), a product deleted or a buyer erased before the payment
+   * landed, or a paid form that grants a tier and did not grant it. A refund or a manual grant is
+   * owed.
+   */
+  notGranted?: boolean;
+  /**
+   * How a `notGranted` payment was closed by a manager (`closePaidNotGranted`): `refunded` or
+   * `granted`, null while nobody has recorded it. The `notGranted` mark stays either way.
+   */
+  closedOutcome?: PurchaseClosingOutcome | null;
+  /** When that outcome was recorded, by the server's clock; null while open. */
+  closedAt?: string | null;
+  /**
+   * For an OPEN payment not granted, why the server would refuse to close it as granted (only a
+   * refund is left); null when it may be granted.
+   */
+  grantRefusal?: ClosingGrantRefusal | null;
+  /** For an OPEN payment not granted, the tier its buyer holds now; null when none. */
+  buyerTier?: string | null;
+  /**
+   * For an OPEN payment not granted, true when the tier it bought is already held as ITS delivery:
+   * closing it as granted only records that, and grants or replaces nothing.
+   */
+  delivered?: boolean;
 }
+
+/** Why a payment paid for and not granted cannot be closed as granted (social-service's verdict). */
+export type ClosingGrantRefusal =
+  | 'buyer-erased'
+  | 'tier-gone'
+  | 'year-over'
+  | 'target-held'
+  | 'not-a-rise'
+  | 'not-comparable'
+  | 'held-tier-deleted';
+
+/** The two outcomes that close a payment paid for and not granted. */
+export type PurchaseClosingOutcome = 'refunded' | 'granted';
 
 /** @deprecated Use AssociationPurchase - kept for per-product endpoint compatibility. */
 export type ProductPurchase = AssociationPurchase;
@@ -1844,6 +2138,11 @@ export interface CreateProductPayload {
   amountCentsMember?: number;
   /** Named cotisation tier (e.g. "avec-alcool"); only meaningful for `type: 'membership'`. */
   variantKey?: string;
+  /**
+   * Membership only: let the server derive a new named tier's `variantKey` from `name`. The admin
+   * screen sends this and never a key - the key is a technical id no person types (cotisations.md).
+   */
+  deriveVariantKey?: boolean;
   /** Ordinal rank of this tier for future "tier >= N" checks (WP-COT-8, unused today). */
   variantLevel?: number;
   /** Sibling tier's granted tag that qualifies the buyer for `amountCentsMember` (tier upgrade pricing). */
@@ -1925,8 +2224,35 @@ export async function listAssociationProductsForManage(
 
 export interface GrantProductPurchasePayload {
   userId: string;
-  /** Amount in cents; required when the product has no fixed price. */
+  /**
+   * Amount in cents; required when the product has no price for this beneficiary (a free amount,
+   * a grid that closes their combination). Otherwise it overrides the quoted default.
+   */
   amountCents?: number;
+}
+
+/**
+ * What a cash sale records when the cashier types no amount: `priced` (the beneficiary's grid cell
+ * or fixed price, `preferential` when it is the member price), `typed` (a free amount: one must be
+ * typed), `not-sold` (the grid closes this beneficiary's combination: one must be typed).
+ */
+export type CashSaleQuote =
+  | { kind: 'priced'; amountCents: number; preferential: boolean }
+  | { kind: 'typed' }
+  | { kind: 'not-sold' };
+
+/**
+ * The amount a cash sale of `productId` to `userId` records when no amount is typed - the same
+ * server computation the sale itself runs. Requires MANAGE_PRODUCTS.
+ */
+export async function quoteCashSale(
+  associationId: string,
+  productId: string,
+  userId: string
+): Promise<CashSaleQuote> {
+  return request<CashSaleQuote>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/grant-quote?userId=${encodeURIComponent(userId)}`
+  );
 }
 
 /**
@@ -1945,6 +2271,26 @@ export async function grantProductPurchase(
   return row;
 }
 
+/**
+ * Records how a payment paid for and NOT granted was settled - `refunded`, or `granted` (the server
+ * then grants the tier by hand) - and answers the updated purchases row. Once per payment: a second
+ * call is refused `PURCHASE_ALREADY_CLOSED`. A `granted` closing carries what the list showed
+ * (`expectDelivered`, the row's `delivered`), and the server refuses `PURCHASE_CLOSING_CHANGED` when
+ * that is no longer so - "nothing is granted" never grants. Requires MANAGE_PRODUCTS.
+ */
+export async function closePaidNotGranted(
+  associationId: string,
+  purchaseId: string,
+  outcome: PurchaseClosingOutcome,
+  expectDelivered: boolean
+): Promise<AssociationPurchase> {
+  const body = outcome === 'granted' ? { outcome, expectDelivered } : { outcome };
+  return request<AssociationPurchase>(
+    `/api/associations/${encodeURIComponent(associationId)}/purchases/${encodeURIComponent(purchaseId)}/close`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
+}
+
 /** Lists all paid purchases for an association (requires MANAGE_PRODUCTS). */
 export async function listAssociationPurchases(
   associationId: string
@@ -1961,6 +2307,139 @@ export async function listProductPurchases(
 ): Promise<AssociationPurchase[]> {
   return request<AssociationPurchase[]>(
     `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/purchases`
+  );
+}
+
+// ── Lydia refunds (MANAGE_PAYOUT_ACCOUNT, enrolment chantier lot 4) ──────────
+
+/**
+ * What a TOTAL refund of a payment withdraws, so the confirmation names it (`refund-codes.ts`
+ * server side): a boutique membership's tier, a form answer's seat (and the tier it granted), a shop
+ * purchase, a Cercle top-up (the money only, never the balance), or nothing when the product is gone.
+ */
+export type RefundWithdrawal =
+  | 'membership'
+  | 'form'
+  | 'form-membership'
+  | 'shop'
+  | 'topup'
+  | 'unidentified';
+
+/** Why a payment cannot be refunded from Canari (`NotRefundableReason` server side). */
+export type RefundRefusalReason = 'not-online' | 'not-received' | 'untraceable' | 'other-business';
+
+/**
+ * Where a refund stands: `refunded`; `refused` (nothing refunded); `in-progress` (Lydia is being
+ * asked right now); `unconfirmed` (Lydia never answered - a manager checks it); `unrecorded` (Lydia
+ * confirmed, Canari failed to save it - a manager saves it).
+ */
+export type RefundState = 'refunded' | 'refused' | 'in-progress' | 'unconfirmed' | 'unrecorded';
+
+/** A refund as the purchases screen reads it. */
+export interface AssociationRefund {
+  id: string;
+  purchaseRecordId: string;
+  kind: 'total' | 'partial';
+  amountCents: number;
+  reason: string;
+  /** Where it stands (`RefundState`). */
+  state: RefundState;
+  /** The typed code of a refusal, worded by `refundRefusalMessage`; null otherwise. */
+  refusal: string | null;
+  /**
+   * Lydia's answer when it came AFTER the refund was settled and contradicts it (`refunded` on one
+   * settled as not refunded, `refused` on one settled as refunded); null otherwise.
+   */
+  lateAnswer: 'refunded' | 'refused' | null;
+  sideEffect: string | null;
+  requestedAt: string;
+  answeredAt: string | null;
+  resolvedAt: string | null;
+}
+
+/** Per payment of the purchases list: whether a refund is offered, and where it stands. */
+export interface RefundStanding {
+  purchaseRecordId: string;
+  refundable: boolean;
+  reason: RefundRefusalReason | null;
+  withdrawal: RefundWithdrawal | null;
+  paidCents: number;
+  refundedCents: number;
+  /** The refund not settled yet, which blocks any new one, and where it stands; null when none. */
+  openRefund: { id: string; state: 'in-progress' | 'unconfirmed' | 'unrecorded' } | null;
+}
+
+/** What a refund asks: the dialog draws `idempotencyKey` once, so a resent click refunds nothing twice. */
+export interface RefundRequest {
+  kind: 'total' | 'partial';
+  amountCents?: number;
+  reason: string;
+  idempotencyKey: string;
+}
+
+/** The refund standing of every listed payment, and the refunds made (MANAGE_PAYOUT_ACCOUNT). */
+export async function listAssociationRefunds(
+  associationId: string
+): Promise<{ standings: RefundStanding[]; refunds: AssociationRefund[] }> {
+  return request(`/api/associations/${encodeURIComponent(associationId)}/refunds`);
+}
+
+/**
+ * Refunds a payment through Lydia. Answers the refund - read its `state`: a resent request answers
+ * the first one whatever came of it, and a refund Lydia confirmed but Canari failed to save is
+ * `unrecorded`. Throws a {@link SocialApiError} otherwise - a 504 `LYDIA_REFUND_UNCONFIRMED` when
+ * Lydia did not answer.
+ */
+export async function refundAssociationPurchase(
+  associationId: string,
+  purchaseId: string,
+  body: RefundRequest
+): Promise<AssociationRefund> {
+  return request<AssociationRefund>(
+    `/api/associations/${encodeURIComponent(associationId)}/purchases/${encodeURIComponent(purchaseId)}/refunds`,
+    { method: 'POST', body: JSON.stringify(body) }
+  );
+}
+
+/**
+ * Settles a refund Lydia never confirmed, from what the manager read in Lydia's own history:
+ * `refunded` true when the refund shows there.
+ */
+export async function resolveAssociationRefund(
+  associationId: string,
+  refundId: string,
+  refunded: boolean
+): Promise<AssociationRefund> {
+  return request<AssociationRefund>(
+    `/api/associations/${encodeURIComponent(associationId)}/refunds/${encodeURIComponent(refundId)}/resolve`,
+    { method: 'POST', body: JSON.stringify({ refunded }) }
+  );
+}
+
+/** One line of the statement: a payment received, or a confirmed refund (a negative amount). */
+export interface StatementLine {
+  /** `YYYY-MM-DD`. */
+  date: string;
+  operation: 'payment' | 'refund-total' | 'refund-partial';
+  item: string;
+  method: 'cash' | 'online';
+  amountCents: number;
+  reason: string | null;
+}
+
+/** The association's statement, as data: the client writes the file in its own words. */
+export interface AssociationStatement {
+  lines: StatementLine[];
+  receivedCents: number;
+  refundedCents: number;
+}
+
+/** The association's payments and confirmed refunds, with the totals (MANAGE_PAYOUT_ACCOUNT). */
+export async function getAssociationStatement(
+  associationId: string
+): Promise<AssociationStatement> {
+  return request<AssociationStatement>(
+    `/api/associations/${encodeURIComponent(associationId)}/statement`
   );
 }
 
@@ -2254,6 +2733,8 @@ export interface AssociationForm {
   basePrice: number;
   currency: string;
   allowCashPayment: boolean;
+  /** `draft` until published; absent from a server before drafts (then published). */
+  status?: 'draft' | 'published';
   createdAt: string;
 }
 
@@ -2263,9 +2744,9 @@ export async function listAssociationForms(associationId: string): Promise<Assoc
 }
 
 /**
- * True when the association's Lydia account is ready. `null` is a provider not yet known, and
- * `disabled` is payments switched off platform-wide: neither is ever ready. The historic
- * `stripeOnboardingComplete` flag is no longer even on the type: the server stopped mapping it.
+ * True when the association's OWN Lydia account is ready - what may RECEIVE a delegation. `null`
+ * is a provider not yet known, and `disabled` is payments switched off platform-wide: neither is
+ * ever ready. Whether an entity can TAKE a payment is `canTakePayments`, which honours delegation.
  */
 export function isPaymentAccountReady(
   asso: Pick<Association, 'lydiaOnboardingComplete'>,
@@ -2275,14 +2756,32 @@ export function isPaymentAccountReady(
 }
 
 /**
- * True when an association may be selected as recipient for paid forms.
- * Requires onboarding complete at the ACTIVE provider (not merely a linked account id).
+ * A row returned by a write (`PATCH :id`) does not carry the derived `paymentsReady`; an edit of the
+ * profile does not change it, so the previous resolution is kept rather than dropped to "not ready".
  */
+export function keepPaymentsReady(updated: Association, previous: Association | null): Association {
+  return { ...updated, paymentsReady: updated.paymentsReady ?? previous?.paymentsReady };
+}
+
+/**
+ * True when an entity can take a payment NOW - its own Lydia Business, or the one of the
+ * association it delegates to (APPROVED): the server's resolved `paymentsReady`, under the active
+ * provider (G4, owner 2026-11-02). A delegating association or list used to be told "payments not
+ * configured" here while the server accepted, because this read the row's OWN onboarding flag.
+ */
+export function canTakePayments(
+  asso: Pick<Association, 'paymentsReady'>,
+  provider: PaymentProviderId | null
+): boolean {
+  return provider === 'lydia' && asso.paymentsReady === true;
+}
+
+/** True when an association may be selected as recipient for paid forms (`canTakePayments`). */
 export function canAssociationReceiveFormPayments(
   asso: Association,
   provider: PaymentProviderId | null
 ): boolean {
-  return isPaymentAccountReady(asso, provider);
+  return canTakePayments(asso, provider);
 }
 
 /** An association's Lydia Business as its MANAGE_PAYOUT_ACCOUNT holders see it. */
@@ -2292,6 +2791,66 @@ export interface AssociationPayoutAccount {
   /** Handed out once by `business/create` and never re-issuable - persisted so it survives a reload. */
   lydiaDashboardUrl: string | null;
   lydiaOnboardingComplete: boolean;
+  /** The Responsable (a Lydia cashier, `confirmed` or not); `phoneEnd` is the ONLY phone data returned. */
+  responsable?: LydiaResponsable | null;
+  /** The last readiness change and its cause; null when none was ever recorded. */
+  readiness?: { cause: LydiaReadinessCause; at: string } | null;
+  /** ISO instant a `business/create` was started and its outcome is not known or cleared yet. */
+  enrolmentInFlightSince?: string | null;
+  /** ISO instant a Responsable step was claimed and its outcome is not known or cleared yet. */
+  responsableInFlightSince?: string | null;
+  /**
+   * The live cashiers of the CURRENT Business (enrolment lot 3), the Responsable first. Absent on a
+   * server older than lot 3: read as none.
+   */
+  cashiers?: LydiaCashier[];
+}
+
+/** A cashier role Canari gives at Lydia; `responsable` holds every right and is set by the enrolment. */
+export type LydiaCashierRole = 'responsable' | 'tresorier' | 'vendeur';
+
+/** The two roles a payout manager may add or switch between (lot 3). */
+export type LydiaAddableCashierRole = Exclude<LydiaCashierRole, 'responsable'>;
+
+/**
+ * Where a cashier stands at Lydia: `confirmed` (Lydia showed exactly the role's rights),
+ * `unconfirmed` (Lydia answered the add but did not show them), `revoke-unconfirmed` (a removal
+ * was asked and Lydia did not show it done: the person may still hold rights).
+ */
+export type LydiaCashierState = 'confirmed' | 'unconfirmed' | 'revoke-unconfirmed';
+
+/** One live Lydia cashier of an association, as its payout managers see it: 2 phone digits only. */
+export interface LydiaCashier {
+  id: string;
+  userId: string;
+  name: string;
+  role: LydiaCashierRole;
+  phoneEnd: string;
+  state: LydiaCashierState;
+  /** An older number of this person (a Responsable number change) whose removal is not confirmed. */
+  previousPhoneEnd: string | null;
+  /** ISO instant the cashier was added. */
+  addedAt: string;
+  addedByName: string;
+}
+
+/** The cause of the last readiness change of a Lydia Business. */
+export type LydiaReadinessCause =
+  | 'webhook-validated'
+  | 'admin'
+  | 'request-refused'
+  | 'request-blocked';
+
+/** The person recorded as the Lydia cashier of an association: the last 2 phone digits only. */
+export interface LydiaResponsable {
+  userId: string;
+  name: string;
+  phoneEnd: string;
+  /**
+   * False when Lydia answered the add but did not confirm every right: Lydia holds the cashier, the
+   * same-number resend confirms it. Absent reads as confirmed.
+   */
+  confirmed?: boolean;
 }
 
 /**
@@ -2303,31 +2862,6 @@ export async function getAssociationPayoutAccount(
 ): Promise<AssociationPayoutAccount> {
   return request<AssociationPayoutAccount>(
     `/api/associations/${encodeURIComponent(associationId)}/payout-account`
-  );
-}
-
-/**
- * Whether the association's Lydia Business private token is stored (MANAGE_PAYOUT_ACCOUNT). The key
- * is WRITE-ONLY: this is the one thing a browser ever learns about it. Without one, Lydia's
- * callbacks are refused and a payment is confirmed only when the payer returns to the app.
- */
-export async function getLydiaBusinessKeyStatus(associationId: string): Promise<{ set: boolean }> {
-  return request<{ set: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`
-  );
-}
-
-/**
- * Stores the association's Lydia Business private token (MANAGE_PAYOUT_ACCOUNT), encrypted on the
- * server; replaces any key already stored. Answers `{ set: true }` and never the value.
- */
-export async function setLydiaBusinessKey(
-  associationId: string,
-  businessPrivateToken: string
-): Promise<{ set: boolean }> {
-  return request<{ set: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/lydia-business-key`,
-    { method: 'PUT', body: JSON.stringify({ businessPrivateToken }) }
   );
 }
 
@@ -2367,6 +2901,98 @@ export async function validateLydiaOnboarding(associationId: string): Promise<vo
   }
 }
 
+/**
+ * Adds (`add`, also "resend the SMS") or records (`record`: an already-linked Business, read-only at
+ * Lydia, no SMS) the Responsable of the association's Lydia Business. A refusal is a
+ * {@link SocialApiError} typed at the throw: its `code` (`lydiaResponsableRefusal.ts`) is what a
+ * screen reads. `phone` is E.164.
+ */
+export async function setLydiaResponsable(
+  associationId: string,
+  input: { userId: string; phone: string; mode: 'add' | 'record' }
+): Promise<LydiaResponsable> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-responsable/${encodeURIComponent(associationId)}`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  const body = (await readApiJson(res, 'POST /api/payments/lydia-responsable')) as {
+    responsable: LydiaResponsable;
+  };
+  return body.responsable;
+}
+
+/**
+ * Adds a member as a Lydia cashier with a role (lot 3, MANAGE_PAYOUT_ACCOUNT; Lydia sends its SMS).
+ * `phone` is E.164. A refusal is a {@link SocialApiError} typed at the throw
+ * (`lydiaCashierRefusal.ts`); the server refuses every add while its gate is off.
+ */
+export async function addLydiaCashier(
+  associationId: string,
+  input: { userId: string; phone: string; role: LydiaAddableCashierRole }
+): Promise<LydiaCashier> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-cashiers/${encodeURIComponent(associationId)}`,
+    { method: 'POST', body: JSON.stringify(input) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  const body = (await readApiJson(res, 'POST /api/payments/lydia-cashiers')) as {
+    cashier: LydiaCashier;
+  };
+  return body.cashier;
+}
+
+/** Switches a cashier between Tresorier and Vendeur (lot 3, gated like the add). */
+export async function changeLydiaCashierRole(
+  associationId: string,
+  cashierId: string,
+  role: LydiaAddableCashierRole
+): Promise<LydiaCashier> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-cashiers/${encodeURIComponent(associationId)}/${encodeURIComponent(cashierId)}/role`,
+    { method: 'POST', body: JSON.stringify({ role }) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+  const body = (await readApiJson(res, 'POST /api/payments/lydia-cashiers/:id/role')) as {
+    cashier: LydiaCashier;
+  };
+  return body.cashier;
+}
+
+/**
+ * Removes a cashier's number at Lydia (lot 3): `current`, or `previous` for the older number a
+ * Responsable number change left behind. Resolves only when Lydia showed the number holds no right;
+ * otherwise a typed {@link SocialApiError} (`LYDIA_CASHIER_REVOKE_UNCONFIRMED`: the row stays).
+ */
+export async function revokeLydiaCashier(
+  associationId: string,
+  cashierId: string,
+  number: 'current' | 'previous'
+): Promise<void> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-cashiers/${encodeURIComponent(associationId)}/${encodeURIComponent(cashierId)}/revoke`,
+    { method: 'POST', body: JSON.stringify({ number }) }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+}
+
+/**
+ * Clears the in-flight enrolment marker (global admin only), after an admin checked with Lydia that
+ * no Business was created - or linked the one that was.
+ */
+export async function clearLydiaEnrolmentInFlight(associationId: string): Promise<void> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/lydia-enrolment-clear/${encodeURIComponent(associationId)}`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw await socialRefusal(res);
+}
+
 // ── Payment provider (WP-LYDIA-1) ───────────────────────────────────────────
 
 /** `disabled` is the platform declaring payments OFF: no provider, nothing is ever ready. */
@@ -2395,7 +3021,18 @@ export interface LydiaBusinessLegalProfile {
   businessPhone: string;
 }
 
-/** Creates a Lydia Business for the association and returns its vendor token + Lydia console URL. */
+/**
+ * Creates a Lydia Business for the association and returns its vendor token + Lydia console URL.
+ * A refusal is a {@link SocialApiError} typed at the throw: its `code` (`lydiaOnboardingRefusal.ts`)
+ * is what a screen reads - the 409 `LYDIA_ACCOUNT_ALREADY_LINKED` of a re-run among them.
+ */
+/**
+ * How long the onboarding waits for its answer. core bounds its whole chain at 55 s and nginx gives
+ * up at 60 s (`LYDIA_ONBOARDING_STEP_TIMEOUT_MS`, core `lydia-payment-provider.ts`), so 75 s is above
+ * both: the screen always receives core's TYPED answer, or nginx's own, before giving up itself.
+ */
+export const LYDIA_ONBOARDING_DEADLINE_MS = 75_000;
+
 export async function startLydiaOnboarding(
   associationId: string,
   legalProfile: LydiaBusinessLegalProfile
@@ -2404,111 +3041,18 @@ export async function startLydiaOnboarding(
   const res = await apiFetch(`${base}/api/payments/onboarding`, {
     method: 'POST',
     body: JSON.stringify({ associationId, legalProfile }),
+    deadlineMs: LYDIA_ONBOARDING_DEADLINE_MS,
   });
+  if (!res.ok) throw await socialRefusal(res);
   // A 2xx that is not the API's JSON throws `NotFromApiError`: it used to read as `{}` and hand back
-  // an onboarding with no url. A refusal's body stays optional - it may carry a message, or nothing.
-  const body = res.ok
-    ? await readApiJson(res, 'POST /api/payments/onboarding')
-    : await res.json().catch(() => ({}));
+  // an onboarding with no url.
+  const body = await readApiJson(res, 'POST /api/payments/onboarding');
   // `createOnboarding` answers an unconfigured provider with 200 { ok: false, message } rather
   // than a thrown status - a plain `!res.ok` check would miss it and hand back a bodyless result.
-  if (!res.ok || (body as { ok?: boolean }).ok === false) {
+  if ((body as { ok?: boolean }).ok === false) {
     throw new Error((body as { message?: string })?.message || `onboarding failed (${res.status})`);
   }
   return body as { url: string; accountId: string };
-}
-
-// ── Association categories (thematic taxonomy) ───────────────────────────────
-
-/** A managed thematic category used to group associations on the poster and directory. */
-export interface AssociationCategory {
-  id: string;
-  /** Human-readable label (e.g. "Cuisine"). */
-  label: string;
-  /** URL-safe unique identifier (e.g. "cuisine"). */
-  slug: string;
-  /** Display position - lower values appear first. */
-  sortOrder: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CreateAssociationCategoryPayload {
-  label: string;
-  slug: string;
-  sortOrder?: number;
-}
-
-export interface UpdateAssociationCategoryPayload {
-  label?: string;
-  sortOrder?: number;
-}
-
-/**
- * The category list, held for five minutes and shared by every caller.
- *
- * It is a handful of labels that only a global admin can change, read by the association profile
- * tab and both carte screens - and the profile tab is inside a tab strip that UNMOUNTS its panel,
- * so every switch back to it re-asked. Same invalidation rule as the directory: the four writes
- * below drop it, the window only bounds a change made elsewhere.
- */
-const categories = new SharedCache<AssociationCategory[]>(5 * 60_000);
-
-/** Lists categories in display order. Public. */
-export async function listAssociationCategories(): Promise<AssociationCategory[]> {
-  return categories.load('all', () =>
-    request<AssociationCategory[]>('/api/associations/categories')
-  );
-}
-
-/** Creates a category. Global admins / BDE super-admins only. */
-export async function createAssociationCategory(
-  payload: CreateAssociationCategoryPayload
-): Promise<AssociationCategory> {
-  const created = await request<AssociationCategory>('/api/associations/categories', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  categories.invalidate();
-  return created;
-}
-
-/** Updates a category's label/order. Global admins / BDE super-admins only. */
-export async function updateAssociationCategory(
-  id: string,
-  payload: UpdateAssociationCategoryPayload
-): Promise<AssociationCategory> {
-  const updated = await request<AssociationCategory>(
-    `/api/associations/categories/${encodeURIComponent(id)}`,
-    { method: 'PATCH', body: JSON.stringify(payload) }
-  );
-  categories.invalidate();
-  return updated;
-}
-
-/** Deletes a category and detaches it from its associations. Global admins / BDE super-admins only. */
-export async function deleteAssociationCategory(id: string): Promise<{ ok: boolean }> {
-  const result = await request<{ ok: boolean }>(
-    `/api/associations/categories/${encodeURIComponent(id)}`,
-    { method: 'DELETE' }
-  );
-  // A deleted category is detached from its associations, so the directory carries it too.
-  categories.invalidate();
-  invalidateAssociationDirectory();
-  return result;
-}
-
-/** Persists a new top-to-bottom category order. Global admins / BDE super-admins only. */
-export async function reorderAssociationCategories(
-  orderedIds: string[]
-): Promise<AssociationCategory[]> {
-  const reordered = await request<AssociationCategory[]>('/api/associations/categories/reorder', {
-    method: 'PATCH',
-    body: JSON.stringify({ orderedIds }),
-  });
-  // The response IS the new list in the new order, so it seeds rather than evicts.
-  categories.put('all', reordered);
-  return reordered;
 }
 
 // ── Poster projects ("Carte de la Vie Asso") ─────────────────────────────────
@@ -2523,6 +3067,11 @@ export interface PosterProject {
   name: string;
   /** Opaque JSON layout - the editor owns this shape. */
   layout: Record<string, unknown>;
+  /**
+   * The space (formation x campus) the map is drawn for; null for a map migration 147 could not
+   * attach, which only the platform admin sees until it is attached.
+   */
+  spaceId: string | null;
   /** ISO timestamp of the last publish to the public showcase; null when this poster is offline. */
   publishedAt: string | null;
   /**
@@ -2535,24 +3084,127 @@ export interface PosterProject {
   updatedAt: string;
 }
 
+/** A space a map can be drawn for: one formation x campus pair. */
+export interface CarteSpace {
+  id: string;
+  formation: string;
+  campus: string;
+}
+
+/** A zone of ONE map (its own taxonomy since migration 147). */
+export interface PosterZone {
+  id: string;
+  posterProjectId: string;
+  label: string;
+  sortOrder: number;
+}
+
+/**
+ * One association as one map has seen it: its switch and its zone. An association of the map's
+ * space with NO entry is new - offered switched off, with a badge.
+ */
+export interface PosterEntry {
+  posterProjectId: string;
+  associationId: string;
+  enabled: boolean;
+  zoneId: string | null;
+}
+
+/** One map as the editor opens it: its space, zones, switches and what its space offers today. */
+export interface PosterProjectDetail extends PosterProject {
+  space: CarteSpace | null;
+  zones: PosterZone[];
+  entries: PosterEntry[];
+  /** Every association of the map's space today; one with no entry is new. */
+  spaceAssociationIds: string[];
+}
+
 export interface CreatePosterProjectPayload {
   name: string;
+  /** The space the map is drawn for - one the caller manages. */
+  spaceId: string;
   layout?: Record<string, unknown>;
 }
 
 export interface UpdatePosterProjectPayload {
   name?: string;
   layout?: Record<string, unknown>;
+  /** Attaches a map that has no space; an attached map never moves. */
+  spaceId?: string;
 }
 
-/** Lists all poster projects, most-recently-updated first. Admins / BDE super-admins only. */
+/** The refusal codes of the carte routes the editor names to its author. */
+export const CARTE_REFUSAL = {
+  UNIT_OUTSIDE_MAP: 'CARTE_UNIT_OUTSIDE_MAP',
+  NOT_ATTACHED: 'CARTE_NOT_ATTACHED',
+} as const;
+
+/**
+ * The maps the caller manages (those of the spaces its BDE governs; every map for the platform
+ * admin), most-recently-updated first.
+ */
 export async function listPosterProjects(): Promise<PosterProject[]> {
   return request<PosterProject[]>('/api/associations/poster');
 }
 
-/** Loads one poster project (full layout). Admins / BDE super-admins only. */
-export async function getPosterProject(id: string): Promise<PosterProject> {
-  return request<PosterProject>(`/api/associations/poster/${encodeURIComponent(id)}`);
+/** The spaces the caller may create a map for. */
+export async function listCarteSpaces(): Promise<CarteSpace[]> {
+  return request<CarteSpace[]>('/api/associations/poster/spaces');
+}
+
+/** Loads one map with its space, zones and switches. 404 for a map the caller does not manage. */
+export async function getPosterProject(id: string): Promise<PosterProjectDetail> {
+  return request<PosterProjectDetail>(`/api/associations/poster/${encodeURIComponent(id)}`);
+}
+
+/** Adds a zone to a map. */
+export async function createPosterZone(projectId: string, label: string): Promise<PosterZone> {
+  return request<PosterZone>(`/api/associations/poster/${encodeURIComponent(projectId)}/zones`, {
+    method: 'POST',
+    body: JSON.stringify({ label }),
+  });
+}
+
+/** Renames a zone of a map. */
+export async function renamePosterZone(
+  projectId: string,
+  zoneId: string,
+  label: string
+): Promise<PosterZone> {
+  return request<PosterZone>(
+    `/api/associations/poster/${encodeURIComponent(projectId)}/zones/${encodeURIComponent(zoneId)}`,
+    { method: 'PATCH', body: JSON.stringify({ label }) }
+  );
+}
+
+/** Deletes a zone of a map; its associations stay on the map, unzoned. */
+export async function deletePosterZone(projectId: string, zoneId: string): Promise<void> {
+  await request<unknown>(
+    `/api/associations/poster/${encodeURIComponent(projectId)}/zones/${encodeURIComponent(zoneId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+/** Persists the order of a map's zones (every zone, exactly once). */
+export async function reorderPosterZones(
+  projectId: string,
+  orderedIds: string[]
+): Promise<PosterZone[]> {
+  return request<PosterZone[]>(
+    `/api/associations/poster/${encodeURIComponent(projectId)}/zones/order`,
+    { method: 'PUT', body: JSON.stringify({ orderedIds }) }
+  );
+}
+
+/** Writes the switch and/or zone of associations on a map; an absent field is left as it is. */
+export async function setPosterEntries(
+  projectId: string,
+  entries: { associationId: string; enabled?: boolean; zoneId?: string | null }[]
+): Promise<PosterEntry[]> {
+  return request<PosterEntry[]>(
+    `/api/associations/poster/${encodeURIComponent(projectId)}/entries`,
+    { method: 'PUT', body: JSON.stringify({ entries }) }
+  );
 }
 
 /** Creates a poster project owned by the caller. Admins / BDE super-admins only. */
@@ -2584,8 +3236,8 @@ export async function deletePosterProject(id: string): Promise<{ ok: boolean }> 
 }
 
 /**
- * Publishes a poster to the public showcase (portail-etu), replacing whatever was live - at most
- * one map is published at a time. The payload is the normalized geometry document built by
+ * Publishes a poster to the public showcase (portail-etu), replacing the live map of ITS SPACE -
+ * at most one map is live per space. The payload is the normalized geometry document built by
  * {@link buildPublishedCarte}, not the editor layout. Admins / BDE super-admins only.
  *
  * @param fingerprint - Of that exact document, so the editor can later tell whether the live map is
@@ -2810,17 +3462,24 @@ export async function deletePartnershipIcon(
 /**
  * Absolute `.ics` URL of ONE validated event, for a phone to open in the system browser.
  *
- * Narrow window around the event's own start (the feed filters by overlap) plus `eventId`.
- * Returns an empty string for an unreadable start.
+ * Narrow window around the event's own start (the feed filters by overlap) plus `eventId` and the
+ * event's own signature, `icsSig`, served with it (2026-11-02): the server refuses the link
+ * unsigned. Returns an empty string - no link at all - for an unreadable start or a missing
+ * signature, never an unsigned link that would only be refused.
  */
-export function eventIcsAbsoluteUrl(eventId: string, startsAt: string | Date): string {
+export function eventIcsAbsoluteUrl(
+  eventId: string,
+  startsAt: string | Date,
+  icsSig: string | undefined
+): string {
   const start = new Date(startsAt);
-  if (Number.isNaN(start.getTime())) return '';
+  if (Number.isNaN(start.getTime()) || !icsSig?.trim()) return '';
   const DAY_MS = 24 * 60 * 60 * 1000;
   return aggregatedCalendarFeedIcsAbsoluteUrl({
     from: new Date(start.getTime() - DAY_MS).toISOString(),
     to: new Date(start.getTime() + DAY_MS).toISOString(),
     eventId,
+    sig: icsSig,
   });
 }
 
@@ -2836,15 +3495,19 @@ export interface SpaceRow {
   /** How many associations' audience rules reach this space. */
 }
 
-/** One audience rule of one association. */
-export interface AssociationRuleRow extends AudienceRule {
-  associationId: string;
-}
-
 /** One audience rule; `null` means "any" (every formation, or every campus). */
 export interface AudienceRule {
   formation: Formation | null;
   campus: Campus | null;
+}
+
+/**
+ * A rule as the server hands it to its reader: `editable` is false for a BDE star when the rule
+ * exceeds the spaces it governs ("Lire tout, modifier dans ses espaces", owner 2026-11-03). The
+ * editor shows such a rule read-only and sends it back unchanged.
+ */
+export interface AudienceRuleView extends AudienceRule {
+  editable: boolean;
 }
 
 /** Lists every formation x campus space with its BDE. Global admins only. */
@@ -2852,36 +3515,178 @@ export function listSpaces(): Promise<SpaceRow[]> {
   return request<SpaceRow[]>('/api/associations/spaces');
 }
 
-/** The audience rules of EVERY association, in one call: the admin grid draws itself from them. */
-export function listAllAudiences(): Promise<AssociationRuleRow[]> {
-  return request<AssociationRuleRow[]>('/api/associations/spaces/audiences');
-}
-
 /**
  * The audience rules of ONE association: a global admin's, or a BDE star's for an entity whose
  * rules lie within the campuses it governs (the server refuses the rest with a typed code).
  */
-export function getAssociationAudiences(associationId: string): Promise<AudienceRule[]> {
-  return request<AudienceRule[]>(
+export function getAssociationAudiences(associationId: string): Promise<AudienceRuleView[]> {
+  return request<AudienceRuleView[]>(
     `/api/associations/${encodeURIComponent(associationId)}/audiences`
   );
 }
 
-/** Designates, or clears with `null`, the BDE of a space (D22). */
-export function setSpaceBde(spaceId: string, associationId: string | null): Promise<void> {
-  return request<void>(`/api/associations/spaces/${encodeURIComponent(spaceId)}/bde`, {
+/**
+ * Designates, or clears with `null`, the governor of a space (D22): a BDE association or an
+ * institution (D3), never a list (`SPACE_GOVERNOR_TYPE`) nor an association that has a parent
+ * (`DEPENDENCY_CHILD_IS_A_BDE`). Since WP-D1 it writes NO audience rule (reform 2.5): who the
+ * governor addresses stays what its own rules say. Drops the held directory, whose BDE marks read it.
+ */
+export async function setSpaceBde(spaceId: string, associationId: string | null): Promise<void> {
+  await request<void>(`/api/associations/spaces/${encodeURIComponent(spaceId)}/bde`, {
     method: 'PUT',
     body: JSON.stringify({ associationId }),
   });
+  invalidateAssociationDirectory();
 }
 
-/** Replaces the audience rules of an association; at least one rule is required. */
-export function setAssociationAudiences(
+/**
+ * Replaces the audience rules of an association; at least one rule is required. Drops the held
+ * directory: the rules ARE what the directory (D37) and its map filter are computed from.
+ */
+export async function setAssociationAudiences(
   associationId: string,
   rules: AudienceRule[]
-): Promise<AudienceRule[]> {
-  return request<AudienceRule[]>(
+): Promise<AudienceRuleView[]> {
+  // The server answers in the read's shape (`editable` per rule), so a caller renders the write's
+  // own result and never needs a second read that could fail after the write has landed.
+  const saved = await request<AudienceRuleView[]>(
     `/api/associations/${encodeURIComponent(associationId)}/audiences`,
     { method: 'PUT', body: JSON.stringify({ rules }) }
   );
+  invalidateAssociationDirectory();
+  return saved;
+}
+
+// ── The dependency axis (`/admin/spaces`, reform 2.2 and 2.7, WP-D1) ─────────────────────────────
+
+/**
+ * Why an entity's dependency does not fit its audience (reform 2.5), computed by the server
+ * (`spaces/dependency-rules.ts`). Shown, never corrected: a fix is an admin's choice.
+ */
+export type DependencyMismatch =
+  | 'parent_missing'
+  | 'parent_governs_nothing'
+  | 'reaches_outside_parent'
+  | 'parent_governs_none_of_audience';
+
+/** One entity of the Dependencies panel: its governing parent, its label and its mismatches. */
+export interface DependencyEntity {
+  id: string;
+  name: string;
+  slug: string;
+  type: 'association' | 'list' | 'institution';
+  archived: boolean;
+  parentAssociationId: string | null;
+  displayParentAssociationId: string | null;
+  /** Governs at least one space: a BDE when of type `association`. */
+  governs: boolean;
+  mismatches: DependencyMismatch[];
+}
+
+/** Every entity with its dependency (the Dependencies panel). Platform admins only. */
+export function listDependencies(): Promise<DependencyEntity[]> {
+  return request<DependencyEntity[]>('/api/associations/spaces/dependencies');
+}
+
+/**
+ * Sets the governing parent of an association or a list, and its display label when given
+ * (`undefined` keeps the stored one). Platform admins only, journaled by the server; a refusal is a
+ * typed 409 read by {@link SocialApiError.code} (`dependencyRefusal.ts`). Drops the held directory,
+ * whose parent names read it.
+ */
+export async function setDependency(
+  associationId: string,
+  parentAssociationId: string | null,
+  displayParentAssociationId?: string | null
+): Promise<void> {
+  await request<void>(
+    `/api/associations/spaces/dependencies/${encodeURIComponent(associationId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(
+        displayParentAssociationId === undefined
+          ? { parentAssociationId }
+          : { parentAssociationId, displayParentAssociationId }
+      ),
+    }
+  );
+  invalidateAssociationDirectory();
+}
+
+// ── The platform admin's catalogue and create form (`/admin/spaces`, owner 2026-11-02) ──────────
+
+/** One entity of the admin catalogue: every field of the directory, plus its audience rules. */
+export interface AdminCatalogueRow extends Association {
+  audiences: AudienceRule[];
+}
+
+/** One keyset page; `next` is the opaque cursor of the following page, `null` on the last. */
+export interface AdminCataloguePage {
+  rows: AdminCatalogueRow[];
+  next: string | null;
+}
+
+/**
+ * The `code` of a create whose first admin names no account (social-service
+ * `ADMIN_ASSOCIATION_ERROR.FIRST_ADMIN_UNKNOWN`). Read from `SocialApiError.code`.
+ */
+export const ADMIN_ASSOCIATION_FIRST_ADMIN_UNKNOWN = 'ADMIN_ASSOCIATION_FIRST_ADMIN_UNKNOWN';
+
+/**
+ * The ONE refusal of the institution rule (owner, 2026-11-02): an institution's members are the
+ * platform admin's alone, so a member write on one by anyone else (403) and a write handing one of
+ * its members `MANAGE_MEMBERS` (400, the create form's first admin included) carry this `code`.
+ */
+export const ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY =
+  'ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY';
+
+/**
+ * One page of one kind of the platform admin's catalogue - every entity, member or not, never the
+ * reader's directory. Platform admin only; the server pages by `(name, id)`.
+ */
+export function listAdminCatalogue(
+  type: Association['type'],
+  opts: { q?: string; after?: string | null; limit?: number } = {}
+): Promise<AdminCataloguePage> {
+  const params = new URLSearchParams({ type });
+  if (opts.q?.trim()) params.set('q', opts.q.trim());
+  if (opts.after) params.set('after', opts.after);
+  if (opts.limit) params.set('limit', String(opts.limit));
+  return request<AdminCataloguePage>(`/api/associations/admin/catalogue?${params}`);
+}
+
+/**
+ * The slug the server would derive for `name` NOW - the same candidates and the same collision
+ * checks as the create, read from the server so the preview never re-implements them. `null`
+ * when no candidate is free. A preview: the create stays the authority.
+ */
+export async function previewAdminSlug(name: string): Promise<string | null> {
+  const params = new URLSearchParams({ name });
+  return (await request<{ slug: string | null }>(`/api/associations/admin/slug-preview?${params}`))
+    .slug;
+}
+
+/** The admin create form: exactly a name, a kind, its spaces and an optional first admin. */
+export interface AdminCreateAssociationPayload {
+  name: string;
+  type: Association['type'];
+  /** The spaces it reaches; empty reaches nobody. */
+  audiences: AudienceRule[];
+  /**
+   * Absent: the entity starts with no member at all. No role: a title is written by a person on
+   * the members tab, never a label this code would store as data.
+   */
+  firstAdmin?: { userId: string; permissions: number };
+}
+
+/** Creates an entity placed in its spaces, through the server's one creation path. */
+export async function adminCreateAssociation(
+  payload: AdminCreateAssociationPayload
+): Promise<Association> {
+  const created = await request<Association>('/api/associations/admin', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  invalidateAssociationDirectory();
+  return created;
 }

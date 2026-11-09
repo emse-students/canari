@@ -48,7 +48,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
                     CanariFirebaseMessagingService.ACTION_MARK_READ ->
                         handleMarkRead(appContext, intent, groupId)
                     CanariFirebaseMessagingService.ACTION_CALL_DECLINE ->
-                        handleCallDecline(appContext, intent)
+                        handleCallDecline(appContext, intent, groupId)
                     else -> Log.w(TAG, "onReceive: unknown action ${intent.action}")
                 }
             } catch (e: Exception) {
@@ -76,6 +76,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
      */
     private fun handleReply(context: Context, intent: Intent, groupId: String) {
         val notifiedAt = intent.getLongExtra(CanariFirebaseMessagingService.EXTRA_SENT_AT, 0L)
+        val notifiedServerAt = intent.getLongExtra(CanariFirebaseMessagingService.EXTRA_SERVER_AT, 0L)
         val text = RemoteInput.getResultsFromIntent(intent)
             ?.getCharSequence(CanariFirebaseMessagingService.KEY_TEXT_REPLY)
             ?.toString()?.trim()
@@ -83,9 +84,10 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             Log.w(TAG, "handleReply: empty text -> abort")
             return
         }
-        val pushCtx = MlsContextLoader.loadPushContext(context)
+        val pushCtxRead = MlsContextLoader.readPushContext(context)
+        val pushCtx = pushCtxRead.context
         if (pushCtx == null) {
-            Log.e(TAG, "handleReply: push_context.json absent -> abort")
+            Log.e(TAG, "handleReply: push_context.json ${pushCtxRead.verdict.describe()} -> abort")
             return
         }
         val service = CanariFirebaseMessagingService()
@@ -105,18 +107,23 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
         )
         Log.d(TAG, "handleReply: queued id=${messageId.take(8)} group=${groupId.take(8)}")
 
-        val remaining = CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx)
+        // The server's receive time of THIS reply, as its POST answered it: the cache row is dated
+        // by it, so the reply sits where the server placed it (chat.md, server order).
+        var receivedAt = 0L
+        val remaining = CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx) { sent ->
+            if (sent.id == messageId) receivedAt = sent.receivedAt
+        }
         if (remaining == 0) {
             // Delivered: record it locally BEFORE clearing the notification, so the one visible
             // trace of the reply is never dropped before the durable one exists.
             CanariFirebaseMessagingService.writeSentMessageToCache(
-                context, groupId, pushCtx.userId, messageId, text, sentAt
+                context, groupId, pushCtx.userId, messageId, text, sentAt, receivedAt
             )
             CanariFirebaseMessagingService.cancelConversationNotification(context, groupId)
             // ANSWERING A CONVERSATION IS READING IT (product decision, 2026-08-31). Only on the
             // delivered branch: a reply still sitting in the outbox has not been seen by anyone,
             // and announcing a read state for it would state something no peer can yet corroborate.
-            sendReadWatermark(context, groupId, notifiedAt)
+            sendReadWatermark(context, groupId, notifiedAt, notifiedServerAt)
         } else {
             // Not delivered: NO cache entry, or the app would show as sent a message that never
             // left. The entry stays in outbox_pending.ndjson - where `adoptOrphanedMirrorEntries`
@@ -132,7 +139,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             //    failed waited for the next LOGIN, where the FCM drain's own failure path has had
             //    a 30s/60s/120s backoff all along.
             Log.w(TAG, "handleReply: reply still queued (remaining=$remaining) - re-posting the notification and scheduling a retry")
-            CanariFirebaseMessagingService.repostReplyPending(context, groupId, text, notifiedAt)
+            CanariFirebaseMessagingService.repostReplyPending(context, groupId, text, notifiedAt, notifiedServerAt)
             OutboxRetryWorker.enqueueIfHealthy(context)
         }
     }
@@ -158,25 +165,34 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
      * states in `watermarkAfterReading` (readState.ts). `at <= 0` therefore means "this notification
      * predates the extra": nothing is sent, rather than something invented.
      *
+     * TWO CLOCKS. `serverAt` is the server's `createdAt` of the same message
+     * ([CanariFirebaseMessagingService.EXTRA_SERVER_AT]), the clock the conversation is ordered and
+     * read on since 2026-10-31. Known, it is what the frame states (`serverAt`, and `at` the same
+     * value, as the app sends it); unknown (0), the frame states `at` alone on the sender's clock.
+     *
      * TWO DESTINATIONS, because the frame only reaches the OTHER side. The outbox entry carries it
      * to peers and to our own other devices; `appendReadWatermark` leaves it where THIS device's
      * app will merge it at the next boot, which is what actually clears the badge on the phone the
      * user is holding.
      */
-    private fun sendReadWatermark(context: Context, groupId: String, at: Long) {
+    private fun sendReadWatermark(context: Context, groupId: String, at: Long, serverAt: Long) {
         if (at <= 0L) {
             Log.w(TAG, "sendReadWatermark: no sentAt on the intent for group=${groupId.take(8)} - nothing announced")
             return
         }
-        CanariFirebaseMessagingService.appendReadWatermark(context, groupId, at)
+        CanariFirebaseMessagingService.appendReadWatermark(context, groupId, at, serverAt)
 
-        val pushCtx = MlsContextLoader.loadPushContext(context)
+        val pushCtxRead = MlsContextLoader.readPushContext(context)
+        val pushCtx = pushCtxRead.context
         if (pushCtx == null) {
-            Log.e(TAG, "sendReadWatermark: push_context.json absent -> frame not queued")
+            Log.e(TAG, "sendReadWatermark: push_context.json ${pushCtxRead.verdict.describe()} -> frame not queued")
             return
         }
         val service = CanariFirebaseMessagingService()
-        val protoB64 = service.nativeBuildReadWatermarkProto(at)
+        if (serverAt <= 0L) {
+            Log.w(TAG, "sendReadWatermark: no server time on the intent for group=${groupId.take(8)} - the mark is stated on the sender's clock alone")
+        }
+        val protoB64 = service.nativeBuildReadWatermarkProto(at, serverAt)
         if (protoB64.isEmpty()) {
             Log.e(TAG, "sendReadWatermark: nativeBuildReadWatermarkProto failed")
             return
@@ -191,7 +207,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             )
         )
         CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx)
-        Log.d(TAG, "sendReadWatermark: queued+drained at=$at group=${groupId.take(8)}")
+        Log.d(TAG, "sendReadWatermark: queued+drained at=$at serverAt=$serverAt group=${groupId.take(8)}")
     }
 
     /**
@@ -206,7 +222,8 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
         val at = intent.getLongExtra(CanariFirebaseMessagingService.EXTRA_SENT_AT, 0L)
         val channelId = ChannelReadMark.channelIdOf(groupId)
         if (channelId == null) {
-            sendReadWatermark(context, groupId, at)
+            val serverAt = intent.getLongExtra(CanariFirebaseMessagingService.EXTRA_SERVER_AT, 0L)
+            sendReadWatermark(context, groupId, at, serverAt)
         } else if (at > 0L) {
             // A SALON: its read state is a server row, not an MLS frame, so it is one PushSecret
             // call. `at` is the server's `createdAt` of the newest message the banner shows.
@@ -217,13 +234,49 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
     }
 
     /**
-     * Declines an incoming-call ring (WP-XP-5): stops the local ring only. No MLS hangup is sent -
-     * in a group call "decline" means "stop ringing me", not "end the call for everyone"; the
-     * caller side stops on its own timeout, on ring-end, or when someone answers.
+     * Declines an incoming-call ring (WP-XP-5) from the native ring - the notification's Decline and
+     * [IncomingCallActivity]'s, which fires this same intent.
+     *
+     * THE DECLINE REACHES THE CALLER. The ring stops here first (the half the user sees), then the
+     * hangup the in-app Decline sends - `CallMsg { hangup, end_reason = DECLINED }` - goes to the
+     * conversation, so the caller's ring ends at once and its record reads "declined". Before, this
+     * sent nothing and the caller rang out its whole minute (1.5.2-alpha.1). Calls are 1:1 (calls.md,
+     * lot 1), so "decline" and "end the ring for the caller" are the same act.
+     *
+     * Sent ONCE and not queued ([CanariFirebaseMessagingService.sendTransportFrameNow]): a hangup
+     * replayed after the call ended means nothing. A failure is logged; the caller rings out.
      */
-    private fun handleCallDecline(context: Context, intent: Intent) {
+    private fun handleCallDecline(context: Context, intent: Intent, groupId: String) {
         val callId = intent.getStringExtra(CanariFirebaseMessagingService.EXTRA_CALL_ID) ?: ""
-        Log.d(TAG, "handleCallDecline: call=$callId")
+        Log.d(TAG, "handleCallDecline: call=$callId group=${groupId.take(8)}")
         CanariFirebaseMessagingService.cancelIncomingCallNotification(context, callId)
+        if (callId.isEmpty()) {
+            Log.e(TAG, "handleCallDecline: no callId on the intent -> the caller is not told")
+            return
+        }
+        val pushCtxRead = MlsContextLoader.readPushContext(context)
+        val pushCtx = pushCtxRead.context
+        if (pushCtx == null) {
+            Log.e(TAG, "handleCallDecline: push_context.json ${pushCtxRead.verdict.describe()} -> the caller is not told")
+            return
+        }
+        val service = CanariFirebaseMessagingService()
+        val messageId = UUID.randomUUID().toString()
+        val protoB64 = service.nativeBuildCallHangupProto(
+            messageId, System.currentTimeMillis(), callId, pushCtx.deviceId,
+            CanariFirebaseMessagingService.CALL_END_REASON_DECLINED,
+        )
+        if (protoB64.isEmpty()) {
+            Log.e(TAG, "handleCallDecline: nativeBuildCallHangupProto failed -> the caller is not told")
+            return
+        }
+        val sent = CanariFirebaseMessagingService.sendTransportFrameNow(
+            context, service, pushCtx, groupId, messageId, protoB64
+        )
+        if (sent) {
+            Log.d(TAG, "handleCallDecline: the decline reached the server call=$callId")
+        } else {
+            Log.w(TAG, "handleCallDecline: the decline was not sent call=$callId - the caller rings out its window")
+        }
     }
 }

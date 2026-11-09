@@ -18,7 +18,6 @@
     ChevronUp,
     CornerDownRight,
     Flag,
-    Heart,
     Pencil,
     Send,
     Trash2,
@@ -26,7 +25,8 @@
   } from '@lucide/svelte';
   import { tick } from 'svelte';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
-  import PostImage from './PostImage.svelte';
+  import CommentMedia from './CommentMedia.svelte';
+  import CommentLikeButton from './CommentLikeButton.svelte';
   import CommentAuthorAvatar from './CommentAuthorAvatar.svelte';
   import RevealedAuthorLine from './RevealedAuthorLine.svelte';
   import CommentItem from './CommentItem.svelte';
@@ -38,7 +38,6 @@
     commentRevealedAuthorId,
   } from '$lib/posts/commentAuthor';
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
-  import { mediaAspectStyle, resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { reportLineClamp } from '$lib/actions/reportLineClamp';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -102,6 +101,11 @@
   const liked = $derived(comment.likes?.includes(currentUserId) ?? false);
   const likeCount = $derived(comment.likes?.length ?? 0);
   const isFocused = $derived(comment.id === focusCommentId);
+  /**
+   * A moderation TOMBSTONE (lead, 2026-11-04): removed by a moderator, kept because replies it could
+   * not remove still answer it. It draws one line in place of its author, text, media and actions.
+   */
+  const removedByModeration = $derived(comment.removedByModeration === true);
   const replies = $derived(isReply ? [] : comments.filter((c) => c.parentId === comment.id));
 
   // --- Text: the five-line clamp and "voir plus" ---------------------------------------------
@@ -174,7 +178,9 @@
     <CommentAuthorAvatar {comment} />
   {/snippet}
 
-  {#if authorHref}
+  {#if removedByModeration}
+    <!-- No author is drawn for a tombstone: the server serves none. -->
+  {:else if authorHref}
     <a
       href={authorHref}
       class="mt-0.5 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
@@ -186,7 +192,14 @@
   {/if}
 
   <div class="min-w-0 flex-1">
-    {#if editing}
+    {#if removedByModeration}
+      <p
+        class="text-text-muted px-2 py-1 text-xs italic"
+        data-testid="comment-removed-by-moderation"
+      >
+        {m.post_comment_removed_by_moderation()}
+      </p>
+    {:else if editing}
       <!-- Inline edit mode. -->
       <div
         class="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-amber-500/40 bg-black/5 px-3.5 py-2.5 dark:bg-white/5"
@@ -242,7 +255,7 @@
         {#if isReply}
           <!-- "In reply to" badge on rendered replies. -->
           {@const parentComment = comments.find((c) => c.id === comment.parentId)}
-          {#if parentComment}
+          {#if parentComment && !parentComment.removedByModeration}
             <span
               class="text-text-muted text-2xs mb-1 flex items-center gap-1 font-semibold opacity-75"
             >
@@ -279,92 +292,76 @@
           {/if}
         {/if}
         {#if comment.media && authToken}
-          {@const reserved = reservesAspectRatio(resolveMediaType(comment.media))}
-          <div
-            class="relative mt-1.5 w-full overflow-hidden rounded-xl {reserved
-              ? 'max-w-56 bg-black/5 dark:bg-white/5'
-              : 'max-w-[20rem]'}"
-            style={reserved ? mediaAspectStyle(comment.media.width, comment.media.height) : ''}
-          >
-            <PostImage media={comment.media} {authToken} />
-          </div>
+          <CommentMedia media={comment.media} {authToken} />
         {/if}
       </div>
     {/if}
 
-    <div class="mt-1 flex items-center gap-x-4 px-2">
-      <span
-        class="text-text-muted text-2xs font-bold opacity-80"
-        title={exactDate(comment.createdAt)}
-        >{timeAgo(
-          comment.createdAt
-        )}{#if comment.editedAt}&nbsp;·&nbsp;{m.post_comment_edited_label()}{/if}</span
-      >
+    <!-- A tombstone has no actions: it can be neither answered, edited, deleted nor liked here. -->
+    {#if !removedByModeration}
+      <div class="mt-1 flex items-center gap-x-4 px-2">
+        <span
+          class="text-text-muted text-2xs font-bold opacity-80"
+          title={exactDate(comment.createdAt)}
+          >{timeAgo(
+            comment.createdAt
+          )}{#if comment.editedAt}&nbsp;·&nbsp;{m.post_comment_edited_label()}{/if}</span
+        >
 
-      <!-- WITHHELD WHILE THE ROW IS PENDING: every one of these names the comment's id to the
+        <!-- WITHHELD WHILE THE ROW IS PENDING: every one of these names the comment's id to the
            server, and a pending row's id is local. The reader sees the comment; they simply cannot
            act on it until it exists. `tap-target` gives each small control a 44px hit box on a touch
            screen without changing how it is drawn. -->
-      {#if !isPending}
-        <button
-          type="button"
-          onclick={() => onReply(comment)}
-          class="tap-target text-text-muted hover:text-text-main text-2xs font-bold transition-colors outline-none focus-visible:underline"
-        >
-          {m.post_reply_label()}
-        </button>
+        {#if !isPending}
+          <button
+            type="button"
+            onclick={() => onReply(comment)}
+            class="tap-target text-text-muted hover:text-text-main text-2xs font-bold transition-colors outline-none focus-visible:underline"
+          >
+            {m.post_reply_label()}
+          </button>
 
-        {#if comment.canEdit && !editing}
-          <button
-            type="button"
-            onclick={startEdit}
-            class="tap-target text-text-muted text-2xs font-bold transition-colors outline-none hover:text-amber-500"
-            aria-label={m.common_edit_label()}
-          >
-            <Pencil size={12} strokeWidth={2.5} />
-          </button>
-        {/if}
-        {#if comment.canDelete}
-          <button
-            type="button"
-            onclick={confirmDelete}
-            class="tap-target text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-500"
-            aria-label={m.common_delete_button()}
-          >
-            <Trash2 size={12} strokeWidth={2.5} />
-          </button>
-        {/if}
-        {#if !comment.canEdit && onReport}
-          <button
-            type="button"
-            onclick={() => onReport?.(comment.id)}
-            class="tap-target text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-400"
-            aria-label={m.post_report_comment_label()}
-            title={m.post_report_label()}
-          >
-            <Flag size={11} strokeWidth={2.5} />
-          </button>
-        {/if}
+          {#if comment.canEdit && !editing}
+            <button
+              type="button"
+              onclick={startEdit}
+              class="tap-target text-text-muted text-2xs font-bold transition-colors outline-none hover:text-amber-500"
+              aria-label={m.common_edit_label()}
+            >
+              <Pencil size={12} strokeWidth={2.5} />
+            </button>
+          {/if}
+          {#if comment.canDelete}
+            <button
+              type="button"
+              onclick={confirmDelete}
+              class="tap-target text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-500"
+              aria-label={m.common_delete_button()}
+            >
+              <Trash2 size={12} strokeWidth={2.5} />
+            </button>
+          {/if}
+          {#if !comment.canEdit && onReport}
+            <button
+              type="button"
+              onclick={() => onReport?.(comment.id)}
+              class="tap-target text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-400"
+              aria-label={m.post_report_comment_label()}
+              title={m.post_report_label()}
+            >
+              <Flag size={11} strokeWidth={2.5} />
+            </button>
+          {/if}
 
-        <!-- THE ONE LIKE CONTROL: a heart at the right end of the row, under the bubble, with the count
-             beside it when there is one. It is not a reaction chip laid over the bubble, and the count
-             is not said a second time anywhere else. -->
-        <button
-          type="button"
-          onclick={() => onLike(comment.id)}
-          aria-pressed={liked}
-          aria-label={likeCount > 0
-            ? m.post_likes_count_label({ count: likeCount })
-            : m.post_like_label()}
-          class="tap-target text-2xs ml-auto flex items-center gap-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {liked
-            ? 'text-red-500'
-            : 'text-text-muted hover:text-text-main'}"
-        >
-          <Heart size={15} strokeWidth={2.25} class={liked ? 'fill-current' : ''} />
-          {#if likeCount > 0}<span class="tabular-nums">{likeCount}</span>{/if}
-        </button>
-      {/if}
-    </div>
+          <CommentLikeButton
+            {liked}
+            count={likeCount}
+            onLike={() => onLike(comment.id)}
+            class="ml-auto"
+          />
+        {/if}
+      </div>
+    {/if}
 
     {#if replies.length > 0}
       {#if foldable && !mustShowReplies}

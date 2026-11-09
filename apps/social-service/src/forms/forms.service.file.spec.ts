@@ -71,7 +71,8 @@ describe('FormsService - the file question', () => {
       { count: jest.fn(() => Promise.resolve(0)) } as any,
       formFiles,
       // FormOrganiserAlertService: switched off, as it ships.
-      { enabled: () => false } as any
+      { enabled: () => false } as any,
+      {} as any
     );
     return { service, saved, formFiles, manager };
   }
@@ -261,6 +262,22 @@ describe('FormsService - the file question', () => {
       const open = makeService();
       await expect(open.service.assertMayUploadAnswerFile('f1', 'u1')).resolves.toBeUndefined();
       expect((open.service as any).pricingFacts.build).not.toHaveBeenCalled();
+    });
+
+    // Owner, 2026-10-30: a holder cannot park a file on a form for people without the cotisation -
+    // refused with the same TYPED code as submit, before a byte is stored.
+    it('refuses a holder of an excluded cotisation, typed FORM_COTISATION_HELD', async () => {
+      const { service } = makeService(
+        baseForm({ submitCondition: { notCotisation: { variantKeys: [null] } } })
+      );
+      (service as any).pricingFacts.build.mockResolvedValueOnce({
+        ...facts(null),
+        cotisationTiers: [null],
+      });
+      await expect(service.assertMayUploadAnswerFile('f1', 'u1')).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'FORM_COTISATION_HELD' },
+      });
     });
 
     it('is a 404 for a form that is gone', async () => {

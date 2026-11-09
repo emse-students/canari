@@ -20,7 +20,11 @@ import { MessagingService } from '../services/messaging.service';
 describe('PushController - POST mls/push/register binds the registration to its session', () => {
   const SID = '0f0f0f0f-0000-4000-8000-00000000a1b2';
   let controller: PushController;
-  const pushTokenRepo = { upsert: jest.fn().mockResolvedValue(undefined) };
+  // The registration also sweeps the device's push envelopes (`sweepDeviceEnvelopes`): none here.
+  const pushTokenRepo = {
+    upsert: jest.fn().mockResolvedValue(undefined),
+    manager: { query: jest.fn().mockResolvedValue([{ n: 0 }]) },
+  };
   const emptyRepo = () => ({ findOne: jest.fn(), find: jest.fn(), save: jest.fn() });
 
   beforeEach(async () => {

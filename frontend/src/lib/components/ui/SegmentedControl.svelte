@@ -30,6 +30,11 @@
     tone?: 'amber' | 'yellow';
     /** When set, tabs get `${idPrefix}tab-<key>` ids and `aria-controls` `${idPrefix}tabpanel-<key>`. */
     idPrefix?: string;
+    /**
+     * `pill` (default): the filled track with a raised active tab. `underline`: bare tabs on a
+     * rule, the active one marked by a brand underline (the bookings dashboard's phone tabs).
+     */
+    variant?: 'pill' | 'underline';
     class?: string;
   }
 
@@ -40,6 +45,7 @@
     label,
     tone = 'amber',
     idPrefix,
+    variant = 'pill',
     class: extra = '',
   }: Props = $props();
 
@@ -75,7 +81,10 @@
   aria-label={label}
   data-segmented-control
   data-swipe-nav-ignore
-  class="grid gap-1 rounded-xl bg-black/5 p-1 dark:bg-white/5 {extra}"
+  data-variant={variant}
+  class="grid gap-1 {variant === 'underline'
+    ? 'border-cn-border border-b'
+    : 'rounded-xl bg-black/5 p-1 dark:bg-white/5'} {extra}"
   style:grid-template-columns="repeat({items.length}, minmax(0, 1fr))"
 >
   {#each items as item, i (item.key)}
@@ -90,9 +99,10 @@
       tabindex={selected ? 0 : -1}
       onclick={() => onSelect(item.key)}
       onkeydown={(e) => onKeydown(e, i)}
-      class="flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-center text-xs leading-tight font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 sm:flex-row sm:gap-2 sm:text-sm {selected
-        ? ACTIVE[tone]
-        : IDLE}"
+      class="flex min-w-0 items-center justify-center text-center leading-tight font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {variant ===
+      'underline'
+        ? `-mb-px min-h-11 gap-2 border-b-2 px-4 text-sm ${selected ? 'border-cn-yellow text-text-main' : 'text-text-muted hover:text-text-main border-transparent'}`
+        : `flex-col gap-1 rounded-lg px-1 py-2 text-xs sm:flex-row sm:gap-2 sm:text-sm ${selected ? ACTIVE[tone] : IDLE}`}"
     >
       {#if item.icon}
         {@const Icon = item.icon}

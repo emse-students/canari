@@ -1,17 +1,30 @@
 /**
- * THE KINDS OF ASSOCIATION THAT REPUBLISH, and the allowlist is the point: "only associations and
- * institutions republish" (user, 2026-10-04). A promo LIST does not; an institution joined with WP6e
- * (migration 075) - a type nobody listed stays refused.
+ * THE KINDS OF ASSOCIATION THAT REPUBLISH, and the allowlist is the point: a type nobody listed
+ * stays refused. "Only associations and institutions republish" (user, 2026-10-04); an institution
+ * joined with WP6e (migration 075); a campaign LIST joined on 2026-10-31 (owner: lists gain the
+ * publications section, `POST_AS_ASSO` / `PROPOSE_EVENT`).
  */
-export const REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = ['association', 'institution'];
+export const REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = [
+  'association',
+  'list',
+  'institution',
+];
 
 /**
- * THE KINDS OF ASSOCIATION THAT MAY ASK A PERSON TO REPUBLISH THEIR POST (D38b): associations only.
- * The user asked for "republier en tant qu'association" (2026-10-19), and an INSTITUTION carrying a
- * student's personal post is what D34-D36 rule out ("never a student's personal post" reaches the
- * personnel side): it stays refused until somebody decides otherwise. A list never republishes.
+ * THE KINDS OF ASSOCIATION THAT MAY ASK A PERSON TO REPUBLISH THEIR POST (D38b), an allowlist of its
+ * own: a type nobody listed stays refused. Associations since D38b (2026-10-19); LISTS and
+ * INSTITUTIONS since the owner's decision of 2026-11-02 - "Oui partout sans exception. Si un
+ * etudiant demande a l'institution de le republier, je ne vois pas le probleme ?". So an institution
+ * may carry a student's personal post to its audience, its staff members included, which amends
+ * D34-D36's "never a student's personal post reaches the personnel side" for THIS consented path
+ * only: nothing is visible before the author accepts, and the author's request names the
+ * institution. A nominative read grant still never opens a personal post (WP7, a different rule).
  */
-export const PERSONAL_REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = ['association'];
+export const PERSONAL_REPUBLISHING_ASSOCIATION_TYPES: readonly string[] = [
+  'association',
+  'list',
+  'institution',
+];
 
 /** How a card names an association that republished its post. */
 export interface Republisher {
@@ -23,7 +36,8 @@ export interface Republisher {
 
 /**
  * The republishers of each post in `postIds`, oldest republication first - ONE query for a whole
- * page. A post nobody republished is absent from the map.
+ * page. A post nobody republished is absent from the map. An ARCHIVED republisher is left out: it
+ * carries the post to nobody (`republicationReachesUserSql`), so no card names it (review of #2965).
  */
 export async function republishersOf(
   manager: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
@@ -34,7 +48,7 @@ export async function republishersOf(
   const rows: unknown = await manager.query(
     `SELECT pr."postId", a.id, a.name, a.slug, a."logoUrl"
        FROM post_republications pr JOIN associations a ON a.id = pr."associationId"
-      WHERE pr."postId" = ANY($1::uuid[])
+      WHERE pr."postId" = ANY($1::uuid[]) AND NOT COALESCE(a.archived, false)
       ORDER BY pr."republishedAt" ASC, a.name ASC`,
     [postIds]
   );
@@ -49,8 +63,10 @@ export async function republishersOf(
 
 /**
  * What a HIDDEN post loses (D38, user 2026-10-04: "hiding or deleting the original removes every
- * republication"): every republication, and every repost proposal still pending for it -
- * an association's request to the AUTHOR of a personal post (D38b) included.
+ * republication"): every republication, every repost proposal still pending for it -
+ * an association's request to the AUTHOR of a personal post (D38b) included - and every MEMBER
+ * repost of it (WP-F6, owner 2026-11-01: "hiding, deleting or erasing the original removes every
+ * repost", `dropMemberRepostsOf`).
  *
  * A plain function over a query runner rather than a service method, because two places hide a post
  * - a moderator (`PostsService.hidePostByModeration`) and the report threshold
@@ -63,7 +79,7 @@ export async function republishersOf(
 export async function dropRepublicationsOf(
   manager: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
   postId: string
-): Promise<{ republications: number; proposals: number }> {
+): Promise<{ republications: number; proposals: number; memberReposts: number }> {
   const count = (result: unknown): number =>
     Array.isArray(result) && typeof result[1] === 'number' ? result[1] : 0;
   const republications = count(
@@ -76,7 +92,26 @@ export async function dropRepublicationsOf(
       [postId]
     )
   );
-  return { republications, proposals };
+  const memberReposts = (await dropMemberRepostsOf(manager, postId)).length;
+  return { republications, proposals, memberReposts };
+}
+
+/**
+ * Deletes every member repost of a post (WP-F6) - the hide's share, through `dropRepublicationsOf`,
+ * and a withdrawn per-post consent's (`MemberRepostsService.setPostConsent`). A DELETED post needs
+ * it not: its foreign key cascades. Answers the reposters whose row went (one row per reposter, the
+ * key), so a caller can drop exactly their audiences' cached feeds.
+ */
+export async function dropMemberRepostsOf(
+  manager: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
+  postId: string
+): Promise<string[]> {
+  const rows = await manager.query(
+    `WITH gone AS (DELETE FROM member_reposts WHERE "postId" = $1 RETURNING "reposterId")
+     SELECT "reposterId" FROM gone`,
+    [postId]
+  );
+  return Array.isArray(rows) ? (rows as { reposterId: string }[]).map((r) => r.reposterId) : [];
 }
 
 /**

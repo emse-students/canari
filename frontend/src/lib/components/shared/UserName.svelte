@@ -1,6 +1,8 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { userDisplayName } from '$lib/utils/users/displayNames.svelte';
+  import { isAbsentUser } from '$lib/utils/users/absentUsers';
+  import { profileHref } from '$lib/utils/users/profileHref';
 
   interface Props {
     /** User ID used to resolve the display name. */
@@ -11,22 +13,28 @@
     class?: string;
     /** When true, wraps the name in a profile link; otherwise renders a plain span. */
     link?: boolean;
+    /**
+     * The conversation this name is drawn in, so a nickname set there shows (`getUserDisplayNameSync`).
+     * Omitted outside a conversation: the profile name.
+     */
+    scope?: string | null;
   }
 
-  let { userId, fallback, class: className = '', link = true }: Props = $props();
+  let { userId, fallback, class: className = '', link = true, scope = null }: Props = $props();
 
   // ONE IMPLEMENTATION, shared with every other place that turns an id into a name - see
   // `displayNames.svelte.ts` for why the sync read comes first and why a `null` resolve is ignored.
   const resolved = userDisplayName(
     () => userId,
-    () => fallback
+    () => fallback,
+    () => scope
   );
   const displayName = $derived(resolved.current);
 </script>
 
-{#if link}
+{#if link && !isAbsentUser(userId)}
   <a
-    href="/profile/{encodeURIComponent(userId)}"
+    href={profileHref(userId)}
     class="{className} hover:underline"
     onclick={(e) => e.stopPropagation()}><EmojiText text={displayName} /></a
   >

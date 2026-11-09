@@ -1,3 +1,4 @@
+import { assertFormItemsShape } from '../forms/answer-bounds';
 import {
   BadRequestException,
   ConflictException,
@@ -25,6 +26,8 @@ import { mayManageSpace, type Actor } from './bookings.service';
 import {
   MAX_PERSONAL_SPACES,
   MAX_RESOURCES_PER_SPACE,
+  SLOT_MINUTES_MAX,
+  SLOT_MINUTES_MIN,
   type AvailabilityDto,
   type CreateResourceDto,
   type CreateSpaceDto,
@@ -33,6 +36,10 @@ import {
 } from './dto/space.dto';
 import { ZONED_INSTANT } from './dto/booking.dto';
 import { BookingPosterMedia, posterOf } from './booking-poster-media';
+import {
+  BookingNotificationsService,
+  deletedBookingNotices,
+} from './booking-notifications.service';
 
 /** The settings that change which shapes are bookable, so they run the D29 check (WP-B2). */
 const SHAPE_KEYS = ['timeZone', 'slotMode', 'stepMinutes', 'maxSteps'] as const;
@@ -50,6 +57,7 @@ export const SPACE_SETTING_KEYS = [
   'slotMode',
   'stepMinutes',
   'maxSteps',
+  'slotMinutes',
   'nameVisibility',
   'discoverability',
   'audience',
@@ -63,7 +71,19 @@ export const SPACE_SETTING_KEYS = [
   'participantWithdrawMinMinutes',
   'maxPeople',
   'retentionDays',
+  'reminderMinutes',
 ] as const satisfies readonly (keyof SpaceSettingsDto & keyof BookingSpace)[];
+
+/** The non-empty `imageUrl`s a space's stored questions carry - grandfathered by an edit. */
+function questionImageUrlsOf(items: unknown): Set<string> {
+  const urls = new Set<string>();
+  if (!Array.isArray(items)) return urls;
+  for (const item of items) {
+    const url = (item as { imageUrl?: unknown } | null)?.imageUrl;
+    if (typeof url === 'string' && url !== '') urls.add(url);
+  }
+  return urls;
+}
 
 /** The fields a request may write onto a resource, by name, for the reason above. */
 export const RESOURCE_KEYS = [
@@ -117,7 +137,8 @@ export class BookingSpacesService {
     private readonly slots: BookingSlotsService,
     private readonly associations: AssociationsService,
     private readonly userTags: UserTagService,
-    private readonly posterMedia: BookingPosterMedia
+    private readonly posterMedia: BookingPosterMedia,
+    private readonly notices: BookingNotificationsService
   ) {}
 
   // -- Rights ------------------------------------------------------------------------------------
@@ -219,24 +240,63 @@ export class BookingSpacesService {
 
   /**
    * The settings of `next` that the database's CHECKs would refuse, refused first as codes - a 500
-   * from a constraint is a defect, a code is an answer the editor can word.
+   * from a constraint is a defect, a code is an answer the editor can word. `storedImageUrls`: the
+   * question images the space held before this edit (empty on a create), which are grandfathered.
    */
-  private async assertSettingsValid(next: BookingSpace) {
+  private async assertSettingsValid(
+    next: BookingSpace,
+    storedImageUrls: ReadonlySet<string> = new Set()
+  ) {
     if (!isValidTimeZone(next.timeZone)) throw new BadRequestException({ code: 'time-zone' });
     const stepShape =
       next.slotMode === 'step'
         ? (next.stepMinutes ?? 0) > 0 && (next.maxSteps ?? 0) >= 1
         : next.stepMinutes === null && next.maxSteps === null;
     if (!stepShape) throw new BadRequestException({ code: 'step-shape' });
+    // The mirror (`booking_spaces_slot_minutes`): a slot length only on a slots space, in range.
+    const slotShape =
+      next.slotMinutes === null ||
+      (next.slotMode === 'slots' &&
+        Number.isInteger(next.slotMinutes) &&
+        next.slotMinutes >= SLOT_MINUTES_MIN &&
+        next.slotMinutes <= SLOT_MINUTES_MAX);
+    if (!slotShape) {
+      this.logger.debug(
+        `[BOOKINGS] slot-shape refused mode=${next.slotMode} slotMinutes=${next.slotMinutes}`
+      );
+      throw new BadRequestException({ code: 'slot-shape' });
+    }
     if ((next.maxMinutesPerPeriod === null) !== (next.quotaPeriod === null)) {
       throw new BadRequestException({ code: 'quota-pair' });
     }
-    const items = (next.items ?? []) as { id?: string; type?: string; showIf?: unknown }[];
+    const items = (next.items ?? []) as {
+      id?: string;
+      type?: string;
+      showIf?: unknown;
+      imageUrl?: unknown;
+    }[];
     // Every question its own id: an answer, a condition and the export are keyed by it.
     const ids = items.map((i) => i.id);
     if (ids.some((id) => !id) || new Set(ids).size !== ids.length) {
       throw new BadRequestException({ code: 'item-id' });
     }
+    // A booking question carries no image: nothing uploads one for a space, and a form's question
+    // image is deleted once no FORM cites it (`form-item-images.service.ts`), so a space citing one
+    // would lose it with that form. Only an image the edit INTRODUCES is refused; one the stored
+    // space already cites is kept and reported, so an older space still saves its other settings.
+    for (const i of items) {
+      if (typeof i.imageUrl !== 'string' || i.imageUrl === '') continue;
+      if (storedImageUrls.has(i.imageUrl)) {
+        this.logger.warn(
+          `[BOOKINGS] question ${i.id} keeps a stored image - a booking question has none since 2026-11-06; kept, not refused`
+        );
+        continue;
+      }
+      this.logger.debug(`[BOOKINGS] item-image refused: question ${i.id} introduces an image`);
+      throw new BadRequestException({ code: 'item-image' });
+    }
+    // A grid's rows and columns each their own label, the forms' rule (`answer-bounds.ts`, D4).
+    assertFormItemsShape(items);
     const withCondition = items.filter((i) => i.showIf != null);
     if (next.audience == null && withCondition.length === 0) return;
     const tiers = next.associationId
@@ -277,6 +337,9 @@ export class BookingSpacesService {
       space.stepMinutes = null;
       space.maxSteps = null;
     }
+    // And a step space no slot length: a switch to 'step' that does not name one clears it. One the
+    // body DOES name on a step space is refused (`slot-shape`), never dropped in silence.
+    if (space.slotMode === 'step' && dto.slotMinutes === undefined) space.slotMinutes = null;
   }
 
   /**
@@ -292,9 +355,18 @@ export class BookingSpacesService {
     if (!(await mayManageSpace(this.associations, owner, actor))) {
       throw new ForbiddenException({ code: 'not-manager' });
     }
-    const space = this.spaces.create({ ...owner, slotMode: 'step', stepMinutes: 30, maxSteps: 4 });
+    const space = this.spaces.create({
+      ...owner,
+      slotMode: 'step',
+      stepMinutes: 30,
+      maxSteps: 4,
+      slotMinutes: null,
+    });
     this.applySettings(space, dto);
     await this.assertSettingsValid(space);
+    // Parsed before the transaction, so a malformed line refuses the creation as a 400 and nothing
+    // is written.
+    const hours = dto.availability ? this.parseAvailability(dto.availability) : null;
     // The id is chosen here so the poster can be claimed FOR this space, inside the transaction that
     // stores it: a refused claim refuses the creation, and a rollback leaves the claim to the release.
     space.id = randomUUID();
@@ -317,10 +389,14 @@ export class BookingSpacesService {
           await this.posterMedia.claim(m, poster, actor.userId, space.id, associationId);
           claimed = true;
         }
-        return m.save(BookingSpace, space);
+        const created = await m.save(BookingSpace, space);
+        const column = await this.writeDefaultColumn(m, created, hours);
+        return { id: created.id, resourceId: column };
       });
-      this.logger.log(`[BOOKINGS] space created id=${saved.id.slice(0, 8)}`);
-      return { id: saved.id };
+      this.logger.log(
+        `[BOOKINGS] space created id=${saved.id.slice(0, 8)} column=${saved.resourceId.slice(0, 8)} hours=${hours?.lines.length ?? 0}`
+      );
+      return saved;
     } catch (err) {
       // No row cites the poster this request claimed: it goes back to the idle sweep.
       if (poster && claimed) {
@@ -332,6 +408,40 @@ export class BookingSpacesService {
       }
       throw err;
     }
+  }
+
+  /**
+   * THE SPACE'S ONE DEFAULT COLUMN (D44): a resource named after the space, at position 0, with the
+   * hours the creation carried, if any. The data model is unchanged - a space still books through
+   * its resources - so a space that is created bookable needs one; the screens hide the columns
+   * level while there is exactly one. Written inside the creation's transaction: a refused write
+   * leaves no space without its column.
+   */
+  private async writeDefaultColumn(
+    m: EntityManager,
+    space: BookingSpace,
+    hours: { lines: AvailabilityLine[]; exceptions: AvailabilityException[] } | null
+  ): Promise<string> {
+    const column = await m.save(
+      BookingResource,
+      m.create(BookingResource, { spaceId: space.id, name: space.name, position: 0 })
+    );
+    if (hours?.lines.length) {
+      await m.insert(
+        BookingAvailabilityRule,
+        hours.lines.map((l) => ({ ...l, resourceId: column.id }))
+      );
+    }
+    if (hours?.exceptions.length) {
+      await m.insert(
+        BookingAvailabilityException,
+        hours.exceptions.map((e) => ({ ...e, resourceId: column.id }))
+      );
+    }
+    this.logger.debug(
+      `[BOOKINGS] default column written space=${space.id.slice(0, 8)} lines=${hours?.lines.length ?? 0} closures=${hours?.exceptions.length ?? 0}`
+    );
+    return column.id;
   }
 
   /**
@@ -350,8 +460,10 @@ export class BookingSpacesService {
         const space = await this.lockSpace(m, spaceId);
         const oldPoster = space.poster?.mediaId ?? null;
         const before: SlotConfig = { ...space };
+        const formerName = space.name;
+        const storedImageUrls = questionImageUrlsOf(space.items);
         this.applySettings(space, dto);
-        await this.assertSettingsValid(space);
+        await this.assertSettingsValid(space, storedImageUrls);
         if (SHAPE_KEYS.some((k) => before[k] !== space[k])) {
           const resources = await m.find(BookingResource, { where: { spaceId } });
           for (const r of resources) {
@@ -370,6 +482,8 @@ export class BookingSpacesService {
           claimed = newPoster;
         }
         await m.save(BookingSpace, space);
+        if (space.name !== formerName)
+          await this.renameDefaultColumn(m, spaceId, formerName, space.name);
         this.logger.log(`[BOOKINGS] space updated id=${spaceId.slice(0, 8)}`);
         return { oldPoster, newPoster };
       });
@@ -385,14 +499,46 @@ export class BookingSpacesService {
   }
 
   /**
+   * A renamed space carries its HIDDEN column's name along (D44): the column is the space's only
+   * resource and still bears the space's former name, which is how it was created. A space's only
+   * column that the organiser named otherwise keeps its own name, and so does any column once there
+   * are two. Without this, the name a booker reads in their bookings, the calendar file and the
+   * export would stay the old one. Runs under the space lock the update holds.
+   */
+  private async renameDefaultColumn(
+    m: EntityManager,
+    spaceId: string,
+    formerName: string,
+    name: string
+  ): Promise<void> {
+    // A CTE, so the statement answers rows whatever the driver makes of a bare UPDATE.
+    const [{ n }]: { n: number }[] = await m.query(
+      `WITH renamed AS (
+         UPDATE booking_resources SET name = $3
+          -- The former name IS the discriminator: the hidden column is the one bearing its space's
+          -- name (D44, the client's columnsHidden), so a column the organiser named never matches.
+          WHERE "spaceId" = $1 AND name = $2
+            AND (SELECT count(*) FROM booking_resources WHERE "spaceId" = $1) = 1
+         RETURNING id)
+       SELECT count(*)::int AS n FROM renamed`,
+      [spaceId, formerName, name]
+    );
+    this.logger.debug(
+      `[BOOKINGS] space renamed id=${spaceId.slice(0, 8)} hiddenColumnFollowed=${n === 1}`
+    );
+  }
+
+  /**
    * Deletes the space and EVERYTHING under it, history included (D27) - other people's COMING
-   * bookings too, hard-deleted with no notice (D13: no notification in v1). How many is logged, so
-   * a deletion that erased someone's evening is never silent in the logs.
+   * bookings too. Their people are told once it is committed (Q-R4, `BookingNotificationsService`,
+   * while its switch is on): who they are is read under the space's lock, BEFORE the delete takes
+   * every row that names them. How many bookings of others went is logged, so a deletion that
+   * erased someone's evening is never silent in the logs.
    */
   async remove(spaceId: string, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] remove space=${spaceId}`);
     await this.managedSpace(spaceId, actor);
-    const { erased, poster } = await this.spaces.manager.transaction(async (m) => {
+    const { erased, poster, space, notices } = await this.spaces.manager.transaction(async (m) => {
       const space = await this.lockSpace(m, spaceId);
       const [{ n }]: { n: number }[] = await m.query(
         `SELECT count(*)::int AS n FROM bookings b JOIN booking_resources r ON r.id = b."resourceId"
@@ -400,12 +546,20 @@ export class BookingSpacesService {
             AND b."holderId" <> $3`,
         [spaceId, new Date(nowMs), actor.userId]
       );
+      const notices = await deletedBookingNotices(
+        (sql, params) => m.query(sql, params),
+        spaceId,
+        nowMs
+      );
       await m.delete(BookingSpace, { id: spaceId });
-      return { erased: n, poster: space.poster?.mediaId ?? null };
+      return { erased: n, poster: space.poster?.mediaId ?? null, space, notices };
     });
     this.logger.log(
       `[BOOKINGS] space deleted id=${spaceId.slice(0, 8)} comingBookingsOfOthersErased=${erased}`
     );
+    // After the response, not inside it: one notice per coming booking is no reason for the
+    // organiser's delete to wait. `spaceDeleted` is guarded and never rejects.
+    void this.notices.spaceDeleted(space, notices, actor.userId);
     // Its files (D7) are now orphans (`booking_files."bookingId"` set NULL): the retention purge
     // takes them at its next run.
     if (poster) await this.posterMedia.releaseUncited([poster], 'its space was deleted');

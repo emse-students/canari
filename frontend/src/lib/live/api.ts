@@ -16,6 +16,7 @@
 
 import { apiFetch, type ApiFetchOptions } from '$lib/utils/apiFetch';
 import { mediaUrl, socialUrl } from '$lib/utils/apiUrl';
+import { getClientAppVersion } from '$lib/utils/appVersion';
 import { ApiRefusalError, refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { responseOrigin } from '$lib/utils/apiRefusal';
 import { trackedFetch } from '$lib/utils/trackedFetch';
@@ -34,10 +35,12 @@ import type {
   LiveEndReason,
   LiveListItem,
   LiveManifest,
+  LivePosterResult,
   LiveReactionKind,
   LiveRefusalKind,
   LiveRemovedViewer,
   LiveRulesStatus,
+  LiveTitleResult,
   LiveView,
 } from './types';
 
@@ -131,9 +134,9 @@ export function classifyLiveRefusal(
 const LIVE_END_REASONS: ReadonlySet<string> = new Set<LiveEndReason>([
   'broadcaster',
   'dropped',
-  'max_duration',
   'erased',
   'cut',
+  'max_duration',
 ]);
 
 /** A refusal body's `endReason` when it is one this build knows, else null (never a guess). */
@@ -151,11 +154,17 @@ function numberField(body: Record<string, unknown> | null, key: string): number 
  * TYPES A REFUSED RESPONSE AT THE THROW. `refusalFromResponse` reads status and `code` (from a
  * clone); the extras are read from the body here. Logged once, at warn for an outcome a viewer or
  * broadcaster will see, with the route, status, code and kind - never the body.
+ *
+ * `expected` is the set of kinds the CALLER declares an ordinary outcome of its request (a card's
+ * poster that was purged with its live): those are logged ONCE at debug with the reason, every other
+ * kind keeps the warn. A `not-found` is expected ONLY from the GATEWAY (media-service's own JSON
+ * 404): an edge or nginx 404 with no JSON body means a broken route and keeps the warn. It is decided here, at the throw, from the kind - never from a message.
  */
 async function liveRefusal(
   res: Response,
   what: string,
-  segmentFetch = false
+  segmentFetch = false,
+  expected: readonly LiveRefusalKind[] = []
 ): Promise<LiveRefusalError> {
   const base = await refusalFromResponse(res, what);
   let body: Record<string, unknown> | null = null;
@@ -168,9 +177,10 @@ async function liveRefusal(
   const kind = classifyLiveRefusal(base.status, base.code, responseOrigin(res), segmentFetch);
   const endedAt = typeof body?.endedAt === 'string' ? body.endedAt : null;
   const endReason = liveEndReasonOf(body?.endReason);
-  console.warn(
-    `[LIVE] ${what}: ${base.status} ${base.code ?? '-'} -> ${kind}${endReason ? ` (${endReason})` : ''}`
-  );
+  const line = `[LIVE] ${what}: ${base.status} ${base.code ?? '-'} -> ${kind}${endReason ? ` (${endReason})` : ''}`;
+  if (expected.includes(kind) && responseOrigin(res) === 'gateway')
+    console.debug(`${line} (expected: the caller treats it as an outcome)`);
+  else console.warn(line);
   return new LiveRefusalError(
     base.status,
     base.code,
@@ -194,9 +204,24 @@ function livePath(liveId: string): string {
   return `${livesBase()}/${encodeURIComponent(liveId)}`;
 }
 
+/**
+ * The header every lives call carries so the server can answer a build below `1.5.4` like a
+ * switched-off estate (`LiveEnabledGuard`, docs/wiki/legacy-compatibility.md). Absent on a build
+ * that predates it - which is the evidence the server reads.
+ */
+export const LIVE_CLIENT_VERSION_HEADER = 'X-Canari-Client-Version';
+
+/** `init` with the client-version header added. */
+function withClientVersion(init: ApiFetchOptions = {}): ApiFetchOptions {
+  return {
+    ...init,
+    headers: { ...init.headers, [LIVE_CLIENT_VERSION_HEADER]: getClientAppVersion() },
+  };
+}
+
 /** Runs one authenticated lives call and returns its JSON, or throws the typed refusal. */
 async function liveJson<T>(url: string, what: string, init: ApiFetchOptions = {}): Promise<T> {
-  const res = await apiFetch(url, init);
+  const res = await apiFetch(url, withClientVersion(init));
   if (!res.ok) throw await liveRefusal(res, what);
   return (await res.json()) as T;
 }
@@ -207,7 +232,10 @@ export async function fetchLiveLimits(): Promise<LiveLimits> {
   return liveJson<LiveLimits>(`${livesBase()}/limits`, 'Live limits');
 }
 
-/** `GET /api/lives` - the open lives the caller may watch, newest first, at most 50, no key. */
+/**
+ * `GET /api/lives` - the open lives the caller may watch, newest first, at most 50. Takes NO seat;
+ * each item carries its title, viewer count and newest preview image with the key that opens it.
+ */
 export async function listOpenLives(): Promise<LiveListItem[]> {
   console.debug('[LIVE] list');
   return liveJson<LiveListItem[]>(livesBase(), 'Live list');
@@ -228,24 +256,32 @@ export async function fetchLiveRules(): Promise<LiveRulesStatus> {
  * @param acceptedRulesVersion The rules version the member accepted on THIS screen, sent only then:
  *   the server records it with the start. Omitted when the account accepted it before.
  * Refusals: `LIVE_KEY_INVALID`, `LIVE_ASSOCIATION_INVALID`, `LIVE_MUTED`, `LIVE_RULES_NOT_ACCEPTED`,
- * `LIVE_ASSOCIATION_FORBIDDEN`, `LIVE_ALREADY_OPEN` (all `refused`), `LIVE_START_RATE` (`rate-limited`),
+ * `LIVE_ASSOCIATION_FORBIDDEN`, `LIVE_ASSOCIATION_ARCHIVED`, `LIVE_ALREADY_OPEN` (all `refused`), `LIVE_START_RATE` (`rate-limited`),
  * `LIVE_KEY_SEALING_UNAVAILABLE` (`unavailable`: the server cannot seal the key, nothing was written).
  */
 export async function startLive(
   keyHex: string,
   associationId?: string,
-  acceptedRulesVersion?: number
+  acceptedRulesVersion?: number,
+  title?: string | null
 ): Promise<LiveView> {
   console.debug(
     `[LIVE] start${associationId ? ` as association ${associationId}` : ''}${
       acceptedRulesVersion === undefined ? '' : `, rules v${acceptedRulesVersion} accepted`
-    }`
+    }, title ${title ? `${[...title].length} chars` : 'none'}`
   );
-  const body: { key: string; associationId?: string; acceptedRulesVersion?: number } = {
+  const body: {
+    key: string;
+    associationId?: string;
+    acceptedRulesVersion?: number;
+    title?: string;
+  } = {
     key: keyHex,
   };
   if (associationId) body.associationId = associationId;
   if (acceptedRulesVersion !== undefined) body.acceptedRulesVersion = acceptedRulesVersion;
+  // Sent only when there is one: a server before the titles ignores an unknown field anyway.
+  if (title) body.title = title;
   const live = await liveJson<LiveView>(livesBase(), 'Live start', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -292,6 +328,7 @@ export function manifestQuery(from?: number, chat?: LiveChatQuery): string {
     if (chat.messagesAfter !== undefined) params.set('messagesAfter', String(chat.messagesAfter));
     if (chat.reactionsAfter !== undefined)
       params.set('reactionsAfter', String(chat.reactionsAfter));
+    if (chat.arrivalsAfter !== undefined) params.set('arrivalsAfter', String(chat.arrivalsAfter));
   }
   const query = params.toString();
   return query ? `?${query}` : '';
@@ -366,6 +403,39 @@ export async function putLiveSegment(
 }
 
 /**
+ * `PATCH /api/lives/:id` - the broadcaster sets or clears the title while on air (owner,
+ * 2026-11-07). `null` clears it. Refusals: `LIVE_TITLE_INVALID`, `LIVE_MUTED` (`refused`),
+ * `not-found`, `ended`.
+ */
+export async function setLiveTitle(liveId: string, title: string | null): Promise<LiveTitleResult> {
+  console.debug(`[LIVE] title of ${liveId}: ${title ? `${[...title].length} chars` : 'cleared'}`);
+  return liveJson<LiveTitleResult>(livePath(liveId), 'Live title', {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  });
+}
+
+/**
+ * `PUT /api/lives/:id/poster` - the live's preview image, sealed under the POSTER key, never the
+ * live key (`sealLivePoster` in `livePosterCrypto.ts`), raw `application/octet-stream`. Replaces the previous one. Refusals:
+ * `LIVE_POSTER_TOO_FAST` (`rate-limited`), `LIVE_STORE_UNAVAILABLE` / `LIVE_INGEST_BUSY`
+ * (`retry-segment`), `LIVE_POSTER_IN_PROGRESS` / `LIVE_POSTER_TOO_LARGE` (`refused`), `ended`.
+ * The sender retries NONE of them: the next preview is a few segments away.
+ */
+export async function putLivePoster(
+  liveId: string,
+  sealed: Uint8Array<ArrayBuffer>
+): Promise<LivePosterResult> {
+  console.debug(`[LIVE] poster of ${liveId}: ${sealed.byteLength} B`);
+  const body = new Blob([sealed], { type: 'application/octet-stream' });
+  return liveJson<LivePosterResult>(`${livePath(liveId)}/poster`, 'Live poster', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body,
+  });
+}
+
+/**
  * `POST /api/lives/:id/end` - the broadcaster ends it. Idempotent while the row exists; once the
  * end's purge deleted it, a repeat is `not-found`, which means "ended and deleted" (no replay, L3).
  */
@@ -431,7 +501,7 @@ export async function withdrawBroadcaster(
  */
 export async function leaveLiveSeat(liveId: string): Promise<void> {
   console.debug(`[LIVE] leave ${liveId}`);
-  const res = await apiFetch(`${livePath(liveId)}/seat`, { method: 'DELETE' });
+  const res = await apiFetch(`${livePath(liveId)}/seat`, withClientVersion({ method: 'DELETE' }));
   if (!res.ok) throw await liveRefusal(res, 'Live leave');
 }
 
@@ -470,13 +540,47 @@ export function liveSegmentUrl(liveId: string, name: string): string {
  * `signal` cancels the download (head AND body): a viewer that closes or restarts aborts its run's
  * fetches, so none keeps a connection beside the next run's under nginx's per-address bound.
  */
-export async function fetchLiveSegment(
+export function fetchLiveSegment(
   liveId: string,
   name: string,
   signal?: AbortSignal
 ): Promise<ArrayBuffer> {
-  const res = await trackedFetch(fetch, liveSegmentUrl(liveId, name), { method: 'GET', signal });
-  if (!res.ok) throw await liveRefusal(res, `Live segment ${name}`, true);
+  return fetchLiveObject(liveSegmentUrl(liveId, name), `Live segment ${name}`, signal);
+}
+
+/**
+ * The public URL of a live's PREVIEW IMAGE: its OWN path (`/api/media/public/live-poster/`), which
+ * nginx counts in its own zones and budget so a card reader never spends a seated viewer's segment
+ * quota - and maps onto the same stored object and the same cache as the segment route (review of
+ * #3135, lives.md "What the preview costs").
+ */
+export function livePosterUrl(liveId: string, name: string): string {
+  return `${mediaUrl()}/api/media/public/live-poster/${liveId.toLowerCase()}/${name.toLowerCase()}`;
+}
+
+/**
+ * A live's sealed PREVIEW IMAGE (owner, 2026-11-07), by the `poster.name` the list gave, through
+ * {@link livePosterUrl}: every card showing it asks nginx's cache, never the store. A plain GET for
+ * the same reason as {@link fetchLiveSegment}.
+ */
+export function fetchLivePoster(
+  liveId: string,
+  name: string,
+  signal?: AbortSignal
+): Promise<ArrayBuffer> {
+  // A poster purged with its live (or replaced twice since the list) is a 404 the card expects.
+  return fetchLiveObject(livePosterUrl(liveId, name), `Live poster ${name}`, signal, ['not-found']);
+}
+
+/** The one GET of a live's public object; `what` names it in the refusal's log. */
+async function fetchLiveObject(
+  url: string,
+  what: string,
+  signal?: AbortSignal,
+  expected: readonly LiveRefusalKind[] = []
+): Promise<ArrayBuffer> {
+  const res = await trackedFetch(fetch, url, { method: 'GET', signal });
+  if (!res.ok) throw await liveRefusal(res, what, true, expected);
   return res.arrayBuffer();
 }
 

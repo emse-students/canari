@@ -83,8 +83,11 @@ jobs:
       run-frontend-build: ${{ steps.matrix.outputs.frontend_build }}
       run-harness: ${{ steps.matrix.outputs.harness }}
       run-android: ${{ steps.matrix.outputs.android }}
+      run-android-app: ${{ steps.matrix.outputs.android_app }}
+      run-ios-app: ${{ steps.matrix.outputs.ios_app }}
       run-mls-compat: ${{ steps.matrix.outputs.mls_compat }}
       run-miconnect: ${{ steps.matrix.outputs.miconnect }}
+      run-call-e2e: ${{ steps.matrix.outputs.call_e2e }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -115,8 +118,11 @@ jobs:
             echo "frontend_build=true" >> "$GITHUB_OUTPUT"
             echo "harness=true"      >> "$GITHUB_OUTPUT"
             echo "android=true"      >> "$GITHUB_OUTPUT"
+            echo "android_app=true"  >> "$GITHUB_OUTPUT"
+            echo "ios_app=true"      >> "$GITHUB_OUTPUT"
             echo "mls_compat=true"   >> "$GITHUB_OUTPUT"
             echo "miconnect=true"    >> "$GITHUB_OUTPUT"
+            echo "call_e2e=true"     >> "$GITHUB_OUTPUT"
           }
 
           # ── Determine base commit ──
@@ -139,7 +145,7 @@ jobs:
           echo "Changed files:" && echo "$CHANGED"
 
           # Helper: returns 0 if any changed file matches the pattern
-          has() { echo "$CHANGED" | grep -qE "$1"; }
+          has() { grep -qE "$1" <<<"$CHANGED"; }
 
           # THE CI DEFINITION ITSELF CHANGED -> test everything, and THE PATH IS DERIVED FROM THE
           # RUN rather than written down here.
@@ -161,7 +167,7 @@ jobs:
           SELF="${SELF#*/*/}"                # .github/workflows/ci.yml
           # The path is matched as a FIXED WHOLE LINE, so no regex escaping stands between the
           # name the runner gave us and the name in the diff.
-          if printf '%s\n' "$CHANGED" | grep -qxF "$SELF" \
+          if grep -qxF "$SELF" <<<"$CHANGED" \
              || has '^\.github/workflows/code-analysis\.yml$'; then
             echo "CI definition changed ($SELF) - running all tests."
             run_all; exit 0
@@ -300,10 +306,10 @@ jobs:
 
           # The PRODUCTION BUILD runs on a pull request only when what it consumes changed: the
           # dependency set (`package.json`, `bun.lock`, `patches/`), the build configuration
-          # (`svelte.config`, `vite.config`, so the adapters too) and the image that serves the
+          # (`kit.config`, `vite.config`, so the adapters too) and the image that serves the
           # output. An `adapter-node` bump broke the main-only build AFTER its pull request had
           # passed every gate here, because nothing ran the build before the merge.
-          if has '^frontend/package.json' || has '^frontend/bun.lock' || has '^frontend/patches/' ||              has '^frontend/svelte.config' || has '^frontend/vite.config' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
+          if has '^frontend/package.json' || has '^frontend/bun.lock' || has '^frontend/patches/' ||              has '^frontend/kit.config' || has '^frontend/vite.config' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
             echo "frontend_build=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend_build=false" >> "$GITHUB_OUTPUT"
@@ -322,6 +328,51 @@ jobs:
             echo "android=false" >> "$GITHUB_OUTPUT"
           fi
 
+          # -- Android `:app` compile --
+          # What `compile-android-app` reads: the Android project itself, and whatever feeds the
+          # generation of its `tauri.settings.gradle` AND the Rust it checks for the Android target
+          # (the app crate's `build.rs` runs under cargo, so the manifest, the lock, the toolchain,
+          # the crate's sources, `mls-core` it depends on by path, and the native plugins it names),
+          # plus its own script. This is the ONLY pull-request compile for an Android Rust target,
+          # which is why `src/` is here. Narrower than `android` above on purpose: `android-tests`
+          # is a JVM project this job does not build, and it pays minutes of Rust.
+          if has '^frontend/src-tauri/gen/android/' || \
+             has '^frontend/src-tauri/src/' || \
+             has '^frontend/src-tauri/Cargo\.(toml|lock)$' || \
+             has '^frontend/src-tauri/build\.rs$' || \
+             has '^frontend/src-tauri/tauri\.conf\.json$' || \
+             has '^frontend/src-tauri/(plugins|patches)/' || \
+             has '^frontend/mls-core/' || \
+             has '^rust-toolchain\.toml$' || \
+             has '^\.github/scripts/android-app-compile\.sh$'; then
+            echo "android_app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "android_app=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # -- iOS app compile --
+          # What `compile-ios-app` reads: the NATIVE APPLE CODE and what builds it. It runs on a
+          # macOS runner, the scarcest minutes in this file, so the trigger is the Apple tree and
+          # not (like `android_app`) the Rust crate: `gen/apple` (the app, the notification and share
+          # extensions, the pbxproj), a Swift package under `plugins/*/ios` or `patches/*/ios`, any
+          # Swift / Objective-C source or header under `src-tauri` (a bridge may live beside the
+          # Rust), the manifest, build script and Tauri config that decide what is linked and
+          # bundled (owner, 2026-11-04; NOT `Cargo.lock`, which Dependabot bumps would turn into a
+          # macOS run each), the scripts it runs, `ios.yml` (the release build it mirrors) and the
+          # toolchain pin. A change to the crate's Rust sources alone is compiled for the host by
+          # `test-rust` and for iOS by the release.
+          if has '^frontend/src-tauri/gen/apple/' || \
+             has '^frontend/src-tauri/(plugins|patches)/[^/]+/ios/' || \
+             has '^frontend/src-tauri/.*\.(swift|m|mm|h)$' || \
+             has '^frontend/src-tauri/(Cargo\.toml|build\.rs|tauri(\.ios)?\.conf\.json)$' || \
+             has '^rust-toolchain\.toml$' || \
+             has '^\.github/workflows/ios\.yml$' || \
+             has '^\.github/scripts/ios-(app-compile|libapp|extensions)\.sh$'; then
+            echo "ios_app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ios_app=false" >> "$GITHUB_OUTPUT"
+          fi
+
           # -- MLS cross-version compatibility --
           # THE WIDEST TRIGGER IN THIS FILE, ON PURPOSE. It fires on `mls-core` (the library whose
           # wire output is the subject), on `mls-cross-version` (the driver both sides are built
@@ -335,6 +386,21 @@ jobs:
             echo "mls_compat=true" >> "$GITHUB_OUTPUT"
           else
             echo "mls_compat=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # -- The SFU's end-to-end call (owner decision D3, 2026-11-01) --
+          # ASK WHAT THE GATE READS: the crate (its harness lives in `apps/call-service/e2e/`), the
+          # shared Chrome driver, the app's E2E worker and every module that worker or the page
+          # imports - the worker IS the transform under test, built from source, so a change to it
+          # alone must run the call that proves it still works through the SFU.
+          if has '^apps/call-service/' || \
+             has '^tools/headless-chrome/' || \
+             has '^frontend/src/lib/workers/encryption\.worker\.ts$' || \
+             has '^frontend/src/lib/utils/(callAudio|opusPacket|callVideoFrame|callFrameAad|callE2eReport)\.ts$' || \
+             has '^rust-toolchain\.toml$' || has '^\.bun-version$'; then
+            echo "call_e2e=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "call_e2e=false" >> "$GITHUB_OUTPUT"
           fi
 
           # -- MiConnect's blueprints --
@@ -383,7 +449,7 @@ jobs:
     # digest as production (`ci-passed-gate.test.mjs` compares them).
     services:
       redis:
-        image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
         ports:
           - 6379:6379
         options: >-
@@ -513,8 +579,8 @@ jobs:
   # calls `bucketExists`, which is a network round trip. Mocking it away would have made the adapter
   # under test a mock, which is the one thing a boot test may never do.
   #
-  # EVERY DATABASE HERE IS DISPOSABLE, and that is load-bearing: all four services set
-  # `synchronize: process.env.NODE_ENV !== 'production'`, so a boot CREATES and ALTERS the schema.
+  # EVERY DATABASE HERE IS DISPOSABLE, and that is load-bearing: this job sets
+  # `TYPEORM_SYNCHRONIZE=1` (`typeorm-synchronize.ts`), so a boot CREATES and ALTERS the schema.
   boot-nest-apps:
     name: Boot the real AppModule (${{ matrix.service }})
     needs: [changes]
@@ -556,7 +622,7 @@ jobs:
         # run - it mattered the day `ioredis` went to 6, whose breaking change is RESP3 by default.
         # Both halves are pinned since #306, and this line carries the digest rather than `8-alpine`
         # so the two cannot drift by a minor either. Bump it WITH the compose files, never alone.
-        image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
         ports:
           - 6379:6379
         options: >-
@@ -622,6 +688,9 @@ jobs:
         working-directory: ${{ matrix.service }}
         env:
           NODE_ENV: test
+          # The schema is built from the entities by NAME, never because NODE_ENV is not
+          # `production` (typeorm-synchronize.ts): the disposable database needs it to boot.
+          TYPEORM_SYNCHRONIZE: '1'
           # Required whenever NODE_ENV is not `production`: `auth.controller.ts` refuses to
           # start rather than guess whether the refresh cookie should carry `Secure`. `false`
           # is the value a deployed estate uses, so this boot exercises the same branch.
@@ -762,7 +831,7 @@ jobs:
       # and skipped everywhere until this service existed. The same digest as production, as the
       # Postgres above (`ci-passed-gate.test.mjs` compares them).
       redis:
-        image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+        image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
         ports:
           - 6379:6379
         options: >-
@@ -1106,19 +1175,7 @@ jobs:
           bun run check
           bun run format:check
 
-      # `test:coverage` runs the exact same suite as `test` (coverage only instruments and
-      # reports, it does not change which tests exist), so a plain run first caught nothing a
-      # failure here would not - it only doubled the frontend suite's wall-clock cost every run.
-      - name: Run Vitest with coverage
-        working-directory: frontend
-        run: bun run test:coverage
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: frontend-coverage
-          path: frontend/coverage/
+      # THE VITEST SUITE RUNS IN `test-frontend-shards`, below.
 
       # THE PRODUCTION FRONTEND IS BUILT ON `main`, AND ON A PULL REQUEST THAT TOUCHES WHAT THE BUILD
       # CONSUMES (dependencies, build config, the serving image: `frontend_build` in `changes`), NOT
@@ -1140,6 +1197,57 @@ jobs:
       - name: Assert what the build carries
         if: github.event_name == 'push' || needs.changes.outputs.run-frontend-build == 'true'
         run: bun .github/scripts/assert-frontend-build.mjs frontend "${{ github.sha }}"
+
+  # THE VITEST SUITE, SHARDED (2026-10-30). `Run Vitest with coverage` was 13.3 of the 14.9 minutes of
+  # `test-frontend`, the whole critical path of a pull request's CI (median 14 min). Lint, type-check
+  # and the build stay in `test-frontend`; the suite is split with vitest's own `--shard=i/N`, which
+  # partitions the test FILES deterministically. Each shard repeats the ~1.5 min setup (dependencies,
+  # wasm, protobuf) rather than sharing an artefact. Coverage is uploaded per shard; no threshold is
+  # enforced anywhere. `CI passed` needs this job and `ci-passed-gate.test.mjs` fails if it stops.
+  test-frontend-shards:
+    name: Test Frontend (shard ${{ matrix.shard }}/4)
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-frontend == 'true' }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Sync SvelteKit
+        working-directory: frontend
+        run: bun run sync
+
+      - name: Build MLS WASM
+        uses: ./.github/actions/build-mls-wasm
+
+      - name: Generate protobuf bindings
+        working-directory: frontend
+        run: bun run proto:gen
+
+      - name: Run Vitest shard with coverage
+        working-directory: frontend
+        run: bun run test:coverage --shard=${{ matrix.shard }}/4
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: frontend-coverage-${{ matrix.shard }}
+          path: frontend/coverage/
 
   # =================================================================================================
   # THE ANDROID UNIT TESTS, WHICH HAD NEVER RUN ON ANY MACHINE
@@ -1198,6 +1306,231 @@ jobs:
       - name: Run the Android unit tests
         run: bash .github/scripts/android-unit-tests.sh
 
+  # THE GATE THE CEILING WAS WAITING FOR (2026-10-30). Until now nothing on a pull request configured
+  # the `:app` module, so `lib/ceiling.sh` refused EVERY Gradle update to `gen/android` - the
+  # wrapper, AndroidX and Firebase bumps sat blocked with auto-merge armed. This compiles `:app` for
+  # real: the app crate's build script generates `tauri.settings.gradle` (as `tauri android build`
+  # does), a committed STUB stands in for the `google-services.json` secret, so it runs on a
+  # Dependabot pull request, which gets no secrets. `android-app-compile.sh` holds the whole
+  # account and ASSERTS the Kotlin task executed - a Gradle run matching no task exits 0.
+  compile-android-app:
+    name: Compile Android app
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-android-app == 'true' }}
+    runs-on: ubuntu-24.04
+    # The repository default is write; this job reads a checkout and nothing else.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      # THE WRAPPER JAR IS BINARY CODE a bump of the wrapper replaces (#2564), and this job runs it.
+      - name: Validate the Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: Setup JDK
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # NO `toolchain:` - the action reads `rust-toolchain.toml` (1.97.0), the same compiler every
+      # other job here uses. `rustflags: ''` for the reason `build-mls-wasm` gives: this action
+      # exports its default `-D warnings` into every later step of the job, and a vendored path
+      # dependency would then compile under our lint bar.
+      #
+      # ITS OWN CACHE, AND THAT IS NOT AN OVERSIGHT. `test-rust` caches the repository-root
+      # `target` (which `frontend/src-tauri` does not even build into) keyed on every lock, for
+      # host-triple artefacts that cannot serve an `aarch64-linux-android` check. Reusing that key
+      # would restore a large directory this job never reads. The Swatinem cache this action
+      # carries is scoped to `frontend/src-tauri`, and it keys on the target and the lock.
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          target: aarch64-linux-android
+          cache-workspaces: frontend/src-tauri
+          rustflags: ''
+
+      - name: Cache Gradle
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-app-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/android/**/*.gradle*', 'frontend/src-tauri/gen/android/**/*.kts', 'frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-app-${{ runner.os }}-
+
+      - name: Compile the Android app module
+        run: bash .github/scripts/android-app-compile.sh
+
+  # =================================================================================================
+  # THE iOS APP COMPILES (2026-11-04). Nothing on the Windows workstation compiles Swift or
+  # Objective-C and no pull-request job did, so a Swift error first failed on the pre-release, after
+  # the merge, where it blocks every change behind it. This builds the app, both extensions and the
+  # Swift plugins UNSIGNED (no secret, so it runs on a Dependabot pull request) with
+  # `xcodebuild build`, and `ios-extensions.sh` asserts both extensions came out.
+  #
+  # A JOB OF THIS FILE, NOT A SECOND CALL OF `ios.yml`: that workflow's job needs signing secrets and
+  # write permission, and both are things a pull request must not have. What the two share is the
+  # script that stages the Rust static library (`ios-libapp.sh`) and the extension assertion; the
+  # runner, the Xcode pin and the dependency steps are the same lines. Behind `run-ios-app` so a
+  # pull request touching no Apple code pays no macOS minute, and `skipped` passes the aggregate.
+  # =================================================================================================
+  compile-ios-app:
+    name: Compile iOS app
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-ios-app == 'true' }}
+    runs-on: macos-15 # carries Xcode 26.x, which `ios.yml` REQUIRES for the same reason
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '^26.0'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            frontend/node_modules
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+          key: ios-app
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          bun install --frozen-lockfile
+          bunx svelte-kit sync
+
+      - name: Build MLS WASM
+        uses: ./.github/actions/build-mls-wasm
+
+      - name: Generate protobuf bindings
+        working-directory: frontend
+        run: bun run proto:gen
+
+      - name: Compile the iOS app
+        run: bash .github/scripts/ios-app-compile.sh
+
+  # =================================================================================================
+  # THE SFU'S END-TO-END CALL - REAL BROWSERS, REAL TURN, ENCRYPTED AUDIO (owner decision D3, 2026-11-01)
+  #
+  # `call-service` is kept working for the day the School opens UDP to it (D2), and a green
+  # `cargo test` was never evidence of that: its unit tests run no ICE stack and `relay_path.rs`
+  # places no call through the SFU and no browser peer. THIS is the call: the crate's binary, a
+  # throwaway coturn on this runner's own address, two headless Chromes running the app's own E2E
+  # frame transform, relay-only on both browsers and on the SFU, and a pass only on PROOF - each
+  # browser decrypted N audio frames under the OTHER browser's send key, over a `relay` pair, and the
+  # SFU's record shows both sessions connected and both ending `client-close`
+  # (docs/wiki/services/call-service.md#the-end-to-end-call-in-ci).
+  #
+  # A JOB OF THIS FILE, NOT A CALLED LIBRARY: `tools/ecosystem-shape/shape.mjs` refuses a workflow
+  # file it does not expect, and a job here is already invisible in the Actions list and already a
+  # need of `CI passed`. Skipped when no path it reads changed, and `skipped` passes the aggregate.
+  #
+  # COTURN IS A `docker run` STEP, NOT A `services:` CONTAINER: a service container takes no
+  # command-line arguments, and coturn is configured by its arguments alone (the image's default
+  # asks an internet service for an external address). `--network host` puts its relay ports on the
+  # runner's address, the one both browsers and the SFU reach - GitHub's runners have UDP.
+  #
+  # NO CLOCK DECIDES THE VERDICT. The harness waits for a proof of success or of failure (the SFU's
+  # ICE giving up, a refused TURN allocation, a socket closing, a frame that does not decrypt, a
+  # process exiting); `timeout-minutes` is the only bound, for a run in which nothing happens at all.
+  # =================================================================================================
+  test-call-service-e2e:
+    name: Call Service E2E (two browsers through the SFU and coturn)
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-call-e2e == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/call-service
+
+      - name: Build the call-service binary
+        working-directory: apps/call-service
+        run: cargo build --locked
+
+      - name: Start a throwaway coturn on the runner's address
+        run: |
+          set -euo pipefail
+          # The source address the kernel would use toward the outside: the interface that carries
+          # the default route, by the routing table's own answer (no packet is sent), rather than
+          # whichever address `hostname -I` happens to list first (a docker bridge, an IPv6).
+          ip="$(ip -4 route get 1.1.1.1 | awk '{ for (i = 1; i < NF; i++) if ($i == "src" && !seen) { print $(i + 1); seen = 1 } }')"
+          if [ -z "$ip" ]; then ip -4 route; echo "::error::no IPv4 source address on the default route"; exit 1; fi
+          password="$(openssl rand -hex 16)"
+          # Masked before anything can print it (coturn's own log included).
+          echo "::add-mask::$password"
+          docker run -d --name e2e-coturn --network host \
+            coturn/coturn:4.7.0@sha256:a00afb5b4890de4df22bbe70379c6b316685dffee297d53cac1271dcb91fab93 \
+            -n --log-file=stdout --no-cli --no-tls --no-dtls \
+            --listening-ip="$ip" --relay-ip="$ip" --external-ip="$ip" --listening-port=3478 \
+            --min-port=49160 --max-port=49400 \
+            --lt-cred-mech --realm=canari.test --user="e2e:$password" --allow-loopback-peers
+          echo "E2E_TURN_URL=turn:$ip:3478?transport=udp" >> "$GITHUB_ENV"
+          echo "E2E_TURN_PASSWORD=$password" >> "$GITHUB_ENV"
+          # Ready is a FACT, and the KERNEL's: a UDP socket bound to the address and port we gave
+          # coturn. Two first runs waited for good on a line of coturn's own log instead - a log
+          # line is coturn's wording, which a version may change, and the socket is the thing.
+          for (( n = 0; ; n++ )); do
+            if [ -n "$(ss -Hlun "src $ip and sport = :3478")" ]; then break; fi
+            if [ "$(docker inspect -f '{{.State.Running}}' e2e-coturn)" != "true" ]; then
+              docker logs e2e-coturn; echo "::error::coturn exited before it listened"; exit 1
+            fi
+            # Not a verdict: what a run still waiting here was waiting on, in its own log.
+            if (( n % 10 == 9 )); then docker logs --tail 20 e2e-coturn 2>&1; fi
+            sleep 1
+          done
+          echo "coturn listening on $ip:3478 (udp)"
+
+      - name: Two browsers call each other through the SFU, encrypted
+        run: |
+          bun apps/call-service/e2e/run.mjs \
+            --turn "$E2E_TURN_URL" --turn-user e2e --turn-credential "$E2E_TURN_PASSWORD"
+
+      # `always()`, not `failure()`: a run CANCELLED by the job's timeout is the one whose relay's
+      # side of the story is most needed. Nothing to print when coturn never started.
+      - name: coturn's log
+        if: always()
+        run: docker logs e2e-coturn 2>&1 | tail -200 || true
+
   # =================================================================================================
   # CROSS-CLIENT HARNESS SELF-TESTS
   # The rig's rules about itself: the two log classifiers and the phase/device declarations. None of
@@ -1250,10 +1583,14 @@ jobs:
   test-ci-scripts:
     name: Test CI Scripts (self-tests)
     runs-on: ubuntu-24.04
+    env:
+      # Job-level so the archive cache below can key on it; the lint step verifies against it.
+      SHELLCHECK_SHA256: 6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 2
 
       # THE RECIPE IS NOT BASH-ONLY AND HAS NOT BEEN SINCE THE .mjs TESTS JOINED IT - three of its
       # eleven are JavaScript (`no-nul-in-source`, `wiki-links`, and the App Store submitter's own
@@ -1269,6 +1606,12 @@ jobs:
 
       - name: Run CI script self-tests
         run: make test-ci-scripts
+
+      # The raw-controls ratchet may only go down, and only a comparison with the base can see a
+      # hand edit raise it (docs/wiki/frontend/controls.md). HEAD^1 is the base of a pull request's
+      # synthesised merge commit, and the previous main for a push.
+      - name: Raw-controls ratchet is not raised
+        run: bun .github/scripts/ratchet-not-raised.mjs HEAD^1
 
       # `.github/scripts/` is the only code in this repository that MERGES things, so it is linted
       # rather than merely parsed. This step was refused once, for the right reason - the linter was
@@ -1292,20 +1635,33 @@ jobs:
       # pointing the other way. Same shape as `.bun-version`, and for the same reason. The digest
       # stays here because it is a property of the ARCHIVE rather than of the version, and a bump
       # that forgets it fails CLOSED on the checksum rather than quietly fetching something else.
+      # THE VERIFIED ARCHIVE IS CACHED, keyed on the version file and the digest: GitHub's release
+      # downloads answered 504 for hours on 2026-11-08 while its status page said operational, and
+      # every pull request failed fetching bytes it already had. The digest is checked on EVERY
+      # run, cache hit or not, so a cache can only hand back the archive the pin names.
+      - name: Cache the ShellCheck archive
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/shellcheck-archive
+          key: shellcheck-${{ hashFiles('.shellcheck-version') }}-${{ env.SHELLCHECK_SHA256 }}
+
       - name: Lint the CI scripts
-        env:
-          SHELLCHECK_SHA256: 6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87
         run: |
           set -euo pipefail
           SHELLCHECK_VERSION="$(tr -d '[:space:]' < .shellcheck-version)"
-          archive="$RUNNER_TEMP/shellcheck.tar.xz"
-          curl -sSLf -o "$archive" \
-            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          mkdir -p "$RUNNER_TEMP/shellcheck-archive"
+          archive="$RUNNER_TEMP/shellcheck-archive/shellcheck.tar.xz"
+          if [ -f "$archive" ]; then
+            echo "ShellCheck archive restored from the cache"
+          else
+            curl -sSLf --retry 3 -o "$archive" \
+              "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          fi
           echo "${SHELLCHECK_SHA256}  ${archive}" | sha256sum -c -
           tar -xJf "$archive" -C "$RUNNER_TEMP"
           "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}/shellcheck" --version
           "$RUNNER_TEMP/shellcheck-${SHELLCHECK_VERSION}/shellcheck" -x \
-            .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh \
+            .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh .github/scripts/tests/rolling-fixture/*.sh \
             infrastructure/dev/*.sh infrastructure/deploy/*.sh \
             infrastructure/local/*.sh infrastructure/backup/*.sh \
             infrastructure/lib/*.sh infrastructure/egress-probe/*.sh infrastructure/authentik/*.sh \
@@ -1376,9 +1732,24 @@ jobs:
           # answered empty, so a rehearsal recorded there would have lifted nothing.
           # `infrastructure/authentik/compose.yml` for the same reason as production's: the identity
           # provider runs its OWN PostgreSQL major, and an update to that file is compared with it.
+          # The dev and local compose files because an image's statefulness is read from EVERY
+          # compose file (`ceiling_image_may_cross_major`), and an absent one refuses every major.
+          # `ci.yml` because `ceiling.test.sh` asserts the `compile-android-app` job behind the
+          # `gen/android` allowance: without it that self-test failed on EVERY Dependabot pull
+          # request from 2026-10-30, so the step that decides never ran (#2742, 2026-10-31).
+          #
+          # THE BASE, NOT THE PULL REQUEST, AND THIS LINE IS WHAT MAKES THE MAJOR COMPARISON MEAN
+          # ANYTHING. A `pull_request` checkout is the MERGE ref, which already carries Dependabot's
+          # new pin - so `16-alpine -> 18-alpine` read the major "the stack runs" as 18 out of the
+          # bumped file and passed as same-major (#2742, measured 2026-10-31). The major running
+          # is the one on the base branch. `ceiling.test.sh` asserts this `ref`.
+          ref: ${{ github.event.pull_request.base.sha }}
           sparse-checkout: |
             .github/scripts
+            .github/workflows/ci.yml
             infrastructure/docker-compose.prod.yml
+            infrastructure/docker-compose.dev.yml
+            infrastructure/local/docker-compose.yml
             infrastructure/dev/version-gap.yml
             infrastructure/authentik/compose.yml
 
@@ -1529,8 +1900,8 @@ jobs:
     name: CI passed
     if: always()
     needs:
-      [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-android, test-harness,
-      test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, security, dependency-audit]
+      [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-frontend-shards, test-android, compile-android-app, compile-ios-app, test-harness,
+      test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, test-call-service-e2e, security, dependency-audit]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job either passed or had nothing to do

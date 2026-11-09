@@ -6,10 +6,15 @@ import {
   customTabsCommand,
 } from './customTabsCommands';
 import { KEYSTORE_COMMAND_NAMES, KEYSTORE_PLUGIN, keystoreCommand } from './keystoreCommands';
+import {
+  SYSTEM_COMPONENTS_COMMAND_NAMES,
+  SYSTEM_COMPONENTS_PLUGIN,
+  systemComponentsCommand,
+} from './systemComponentsCommands';
 
 /**
- * Cross-language contract guard for the two hand-written Tauri plugins whose command names are
- * built in TypeScript (keystore, customtabs). A `plugin:<name>|<command>` string is unchecked on
+ * Cross-language contract guard for the Tauri plugins whose command names are built in TypeScript
+ * (keystore, customtabs, and the Canari-patched commands of system-components). A `plugin:<name>|<command>` string is unchecked on
  * both sides: it compiles, lints and type-checks while resolving to nothing at runtime if either
  * side drifts. These tests read the Rust sources so a rename fails CI instead of silently
  * disabling biometrics or the Custom Tab (`openUrl` is not a fallback, see `auth.ts`).
@@ -55,6 +60,16 @@ const ROWS: PluginRow[] = [
     build: customTabsCommand,
     sample: ['openCustomTab', 'plugin:customtabs|open_custom_tab'],
     otherSample: 'openCustomTab',
+  },
+  {
+    label: 'system-components (Canari patch)',
+    pluginDir: '../../../src-tauri/patches/tauri-plugin-system-components/',
+    plugin: SYSTEM_COMPONENTS_PLUGIN,
+    androidId: 'com.sosweetham.systemcomponents',
+    commandNames: SYSTEM_COMPONENTS_COMMAND_NAMES,
+    build: systemComponentsCommand,
+    sample: ['setTabBarInteractive', 'plugin:system-components|set_tab_bar_interactive'],
+    otherSample: 'setTabBarInteractive',
   },
 ];
 

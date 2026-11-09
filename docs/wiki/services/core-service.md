@@ -126,7 +126,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | GET | `/api/users/search?q=...` | JWT | Search users by id/displayName for autocomplete |
 | GET | `/api/users/directory` | JWT | Paginated directory with filters (promo, formation, association) |
 | GET | `/api/users/batch?ids=a,b,c` | JWT | Public profiles for up to 100 ids in ONE query ([why](#one-request-for-a-list-the-client-already-holds)) |
-| GET | `/api/users/:id/avatar` | JWT | Proxy the user's MiGallery photo ([three outcomes](#the-avatar-proxy)) |
+| GET | `/api/users/:id/avatar` | avatar token (`?t=`) or internal secret ([sessions](../sessions.md#the-avatar-token)) | Proxy the user's MiGallery photo ([three outcomes](#the-avatar-proxy)) |
 | POST | `/api/users` | global admin | Create user manually; an id that has a row, or whose erasure is running, is a `409` |
 | GET | `/api/users/me/notes` | JWT | Get caller's notepad ciphertext (+ `legacyNotes` once, pre-encryption) |
 | PUT | `/api/users/me/notes` | JWT | Store caller's notepad ciphertext; clears the legacy plaintext |
@@ -215,6 +215,16 @@ Pinned by `avatar-presence.spec.ts` (core), `avatarPresence.test.ts` and `userAv
 `avatar.service.ts` fetches `gallery.mitv.fr/api/users/<id>/avatar` with `x-api-key` and answers one
 of **three** outcomes. The distinction exists for one reason: **only an ANSWER may be cached.**
 
+**Who may ask is decided first** (`users/avatar-access.ts`, [sessions](../sessions.md#the-avatar-token)):
+a viewer whose `?t=` avatar token verifies against a live session, or a service proving
+`x-internal-secret`. A wrong credential is a bodyless `403` (`no-store`) before any answer about the
+id, so a refusal never says whether there is a photo. Every `[AVATAR]` line carries
+`access=internal|signed|unsigned|refused` (and the refusal's `reason`: `malformed`,
+`bad-signature`, `stale`, `session-ended`, `unconfigured`, `bad-internal-secret`); a request with no
+token at all adds `via=<nginx|direct> origin=<native|web|none>` for the rollout. The edge never
+forwards `x-internal-secret` ([nginx](../infrastructure/nginx.md)): a service proves it on the
+Docker network only.
+
 | outcome | when | response | cached |
 | --- | --- | --- | --- |
 | `image` | upstream 200 | the bytes, upstream `Content-Type` **and upstream `ETag`** | 1 h in process (then REVALIDATED, not re-fetched); `Cache-Control: public, no-cache` + ETag, `304` on a matching `If-None-Match` (2026-10-08) |
@@ -237,8 +247,10 @@ of **three** outcomes. The distinction exists for one reason: **only an ANSWER m
   what produced three console lines per benign miss: `404`, then `ERR_BLOCKED_BY_ORB` (Chrome
   refusing a JSON body to an image destination), then `ERR_ABORTED`.
 
-The client half is `frontend/src/lib/utils/userAvatarCache.ts`, and it answers a KIND rather than a
-nullable URL: `blob` (bytes held locally), `direct` (nothing cached, let the element fetch it), or
+The client half is `frontend/src/lib/utils/userAvatarCache.ts`. **It is keyed by USER ID, never by
+URL** (2026-11-02): the URL is built at the request by the one helper `avatarUrl(userId)` and carries
+the viewer's avatar token, which rotates daily and at every sign-in, so a URL key would split one face
+- and one known absence - across tokens. It answers a KIND rather than a nullable URL: `blob` (bytes held locally), `direct` (nothing cached, let the element fetch it), or
 `none` (the server answered and there is nothing to draw). `none` is what stops the second request -
 the element used to be handed back the same URL and ask the server again for the answer just given.
 `direct` is what keeps the native clients working, where the API is a different origin and `fetch`
@@ -412,6 +424,8 @@ Both `unaccent` and `pg_trgm` are enabled on boot in `UsersService.onModuleInit`
 | DELETE | `/api/users/admin/platform/announcement` | global admin | Retire the live one (keeps the row and its readership) |
 | GET | `/api/users/me/announcement?clientVersion=` | session | The announcement this account has not seen, or `null` |
 | POST | `/api/users/me/announcement/:id/seen` | session | Record that this account has read it |
+| GET | `/api/users/me/help-seen` | session, 30/min per account on this route | The first-time helps this account has seen (`{ seen }`) - [guided-help](../frontend/guided-help.md) |
+| POST | `/api/users/me/help-seen/:helpId` | session, 30/min per account on this route | Record one, idempotent; `400 HELP_ID_UNKNOWN` outside `HELP_IDS` |
 | GET | `/api/version` | none | Latest app version + platform gates, and `calls: { mode }` - the calls kill switch clients read to hide what chat-delivery-service would refuse ([calls](../frontend/modules/calls.md#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)) |
 
 ### Payments (Stripe + Lydia)
@@ -437,11 +451,9 @@ of the association its `vendor_token` names (read from social-service's internal
 fulfillment as a trigger, via an `order_ref` Canari encodes itself
 (`lydia-order-ref.ts`) - a form only: a `product:` confirm fulfils nothing until a boutique checkout
 is a stored row (lot B3); a confirm, a cancel and an expiry alike only make social-service read the row's own request at Lydia before anything moves, and a failure to apply a verified callback (that read included) is a retryable 503. The route is rate-limited at nginx (`lydia_callback`, 5 r/s burst 50 per address). **Still blocking an actual switch to Lydia** (tracked in
-[backlog](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end), harmless today
-since `payment_provider` defaults to `disabled`): nothing resolves the `payerRecipient` `request/do`
-requires, and the `business/create` `BUSINESS_VALIDATED` webhook (would flip
-`lydiaOnboardingComplete` automatically) is deliberately unbuilt - no documented signature, and
-`vendor_token` is PUBLIC.
+[backlog](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end), owed before a GUEST can pay; Lydia itself is live in production since 2026-11-06): nothing resolves the `payerRecipient` `request/do`
+requires. The `business/create` webhook is described in
+[payments](../frontend/modules/payments.md).
 
 **How core-service reads an association's payment account (2026-10-05).** the Lydia manual
 validation reads social-service's INTERNAL route
@@ -471,11 +483,12 @@ has no foreign key; the orphan rendered as "Personnel"). Submissions stay, as wi
 |---|---|---|---|
 | GET | `/api/payments/provider` | none | Active provider (`lydia` or `disabled`), for the frontend to render the matching onboarding UI |
 | POST | `/api/payments/onboarding` | JWT | Start/resume Connect-style onboarding for an association, with the active provider |
-| POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
+| POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT + global admin | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
 | POST | `/api/payments/create-checkout-session` | InternalSecret | Create a checkout session (called by social-service, never by a browser) |
 | POST | `/api/payments/cancel-request` | InternalSecret | Cancel a payment request a retry replaced (Lydia `request/cancel`, numeric `request_id`; social-service only) |
-| POST | `/api/payments/request-state` | InternalSecret | Read a payment request's state (Lydia `request/state`, `request_uuid` - 32 hex digits - + `vendor_token`; social-service only): after a cancel answered "already processed", and for `forms/submissions/:id/confirm-payment` on the payer's return. `verify-session` / `cancel-session` were deleted 2026-10-15: `request/state` echoes no `order_ref`, so they could never name a submission ([payments](../frontend/modules/payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)) |
+| POST | `/api/payments/request-state` | InternalSecret | Read a payment request's state (Lydia `request/state`, `request_uuid` - 32 hex digits - + `vendor_token`; social-service only): after a cancel answered "already processed", and for `forms/submissions/:id/confirm-payment` on the payer's return. `verify-session` / `cancel-session` were deleted 2026-10-15: `request/state` echoes no `order_ref`, so they could never name a submission ([payments](../frontend/modules/payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)). With `expectedAmountCents` the answer is VERIFIED - Lydia's signature checked with the Business key over that amount - and carries `verification` (`verified`, `mismatch`, `unsigned`, or `no-key` without asking Lydia); the reconciliation sweep's read ([lydia-api](../lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)) |
 | POST | `/api/payments/lydia-request-callback?outcome=confirm\|cancel\|expire` | Lydia signature (`sig`, the association's Business key) | `request/do` payment confirmation - the authoritative fulfillment path for Lydia, since the buyer returning to the success redirect is not guaranteed |
+| POST | `/api/payments/lydia-business-webhook` | none - UNSIGNED by Lydia, so it writes nothing | `business/create`'s `webhook`: `BUSINESS_VALIDATED` / `BUSINESS_UNVALIDATED` logged with the association holding the `vendor_token`, for a global admin who still validates by hand ([payments](../frontend/modules/payments.md#the-key-is-captured-at-businesscreate-enrolment-lot-1)) |
 
 ### Health
 
@@ -493,9 +506,10 @@ PostgreSQL (`auth_db`). Main tables:
 | `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp`, `deviceId` |
 | `restore_credentials` | `id` (credential id), `userId` (FK CASCADE), `sessionId` (UNIQUE, FK `auth_sessions` CASCADE), `publicKey`, `counter`, `cloudBackup`, `createdAt` - [account-restore](../account-restore.md) |
 | `restore_challenges_spent` | `nonce`, `expiresAt` - written only after a verified assertion, swept hourly |
-| `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion`, `paymentProvider`, `callsMode` (`calls_mode`, migration 014: `off` / `audio` / `audio_video`, default `off`, enforced by chat-delivery-service on every call request), `livesMode` (`lives_mode`, migration 015: `off` / `on`, default `off`, enforced by social-service on every live route and relayed to media-service's segment routes - [lives](lives.md#the-two-switches-live_enabled-and-lives_mode)) |
+| `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion`, `paymentProvider`, `callsMode` (`calls_mode`, migration 014: `off` / `audio` / `audio_video`, default `off`, enforced by chat-delivery-service on every call request), `livesMode` (`lives_mode`, migration 015: `off` / `on`, default `off`, enforced by social-service on every live route and relayed to media-service's segment routes - [lives](lives.md#the-two-switches-live_enabled-and-lives_mode)), `checkpointSkipMode` (`checkpoint_skip_mode`, migration 020: `off` / `on`, default `off`, enforced by no service - published by `/api/version` as `checkpointSkip.mode` and obeyed by the client's MLS state persister, [the decision](../open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)) |
 | `platform_announcements` | `title_fr/en`, `body_fr/en`, `min_client_version`, `max_client_version`, `active`, `created_by` |
 | `platform_announcement_seen` | `announcement_id` (FK CASCADE), `user_id` — PK is the pair |
+| `help_seen` | `user_id` (varchar 255), `help_id` (one of `libs/contracts/help-ids.json`), `seen_at` — PK is the pair; migration 019, erased with the account |
 
 `auth_sessions` rows are swept hourly, and any row past `expiresAt` is refused before it is swept —
 the sweep is housekeeping, never a security boundary. `userAgent` and `lastIp` exist so the owner

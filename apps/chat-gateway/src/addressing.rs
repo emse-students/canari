@@ -199,7 +199,8 @@ return 1
 
 /// Retires one session and, when no session of the device is left on ANY process, its presence.
 ///
-/// KEYS: presence, sessions, left, join-ask. ARGV: field (empty = retire nobody, only re-ask the
+/// KEYS: presence, sessions, left, join-ask, client declaration (the census's `monitor:client:*`,
+/// deleted WITH the presence key it describes). ARGV: field (empty = retire nobody, only re-ask the
 /// presence), ttl, older marker. The field is recorded as LEFT before it is removed from both
 /// hashes, so no refresh can bring it back. The presence goes only when the sessions hash holds no
 /// field after that - and never an older gateway's `true`, which belongs to a session still
@@ -216,6 +217,7 @@ if ARGV[1] ~= '' then
 end
 if #redis.call('HKEYS', KEYS[2]) == 0 and redis.call('GET', KEYS[1]) ~= ARGV[3] then
   redis.call('DEL', KEYS[1])
+  redis.call('DEL', KEYS[5])
 end
 return 1
 ";
@@ -267,6 +269,7 @@ pub async fn leave_session(
         .key(sessions_key(conn_key))
         .key(left_key(conn_key))
         .key(join_ask_key(conn_key))
+        .key(crate::census::client_key(conn_key))
         .arg(field.unwrap_or(""))
         .arg(ttl_secs)
         .arg(PRESENCE_OLDER_GATEWAY)
@@ -526,6 +529,44 @@ mod redis_it {
             .unwrap();
         assert_eq!(presence(&mut con, &key).await, None);
         assert!(fields(&mut con, &key).await.is_empty());
+    }
+
+    /// The census's declaration key (`monitor:client:*`) goes WITH the presence key, in the same
+    /// script - and stays while another session holds the device.
+    #[tokio::test]
+    async fn the_declaration_key_goes_with_the_presence_key() {
+        let Some(mut con) = redis().await else { return };
+        let key = device();
+        let kind = crate::census::ClientKind::from_query(Some("web"), Some("1.0.0"));
+        write_session(&mut con, &key, "a:1", NONE, 90)
+            .await
+            .unwrap();
+        write_session(&mut con, &key, "b:1", NONE, 90)
+            .await
+            .unwrap();
+        crate::census::note_client(&mut con, &key, &kind, 90)
+            .await
+            .unwrap();
+        let name = crate::census::client_key(&key);
+
+        leave_session(&mut con, &key, Some("a:1"), 90)
+            .await
+            .unwrap();
+        let held: i64 = redis::cmd("EXISTS")
+            .arg(&name)
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(held, 1, "a sibling session still holds the device");
+        leave_session(&mut con, &key, Some("b:1"), 90)
+            .await
+            .unwrap();
+        let held: i64 = redis::cmd("EXISTS")
+            .arg(&name)
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(held, 0);
     }
 
     /// Review of #2270: a refresh already in flight when its session left must not bring it back.

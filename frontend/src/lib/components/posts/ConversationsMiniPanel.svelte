@@ -16,7 +16,9 @@
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import { isHiddenFromList, loadHiddenUnopenable } from '$lib/utils/chat/noHolder.svelte';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
+  import { previewContentOf } from '$lib/utils/chat/listPreview';
   import { m } from '$lib/paraglide/messages';
 
   interface ConvItem {
@@ -93,10 +95,10 @@
       isReady: conv.lifecycle === 'active',
       unreadCount: conv.unreadCount ?? baseline?.unreadCount ?? 0,
       imageMediaId: conv.imageMediaId ?? baseline?.imageMediaId ?? null,
+      // Only device lines loaded: the baseline's preview, never an empty row.
       lastMessageContent:
-        conv.messages?.length > 0
-          ? conv.messages[conv.messages.length - 1].content
-          : baseline?.lastMessageContent,
+        (conv.messages?.length > 0 ? previewContentOf(conv.messages) : undefined) ??
+        baseline?.lastMessageContent,
     };
   }
 
@@ -161,8 +163,10 @@
       // backends, and `db/conversationOrder.test.ts` pins it. This panel used to re-sort because the
       // web backend did not keep that promise - which is fixed at the store, so the compensation
       // went with it rather than being left as a second copy of the ordering rule.
+      loadHiddenUnopenable(uid);
       idbItems = convos
         .filter((meta) => !isChannelConversationId(meta.id))
+        .filter((meta) => !isHiddenFromList(meta.id, meta.lifecycle))
         .slice(0, 20)
         .map((meta) => buildItemFromMeta(meta, uid));
       // IT DOES NOT CLOSE, DELIBERATELY, AND ADDING A `close()` HERE WOULD BREAK THE LIVE SESSION.

@@ -1,6 +1,6 @@
 import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
 import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
-import { openChannelMessage } from '$lib/utils/graine/channelSeal';
+import { openChannelMessageProving } from '$lib/utils/graine/channelSeal';
 import { reportUnreadableChannelMessage } from '$lib/utils/chat/channelCrypto';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
@@ -11,9 +11,12 @@ import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { mergeReadWatermark, withOwnReadAdvanced } from '$lib/utils/chat/readState';
+import { publishReadState } from '$lib/mls-client/tabMessageSync';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
 import { isJoinAskOutcome } from '../joinAskFrames';
+import { salonGrants } from '$lib/utils/chat/memberRemoval';
+import { applyCommunityNicknameEvent } from '$lib/utils/chat/nicknameActions';
 
 /**
  * Context for handleChannelEvent: MessageHandlerDeps plus the epoch-recovery
@@ -28,6 +31,7 @@ export interface ChannelEventContext extends Pick<
   | 'addMessageToChat'
   | 'onChannelMemberJoined'
   | 'onChannelMemberKicked'
+  | 'onChannelRemovalReleased'
   | 'onChannelUpdated'
   | 'onRolePermissionsChanged'
   | 'onChannelDeleted'
@@ -74,6 +78,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     addMessageToChat,
     onChannelMemberJoined,
     onChannelMemberKicked,
+    onChannelRemovalReleased,
     onChannelUpdated,
     onRolePermissionsChanged,
     onChannelDeleted,
@@ -185,6 +190,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 
   if (event.type === 'channel.member.joined') {
     const data = event.data || {};
+    // The grant's revision, for each person it names, orders it against a removal (`salonGrants`).
+    const granted: string[] = Array.isArray(data.grantedUserIds)
+      ? data.grantedUserIds.map(String)
+      : data.joinedBy
+        ? [String(data.joinedBy)]
+        : [];
+    salonGrants.noteGrant(String(data.channelId || ''), granted, data.accessRevision);
     onChannelMemberJoined?.({
       channelId: String(data.channelId || ''),
       channelName: data.channelName,
@@ -204,13 +216,48 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
   // are normalised here so a single client handler decides what is actually lost.
   if (event.type === 'channel.member.kicked' || event.type === 'channel.member.removed') {
     const data = event.data || {};
+    const channelId = String(data.channelId || '');
+    const kickedUserId = String(data.kickedUserId ?? data.removedUserId ?? '');
+    // A removal OLDER than a grant already seen for the same person and salon (a leave, then a
+    // quick re-invitation) changes nothing: acting on it would purge a salon they are back in.
+    if (channelId && salonGrants.supersedes(channelId, kickedUserId, data.accessRevision)) {
+      log(
+        `[CHANNEL] removal of ${kickedUserId.slice(0, 8)} from ${channelId.slice(0, 8)} at access revision ${data.accessRevision} is older than a grant already seen - ignored`
+      );
+      return;
+    }
     onChannelMemberKicked?.({
-      channelId: String(data.channelId || ''),
+      channelId,
       channelName: data.channelName,
       workspaceId: data.workspaceId,
-      kickedUserId: String(data.kickedUserId ?? data.removedUserId ?? ''),
+      kickedUserId,
       kickedBy: data.kickedBy ?? data.removedBy,
+      actorDeviceId: typeof data.actorDeviceId === 'string' ? data.actorDeviceId : undefined,
       channelIsPrivate: data.isPrivate === true,
+    });
+    return;
+  }
+
+  // THE ACTOR RELEASED A REMOVE IT CLAIMED (channel-encryption section 10): it did not commit it, and
+  // the scope's remaining members elect a committer - on this event, never on a guess.
+  if (event.type === 'channel.member.removal-released') {
+    const data = event.data || {};
+    const workspaceId = String(data.workspaceId || '');
+    const removedUserId = String(data.removedUserId || '');
+    // WHO released it: its leaves are out of the election, or the releaser is elected again.
+    const releasedBy = String(data.releasedBy || '');
+    // ...and BY WHICH DEVICE: only a receiver that deferred to that device's leaf re-decides.
+    const releasedByDevice = String(data.releasedByDevice || '');
+    if (!workspaceId) return unaddressable(log, event.type, 'workspaceId');
+    if (!removedUserId) return unaddressable(log, event.type, 'removedUserId');
+    if (!releasedBy) return unaddressable(log, event.type, 'releasedBy');
+    if (!releasedByDevice) return unaddressable(log, event.type, 'releasedByDevice');
+    onChannelRemovalReleased?.({
+      workspaceId,
+      channelId: String(data.channelId || ''),
+      removedUserId,
+      releasedBy,
+      releasedByDevice,
     });
     return;
   }
@@ -255,6 +302,9 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onRolePermissionsChanged?.({
       roleId,
       permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],
+      // The community's own name for the role: a string, or null for "none - use the default". ABSENT
+      // (a server older than the rename) leaves the name where the last listing put it.
+      label: typeof data.label === 'string' ? data.label : data.label === null ? null : undefined,
     });
     return;
   }
@@ -275,6 +325,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 
   if (event.type === 'workspace.updated') {
     const data = event.data || {};
+    if (data.nickname !== undefined) {
+      // A COMMUNITY NICKNAME CHANGED ("Modifier les pseudos"). It rides this type because every
+      // client knows it - an older one ignores the field - and the event carries nothing else, so
+      // the community entry is not touched.
+      applyCommunityNicknameEvent(String(data.workspaceId || ''), data.nickname);
+      return;
+    }
     onWorkspaceUpdated?.({
       workspaceId: String(data.workspaceId || ''),
       imageMediaId: data.imageMediaId,
@@ -342,12 +399,17 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     // title `(N)` - until it was opened on this device too.
     const next =
       userId.toLowerCase() === ctx.userId.toLowerCase()
-        ? withOwnReadAdvanced(convo, userId, Number(data.at))
+        ? // A salon's marks are on the stamped map, where a salon row's stamp IS its server time.
+          withOwnReadAdvanced(convo, userId, Number(data.at), 'stamped')
         : (() => {
             const merged = mergeReadWatermark(convo.readWatermarks, userId, Number(data.at));
             return merged ? { ...convo, readWatermarks: merged } : convo;
           })();
-    if (next !== convo) conversations.set(key, next);
+    if (next !== convo) {
+      conversations.set(key, next);
+      // A follower tab of this browser has no socket: it learns the mark from here (`read_state`).
+      publishReadState(key, userId.toLowerCase(), Number(data.at), 'stamped');
+    }
     return;
   }
 
@@ -381,12 +443,15 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       let isSystemNotice = false;
       // The client UUID sealed INSIDE the ciphertext: what this device's own echo is keyed by.
       let innerMessageId: string | undefined;
+      // Whether the open PROVED the author (a v2 session): the native banner names a speaker only
+      // then, and the push trigger decides from the same fact - see `openChannelMessageProving`.
+      let authorProven = false;
       const channelServerMs = parseServerTimestampMs(data.createdAt);
       try {
         if (data.ciphertext) {
           // Opened here rather than left to the history reload: a live bubble that only appeared
           // after a refetch is the symptom the epoch-key path used to have.
-          const bytes = await openChannelMessage(data.channelId, {
+          const opening = await openChannelMessageProving(data.channelId, {
             // The same id the bubble is keyed by below, and the history load reads: a row opened
             // on both paths is one row, never its own replay.
             id: messageId,
@@ -400,7 +465,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
                 ? null
                 : Number(data.messageIndex),
           });
-          const msg = decodeAppMessage(bytes);
+          authorProven = opening.authorProven;
+          const msg = decodeAppMessage(opening.bytes);
           // A reaction is a channel message now (WP-40), so it arrives on this very path. It
           // changes a bubble instead of adding one, and it is the ONLY live route reactions have -
           // there is no server tally left to broadcast.
@@ -517,6 +583,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         // reconcile can compare with the server's rows (see `reconcileSalonUnread`).
         serverTimestamp: channelServerMs,
         skipDbSave: true,
+        authorProven,
         // A follower tab may be the one that composed it: the id lets it settle its echo.
         ...(ownClientId ? { clientMessageId: ownClientId } : {}),
         ...(isSystemNotice ? { isSystem: true } : {}),

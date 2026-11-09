@@ -94,6 +94,19 @@ shared host and a cron there is a change its administrators have not agreed to.
 ## What stays open: the report's reach, the RAID channel, and libraries nothing restarts
 
 The report covers only the host the runner lives on; a RAID sensor without a report channel and a
-library security fix that is installed but not in effect remain open. See
-[backlog](../backlog.md#p2---two-of-the-hosts-that-take-security-updates-are-not-reported-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03).
-The shared host's own update policy is the school's and is judged on our questions only.
+library security fix that is installed but not in effect stay as they are, on purpose (below). The
+shared host's own update policy is the school's and is judged on our questions only; a library it
+installed but did not restart is the school's to restart.
+
+## The owner's three old VMs are ignored on purpose (2026-10-24)
+
+The owner's three older VMs - the old Canari VM among them - get no runner key, no RAID report
+channel and no decommission plan. This is a decision, not a gap: nothing here reports on them, and a
+line asking for any of the three is not reopened without the owner.
+
+## The root disk: no new container until the DSI extends it (2026-10-24)
+
+The DSI warned that the shared host's root disk stood at **92 %**. It was cleaned to **73 %** the same
+day: old CI runner versions, and the host's local backup archives older than 7 days (an offsite copy
+keeps 14 days, so no backup generation was lost). **Rule: no new container goes on that host until the
+DSI extends the disk and says go** - a new service, a new estate or a new sidecar alike.

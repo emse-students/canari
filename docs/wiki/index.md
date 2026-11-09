@@ -24,9 +24,11 @@
 - [MLS defects the campaign measured](protocols/campaign-measured-defects.md) — The reasoning, numbers, recurrences and refuted readings behind the open MLS healing and delivery entries of the backlog
 - [MLS desync prevention](protocols/mls-desync-prevention.md) — Server + client tactics to avoid state drift
 - [MLS recovery ladder](protocols/mls-recovery-ladder.md) — Step-by-step recovery (commit replay → external join → welcome_request)
+- [MLS availability with no holder](protocols/mls-availability-no-holder.md) — Who can get back into a group no live device holds: the audit of 2026-10-31, the owner's decisions D1-D6 (a further device lets itself in when no member device is online; the "cannot be opened here" banner decided by server facts only)
 - [MLS + Graine state machine](protocols/mls-graine-state-machine.md) — **Every path, drawn from the code.** Mermaid diagrams with `file:line` on every transition, the duplicate-path table, the dead ends, and the P1/P2/P3 triage
 - [Channel encryption](protocols/channel-encryption.md) — **Graine, PHASES 1-5 ARE IN.** Why a salon is not an MLS group, the per-sender seed the server has never held, and the cut that is still owed
 - [Graine rotates on a departure (design)](protocols/graine-removal-tracker.md) — DESIGN ONLY, reviewed before code: a commit summary from `mls-core` on every platform, a per-key-group clean run, the fail-safe argument, reuse across an Add by re-distributing the same seed, `joined` keeps rotate-on-add
+- [Content-free push (design)](protocols/content-free-push.md) - DESIGN past step 1: every push type's cleartext fields measured from the code, the push envelope for salons and social pushes, Android and iOS mechanics, the honest failure contract, calls kept immediate, several accounts, rollout by `wakeVersion`, WP-W1..W7 with their gates
 - [DMs and communities, compared](protocols/dm-vs-community-encryption.md) — What MLS-carried DMs and Graine-carried communities each do well, re-measured on production 2026-10-21: group sizes, the rotation rate, the bundle, the queue, and where each can improve
 - [WebSocket binary protocol](protocols/websocket-protocol.md) — protobuf wire format, AppMessage, MlsFrame
 - [API surface](protocols/api-surface.md) — Full endpoint list across all services
@@ -51,14 +53,17 @@
 ### Frontend
 
 - [Frontend architecture](frontend/architecture.md) — SvelteKit 5, stores, routing, Paraglide i18n
+- [Guided help](frontend/guided-help.md) - the welcome tour and first-time hints: one engine, how to declare a help, a missing target decided by an event, the quiet state, and the per-account seen store
 - [Design reference](frontend/design-reference.md) - Messenger and Facebook MEASURED, Canari's 36 font sizes measured beside them, and the scale that replaces them
+- [Controls](frontend/controls.md) - one 40 px height, one grey edge, three mandatory components (Button, Input, Select) and the ratchet test that fails a screen drawing its own
 - [SEO and link previews](frontend/seo.md) — why a login-gated SPA needs server-rendered heads, the sitemap and robots routes, and what each decision follows from
 - [Local-first UI](frontend/local-first-ui.md) - the rule that no interaction servable from local state may await the network, what a shaped link measured on the phone, and the ledger of what is fixed
 - [Offline and weak network](frontend/offline-and-weak-network.md) - what each send and load path does offline and on Slow 3G / 2G, measured on the sandbox pair, the root causes with file:line, and the ordered work packages (salon outbox, deadlines, boot chain)
+- [Markdown coherence: toolbar, composer preview and post render one grammar](frontend/markdown-coherence.md) - the `**x **` bug, the tolerance, the cases table
 - [Emoji: Noto pictures, replacing the bundled font](frontend/emoji.md) - the SVG set and the svgo plugins measured to damage it, the presentation rule, the gate, and the font until it is deleted
-- [Sounds](frontend/sounds.md) - every sound the app emits and its trigger, and the rule that no audio output is held while nothing plays (the stream a frozen Android app kept `started`)
+- [Sounds](frontend/sounds.md) - every sound the app emits and its trigger, the rule that no audio output is held while nothing plays (the stream a frozen Android app kept `started`), and who owns the audio session category (the silent switch, the Android ringer)
 - [MediaFrame](frontend/media-frame.md) - the box a picture, a GIF or a video holds before it arrives: what Discord, WhatsApp, Telegram and Slack carry (sourced), what Canari shifted, and the primitive every renderer uses
-- [Video preparation](frontend/video-preparation.md) - every video re-encoded ON the phone to one fragmented MP4 (H.264 + AAC, 720p, ~2.5 Mb/s): the `prepareVideoForUpload` seam, its faults, and the device readings
+- [Video preparation](frontend/video-preparation.md) - every video re-encoded ON the phone to one fragmented MP4 (H.264 + AAC, 720p, ~2.5 Mb/s, a constant 30 fps): the `prepareVideoForUpload` seam, its faults, the device readings, and the A/V sync rig (`tools/video-av-sync`)
 - [The cold start, measured](frontend/cold-start.md) - every reading behind the under-1 s target, and every hypothesis refuted on the way
 - [From a notification tap to a sent reply, measured](frontend/notification-to-conversation-latency.md) - tap to usable conversation, killed and backgrounded, ranked costs and the fix plan
 - [UI redesign audit, 2026-10-16](frontend/ui-redesign-audit-2026-10-16.md) - every page against the /admin standard (shell, hub, segmented control, ui controls), the dashboard rebuilt as the app's hub, and the ordered work packages
@@ -104,7 +109,10 @@
 - [CAS callback without state](infrastructure/cas-callback-state.md) — school CAS sign-ins that return with no code: pinned cookie, setting, measurements
 - [Mino access](infrastructure/mino-access.md) — Wiki.js and Omeka permissions driven by Authentik groups, the three archive levels
 - [MiConnect profiles and access](profiles-and-access.md) — the reform decided 2026-09-29: affiliations, spaces, who reaches which app, and the production state it was measured against
+- [What Canari serves without an account](anonymous-surface.md) — the owner's rule of 2026-11-02 (the public showcase is the ceiling) and every anonymous route, page head and sitemap entry with its verdict: closed, stripped or kept, and why
+- [Spaces, audiences and dependencies (proposal)](spaces-and-audiences-reform.md) — PROPOSAL 2026-11-02, for the owner to decide: audience and dependencies as two independent axes with two admin panels, a two-level dependency (an association or list under at most one BDE) and one governor per space, institution-only item narrowing, events and partnerships validated per governor slice, associations vs lists vs institutions compared, the work packages and the owner's open questions
 - [Cloudflare edge](infrastructure/cloudflare-edge.md) — the zone configured by hand with no representation in git: what lives there, how to read it, and the tunnel token rotation
+- [Upstream reachability](infrastructure/upstream-reachability.md) — the 15-minute report for a public name whose tunnel has no connector (gallery, dev, legacy, production), and the `--protocol http2` decision
 - [Databases](infrastructure/databases.md) — PostgreSQL, Redis, Garage
 - [Backup system](infrastructure/backup.md) — Daily cron, offsite rsync
 - [Host OS updates](infrastructure/host-updates.md) — the four boxes' security updates, the `#clear` without which the policy is decorative, the 30-second `502` this scope does NOT incur, and the daily run that fails on a finding
@@ -115,7 +123,7 @@
 - [Production queue and epoch audit, 2026-10-12](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md) - why `queued_message` reached 93 k rows: repair answers sent to every seat of a new community, and seats of devices with no session left; no client stuck, the reaper by age rejected
 - [Storage forecast](infrastructure/storage-forecast.md) — Measured unit costs, the model at 400 daily users, and why the backup scheme fails before the data does
 - [Storage and retention](infrastructure/storage-and-retention.md) — Draft audit of 2026-10-11: host disk, volumes, logs and backups measured read-only; the unmeasured remainder is listed
-- [Real-time media feasibility](infrastructure/realtime-media-feasibility.md) - measured 2026-10-15: what calls and livestreams can do on the production host; inbound is 443 only and is enough, but the host cannot send UDP out, so the SFU cannot reach Cloudflare TURN - the minimal DSI ask is one OUTBOUND rule; segmented live over 443 works, ~90-107 Mb/s measured
+- [Real-time media feasibility](infrastructure/realtime-media-feasibility.md) - measured 2026-10-15: what calls and livestreams can do on the production host; inbound is 443 only and is enough, but the host cannot send UDP out, so the SFU cannot reach Cloudflare TURN - the minimal DSI ask is one OUTBOUND rule, never granted - 1:1 calls are peer to peer by design, so production carries them without it; segmented live over 443 works, ~90-107 Mb/s measured
 - [Estate migration](infrastructure/estate-migration.md) - the three VMs moving onto the Portail-etu host and then onto `emse.fr`: the two phases and why they are separate, the decisions taken 2026-09-23, the bun blocker that is REFUTED, and the certificate renewal nothing would reload
 
 ### Features
@@ -125,6 +133,8 @@
 - [Association permissions](association-permissions.md) — The eleven flags measured from their call sites, the one predicate answering "may this user act here", and the two tiers above a member
 - [Cotisations](cotisations.md) — Membership dues: cotisant tags, boutique products, form member pricing
 - [Carte de la Vie Asso](carte-vie-asso.md) — Editable poster generator (drag & drop canvas, PDF export)
+- [Engagement](engagement.md) - the owner's decisions of 2026-11-07: who a live and a post notify, follow suggestions (the query, measured), the per-account bell, the daily push cap, what each surface reveals, WP-1..WP-10
+- [Birthdays](birthdays.md) - day and month on the profile, who sees the date, the ring on the day for everyone, the followers' morning notice: the data, the rules, the proofs
 
 ### Compliance (GDPR)
 
@@ -138,6 +148,7 @@
 
 - [Durable rules](durable-rules.md) — the constraints, grouped by area, each linked to the page carrying its reasoning
 - [Backlog](backlog.md) — the scheduled queue behind `CLAUDE.md`: the substance of every queue item, and the table of what only the user can do
+- [backlog.d](backlog.d/README.md) — the backlog entries written since 2026-10-30, one file each, read together with `backlog.md`
 - [Open questions](open-questions.md) — questions parked deliberately, with no code until they are answered; an answer becomes a backlog entry or closes the question
 - [Legacy compatibility](legacy-compatibility.md) — every shim kept alive for older clients, and the date or condition at which each may be removed
 - [The 2026-09-02 workflow migration](workflow-migration.md) — main-only, deploy at the bump, pull requests, local development, `-alpha.N` pre-releases: the decisions, the measurements, the ordered checklist
@@ -158,7 +169,7 @@
 - [Cross-client campaign](cross-client-campaign.md) — The campaign's design: the ladder, what it is allowed to contain, the standing rules, the preflight, and what does NOT exist
 - [The 1.4.1 campaign on dev](cross-client-campaign-1-4-1.md) - PLANNED: the verdict on the campaign documents, the rig gaps that block a dev run, the MLS core matrix that blocks the `1.4.1` stable (pathological cases included) and what runs after
 - [The 1.4.1 campaign - runners](cross-client-campaign-1-4-1-runners.md) - row by row, how each blocking row is run and recorded, the atom covering it, what is missing, who must be present, and the ten table-driven runners
-- [The LITHIUM board, archived](cross-client-testing-archive.md) — every verdict taken between 2026-08-14 and 2026-08-30, against production, on a rig whose ledger was lost: where to look first when a re-run disagrees, and worth nothing as a gate
+- [The previous machine's board, archived](cross-client-testing-archive.md) — every verdict taken between 2026-08-14 and 2026-08-30, against production, on a rig whose ledger was lost: where to look first when a re-run disagrees, and worth nothing as a gate
 - [The campaign on the iPhone](cross-client-ios.md) — Every board row classified for the iPhone 12 (runs with the adapter / needs a named observable / not an iOS row), the `phone-ios.mjs` adapter and what is still owed
 - [Resuming the cross-client campaign](cross-client-campaign-resume.md) — The delta since the 2026-08-30 pause and the ordered restart: what the dev estate and the dependency sweep do to a run, and what they do not
 - [Server migration & bootstrap](../../infrastructure/MIGRATION.md) — Bare-metal setup, secrets, data restore, SSH backup

@@ -24,7 +24,7 @@
   <p class="text-text-muted text-sm">{m.audience_profile_prompt_body()}</p>
   <ProfileCorrectionRequest />
   <a
-    href={resolve('/profile')}
+    href={resolve('profile')}
     class="text-text-main inline-block text-sm font-bold underline underline-offset-2"
   >
     {m.audience_profile_prompt_link()}

@@ -44,8 +44,8 @@
     // Not authenticated yet: send to login, returning here afterwards (token is in the path).
     if (!currentUserId()) {
       keepInviteFragment(token, inviteFragment);
-      await goto(resolve(`/login?returnTo=${encodeURIComponent(`/c/join/${token}`)}`), {
-        replaceState: true,
+      await goto(resolve(`login?returnTo=${encodeURIComponent(`/c/join/${token}`)}`), {
+        replace: true,
       });
       return;
     }
@@ -72,7 +72,7 @@
         await openInvitedChannel(firstChannelId);
         return;
       }
-      await goto(resolve('/communities'), { replaceState: true });
+      await goto(resolve('/communities'), { replace: true });
     } catch (e) {
       // A link outliving its community is refused with a code rather than a sentence, so the
       // reason survives any rewording on the server side.
@@ -124,6 +124,16 @@
     }
   }
 </script>
+
+<!--
+  The URL carries the invite, so the page sends only its origin as Referer (strict-origin: no-referrer
+  would outlive the page and make every same-origin POST carry `Origin: null`). The policy is a HEADER
+  of this page (`$capability_referrer_policy`, Dockerfile.frontend); this <meta> restates it where no
+  nginx answers - the Tauri app, a dev server - and for a client-side navigation here.
+-->
+<svelte:head>
+  <meta name="referrer" content="strict-origin" />
+</svelte:head>
 
 <!--
   THE PAGE IS A DECLARED SHAPE AND THE CARD OWNS ITS OWN WIDTH. This was `mx-auto max-w-md` on the

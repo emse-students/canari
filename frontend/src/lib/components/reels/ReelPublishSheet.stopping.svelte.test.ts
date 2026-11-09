@@ -73,7 +73,12 @@ async function render(blob: Blob, deps?: PublishReelDeps) {
       target,
       props: {
         clip: { blob, source: 'camera' },
-        limits: { maxDurationMs: 90_000, retentionDays: 30, warningWindowDays: 7 },
+        limits: {
+          maxDurationMs: 90_000,
+          chatMaxDurationMs: 60_000,
+          retentionDays: 30,
+          warningWindowDays: 7,
+        },
         onclose,
         deps,
       },
@@ -132,6 +137,7 @@ describe('ReelPublishSheet - a Back during a publish it cannot stop', () => {
         }
         throw new Error('the re-encode ran although the publish was stopped');
       }),
+      placeholder: vi.fn(async () => null),
       upload: vi.fn(),
       createPost: vi.fn(),
     };
@@ -143,7 +149,9 @@ describe('ReelPublishSheet - a Back during a publish it cannot stop', () => {
 
     mute.release();
     await settle();
-    expect(deps.prepare).toHaveBeenCalledTimes(1);
+    // THE ENCODER LEASE (RC-13) refuses an aborted publish before the re-encode is even called; it
+    // reaches the sheet as the same 'aborted' fault the re-encode itself would have thrown.
+    expect(deps.prepare).not.toHaveBeenCalled();
     expect(deps.upload).not.toHaveBeenCalled();
     expect(deps.createPost).not.toHaveBeenCalled();
   });

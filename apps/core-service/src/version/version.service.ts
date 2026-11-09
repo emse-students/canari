@@ -2,7 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { PlatformService } from '../platform/platform.service';
 import { deployedVersion } from '../platform/deployed-version';
 import { deployBuild } from '../platform/deploy-build';
-import type { CallsMode, LivesMode } from '../platform/entities/platform-config.entity';
+import type {
+  CallsMode,
+  CheckpointSkipMode,
+  LivesMode,
+} from '../platform/entities/platform-config.entity';
 
 export type AppVersionResponse = {
   version: string;
@@ -37,6 +41,15 @@ export type AppVersionResponse = {
     mode: LivesMode;
   };
   /**
+   * The server's switch for WP-CHECKPOINT-SKIP (`platform_config.checkpoint_skip_mode`): `on` lets a
+   * client leave the MLS checkpoint of a live receive-only drain to the next existing trigger, until
+   * its own count of unsaved receive generations is reached. NOTHING IS ENFORCED HERE - the
+   * checkpoint is the client's own durability - so a client that cannot read the field stays `off`.
+   */
+  checkpointSkip: {
+    mode: CheckpointSkipMode;
+  };
+  /**
    * A CAPABILITY, NOT A SWITCH: this core-service forwards a PKCE `code_verifier` from
    * `POST /api/auth/oidc/callback` to MiConnect. A client sends a `code_challenge` only to a server
    * that says so, because a core-service older than this field drops the verifier, and MiConnect
@@ -44,6 +57,37 @@ export type AppVersionResponse = {
    * in. Always `true` from this release on; its absence is what an older server looks like.
    */
   oidcPkce: true;
+  /**
+   * A CAPABILITY OF THIS ESTATE'S CHAT-GATEWAY, published here because this is the one capability
+   * document every client reads: `POST /api/presence` takes the asked ids in its BODY. A client
+   * sends the POST only to an estate that says so, because a gateway older than the route answers
+   * it `405` - and a stable ships both stores before production deploys, so for days a new phone
+   * build talks to the old gateway. The gateway and this service are built from ONE release tag and
+   * deployed together, which is what makes this service's word about the gateway true. Always
+   * `true` from this release on; its absence is what an older estate looks like
+   * (docs/wiki/legacy-compatibility.md, "the presence ids in a URL").
+   */
+  presencePost: true;
+  /**
+   * A CAPABILITY OF THIS ESTATE'S SOCIAL- AND MEDIA-SERVICE, published here for the same reason:
+   * social-service keeps a post's client id and serves `POST /api/posts/:id/withdraw` (migration
+   * 135), media-service opens `single-block` sessions. The client's background publish queue sends
+   * nothing to an estate that does not say so - an older one would duplicate a post whose answer was
+   * lost - and the three services are built from ONE release tag and deployed together. Always
+   * `true` from this release on (docs/wiki/frontend/modules/posts.md#the-background-publish-queue).
+   */
+  publishQueue: true;
+  /**
+   * A CAPABILITY OF THIS ESTATE'S SOCIAL-SERVICE, published here for the same reason: a form is
+   * created as a DRAFT (`draft: true`, migration 145) and published by its own route, and its edits
+   * are saved as an unpublished revision (`/forms/:id/draft`, migration 146). A client builds forms
+   * that way only on an estate that says so: an older social-service strips `draft` (its validation
+   * whitelists the body) and publishes an empty form at once, and answers the revision routes `404`
+   * - and a store build reaches phones before production deploys. Built from ONE release tag with
+   * social-service. Always `true` from this release on (docs/wiki/legacy-compatibility.md, "a form
+   * editor newer than its server").
+   */
+  formDrafts: true;
 };
 
 /** Resolves deployed app version and platform gates from core-service. */
@@ -65,7 +109,11 @@ export class VersionService {
       },
       calls: { mode: platform.callsMode },
       lives: { mode: platform.livesMode },
+      checkpointSkip: { mode: platform.checkpointSkipMode },
       oidcPkce: true,
+      presencePost: true,
+      publishQueue: true,
+      formDrafts: true,
     };
   }
 }

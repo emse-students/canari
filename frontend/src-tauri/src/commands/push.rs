@@ -652,6 +652,91 @@ fn with_graine_mirror<R>(
     with_graine_mirror_inner(data_dir, key, false, edit).map(|(r, _)| r)
 }
 
+/// Takes the seed mirror's writers' lock in `data_dir` (`graine_seeds.lock`), held until the returned
+/// file is dropped. EVERY WRITER of a `graine_seeds.json` takes it - the edits below, and the iOS
+/// activation copy into the App Group ([`sync_seed_mirror_copy`]).
+fn lock_seed_mirror(data_dir: &std::path::Path) -> Result<std::fs::File, String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(data_dir.join("graine_seeds.lock"))
+        .map_err(|e| format!("open graine_seeds.lock: {e}"))?;
+    lock_exclusive(&lock).map_err(|e| format!("lock graine_seeds.lock: {e}"))?;
+    Ok(lock)
+}
+
+/// Copies the app's seed mirror over the App Group's, UNDER THE GROUP COPY'S WRITERS' LOCK - the iOS
+/// activation mirror (`CanariMirrorPushStateToAppGroup`), which used to copy it in Objective-C with
+/// no lock. Unlocked, it could read the app's copy before an account's wipe and write it over the
+/// group's after the wipe had edited it, bringing the wiped seeds back for the extension. Under the
+/// lock, a copy read before the wipe lands before the wipe's own edit of the group's copy, which
+/// waits for the same lock. Returns whether a copy was made: an app with no mirror leaves the
+/// group's as it is, as the Objective-C did.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn sync_seed_mirror_copy(
+    data_dir: &std::path::Path,
+    group: &std::path::Path,
+) -> Result<bool, String> {
+    let _lock = lock_seed_mirror(group)?;
+    // Read without the app's lock: its writers rename whole files, so this is one version or the
+    // other, never half of one. COPIED AS BYTES, never opened: the copy answers no question about
+    // the mirror's contents, which only `read_graine_mirror` reads.
+    let source = data_dir.join("graine_seeds.json");
+    let bytes = match std::fs::read(&source) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("read the app's seed mirror: {e}")),
+    };
+    let path = group.join("graine_seeds.json");
+    let tmp = group.join("graine_seeds.json.tmp");
+    std::fs::write(&tmp, bytes).map_err(|e| format!("write the group copy: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("rename the group copy: {e}"))?;
+    crate::native_cache::exclude_from_backup(&path);
+    Ok(true)
+}
+
+/// The C entry of [`sync_seed_mirror_copy`], called by `CanariMirrorPushStateToAppGroup`
+/// (`canari_push.mm`) with the app data directory. Answers one of the `MIRROR_*` codes of
+/// `mls_account_state.rs` (`CANARI_MLS_MIRROR_*` in `canari_rust_bridge.h`), which the caller logs.
+///
+/// # Safety
+/// `data_dir` is null or a valid NUL-terminated string for the duration of the call.
+#[cfg(target_os = "ios")]
+#[no_mangle]
+pub unsafe extern "C" fn canari_ios_mirror_graine_seeds_to_app_group(
+    data_dir: *const std::os::raw::c_char,
+) -> i32 {
+    use crate::commands::mls_account_state::{
+        MIRROR_FAILED, MIRROR_NO_DIR, MIRROR_NO_GROUP, MIRROR_OK,
+    };
+    if data_dir.is_null() {
+        return MIRROR_NO_DIR;
+    }
+    // SAFETY: non-null, and NUL-terminated for the call by this function's contract.
+    let Ok(dir) = std::ffi::CStr::from_ptr(data_dir).to_str() else {
+        return MIRROR_NO_DIR;
+    };
+    let group = match crate::app_group::app_group_dir() {
+        Ok(group) => group,
+        Err(e) => {
+            log::error!("[GRAINE_MIRROR] activation mirror: no App Group container: {e}");
+            return MIRROR_NO_GROUP;
+        }
+    };
+    match sync_seed_mirror_copy(std::path::Path::new(dir), &group) {
+        Ok(copied) => {
+            log::debug!("[GRAINE_MIRROR] activation mirror of the seed mirror: copied={copied}");
+            MIRROR_OK
+        }
+        Err(e) => {
+            log::error!("[GRAINE_MIRROR] activation mirror of the seed mirror failed: {e}");
+            MIRROR_FAILED
+        }
+    }
+}
+
 /// [`with_graine_mirror`], optionally writing back a plaintext mirror even when `edit` changed
 /// nothing - which is how [`reseal_graine_mirror`] seals one. Also returns whether it wrote.
 fn with_graine_mirror_inner<R>(
@@ -660,15 +745,8 @@ fn with_graine_mirror_inner<R>(
     seal_plaintext: bool,
     edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> Result<(R, bool), String>,
 ) -> Result<(R, bool), String> {
-    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(data_dir.join("graine_seeds.lock"))
-        .map_err(|e| format!("open graine_seeds.lock: {e}"))?;
-    // Released when `lock` is dropped at the end of this function, on every return path.
-    lock_exclusive(&lock).map_err(|e| format!("lock graine_seeds.lock: {e}"))?;
+    // Released when `_lock` is dropped at the end of this function, on every return path.
+    let _lock = lock_seed_mirror(data_dir)?;
     let path = data_dir.join("graine_seeds.json");
     let (mut root, was_plaintext) = match std::fs::read(&path) {
         Ok(bytes) => match open_file(key, Purpose::SeedMirror, &bytes) {
@@ -754,17 +832,17 @@ pub(crate) fn read_graine_mirror(
 /// extension (`canari_native_store_graine_seeds`) hand it the same JSON, so the per-seed skip and
 /// the count cannot drift between the platforms.
 ///
-/// Returns -1 when the payload is not a JSON array at all, or when no cache key was handed over:
-/// different facts from "zero seeds were usable", which must not read as the same one.
+/// Returns `None` when the payload is not a JSON array at all, or when no cache key was handed
+/// over: different facts from "zero seeds were usable", which must not read as the same one.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub(crate) fn store_graine_seeds_json(
     data_dir: &std::path::Path,
     key: Option<&CacheKey>,
     json: &str,
-) -> i32 {
+) -> Option<SeedsStored> {
     let Ok(seeds) = serde_json::from_str::<Vec<serde_json::Value>>(json) else {
         log::error!("[GRAINE_PUSH] seeds payload is not a JSON array");
-        return -1;
+        return None;
     };
     // NEVER IN THE CLEAR: with no key the mirror is not written at all. The app writes the same
     // seeds from its durable store when it next runs.
@@ -773,23 +851,24 @@ pub(crate) fn store_graine_seeds_json(
             "[GRAINE_PUSH] no native cache key - {} seed(s) not mirrored",
             seeds.len()
         );
-        return -1;
+        return None;
     };
 
-    let mut stored = 0i32;
+    let mut stored = 0usize;
     let mut left_to_the_app = 0usize;
     for seed in &seeds {
         let Some(entry) = MirrorSeed::from_extracted(seed) else {
             log::warn!("[GRAINE_PUSH] incomplete seed entry skipped");
             continue;
         };
-        // A RELAYED SEED (a bundle's) ONLY FOR A SALON THIS DEVICE ALREADY READS. Native code does
+        // A RELAYED SEED (a bundle's) ONLY FOR A SALON THIS ACCOUNT ALREADY READS. Native code does
         // not know which salons are private, nor which key group carried the frame, so it cannot make
-        // the app's scope check (`storeIncomingSeed`); a salon the mirror already holds a session of
-        // is one the app admitted seeds for. Any other is left to the app, which reads the same
-        // answer from its durable queue at its next start and checks it fully.
+        // the app's scope check (`storeIncomingSeed`); a salon the mirror holds a session of LABELLED
+        // WITH THIS ACCOUNT is one the app admitted seeds for, for this account - another account's
+        // admission on the same install is not this one's. Any other is left to the app, which reads
+        // the same answer from its durable queue at its next start and checks it fully.
         if seed["relayed"].as_bool() == Some(true)
-            && !mirror_holds_channel(data_dir, key, entry.channel_id)
+            && !mirror_holds_channel(data_dir, key, entry.channel_id, entry.account)
         {
             left_to_the_app += 1;
             continue;
@@ -809,23 +888,61 @@ pub(crate) fn store_graine_seeds_json(
         );
     }
     log::debug!("[GRAINE_PUSH] stored {stored}/{} seed(s)", seeds.len());
-    stored
+    Some(SeedsStored {
+        stored,
+        left_to_the_app,
+    })
 }
 
-/// Whether the mirror holds at least one session of `channel_id` - a salon whose seeds the app has
-/// admitted. Read without the lock, as [`read_graine_seed`] reads: every writer renames a whole
-/// file over the old one.
+/// What [`store_graine_seeds_json`] did with a payload's seeds. `stored + left_to_the_app` short of
+/// the payload's length is seeds LOST (incomplete, or a merge refused); a seed left to the app is
+/// not lost - the app reads it from its durable queue and checks it fully - so the native callers
+/// report it apart, at info, never as the writer keeping fewer.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SeedsStored {
+    /// Seeds now in the mirror.
+    pub stored: usize,
+    /// Relayed seeds for a salon this account has no mirrored session of, left to the app.
+    pub left_to_the_app: usize,
+}
+
+#[cfg(any(target_os = "android", test))]
+impl SeedsStored {
+    /// The JSON the Android push service reads (`absorbGraineSeeds`: `stored`, `leftToApp`).
+    pub(crate) fn to_json(self) -> String {
+        serde_json::json!({ "stored": self.stored, "leftToApp": self.left_to_the_app }).to_string()
+    }
+}
+
+/// Whether the mirror holds at least one session of `channel_id` labelled with `account` - a salon
+/// whose seeds the app has admitted FOR THAT ACCOUNT. Read without the lock, as [`read_graine_seed`]
+/// reads: every writer renames a whole file over the old one.
+///
+/// An entry written before the label names nobody ([`entry_accounts`]) and answers no: a legacy
+/// entry is never read as this account's. No `account` at all answers no too - the seed is left to
+/// the app, the conservative side.
 ///
 /// THE MIRROR IS SEALED, so it is opened with `key` through [`read_graine_mirror`], the one reader -
 /// a plain-text parse fails on every sealed file, and every relayed seed would then be left to the
 /// app. An absent file holds nothing; an unreadable one holds nothing either, and says so at ERROR,
 /// because a mirror this device wrote and cannot open is not an expected state.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
-fn mirror_holds_channel(data_dir: &std::path::Path, key: &CacheKey, channel_id: &str) -> bool {
+fn mirror_holds_channel(
+    data_dir: &std::path::Path,
+    key: &CacheKey,
+    channel_id: &str,
+    account: Option<&str>,
+) -> bool {
+    let Some(account) = account else {
+        return false;
+    };
     match read_graine_mirror(data_dir, Some(key)) {
-        Ok(Some(root)) => root[channel_id]
-            .as_object()
-            .is_some_and(|sessions| !sessions.is_empty()),
+        Ok(Some(root)) => root[channel_id].as_object().is_some_and(|sessions| {
+            sessions
+                .values()
+                .any(|entry| entry_accounts(entry).contains(&account))
+        }),
         Ok(None) => false,
         Err(e) => {
             log::error!("[GRAINE_PUSH] mirror unreadable while checking salon {channel_id}: {e}");
@@ -912,7 +1029,9 @@ const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;
 
 /// Merges one Graine seed into {app_data_dir}/graine_seeds.json so the background push service can
 /// derive a message key with the app killed. The file is a JSON map
-/// `channelId -> { sessionId -> { seed, createdAt, firstIndex, [version, minterUserId, signingPk] } }`.
+/// `channelId -> { sessionId -> { seed, createdAt, firstIndex, [version, minterUserId, signingPk],
+/// accounts, [unattributed] } }` - `accounts` the label of every account that wrote the entry
+/// ([`label_entry`], the per-account wipe's allowlist: [`forget_account_entries`]).
 ///
 /// **Bounded, unlike the epoch mirror it replaced.** Epoch keys were few and a whole channel's
 /// worth could be kept; seeds accumulate for ever, in a file rewritten on every rotation, which is
@@ -929,8 +1048,11 @@ pub(crate) async fn store_graine_seed(
     app: tauri::AppHandle,
     seed: MirrorSeedInput,
 ) -> Result<(), String> {
+    // THE WRITER IS THE PAGE'S SIGNED-IN ACCOUNT, named by the page: the seed was admitted into
+    // that account's durable store a moment ago (`frameHandler.ts`, `channelSeal.ts`).
+    let account = crate::commands::mls_account_state::account_label(&seed.account_id);
     with_app_mirror(app, move |dir, key| {
-        merge_graine_seed(dir, key, &seed.as_mirror_seed()).map(|_| ())
+        merge_graine_seed(dir, key, &seed.as_mirror_seed(&account)).map(|_| ())
     })
     .await
 }
@@ -984,11 +1106,17 @@ pub(crate) struct MirrorSeedInput {
     /// Both set on a v2 session, both null on a v1 one.
     minter_user_id: Option<String>,
     signing_public_key_b64: Option<String>,
+    /// The signed-in account the page stored the session for - the entry's label.
+    account_id: String,
 }
 
 impl MirrorSeedInput {
-    fn as_mirror_seed(&self) -> MirrorSeed<'_> {
+    /// The seed as the mirror holds it, labelled with `account` ([`account_label`] of its writer).
+    ///
+    /// [`account_label`]: crate::commands::mls_account_state::account_label
+    fn as_mirror_seed<'a>(&'a self, account: &'a str) -> MirrorSeed<'a> {
         MirrorSeed {
+            account: Some(account),
             channel_id: &self.channel_id,
             session_id: &self.session_id,
             seed_b64: &self.seed_b64,
@@ -1016,6 +1144,11 @@ pub(crate) struct MirrorSeed<'a> {
     pub first_index: u32,
     /// What a v2 push is verified against; `None` is a v1 session.
     pub v2: Option<MirrorSeedV2<'a>>,
+    /// The label ([`account_label`]) of the account whose state or page produced the seed, or `None`
+    /// when the writer named none - an entry of UNKNOWN writer, which no per-account wipe removes.
+    ///
+    /// [`account_label`]: crate::commands::mls_account_state::account_label
+    pub account: Option<&'a str>,
 }
 
 /// The v2 half of a mirrored seed: the author its rows must name and the key that signs them.
@@ -1053,6 +1186,16 @@ impl<'a> MirrorSeed<'a> {
         } else {
             None
         };
+        // THE PUSH DECRYPT STAMPS EVERY SEED WITH THE ACCOUNT ITS STATE WAS OPENED FOR
+        // (`background.rs`, `with_seed_writer`), so an extracted seed without it is a broken
+        // invariant: still mirrored, since a seed is what the banner needs, but as an entry of unknown
+        // writer - which no per-account wipe ever removes - and said.
+        let account = seed[SEED_WRITER_FIELD].as_str().filter(|a| !a.is_empty());
+        if account.is_none() {
+            log::error!(
+                "[GRAINE_PUSH] seed {session_id} carries no writer account - mirrored unattributed"
+            );
+        }
         Some(Self {
             channel_id,
             session_id,
@@ -1060,6 +1203,7 @@ impl<'a> MirrorSeed<'a> {
             created_at: seed["createdAt"].as_i64().unwrap_or(0),
             first_index: seed["firstIndex"].as_u64().unwrap_or(0) as u32,
             v2,
+            account,
         })
     }
 
@@ -1075,8 +1219,282 @@ impl<'a> MirrorSeed<'a> {
             entry["minterUserId"] = v2.minter_user_id.into();
             entry["signingPk"] = v2.signing_public_key_b64.into();
         }
+        if let Some(account) = self.account {
+            entry[ACCOUNTS_FIELD] = serde_json::json!([account]);
+        }
         entry
     }
+}
+
+/// The field of an EXTRACTED seed (the push decrypt's `seeds` array) naming its writer's label -
+/// stamped by `background.rs` (`with_seed_writer`), read by [`MirrorSeed::from_extracted`]. Only
+/// where a push service runs: a desktop build has no push decrypt and no extracted seed.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) const SEED_WRITER_FIELD: &str = "account";
+
+/// The field of a mirror entry listing the label of every account that wrote it.
+const ACCOUNTS_FIELD: &str = "accounts";
+
+/// The field of a mirror entry that ALSO had a writer nobody can name: an entry written before the
+/// label, then labelled by a later write. `true` or absent.
+const UNATTRIBUTED_FIELD: &str = "unattributed";
+
+/// The labels an entry names, empty for an entry that names none. Read by the relayed-seed check,
+/// which only a push service runs.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+fn entry_accounts(entry: &serde_json::Value) -> Vec<&str> {
+    entry[ACCOUNTS_FIELD]
+        .as_array()
+        .map(|list| list.iter().filter_map(serde_json::Value::as_str).collect())
+        .unwrap_or_default()
+}
+
+/// Whether an entry had a writer nobody can name - written before the label (no `accounts` list,
+/// or one that is not a list), or labelled since and marked [`UNATTRIBUTED_FIELD`].
+///
+/// **THE LEGACY DECISION** (2026-11-07): an entry the mirror held before the label was written by
+/// whichever account was signed in at the time, and on an install two accounts share nothing says
+/// which - the file carried no account and the push path wrote it for the slot's owner of the day.
+/// So it is NEVER read as an account's: no per-account wipe removes it (it may be the remaining
+/// account's), and no relayed-seed check counts it as one account's admission. A later write by an
+/// account adds that account's label and KEEPS this mark, because that write proves who wrote it
+/// now, not who wrote it before. Such an entry leaves the way every entry leaves without a wipe:
+/// the per-channel bound, the retention sweep, a community leaving the device, the factory wipe.
+fn entry_unattributed(entry: &serde_json::Value) -> bool {
+    !entry[ACCOUNTS_FIELD].is_array() || entry[UNATTRIBUTED_FIELD].as_bool() == Some(true)
+}
+
+/// Adds `account` to the writers an entry names, and says whether that changed it. An entry that
+/// named none (written before the label) is marked [`UNATTRIBUTED_FIELD`] as it gains its first.
+fn label_entry(entry: &mut serde_json::Value, account: &str) -> bool {
+    let unattributed = entry_unattributed(entry);
+    let Some(obj) = entry.as_object_mut() else {
+        return false;
+    };
+    if let Some(list) = obj.get_mut(ACCOUNTS_FIELD).and_then(|v| v.as_array_mut()) {
+        if list.iter().any(|a| a.as_str() == Some(account)) {
+            return false;
+        }
+        list.push(account.into());
+        return true;
+    }
+    obj.insert(ACCOUNTS_FIELD.to_string(), serde_json::json!([account]));
+    if unattributed {
+        obj.insert(UNATTRIBUTED_FIELD.to_string(), true.into());
+    }
+    true
+}
+
+/// What [`forget_account_entries`] did to the mirror.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct AccountForgotten {
+    /// Entries that account ALONE wrote - removed.
+    pub removed: usize,
+    /// Entries it wrote with another account, or with a writer nobody can name - its label dropped,
+    /// the entry kept for the others.
+    pub unlabelled: usize,
+    /// Entries of unknown writer LEFT, because another account may be their writer
+    /// ([`entry_unattributed`], [`Unattributed::Keep`]).
+    pub unattributed_kept: usize,
+    /// Entries of unknown writer REMOVED, because no other writer can exist ([`Unattributed::Drop`]).
+    pub unattributed_dropped: usize,
+    /// Channel entries left with no session, dropped.
+    pub channels_dropped: usize,
+}
+
+impl AccountForgotten {
+    /// Whether the map changed, so the file must be written back.
+    fn changed(&self) -> bool {
+        self.removed > 0
+            || self.unlabelled > 0
+            || self.unattributed_dropped > 0
+            || self.channels_dropped > 0
+    }
+
+    /// Entries that left the file.
+    pub(crate) fn gone(&self) -> usize {
+        self.removed + self.unattributed_dropped
+    }
+}
+
+/// Which entries an account's forget reaches.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ForgetScope<'a> {
+    /// Every entry: the account's wipe.
+    Everything,
+    /// One salon's entries: the account left the community it belongs to.
+    Channel(&'a str),
+    /// The named sessions, wherever they sit: the account's retention sweep.
+    Sessions(&'a std::collections::HashSet<&'a str>),
+}
+
+impl ForgetScope<'_> {
+    fn reaches(&self, channel_id: &str, session_id: &str) -> bool {
+        match self {
+            ForgetScope::Everything => true,
+            ForgetScope::Channel(id) => *id == channel_id,
+            ForgetScope::Sessions(ids) => ids.contains(session_id),
+        }
+    }
+}
+
+/// What a forget does with an entry of unknown writer ([`entry_unattributed`]) that names no
+/// account but the forgetting one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Unattributed {
+    /// Left: another account of the install may have written it (the wipe of one account among
+    /// several).
+    Keep,
+    /// Removed: no other writer can need it - the wipe of the install's ONLY account, or a forget the
+    /// entry would have gone to before the label existed (a community left, a session expired),
+    /// whose cost to another account is at worst the generic banner it had before the label.
+    Drop,
+}
+
+/// Drops `account` from the entries `scope` reaches: an entry it alone wrote goes, an entry it
+/// shares keeps its other writers, an entry of unknown writer follows `unattributed`. **AN
+/// ALLOWLIST BY LABEL**, never a guess from the community or the salon: a seed is the salon's, and
+/// two accounts of one install may read the same salon - one account leaving a community, or one
+/// account's sweep, must not take the seeds another still reads (it would never mirror them again:
+/// a held session is `already-held`).
+///
+/// Split out of the commands because that is the whole decision; they only read a file and write
+/// it back.
+fn forget_account_entries(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    account: &str,
+    scope: ForgetScope<'_>,
+    unattributed: Unattributed,
+) -> AccountForgotten {
+    let mut done = AccountForgotten::default();
+    let mut emptied: Vec<String> = Vec::new();
+    for (channel_id, sessions) in map.iter_mut() {
+        let Some(sessions) = sessions.as_object_mut() else {
+            // A malformed channel entry names no writer and no session: left as it is.
+            continue;
+        };
+        sessions.retain(|session_id, entry| {
+            if !scope.reaches(channel_id, session_id) {
+                return true;
+            }
+            let of_unknown_writer = entry_unattributed(entry);
+            let (unlabelled, remaining) =
+                match entry.get_mut(ACCOUNTS_FIELD).and_then(|v| v.as_array_mut()) {
+                    Some(list) => {
+                        let before = list.len();
+                        list.retain(|a| a.as_str() != Some(account));
+                        (list.len() < before, list.len())
+                    }
+                    None => (false, 0),
+                };
+            if remaining == 0 {
+                if !of_unknown_writer && unlabelled {
+                    done.removed += 1;
+                    return false;
+                }
+                if of_unknown_writer && unattributed == Unattributed::Drop {
+                    done.unattributed_dropped += 1;
+                    return false;
+                }
+            }
+            if unlabelled {
+                done.unlabelled += 1;
+            } else if of_unknown_writer {
+                done.unattributed_kept += 1;
+            }
+            true
+        });
+        if sessions.is_empty() {
+            emptied.push(channel_id.clone());
+        }
+    }
+    for channel_id in &emptied {
+        map.remove(channel_id);
+    }
+    done.channels_dropped = emptied.len();
+    done
+}
+
+/// [`forget_account_entries`] on the mirror in `data_dir`, written back sealed when it changed.
+pub(crate) fn forget_account_in_mirror(
+    data_dir: &std::path::Path,
+    key: &CacheKey,
+    account: &str,
+    scope: ForgetScope<'_>,
+    unattributed: Unattributed,
+) -> Result<AccountForgotten, String> {
+    with_graine_mirror(data_dir, key, |map| {
+        let done = forget_account_entries(map, account, scope, unattributed);
+        Ok((done, done.changed()))
+    })
+}
+
+/// The account a page names, as the mirror labels it - refused when empty.
+fn named_account(user_id: &str) -> Result<String, String> {
+    if user_id.trim().is_empty() {
+        return Err("no account named".to_string());
+    }
+    Ok(crate::commands::mls_account_state::account_label(user_id))
+}
+
+/// Removes ONE account's Graine seeds from the push mirror - the deleted-account wipe and the
+/// revoked device's wipe of one account (`accountLocalWipe.ts`): every entry `user_id` alone wrote
+/// goes, every entry another account also wrote stays, without its label ([`forget_account_entries`]).
+///
+/// **AN ENTRY OF UNKNOWN WRITER** (written before the label) goes too when `alone_on_install` - the
+/// page found no other account on the install (`otherAccountOnInstall`), so nobody else can be its
+/// writer - and stays otherwise. Without that, a deleted account's pre-label seeds would stay for
+/// good: every other exit (the bound, the retention sweep, a community left) runs from that
+/// account's page, which never runs again.
+///
+/// BOTH COPIES ON iOS, the app's FIRST: the App Group's is the extension's, which it writes itself,
+/// and the next activation mirror would copy the app's over it - but until then it would still hold
+/// the account's seeds. A failure to reach the App Group fails the call AFTER the app's copy was
+/// edited, so the wipe stays owed and its resume (idempotent) edits the group's.
+///
+/// Returns how many entries left the APP's copy; each copy reports its own line.
+#[tauri::command]
+pub(crate) async fn forget_account_graine_seeds(
+    app: tauri::AppHandle,
+    user_id: String,
+    alone_on_install: bool,
+) -> Result<usize, String> {
+    let account = named_account(&user_id)?;
+    let unattributed = if alone_on_install {
+        Unattributed::Drop
+    } else {
+        Unattributed::Keep
+    };
+    with_app_mirror(app, move |dir, key| {
+        let done = forget_account_in_mirror(dir, key, &account, ForgetScope::Everything, unattributed)?;
+        log_account_forgotten("the app's copy", &done);
+        #[cfg(target_os = "ios")]
+        {
+            let group = crate::app_group::app_group_dir().map_err(|e| {
+                log::error!(
+                    "[GRAINE_MIRROR] the App Group copy was not reached - the account's seeds stay there until the resumed wipe: {e}"
+                );
+                format!("App Group copy: {e}")
+            })?;
+            let group_done =
+                forget_account_in_mirror(&group, key, &account, ForgetScope::Everything, unattributed)?;
+            log_account_forgotten("the App Group copy", &group_done);
+        }
+        Ok(done.gone())
+    })
+    .await
+}
+
+/// One line per copy a wipe edited.
+fn log_account_forgotten(copy: &str, done: &AccountForgotten) {
+    log::info!(
+        "[GRAINE_MIRROR] the account's seeds in {copy}: {} removed, {} kept for another writer, {} of unknown writer removed, {} of unknown writer left, {} channel(s) dropped",
+        done.removed,
+        done.unlabelled,
+        done.unattributed_dropped,
+        done.unattributed_kept,
+        done.channels_dropped
+    );
 }
 
 /// The v2 half of an entry already in the file, for the replacement check.
@@ -1132,15 +1550,22 @@ pub(crate) fn merge_graine_seed(
                     "session {session_id} is already held with another seed, salon or endorsement"
                 ));
             }
-            // THE FLOOR IS THE ONLY THING A SECOND COPY MAY MOVE, and only down - the durable
-            // store's rule. An entry written before the floor was mirrored has none, and reads as 0.
+            // THE FLOOR AND THE WRITERS ARE THE ONLY THINGS A SECOND COPY MAY MOVE - the floor only
+            // down, the durable store's rule (an entry written before the floor was mirrored has
+            // none, and reads as 0); the writers only by ADDING this copy's account, so an account
+            // that also holds the session keeps it through another account's wipe.
             let held_floor = held["firstIndex"].as_u64().unwrap_or(0) as u32;
-            if seed.first_index < held_floor {
-                map[held_channel.as_str()][session_id]["firstIndex"] = seed.first_index.into();
-                return Ok((0, true));
+            let entry = &mut map[held_channel.as_str()][session_id];
+            let lowered = seed.first_index < held_floor;
+            if lowered {
+                entry["firstIndex"] = seed.first_index.into();
             }
-            // The same seed again: nothing to write, and the bound has nothing new to trim.
-            return Ok((0, false));
+            let labelled = seed
+                .account
+                .is_some_and(|account| label_entry(entry, account));
+            // The same seed again by a writer it already names: nothing to write, and the bound has
+            // nothing new to trim.
+            return Ok((0, lowered || labelled));
         }
         let channel_entry = map
             .entry(channel_id.to_string())
@@ -1194,12 +1619,16 @@ fn prune_graine_sessions(sessions: &mut serde_json::Map<String, serde_json::Valu
     doomed.len()
 }
 
-/// Drops one channel's whole entry from {app_data_dir}/graine_seeds.json.
+/// Drops ONE ACCOUNT's entries of one channel from {app_data_dir}/graine_seeds.json.
 ///
-/// Called when a community leaves this device - the member left it, was removed from it, or it was
+/// Called when a community leaves this account - the member left it, was removed from it, or it was
 /// deleted. The durable store is purged at the same moment; without this the mirror would keep
-/// plaintext seeds for salons the device can no longer even list, and the bound that trims the file
+/// plaintext seeds for salons the account can no longer even list, and the bound that trims the file
 /// only ever runs on a channel something is still being WRITTEN to.
+///
+/// **BY LABEL** ([`forget_account_entries`]): an entry another account of the install also wrote
+/// keeps that writer - it still reads the salon, and would never mirror the session again. An entry
+/// of unknown writer goes, as the whole channel went before the label existed.
 ///
 /// Absent file or absent channel is success, not an error: there is nothing to forget, which is the
 /// state the caller asked for.
@@ -1207,21 +1636,31 @@ fn prune_graine_sessions(sessions: &mut serde_json::Map<String, serde_json::Valu
 pub(crate) async fn forget_graine_channel(
     app: tauri::AppHandle,
     channel_id: String,
+    user_id: String,
 ) -> Result<(), String> {
-    let forgot = with_app_mirror(app, move |dir, key| {
-        with_graine_mirror(dir, key, |map| {
-            let forgot = map.remove(&channel_id).is_some();
-            Ok((forgot, forgot))
-        })
+    let account = named_account(&user_id)?;
+    let done = with_app_mirror(app, move |dir, key| {
+        forget_account_in_mirror(
+            dir,
+            key,
+            &account,
+            ForgetScope::Channel(&channel_id),
+            Unattributed::Drop,
+        )
     })
     .await?;
-    if forgot {
-        log::debug!("[GRAINE_MIRROR] forgot every seed of one channel");
+    if done.changed() {
+        log::debug!(
+            "[GRAINE_MIRROR] forgot one channel for the account: {} entr(y/ies) gone, {} kept for another writer",
+            done.gone(),
+            done.unlabelled
+        );
     }
     Ok(())
 }
 
-/// Drops the named Graine sessions from {app_data_dir}/graine_seeds.json, wherever they sit.
+/// Drops ONE ACCOUNT's named Graine sessions from {app_data_dir}/graine_seeds.json, wherever they
+/// sit.
 ///
 /// Called by the retention sweep, which works one SESSION at a time in channels the device is still
 /// a member of - so `forget_graine_channel` is the wrong shape here, and the per-channel bound that
@@ -1229,68 +1668,49 @@ pub(crate) async fn forget_graine_channel(
 /// WRITTEN to, so a quiet salon keeps up to twenty plaintext seeds for messages the server deleted
 /// a year ago.
 ///
-/// A channel left with no sessions has its entry removed too, so the file shrinks to nothing rather
-/// than to a map of empty objects.
+/// **BY LABEL**, like [`forget_graine_channel`]: another account's sweep of the same session drops
+/// its own label when it runs. A channel left with no sessions has its entry removed too, so the
+/// file shrinks to nothing rather than to a map of empty objects.
 ///
 /// Absent file, absent session: success. The caller asked for an end state and that is the state.
+/// Returns how many entries left the file.
 #[tauri::command]
 pub(crate) async fn forget_graine_sessions(
     app: tauri::AppHandle,
     session_ids: Vec<String>,
+    user_id: String,
 ) -> Result<usize, String> {
     if session_ids.is_empty() {
         return Ok(0);
     }
-    let (removed, emptied) = with_app_mirror(app, move |dir, key| {
-        with_graine_mirror(dir, key, |map| {
-            let (removed, emptied) = remove_graine_sessions(map, &session_ids);
-            Ok(((removed, emptied), removed > 0 || emptied > 0))
-        })
+    let account = named_account(&user_id)?;
+    let done = with_app_mirror(app, move |dir, key| {
+        let ids: std::collections::HashSet<&str> = session_ids.iter().map(String::as_str).collect();
+        forget_account_in_mirror(
+            dir,
+            key,
+            &account,
+            ForgetScope::Sessions(&ids),
+            Unattributed::Drop,
+        )
     })
     .await?;
-    if removed > 0 || emptied > 0 {
+    if done.changed() {
         log::debug!(
-            "[GRAINE_MIRROR] forgot {removed} expired session(s), {emptied} channel(s) dropped"
+            "[GRAINE_MIRROR] forgot {} expired session(s), {} kept for another writer, {} channel(s) dropped",
+            done.gone(),
+            done.unlabelled,
+            done.channels_dropped
         );
     }
-    Ok(removed)
+    Ok(done.gone())
 }
 
-/// Removes the named sessions from every channel entry, dropping channels left with none.
-///
-/// Split out of the command because that is the whole decision: the command around it only reads a
-/// file, writes it back, and cannot be reached without a running Tauri app.
-///
-/// @returns how many sessions went, and how many channel entries were dropped for being empty.
-fn remove_graine_sessions(
-    map: &mut serde_json::Map<String, serde_json::Value>,
-    session_ids: &[String],
-) -> (usize, usize) {
-    let doomed: std::collections::HashSet<&str> = session_ids.iter().map(String::as_str).collect();
-    let mut removed = 0usize;
-    let mut emptied: Vec<String> = Vec::new();
-    for (channel_id, entry) in map.iter_mut() {
-        let Some(sessions) = entry.as_object_mut() else {
-            // A malformed entry is left exactly as it is: nothing here can tell whether it holds
-            // seeds, and guessing either way is worse than leaving it for the next writer.
-            continue;
-        };
-        let before = sessions.len();
-        sessions.retain(|session_id, _| !doomed.contains(session_id.as_str()));
-        removed += before - sessions.len();
-        if sessions.is_empty() {
-            emptied.push(channel_id.clone());
-        }
-    }
-    for channel_id in &emptied {
-        map.remove(channel_id);
-    }
-    (removed, emptied.len())
-}
-
-/// Reads {app_data_dir}/outbox_sent.ndjson (one messageId per line, written by the Android service
-/// after a successful background send), clears the file and returns the ids. Called at login to
-/// drop from the outbox the messages already delivered in the background.
+/// Reads {app_data_dir}/outbox_sent.ndjson (one line per message the native side delivered in the
+/// background: `messageId`, or `messageId<TAB>receivedAt` from an Android build that reads the
+/// server's answer), clears the file and returns the lines as written. Called at login to drop from
+/// the outbox the messages already delivered, and to date the author's copy by the server's receive
+/// time (`reconcileOutboxSent`, outboxMirror.ts, which parses both shapes).
 #[tauri::command]
 pub(crate) fn read_and_clear_outbox_sent(app: tauri::AppHandle) -> Vec<String> {
     let data_dir = match app.path().app_data_dir() {
@@ -1339,6 +1759,605 @@ pub(crate) fn read_and_clear_pending_call_accept(app: tauri::AppHandle) -> Optio
     )
 }
 
+/// The one-shot file the iOS notification delegate writes on a tap (`canari_push.mm`,
+/// `CanariQueueNotificationTap`). The NAME is the whole contract between the two sides
+/// (`iosNotificationDelegate.test.ts` reads it in both).
+pub(crate) const PENDING_NOTIFICATION_TAP_FILE: &str = "pending_notification_tap.json";
+
+/// Takes `{app_data_dir}/pending_notification_tap.json` - `{"deepLink","tappedAt"}`, the link a
+/// push banner's tap opens - read and deleted in one call, so a tap is acted on exactly once. Null
+/// when none waits (always on Android, whose tap is an intent).
+///
+/// A FILE, BECAUSE A COLD START'S TAP ARRIVES BEFORE THE PAGE: iOS delivers the response to the
+/// notification delegate before the WebView exists, so the native side keeps it in durable state
+/// and the page takes it at its mount, or when told one waits (`canari:notification-tap`,
+/// `$lib/mobile/notificationTapDrain`).
+#[tauri::command]
+pub(crate) fn read_and_clear_pending_notification_tap(app: tauri::AppHandle) -> Option<String> {
+    crate::commands::handoff::read_and_clear_app_data_file(
+        &app,
+        PENDING_NOTIFICATION_TAP_FILE,
+        "NOTIF_TAP",
+    )
+}
+
+/// The quick replies the iOS notification delegate hands to the page while it holds the MLS state
+/// (`canari_push.mm`, `CanariHandQuickReplyToPage`). The NAME is the contract
+/// (`iosNotificationDelegate.test.ts` reads it on both sides).
+///
+/// ONE SEALED LINE PER REPLY (`native_cache`, [`Purpose::QuickReply`]), whose plaintext is
+/// `{"replyId","accountId","groupId","text","notifiedAt","repliedAt"}`: what the user typed is never
+/// on disk in the clear, and each line names the ACCOUNT the notification was addressed to, so a
+/// reply one account left is never sent by the next.
+///
+/// WHEN A LINE GOES: when it is taken (sent, or handed back by the page); when another account
+/// takes the file (dropped, and the native side is told it is lost); and when ITS account is
+/// DELETED - only its lines, never the file, since the file can hold another account's
+/// ([`remove_quick_replies_of`], `delete_user_quick_replies`). A sign-out leaves them, like the
+/// outbox: they are still that account's, and its next sign-in sends them.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) const PENDING_QUICK_REPLIES_FILE: &str = "pending_quick_replies.ndjson";
+
+/// What became of a quick reply, as the page acknowledges it and the native side is told it
+/// (`canari_push.mm`, `CanariQuickReplyOutcome`, same codes).
+#[cfg(any(target_os = "ios", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuickReplyOutcome {
+    /// Delivered.
+    Sent = 0,
+    /// Out of the queue unsent: a failed row the page shows, with its retry.
+    Failed = 1,
+    /// Queued, not sent yet - it waits for a retry.
+    Pending = 2,
+    /// Not queued: put back in the file for a later take.
+    Returned = 3,
+    /// Not sent and never will be: unreadable, typed under another account, or not put back.
+    Lost = 4,
+}
+
+#[cfg(any(target_os = "ios", test))]
+impl QuickReplyOutcome {
+    /// The page's word for it (`QuickReplyOutcome` in `$lib/mobile/quickReplyDrain`).
+    pub(crate) fn parse(word: &str) -> Option<Self> {
+        match word {
+            "sent" => Some(Self::Sent),
+            "failed" => Some(Self::Failed),
+            "pending" => Some(Self::Pending),
+            "returned" => Some(Self::Returned),
+            "lost" => Some(Self::Lost),
+            _ => None,
+        }
+    }
+}
+
+/// Opens one sealed line: its plaintext and the account it names, or `None` when it cannot be read
+/// (a foreign key, a plaintext line - no build ever wrote this file in the clear - or no account).
+#[cfg(any(target_os = "ios", test))]
+fn open_quick_reply(key: &CacheKey, line: &str) -> Option<(String, serde_json::Value)> {
+    let Ok(Opened::Sealed(plain)) = open_line(key, Purpose::QuickReply, line) else {
+        return None;
+    };
+    let value = serde_json::from_str::<serde_json::Value>(&plain).ok()?;
+    let owner = value.get("accountId")?.as_str()?;
+    if owner.is_empty() {
+        return None;
+    }
+    Some((plain, value))
+}
+
+/// Claims `{dir}/pending_quick_replies.ndjson` and returns the plaintext of each reply addressed to
+/// `account_id`; empty when none wait.
+///
+/// A line typed under another account is DROPPED, never handed back - sending it would post one
+/// account's words as another's, and putting it back would hand it to every later take for ever
+/// (review of #2843, A2) - and the native side is TOLD it is lost, so the user hears of it rather
+/// than waiting out a background time (M3). A line this install's key does not open, or one naming
+/// no account, is dropped too. Each kind is counted and said once per take, which is once per line,
+/// since a dropped line is gone.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn take_quick_replies_in(
+    dir: &std::path::Path,
+    key: &CacheKey,
+    account_id: &str,
+) -> Vec<String> {
+    let Some(content) =
+        crate::commands::handoff::take_handoff(dir, PENDING_QUICK_REPLIES_FILE, "QUICK_REPLY")
+    else {
+        return vec![];
+    };
+    let mut replies = Vec::new();
+    let mut other_account = 0usize;
+    let mut unreadable = 0usize;
+    for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let Some((plain, value)) = open_quick_reply(key, line) else {
+            unreadable += 1;
+            continue;
+        };
+        if value.get("accountId").and_then(|a| a.as_str()) == Some(account_id) {
+            replies.push(plain);
+            continue;
+        }
+        other_account += 1;
+        match value.get("replyId").and_then(|r| r.as_str()) {
+            Some(reply_id) if !reply_id.is_empty() => {
+                tell_quick_reply_settled(reply_id, QuickReplyOutcome::Lost);
+            }
+            _ => log::error!("[QUICK_REPLY] another account's reply names no id - nobody told"),
+        }
+    }
+    if other_account > 0 {
+        log::warn!(
+            "[QUICK_REPLY] {other_account} reply(ies) addressed to ANOTHER account dropped - never \
+             sent by this one, the native side told"
+        );
+    }
+    if unreadable > 0 {
+        log::error!(
+            "[QUICK_REPLY] {unreadable} line(s) unsealed, unopenable or naming no account dropped"
+        );
+    }
+    log::info!("[QUICK_REPLY] {} reply(ies) taken", replies.len());
+    replies
+}
+
+/// Appends `lines` (the plaintext a take returned) back to `{dir}/pending_quick_replies.ndjson`,
+/// each SEALED again, ONE `O_APPEND` write per line, so a line the native side appends meanwhile is
+/// never overwritten or interleaved.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn append_quick_replies_in(
+    dir: &std::path::Path,
+    key: &CacheKey,
+    lines: &[String],
+) -> std::io::Result<()> {
+    let sealed: Vec<String> = lines
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .map(|l| crate::native_cache::seal_line(key, Purpose::QuickReply, l))
+        .collect();
+    append_sealed_quick_replies(dir, &sealed)
+}
+
+/// Appends lines that are ALREADY sealed, one `O_APPEND` write each.
+#[cfg(any(target_os = "ios", test))]
+fn append_sealed_quick_replies(dir: &std::path::Path, sealed: &[String]) -> std::io::Result<()> {
+    use std::io::Write;
+    if sealed.is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(PENDING_QUICK_REPLIES_FILE))?;
+    for line in sealed {
+        file.write_all(format!("{line}\n").as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Removes the lines addressed to `account_id` (a DELETED account) and keeps every other line as it
+/// was - another account's, and one whose owner cannot be read (an unknown owner is never a licence
+/// to delete). The file is claimed by a rename first, so a reply the native side appends meanwhile
+/// lands in the next file and is kept; the kept lines are appended to it, still sealed.
+///
+/// Returns how many lines were removed.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn remove_quick_replies_of(
+    dir: &std::path::Path,
+    key: &CacheKey,
+    account_id: &str,
+) -> std::io::Result<usize> {
+    let Some(content) =
+        crate::commands::handoff::take_handoff(dir, PENDING_QUICK_REPLIES_FILE, "QUICK_REPLY")
+    else {
+        return Ok(0);
+    };
+    let mut kept = Vec::new();
+    let mut removed = 0usize;
+    for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let owner = open_quick_reply(key, line)
+            .and_then(|(_, v)| v.get("accountId")?.as_str().map(str::to_string));
+        if owner.as_deref() == Some(account_id) {
+            removed += 1;
+        } else {
+            kept.push(line.to_string());
+        }
+    }
+    if let Err(e) = append_sealed_quick_replies(dir, &kept) {
+        log::error!(
+            "[QUICK_REPLY] {} other account line(s) taken for the deletion and NOT written back: {e}",
+            kept.len()
+        );
+        return Err(e);
+    }
+    log::info!(
+        "[QUICK_REPLY] deleted account: {removed} reply line(s) removed, {} kept",
+        kept.len()
+    );
+    Ok(removed)
+}
+
+/// Runs `f` with the app data directory and the install's cache key, off the main thread (the key
+/// is a keystore plugin read). `None` when either cannot be had - each logged where it fails, and
+/// the file is then NOT claimed: it waits for a take that can read it.
+#[cfg(target_os = "ios")]
+async fn with_quick_reply_key<T: Send + 'static>(
+    app: tauri::AppHandle,
+    f: impl FnOnce(&std::path::Path, &CacheKey) -> T + Send + 'static,
+) -> Option<T> {
+    let ran = tauri::async_runtime::spawn_blocking(move || {
+        let dir = match app.path().app_data_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                log::error!("[QUICK_REPLY] app_data_dir() failed: {e}");
+                return None;
+            }
+        };
+        // Logged by `app_cache_key` (on the transition).
+        let key = crate::native_cache::app_cache_key(&app).ok()?;
+        Some(f(&dir, &key))
+    })
+    .await;
+    ran.unwrap_or_else(|e| {
+        log::error!("[QUICK_REPLY] the blocking task failed: {e}");
+        None
+    })
+}
+
+/// Takes the quick replies addressed to `account_id` that wait for the page - each line acted on
+/// once: the page sends it, or hands it back through [`return_pending_quick_replies`] when it cannot
+/// yet. Always empty off iOS, where nothing writes the file.
+#[tauri::command]
+pub(crate) async fn read_and_clear_pending_quick_replies(
+    app: tauri::AppHandle,
+    account_id: String,
+) -> Vec<String> {
+    #[cfg(target_os = "ios")]
+    {
+        with_quick_reply_key(app, move |dir, key| {
+            take_quick_replies_in(dir, key, &account_id)
+        })
+        .await
+        .unwrap_or_default()
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, account_id);
+        vec![]
+    }
+}
+
+/// Puts back the quick replies the page took and could not send, sealed again, so none is lost:
+/// the next take hands them over again.
+#[tauri::command]
+pub(crate) async fn return_pending_quick_replies(
+    app: tauri::AppHandle,
+    lines: Vec<String>,
+) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    {
+        let count = lines.len();
+        let written = with_quick_reply_key(app, move |dir, key| {
+            append_quick_replies_in(dir, key, &lines).map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap_or_else(|| Err("no data directory or no cache key".to_string()));
+        match &written {
+            Ok(()) => log::info!("[QUICK_REPLY] {count} reply(ies) put back for a later take"),
+            Err(e) => log::error!("[QUICK_REPLY] {count} reply(ies) NOT put back: {e}"),
+        }
+        written
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, lines);
+        Err("quick replies exist on iOS only".to_string())
+    }
+}
+
+/// Removes the waiting quick replies of a DELETED account (WP-DEL-LOCAL) - only its lines
+/// ([`remove_quick_replies_of`]). Async, apart from `delete_user_push_files`, because the lines are
+/// sealed and the key is a keystore read that must not run on the main thread. `Ok(0)` off iOS.
+#[tauri::command]
+pub(crate) async fn delete_user_quick_replies(
+    app: tauri::AppHandle,
+    user_id: String,
+) -> Result<usize, String> {
+    #[cfg(target_os = "ios")]
+    {
+        // Nothing waits: nothing to remove, and no key needed to know it - so an install whose
+        // cache key cannot be read does not keep the deletion owed for a file that is not there.
+        let dir = app.path().app_data_dir().map_err(|e| {
+            log::error!("[QUICK_REPLY] app_data_dir() failed: {e}");
+            e.to_string()
+        })?;
+        if !dir.join(PENDING_QUICK_REPLIES_FILE).exists() {
+            log::info!("[QUICK_REPLY] deleted account: no reply waits");
+            return Ok(0);
+        }
+        with_quick_reply_key(app, move |dir, key| {
+            remove_quick_replies_of(dir, key, &user_id).map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap_or_else(|| Err("no data directory or no cache key - nothing removed".to_string()))
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, user_id);
+        Ok(0)
+    }
+}
+
+/// The native listener told what became of a quick reply it holds (`canari_push.mm`,
+/// `CanariPageSettledQuickReply`), with a [`QuickReplyOutcome`] code. The native side holds the
+/// notification response and a background task until then (review of #2843, A1 and H1).
+///
+/// REGISTERED, NEVER LINKED: this crate is linked into the notification extension too, where
+/// `canari_push.mm` is not (`page_ring.rs`).
+#[cfg(any(target_os = "ios", test))]
+pub(crate) type QuickReplyAckListener =
+    extern "C" fn(reply_id: *const std::os::raw::c_char, outcome: i32);
+
+#[cfg(any(target_os = "ios", test))]
+static QUICK_REPLY_ACK_LISTENER: std::sync::Mutex<Option<QuickReplyAckListener>> =
+    std::sync::Mutex::new(None);
+
+/// Registers (or, with `None`, removes) the native listener of [`QuickReplyAckListener`].
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn set_quick_reply_ack_listener(listener: Option<QuickReplyAckListener>) {
+    *QUICK_REPLY_ACK_LISTENER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = listener;
+    log::debug!(
+        "[QUICK_REPLY] acknowledgement listener {}",
+        if listener.is_some() {
+            "registered"
+        } else {
+            "removed"
+        }
+    );
+}
+
+/// Tells the native listener what became of `reply_id`, outside the lock. False when nobody could
+/// be told.
+#[cfg(any(target_os = "ios", test))]
+fn tell_quick_reply_settled(reply_id: &str, outcome: QuickReplyOutcome) -> bool {
+    let listener = *QUICK_REPLY_ACK_LISTENER
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(listener) = listener else {
+        log::error!(
+            "[QUICK_REPLY] reply {reply_id} settled ({outcome:?}) and no native listener is \
+             registered - its notification response is held until iOS ends the background time"
+        );
+        return false;
+    };
+    match std::ffi::CString::new(reply_id) {
+        Ok(c) => {
+            listener(c.as_ptr(), outcome as i32);
+            true
+        }
+        Err(e) => {
+            log::error!("[QUICK_REPLY] reply id {reply_id:?} has a NUL byte, not told: {e}");
+            false
+        }
+    }
+}
+
+/// The page says what became of quick reply `reply_id` - `outcome` is a [`QuickReplyOutcome`] word,
+/// how the queue SETTLED it, never merely "queued" (H1): the native side then ends the background
+/// task it held for it, completes the notification response, and tells the user what is not sent
+/// (`$lib/mobile/quickReplyDrain`).
+#[tauri::command]
+pub(crate) fn acknowledge_quick_reply(reply_id: String, outcome: String) -> Result<(), String> {
+    log::info!("[QUICK_REPLY] the page settles reply {reply_id}: {outcome}");
+    #[cfg(target_os = "ios")]
+    {
+        let Some(parsed) = QuickReplyOutcome::parse(&outcome) else {
+            log::error!("[QUICK_REPLY] reply {reply_id}: unknown outcome {outcome:?} - not told");
+            return Err(format!("unknown outcome {outcome:?}"));
+        };
+        tell_quick_reply_settled(&reply_id, parsed);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod session_key_tests {
+    use super::session_key_of;
+
+    #[test]
+    fn none_is_the_biometric_sign_in() {
+        assert_eq!(session_key_of(None), Ok(None));
+    }
+
+    #[test]
+    fn an_empty_or_blank_key_is_refused_not_taken_for_a_biometric_sign_in() {
+        assert!(session_key_of(Some("")).is_err());
+        assert!(session_key_of(Some("   ")).is_err());
+    }
+
+    #[test]
+    fn a_key_is_handed_on_trimmed() {
+        assert_eq!(session_key_of(Some(" abc= ")), Ok(Some("abc=")));
+    }
+}
+
+#[cfg(test)]
+mod quick_reply_tests {
+    use super::*;
+
+    const KEY: CacheKey = [7u8; 32];
+
+    /// The listener is one process-wide slot: the tests that set it run one at a time.
+    static LISTENER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static TOLD: std::sync::Mutex<Vec<(String, i32)>> = std::sync::Mutex::new(Vec::new());
+
+    extern "C" fn record(reply_id: *const std::os::raw::c_char, outcome: i32) {
+        let id = unsafe { std::ffi::CStr::from_ptr(reply_id) }
+            .to_string_lossy()
+            .into_owned();
+        TOLD.lock().unwrap().push((id, outcome));
+    }
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("quick-reply-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn reply(account: &str, group: &str) -> String {
+        format!(
+            "{{\"replyId\":\"r-{group}\",\"accountId\":\"{account}\",\"groupId\":\"{group}\",\"text\":\"t\"}}"
+        )
+    }
+
+    fn append_raw(dir: &std::path::Path, line: &str) {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join(PENDING_QUICK_REPLIES_FILE))
+            .unwrap();
+        writeln!(f, "{line}").unwrap();
+    }
+
+    #[test]
+    fn nothing_waits_reads_as_empty() {
+        assert!(take_quick_replies_in(&temp_dir("empty"), &KEY, "a").is_empty());
+    }
+
+    #[test]
+    fn each_line_is_taken_once_and_was_sealed_on_disk() {
+        let dir = temp_dir("once");
+        append_quick_replies_in(&dir, &KEY, &[reply("me", "a"), reply("me", "b")]).unwrap();
+        let on_disk = std::fs::read_to_string(dir.join(PENDING_QUICK_REPLIES_FILE)).unwrap();
+        assert!(
+            !on_disk.contains("groupId"),
+            "what the user typed is never on disk in the clear"
+        );
+        assert_eq!(
+            take_quick_replies_in(&dir, &KEY, "me"),
+            vec![reply("me", "a"), reply("me", "b")]
+        );
+        assert!(take_quick_replies_in(&dir, &KEY, "me").is_empty());
+    }
+
+    #[test]
+    fn a_reply_put_back_is_taken_again_beside_a_newer_one() {
+        let dir = temp_dir("back");
+        append_quick_replies_in(&dir, &KEY, &[reply("me", "old")]).unwrap();
+        // The native side appends a newer reply after the put-back: both survive, in order.
+        append_quick_replies_in(&dir, &KEY, &[reply("me", "new"), "  ".to_string()]).unwrap();
+        assert_eq!(
+            take_quick_replies_in(&dir, &KEY, "me"),
+            vec![reply("me", "old"), reply("me", "new")]
+        );
+    }
+
+    #[test]
+    fn another_accounts_reply_is_dropped_and_told_lost() {
+        let _serial = LISTENER_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        TOLD.lock().unwrap().clear();
+        set_quick_reply_ack_listener(Some(record));
+        let dir = temp_dir("account");
+        append_quick_replies_in(&dir, &KEY, &[reply("a", "g1"), reply("b", "g2")]).unwrap();
+        assert_eq!(
+            take_quick_replies_in(&dir, &KEY, "b"),
+            vec![reply("b", "g2")]
+        );
+        set_quick_reply_ack_listener(None);
+        // The native side holding r-g1 hears it is lost, at once, not at the expiry.
+        assert_eq!(
+            *TOLD.lock().unwrap(),
+            vec![("r-g1".to_string(), QuickReplyOutcome::Lost as i32)]
+        );
+        // Gone, not waiting for account A: the next take of A finds nothing either.
+        assert!(take_quick_replies_in(&dir, &KEY, "a").is_empty());
+    }
+
+    #[test]
+    fn plaintext_foreign_key_and_ownerless_lines_are_dropped() {
+        let dir = temp_dir("unreadable");
+        append_quick_replies_in(&dir, &[9u8; 32], &[reply("me", "other-key")]).unwrap();
+        append_quick_replies_in(&dir, &KEY, &["{\"groupId\":\"no-owner\"}".to_string()]).unwrap();
+        append_raw(&dir, &reply("me", "plain"));
+        assert!(take_quick_replies_in(&dir, &KEY, "me").is_empty());
+    }
+
+    #[test]
+    fn a_deleted_account_loses_only_its_own_lines() {
+        let dir = temp_dir("delete");
+        append_quick_replies_in(
+            &dir,
+            &KEY,
+            &[
+                reply("gone", "g1"),
+                reply("kept", "g2"),
+                reply("gone", "g3"),
+            ],
+        )
+        .unwrap();
+        // A line this key cannot open names no readable owner: never a licence to delete it.
+        append_quick_replies_in(&dir, &[9u8; 32], &[reply("gone", "foreign")]).unwrap();
+        assert_eq!(remove_quick_replies_of(&dir, &KEY, "gone").unwrap(), 2);
+        assert_eq!(
+            take_quick_replies_in(&dir, &KEY, "kept"),
+            vec![reply("kept", "g2")],
+            "the other account's reply survives the deletion"
+        );
+        assert_eq!(remove_quick_replies_of(&dir, &KEY, "gone").unwrap(), 0);
+    }
+
+    #[test]
+    fn a_deletion_with_nothing_waiting_touches_nothing() {
+        let dir = temp_dir("delete-empty");
+        assert_eq!(remove_quick_replies_of(&dir, &KEY, "gone").unwrap(), 0);
+        assert!(!dir.join(PENDING_QUICK_REPLIES_FILE).exists());
+    }
+
+    #[test]
+    fn the_quick_reply_file_is_not_deleted_whole_with_an_account() {
+        assert!(!ACCOUNT_PUSH_FILES.contains(&PENDING_QUICK_REPLIES_FILE));
+    }
+
+    #[test]
+    fn every_page_outcome_word_parses_to_its_native_code() {
+        for (word, code) in [
+            ("sent", 0),
+            ("failed", 1),
+            ("pending", 2),
+            ("returned", 3),
+            ("lost", 4),
+        ] {
+            assert_eq!(QuickReplyOutcome::parse(word).map(|o| o as i32), Some(code));
+        }
+        assert_eq!(QuickReplyOutcome::parse("queued"), None);
+    }
+
+    #[test]
+    fn a_settlement_reaches_the_native_listener_with_its_code() {
+        let _serial = LISTENER_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        TOLD.lock().unwrap().clear();
+        set_quick_reply_ack_listener(None);
+        assert!(
+            !tell_quick_reply_settled("r0", QuickReplyOutcome::Sent),
+            "no listener yet"
+        );
+        set_quick_reply_ack_listener(Some(record));
+        assert!(tell_quick_reply_settled("r1", QuickReplyOutcome::Sent));
+        assert!(tell_quick_reply_settled("r2", QuickReplyOutcome::Pending));
+        set_quick_reply_ack_listener(None);
+        assert!(!tell_quick_reply_settled("r3", QuickReplyOutcome::Failed));
+        assert_eq!(
+            *TOLD.lock().unwrap(),
+            vec![("r1".to_string(), 0), ("r2".to_string(), 2)]
+        );
+    }
+}
+
 /// Writes the session context to `{app_data_dir}/push_context.json` so the native background
 /// handlers (Android `CanariFirebaseMessagingService`, iOS NSE) can decrypt push notifications.
 /// `push_token` is a long-lived Bearer token (empty on desktop) the native side uses to fetch
@@ -1351,9 +2370,17 @@ pub(crate) fn read_and_clear_pending_call_accept(app: tauri::AppHandle) -> Optio
 /// The key goes into the platform keystore under `mls_device_key_{user_id}_{device_id}`, never
 /// into the JSON (WP-SEC-1): the background push and the biometric login path
 /// (`load_encrypted_with_keystore` path A) read it there, so a failed write is returned.
+///
+/// **`device_key_b64` IS `None` ON A BIOMETRIC SIGN-IN, AND THE FILE IS WRITTEN ANYWAY** (2026-11-07).
+/// That sign-in opened the state with the key it read FROM this keystore entry, so there is no key
+/// to write and the entry is already right - but the file is still this session's to write. The
+/// call used to be skipped whole in that mode, and a sign-out strips the file to its identity keys
+/// (`keep_device_context_only`, no `baseUrl`): a phone that signed out and back in by fingerprint
+/// kept the stripped file - every push a generic banner - until a PIN sign-in, which biometric unlock
+/// exists to avoid. The file mirrors the SESSION; the key is a separate fact with its own writer.
 #[tauri::command]
 pub(crate) fn store_push_context(
-    device_key_b64: String,
+    device_key_b64: Option<String>,
     user_id: String,
     device_id: String,
     base_url: String,
@@ -1367,12 +2394,54 @@ pub(crate) fn store_push_context(
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
 
+    match session_key_of(device_key_b64.as_deref())? {
+        Some(key) => store_session_device_key(key, &user_id, &device_id, &app)?,
+        None => log::info!(
+            "[PushCtx] store_push_context: no device key (biometric sign-in) - keystore entry left as it is, the session's context written"
+        ),
+    }
+
+    write_session_push_context(
+        &data_dir,
+        &user_id,
+        &device_id,
+        &base_url,
+        &push_token.unwrap_or_default(),
+        locale,
+    )
+}
+
+/// What [`store_push_context`] does with the key it was handed: `None` is the biometric sign-in (no
+/// key in hand, the keystore entry left alone) and is the ONLY such case. A key that is present but
+/// empty is a caller defect - the JS side sends `null` for "no key" - so it is refused, never taken
+/// for a biometric sign-in, which would leave the keystore on whatever key it held before.
+fn session_key_of(device_key_b64: Option<&str>) -> Result<Option<&str>, String> {
+    match device_key_b64 {
+        None => Ok(None),
+        Some(key) if key.trim().is_empty() => {
+            log::error!(
+                "[PushCtx] store_push_context: an EMPTY device key was passed - refused (no key is `null`)"
+            );
+            Err("device_key_b64 is empty - pass null for a session with no key in hand".to_string())
+        }
+        Some(key) => Ok(Some(key.trim())),
+    }
+}
+
+/// The keystore half of [`store_push_context`]: puts this session's device key in the entry the
+/// background push and the biometric login read. Returns an error only when the write FAILED.
+fn store_session_device_key(
+    device_key_b64: &str,
+    user_id: &str,
+    device_id: &str,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
     // Validate before writing: a malformed key would poison the keystore,
     // and the failure would only surface much later as an undecryptable notification.
-    let key_bytes = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64.trim())
+    let key_bytes = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64)
         .map_err(|e| format!("invalid device_key_b64: {e}"))?;
 
-    let alias = crate::commands::at_rest_key::device_key_alias(&user_id, &device_id);
+    let alias = crate::commands::at_rest_key::device_key_alias(user_id, device_id);
     // Through the at-rest guard (`store_guarded`): on a migrated phone the entry already holds this
     // key and is not rewritten; during a re-key the session's OLD key is refused, because rows already
     // sit under the new one whose only copy is this entry. A refusal is not an error here: the push
@@ -1397,15 +2466,7 @@ pub(crate) fn store_push_context(
             ))
         }
     }
-
-    write_session_push_context(
-        &data_dir,
-        &user_id,
-        &device_id,
-        &base_url,
-        &push_token.unwrap_or_default(),
-        locale,
-    )
+    Ok(())
 }
 
 /// Orders every edit of `push_context.json` made in this process: the three writers
@@ -1453,7 +2514,130 @@ fn write_session_push_context(
         "pushToken": push_token,
         "locale": locale,
     });
-    std::fs::write(data_dir.join(PUSH_CONTEXT_FILE), json.to_string()).map_err(|e| e.to_string())
+    write_push_context_file(data_dir, &json.to_string())
+}
+
+/// Replaces `push_context.json` with `json` and makes the notification extension's copy in the iOS
+/// App Group follow it - the ONE writer of the file, called by every edit under [`PUSH_CONTEXT_LOCK`]
+/// (the caller holds it).
+///
+/// **WHY AT THE WRITE, NOT AT A LIFECYCLE EVENT** (the rule `mls.bin` met first, #3040). The copy was
+/// made only by `CanariMirrorPushStateToAppGroup` at `didBecomeActive` / `willResignActive`; a
+/// process killed in the foreground never resigns, so an account switch in the foreground followed
+/// by such a kill left the extension pairing account B's state (which follows every write) with A's
+/// context - a generic banner for every push until the app was opened and left again.
+pub(crate) fn write_push_context_file(
+    data_dir: &std::path::Path,
+    json: &str,
+) -> Result<(), String> {
+    write_push_context_file_then(data_dir, json, follow_push_context_in_extension)
+}
+
+/// [`write_push_context_file`] with the follower handed in - the App Group exists only on a device,
+/// so a test hands a directory of its own, and the sign-out strip hands the container it was given.
+/// The follower runs only once the file is written.
+pub(crate) fn write_push_context_file_then(
+    data_dir: &std::path::Path,
+    json: &str,
+    follow: impl FnOnce(&std::path::Path),
+) -> Result<(), String> {
+    std::fs::write(data_dir.join(PUSH_CONTEXT_FILE), json).map_err(|e| e.to_string())?;
+    follow(data_dir);
+    Ok(())
+}
+
+/// Makes the extension's `push_context.json` follow `data_dir`'s, on iOS; nothing elsewhere, where
+/// no extension exists. A failure is logged and not returned: the app's own file IS written, and
+/// failing the edit would make the app lose a context it holds for the sake of a copy.
+pub(crate) fn follow_push_context_in_extension(data_dir: &std::path::Path) {
+    #[cfg(target_os = "ios")]
+    match crate::app_group::app_group_dir() {
+        Ok(group) => {
+            if let Err(e) = sync_push_context_copy(data_dir, &group) {
+                log::error!(
+                    "[PushCtx] the extension's copy of the push context was not refreshed: {e}"
+                );
+            }
+        }
+        Err(e) => log::error!(
+            "[PushCtx] no App Group container - the extension's push context was not refreshed: {e}"
+        ),
+    }
+    #[cfg(not(target_os = "ios"))]
+    let _ = data_dir;
+}
+
+/// `data_dir`'s `push_context.json` copied into `group` atomically (tmp + rename: the extension reads
+/// it from another process), or `group`'s copy removed when `data_dir` holds none.
+pub(crate) fn sync_push_context_copy(
+    data_dir: &std::path::Path,
+    group: &std::path::Path,
+) -> Result<(), String> {
+    let copy = group.join(PUSH_CONTEXT_FILE);
+    match std::fs::read(data_dir.join(PUSH_CONTEXT_FILE)) {
+        Ok(bytes) => {
+            let tmp = group.join(format!("{PUSH_CONTEXT_FILE}.tmp"));
+            std::fs::write(&tmp, bytes)
+                .and_then(|()| std::fs::rename(&tmp, &copy))
+                .map_err(|e| format!("copy {PUSH_CONTEXT_FILE}: {e}"))?;
+            log::debug!("[PushCtx] the extension's copy of the push context follows the app's");
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => match std::fs::remove_file(&copy) {
+            Ok(()) => {
+                log::info!("[PushCtx] no push context in the app - the extension's copy removed");
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("remove the {PUSH_CONTEXT_FILE} copy: {e}")),
+        },
+        Err(e) => Err(format!("{PUSH_CONTEXT_FILE} unreadable: {e}")),
+    }
+}
+
+/// The activation mirror's push-context half: [`sync_push_context_copy`] UNDER [`PUSH_CONTEXT_LOCK`],
+/// so a mirror cannot read the file before an edit and write its copy after the edit's own - the
+/// copy every edit makes is the newest. It only catches up a copy an earlier build left stale.
+#[cfg(target_os = "ios")]
+fn mirror_push_context_copy(data_dir: &std::path::Path, group: &std::path::Path) -> i32 {
+    log::debug!("[PushCtx] activation mirror of the push context into the App Group");
+    let _guard = push_context_guard();
+    match sync_push_context_copy(data_dir, group) {
+        Ok(()) => crate::commands::mls_account_state::MIRROR_OK,
+        Err(e) => {
+            log::error!("[PushCtx] activation mirror of the push context failed: {e}");
+            crate::commands::mls_account_state::MIRROR_FAILED
+        }
+    }
+}
+
+/// The C entry of [`mirror_push_context_copy`], called by `CanariMirrorPushStateToAppGroup`
+/// (`canari_push.mm`) with the app data directory. Answers one of the `MIRROR_*` codes of
+/// `mls_account_state.rs` (`CANARI_MLS_MIRROR_*` in `canari_rust_bridge.h`), which the caller logs.
+///
+/// # Safety
+/// `data_dir` is null or a valid NUL-terminated string for the duration of the call.
+#[cfg(target_os = "ios")]
+#[no_mangle]
+pub unsafe extern "C" fn canari_ios_mirror_push_context_to_app_group(
+    data_dir: *const std::os::raw::c_char,
+) -> i32 {
+    use crate::commands::mls_account_state::{MIRROR_NO_DIR, MIRROR_NO_GROUP};
+    if data_dir.is_null() {
+        return MIRROR_NO_DIR;
+    }
+    // SAFETY: non-null, and NUL-terminated for the call by this function's contract.
+    let Ok(dir) = std::ffi::CStr::from_ptr(data_dir).to_str() else {
+        return MIRROR_NO_DIR;
+    };
+    let group = match crate::app_group::app_group_dir() {
+        Ok(group) => group,
+        Err(e) => {
+            log::error!("[PushCtx] activation mirror: no App Group container: {e}");
+            return MIRROR_NO_GROUP;
+        }
+    };
+    mirror_push_context_copy(std::path::Path::new(dir), &group)
 }
 
 /// Mirrors THIS DEVICE'S IDENTITY, and nothing else, so it survives the WebView losing
@@ -1508,7 +2692,7 @@ pub(crate) fn store_device_identity(
 
     ctx.insert("userId".to_string(), serde_json::Value::String(user_id));
     ctx.insert("deviceId".to_string(), serde_json::Value::String(device_id));
-    std::fs::write(&path, serde_json::Value::Object(ctx).to_string()).map_err(|e| e.to_string())
+    write_push_context_file(&data_dir, &serde_json::Value::Object(ctx).to_string())
 }
 
 /// The language a background notification falls back to when nothing has been mirrored yet.
@@ -1555,7 +2739,7 @@ pub(crate) fn set_push_context_locale(locale: String, app: tauri::AppHandle) -> 
         Err(_) => return Ok(()),
     };
     ctx.insert("locale".to_string(), serde_json::Value::String(locale));
-    std::fs::write(&path, serde_json::Value::Object(ctx).to_string()).map_err(|e| e.to_string())
+    write_push_context_file(&data_dir, &serde_json::Value::Object(ctx).to_string())
 }
 
 /// Reads {app_data_dir}/push_context.json and returns its contents.
@@ -1590,45 +2774,91 @@ pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Val
 /// The per-install files that hold ONE account's data in the clear and die with that account when it
 /// is DELETED: unsent `AppMessage` protos (`store_outbox_mirror`), messages decrypted by a push
 /// (`take_fcm_cache`; what a take moved aside, `FCM_CACHE_TAKEN_PREFIX*`, goes with them), the read
-/// marks and sent ids the background side handed over, and the device-notice ledger (one marker per
-/// announced device, named by `userId:deviceId`). Not `mls.bin`, `graine_seeds.json` or the push
-/// secret - kept by this command on purpose.
-const ACCOUNT_PUSH_FILES: [&str; 5] = [
+/// marks and sent ids the background side handed over. Not `mls.bin`, `graine_seeds.json` or the
+/// push secret - kept by this command on purpose. Not the quick replies waiting for the page either:
+/// that file can hold ANOTHER account's lines, so only this account's are removed
+/// (`remove_quick_replies_of`, `delete_user_quick_replies`). Not the device-notice ledger either:
+/// it is shared by every account on the install, so only this account's markers go
+/// ([`remove_device_notices_of`]).
+const ACCOUNT_PUSH_FILES: [&str; 4] = [
     "outbox_pending.ndjson",
     FCM_CACHE_FILE,
     "read_watermarks.ndjson",
     "outbox_sent.ndjson",
-    DEVICE_NOTICES_DIR,
 ];
 
 /// The directory of the device-notice ledger (`mobile::device_notice`), in the app data directory on
 /// Android and in the App Group container on iOS - where the app and its background engine both
-/// reach it.
+/// reach it. One sub-directory per account ([`device_notices_account_dir`]).
 pub(crate) const DEVICE_NOTICES_DIR: &str = "device_notices";
+
+/// The ONE encoder of a device-notice file name: `text`'s SHA-256 in hex, 64 characters whatever
+/// its length - no `:` or `|` reaches a path, and no name exceeds the 255-byte limit of the
+/// filesystems the ledger lives on (ext4/f2fs on Android, APFS on iOS).
+pub(crate) fn device_notice_file_name(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The name builds before 1.6.1 gave a device-notice marker, in the ledger's root: `text`'s bytes in
+/// hex (read, migrated and deleted, never written - `legacy-compatibility.md`).
+pub(crate) fn device_notice_legacy_name(text: &str) -> String {
+    text.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `user_id`'s directory in the device-notice ledger under `data_dir`: named by the user id as the
+/// keys spell it (lowercase, `canonical_identity`), through [`device_notice_file_name`].
+pub(crate) fn device_notices_account_dir(
+    data_dir: &std::path::Path,
+    user_id: &str,
+) -> std::path::PathBuf {
+    data_dir
+        .join(DEVICE_NOTICES_DIR)
+        .join(device_notice_file_name(&user_id.to_ascii_lowercase()))
+}
+
+/// Removes `user_id`'s device-notice markers from the ledger under `dir`: its own directory, and
+/// the legacy root markers whose key names it (`<hex(userId:)>...`). Another account's are kept.
+fn remove_device_notices_of(
+    dir: &std::path::Path,
+    user_id: &str,
+    removed: &mut usize,
+    failures: &mut usize,
+) {
+    crate::commands::storage::remove_entry(
+        &device_notices_account_dir(dir, user_id),
+        removed,
+        failures,
+    );
+    let prefix = device_notice_legacy_name(&format!("{}:", user_id.to_ascii_lowercase()));
+    let Ok(entries) = std::fs::read_dir(dir.join(DEVICE_NOTICES_DIR)) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            crate::commands::storage::remove_entry(&entry.path(), removed, failures);
+        }
+    }
+}
 
 /// Claims, in the device-notice ledger the background engines share, the keys of the "a new device
 /// was added to your account" alerts the app has just shown - so a push that later replays the same
 /// commit raises no local notification for them - and returns the keys nobody had announced yet.
 ///
 /// Phones only: the ledger exists because a background engine may see the commit first, and only
-/// a phone has one. The app calls it from `nativeDeviceNotices.ts` on Android and iOS alone.
+/// a phone has one. The app calls it from `deviceNoticeWiring.ts` on Android and iOS alone.
 #[tauri::command]
 pub(crate) fn claim_device_notices(
     app: tauri::AppHandle,
     keys: Vec<String>,
 ) -> Result<Vec<String>, String> {
     log::debug!("[DEVICE_NOTICE] app claims {} key(s)", keys.len());
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        let _ = &app;
-        let dir = crate::app_group::app_group_dir()?;
-        Ok(crate::mobile::device_notice::claim_device_notices(
-            &dir, &keys,
-        ))
-    }
-    #[cfg(target_os = "android")]
-    {
-        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let dir = device_notices_data_dir(&app)?;
         Ok(crate::mobile::device_notice::claim_device_notices(
             &dir, &keys,
         ))
@@ -1636,7 +2866,56 @@ pub(crate) fn claim_device_notices(
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = (app, keys);
-        Err("the device-notice ledger exists on a phone only".to_string())
+        Err(NO_DEVICE_NOTICE_LEDGER.to_string())
+    }
+}
+
+/// The app's pre-claim of `user_id`'s older devices at registration (`preclaimOldOwnDevices`):
+/// records `keys`, then the account's pre-claim marker, without which the background engines
+/// announce nothing for it (`mobile::device_notice::preclaim_device_notices`). `complete` is false
+/// when a listed device's key ages went unanswered: its keys may be old, so the marker is withheld.
+/// Answers whether the marker is in place. Phones only, as [`claim_device_notices`].
+#[tauri::command]
+pub(crate) fn preclaim_device_notices(
+    app: tauri::AppHandle,
+    user_id: String,
+    keys: Vec<String>,
+    complete: bool,
+) -> Result<bool, String> {
+    log::debug!(
+        "[DEVICE_NOTICE] app pre-claims {} key(s), complete={complete}",
+        keys.len()
+    );
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let dir = device_notices_data_dir(&app)?;
+        Ok(crate::mobile::device_notice::preclaim_device_notices(
+            &dir, &user_id, &keys, complete,
+        ))
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = (app, user_id, keys, complete);
+        Err(NO_DEVICE_NOTICE_LEDGER.to_string())
+    }
+}
+
+/// The refusal off a phone, where no background engine shares a device-notice ledger.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+const NO_DEVICE_NOTICE_LEDGER: &str = "the device-notice ledger exists on a phone only";
+
+/// The directory that holds the device-notice ledger: the App Group container on iOS, the app data
+/// directory on Android.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn device_notices_data_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let _ = app;
+        crate::app_group::app_group_dir()
+    }
+    #[cfg(target_os = "android")]
+    {
+        app.path().app_data_dir().map_err(|e| e.to_string())
     }
 }
 
@@ -1645,8 +2924,8 @@ pub(crate) const PUSH_CONTEXT_FILE: &str = "push_context.json";
 
 /// Deletes the push-side files of a DELETED account (WP-DEL-LOCAL) - see [`remove_user_push_files`].
 ///
-/// On iOS the App Group container is part of the deletion: `CanariMirrorPushStateToAppGroup`
-/// copies `push_context.json` there and the notification extension writes its decrypted
+/// On iOS the App Group container is part of the deletion: every edit of `push_context.json` copies it
+/// there ([`write_push_context_file`]) and the notification extension writes its decrypted
 /// `fcm_message_cache.ndjson` there, and neither writer ever deletes. With no container the
 /// app's own files still go and the error is returned: the mirror resolves the container through
 /// the same entitlement, so a container this call cannot reach is one nothing was copied into.
@@ -1797,11 +3076,13 @@ fn remove_user_push_files_proved(
     for (_, name) in taken_files(data_dir) {
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
+    remove_device_notices_of(data_dir, user_id, &mut removed, &mut failures);
     if let Some(dir) = extension_dir {
         let before = removed;
         for name in extension_account_files() {
             crate::commands::storage::remove_entry(&dir.join(name), &mut removed, &mut failures);
         }
+        remove_device_notices_of(dir, user_id, &mut removed, &mut failures);
         log::info!(
             "[DEL-LOCAL] push files: {} removed from the extension's container",
             removed - before
@@ -1904,22 +3185,39 @@ pub(crate) fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result
 #[cfg(test)]
 mod graine_mirror_tests {
     use super::{
+        forget_account_entries, forget_account_in_mirror, sync_seed_mirror_copy, AccountForgotten,
+        ForgetScope, SeedsStored, Unattributed,
+    };
+    use super::{
         graine_seed_held, merge_graine_seed, prune_graine_sessions, read_graine_mirror,
-        read_graine_seed, remove_graine_sessions, reseal_graine_mirror, store_graine_seeds_json,
-        MirrorSeed, MirrorSeedV2, GRAINE_MIRROR_SESSIONS_PER_CHANNEL,
+        read_graine_seed, reseal_graine_mirror, store_graine_seeds_json, MirrorSeed, MirrorSeedV2,
+        GRAINE_MIRROR_SESSIONS_PER_CHANNEL,
     };
     use crate::native_cache::{is_sealed_file, CacheKey};
 
     /// The install key every test seals under.
     const KEY: CacheKey = [3u8; 32];
 
-    /// A v1 seed at floor 0 - what every test below wrote before the entry carried more.
+    /// A v1 seed at floor 0, of a writer nobody named - what every test below wrote before the
+    /// entry carried more.
     fn merge(
         dir: &std::path::Path,
         channel_id: &str,
         session_id: &str,
         seed_b64: &str,
         created_at: i64,
+    ) -> Result<usize, String> {
+        merge_as(dir, channel_id, session_id, seed_b64, created_at, None)
+    }
+
+    /// [`merge`], written by `account` (a label, as `account_label` makes one).
+    fn merge_as(
+        dir: &std::path::Path,
+        channel_id: &str,
+        session_id: &str,
+        seed_b64: &str,
+        created_at: i64,
+        account: Option<&str>,
     ) -> Result<usize, String> {
         merge_graine_seed(
             dir,
@@ -1931,6 +3229,7 @@ mod graine_mirror_tests {
                 created_at,
                 first_index: 0,
                 v2: None,
+                account,
             },
         )
     }
@@ -1943,14 +3242,17 @@ mod graine_mirror_tests {
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
 
-        assert_eq!(store_graine_seeds_json(&dir, Some(&KEY), "{}"), -1);
+        assert_eq!(store_graine_seeds_json(&dir, Some(&KEY), "{}"), None);
         let bundle = serde_json::json!([
             { "channelId": "chan", "sessionId": "s-1", "seedB64": "c2VlZA==", "createdAt": 1 },
             { "channelId": "chan", "sessionId": "", "seedB64": "c2VlZA==", "createdAt": 2 },
         ]);
         assert_eq!(
             store_graine_seeds_json(&dir, Some(&KEY), &bundle.to_string()),
-            1
+            Some(SeedsStored {
+                stored: 1,
+                left_to_the_app: 0
+            })
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1993,7 +3295,10 @@ mod graine_mirror_tests {
         let bundle = serde_json::json!([
             { "channelId": "chan", "sessionId": "s-1", "seedB64": "c2VlZA==", "createdAt": 1 },
         ]);
-        assert_eq!(store_graine_seeds_json(&dir, None, &bundle.to_string()), -1);
+        assert_eq!(
+            store_graine_seeds_json(&dir, None, &bundle.to_string()),
+            None
+        );
         assert!(!dir.join("graine_seeds.json").exists());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -2134,6 +3439,7 @@ mod graine_mirror_tests {
                 minter_user_id: minter,
                 signing_public_key_b64: "cGs=",
             }),
+            account: None,
         }
     }
 
@@ -2179,36 +3485,242 @@ mod graine_mirror_tests {
         ]);
         assert_eq!(
             store_graine_seeds_json(&dir, Some(&KEY), &bundle.to_string()),
-            1
+            Some(SeedsStored {
+                stored: 1,
+                left_to_the_app: 0
+            })
         );
         assert!(mirror(&dir)["chan"].get("s-3").is_none());
         assert_eq!(mirror(&dir)["chan"]["s-4"]["firstIndex"], 3);
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// A bundle's seeds (`relayed`) reach the mirror only for a salon it already holds a session
-    /// of: native code cannot tell a private salon this viewer may not read from a public one, so
-    /// every other relayed seed is left to the app, which reads the same answer from its queue.
-    /// A seed distributed by its own sender (not relayed) is mirrored as before.
+    /// A bundle's seeds (`relayed`) reach the mirror only for a salon THIS ACCOUNT already holds a
+    /// session of: native code cannot tell a private salon this viewer may not read from a public
+    /// one, so every other relayed seed is left to the app, which reads the same answer from its
+    /// queue. Another account's session of the salon, and a session of unknown writer, are not this
+    /// account's admission. A seed distributed by its own sender (not relayed) is mirrored as before.
     #[test]
-    fn a_relayed_seed_is_mirrored_only_for_a_salon_the_device_already_reads() {
+    fn a_relayed_seed_is_mirrored_only_for_a_salon_the_account_already_reads() {
         let dir = mirror_dir("relayed");
-        merge(&dir, "read-salon", "s-held", "c2VlZA==", 1).unwrap();
+        merge_as(&dir, "read-salon", "s-held", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        merge_as(&dir, "b-salon", "s-b-held", "c2VlZA==", 1, Some("acct-b")).unwrap();
+        merge(&dir, "legacy-salon", "s-old", "c2VlZA==", 1).unwrap();
         let seeds = serde_json::json!([
-            { "channelId": "read-salon", "sessionId": "s-a", "seedB64": "c2VlZA==", "createdAt": 2, "relayed": true },
-            { "channelId": "other-salon", "sessionId": "s-b", "seedB64": "c2VlZA==", "createdAt": 3, "relayed": true },
-            { "channelId": "new-salon", "sessionId": "s-c", "seedB64": "c2VlZA==", "createdAt": 4 },
+            { "channelId": "read-salon", "sessionId": "s-a", "seedB64": "c2VlZA==", "createdAt": 2, "relayed": true, "account": "acct-a" },
+            { "channelId": "other-salon", "sessionId": "s-b", "seedB64": "c2VlZA==", "createdAt": 3, "relayed": true, "account": "acct-a" },
+            { "channelId": "b-salon", "sessionId": "s-d", "seedB64": "c2VlZA==", "createdAt": 3, "relayed": true, "account": "acct-a" },
+            { "channelId": "legacy-salon", "sessionId": "s-e", "seedB64": "c2VlZA==", "createdAt": 3, "relayed": true, "account": "acct-a" },
+            { "channelId": "new-salon", "sessionId": "s-c", "seedB64": "c2VlZA==", "createdAt": 4, "account": "acct-a" },
         ]);
         assert_eq!(
             store_graine_seeds_json(&dir, Some(&KEY), &seeds.to_string()),
-            2
+            Some(SeedsStored {
+                stored: 2,
+                left_to_the_app: 3
+            }),
+            "three relayed seeds left to the app, reported apart from the two stored"
         );
+        // The keys the Kotlin absorber reads.
+        let reported: serde_json::Value = serde_json::from_str(
+            &SeedsStored {
+                stored: 2,
+                left_to_the_app: 3,
+            }
+            .to_json(),
+        )
+        .unwrap();
+        assert_eq!(reported, serde_json::json!({ "stored": 2, "leftToApp": 3 }));
         assert!(mirror(&dir)["read-salon"].get("s-a").is_some());
         assert!(mirror(&dir).get("other-salon").is_none());
+        assert!(
+            mirror(&dir)["b-salon"].get("s-d").is_none(),
+            "acct-b's admission is not acct-a's"
+        );
+        assert!(
+            mirror(&dir)["legacy-salon"].get("s-e").is_none(),
+            "an unattributed entry admits nobody"
+        );
         assert!(mirror(&dir)["new-salon"].get("s-c").is_some());
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// EVERY WRITER LABELS ITS ENTRY: the page's account and the push decrypt's stamp both reach the
+    /// `accounts` list, a second account writing the same session is added to it, and the same
+    /// writer again changes nothing.
+    #[test]
+    fn each_writer_labels_the_entry_it_writes() {
+        let dir = mirror_dir("labels");
+        merge_as(&dir, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        assert_eq!(
+            mirror(&dir)["chan"]["s-1"]["accounts"],
+            serde_json::json!(["acct-a"])
+        );
+        let pushed = serde_json::json!([
+            { "channelId": "chan", "sessionId": "s-1", "seedB64": "c2VlZA==", "createdAt": 1, "account": "acct-b" },
+            { "channelId": "chan", "sessionId": "s-2", "seedB64": "c2VlZA==", "createdAt": 2, "account": "acct-b" },
+        ]);
+        assert_eq!(
+            store_graine_seeds_json(&dir, Some(&KEY), &pushed.to_string()),
+            Some(SeedsStored {
+                stored: 2,
+                left_to_the_app: 0
+            })
+        );
+        let held = mirror(&dir);
+        assert_eq!(
+            held["chan"]["s-1"]["accounts"],
+            serde_json::json!(["acct-a", "acct-b"])
+        );
+        assert_eq!(
+            held["chan"]["s-2"]["accounts"],
+            serde_json::json!(["acct-b"])
+        );
+        assert!(held["chan"]["s-1"].get("unattributed").is_none());
+        let before = std::fs::read(dir.join("graine_seeds.json")).unwrap();
+        assert_eq!(
+            merge_as(&dir, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")),
+            Ok(0)
+        );
+        assert_eq!(
+            std::fs::read(dir.join("graine_seeds.json")).unwrap(),
+            before,
+            "not rewritten"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// THE PER-ACCOUNT WIPE IS AN ALLOWLIST BY LABEL: an entry the account alone wrote goes, one it
+    /// shares keeps the other writer, another account's entry and an entry of unknown writer are
+    /// untouched, and a channel left empty is dropped.
+    #[test]
+    fn the_account_wipe_removes_only_what_that_account_alone_wrote() {
+        let dir = mirror_dir("wipe");
+        merge_as(&dir, "only-b", "s-b", "c2VlZA==", 1, Some("acct-b")).unwrap();
+        merge_as(&dir, "shared", "s-ab", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        merge_as(&dir, "shared", "s-ab", "c2VlZA==", 1, Some("acct-b")).unwrap();
+        merge_as(&dir, "shared", "s-a", "c2VlZA==", 2, Some("acct-a")).unwrap();
+        merge(&dir, "shared", "s-old", "c2VlZA==", 3).unwrap();
+
+        let done = forget_account_in_mirror(
+            &dir,
+            &KEY,
+            "acct-b",
+            ForgetScope::Everything,
+            Unattributed::Keep,
+        )
+        .unwrap();
+        assert_eq!(
+            done,
+            AccountForgotten {
+                removed: 1,
+                unlabelled: 1,
+                unattributed_kept: 1,
+                unattributed_dropped: 0,
+                channels_dropped: 1,
+            }
+        );
+        let held = mirror(&dir);
+        assert!(
+            held.get("only-b").is_none(),
+            "B's channel went with its one entry"
+        );
+        assert_eq!(
+            held["shared"]["s-ab"]["accounts"],
+            serde_json::json!(["acct-a"])
+        );
+        assert_eq!(
+            held["shared"]["s-a"]["accounts"],
+            serde_json::json!(["acct-a"])
+        );
+        assert!(
+            held["shared"].get("s-old").is_some(),
+            "unknown writer: never judged"
+        );
+        assert_eq!(
+            graine_seed_held(&dir, Some(&KEY), "shared", "s-ab"),
+            1,
+            "A still opens the shared session's pushes"
+        );
+        // Idempotent: a resumed wipe finds nothing of B left and writes nothing.
+        let before = std::fs::read(dir.join("graine_seeds.json")).unwrap();
+        let again = forget_account_in_mirror(
+            &dir,
+            &KEY,
+            "acct-b",
+            ForgetScope::Everything,
+            Unattributed::Keep,
+        )
+        .unwrap();
+        assert_eq!((again.removed, again.unlabelled), (0, 0));
+        assert_eq!(
+            std::fs::read(dir.join("graine_seeds.json")).unwrap(),
+            before
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// THE LEGACY DECISION: an entry written before the label is never read as an account's. A
+    /// later write labels it AND keeps the mark that it had a writer nobody can name, so that
+    /// writer's wipe drops its label and leaves the entry - it may be the other account's.
+    #[test]
+    fn a_legacy_entry_is_never_taken_as_one_accounts() {
+        let dir = mirror_dir("legacy-label");
+        // The shape every build before the label wrote.
+        let legacy = serde_json::json!({ "chan": { "s-1": { "seed": "c2VlZA==", "createdAt": 1, "firstIndex": 0 } } });
+        std::fs::write(dir.join("graine_seeds.json"), legacy.to_string()).unwrap();
+
+        // Nobody's wipe touches it.
+        let done = forget_account_in_mirror(
+            &dir,
+            &KEY,
+            "acct-a",
+            ForgetScope::Everything,
+            Unattributed::Keep,
+        )
+        .unwrap();
+        assert_eq!((done.removed, done.unattributed_kept), (0, 1));
+        assert!(mirror(&dir)["chan"].get("s-1").is_some());
+
+        // A's next write of the session labels it and keeps the mark.
+        merge_as(&dir, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        let entry = mirror(&dir)["chan"]["s-1"].clone();
+        assert_eq!(entry["accounts"], serde_json::json!(["acct-a"]));
+        assert_eq!(entry["unattributed"], true);
+
+        // A's wipe drops A's label and keeps the entry.
+        let done = forget_account_in_mirror(
+            &dir,
+            &KEY,
+            "acct-a",
+            ForgetScope::Everything,
+            Unattributed::Keep,
+        )
+        .unwrap();
+        assert_eq!((done.removed, done.unlabelled), (0, 1));
+        let entry = mirror(&dir)["chan"]["s-1"].clone();
+        assert_eq!(entry["accounts"], serde_json::json!([]));
+        assert_eq!(entry["seed"], "c2VlZA==");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A malformed channel or session entry names no writer and is left as it is.
+    #[test]
+    fn the_account_wipe_leaves_malformed_entries() {
+        let mut root = serde_json::json!({
+            "odd-chan": 7,
+            "chan": { "s-odd": "not an entry", "s-1": { "seed": "c2VlZA==", "accounts": ["acct-a"] } },
+        });
+        let map = root.as_object_mut().unwrap();
+        let done =
+            forget_account_entries(map, "acct-a", ForgetScope::Everything, Unattributed::Keep);
+        assert_eq!(done.removed, 1);
+        assert_eq!(map["odd-chan"], 7);
+        assert_eq!(map["chan"]["s-odd"], "not an entry");
+    }
+
+    /// The retention sweep names sessions, not channels: they sit wherever they sit. Entries of
+    /// unknown writer go, as every named session went before the label.
     #[test]
     fn forgets_named_sessions_across_channels_and_drops_empty_ones() {
         let mut root = serde_json::json!({
@@ -2216,13 +3728,17 @@ mod graine_mirror_tests {
             "chan-b": { "s-3": seed(3) },
         });
         let map = root.as_object_mut().unwrap();
+        let ids: std::collections::HashSet<&str> = ["s-1", "s-3"].into_iter().collect();
 
-        // The sweep names sessions, not channels: they sit wherever they sit.
-        let (removed, emptied) =
-            remove_graine_sessions(map, &["s-1".to_string(), "s-3".to_string()]);
+        let done = forget_account_entries(
+            map,
+            "acct-a",
+            ForgetScope::Sessions(&ids),
+            Unattributed::Drop,
+        );
 
-        assert_eq!(removed, 2);
-        assert_eq!(emptied, 1);
+        assert_eq!(done.gone(), 2);
+        assert_eq!(done.channels_dropped, 1);
         // chan-b held nothing else, so the entry goes rather than staying as an empty object.
         assert!(!map.contains_key("chan-b"));
         assert_eq!(map["chan-a"].as_object().unwrap().len(), 1);
@@ -2233,11 +3749,122 @@ mod graine_mirror_tests {
     fn an_id_naming_nothing_changes_nothing() {
         let mut root = serde_json::json!({ "chan-a": { "s-1": seed(1) } });
         let map = root.as_object_mut().unwrap();
+        let ids: std::collections::HashSet<&str> = ["ghost"].into_iter().collect();
 
-        let (removed, emptied) = remove_graine_sessions(map, &["ghost".to_string()]);
+        let done = forget_account_entries(
+            map,
+            "acct-a",
+            ForgetScope::Sessions(&ids),
+            Unattributed::Drop,
+        );
 
-        assert_eq!((removed, emptied), (0, 0));
+        assert_eq!(done, AccountForgotten::default());
         assert!(map["chan-a"].get("s-1").is_some());
+    }
+
+    /// ONE ACCOUNT LEAVING A COMMUNITY, or sweeping a session, takes only its own label: account B
+    /// still reads the salon and would never mirror a held session again (`already-held`). An entry
+    /// it alone wrote goes, another salon is untouched.
+    #[test]
+    fn leaving_a_salon_or_sweeping_a_session_keeps_what_another_account_reads() {
+        let labelled = |accounts: serde_json::Value| serde_json::json!({ "seed": "c2VlZA==", "createdAt": 1, "accounts": accounts });
+        let mut root = serde_json::json!({
+            "salon": {
+                "s-ab": labelled(serde_json::json!(["acct-a", "acct-b"])),
+                "s-a": labelled(serde_json::json!(["acct-a"])),
+                "s-old": seed(1),
+            },
+            "other": { "s-x": labelled(serde_json::json!(["acct-a"])) },
+        });
+        let map = root.as_object_mut().unwrap();
+
+        let done = forget_account_entries(
+            map,
+            "acct-a",
+            ForgetScope::Channel("salon"),
+            Unattributed::Drop,
+        );
+        assert_eq!(
+            (done.removed, done.unlabelled, done.unattributed_dropped),
+            (1, 1, 1)
+        );
+        assert_eq!(
+            map["salon"]["s-ab"]["accounts"],
+            serde_json::json!(["acct-b"])
+        );
+        assert!(map["salon"].get("s-a").is_none());
+        assert!(
+            map["salon"].get("s-old").is_none(),
+            "unknown writer: goes, as before the label"
+        );
+        assert!(
+            map["other"].get("s-x").is_some(),
+            "another salon is out of scope"
+        );
+
+        // B's sweep of the shared session then takes it: B was its last writer.
+        let ids: std::collections::HashSet<&str> = ["s-ab"].into_iter().collect();
+        let done = forget_account_entries(
+            map,
+            "acct-b",
+            ForgetScope::Sessions(&ids),
+            Unattributed::Drop,
+        );
+        assert_eq!((done.removed, done.channels_dropped), (1, 1));
+        assert!(!map.contains_key("salon"));
+    }
+
+    /// THE INSTALL'S ONLY ACCOUNT takes its entries of unknown writer with it: nobody else can be
+    /// their writer, and no other exit will ever run for a deleted account. Another account's
+    /// labelled entry - one an earlier account left - stays.
+    #[test]
+    fn the_only_accounts_wipe_also_takes_the_entries_of_unknown_writer() {
+        let dir = mirror_dir("alone");
+        merge(&dir, "chan", "s-old", "c2VlZA==", 1).unwrap();
+        merge(&dir, "chan", "s-relabelled", "c2VlZA==", 2).unwrap();
+        merge_as(&dir, "chan", "s-relabelled", "c2VlZA==", 2, Some("acct-a")).unwrap();
+        merge_as(&dir, "chan", "s-a", "c2VlZA==", 3, Some("acct-a")).unwrap();
+        merge_as(&dir, "chan", "s-z", "c2VlZA==", 4, Some("acct-z")).unwrap();
+
+        let done = forget_account_in_mirror(
+            &dir,
+            &KEY,
+            "acct-a",
+            ForgetScope::Everything,
+            Unattributed::Drop,
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                done.removed,
+                done.unattributed_dropped,
+                done.unattributed_kept
+            ),
+            (1, 2, 0)
+        );
+        let held = mirror(&dir);
+        assert_eq!(held["chan"].as_object().unwrap().len(), 1);
+        assert!(held["chan"].get("s-z").is_some());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The iOS activation copy into the App Group takes the group copy's writers' lock and copies the
+    /// app's bytes as they are; an app with no mirror leaves the group's alone.
+    #[test]
+    fn the_app_group_copy_is_made_whole_and_only_from_a_mirror_that_exists() {
+        let app = mirror_dir("copy-app");
+        let group = mirror_dir("copy-group");
+        assert_eq!(sync_seed_mirror_copy(&app, &group), Ok(false));
+        merge_as(&app, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        assert_eq!(sync_seed_mirror_copy(&app, &group), Ok(true));
+        assert_eq!(
+            std::fs::read(group.join("graine_seeds.json")).unwrap(),
+            std::fs::read(app.join("graine_seeds.json")).unwrap()
+        );
+        assert!(group.join("graine_seeds.lock").exists());
+        assert!(!group.join("graine_seeds.json.tmp").exists());
+        std::fs::remove_dir_all(&app).ok();
+        std::fs::remove_dir_all(&group).ok();
     }
 
     #[test]
@@ -2351,7 +3978,7 @@ mod delete_user_push_files_tests {
 ",
         )
         .unwrap();
-        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 7);
+        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 6);
         assert!(!dir.join("fcm_message_cache.taken.3.ndjson").exists());
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
@@ -2401,9 +4028,15 @@ mod delete_user_push_files_tests {
         std::fs::create_dir_all(&group).unwrap();
         std::fs::write(group.join(PUSH_CONTEXT_FILE), context).unwrap();
         std::fs::write(group.join(super::FCM_CACHE_FILE), b"{}\n").unwrap();
-        // The device-notice ledger the extension claims in: markers name `userId:deviceId`.
-        std::fs::create_dir_all(group.join(super::DEVICE_NOTICES_DIR)).unwrap();
-        std::fs::write(group.join(super::DEVICE_NOTICES_DIR).join("6123"), b"").unwrap();
+        // The device-notice ledger the extension claims in, shared by the accounts on the install:
+        // a directory per account, and a legacy root marker (`hex(userId:...)`) of each.
+        for user in ["a", "b"] {
+            let account = super::device_notices_account_dir(&group, user);
+            std::fs::create_dir_all(&account).unwrap();
+            std::fs::write(account.join("preclaimed"), b"").unwrap();
+            let legacy = super::device_notice_legacy_name(&format!("{user}:d|ff"));
+            std::fs::write(group.join(super::DEVICE_NOTICES_DIR).join(legacy), b"").unwrap();
+        }
         for kept in ["mls.bin", "graine_seeds.json", "push_secret.txt"] {
             std::fs::write(group.join(kept), b"x").unwrap();
         }
@@ -2421,7 +4054,16 @@ mod delete_user_push_files_tests {
         assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 9);
         assert!(!group.join(PUSH_CONTEXT_FILE).exists());
         assert!(!group.join(super::FCM_CACHE_FILE).exists());
-        assert!(!group.join(super::DEVICE_NOTICES_DIR).exists());
+        // Only the deleted account's device notices go; the other account's stay.
+        let ledger = group.join(super::DEVICE_NOTICES_DIR);
+        assert!(!super::device_notices_account_dir(&group, "a").exists());
+        assert!(!ledger
+            .join(super::device_notice_legacy_name("a:d|ff"))
+            .exists());
+        assert!(super::device_notices_account_dir(&group, "b").exists());
+        assert!(ledger
+            .join(super::device_notice_legacy_name("b:d|ff"))
+            .exists());
         for kept in ["mls.bin", "graine_seeds.json", "push_secret.txt"] {
             assert!(group.join(kept).exists(), "{kept}");
         }
@@ -2475,7 +4117,7 @@ mod delete_user_push_files_tests {
         std::fs::create_dir_all(dir.join(crate::commands::display_names::DISPLAY_NAMES_FILE))
             .unwrap();
         let err = super::remove_account_push_and_name_files(&dir, None, "a").unwrap_err();
-        assert!(err.contains("6 push file(s) removed"), "{err}");
+        assert!(err.contains("5 push file(s) removed"), "{err}");
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
         }
@@ -2494,7 +4136,7 @@ mod delete_user_push_files_tests {
         merge_display_names(&group, "a", &names, &[]).unwrap();
         assert_eq!(
             super::remove_account_push_and_name_files(&dir, Some(&group), "a").unwrap(),
-            6
+            5
         );
         assert!(!dir.join(DISPLAY_NAMES_FILE).exists());
         assert!(!group.join(DISPLAY_NAMES_FILE).exists());
@@ -2729,5 +4371,56 @@ mod push_context_lock_tests {
         );
         assert_eq!(owner(&dir).as_deref(), Some("new"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod push_context_copy_tests {
+    use super::{sync_push_context_copy, write_push_context_file_then, PUSH_CONTEXT_FILE};
+
+    fn scratch(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root =
+            std::env::temp_dir().join(format!("canari_push_ctx_copy_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (app, group) = (root.join("app"), root.join("group"));
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::create_dir_all(&group).unwrap();
+        (app, group)
+    }
+
+    /// Every edit is followed into the extension's directory, with the bytes the edit wrote.
+    #[test]
+    fn an_edit_is_followed_into_the_extension_copy() {
+        let (app, group) = scratch("follow");
+        write_push_context_file_then(&app, r#"{"userId":"b"}"#, |dir| {
+            sync_push_context_copy(dir, &group).unwrap()
+        })
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(group.join(PUSH_CONTEXT_FILE)).unwrap(),
+            r#"{"userId":"b"}"#
+        );
+        assert!(!group.join(format!("{PUSH_CONTEXT_FILE}.tmp")).exists());
+    }
+
+    /// A write that failed is not followed: the copy never runs ahead of the app's file.
+    #[test]
+    fn a_failed_edit_is_not_followed() {
+        let (app, _) = scratch("fail");
+        let mut followed = false;
+        let refused = write_push_context_file_then(&app.join("missing"), "{}", |_| followed = true);
+        assert!(refused.is_err());
+        assert!(!followed);
+    }
+
+    /// The app holding no context leaves the extension none either - never the previous account's.
+    #[test]
+    fn no_context_in_the_app_removes_the_extension_copy() {
+        let (app, group) = scratch("remove");
+        std::fs::write(group.join(PUSH_CONTEXT_FILE), r#"{"userId":"a"}"#).unwrap();
+        sync_push_context_copy(&app, &group).unwrap();
+        assert!(!group.join(PUSH_CONTEXT_FILE).exists());
+        // ...and an absent copy is nothing to remove.
+        sync_push_context_copy(&app, &group).unwrap();
     }
 }

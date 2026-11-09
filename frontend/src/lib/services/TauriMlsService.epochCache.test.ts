@@ -7,7 +7,10 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
-vi.mock('$lib/stores/auth', () => ({ getToken: vi.fn().mockResolvedValue('') }));
+vi.mock('$lib/stores/auth', () => ({
+  getToken: vi.fn().mockResolvedValue(''),
+  signOutGeneration: () => 0,
+}));
 
 import { TauriMlsService } from './TauriMlsService';
 import { isInEpochGap, resetEpochGapRegistry } from '$lib/utils/chat/epochGapRegistry';
@@ -115,6 +118,7 @@ interface Internals {
   processIncomingMessage(groupId: string, bytes: Uint8Array): Promise<Uint8Array | null>;
   mergePendingCommit(groupId: string): Promise<void>;
   syncGroupCachesFromNative(): Promise<number>;
+  freshEpoch(groupId: string): Promise<number>;
   createGroup(groupId: string): Promise<void>;
   forgetGroup(groupId: string): void;
   deviceId: string;
@@ -126,8 +130,7 @@ interface Internals {
   ): Promise<void>;
   verifyDistributionEpoch(groupId: string, activeEpoch: number): Promise<string>;
   onDistributionGapVerdict(listener: ((g: string, v: string) => void) | null): void;
-  initialDrain: Promise<void>;
-  waitForGroupQueueIdle: () => Promise<void>;
+  whenGroupDrained: (groupId: string) => Promise<void>;
   delivery: { fetchCommitsSince: ReturnType<typeof vi.fn> };
 }
 
@@ -199,8 +202,8 @@ describe('TauriMlsService - the epoch cache says what the native manager says', 
     nativeManager({ 'kg-1': 56 });
     const svc = makeService();
     await svc.reloadStateFromDisk();
-    svc.initialDrain = Promise.resolve();
-    svc.waitForGroupQueueIdle = vi.fn().mockResolvedValue(undefined);
+    // This link's drain has settled (the check waits for it, never for the boot's).
+    svc.whenGroupDrained = vi.fn().mockResolvedValue(undefined);
     svc.delivery.fetchCommitsSince = vi.fn().mockResolvedValue({
       commits: [{ baseEpoch: 0, proto: 'AA==' }],
       activeEpoch: 56,
@@ -275,6 +278,21 @@ describe('TauriMlsService - a sync never overwrites what landed while it ran', (
     await sync;
     expect(svc.getLocalGroups()).toEqual(['kg-1']);
     expect(svc.getEpoch('kg-2')).toBe(0);
+  });
+
+  it('a held group read during the first listing is still listed - the read adds it', async () => {
+    const native = nativeManager({ 'kg-1': 56 });
+    const svc = makeService();
+    native.hold('lister_groupes'); // answers ['kg-1']
+    const sync = svc.syncGroupCachesFromNative();
+    await native.parkedOn('lister_groupes');
+
+    // Touched after the listing started, so the listing leaves it to this read.
+    expect(await svc.freshEpoch('kg-1')).toBe(56);
+
+    await native.release('lister_groupes');
+    await sync;
+    expect(svc.getLocalGroups()).toEqual(['kg-1']);
   });
 
   it('a group gone from the native manager leaves both caches', async () => {

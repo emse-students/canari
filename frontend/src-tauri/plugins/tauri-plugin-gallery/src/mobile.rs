@@ -1,6 +1,6 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::commands::{PublishAnswer, ShareTarget};
+use crate::commands::{DocumentWritten, PublishAnswer, ShareTarget};
 use tauri::{
     plugin::{PluginApi, PluginHandle},
     AppHandle, Runtime,
@@ -9,8 +9,8 @@ use tauri::{
 #[cfg(target_os = "ios")]
 tauri::ios_plugin_binding!(init_plugin_gallery);
 
-/// Registers the platform class: Kotlin `GalleryPlugin` (MediaStore) on Android, Swift
-/// `GalleryPlugin` (PHPhotoLibrary) on iOS.
+/// Registers the platform class: Kotlin `GalleryPlugin` (MediaStore, sharing shortcuts) on Android,
+/// Swift `GalleryPlugin` (PHPhotoLibrary, `INSendMessageIntent` donations) on iOS.
 pub fn init<R: Runtime, C: DeserializeOwned>(
     _app: &AppHandle<R>,
     api: PluginApi<R, C>,
@@ -29,6 +29,7 @@ pub struct Gallery<R: Runtime>(PluginHandle<R>);
 struct SaveVideoPayload {
     path: String,
     name: String,
+    mime: String,
 }
 
 #[derive(Serialize)]
@@ -42,6 +43,13 @@ struct ShareTextPayload {
 struct ShareFilePayload {
     path: String,
     mime: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WriteDocumentPayload {
+    path: String,
+    uri: String,
 }
 
 #[derive(Serialize)]
@@ -65,9 +73,14 @@ pub struct SaveOutcome {
 }
 
 impl<R: Runtime> Gallery<R> {
-    pub fn save_video(&self, path: String, name: String) -> crate::Result<SaveOutcome> {
+    pub fn save_video(
+        &self,
+        path: String,
+        name: String,
+        mime: String,
+    ) -> crate::Result<SaveOutcome> {
         self.0
-            .run_mobile_plugin("saveVideo", SaveVideoPayload { path, name })
+            .run_mobile_plugin("saveVideo", SaveVideoPayload { path, name, mime })
             .map_err(Into::into)
     }
 
@@ -80,6 +93,14 @@ impl<R: Runtime> Gallery<R> {
     pub fn share_file(&self, path: String, mime: String) -> crate::Result<()> {
         self.0
             .run_mobile_plugin("shareFile", ShareFilePayload { path, mime })
+            .map_err(Into::into)
+    }
+
+    /// Android only: copies the file at `path` into the document `uri` through the provider's own
+    /// stream (`write_staged_document`).
+    pub fn write_document(&self, path: String, uri: String) -> crate::Result<DocumentWritten> {
+        self.0
+            .run_mobile_plugin("writeDocument", WriteDocumentPayload { path, uri })
             .map_err(Into::into)
     }
 

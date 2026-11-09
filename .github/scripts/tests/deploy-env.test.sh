@@ -66,7 +66,8 @@ dev_env() {
     DEV_AGENDA_SIGNING_KEY=d8-0123456789abcdef0123456789abcdef \
     DEV_LIVE_REPORT_SIGNING_KEY=d9-0123456789abcdef0123456789abcdef \
     DEV_LYDIA_KEY_ENCRYPTION_SECRET=d10-0123456789abcdef0123456789abcde \
-    DEV_LIVE_KEY_ENCRYPTION_SECRET=d11-0123456789abcdef0123456789abcde
+    DEV_LIVE_KEY_ENCRYPTION_SECRET=d11-0123456789abcdef0123456789abcde \
+    DEV_AVATAR_TOKEN_SECRET=d12-0123456789abcdef0123456789abcde
 }
 
 prod_env() {
@@ -89,7 +90,9 @@ prod_env() {
     LIVE_REPORT_SIGNING_KEY=p9-0123456789abcdef0123456789abcdef \
     LYDIA_KEY_ENCRYPTION_SECRET=p10-0123456789abcdef0123456789abcde \
     LIVE_KEY_ENCRYPTION_SECRET=p11-0123456789abcdef0123456789abcde \
-    LYDIA_ENV=production
+    AVATAR_TOKEN_SECRET=p12-0123456789abcdef0123456789abcde \
+    LYDIA_ENV=production \
+    LYDIA_PROVIDER_PRIVATE_TOKEN=test-provider-private-token
 }
 
 # Run the renderer with an explicit environment built from the lines on stdin.
@@ -109,7 +112,7 @@ manifest_rows() {
 
 manifest_field() {
   # $1 = key, $2 = column number
-  manifest_rows | awk -F'\t' -v k="$1" -v c="$2" '$1 == k { print $c; exit }'
+  manifest_rows | awk -F'\t' -v k="$1" -v c="$2" '$1 == k && !seen { print $c; seen = 1 }'
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -225,15 +228,26 @@ for key in FRONTEND_HOST_PORT GARAGE_API_HOST_PORT GARAGE_ADMIN_HOST_PORT; do
   fi
 done
 
-# THE LIVE SWITCH IS CLOSED ON PRODUCTION AND OPEN ON DEV, read from the RENDERED files for the reason
-# the ports are: the template says `false`, so a dev render that forgot to override would look right
-# in every file but the one the estate reads (docs/wiki/services/lives.md).
+# THE LIVE SWITCH IS OPEN ON BOTH ESTATES since the production flip (owner, 2026-10-30), read from
+# the RENDERED files for the reason the ports are: the compose default is `false`, so a render that
+# dropped the key would look right in every file but the one the estate reads. What closes lives on
+# an estate is the runtime `platform_config.lives_mode` (docs/wiki/services/lives.md).
 live_prod="$(port_of "$TMP/ports-prod.env" LIVE_ENABLED)"
 live_dev="$(port_of "$TMP/ports-dev.env" LIVE_ENABLED)"
-if [ "$live_prod" = "false" ] && [ "$live_dev" = "true" ]; then
-  pass "LIVE_ENABLED renders false on production and true on dev"
+if [ "$live_prod" = "true" ] && [ "$live_dev" = "true" ]; then
+  pass "LIVE_ENABLED renders true on production and on dev"
 else
-  fail "LIVE_ENABLED renders prod='$live_prod' dev='$live_dev' - production must be false, dev true"
+  fail "LIVE_ENABLED renders prod='$live_prod' dev='$live_dev' - both estates must be true (lives_mode is the runtime switch)"
+fi
+
+# THE LYDIA RECONCILIATION SWITCH, by the same rule: production asks Lydia nothing on its own until
+# the signed amount format is measured (docs/wiki/lydia-api.md section 7).
+reconcile_prod="$(port_of "$TMP/ports-prod.env" LYDIA_RECONCILE_ENABLED)"
+reconcile_dev="$(port_of "$TMP/ports-dev.env" LYDIA_RECONCILE_ENABLED)"
+if [ "$reconcile_prod" = "false" ] && [ "$reconcile_dev" = "true" ]; then
+  pass "LYDIA_RECONCILE_ENABLED renders false on production and true on dev"
+else
+  fail "LYDIA_RECONCILE_ENABLED renders prod='$reconcile_prod' dev='$reconcile_dev' - production must be false, dev true"
 fi
 
 # AND NEITHER ESTATE MAY ASK FOR A PORT THE SHARED HOST HAS ALREADY GIVEN AWAY. The loop above
@@ -250,10 +264,10 @@ fi
 # whose result would have to escape a subshell.
 reserved_host_ports() {
   cat <<'PORTS'
-22 the DSI sshd
-80 the host nginx, which fronts all eight vhosts
-443 the host nginx, which fronts all eight vhosts
-8080 CrowdSec's Local API
+22 the host's ssh service
+80 the host nginx, which fronts every vhost on the host
+443 the host nginx, which fronts every vhost on the host
+8080 a host security service
 PORTS
 }
 
@@ -290,13 +304,13 @@ add_declared() {
   if [ -z "$2" ]; then fail "could not read the dev host port from $1"; else declared="$declared $1=$2"; fi
 }
 add_declared "docker-compose.dev.yml" \
-  "$(grep -oE '\$\{FRONTEND_HOST_PORT:-[0-9]+\}' infrastructure/docker-compose.dev.yml | head -1 |
+  "$(grep -oE '\$\{FRONTEND_HOST_PORT:-[0-9]+\}' infrastructure/docker-compose.dev.yml | sed -n 1p |
     grep -oE '[0-9]+' || true)"
 add_declared "deploy-environment.sh" \
   "$(grep -A4 '^dev)' infrastructure/deploy/deploy-environment.sh |
     grep -oE 'DEFAULT_FRONTEND_PORT=[0-9]+' | grep -oE '[0-9]+' || true)"
 add_declared "scheduled.yml" \
-  "$(grep -oE '127\.0\.0\.1:[0-9]+/api/version' .github/workflows/scheduled.yml | head -1 |
+  "$(grep -oE '127\.0\.0\.1:[0-9]+/api/version' .github/workflows/scheduled.yml | sed -n 1p |
     grep -oE ':[0-9]+' | tr -d ':' || true)"
 
 disagree=""
@@ -353,7 +367,7 @@ if [ ! -f "$out" ]; then
 else
   pass "a complete production environment renders"
 
-  got="$(grep '^ALLOW_ORIGIN=' "$out" | head -1)"
+  got="$(grep '^ALLOW_ORIGIN=' "$out" | sed -n 1p)"
   # WHAT PRODUCTION IS ACTUALLY SERVING, read off the running estate on 2026-09-24 and pinned here.
   # This used to compare against the value `serve-prod.yml` computed inline, which was the right
   # check while the conversion to `render-env.sh` was still ahead; that shell is gone, and a
@@ -376,7 +390,7 @@ else
   canon_out="$TMP/allow-origin-canonical.env"
   # shellcheck disable=SC2046 # word splitting is the point: each line is one VAR=value assignment
   render prod "$canon_out" $(prod_env) BASE_URL=https://canari.emse.fr >"$TMP/canon.log" 2>&1 || true
-  canon_got="$(grep '^ALLOW_ORIGIN=' "$canon_out" 2>/dev/null | head -1)"
+  canon_got="$(grep '^ALLOW_ORIGIN=' "$canon_out" 2>/dev/null | sed -n 1p)"
   canon_want="ALLOW_ORIGIN=https://canari.emse.fr,https://canari-emse.fr,https://dev.canari-emse.fr,http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,https://tauri.localhost,tauri://localhost"
   if [ "$canon_got" = "$canon_want" ]; then
     pass "with BASE_URL on the canonical apex, BOTH public names are allowed"
@@ -466,7 +480,7 @@ else
     fail "dev's JWT_SECRET is not devjwt"
   fi
 
-  got="$(grep '^ALLOW_ORIGIN=' "$out" | head -1)"
+  got="$(grep '^ALLOW_ORIGIN=' "$out" | sed -n 1p)"
   case "$got" in
   *"https://canari-emse.fr"*) fail "dev's CORS list carries production's origin: $got" ;;
   *"https://dev.canari-emse.fr"*) pass "dev's CORS list carries dev's origin and not production's" ;;
@@ -507,6 +521,34 @@ elif grep -q 'AGENDA_SIGNING_KEY is set for the prod environment but is only 31 
   pass "a 31-character AGENDA_SIGNING_KEY fails the production render, naming the secret"
 else
   fail "production refused a short AGENDA_SIGNING_KEY without naming it"
+fi
+
+# The local stack's AGENDA_SIGNING_KEY default is long enough and PUBLIC (the compose file is in a
+# public repository): an estate holding it signs every agenda link with a key anybody can read. It
+# must fail the render, naming the secret. The literal is read from the compose file itself, so the
+# refusal and the default cannot drift apart.
+# `[$]` rather than `\$`: the dollar is the compose file's literal, not a shell expansion.
+local_default="$(sed -n 's/^ *AGENDA_SIGNING_KEY: [$][{]AGENDA_SIGNING_KEY:-\(.*\)}$/\1/p' infrastructure/local/docker-compose.yml)"
+if [ -z "$local_default" ]; then
+  fail "could not read the local AGENDA_SIGNING_KEY default from the compose file"
+else
+  for estate in dev prod; do
+    out="$TMP/$estate-publickey.env"
+    if [ "$estate" = dev ]; then
+      # shellcheck disable=SC2046
+      render dev "$out" $(dev_env | grep -v '^DEV_AGENDA_SIGNING_KEY=') "DEV_AGENDA_SIGNING_KEY=$local_default" >"$TMP/$estate-publickey.log" || true
+    else
+      # shellcheck disable=SC2046
+      render prod "$out" $(prod_env | grep -v '^AGENDA_SIGNING_KEY=') "AGENDA_SIGNING_KEY=$local_default" >"$TMP/$estate-publickey.log" || true
+    fi
+    if [ -f "$out" ]; then
+      fail "$estate rendered with the local stack's public AGENDA_SIGNING_KEY"
+    elif grep -q "AGENDA_SIGNING_KEY is set for the $estate environment to the local stack's PUBLIC default" "$TMP/$estate-publickey.log"; then
+      pass "the local stack's public AGENDA_SIGNING_KEY fails the $estate render, naming the secret"
+    else
+      fail "$estate refused the public AGENDA_SIGNING_KEY without naming it"
+    fi
+  done
 fi
 
 # A TURN budget that is not a whole number is read as 0 by chat-delivery - TURN off on every call,
@@ -573,6 +615,28 @@ elif grep -q 'LIVE_KEY_ENCRYPTION_SECRET is set for the dev environment but is o
   pass "a 31-character LIVE_KEY_ENCRYPTION_SECRET fails the dev render, naming the secret"
 else
   fail "dev refused a short LIVE_KEY_ENCRYPTION_SECRET without naming it"
+fi
+
+out="$TMP/prod-noavatarkey.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env | grep -v '^AVATAR_TOKEN_SECRET=') >"$TMP/prod-noavatarkey.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with no AVATAR_TOKEN_SECRET"
+elif grep -q 'AVATAR_TOKEN_SECRET is not set for the prod environment' "$TMP/prod-noavatarkey.log"; then
+  pass "a missing AVATAR_TOKEN_SECRET fails the production render, naming the secret"
+else
+  fail "production refused a missing AVATAR_TOKEN_SECRET without naming it"
+fi
+
+out="$TMP/dev-shortavatarkey.env"
+# shellcheck disable=SC2046
+render dev "$out" $(dev_env | grep -v '^DEV_AVATAR_TOKEN_SECRET=') DEV_AVATAR_TOKEN_SECRET=0123456789abcdef0123456789abcde >"$TMP/dev-shortavatarkey.log" || true
+if [ -f "$out" ]; then
+  fail "dev rendered with a 31-character AVATAR_TOKEN_SECRET"
+elif grep -q 'AVATAR_TOKEN_SECRET is set for the dev environment but is only 31 characters' "$TMP/dev-shortavatarkey.log"; then
+  pass "a 31-character AVATAR_TOKEN_SECRET fails the dev render, naming the secret"
+else
+  fail "dev refused a short AVATAR_TOKEN_SECRET without naming it"
 fi
 
 # PRODUCTION'S LYDIA_ENV IS EXPLICIT (2026-10-23). The template says `homologation`, so a production
@@ -691,6 +755,13 @@ for key in LYDIA_PROVIDER_TOKEN LYDIA_PROVIDER_PRIVATE_TOKEN; do
     fail "$key is not rendered in dev - a Lydia onboarding cannot be tried there"
   fi
 done
+# The Provider private token signs `business/addcashier` (enrolment lot 2, the Responsable step):
+# production without it cannot finish an enrolment, so the render refuses the deploy instead.
+if [ "$(manifest_field LYDIA_PROVIDER_PRIVATE_TOKEN 2)" = "required" ]; then
+  pass "LYDIA_PROVIDER_PRIVATE_TOKEN is required in production"
+else
+  fail "LYDIA_PROVIDER_PRIVATE_TOKEN is not required in production - a Responsable could never be added"
+fi
 if grep -qE '^      LYDIA_ENV: homologation$' infrastructure/docker-compose.dev.yml; then
   pass "dev pins LYDIA_ENV=homologation as a literal, so it can never address Lydia's production"
 else
@@ -749,7 +820,7 @@ for wf in .github/workflows/*.yml; do
   # A workflow-level group covers every job in the file, which is the right shape for the three
   # deploy libraries: they share one group, so no two of them overlap either.
   if grep -q '^concurrency:' "$wf"; then
-    group="$(grep -A2 '^concurrency:' "$wf" | sed -n 's/^ *group: *//p' | head -1)"
+    group="$(grep -A2 '^concurrency:' "$wf" | sed -n 's/^ *group: *//p' | sed -n 1p)"
     pass "$name serialises the whole file (group: $group)"
     continue
   fi
@@ -781,7 +852,7 @@ done
 # that splitting the file changed nothing about what may overlap; a file that forgot the word
 # would silently leave that group killable, which is the harm this asserts against.
 for wf in build serve-dev serve-prod; do
-  if grep -A2 '^concurrency:' ".github/workflows/$wf.yml" | grep -q 'cancel-in-progress: false'; then
+  if grep -A2 '^concurrency:' ".github/workflows/$wf.yml" | grep 'cancel-in-progress: false' >/dev/null; then
     pass "$wf.yml queues behind a running deploy instead of killing it"
   else
     fail "$wf.yml does not declare 'cancel-in-progress: false' - a cancelled deploy leaves the estate in whatever state the kill found"

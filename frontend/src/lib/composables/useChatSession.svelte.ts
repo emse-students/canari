@@ -19,8 +19,12 @@ import {
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
 import { CallService } from '$lib/services/CallService';
+import {
+  markConnectionCaughtUp,
+  setPendingCallAcceptHandler,
+  setSessionCaughtUp,
+} from '$lib/stores/pendingCallAccept';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { requestLeadershipTakeover } from '$lib/utils/chat/connection';
 
 import type { MlsFatalErrorKind, SessionContext } from './session/sessionTypes';
 export type { ChatSessionCallbacks } from './session/sessionTypes';
@@ -29,10 +33,14 @@ import {
   loginImpl,
   prefetchPinSaltImpl,
   endSessionImpl,
+  endLostSessionImpl,
   settleSessionEndByRevocationImpl,
   nativeStorageLoginImpl,
   biometricLoginImpl,
   resetDeviceAsFreshImpl,
+  rollbackDeviceResetImpl,
+  adoptUnsettledDeviceResetImpl,
+  stageDeviceResetImpl,
   wipeDeletedAccountImpl,
   releaseDeletedAccountImpl,
   recoverPinImpl,
@@ -51,8 +59,15 @@ import {
 } from './session/sessionConnection';
 import { exportBackupImpl, importBackupImpl } from './session/sessionBackup';
 import { createMlsHolder } from './session/mlsHolder';
+import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { setMlsReady } from './session/mlsReadiness';
+import {
+  sessionDelegationReadiness,
+  setDelegationReadiness,
+} from '$lib/utils/chat/tabCommitDelegation';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
+import { publishLeaderLink, startLeaderLink } from '$lib/mls-client/tabLeaderLink.svelte';
+import { rememberSelectionForReload } from '$lib/utils/chat/selectionAcrossReload';
 
 /** Creates and returns the reactive chat session store covering login, MLS init, WebSocket, biometrics, device sync and backup. */
 export function useChatSession() {
@@ -76,10 +91,14 @@ export function useChatSession() {
 
   // ── Services ──────────────────────────────────────────────────────────────
   /** The MLS client and its retirement at a sign-out - see `mlsHolder.ts`. */
-  const mlsHolder = createMlsHolder(() => {
-    if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
-    return createMlsService();
-  });
+  const mlsHolder = createMlsHolder(
+    () => {
+      if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
+      return createMlsService();
+    },
+    // A sign-out and an account switch keep `mls.bin` for the account's next sign-in.
+    (reason) => endNativeMlsSession(reason, { sweepState: false })
+  );
   /** The client the current `callService` was built over, so a retired one is never kept. */
   let callServiceMls: IMlsService | null = null;
   let storage: IStorage | null = $state(null);
@@ -168,7 +187,7 @@ export function useChatSession() {
     // Services
     ensureMls,
     resetMls: (only) => mlsHolder.reset(only),
-    retireMls: (finalWrite) => mlsHolder.retire(finalWrite),
+    retireMls: (finalWrite, why) => mlsHolder.retire(finalWrite, why),
     whenMlsRetired: () => mlsHolder.whenRetired(),
     isMlsRetiring: () => mlsHolder.isRetiring(),
     getStorage: () => storage,
@@ -183,11 +202,17 @@ export function useChatSession() {
       isLoggedIn = v;
       // The one writer of the flag is the one writer of the awaitable form (`mlsReadiness.ts`).
       setMlsReady(v);
+      publishDelegationReadiness();
     },
     isWsConnected: () => isWsConnected,
     setIsWsConnected: (v) => {
       isWsConnected = v;
+      // The follower tabs pill reads this tab socket (`tabLeaderLink.svelte.ts`).
+      publishLeaderLink(v);
+      // A socket that closed has nothing caught up: a native answer waits for the next catch-up.
+      if (!v) setSessionCaughtUp(false);
     },
+    onConnectionCaughtUp: () => markConnectionCaughtUp(isWsConnected),
     getLoginError: () => loginError,
     setLoginError: (v) => {
       loginError = v;
@@ -211,6 +236,7 @@ export function useChatSession() {
     getIsLoginInProgress: () => isLoginInProgress,
     setIsLoginInProgress: (v) => {
       isLoginInProgress = v;
+      publishDelegationReadiness();
     },
     isWipingRevokedDevice: () => isWipingRevokedDevice,
     setWipingRevokedDevice: (v) => {
@@ -246,12 +272,39 @@ export function useChatSession() {
     setTabLeaderSessionCb: (cb) => {
       tabLeaderSessionCb = cb;
     },
+    reloadForPromotion: (log) => reloadForPromotion(log),
 
     // Constants
     RECONNECT_DELAYS,
   };
 
   // ── Handler promotion tab leader ──────────────────────────────────────────
+
+  /**
+   * Reloads a page promoted to leader, so the state is read as it now stands. Returns whether a
+   * reload was scheduled (none outside a browser).
+   */
+  function reloadForPromotion(log: (message: string) => void): boolean {
+    if (typeof window === 'undefined') {
+      log('[TAB] Promoted outside a browser - nothing to reload.');
+      return false;
+    }
+    // The reload releases the lock this tab was just granted; the mark is what lets the page it
+    // starts take it back rather than queue behind the tab it took over from.
+    markPromotionReload();
+    rememberSelectionForReload(log);
+    setTimeout(() => window.location.reload(), 50);
+    return true;
+  }
+
+  /**
+   * Tells a follower tab's handed-over commits what this session can do (`tabCommitDelegation.ts`),
+   * from the two flags this composable is the one writer of - so the readiness follows every login
+   * start and every end (success, early return, failure, sign-out), whoever flips the flag.
+   */
+  function publishDelegationReadiness(): void {
+    setDelegationReadiness(sessionDelegationReadiness(isLoggedIn, isLoginInProgress));
+  }
 
   // This tab has just been handed leadership: the previous leader advanced the MLS ratchet on disk
   // for as long as it lived, while this tab's in-memory client still holds the snapshot it loaded.
@@ -261,19 +314,16 @@ export function useChatSession() {
   // second of startup, and the outbox is durable, so nothing queued is lost. A hot
   // `reloadStateFromDisk` on the web service would be cheaper but has to swap the live WASM client
   // under any in-flight operation - see WP-MULTITAB-1 in CLAUDE.md.
+  //
+  // A PROMOTION DURING A LOGIN (before `isLoggedIn`) is not ignored: the login reads the same fact
+  // (`promotedSinceLoad`) right before going live and takes {@link reloadForPromotion} itself, so
+  // no copy loaded as a follower ever goes live as the leader.
   setTabLeaderPromotedHandler(() => {
     const cb = tabLeaderSessionCb;
     if (!cb || !isLoggedIn || !getIsTabLeader()) return;
     isTabLeaderState = true;
     cb.log('[TAB] Leader promoted - reloading to pick up the MLS state left by the old leader.');
-    if (typeof window !== 'undefined') {
-      // The reload releases the lock this tab was just granted; the mark is what lets the page it
-      // starts take it back rather than queue behind the tab it took over from.
-      markPromotionReload();
-      setTimeout(() => window.location.reload(), 50);
-      return;
-    }
-    void attemptReconnectImpl(ctx, cb);
+    if (!reloadForPromotion(cb.log)) void attemptReconnectImpl(ctx, cb);
   });
 
   // This tab just yielded leadership to another tab: reload to cleanly close the
@@ -282,11 +332,15 @@ export function useChatSession() {
   setTabLeaderDemotedHandler(() => {
     isTabLeaderState = false;
     tabLeaderSessionCb?.log('[TAB] Leadership released - reloading as follower.');
+    if (tabLeaderSessionCb) rememberSelectionForReload(tabLeaderSessionCb.log);
     if (typeof window === 'undefined') return;
     setTimeout(() => window.location.reload(), 50);
     // Said, so this document neither queues nor accepts the lead on its way out.
     return 'reloads';
   });
+
+  // A follower tab learns the leader socket state here; the leader answers its queries.
+  if (typeof window !== 'undefined') startLeaderLink();
 
   // ── Exposed API ───────────────────────────────────────────────────────────
 
@@ -345,6 +399,7 @@ export function useChatSession() {
     /** Allows ChatBackgroundService to set the flag early (before loginImpl) to close the layout race window. */
     set isLoginInProgress(v: boolean) {
       isLoginInProgress = v;
+      publishDelegationReadiness();
     },
     /** True while startup messaging sync runs after MLS unlock (overlay on /chat). */
     get isMessagingInitializing() {
@@ -369,14 +424,6 @@ export function useChatSession() {
     /** True when this tab is the MLS leader (holds the WebSocket). False for follower tabs. */
     get isTabLeader() {
       return isTabLeaderState;
-    },
-    /**
-     * Asks the leader tab to release its leadership so this tab can take over.
-     * No-op if this tab is already the leader.
-     */
-    requestTabTakeover() {
-      if (isTabLeaderState) return;
-      requestLeadershipTakeover();
     },
     /** Active IndexedDB storage instance (null before login). */
     get storage() {
@@ -428,8 +475,15 @@ export function useChatSession() {
       if (callServiceMls === svc) return;
       callServiceMls = svc;
       log(isTauriRuntime() ? 'Initialised in TAURI mode' : 'Initialised in WEB mode (WASM)');
+      // The replaced service (an account switch) withdraws what it told the native ring, so its
+      // holder does not outlive it (`CallService.retireFromPageRing`).
+      callService?.retireFromPageRing();
       callService = new CallService(svc);
       callService.callState.subscribe((s: any) => (callState = s));
+      // An answer given on the ring joins once the socket's catch-up is done, whichever of the two
+      // comes second (`pendingCallAccept.ts`; calls.md, "An answer from the ring joins on the
+      // ring's facts").
+      setPendingCallAcceptHandler((why) => callService?.answerFromSystemSurface(why));
     },
     /** Returns the current MLS service instance, creating it lazily if needed. */
     ensureMls,
@@ -462,6 +516,9 @@ export function useChatSession() {
     /** Stops the live session after a sign-out; `clearAuth` reaches it through `setSignOutHandler`. */
     endSession: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       endSessionImpl(ctx, cb),
+    /** Stops the live session on this device only, its MLS session lost; the credential is kept. */
+    endLostSession: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
+      endLostSessionImpl(ctx, cb),
     /**
      * The session-expired reaction's half of a revocation: when the refresh refusal said the session
      * died because its owner revoked this device, returns the device to a fresh install (the one
@@ -512,7 +569,15 @@ export function useChatSession() {
     /** Processes pending MLS invitations from our other devices (multi-device sync). */
     processDeviceInvitationsLocally: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       processDeviceInvitationsLocally(ctx, cb),
-    /** Resets this device's MLS state and returns to a fresh state (called on server revocation). */
+    /** Step one of the "forgot PIN" reset: sets the account's MLS state apart, before the server is asked. */
+    stageDeviceReset: (userIdToReset: string, serverBasis: string) =>
+      stageDeviceResetImpl(ctx, userIdToReset, serverBasis),
+    /** Adopts a reset a page that is gone left unsettled, to settle it from the server's answer. */
+    adoptUnsettledDeviceReset: (userId: string, handOver = false) =>
+      adoptUnsettledDeviceResetImpl(userId, handOver),
+    /** Undoes the stage when the server did not reset the PIN. */
+    rollbackDeviceReset: (userIdToReset: string) => rollbackDeviceResetImpl(userIdToReset),
+    /** Step two of the "forgot PIN" reset, once the server reset the PIN: removes what was set apart. */
     resetDeviceAsFresh: (
       userIdToReset: string,
       cb: import('./session/sessionTypes').ChatSessionCallbacks

@@ -1,6 +1,6 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
-  import PinAccountField from './PinAccountField.svelte';
   import { LoaderCircle, TriangleAlert, KeyRound } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import type { PinOperationProgress } from '$lib/utils/chat/pinChange';
@@ -25,8 +25,6 @@
      * (to decrypt this device) plus the NEW account PIN to recover their messages.
      */
     variant?: 'change' | 'recover';
-    /** The signed-in account's id, filed with the PIN by a password manager (see `PinAccountField`). */
-    account?: string;
   }
 
   let {
@@ -37,7 +35,6 @@
     isLoading = false,
     loadingProgress = null,
     variant = 'change',
-    account = '',
   }: Props = $props();
 
   const isRecover = $derived(variant === 'recover');
@@ -135,7 +132,6 @@
 
 <Modal {open} {title} {onClose} footerEdge>
   <form id={FORM_ID} onsubmit={handleSubmit} class="space-y-5 p-1">
-    <PinAccountField {account} />
     <div class="border-cn-yellow/30 bg-cn-yellow/10 rounded-xl border px-4 py-3">
       {#if isRecover}
         <p class="text-text-muted text-sm leading-relaxed">
@@ -163,7 +159,7 @@
       <input
         id="current-pin"
         type="password"
-        autocomplete="current-password"
+        autocomplete="one-time-code"
         bind:value={currentPin}
         oninput={() => (internalError = '')}
         disabled={isLoading}
@@ -177,7 +173,7 @@
       <input
         id="new-pin"
         type="password"
-        autocomplete="new-password"
+        autocomplete="one-time-code"
         bind:value={newPin}
         oninput={() => (internalError = '')}
         disabled={isLoading}
@@ -193,7 +189,7 @@
       <input
         id="confirm-pin"
         type="password"
-        autocomplete="new-password"
+        autocomplete="one-time-code"
         bind:value={confirmPin}
         oninput={() => (internalError = '')}
         disabled={isLoading}
@@ -240,12 +236,7 @@
     69 px that were already missing.
   -->
   {#snippet footer()}
-    <button
-      type="submit"
-      form={FORM_ID}
-      disabled={isLoading}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold shadow-lg transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0"
-    >
+    <Button class="min-h-12 w-full" type="submit" form={FORM_ID} disabled={isLoading}>
       {#if isLoading}
         <LoaderCircle size={16} class="animate-spin" />
         {isRecover ? m.auth_changepin_recovering() : m.auth_changepin_changing()}
@@ -253,6 +244,6 @@
         <KeyRound size={16} strokeWidth={2.5} />
         {submitLabel}
       {/if}
-    </button>
+    </Button>
   {/snippet}
 </Modal>

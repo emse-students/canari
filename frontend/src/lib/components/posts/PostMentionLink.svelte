@@ -48,7 +48,7 @@
 
   function handleMentionClick(e: MouseEvent) {
     e.preventDefault();
-    if (mentionUserId) void goto(resolve(`/profile/${mentionUserId}`));
+    if (mentionUserId) void goto(resolve(`profile/${mentionUserId}`));
   }
 </script>
 

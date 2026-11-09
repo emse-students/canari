@@ -7,6 +7,7 @@ import { MessagingController } from './messaging.controller';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { MessagingService, SendMessageBody } from '../services/messaging.service';
+import { externalCommitFrame, mlsFrame } from '../testing/mlsFrameFixture';
 
 /**
  * `POST /mls/send` accepts what a client sends and nothing else (`clientSendRefusal`): the allowlisted
@@ -89,6 +90,33 @@ describe('MessagingController - POST mls/send accepts a client send only', () =>
       error: 'proto_required',
     });
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The send route relays only private (application) frames; a public handshake frame goes through
+   * the commit route, whose gate reads it. Every client seals with `create_message` under openmls's
+   * default ciphertext policy, so no legitimate send is a `PublicMessage`.
+   */
+  it('refuses a public handshake frame with a typed 400 and an ERROR line, and relays a private one', async () => {
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    try {
+      const refusal = await refusalOf(
+        clientBody({ proto: externalCommitFrame('g1', 5n, 'alice:web-a') })
+      );
+
+      expect(refusal).toBeInstanceOf(BadRequestException);
+      expect((refusal as BadRequestException).getResponse()).toEqual({
+        error: 'public_frame_refused',
+        message: 'this send is not accepted',
+      });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('REJECT public_frame_refused'));
+      expect(sendMessage).not.toHaveBeenCalled();
+
+      await controller.sendMessage(clientBody({ proto: mlsFrame(2, 'g1', 5n) }), 'alice');
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it.each([

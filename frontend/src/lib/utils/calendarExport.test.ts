@@ -48,6 +48,7 @@ function makeEvent(
     createdBy: 'u-1',
     createdAt: '2026-05-01T00:00:00.000Z',
     kind: 'event',
+    presentation: 'association',
     status: 'approved' as AssociationCalendarFeedEvent['status'],
     validatedAt: null,
     validatedBy: null,

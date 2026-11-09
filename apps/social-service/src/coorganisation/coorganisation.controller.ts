@@ -29,4 +29,23 @@ export class CoorganisationController {
       xGlobalAdmin === 'true'
     );
   }
+
+  /**
+   * Which side the caller writes the event from, `organiser` or `partner` (owner decision E2): what
+   * the event form reads to hide the date and the partner list from a partner.
+   */
+  @Get(':id/events/:eventId/write-side')
+  writeSide(
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
+    @Param('id', ParseUUIDPipe) associationId: string,
+    @Param('eventId', ParseUUIDPipe) eventId: string
+  ) {
+    return this.coorganisation.writeSideFor(
+      associationId,
+      eventId,
+      xUserId,
+      xGlobalAdmin === 'true'
+    );
+  }
 }

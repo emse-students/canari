@@ -2,7 +2,7 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import type { FindOperator } from 'typeorm';
+import { FindOperator } from 'typeorm';
 import { AppController } from './app.controller';
 import { MessagingService } from './services/messaging.service';
 import { GROUP_REDIS_KEY_PREFIXES, groupRedisKeys } from './utils/group-purge';
@@ -16,6 +16,8 @@ import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { GroupInvite } from './entities/group-invite.entity';
 import { GroupMembershipInterval } from './entities/group-membership-interval.entity';
 import { SeatEviction } from './entities/seat-eviction.entity';
+import { JoinAskPush } from './entities/join-ask-push.entity';
+import { RevokedDeviceGroup } from './entities/revoked-device-group.entity';
 import { UserDismissedGroup } from './entities/user-dismissed-group.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
@@ -56,6 +58,8 @@ const SWEPT = [
   GroupInvite,
   GroupMembershipInterval,
   SeatEviction,
+  JoinAskPush,
+  RevokedDeviceGroup,
   UserDismissedGroup,
 ];
 
@@ -75,6 +79,8 @@ const FAKE_TABLE = new Map<unknown, string>([
   [GroupInvite, 'table_of_invite'],
   [GroupMembershipInterval, 'table_of_membership_interval'],
   [SeatEviction, 'table_of_seat_eviction'],
+  [JoinAskPush, 'table_of_join_ask_push'],
+  [RevokedDeviceGroup, 'table_of_revoked_device_group'],
   [UserDismissedGroup, 'table_of_dismissal'],
 ]);
 
@@ -207,8 +213,8 @@ describe('an orphan group - one repair, three paths', () => {
           queries.push(sql);
           return orphanRowIds.map((groupId) => ({ groupId }));
         }),
-        // The reader's own membership intervals, read by a history page: nobody here ever left.
-        find: jest.fn(async () => []),
+        // The reader's own membership interval, read by a history page: open since the epoch.
+        find: jest.fn(async () => [{ joinedAt: new Date(0), leftAt: null }]),
       },
     };
 
@@ -225,7 +231,22 @@ describe('an orphan group - one repair, three paths', () => {
           },
         },
         { provide: getRepositoryToken(Group), useValue: groupRepo },
-        { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
+        {
+          provide: getRepositoryToken(GroupMember),
+          // The history reader holds an admitted seat in every group it asks for: history is a
+          // member's read, and no global admin is exempt from that (owner, 2026-11-02).
+          useValue: {
+            ...emptyRepo(),
+            find: jest.fn(async ({ where }: { where: { userId?: string; groupId?: unknown } }) =>
+              where.userId === 'u1' && where.groupId instanceof FindOperator
+                ? (where.groupId.value as unknown as string[]).map((groupId) => ({
+                    groupId,
+                    awaitingAdmission: false,
+                  }))
+                : []
+            ),
+          },
+        },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: emptyRepo() },
         { provide: getRepositoryToken(MlsCommitLog), useValue: emptyRepo() },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: emptyRepo() },
@@ -250,13 +271,13 @@ describe('an orphan group - one repair, three paths', () => {
         feed: (groupId) => {
           queue = [{ id: 'm1', groupId, proto: 'x'.repeat(64), createdAt: new Date(0) }];
         },
-        run: () => service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined),
+        run: () => service.fetchMessages('u1', 'd1', 'u1', 500, undefined),
       },
       {
         name: 'a history read',
         // The id IS the argument; nothing to stage.
         feed: () => undefined,
-        run: () => service.getHistory(staged, undefined, 'u1', 'true'),
+        run: () => service.getHistory(staged, undefined, 'u1'),
       },
       {
         name: 'the 6 h orphan sweep',

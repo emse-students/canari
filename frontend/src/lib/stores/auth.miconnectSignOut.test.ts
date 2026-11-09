@@ -38,8 +38,15 @@ vi.mock('$app/navigation', () => ({
 vi.stubEnv('VITE_AUTHENTIK_URL', 'https://auth.example');
 vi.stubEnv('VITE_AUTHENTIK_CLIENT_ID', 'client');
 
-const { planMiconnectSignOut, handleOidcCallback, leaveSignedOut } =
+const { planMiconnectSignOut, handleOidcCallback, leaveSignedOut, startOidcLogin } =
   await import('$lib/stores/auth');
+
+/** A promise the test settles by hand - the in-app browser's answer, which comes when its sheet goes. */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
 const { connectivity } = await import('$lib/stores/connectivity.svelte');
 
 const ISSUER = 'https://auth.example/application/o/canari/';
@@ -99,7 +106,7 @@ describe('the end-session request a sign-out makes', () => {
 describe('from sign-in to sign-out', () => {
   beforeEach(() => {
     mobile.value = true;
-    invokeMock.mockReset().mockResolvedValue(undefined);
+    invokeMock.mockReset().mockResolvedValue({ outcome: 'completed' });
     gotoMock.mockReset().mockResolvedValue(undefined);
     connectivity.reset();
     localStorage.clear();
@@ -126,7 +133,7 @@ describe('from sign-in to sign-out', () => {
     expect(cmd).toBe('plugin:customtabs|open_custom_tab');
     const url = new URL((args as { url: string }).url);
     expect(url.searchParams.get('id_token_hint')).toBe(token);
-    expect(gotoMock).toHaveBeenCalledWith('/login', { replaceState: true });
+    expect(gotoMock).toHaveBeenCalledWith('/login', { replace: true });
   });
 
   it('uses the id_token once: a second sign-out has nothing to send and says so', async () => {
@@ -139,7 +146,7 @@ describe('from sign-in to sign-out', () => {
 
     expect(invokeMock).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('MiConnect session NOT ended'));
-    expect(gotoMock).toHaveBeenLastCalledWith('/login', { replaceState: true });
+    expect(gotoMock).toHaveBeenLastCalledWith('/login', { replace: true });
     warn.mockRestore();
   });
 
@@ -153,6 +160,42 @@ describe('from sign-in to sign-out', () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
+  it('goes to /login at once, without waiting for the end-session sheet to close', async () => {
+    // The plugin answers when the sheet GOES (iOS): a sign-out that awaited it would sit behind it.
+    await signIn({ access_token: 'h.e30.s', id_token: idToken(), user: { id: 'user-1' } });
+    invokeMock.mockReturnValue(new Promise(() => {}));
+
+    await leaveSignedOut();
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(gotoMock).toHaveBeenCalledWith('/login', { replace: true });
+  });
+
+  it('a sign-in over a sheet still up: the superseded sheet answers `cancelled`, the sign-in its own', async () => {
+    // The plugin answers the EARLIER invoke `cancelled` when a second sheet replaces it; that answer
+    // belongs to the sign-out (only logged) and must not be read as the sign-in's.
+    await signIn({ access_token: 'h.e30.s', id_token: idToken(), user: { id: 'user-1' } });
+    const endSession = deferred<unknown>();
+    const authorize = deferred<unknown>();
+    invokeMock.mockReturnValueOnce(endSession.promise).mockReturnValueOnce(authorize.promise);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await leaveSignedOut();
+    let started: string | null = null;
+    const login = startOidcLogin('/chat').then((s) => (started = s));
+    await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(2));
+
+    endSession.resolve({ outcome: 'cancelled' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(started).toBeNull();
+
+    authorize.resolve({ outcome: 'completed' });
+    await login;
+    expect(started).toBe('completed');
+    log.mockRestore();
+  });
+
   it('still completes the Canari sign-out when the in-app browser cannot open', async () => {
     await signIn({ access_token: 'h.e30.s', id_token: idToken(), user: { id: 'user-1' } });
     invokeMock.mockRejectedValue(new Error('no activity'));
@@ -161,7 +204,7 @@ describe('from sign-in to sign-out', () => {
     await leaveSignedOut();
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('its session is NOT ended'));
-    expect(gotoMock).toHaveBeenCalledWith('/login', { replaceState: true });
+    expect(gotoMock).toHaveBeenCalledWith('/login', { replace: true });
     warn.mockRestore();
   });
 
@@ -180,21 +223,24 @@ describe('from sign-in to sign-out', () => {
 
     expect(fetchMock.mock.calls.map(([url]) => String(url)).join(' ')).toContain('/auth/logout');
     // The sign-out also empties the cache's `share_out/` (the decrypted file the last share out
-    // left there) and, in either mobile app, erases a share INTO Canari (`incomingShareSignOut`:
-    // the epoch first, then the claim); every OTHER native call is the one that ends MiConnect.
+    // left there), in either mobile app erases a share INTO Canari (`incomingShareSignOut`: the
+    // epoch first, then the claim) and the share sheet's suggested conversations (`clearShareTargets`,
+    // both phones since lot S5 on iOS); every OTHER native call is the one that ends MiConnect.
     const shareOut = 'plugin:gallery|discard_shared_out';
+    const suggestions = 'plugin:gallery|clear_share_targets';
     const shareIn = ['advance_share_epoch', 'read_and_clear_pending_share'];
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === shareOut)).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === suggestions)).toHaveLength(1);
     expect(
       invokeMock.mock.calls.map(([cmd]) => cmd).filter((cmd) => shareIn.includes(cmd))
     ).toEqual(shareIn);
     const ending = invokeMock.mock.calls.filter(
-      ([cmd]) => cmd !== shareOut && !shareIn.includes(cmd)
+      ([cmd]) => cmd !== shareOut && cmd !== suggestions && !shareIn.includes(cmd)
     );
     expect(ending).toHaveLength(1);
     const url = new URL((ending[0]![1] as { url: string }).url);
     expect(url.searchParams.get('id_token_hint')).toBe(token);
-    expect(gotoMock).toHaveBeenCalledWith('/login', { replaceState: true });
+    expect(gotoMock).toHaveBeenCalledWith('/login', { replace: true });
     vi.unstubAllGlobals();
   });
 

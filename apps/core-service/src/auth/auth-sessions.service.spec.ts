@@ -554,6 +554,16 @@ describe('AuthSessionsService', () => {
 
       await expect(service.isLive(opened.sessionId, 'user-1', later)).resolves.toBe(false);
     });
+
+    it('isLiveSession: the same row, whoever owns it - live, then ended, then expired', async () => {
+      const { service } = makeService();
+      const opened = await service.create('user-1');
+      await expect(service.isLiveSession(opened.sessionId)).resolves.toBe(true);
+      const later = new Date(opened.expiresAt.getTime() + 1);
+      await expect(service.isLiveSession(opened.sessionId, later)).resolves.toBe(false);
+      await service.revokeOwned('user-1', opened.sessionId);
+      await expect(service.isLiveSession(opened.sessionId)).resolves.toBe(false);
+    });
   });
 
   describe('a session that ends records its push ending in the same transaction', () => {

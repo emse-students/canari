@@ -32,10 +32,26 @@ vi.mock('$app/navigation', async (importOriginal) => ({
 }));
 const native = vi.hoisted(() => ({ pick: vi.fn(async (_kind: string) => [] as File[]) }));
 vi.mock('$lib/utils/chat/nativeAttachPicker', () => ({ pickNatively: native.pick }));
+// Whether the soft keyboard is up decides whether "+" may take focus (`menuPressKeepsFocus`).
+const kb = vi.hoisted(() => ({ isOpen: true }));
+vi.mock('$lib/stores/keyboardViewport.svelte', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/stores/keyboardViewport.svelte')>();
+  return {
+    ...actual,
+    getKeyboardViewport: () => ({ ...actual.getKeyboardViewport(), isOpen: kb.isOpen }),
+  };
+});
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 // The menu fades; happy-dom rejects a cancelled animation, see the helper.
 afterAll(adoptTransitionAnimations());
+
+/** Whether a press's default action (moving focus) was cancelled. */
+function press(el: Element): boolean {
+  const e = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+  el.dispatchEvent(e);
+  return e.defaultPrevented;
+}
 
 const mounted: (() => void)[] = [];
 const originalMatchMedia = window.matchMedia;
@@ -124,35 +140,41 @@ describe('the one attachment menu - Android app', () => {
     openMenu();
 
     expect(opened).toEqual([]);
-    expect(entries()).toEqual([
-      'Photothèque',
-      'Ouvrir la caméra',
-      'Tous les fichiers',
-      'CanaReels',
-    ]);
+    expect(entries()).toEqual(['Photothèque', 'Ouvrir la caméra', 'Tous les fichiers']);
     expect(plus().getAttribute('aria-expanded')).toBe('true');
   });
 
-  it('leaves the keyboard up: neither "+" nor an entry takes focus from the text field', () => {
+  it('with the keyboard up, neither "+" nor an entry takes focus from the text field', () => {
     // Mi 9T 2026-10-02: focus moving onto "+" let the keyboard fall, and the composer dropped
     // 345 px under a menu that floats, then rose again under the GIF panel.
     stubMatchMedia(true);
+    kb.isOpen = true;
     mountComposer();
-    const press = (el: Element) => {
-      const e = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
-      el.dispatchEvent(e);
-      return e.defaultPrevented;
-    };
     expect(press(plus())).toBe(true);
     openMenu();
     expect(press(menuItem('Photothèque'))).toBe(true);
+  });
+
+  it('with the keyboard down, "+" takes focus, so the field it leaves cannot raise the keyboard', () => {
+    // Mi 9T 2026-10-29: the field stays focused after Back, and Chromium raised the keyboard on the
+    // "+" tap instead of the menu, which the rising keyboard then closed.
+    stubMatchMedia(true);
+    kb.isOpen = false;
+    try {
+      mountComposer();
+      expect(press(plus())).toBe(false);
+      openMenu();
+      expect(press(menuItem('Photothèque'))).toBe(false);
+    } finally {
+      kb.isOpen = true;
+    }
   });
 
   // A fresh composer per entry: reopening a menu inside its own 180 ms outro is a test artefact
   // that happy-dom reports as an unhandled animation rejection.
   it.each([
     ['Photothèque', 'image/*,video/*'],
-    ['Tous les fichiers', 'image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip'],
+    ['Tous les fichiers', '*/*'],
   ])('"%s" opens the input that reaches its picker (%s), and closes', (label, accept) => {
     stubMatchMedia(true);
     mountComposer();
@@ -166,19 +188,14 @@ describe('the one attachment menu - Android app', () => {
     expect(plus().getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('"CanaReels" opens the camera TAB (a place, not a picker), and closes the menu', () => {
+  it('offers ONE camera entry: no CanaReels tab entry, and no navigation from the menu', () => {
     stubMatchMedia(true);
     mountComposer();
-    const opened = spyOnPickers();
-
     openMenu();
-    menuItem('CanaReels').click();
-    flushSync();
 
-    expect(nav.goto).toHaveBeenCalledTimes(1);
-    expect(String(nav.goto.mock.calls[0]![0])).toMatch(/\/camera$/);
-    expect(opened).toEqual([]);
-    expect(plus().getAttribute('aria-expanded')).toBe('false');
+    expect(entries().filter((e) => /cam[ée]ra|CanaReel/i.test(e))).toEqual(['Ouvrir la caméra']);
+    expect(entries()).not.toContain('CanaReels');
+    expect(nav.goto).not.toHaveBeenCalled();
   });
 
   it('hands what an input picked to the upload path', () => {
@@ -206,12 +223,7 @@ describe('the one attachment menu - iOS app', () => {
     const opened = spyOnPickers();
 
     openMenu();
-    expect(entries()).toEqual([
-      'Photothèque',
-      'Ouvrir la caméra',
-      'Tous les fichiers',
-      'CanaReels',
-    ]);
+    expect(entries()).toEqual(['Photothèque', 'Ouvrir la caméra', 'Tous les fichiers']);
     menuItem('Photothèque').click();
     flushSync();
     await tick();
@@ -270,7 +282,7 @@ describe('the one attachment menu - the website', () => {
     const input = document.querySelector<HTMLInputElement>(
       'label input[type="file"][aria-label="Joindre un fichier"]'
     );
-    expect(input?.accept).toBe('image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip');
+    expect(input?.accept).toBe('*/*');
     expect(input?.hasAttribute('capture')).toBe(false);
   });
 
@@ -295,7 +307,7 @@ describe('the one attachment menu - the website', () => {
     document.querySelector<HTMLButtonElement>('button[aria-label="Joindre un fichier"]')!.click();
     flushSync();
 
-    expect(opened).toEqual(['image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip']);
+    expect(opened).toEqual(['*/*']);
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 });

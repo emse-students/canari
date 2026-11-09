@@ -53,7 +53,9 @@ fn refused(reason: &str) -> serde_json::Value {
 /// it: can a LATER state of this group read the same bytes?
 ///
 /// `mls-refused` - perhaps: the frame names an epoch ahead of ours (`SenderRatchetGap` carries the
-/// gap fast-fail), or nothing classified it. The commit catch-up and the worker are answers to that.
+/// gap fast-fail; on the direct path that case is read from the header first and answered
+/// `kind: EpochAhead` without asking MLS, see `MlsManager::frame_epoch_ahead`), or nothing
+/// classified it. The commit catch-up and the worker are answers to that.
 ///
 /// `mls-refused-for-good` - no: the frame was refused at an epoch this device already holds, so
 /// applying commits builds the NEXT epoch and leaves this one's secrets exactly as they were. It
@@ -112,12 +114,30 @@ pub fn decode_commits_b64_json(json: &str) -> Vec<Vec<u8>> {
 /// ciphertext (`ciphertext||tag`) and 12-byte nonce; the raw 32-byte epoch key is looked up natively
 /// so the plaintext never transits Google/FCM. The decrypted bytes are the same encoded AppMessage
 /// proto as MLS, so `extract_full_message_info` parses them identically.
+///
+/// TEST-ONLY since 2026-11-04: the production path is [`open_graine_push`], which opens with
+/// [`open_channel_ciphertext`] and names WHICH step failed; this keeps the plain "opened and
+/// renderable, or nothing" shape the cross-version push tests pin the cipher and the proto with.
+#[cfg(test)]
 pub fn decrypt_channel_message(
     raw_key: &[u8],
     nonce: &[u8],
     ciphertext: &[u8],
     language: PushLanguage,
 ) -> Option<serde_json::Value> {
+    let plaintext = open_channel_ciphertext(raw_key, nonce, ciphertext)?;
+    let info = extract_full_message_info(&plaintext, language);
+    if info["ok"].as_bool().unwrap_or(false) {
+        Some(info)
+    } else {
+        None
+    }
+}
+
+/// AES-256-GCM-opens a salon ciphertext (`ciphertext||tag`) - the one cipher step of the v1 half of
+/// [`open_graine_push`] (and of the test-only `decrypt_channel_message`), which tells the caller
+/// WHICH step failed. None, said at error, when the key or nonce is malformed or the tag does not verify.
+fn open_channel_ciphertext(raw_key: &[u8], nonce: &[u8], ciphertext: &[u8]) -> Option<Vec<u8>> {
     use aes_gcm::aead::{Aead, KeyInit};
     use aes_gcm::{Aes256Gcm, Key, Nonce};
 
@@ -135,21 +155,13 @@ pub fn decrypt_channel_message(
         );
         return None;
     }
-
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(raw_key));
-    let plaintext = match cipher.decrypt(Nonce::from_slice(nonce), ciphertext) {
-        Ok(p) => p,
+    match cipher.decrypt(Nonce::from_slice(nonce), ciphertext) {
+        Ok(p) => Some(p),
         Err(e) => {
             log::error!("[ChannelBG] AES-GCM decrypt failed: {e}");
-            return None;
+            None
         }
-    };
-
-    let info = extract_full_message_info(&plaintext, language);
-    if info["ok"].as_bool().unwrap_or(false) {
-        Some(info)
-    } else {
-        None
     }
 }
 
@@ -169,8 +181,10 @@ pub struct GrainePush<'a> {
     pub signature_b64: &'a str,
 }
 
-/// Opens a salon push against the seed mirror, and returns the metadata JSON of
-/// [`decrypt_channel_message`] or a `refused` with its reason.
+/// Opens a salon push against the seed mirror, and returns the message metadata JSON of
+/// `extract_full_message_info` or a `refused` with its reason. An opened answer carries
+/// `authorProven`: `true` under a v2 session (minter and signature checked), `false` under v1, whose
+/// rows carry no author proof - the one fact a banner needs before it names the push's `senderId`.
 ///
 /// ONE IMPLEMENTATION FOR BOTH PLATFORMS (channel-encryption section 21.5): Android's
 /// `nativeOpenGrainePush` and the iOS `canari_native_open_graine_push` hand it the push's fields and
@@ -285,15 +299,31 @@ pub fn open_graine_push(
         }
         Err(_) => return refused("graine-open-failed"),
     };
-    let info = extract_full_message_info(&plaintext, language);
+    let mut info = extract_full_message_info(&plaintext, language);
     if info["ok"].as_bool().unwrap_or(false) {
+        // THE OPEN PROVED THE AUTHOR: the minter check and the signature above both passed, so a
+        // banner may NAME the push's `senderId` (`ChannelBannerAuthor`, `channelBannerAuthor`).
+        info["authorProven"] = serde_json::Value::Bool(true);
         info
     } else {
         log::debug!(
             "[GraineBG] v2 row of session {} opened and is not renderable",
             push.session_id
         );
-        refused("plaintext-not-renderable")
+        unrenderable_salon_row(&info)
+    }
+}
+
+/// The refusal an OPENED salon row with nothing to draw becomes - a silent token when the row is
+/// deliberately never news (a withdrawn reaction, an event silenced by name), so the push posts
+/// nothing; `plaintext-not-renderable` otherwise, which the push draws as the generic line and
+/// reports (`libs/contracts/blind-banner-terms.json`, `silent` and `refused`).
+fn unrenderable_salon_row(info: &serde_json::Value) -> serde_json::Value {
+    use super::proto_fields::{KIND_REACTION_WITHDRAWN, KIND_SILENT_EVENT};
+    match info["kind"].as_str() {
+        Some(KIND_REACTION_WITHDRAWN) => refused("reaction-withdrawn"),
+        Some(KIND_SILENT_EVENT) => refused("silent-event"),
+        _ => refused("plaintext-not-renderable"),
     }
 }
 
@@ -316,8 +346,24 @@ fn open_graine_push_v1(
             return refused("graine-open-failed");
         }
     };
-    decrypt_channel_message(&key, nonce, ciphertext, language)
-        .unwrap_or_else(|| refused("graine-open-failed"))
+    // TWO DIFFERENT FAILURES, NAMED APART (2026-11-04): a ciphertext the key does not open is
+    // `graine-open-failed`; a row that opened and has nothing to draw is the v2 half's token. Both
+    // used to read `graine-open-failed`, so a withdrawn reaction looked like a broken seed.
+    let Some(plaintext) = open_channel_ciphertext(&key, nonce, ciphertext) else {
+        return refused("graine-open-failed");
+    };
+    let mut info = extract_full_message_info(&plaintext, language);
+    if !info["ok"].as_bool().unwrap_or(false) {
+        log::debug!(
+            "[GraineBG] v1 row of session {} opened and is not renderable",
+            push.session_id
+        );
+        return unrenderable_salon_row(&info);
+    }
+    // A v1 row opens WHOEVER the push names, so the answer says the author is NOT proven: a banner
+    // shows the text and names nobody (`ChannelBannerAuthor`) - the server's `senderId` is a claim.
+    info["authorProven"] = serde_json::Value::Bool(false);
+    info
 }
 
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail (WP-XP-3).
@@ -512,8 +558,14 @@ pub fn welcome_request_known_refused(
 }
 
 /// A refusal of [`prepare_welcome_background_with_key`], as the token the native callers branch on.
+///
+/// THE NATIVE CALLER OWNS THE LINE THAT SAYS IT, at the level the token deserves
+/// (`BackgroundWelcomeAnswer.prepareRefusalLevel`: the ordinary refusals - `newcomer`,
+/// `foreground-active`, `warm-process`, `commit-pending` - at debug, any other at warn). This
+/// crate's log reaches no logger in a killed Android app, where the push runs, so a level decided
+/// here would decide nothing; and saying it from both sides printed every refusal twice. Debug here.
 fn welcome_refused(reason: &str) -> serde_json::Value {
-    log::warn!("[BG_WELCOME] prepare refused reason={reason}");
+    log::debug!("[BG_WELCOME] prepare refused reason={reason}");
     refused(reason)
 }
 
@@ -534,10 +586,17 @@ pub struct WelcomeRequest<'a> {
 /// `groupInfo` is the external-join base of the epoch the commit creates, published by the route
 /// in the advance's own transaction - COMM-22), or
 /// `{"ok": false, "reason"}` with one of: `foreground-active`, `warm-process`, `stale-epoch-known`,
-/// `commit-pending`, `key-package-unreadable`, `state-unreadable`, `group-not-held`, `newcomer` (the
-/// requester's user holds no leaf: a new person, whom only a member's gesture admits),
-/// `already-member`, `add-failed`, `stage-failed`, or the [`mls_core::SkippedKeyPackageReason`] wire
-/// name the package is refused for (`identity-mismatch`, `signature-key-changed`, `expired`, ...).
+/// `commit-pending`, `key-package-unreadable`, `state-unreadable`, `group-not-held` (also: the tree
+/// cannot be read, so nothing is decided), `newcomer` (the requester's user holds no leaf: a new
+/// person, whom only a member's gesture admits), `already-member`, `add-failed`, `stage-failed`, or
+/// the [`mls_core::SkippedKeyPackageReason`] wire name the package is refused for
+/// (`identity-mismatch`, `signature-key-changed`, `expired`, ...).
+///
+/// **THE GATE IS ON THE USER, NEVER THE DEVICE** (owner, 2026-10-31, and "aussi en arriere-plan"):
+/// a device of a user who holds a leaf in THIS phone's tree of the group is added from the push as
+/// the foreground's `automaticAdmission` adds it - the same verdict, read from the tree this engine
+/// loaded, failing closed (`group-not-held`) when that tree cannot be read. Only a commit some member
+/// signed wrote those leaves; nothing the requester or the delivery service sends feeds the verdict.
 ///
 /// **THE PACKAGE IS BOUND TO THE REQUESTER** as the foreground's Add binds it: the delivery service
 /// chose the bytes, so a package whose credential names another device, or the requester under a
@@ -611,21 +670,23 @@ pub fn prepare_welcome_background_with_key(
         }
     };
     if matches!(manager.has_pending_commit(group_id), Ok(true)) {
-        log::warn!(
+        // Ordinary while a stage awaits its settlement: said quietly (`welcome_refused`).
+        log::debug!(
             "[BG_WELCOME] group={short} holds a staged commit not yet settled - no second one is staged over it"
         );
         return welcome_refused("commit-pending");
     }
-    // A NEW PERSON IS NOT ADDED FROM A PUSH. Everything that brought this request here - the roster
-    // row, the relayed request, the KeyPackage - is the delivery service's word; this device's tree is
-    // not. A requester whose user holds no leaf is a new person, admitted only by a member's own
-    // gesture: the foreground raises that approval at its next sweep (`automaticAdmission` in
-    // `actions.ts`, the same rule).
+    // THE USER-LEVEL VERDICT, the foreground's `automaticAdmission` (`actions.ts`): a device of a
+    // user holding a leaf in this tree is added, whatever the device; a new person is not added from
+    // a push. Everything that brought this request here - the roster row, the relayed request, the
+    // KeyPackage - is the delivery service's word; this device's tree is not. A requester whose user
+    // holds no leaf is a new person, admitted only by a member's own gesture, which the foreground
+    // raises at its next sweep.
     match manager.user_holds_leaf(group_id, requester) {
         Ok(true) => {}
         Ok(false) => {
-            log::warn!(
-                "[BG_WELCOME] {requester} has no leaf in group={short} - a new person is not added from a push, a member's approval is owed"
+            log::debug!(
+                "[BG_WELCOME] device {requester} belongs to a user with no leaf in group={short} - a new person is not added from a push, a member's approval is owed"
             );
             return welcome_refused("newcomer");
         }
@@ -637,10 +698,12 @@ pub fn prepare_welcome_background_with_key(
     // Bound to the requester BEFORE staging, typed: the refusal travels as its wire name. mls-core
     // has already logged a substitution (`identity-mismatch`, `signature-key-changed`) at ERROR.
     match manager.key_package_verdict(&kp_bytes, requester) {
-        Ok(trust) => log::debug!(
-            "[BG_WELCOME] key package bound to {requester} ({}) group={short}",
-            trust.as_str()
-        ),
+        Ok(trust) => {
+            log::debug!(
+                "[BG_WELCOME] key package bound to {requester} ({}) group={short}",
+                trust.as_str()
+            );
+        }
         Err(reason) => {
             log::error!(
                 "[BG_WELCOME] key package fetched for {requester} refused ({}) group={short} - nothing staged",
@@ -751,12 +814,12 @@ fn write_stage(
     )
     .map_err(|e| {
         log::error!("[BG_STATE] mls.bin NOT written: {e}");
-        // The warm mark is never cleared while the process lives, so reading it now says whether
-        // the write was refused for it - a fact, never the error's prose.
-        if crate::concurrency::live_manager_in_process() {
-            "warm-process"
-        } else {
-            "stage-failed"
+        // CLASSIFIED WHERE THE WRITE WAS REFUSED, never re-read here: the warm mark is cleared by a
+        // sign-out (`end_native_session`), so reading it after the refusal could answer for a
+        // process that is no longer the one the write was refused in.
+        match e {
+            crate::concurrency::BackgroundWriteRefused::WarmProcess => "warm-process",
+            crate::concurrency::BackgroundWriteRefused::Other(_) => "stage-failed",
         }
     })
 }
@@ -1292,8 +1355,34 @@ pub fn decrypt_push_message_with_key(
         return refused("state-unreadable");
     };
 
-    let answer = decrypt_loaded(&mut manager, frame, language);
+    let answer = with_seed_writer(decrypt_loaded(&mut manager, frame, language), user_id);
     with_owner_alerts(answer, &mut manager, user_id, device_id)
+}
+
+/// Stamps every seed of a key-material answer with the label of the account the state was opened
+/// for (`commands::push::SEED_WRITER_FIELD`, `account_label`) - the account whose device key opened
+/// `mls.bin`, so the account whose key group carried the seed. The mirror writer labels the entry
+/// with it, which is what lets a per-account wipe remove exactly that account's seeds
+/// (`forget_account_graine_seeds`). Stamped HERE, beside the decrypt, because this is the one place
+/// that knows both the seeds and the account: the Kotlin and Swift callers hand the array to the
+/// writer as they got it, so neither platform's code names the account itself.
+fn with_seed_writer(mut answer: serde_json::Value, user_id: &str) -> serde_json::Value {
+    if answer["reason"] != "graine-key-material" {
+        return answer;
+    }
+    let label = crate::commands::mls_account_state::account_label(user_id);
+    if let Some(seeds) = answer["seeds"].as_array_mut() {
+        for seed in seeds
+            .iter_mut()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            seed.insert(
+                crate::commands::push::SEED_WRITER_FIELD.to_string(),
+                label.clone().into(),
+            );
+        }
+    }
+    answer
 }
 
 /// Adds `ownDeviceAdded` - the keys of the "a new device was added to your account" alerts the
@@ -1316,12 +1405,36 @@ fn with_owner_alerts(
     answer
 }
 
+/// The `kind` a refusal carries when the frame names an epoch AHEAD of the stored state - not a
+/// `DecryptErrorKind`, because MLS is never asked: see `MlsManager::frame_epoch_ahead`.
+const EPOCH_AHEAD_KIND: &str = "EpochAhead";
+
 /// The body of [`decrypt_push_message_with_key`] once the state is loaded.
 fn decrypt_loaded(
     manager: &mut MlsManager,
     frame: &PushFrame<'_>,
     language: PushLanguage,
 ) -> serde_json::Value {
+    // NOT A FAILURE, AND IT USED TO BE SAID AS ONE. This path never writes `mls.bin` (the foreground
+    // is its single writer), so after ANY commit every push of that group is ahead of the stored
+    // state until the app drains, and the native commit catch-up is the designed answer
+    // (`PushRecoveryLadder`). It used to learn that from an MLS refusal: an ERROR here and a WARN
+    // claiming a "resync" this path never runs, 13 times on a Mi 9T reading of 2026-11-05 while
+    // every banner drew its text. An evicted group's frame is not "ahead" (`frame_epoch_ahead`):
+    // MLS names it `Evicted`, refused for good.
+    if let Some((msg_epoch, held_epoch)) =
+        manager.frame_epoch_ahead(frame.group_id, frame.ciphertext)
+    {
+        log::info!(
+            "[PushBG] key-based: frame of {} at epoch {msg_epoch} is ahead of the stored state \
+             (epoch {held_epoch}) - a commit the foreground has not merged yet; the commit catch-up \
+             reads it",
+            frame.group_id.get(..8).unwrap_or(frame.group_id)
+        );
+        let mut out = refused("mls-refused");
+        out["kind"] = serde_json::Value::String(EPOCH_AHEAD_KIND.to_string());
+        return out;
+    }
     let app = match manager.process_incoming_message_with_sender(frame.group_id, frame.ciphertext) {
         Ok(Some(app)) => app,
         Ok(None) => {
@@ -1577,6 +1690,7 @@ pub fn decrypt_push_message_with_commits_with_key(
             refused_by_mls(&e)
         }
     };
+    let answer = with_seed_writer(answer, user_id);
     with_owner_alerts(answer, &mut manager, user_id, device_id)
 }
 
@@ -1947,6 +2061,33 @@ mod tests {
         assert_eq!(seeds[0]["channelId"], "ch-salon");
         assert_eq!(seeds[0]["sessionId"], "sess-abc");
         assert_eq!(seeds[0]["seedB64"], STANDARD.encode(seed));
+        // Stamped with the account the state was opened for - Bob's, never the sender's - in the
+        // spelling-proof label the mirror and the per-account wipe share.
+        assert_eq!(
+            seeds[0][crate::commands::push::SEED_WRITER_FIELD],
+            crate::commands::mls_account_state::account_label("Graine-Bob")
+        );
+        assert_ne!(
+            seeds[0][crate::commands::push::SEED_WRITER_FIELD],
+            crate::commands::mls_account_state::account_label("graine-alice")
+        );
+    }
+
+    /// Only a key-material answer is stamped: a message, a refusal or a control frame carries no
+    /// seed, and gains no field.
+    #[test]
+    fn only_key_material_is_stamped_with_its_writer() {
+        let message = serde_json::json!({ "ok": true, "body": "x" });
+        assert_eq!(with_seed_writer(message.clone(), "bob"), message);
+        let material = serde_json::json!({
+            "ok": false, "reason": "graine-key-material", "seeds": [{ "sessionId": "s" }, 3]
+        });
+        let stamped = with_seed_writer(material, "bob");
+        assert_eq!(
+            stamped["seeds"][0]["account"],
+            crate::commands::mls_account_state::account_label("bob")
+        );
+        assert_eq!(stamped["seeds"][1], 3, "a malformed seed is left as it is");
     }
 
     /// NOTIF-19, 2026-09-27: a seed sealed ONE COMMIT AHEAD of the device must come out of the
@@ -1999,6 +2140,8 @@ mod tests {
             PushLanguage::French,
         );
         assert_eq!(direct["reason"], "mls-refused");
+        // Read from the header, never learnt from an MLS refusal: the catch-up is owed, nothing failed.
+        assert_eq!(direct["kind"], EPOCH_AHEAD_KIND);
 
         let info = decrypt_push_message_with_commits_with_key(
             &bob_behind,
@@ -2021,10 +2164,159 @@ mod tests {
         assert_eq!(seeds.len(), 1);
         assert_eq!(seeds[0]["sessionId"], "sess-new");
         assert_eq!(seeds[0]["seedB64"], STANDARD.encode(seed));
+        // The catch-up path stamps its writer too: without it, every seed it yields would be
+        // mirrored unattributed, out of reach of the account's wipe.
+        assert_eq!(
+            seeds[0][crate::commands::push::SEED_WRITER_FIELD],
+            crate::commands::mls_account_state::account_label("graine-ahead-bob")
+        );
+    }
+
+    /// Bob's state one commit behind alice, and a frame alice sealed at the epoch that commit made.
+    fn frame_one_commit_ahead(tag: &str, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>, String) {
+        let (mut alice, bob, group_id) = joined_pair(tag);
+        let key = decode_base64_to_32_bytes(&key_b64(seed)).expect("key");
+        let bob_behind = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+        let carol = MlsManager::load_or_create(&format!("{tag}-carol"), "dev-c", None)
+            .expect("carol load_or_create");
+        let kp = carol.generate_key_package().expect("carol key package");
+        let (commit, _welcome, _added, _skipped) = alice
+            .add_members_bulk(&group_id, &[&kp])
+            .expect("add carol");
+        alice
+            .merge_pending_commit_for(&group_id)
+            .expect("merge add");
+        let frame = alice
+            .send_message(&group_id, b"ahead")
+            .expect("alice sends");
+        (bob_behind, commit, frame, group_id)
+    }
+
+    /// The header check answers only for a group this device is still IN: a removed device's
+    /// frames are ahead by construction, and they are `Evicted` - refused for good, no catch-up -
+    /// never `EpochAhead` (review of #3042).
+    #[test]
+    fn a_frame_ahead_for_a_group_this_device_was_evicted_from_is_refused_for_good() {
+        let _fg = quiet_foreground();
+        let (mut alice, mut bob, group_id) = joined_pair("evicted-ahead");
+        let (remove, _info) = alice
+            .remove_members_for_devices(&group_id, &["evicted-ahead-bob:dev-b"])
+            .expect("remove bob");
+        alice
+            .merge_pending_commit_for(&group_id)
+            .expect("merge remove");
+        bob.process_incoming_message(&group_id, &remove)
+            .expect("bob applies his removal");
+        assert!(!bob
+            .is_group_active(&group_id)
+            .expect("bob still holds the group"));
+        // Alice moves on: another commit, then a frame at an epoch bob never reached.
+        let carol = MlsManager::load_or_create("evicted-ahead-carol", "dev-c", None).unwrap();
+        alice
+            .add_members_bulk(&group_id, &[&carol.generate_key_package().unwrap()])
+            .expect("add carol");
+        alice
+            .merge_pending_commit_for(&group_id)
+            .expect("merge add");
+        let frame = alice
+            .send_message(&group_id, b"after")
+            .expect("alice sends");
+        assert!(
+            MlsManager::parse_message_epoch(&frame).unwrap()
+                > bob.get_epoch(&group_id).expect("bob epoch")
+        );
+        assert_eq!(bob.frame_epoch_ahead(&group_id, &frame), None);
+
+        let key = decode_base64_to_32_bytes(&key_b64(61)).expect("key");
+        let bob_state = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+        let out = decrypt_push_message_with_key(
+            &bob_state,
+            &key_b64(61),
+            "evicted-ahead-bob",
+            "dev-b",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: "evicted-ahead-alice",
+                ciphertext: &frame,
+            },
+            PushLanguage::French,
+        );
+        assert_eq!(out["reason"], "mls-refused-for-good", "{out}");
+        assert_eq!(out["kind"], "Evicted", "{out}");
+    }
+
+    /// A gap the catch-up could NOT close (the commits it was handed do not reach the frame) is a
+    /// defect, and keeps MLS's own classification and its ERROR - never the designed `EpochAhead`.
+    #[test]
+    fn a_gap_left_after_the_catch_up_keeps_its_mls_classification() {
+        let _fg = quiet_foreground();
+        let (bob_behind, commit, frame, group_id) = frame_one_commit_ahead("short-catchup", 62);
+        let push = PushFrame {
+            group_id: &group_id,
+            sender_id: "short-catchup-alice",
+            ciphertext: &frame,
+        };
+        let direct = decrypt_push_message_with_key(
+            &bob_behind,
+            &key_b64(62),
+            "short-catchup-bob",
+            "dev-b",
+            &push,
+            PushLanguage::French,
+        );
+        assert_eq!(direct["kind"], EPOCH_AHEAD_KIND, "{direct}");
+        let short = decrypt_push_message_with_commits_with_key(
+            &bob_behind,
+            &key_b64(62),
+            "short-catchup-bob",
+            "dev-b",
+            &[],
+            &push,
+            PushLanguage::French,
+        );
+        assert_eq!(short["reason"], "mls-refused", "{short}");
+        assert_eq!(short["kind"], "SenderRatchetGap", "{short}");
+        // And the commit the catch-up was owed does close it.
+        let full = decrypt_push_message_with_commits_with_key(
+            &bob_behind,
+            &key_b64(62),
+            "short-catchup-bob",
+            "dev-b",
+            &[commit],
+            &push,
+            PushLanguage::French,
+        );
+        assert_ne!(full["kind"], "SenderRatchetGap", "{full}");
+    }
+
+    /// A COMMIT ahead of the stored state (a PublicMessage) is read from its header the same way.
+    #[test]
+    fn a_commit_ahead_of_the_stored_state_is_read_from_its_header() {
+        let (mut alice, bob, group_id) = joined_pair("commit-ahead");
+        let carol = MlsManager::load_or_create("commit-ahead-carol", "dev-c", None).unwrap();
+        alice
+            .add_members_bulk(&group_id, &[&carol.generate_key_package().unwrap()])
+            .expect("add carol");
+        alice
+            .merge_pending_commit_for(&group_id)
+            .expect("merge add carol");
+        let dave = MlsManager::load_or_create("commit-ahead-dave", "dev-d", None).unwrap();
+        let (second, _w, _a, _s) = alice
+            .add_members_bulk(&group_id, &[&dave.generate_key_package().unwrap()])
+            .expect("add dave");
+        let held = bob.get_epoch(&group_id).expect("bob epoch");
+        assert_eq!(
+            bob.frame_epoch_ahead(&group_id, &second),
+            Some((held + 1, held)),
+            "a commit built on an epoch bob never reached"
+        );
     }
 
     /// Alice seals `frame` for the group; bob's saved state is what the push path loads.
     fn alice_frame_for_bob(tag: &str, seed: u8, frame: &[u8]) -> (Vec<u8>, Vec<u8>, String) {
+        // It sends, so it holds the serialiser like every sender here: without it, a parallel
+        // `cargo test` failed it `foreground active` (2026-11-06).
+        let _quiet = quiet_foreground();
         let (alice, bob, group_id) = joined_pair(tag);
         let key = decode_base64_to_32_bytes(&key_b64(seed)).expect("key");
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
@@ -2149,6 +2441,46 @@ mod tests {
         assert_eq!(info["ok"], false);
         assert_eq!(info["reason"], "mls-refused-for-good");
         assert_eq!(info["kind"], "SecretReuse");
+    }
+
+    /// THE ADMISSION RULE IS DISARMED ON THE PUSH PATH TOO (owner, 2026-10-31): an external commit
+    /// by a user holding no leaf is applied like any control frame. The group was closed by a dev
+    /// build and SAVED that way, which is the state such a phone actually holds - and the push path
+    /// LOADS it, so the load drops the `closed` leftover (review of #2817) and the group is judged
+    /// unclassified. That a refusal never reaches the push path even IN MEMORY is pinned by
+    /// `mls-core/tests/admission_policy.rs`, which keeps the state live.
+    #[test]
+    fn an_uninvited_external_commit_in_a_group_a_dev_build_closed_is_applied_after_the_load() {
+        let _fg = quiet_foreground();
+        let tag = "uninvited";
+        let (mut alice, _bob, group_id) = joined_pair(tag);
+        alice.set_admission_policy(&group_id, mls_core::AdmissionPolicy::Closed);
+        let key = decode_base64_to_32_bytes(&key_b64(23)).expect("key");
+        let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
+        let mut stranger = MlsManager::load_or_create(&format!("{tag}-stranger"), "dev-s", None)
+            .expect("stranger");
+        let group_info = alice.export_group_info(&group_id).expect("group info");
+        let (_gid, commit) = stranger
+            .join_by_external_commit(&group_info)
+            .expect("external commit");
+
+        let info = decrypt_push_message_with_key(
+            &alice_state,
+            &key_b64(23),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: &format!("{tag}-stranger"),
+                ciphertext: &commit,
+            },
+            PushLanguage::French,
+        );
+        assert_ne!(info["reason"], "mls-refused-for-good");
+        assert_eq!(
+            info["reason"], "control-frame",
+            "the commit is applied: {info}"
+        );
     }
 
     /// A NEW v1 seed never reaches the mirror (channel-encryption section 21.7): the frame still
@@ -2291,13 +2623,14 @@ mod tests {
 
     /// A shut phone (`alice`) in a group that moved on without it: `bob` admitted `dave`, so the
     /// group is one epoch past alice's `mls.bin`. Returns alice's stale sealed state, the commit that
-    /// moved the group, the key package of a NEW DEVICE of bob (`dev-c`, asking for a Welcome - a
-    /// member's device, the one case a background Add answers) and the group id.
+    /// moved the group, the key package of a NEW DEVICE of bob (`dev-c`, asking for a Welcome) and
+    /// the group id.
     fn shut_phone_behind_its_group(
         tag: &str,
         key_seed: u8,
     ) -> (Vec<u8>, MlsManager, Vec<u8>, String, String) {
         let (alice, mut bob, gid) = joined_pair(tag);
+        let carol = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-c", None).unwrap();
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(key_seed)).expect("key");
         let stale = alice.save_encrypted_with_key(&key).expect("seal alice");
         let dave = MlsManager::load_or_create(&format!("{tag}-dave"), "dev-d", None).unwrap();
@@ -2305,7 +2638,6 @@ mod tests {
             .add_member(&gid, &dave.generate_key_package().unwrap())
             .expect("bob adds dave");
         bob.merge_pending_commit_for(&gid).expect("bob merges");
-        let carol = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
         (stale, bob, moved, kp, gid)
     }
@@ -2320,18 +2652,18 @@ mod tests {
         dir
     }
 
-    /// Alice in a group with bob, her sealed state in a directory of its own, and a NEW DEVICE of
+    /// Alice in a group with bob, her sealed state in a directory of its own, and ANOTHER DEVICE of
     /// bob (`dev-c`, named `carol` below for the device asking) with the key package it asks to be
-    /// added with - a member's device, the one case a background Add answers (`newcomer` otherwise).
+    /// added with: a further device of a member, which the push adds (the gate is on the user).
     fn holder_and_newcomer(
         tag: &str,
         seed: u8,
     ) -> (std::path::PathBuf, Vec<u8>, MlsManager, String, String) {
         let (alice, _bob, gid) = joined_pair(tag);
+        let carol = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-c", None).unwrap();
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(seed)).unwrap();
         let state = alice.save_encrypted_with_key(&key).unwrap();
         let dir = dir_holding(tag, &state);
-        let carol = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
         (dir, state, carol, kp, gid)
     }
@@ -2858,10 +3190,10 @@ mod tests {
         let (mut alice, _bob, held_gid) = joined_pair("slots");
         let free_gid = "slots-free".to_string();
         alice.create_group(free_gid.clone()).unwrap();
+        let carol = MlsManager::load_or_create("slots-bob", "dev-c", None).unwrap();
         let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(66)).unwrap();
         let state = alice.save_encrypted_with_key(&key).unwrap();
         let dir = dir_holding("slots", &state);
-        let carol = MlsManager::load_or_create("slots-bob", "dev-c", None).unwrap();
         let kp = STANDARD.encode(carol.generate_key_package().unwrap());
         assert_eq!(
             prepare(&dir, &state, 66, "slots", &held_gid, &kp)["ok"],
@@ -3346,6 +3678,81 @@ mod tests {
         assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
     }
 
+    /// A NEW DEVICE OF A MEMBER IS ADDED FROM A PUSH (owner, 2026-10-31: the gate is on the user,
+    /// never the device, "aussi en arriere-plan"). Bob holds a leaf, so he is a member; `dev-x` was
+    /// never seen here, and is staged all the same - the foreground's `automaticAdmission` verdict.
+    #[test]
+    fn a_new_device_of_a_member_is_added_from_a_push() {
+        let _s = quiet_foreground();
+        let (alice, _bob, gid) = joined_pair("unseen");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(58)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("unseen", &state);
+        let unseen = MlsManager::load_or_create("unseen-bob", "dev-x", None).unwrap();
+        let kp = STANDARD.encode(unseen.generate_key_package().unwrap());
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(58),
+            "unseen-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "unseen-bob:dev-x",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(out["ok"], true, "{out}");
+        assert!(
+            out["welcome"].as_str().is_some_and(|w| !w.is_empty()),
+            "{out}"
+        );
+        assert_ne!(
+            std::fs::read(dir.join("mls.bin")).unwrap(),
+            state,
+            "the Add is staged in mls.bin"
+        );
+    }
+
+    /// A PIN FROM ANOTHER GROUP MAKES NOBODY A MEMBER HERE. Alice met carol's device in a group of
+    /// her own - it is pinned - and the push still refuses carol in the group under test as a
+    /// `newcomer`: the verdict is read from THIS group's tree, never from the pin store.
+    #[test]
+    fn a_user_pinned_in_another_group_is_still_a_newcomer_on_the_push() {
+        let _s = quiet_foreground();
+        let (mut alice, _bob, gid) = joined_pair("pinned");
+        let elsewhere = MlsManager::load_or_create("pinned-carol", "dev-x", None).unwrap();
+        alice.create_group("pinned-elsewhere".to_string()).unwrap();
+        alice
+            .add_member(
+                "pinned-elsewhere",
+                &elsewhere.generate_key_package().unwrap(),
+            )
+            .unwrap();
+        alice.merge_pending_commit_for("pinned-elsewhere").unwrap();
+        assert!(alice
+            .pinned_signature_keys("pinned-carol", "dev-x")
+            .is_some());
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(59)).unwrap();
+        let state = alice.save_encrypted_with_key(&key).unwrap();
+        let dir = dir_holding("pinned", &state);
+        let kp = STANDARD.encode(elsewhere.generate_key_package().unwrap());
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(59),
+            "pinned-alice",
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: "pinned-carol:dev-x",
+                key_package_b64: &kp,
+            },
+        );
+        assert_eq!(out["reason"], "newcomer", "{out}");
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), state);
+    }
+
     /// A package naming a device this phone pinned, under ANOTHER signature key, is refused: nothing
     /// proves the change, so the background answer does not re-add it.
     #[test]
@@ -3391,6 +3798,10 @@ mod tests {
     /// (both platforms), and BOTH answers carry the alert's key - whatever else they say.
     #[test]
     fn a_commit_adding_an_own_device_carries_the_owner_alert_on_both_push_paths() {
+        // It SENDS (`send_messages_background_with_key`), so it holds the serialiser and a quiet
+        // foreground like every sender here (`quiet_foreground`): a foreground test running beside it
+        // made its write refuse.
+        let _quiet = quiet_foreground();
         let tag = "own-device";
         let (mut alice, bob, group_id) = joined_pair(tag);
         let key = decode_base64_to_32_bytes(&key_b64(23)).expect("key");
@@ -3473,11 +3884,11 @@ mod tests {
         assert!(contact.get("ownDeviceAdded").is_none(), "{contact}");
     }
 
-    /// The phone serving its own account's new device in the background names it for the local
-    /// notification, and the event reaches `mls.bin` - where the app takes it for the in-app alert -
-    /// ONLY once the accepted Add is merged: a cleared Add leaves no event for anyone to announce.
+    /// THE ACCOUNT'S OWN NEW DEVICE IS ADDED FROM A PUSH TOO, and the answer names it for the owner's
+    /// local notification (`ownDeviceAdded`), which the caller raises only once the server ACCEPTED
+    /// the commit.
     #[test]
-    fn a_background_add_of_an_own_device_reaches_the_app_only_once_accepted() {
+    fn an_own_new_device_is_added_from_a_push() {
         let _s = crate::concurrency::test_support::serialise();
         crate::concurrency::mark_foreground_inactive();
         let tag = "own-welcome";
@@ -3487,73 +3898,28 @@ mod tests {
         let laptop = MlsManager::load_or_create(&format!("{tag}-alice"), "dev-laptop", None)
             .expect("laptop");
         let kp = STANDARD.encode(laptop.generate_key_package().expect("kp"));
-        let requester = format!("{tag}-alice:dev-laptop");
-        let prepare = |dir: &Path| {
-            prepare_welcome_background_with_key(
-                dir,
-                &state,
-                &key_b64(29),
-                &format!("{tag}-alice"),
-                "dev-a",
-                &WelcomeRequest {
-                    group_id: &gid,
-                    requester: &requester,
-                    key_package_b64: &kp,
-                },
-            )
-        };
-        let owner_events = |dir: &Path| {
-            let saved = std::fs::read(dir.join("mls.bin")).expect("mls.bin");
-            let mut reloaded =
-                MlsManager::load_with_key(&format!("{tag}-alice"), "dev-a", Some(saved), &key)
-                    .expect("reload");
-            reloaded
-                .take_device_events()
-                .into_iter()
-                .filter(|e| e.is_owner_alert(&format!("{tag}-alice"), "dev-a"))
-                .count()
-        };
-
-        // Refused by the server: cleared, and nothing for the app to announce.
-        let refused_dir = dir_holding(&format!("{tag}-refused"), &state);
-        let out = prepare(&refused_dir);
-        assert_eq!(
-            out["ownDeviceAdded"].as_array().map(Vec::len),
-            Some(1),
-            "{out}"
+        let dir = dir_holding(tag, &state);
+        let out = prepare_welcome_background_with_key(
+            &dir,
+            &state,
+            &key_b64(29),
+            &format!("{tag}-alice"),
+            "dev-a",
+            &WelcomeRequest {
+                group_id: &gid,
+                requester: &format!("{tag}-alice:dev-laptop"),
+                key_package_b64: &kp,
+            },
         );
-        assert_eq!(
-            settle(
-                &refused_dir,
-                29,
-                tag,
-                &gid,
-                &out,
-                WelcomeAnswer::Refused(RefusalMemo::Nothing)
-            )["settled"],
-            "cleared"
-        );
-        assert_eq!(
-            owner_events(&refused_dir),
-            0,
-            "a cleared Add announces nothing"
-        );
-
-        // Accepted: merged, and the event is the app's.
-        let accepted_dir = dir_holding(&format!("{tag}-accepted"), &state);
-        let out = prepare(&accepted_dir);
+        assert_eq!(out["ok"], true, "{out}");
         let keys = out["ownDeviceAdded"]
             .as_array()
-            .expect("named for the notice");
+            .expect("the owner alert's key");
         assert_eq!(keys.len(), 1, "{out}");
         assert!(keys[0]
             .as_str()
             .unwrap()
-            .starts_with(&format!("{requester}|")));
-        assert_eq!(
-            settle(&accepted_dir, 29, tag, &gid, &out, WelcomeAnswer::Accepted)["settled"],
-            "merged"
-        );
-        assert_eq!(owner_events(&accepted_dir), 1, "the merged Add's event");
+            .starts_with(&format!("{tag}-alice:dev-laptop|")));
+        assert_ne!(std::fs::read(dir.join("mls.bin")).unwrap(), state, "staged");
     }
 }

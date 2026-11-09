@@ -56,7 +56,6 @@ describe('PostsController.votePoll', () => {
         { id: 'c4', userId: 'friend-1', text: 'plain' },
       ],
       hiddenByModeration: false,
-      pinned: false,
       scheduledAt: null,
       kind: 'post',
       expiresAt: null,
@@ -83,12 +82,10 @@ describe('PostsController.votePoll', () => {
    * `blockedPairs[viewer]` is what the symmetric `user_blocks` read answers for that viewer (it
    * already unions both directions, so one list states a block either way).
    */
-  function make(
-    stored: Post,
-    blockedPairs: Record<string, string[]> = {},
-    visible: () => Promise<void> = () => Promise.resolve()
-  ) {
+  function make(stored: Post, blockedPairs: Record<string, string[]> = {}, visible = true) {
     const query = jest.fn((sql: string, params?: unknown[]) => {
+      // The audience SQL is proven in `reader-spaces.integration.spec.ts`; here it is a switch.
+      if (sql.includes('AS visible')) return Promise.resolve([{ visible }]);
       if (sql.includes('FROM user_blocks')) {
         const viewer = (params ?? [])[0] as string;
         return Promise.resolve((blockedPairs[viewer] ?? []).map((otherId) => ({ otherId })));
@@ -104,6 +101,13 @@ describe('PostsController.votePoll', () => {
     const associations = {
       mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
       isContentModerator: jest.fn((id: string) => Promise.resolve(id === MODERATOR)),
+      moderatedPostIds: jest.fn((id: string, ids: string[]) =>
+        Promise.resolve(new Set(id === MODERATOR ? ids : []))
+      ),
+      // The publishers a BDE moderator moderates (owner, 2026-11-03): this one governs them all.
+      moderatedAssociationIds: jest.fn((id: string, ids: string[]) =>
+        Promise.resolve(new Set(id === MODERATOR ? ids : []))
+      ),
     };
     const postRepo = {
       manager: { query },
@@ -117,13 +121,12 @@ describe('PostsController.votePoll', () => {
       {} as PostNotificationsService,
       {} as PostMediaRetentionService
     );
-    // The audience SQL is proven in `reader-spaces.integration.spec.ts`; here it is a switch.
-    const assertVisible = jest.spyOn(service, 'assertVisible').mockImplementation(visible);
+    // Observed, not replaced: the vote goes through the same gate as every write.
+    const assertVisible = jest.spyOn(service, 'assertVisible');
     const interactions = { votePoll: jest.fn(() => Promise.resolve(stored)) };
     const controller = new PostsController(
       service,
       interactions as never,
-      {} as never,
       {} as never,
       {} as never,
       { isUserMuted: jest.fn(() => Promise.resolve(false)) } as never
@@ -207,9 +210,7 @@ describe('PostsController.votePoll', () => {
 
   describe('refuses where getById refuses, before recording anything', () => {
     it('a post outside the voter audience (asked with the vote intent)', async () => {
-      const { vote, interactions, assertVisible } = make(storedPersonalPost(), {}, () =>
-        Promise.reject(new NotFoundException('Post not found'))
-      );
+      const { vote, interactions, assertVisible } = make(storedPersonalPost(), {}, false);
       await expect(vote(READER)).rejects.toBeInstanceOf(NotFoundException);
       expect(assertVisible).toHaveBeenCalledWith(POST_ID, READER, 'VOTE');
       expect(interactions.votePoll).not.toHaveBeenCalled();

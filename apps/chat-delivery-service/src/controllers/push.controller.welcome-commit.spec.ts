@@ -106,7 +106,9 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
         // always has its Welcome, so there is no second call left to fail after the advance.
         welcome: { userId: 'u2', deviceId: 'd2', payload: 'V0VMQ09NRQ==', ratchetTree: 'VFJFRQ==' },
       },
-      'u1'
+      'u1',
+      // A PUSH IS NO MEMBER'S GESTURE: the gate refuses an ask under the seat lock.
+      { mayAnswerAsk: false }
     );
     expect(sendWelcome).not.toHaveBeenCalled();
     // A TYPED ANSWER: the phone installs its staged state on `accepted` and on nothing else.
@@ -121,7 +123,8 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
 
     expect(validateCommit).toHaveBeenCalledWith(
       expect.objectContaining({ proto: 'Q09NTUlU', baseEpoch: 7, groupInfo: 'R0lORk8=' }),
-      'u1'
+      'u1',
+      { mayAnswerAsk: false }
     );
   });
 
@@ -244,6 +247,41 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
 
     expect(refusal).toEqual({ status: 409, body: { status: 'rejected', reason: 'not_a_member' } });
     expect(validateCommit).not.toHaveBeenCalled();
+    expect(sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it("answers a target whose seat is a link's ask with 409 and a typed awaiting_admission, validating nothing", async () => {
+    // A removed member's leaf outlived the removal and they rejoined by link: a push must not be
+    // the member's Accept the gate would read it as.
+    groupMemberRepo.findOne.mockResolvedValue({
+      groupId: 'g1',
+      userId: 'u2',
+      awaitingAdmission: true,
+    });
+
+    const refusal = await refusalOf(controller.sendWelcomeAndCommitPush(AUTH, body));
+
+    expect(refusal).toEqual({
+      status: 409,
+      body: { status: 'rejected', reason: 'awaiting_admission' },
+    });
+    expect(validateCommit).not.toHaveBeenCalled();
+    expect(sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it("answers the gate's own awaiting_admission (a link ask written after the route's read) as a typed 409", async () => {
+    validateCommit.mockResolvedValue({
+      accepted: false,
+      currentEpoch: 7,
+      reason: 'awaiting_admission',
+    });
+
+    const refusal = await refusalOf(controller.sendWelcomeAndCommitPush(AUTH, body));
+
+    expect(refusal).toEqual({
+      status: 409,
+      body: { status: 'rejected', reason: 'awaiting_admission', currentEpoch: 7 },
+    });
     expect(sendWelcome).not.toHaveBeenCalled();
   });
 

@@ -4,7 +4,9 @@
  *
  * THE SHAPE, and what each choice replaces in the chunk routes:
  *  - a session is declared at `init` with its exact size, part size and the 20 public header bytes of
- *    the `segmented-v1` blob, and reserves the daily budget ONCE;
+ *    the `segmented-v1` blob - or, for a `single-block` blob (a post photo, which the link preview and
+ *    every legacy reader read as ONE AES-GCM block), with no header at all - and reserves the daily
+ *    budget ONCE;
  *  - each part is a raw request body PIPED to the staging file at `index * partBytes` - never a
  *    `Buffer` of the body, so memory is the stream's high-water mark, not the part (the chunk route
  *    holds a whole multer buffer), and a re-sent part rewrites the same bytes at the same offset
@@ -43,8 +45,9 @@ import {
   PART_MAX_BYTES,
   PART_MIN_BYTES,
   SEGMENTED_HEADER_BYTES,
+  SINGLE_BLOCK_ENCODING,
+  declaredBlobShape,
   expectedPartLength,
-  parseDeclaredHeader,
   partCount,
 } from './upload-session';
 
@@ -65,7 +68,16 @@ interface SessionRecord {
   retentionClass?: RetentionClass;
   totalBytes: number;
   partBytes: number;
-  headerHex: string;
+  /**
+   * The 20 public header bytes of a `segmented-v1` blob, checked again at `complete`. ABSENT exactly
+   * when {@link SessionRecord.encoding} is `single-block`: that blob has no public prefix to check.
+   */
+  headerHex?: string;
+  /**
+   * `single-block` for a blob sealed as ONE AES-GCM block; absent for `segmented-v1`, which is what
+   * every session opened before the field existed was (so an old sidecar reads unchanged).
+   */
+  encoding?: typeof SINGLE_BLOCK_ENCODING;
   createdAt: number;
   /** Absolute: the resume window runs from the opening, never extended by activity. */
   expiresAt: number;
@@ -131,7 +143,12 @@ function validateRecord(raw: unknown, id: string): SessionRecord {
   }
   const parts = partCount(r.totalBytes as number, r.partBytes as number);
   if (parts > MAX_PARTS) bad('too many parts');
-  if (typeof r.headerHex !== 'string' || !/^[0-9a-f]{40}$/.test(r.headerHex)) bad('headerHex');
+  if (r.encoding !== undefined && r.encoding !== SINGLE_BLOCK_ENCODING) bad('encoding');
+  if (r.encoding === SINGLE_BLOCK_ENCODING) {
+    if (r.headerHex !== undefined) bad('headerHex on a single-block session');
+  } else if (typeof r.headerHex !== 'string' || !/^[0-9a-f]{40}$/.test(r.headerHex)) {
+    bad('headerHex');
+  }
   if (!isFiniteNumber(r.createdAt) || !isFiniteNumber(r.expiresAt)) bad('timestamps');
   if (
     r.retentionClass !== undefined &&
@@ -226,6 +243,7 @@ export class UploadSessionService {
       totalBytes: unknown;
       partBytes: unknown;
       header: unknown;
+      encoding?: unknown;
     },
     maxBytes: number
   ): Promise<{ uploadId: string; partBytes: number; totalParts: number; expiresAt: number }> {
@@ -253,12 +271,9 @@ export class UploadSessionService {
         `partBytes is too small: ${totalParts} parts, max ${MAX_PARTS}`
       );
     }
-    const { header } = parseDeclaredHeader(input.header);
-    if (header.ciphertextLength !== total) {
-      throw new BadRequestException(
-        `header declares ${header.ciphertextLength} stored bytes, totalBytes is ${total}`
-      );
-    }
+    // Keyless: a segmented blob's header must imply exactly `total`; a single-block one has no
+    // header and is only held to its tag (`declaredBlobShape`).
+    const shape = declaredBlobShape(input.encoding, input.header, total);
 
     // Sessions past their window free their staging and reservation now, not at the next sweep.
     const expiring = this.disposeExpired();
@@ -307,7 +322,7 @@ export class UploadSessionService {
       ...(input.retentionClass ? { retentionClass: input.retentionClass } : {}),
       totalBytes: total,
       partBytes: part,
-      headerHex: (input.header as string).toLowerCase(),
+      ...(shape.headerHex ? { headerHex: shape.headerHex } : { encoding: SINGLE_BLOCK_ENCODING }),
       createdAt: now,
       expiresAt: now + this.ttlMs,
       received: [],
@@ -338,7 +353,7 @@ export class UploadSessionService {
       throw new InternalServerErrorException('Could not stage the upload');
     }
     this.logger.log(
-      `Upload session ${id} opened by ${ownerId}: ${total} bytes in ${totalParts} part(s) of ${part} (class=${input.retentionClass ?? 'unclassified'})`
+      `Upload session ${id} opened by ${ownerId}: ${total} bytes in ${totalParts} part(s) of ${part} (class=${input.retentionClass ?? 'unclassified'}, ${shape.headerHex ? 'segmented-v1' : SINGLE_BLOCK_ENCODING})`
     );
     return { uploadId: id, partBytes: part, totalParts, expiresAt: this.effectiveExpiry(session) };
   }
@@ -531,16 +546,19 @@ export class UploadSessionService {
         );
         throw new ConflictException('Staged size differs from the declared total');
       }
-      const first = Buffer.alloc(SEGMENTED_HEADER_BYTES);
-      const handle = await fs.promises.open(dataPath, 'r');
-      try {
-        await handle.read(first, 0, SEGMENTED_HEADER_BYTES, 0);
-      } finally {
-        await handle.close();
-      }
-      if (first.toString('hex') !== session.headerHex) {
-        this.logger.warn(`Upload session ${id}: staged header differs from the declared one`);
-        throw new UnprocessableEntityException('Staged header differs from the declared header');
+      // A single-block blob has no public prefix: nothing keyless is left to check but the size.
+      if (session.headerHex !== undefined) {
+        const first = Buffer.alloc(SEGMENTED_HEADER_BYTES);
+        const handle = await fs.promises.open(dataPath, 'r');
+        try {
+          await handle.read(first, 0, SEGMENTED_HEADER_BYTES, 0);
+        } finally {
+          await handle.close();
+        }
+        if (first.toString('hex') !== session.headerHex) {
+          this.logger.warn(`Upload session ${id}: staged header differs from the declared one`);
+          throw new UnprocessableEntityException('Staged header differs from the declared header');
+        }
       }
 
       // Durable BEFORE the store is touched, so a crash from here on retries into the same key.
@@ -599,6 +617,31 @@ export class UploadSessionService {
       }
       await this.dispose(session, 'cancelled');
     });
+  }
+
+  /**
+   * THE ACCOUNT ERASURE ENDS THE OWNER'S OPEN SESSIONS (core-service's fan-out, `DELETE
+   * /media/internal/users/:id`). A deleted member's device wipes its outbox and keeps no token, so no
+   * client can ever release what it had open: without this the staging, the slot and the reservation
+   * of each session would wait for the 24 h sweep. Each is ended under the same lock as `cancel`; a
+   * session that completed meanwhile is left (its blob is the media erasure's). Idempotent: a retry
+   * of the fan-out finds nothing left to end.
+   *
+   * @returns How many sessions were ended.
+   */
+  async cancelAllOwnedBy(ownerId: string): Promise<number> {
+    await this.ensureLoaded();
+    let ended = 0;
+    for (const session of this.sessions.values()) {
+      if (session.ownerId !== ownerId) continue;
+      await this.mutex.run(`${session.id}:complete`, async () => {
+        if (session.completed || !this.sessions.has(session.id)) return;
+        await this.dispose(session, 'cancelled');
+        ended += 1;
+      });
+    }
+    if (ended > 0) this.logger.log(`Account erasure ended ${ended} open upload session(s)`);
+    return ended;
   }
 
   /** Removes every expired session (and the memo of an expired completion). */
@@ -801,7 +844,8 @@ export class UploadSessionService {
       ...(session.retentionClass ? { retentionClass: session.retentionClass } : {}),
       totalBytes: session.totalBytes,
       partBytes: session.partBytes,
-      headerHex: session.headerHex,
+      ...(session.headerHex !== undefined ? { headerHex: session.headerHex } : {}),
+      ...(session.encoding ? { encoding: session.encoding } : {}),
       createdAt: session.createdAt,
       expiresAt: session.expiresAt,
       received: session.received,

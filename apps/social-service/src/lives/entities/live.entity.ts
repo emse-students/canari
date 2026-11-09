@@ -8,7 +8,7 @@ export const LIVES_ONE_OPEN_PER_BROADCASTER = 'lives_one_open_per_broadcaster';
  * A live broadcast (WP-L2, docs/wiki/services/lives.md, migration 091).
  *
  * THE END IS THIS ROW'S STATE. `endedAt` is written once - by the broadcaster, by staff (`cut`, WP-L8), by the sweep when
- * the broadcaster's segments stopped (`dropped`) or the hour ran out (`max_duration`), or by an
+ * the broadcaster's segments stopped (`dropped`), or by an
  * account erasure (`erased`) - and from then on every read answers 410, no segment is accepted, and
  * the sweep deletes the segments and then this row. There is no replay (L3).
  *
@@ -37,6 +37,9 @@ export const LIVES_ONE_OPEN_PER_BROADCASTER = 'lives_one_open_per_broadcaster';
 @Check('lives_next_index', `"nextIndex" >= 0`)
 @Check('lives_stored_bytes', `"storedBytes" >= 0`)
 @Check('lives_chat_seq', `"chatSeq" >= 0 AND "reactionSeq" >= 0`)
+@Check('lives_title_length', `"title" IS NULL OR char_length("title") BETWEEN 1 AND 80`)
+@Check('lives_poster_whole', `("posterName" IS NULL) = ("posterAt" IS NULL)`)
+@Check('lives_poster_pending_whole', `("posterPendingName" IS NULL) = ("posterPendingAt" IS NULL)`)
 @Check(
   'lives_pending_whole',
   `("pendingName" IS NULL) = ("pendingSha256" IS NULL) AND ("pendingName" IS NULL) = ("pendingAt" IS NULL)`
@@ -97,7 +100,7 @@ export class Live {
   @Column({ type: 'varchar', length: 16, nullable: true })
   endReason: LiveEndReason | null;
 
-  /** The sum of the stored segments' sizes, which the per-live byte budget reads. bigint: a string. */
+  /** The sum of the stored segments' sizes, an OBSERVATION of what a live holds in the store, not a limit (no total budget since 2026-10-31). bigint: a string. */
   @Column({ type: 'bigint', default: 0 })
   storedBytes: string;
 
@@ -134,4 +137,39 @@ export class Live {
   /** The same for reaction bursts (C4, C7). */
   @Column({ type: 'integer', default: 0 })
   reactionSeq: number;
+
+  /**
+   * The live's optional TITLE (owner, 2026-11-07, migration 140): 1 to `LIVE_TITLE_MAX_CHARS`
+   * characters of plain text, or NULL for none. Written at the start and by the broadcaster's edit.
+   */
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  title: string | null;
+
+  /**
+   * The stored PREVIEW IMAGE's random name, under `live/<id>/` beside the segments (migration 140),
+   * and when it was stored (the database's clock). Both or neither.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  posterName: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  posterAt: Date | null;
+
+  /**
+   * The poster `posterName` REPLACED (migration 141), kept one round: a list read before the
+   * replacement may still name it, so its object must resolve until the NEXT replacement.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  posterPreviousName: string | null;
+
+  /**
+   * THE RESERVATION of a poster being stored (migration 140), the segment's `pendingName` for the
+   * preview: written before the store, cleared by its confirm, and read by the purge, which leaves
+   * the live alone while it is younger than `LIVE_RESERVATION_TTL_MS`.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  posterPendingName: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  posterPendingAt: Date | null;
 }

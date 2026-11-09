@@ -15,6 +15,7 @@ import { m } from '$lib/paraglide/messages';
 const preloads: string[] = [];
 const stopped: string[] = [];
 vi.mock('$lib/reels/reelPreload', () => ({
+  worthPreloading: () => true,
   ReelPreload: class {
     #id: string;
     constructor(ref: { mediaId: string }) {
@@ -25,6 +26,16 @@ vi.mock('$lib/reels/reelPreload', () => ({
       stopped.push(this.#id);
     }
   },
+}));
+const releasePlayback = vi.fn();
+const holdPlayback = vi.fn((_reason: string) => releasePlayback);
+vi.mock('$lib/actions/playWhileVisible', () => ({
+  holdPlayback: (reason: string) => holdPlayback(reason),
+}));
+const captured: string[] = [];
+vi.mock('$lib/reels/reelPosters.svelte', () => ({
+  reelPosterUrl: () => null,
+  captureReelPoster: vi.fn(async (mediaId: string) => void captured.push(mediaId)),
 }));
 vi.mock('$lib/components/posts/PostMedia.svelte', async () => ({
   default: (await import('./PostMediaStub.test-helper.svelte')).default,
@@ -84,12 +95,20 @@ async function render(loadPage = vi.fn(async () => [reel('a'), reel('b'), reel('
     window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
     await settle();
   };
-  return { onClose, loadPage, playing, key };
+  /** The reel on screen reports its file whole, then its playback - what lets the next preload. */
+  const settleCurrent = async () => {
+    const stub = document.querySelector('[data-post-media-stub]')!;
+    stub.dispatchEvent(new Event('stubloaded'));
+    stub.dispatchEvent(new Event('playing'));
+    await settle();
+  };
+  return { onClose, loadPage, playing, key, settleCurrent };
 }
 
 beforeEach(() => {
   preloads.length = 0;
   stopped.length = 0;
+  captured.length = 0;
   vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce') }));
 });
 
@@ -101,20 +120,66 @@ afterEach(() => {
 });
 
 describe('ReelViewer', () => {
-  it('plays the touched reel first, alone, and preloads the next', async () => {
-    const { playing, loadPage } = await render();
+  it('holds the playback from its first line (before any player mounts) and releases it on close', async () => {
+    await render();
+    expect(holdPlayback, 'whatever plays behind stops as the viewer opens').toHaveBeenCalledTimes(
+      1
+    );
+    expect(releasePlayback).not.toHaveBeenCalled();
+    unmount(mounted.pop()!);
+    expect(releasePlayback, 'closing gives the feed back').toHaveBeenCalledTimes(1);
+  });
+
+  it('plays the touched reel first, alone, and preloads the next once it has settled', async () => {
+    const { playing, loadPage, settleCurrent } = await render();
     expect(loadPage).toHaveBeenCalledWith(0, 10);
     // b first, then a and c from the page (b not repeated); only b has a player.
     expect(playing()).toEqual(['m-b']);
+    // Nothing competes with the reel being watched until it is whole and playing.
+    expect(preloads).toEqual([]);
+    await settleCurrent();
     expect(preloads).toEqual(['m-a']);
+    // Its first frame is NOT decoded beside its own player.
+    expect(captured).toEqual([]);
     expect(document.querySelectorAll('[data-reel-slide]').length).toBe(2);
   });
 
+  it('keeps the first frame of the reel it leaves, so a swipe back lands on it', async () => {
+    const { key, settleCurrent } = await render();
+    await settleCurrent();
+    expect(captured).toEqual([]);
+    await key('ArrowDown');
+    expect(captured).toEqual(['m-b']);
+  });
+
+  it('a reel that will not play by itself (autoplay refused) still lets the next one preload', async () => {
+    await render();
+    const stub = document.querySelector('[data-post-media-stub]')!;
+    stub.dispatchEvent(new Event('stubblocked'));
+    await settle();
+    expect(preloads).toEqual(['m-a']);
+  });
+
+  it('a reel returned to has not settled until it settles again', async () => {
+    const { key, settleCurrent } = await render();
+    await settleCurrent();
+    expect(preloads.filter((id) => id === 'm-a')).toHaveLength(1);
+    await key('ArrowDown');
+    await key('ArrowUp');
+    // Back on b: the earlier visit's settle does not count - a is not fetched again yet.
+    expect(preloads.filter((id) => id === 'm-a')).toHaveLength(1);
+    await settleCurrent();
+    expect(preloads.filter((id) => id === 'm-a')).toHaveLength(2);
+  });
+
   it('steps down to the next reel and back up', async () => {
-    const { playing, key } = await render();
+    const { playing, key, settleCurrent } = await render();
+    await settleCurrent();
     await key('ArrowDown');
     expect(playing()).toEqual(['m-a']);
     expect(stopped).toContain('m-a');
+    expect(preloads).not.toContain('m-c');
+    await settleCurrent();
     expect(preloads).toContain('m-c');
     await key('ArrowUp');
     expect(playing()).toEqual(['m-b']);

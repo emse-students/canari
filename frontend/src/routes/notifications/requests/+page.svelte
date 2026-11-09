@@ -8,7 +8,9 @@
    *
    * Each row states plainly what accepting means, as the decision requires: WHO asks (the member who
    * pressed the button), in WHICH association's name, about WHICH post, and HOW MANY readers would
-   * see it for the first time - a count, never their names. A row leaves the list on the server's
+   * see it for the first time - a count, never their names. An INSTITUTION's request also warns of
+   * its potential audience (owner, 2026-11-02, `institutionAudienceWarning`): everyone, or the spaces
+   * it reaches, and the staff side when staff belong to it. A row leaves the list on the server's
    * answer; a 409 means it was already decided or withdrawn, and the list is re-read.
    */
   import { onMount } from 'svelte';
@@ -22,8 +24,10 @@
     listMyRepublicationRequests,
     PROPOSAL_SENDER_GONE,
     refuseProposal,
+    REPOST_PERSONAL_AUDIENCE_CHANGED,
     type RepublicationRequest,
   } from '$lib/proposals/api';
+  import { institutionAudienceWarning } from '$lib/posts/republication';
   import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { formatRelative } from '$lib/utils/time';
   import { showToast } from '$lib/stores/toast.svelte';
@@ -58,8 +62,11 @@
     errorMessage = '';
     Log.d('RepublicationRequests', `${action} request=${request.id.slice(0, 8)}`);
     try {
-      if (action === 'accept') await acceptProposal(request.id);
-      else await refuseProposal(request.id);
+      if (action === 'accept') {
+        // The consent is to the audience READ on this screen: the server refuses it once it changed.
+        const fingerprint = request.details?.institutionAudience?.fingerprint;
+        await acceptProposal(request.id, fingerprint ? { audienceFingerprint: fingerprint } : {});
+      } else await refuseProposal(request.id);
       requests = requests.filter((r) => r.id !== request.id);
       showToast(
         action === 'accept'
@@ -73,10 +80,13 @@
       if (status === 409) {
         // Re-read FIRST: `load` clears the message, and the reason is what this answer must show.
         await load();
+        const code = refusalCode(e);
         errorMessage =
-          refusalCode(e) === PROPOSAL_SENDER_GONE
+          code === PROPOSAL_SENDER_GONE
             ? m.republication_requests_sender_gone()
-            : m.asso_republications_not_pending();
+            : code === REPOST_PERSONAL_AUDIENCE_CHANGED
+              ? m.republication_requests_audience_changed()
+              : m.asso_republications_not_pending();
       } else {
         errorMessage = m.post_republish_error();
       }
@@ -96,7 +106,7 @@
 
   {#if errorMessage}
     <div
-      class="border-red-err/30 bg-red-err/10 text-red-err mb-3 rounded-xl border px-4 py-3 text-sm"
+      class="border-red-err/30 bg-red-err/10 text-red-err mb-3 rounded-lg border px-4 py-3 text-sm"
     >
       {errorMessage}
     </div>
@@ -116,9 +126,10 @@
   {:else}
     <ul class="space-y-3">
       {#each requests as request (request.id)}
-        <li class="border-cn-border bg-cn-surface space-y-2 rounded-xl border p-4">
+        <li class="border-cn-border bg-cn-surface space-y-2 rounded-lg border p-4">
           <div class="flex items-center gap-2">
             <AssociationAvatar
+              id={request.from.id}
               name={request.from.name}
               logoUrl={request.from.logoUrl}
               size="sm"
@@ -143,9 +154,23 @@
             <p class="text-text-muted text-xs">
               {m.republication_requests_reach({ count: request.details.newlyReached })}
             </p>
+            {@const warning = institutionAudienceWarning(request.details.institutionAudience)}
+            {#if warning.length > 0}
+              <div
+                class="border-amber-warn/30 bg-amber-warn/10 space-y-1 rounded-lg border px-3 py-2 text-xs"
+                data-testid="institution-audience-warning"
+              >
+                <p class="text-text-main font-semibold">
+                  {m.republication_requests_audience_title()}
+                </p>
+                {#each warning as line, i (i)}
+                  <p class="text-text-main">{line}</p>
+                {/each}
+              </div>
+            {/if}
             <a
               href="/posts/{encodeURIComponent(request.subjectId)}"
-              class="text-xs font-semibold text-amber-600 hover:underline dark:text-amber-400"
+              class="text-amber-warn text-xs font-semibold hover:underline"
             >
               {m.asso_republications_view_post()}
             </a>
@@ -155,7 +180,7 @@
           <div class="flex justify-end gap-2">
             <button
               type="button"
-              class="text-text-muted rounded-xl px-4 py-2 text-sm font-semibold transition-colors hover:bg-black/5 disabled:opacity-40"
+              class="text-text-muted rounded-lg px-4 py-2 text-sm font-semibold transition-colors hover:bg-black/5 disabled:opacity-40"
               disabled={busy !== null}
               onclick={() => answer(request, 'refuse')}
             >
@@ -163,7 +188,7 @@
             </button>
             <button
               type="button"
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
+              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
               disabled={busy !== null || !request.details}
               onclick={() => answer(request, 'accept')}
             >

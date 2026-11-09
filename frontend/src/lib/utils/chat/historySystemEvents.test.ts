@@ -2,9 +2,11 @@ import { canari } from '$lib/proto/canari.js';
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import { applyReplaySystemEvent, type HistoryRow } from './historySystemEvents';
 import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
+import { nicknameEntry } from '$lib/utils/users/conversationNicknames.svelte';
 import { envelopeBodyText, mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { keySource } from '$lib/crypto/messageAuthorship.testKit';
+import { readMarkTarget } from './readState';
 
 /** A signature as mls-core left it on a replayed frame - opaque here, only carried. */
 const SIGNED: RecordedAuthorship = { body: 'Ym9keQ==', proof: 'cHJvb2Y=', group: 'group-1' };
@@ -74,8 +76,10 @@ async function replay(
   >;
   reactionUpdates: Map<string, MessageReaction[]>;
   readWatermarkUpdates: ReadWatermarks;
+  serverReadWatermarkUpdates: ReadWatermarks;
   historyFloorUpdate: { at: number };
   pushed: unknown[];
+  kept: unknown[];
 }> {
   let convo = conversation(messages);
   const sinks = {
@@ -86,8 +90,10 @@ async function replay(
     >(),
     reactionUpdates: new Map<string, MessageReaction[]>(),
     readWatermarkUpdates: {} as ReadWatermarks,
+    serverReadWatermarkUpdates: {} as ReadWatermarks,
     historyFloorUpdate: { at: 0 },
     pushed: [] as unknown[],
+    kept: [] as unknown[],
   };
   await applyReplaySystemEvent({
     parsed,
@@ -102,13 +108,20 @@ async function replay(
     messageReactions: new Map(),
     reactionUpdates: sinks.reactionUpdates,
     authorKeys: keySource({}),
+    nicknameRoster: {
+      getGroupMemberIdentities: async () => [`${OWNER}:d1`, `bob:d2`],
+    },
     rowPatches: new Map(),
     pendingById: new Map(),
     deletedMessages: sinks.deletedMessages,
     editedMessages: sinks.editedMessages,
     readWatermarkUpdates: sinks.readWatermarkUpdates,
+    serverReadWatermarkUpdates: sinks.serverReadWatermarkUpdates,
     historyFloorUpdate: sinks.historyFloorUpdate,
     pushPendingMessage: (entry) => sinks.pushed.push(entry),
+    keepPending: async (entry) => {
+      sinks.kept.push(entry);
+    },
     dropOwnExcluded,
     ...(authorship ? { authorship } : {}),
   });
@@ -189,12 +202,41 @@ describe('replaying a deletion', () => {
     expect(result.deletedMessages.size).toBe(0);
   });
 
-  it('carries the claimed author when the message is not in memory', async () => {
-    // Nothing here can check the claim - the row is read after the batch save, and that is where
-    // `history.ts` checks it. Recording WHO is what makes that possible.
+  it('KEEPS it with its claimed author when the message is not shown - the live seam settles it', async () => {
+    // Nothing here can check the claim: the message is stored, buffered in this page or not here
+    // yet. The store of mutations that came before their message settles it against the AUTHOR.
     const result = await replay(systemEvent('delete_message', { messageId: 'gone' }), OTHER, []);
 
-    expect(result.deletedMessages.get('gone')).toEqual({ by: OTHER });
+    expect(result.deletedMessages.size).toBe(0);
+    expect(result.kept).toEqual([
+      {
+        conversationId: GROUP,
+        messageId: 'gone',
+        sender: OTHER,
+        kind: 'delete',
+        slot: '',
+        rank: 0,
+      },
+    ]);
+  });
+
+  it('KEEPS an edit whose message is not shown, dated by its sender', async () => {
+    const result = await replay(
+      systemEvent('edit_message', { messageId: 'gone', newContent: 'x', editedAt: 7 }),
+      OTHER,
+      []
+    );
+
+    expect(result.editedMessages.size).toBe(0);
+    expect(result.kept).toEqual([
+      expect.objectContaining({
+        messageId: 'gone',
+        sender: OTHER,
+        kind: 'edit',
+        rank: 7,
+        text: 'x',
+      }),
+    ]);
   });
 });
 
@@ -340,7 +382,33 @@ describe('replaying read state', () => {
       message('m1', OWNER),
     ]);
 
-    expect(result.readWatermarkUpdates).toEqual({ [OTHER]: 1_700_000_000_000 });
+    // The ids translate through the rows held, whose key is the server's clock (`readOrderKey`).
+    expect(result.serverReadWatermarkUpdates).toEqual({ [OTHER]: 1_700_000_000_000 });
+    expect(result.readWatermarkUpdates).toEqual({});
+  });
+
+  it('puts a frame that says `serverAt` on the server clock, a bare `at` on the stamped one', async () => {
+    const fresh = await replay(
+      systemEvent('read_watermark', { at: 3_000, serverAt: 3_000 }),
+      OTHER,
+      []
+    );
+    expect(fresh.serverReadWatermarkUpdates).toEqual({ [OTHER]: 3_000 });
+    expect(fresh.readWatermarkUpdates).toEqual({});
+  });
+
+  it('takes the server-clock map a bundle carries beside the stamped one', async () => {
+    const result = await replay(
+      systemEvent('history_bundle', {
+        messages: [],
+        readWatermarks: { [OTHER]: 4_000 },
+        serverReadWatermarks: { [OTHER]: 4_500 },
+      }),
+      OTHER,
+      [message('m1', OWNER)]
+    );
+    expect(result.readWatermarkUpdates).toEqual({ [OTHER]: 4_000 });
+    expect(result.serverReadWatermarkUpdates).toEqual({ [OTHER]: 4_500 });
   });
 
   it('takes nothing from a legacy receipt naming messages this device does not hold', async () => {
@@ -359,6 +427,79 @@ describe('replaying read state', () => {
     );
 
     expect(result.readWatermarkUpdates).toEqual({ [OTHER]: 4_000 });
+  });
+});
+
+/**
+ * A RELAYED SERVER TIME IS BELIEVED ONLY INSIDE THE SERVER'S OWN (review of #2824, 2026-11-01). The
+ * history row this frame replays from was accepted at 2026-08-12T10:00Z; a member's claim after that
+ * is a claim the server never made, and as the order key and the read-mark key it would do lasting harm.
+ */
+describe('replaying a frame that claims a server time after its own', () => {
+  const ROW_AT = Date.parse('2026-08-12T10:00:00.000Z');
+  const Y2100 = Date.UTC(2100, 0, 1);
+
+  it('refuses a read mark dated after the frame that carries it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await replay(
+      systemEvent('read_watermark', { at: Y2100, serverAt: Y2100 }),
+      OTHER,
+      []
+    );
+    expect(result.serverReadWatermarkUpdates).toEqual({});
+    expect(result.readWatermarkUpdates).toEqual({});
+  });
+
+  it("drops a bundle's server-clock mark dated after the bundle, keeps the rest", async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = await replay(
+      systemEvent('history_bundle', {
+        messages: [],
+        serverReadWatermarks: { [OTHER]: Y2100, [OWNER]: ROW_AT - 1 },
+      }),
+      OTHER,
+      []
+    );
+    expect(result.serverReadWatermarkUpdates).toEqual({ [OWNER]: ROW_AT - 1 });
+  });
+
+  it('a future-dated bundle row keeps its sentAt, so it moves no mark', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { pushed } = await replay(
+      systemEvent('history_bundle', {
+        messages: [
+          {
+            id: 'honest',
+            senderId: OTHER,
+            content: 'a',
+            timestamp: ROW_AT - 60_000,
+            serverTimestamp: ROW_AT - 59_000,
+          },
+          {
+            id: 'forged',
+            senderId: OTHER,
+            content: 'b',
+            timestamp: ROW_AT - 30_000,
+            serverTimestamp: Y2100,
+          },
+        ],
+      }),
+      OTHER,
+      []
+    );
+    const rows = pushed as Array<{ messageId: string; serverTimestamp?: number; timestamp?: Date }>;
+    expect(rows.find((r) => r.messageId === 'honest')?.serverTimestamp).toBe(ROW_AT - 59_000);
+    expect(rows.find((r) => r.messageId === 'forged')?.serverTimestamp).toBeUndefined();
+    // And read, the conversation's mark goes no further than the honest server time.
+    const asChat = rows.map((r) => ({
+      id: r.messageId,
+      senderId: OTHER,
+      isOwn: false,
+      isSystem: false,
+      timestamp: r.timestamp ?? new Date(0),
+      ...(r.serverTimestamp ? { serverTimestamp: r.serverTimestamp } : {}),
+    }));
+    expect(readMarkTarget(asChat, 0, false, Number.MAX_SAFE_INTEGER)).toBeLessThanOrEqual(ROW_AT);
   });
 });
 
@@ -558,5 +699,60 @@ describe('replaying a pin', () => {
     );
 
     expect(pinnedMessageIds(g)).toEqual([]);
+  });
+});
+
+/**
+ * "Modifier les pseudos": the `nickname` frame is durable in the shared log, so a device that was
+ * offline - or a fresh one walking the scrollback - takes it from the replay, the setter being the
+ * log entry's sender and never a payload field.
+ */
+describe('replaying a nickname', () => {
+  it('applies the frame from the log, and an older one cannot undo it', async () => {
+    // This file runs without a DOM: the register's device copy is unreachable here, and says so.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const g = 'group-nickname';
+    await replay(
+      systemEvent('nickname', { userId: 'Bob', nickname: 'Capitaine', at: 200, setBy: 'forged' }),
+      OTHER,
+      [],
+      g
+    );
+    await replay(
+      systemEvent('nickname', { userId: 'bob', nickname: 'Old', at: 100 }),
+      OWNER,
+      [],
+      g
+    );
+    expect(nicknameEntry(g, 'bob')).toEqual({
+      nickname: 'Capitaine',
+      setBy: OTHER,
+      at: 200,
+      verified: true,
+    });
+    warn.mockRestore();
+  });
+
+  it('keeps a frame whose setter has left since, and refuses one naming a target outside the tree', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const g = 'group-nickname-2';
+    // OTHER is not in the replay's roster: the log is the past, and its nickname stays.
+    await replay(
+      systemEvent('nickname', { userId: 'bob', nickname: 'Reste', at: 1 }),
+      OTHER,
+      [],
+      g
+    );
+    expect(nicknameEntry(g, 'bob')?.nickname).toBe('Reste');
+    await replay(
+      systemEvent('nickname', { userId: 'stranger', nickname: 'X', at: 1 }),
+      OWNER,
+      [],
+      g
+    );
+    expect(nicknameEntry(g, 'stranger')).toBeNull();
+    warn.mockRestore();
+    debug.mockRestore();
   });
 });

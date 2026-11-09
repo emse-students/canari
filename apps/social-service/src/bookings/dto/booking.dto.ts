@@ -3,13 +3,18 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsInt,
   IsOptional,
   IsString,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
+  Min,
+  ValidateIf,
 } from 'class-validator';
 import { IsValidAnswers } from '../../forms/dto/form.dto';
+import type { FormAnswerValue } from '../../forms/answer-bounds';
 
 /**
  * AN INSTANT CARRIES ITS ZONE: ISO 8601 ending in `Z` or an offset. `IsDateString` alone accepts
@@ -19,6 +24,16 @@ import { IsValidAnswers } from '../../forms/dto/form.dto';
  */
 export const ZONED_INSTANT = /(Z|[+-]\d{2}:\d{2})$/;
 export const ZONED_INSTANT_MESSAGE = 'an instant must end in Z or an offset';
+
+/**
+ * A reminder's delay before the slot, in minutes (WP-N, D53): from five minutes to a week. The
+ * database's CHECKs (migration 115) hold the same bounds.
+ */
+export const REMINDER_MIN_MINUTES = 5;
+export const REMINDER_MAX_MINUTES = 10_080;
+
+/** At most this many characters in the word an organiser sends with a cancellation (Q-R3). */
+export const CANCEL_MESSAGE_MAX = 500;
 
 /** At most this many participants in one request: far above any `maxPeople` an organiser sets. */
 export const MAX_PARTICIPANTS_PER_REQUEST = 50;
@@ -48,13 +63,79 @@ export class CreateBookingDto {
   /** Answers to the space's questions, the forms' shape (D7). */
   @IsOptional()
   @IsValidAnswers()
-  answers?: Record<string, string | string[] | number>;
+  answers?: Record<string, FormAnswerValue>;
 
   /** Booking ON BEHALF of this account (D20): only an organiser may name someone else. */
   @IsOptional()
   @IsString()
   @MaxLength(255)
   holderId?: string;
+
+  /**
+   * The HOLDER's own reminder delay (Q-R1); null = no reminder. Absent: the space's default. The
+   * participants start at the space's default and each changes their own (`PATCH :id/reminder`).
+   */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsInt()
+  @Min(REMINDER_MIN_MINUTES)
+  @Max(REMINDER_MAX_MINUTES)
+  reminderMinutes?: number | null;
+}
+
+/**
+ * `PATCH bookings/:bookingId` - edits a coming booking (owner, 2026-11-02): its range and its other
+ * people, nothing else. The resource, the day, the holder, the answers and the files stay; changing
+ * one of them is still a cancellation and a new booking.
+ */
+export class EditBookingDto {
+  /** The NEW half-open range, UTC instants, ISO 8601 - on the same local day as the old one. */
+  @IsDateString()
+  @Matches(ZONED_INSTANT, { message: ZONED_INSTANT_MESSAGE })
+  startsAt: string;
+
+  @IsDateString()
+  @Matches(ZONED_INSTANT, { message: ZONED_INSTANT_MESSAGE })
+  endsAt: string;
+
+  /**
+   * The WHOLE set of the booking's other people after the edit, not a delta: whoever is in it and
+   * not on the booking is added, whoever is on the booking and not in it is removed. The holder is
+   * not one of them.
+   */
+  @IsArray()
+  @ArrayMaxSize(MAX_PARTICIPANTS_PER_REQUEST)
+  @IsString({ each: true })
+  @MaxLength(255, { each: true })
+  participantIds: string[];
+
+  /**
+   * The booking's `revision` as the sheet read it (`bookingRevision`): an edit of any other state
+   * - a participant withdrew, someone else edited meanwhile - is refused `BOOKING_EDIT_CONFLICT`
+   * / `stale` and changes nothing.
+   */
+  @IsString()
+  @MaxLength(64)
+  revision: string;
+}
+
+/** `POST bookings/:bookingId/cancel` - an optional word to the booking's people (Q-R3). */
+export class CancelBookingDto {
+  /** Carried by the notification only: never stored with the booking (Q-R3). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(CANCEL_MESSAGE_MAX)
+  message?: string;
+}
+
+/** `PATCH bookings/:bookingId/reminder` - one person's own reminder delay (Q-R1). */
+export class ReminderDto {
+  /** Minutes before the slot; null = no reminder. */
+  @ValidateIf((_, v) => v !== null)
+  @IsInt()
+  @Min(REMINDER_MIN_MINUTES)
+  @Max(REMINDER_MAX_MINUTES)
+  minutes: number | null;
 }
 
 /** `POST bookings/resources/:resourceId/blocks` - "Indisponible" over a range (D10, D20). */

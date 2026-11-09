@@ -4,7 +4,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { applyMediaRetentionClass } from '../internal/media-retention-class';
-import { claimReelMedia, purgeReelMedia, type ReelPurgeOutcome } from '../internal/reel-media';
+import {
+  deleteNeverCitedMedia,
+  claimReelMedia,
+  purgeReelMedia,
+  type ReelPurgeOutcome,
+  type ReelPurgeReason,
+} from '../internal/reel-media';
 
 /**
  * Keeps the media service's retention class in step with what the feed actually references.
@@ -143,17 +149,20 @@ export class PostMediaRetentionService implements OnModuleInit {
   }
 
   /**
-   * Deletes a reel's blobs now - the comments' too, each under its own uploader - and reports
-   * whether ALL of them are gone (`deleted`/`absent`), or left alone as not the named owner's
-   * (`refused`, terminal), or still there (`failed`, retry).
+   * Ends a reel's blobs now - the comments' too, each under its own uploader - for `reason`, and
+   * reports whether ALL of them are done with (`deleted`/`absent`, or `released`: the post's hold
+   * went and a conversation's chat hold keeps the file, reels-in-chat 15.3), or left alone as not the
+   * named owner's (`refused`, terminal), or still there (`failed`, retry).
    *
    * Throws on a transport failure. See `purgeReelMedia`.
    */
   async purgeReelBlobs(
-    items: Array<{ mediaId: string; ownerId: string }>
+    items: Array<{ mediaId: string; ownerId: string }>,
+    reason: ReelPurgeReason
   ): Promise<Record<string, ReelPurgeOutcome>> {
     if (items.length === 0) return Object.create(null) as Record<string, ReelPurgeOutcome>;
-    return purgeReelMedia(this.httpService, items);
+    this.logger.debug(`[REEL] purging ${items.length} blob(s), reason ${reason}`);
+    return purgeReelMedia(this.httpService, items, reason);
   }
 
   /**
@@ -185,6 +194,79 @@ export class PostMediaRetentionService implements OnModuleInit {
     if (mediaIds.length > 0) {
       await applyMediaRetentionClass(this.httpService, this.logger, mediaIds, 'archive');
     }
+  }
+
+  /**
+   * THE PUBLISH QUEUE'S DELETE, server side: deletes the media a withdrawn post uploaded, under
+   * `ownerId` as their uploader, EXCEPT any id a live post, comment or salon message (a shared reel,
+   * `channel_messages.reelMediaId`) cites. The client cannot be
+   * trusted with that check (an uploader's `archive` objects include the media of posts already
+   * published, an association's among them - review of #3061), and media-service cannot make it,
+   * so it is made here, where the rows are. Cited ids are left alone and logged.
+   *
+   * Throws on a transport failure: the withdrawal answers 5xx and the queue asks again; every step
+   * is idempotent (an object already gone answers `absent`).
+   *
+   * @returns how many were deleted, already gone, kept because a row cites them, or refused - and
+   *   `notTaken`, the uncited ids media-service did not answer `deleted` or `absent` for (refused, or
+   *   missing from its answer): still stored, so a caller that held them back must release them.
+   */
+  async deleteWithdrawnMedia(
+    ownerId: string,
+    mediaIds: string[]
+  ): Promise<{
+    deleted: number;
+    absent: number;
+    cited: number;
+    refused: number;
+    notTaken: string[];
+  }> {
+    const counts = { deleted: 0, absent: 0, cited: 0, refused: 0, notTaken: [] as string[] };
+    const ids = [...new Set(mediaIds)];
+    if (ids.length === 0) return counts;
+    const rows: Array<{ mediaId: string | null }> = await this.postRepo.query(
+      `
+      SELECT m->>'mediaId' AS "mediaId"
+        FROM posts p, jsonb_array_elements(p.images) m
+       WHERE jsonb_typeof(p.images) = 'array'
+         AND m->>'mediaId' = ANY($1::text[])
+      UNION
+      SELECT c->'media'->>'mediaId' AS "mediaId"
+        FROM posts p, jsonb_array_elements(p.comments) c
+       WHERE jsonb_typeof(p.comments) = 'array'
+         AND jsonb_typeof(c->'media') = 'object'
+         AND c->'media'->>'mediaId' = ANY($1::text[])
+      UNION
+      -- A reel shared into a salon cites its file from the message row (migration 122).
+      SELECT cm."reelMediaId"::text AS "mediaId"
+        FROM channel_messages cm
+       WHERE cm."reelMediaId"::text = ANY($1::text[])
+      `,
+      [ids]
+    );
+    const cited = new Set(rows.map((row) => row.mediaId));
+    const free = ids.filter((id) => !cited.has(id));
+    counts.cited = ids.length - free.length;
+    if (counts.cited > 0) {
+      this.logger.warn(
+        `[POST-WITHDRAW] ${counts.cited} media a live row cites left alone (named by a withdrawal)`
+      );
+    }
+    if (free.length === 0) return counts;
+    const results = await deleteNeverCitedMedia(
+      this.httpService,
+      free.map((mediaId) => ({ mediaId, ownerId }))
+    );
+    for (const id of free) {
+      const outcome = results[id];
+      if (outcome === 'deleted') counts.deleted += 1;
+      else if (outcome === 'absent') counts.absent += 1;
+      else {
+        counts.refused += 1;
+        counts.notTaken.push(id);
+      }
+    }
+    return counts;
   }
 
   /**

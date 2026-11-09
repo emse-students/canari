@@ -33,7 +33,9 @@ const NOTIF: NativeMessageNotification = {
   body: 'Hello',
   mentionsMe: false,
   sentAt: 1_700_000_000_000,
+  serverAt: 1_700_000_000_400,
   covers: 1,
+  authorProven: false,
 };
 
 describe('postNativeMessageNotification', () => {
@@ -66,9 +68,31 @@ describe('postNativeMessageNotification', () => {
       // THE SENDER'S OWN INSTANT, and it is load-bearing rather than cosmetic: it is the only
       // thing by which the builder recognises that the push and this frame are one message.
       sentAt: 1_700_000_000_000,
+      // The server's instant of the same message: what the shade's read mark is stated on.
+      serverAt: 1_700_000_000_400,
       // One real banner answers up to this many refused pushes (the batched flush).
       covers: 1,
+      authorProven: false,
     });
+  });
+
+  it("carries the open's proof of the author, which names a salon banner's speaker", async () => {
+    // The push trigger names the speaker only when its native open PROVED the author (a v2
+    // session); this trigger must carry the same fact or the two would draw two speakers for one
+    // message, whichever arrived second winning (review of #2881, HIGH-1).
+    isAndroidTauriRuntime.mockReturnValue(true);
+    invoke.mockResolvedValue(true);
+
+    await postNativeMessageNotification({
+      ...NOTIF,
+      conversationId: 'channel_0001',
+      groupName: 'general',
+      authorProven: true,
+    });
+    expect(invoke).toHaveBeenCalledWith(
+      'notifier_message_natif',
+      expect.objectContaining({ groupId: 'channel_0001', authorProven: true })
+    );
   });
 
   it('reports a refusal instead of raising something else', async () => {

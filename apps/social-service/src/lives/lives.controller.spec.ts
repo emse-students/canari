@@ -1,9 +1,10 @@
-import { HttpStatus, Logger } from '@nestjs/common';
+import { ForbiddenException, HttpStatus, Logger } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Readable } from 'stream';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { LiveEnabledGuard, isLiveEnabled } from './live-enabled.guard';
+import { guardContext } from './live-guard-context.test-helper';
 import { LIVE_SEGMENT_MAX_BYTES } from './live.constants';
 import { LivesController } from './lives.controller';
 import type { LivesService } from './lives.service';
@@ -50,14 +51,14 @@ describe('the live switch (LIVE_ENABLED)', () => {
       expect(isLiveEnabled()).toBe(false);
       // The deploy lock is asked FIRST: a closed estate never reads the database, even with lives on.
       const { db, query } = platformDb([{ lives_mode: 'on' }]);
-      expect(await statusOf(() => new LiveEnabledGuard(db).canActivate())).toBe(
+      expect(await statusOf(() => new LiveEnabledGuard(db).canActivate(guardContext()))).toBe(
         HttpStatus.NOT_FOUND
       );
       expect(query).not.toHaveBeenCalled();
     }
     process.env.LIVE_ENABLED = 'true';
     await expect(
-      new LiveEnabledGuard(platformDb([{ lives_mode: 'on' }]).db).canActivate()
+      new LiveEnabledGuard(platformDb([{ lives_mode: 'on' }]).db).canActivate(guardContext())
     ).resolves.toBe(true);
   });
 
@@ -86,7 +87,9 @@ describe('the live kill switch (platform_config.lives_mode)', () => {
 
   it('answers 404 while the switch is off, the answer of the deploy lock', async () => {
     const { db, query } = platformDb([{ lives_mode: 'off' }]);
-    expect(await statusOf(() => new LiveEnabledGuard(db).canActivate())).toBe(HttpStatus.NOT_FOUND);
+    expect(await statusOf(() => new LiveEnabledGuard(db).canActivate(guardContext()))).toBe(
+      HttpStatus.NOT_FOUND
+    );
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('SELECT lives_mode FROM platform_config')
     );
@@ -96,16 +99,16 @@ describe('the live kill switch (platform_config.lives_mode)', () => {
     const answers = [[{ lives_mode: 'on' }], [{ lives_mode: 'off' }]];
     const query = jest.fn(async () => answers.shift());
     const guard = new LiveEnabledGuard({ manager: { query } } as unknown as DataSource);
-    await expect(guard.canActivate()).resolves.toBe(true);
-    expect(await statusOf(() => guard.canActivate())).toBe(HttpStatus.NOT_FOUND);
+    await expect(guard.canActivate(guardContext())).resolves.toBe(true);
+    expect(await statusOf(() => guard.canActivate(guardContext()))).toBe(HttpStatus.NOT_FOUND);
     expect(query).toHaveBeenCalledTimes(2);
   });
 
   it('answers 404 when the row is missing, and says so at error', async () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    expect(await statusOf(() => new LiveEnabledGuard(platformDb([]).db).canActivate())).toBe(
-      HttpStatus.NOT_FOUND
-    );
+    expect(
+      await statusOf(() => new LiveEnabledGuard(platformDb([]).db).canActivate(guardContext()))
+    ).toBe(HttpStatus.NOT_FOUND);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('MISSING'));
     error.mockRestore();
   });
@@ -114,14 +117,14 @@ describe('the live kill switch (platform_config.lives_mode)', () => {
     'refuses (throws, never opens) on an unknown value %p',
     async (value) => {
       await expect(
-        new LiveEnabledGuard(platformDb([{ lives_mode: value }]).db).canActivate()
+        new LiveEnabledGuard(platformDb([{ lives_mode: value }]).db).canActivate(guardContext())
       ).rejects.toThrow(/unknown value/);
     }
   );
 
   it('refuses when the read fails - a switch that cannot be read is not read as open', async () => {
     await expect(
-      new LiveEnabledGuard(platformDb(new Error('connection lost')).db).canActivate()
+      new LiveEnabledGuard(platformDb(new Error('connection lost')).db).canActivate(guardContext())
     ).rejects.toThrow('connection lost');
   });
 });
@@ -153,6 +156,8 @@ describe('LivesController', () => {
   const ingest = jest.fn().mockResolvedValue({ index: 0 });
   const manifest = jest.fn().mockResolvedValue({ liveId: 'm' });
   const read = jest.fn().mockResolvedValue({ messages: [] });
+  const readArrivals = jest.fn().mockResolvedValue(null);
+  const blockedFor = jest.fn().mockResolvedValue(new Set<string>());
   const cut = jest.fn().mockResolvedValue({ newlyCut: true });
   const rulesStatus = jest.fn().mockResolvedValue({ version: 1 });
   /** The posts' one moderator predicate, faked: only `MODERATOR` holds `MODERATE` in a BDE. */
@@ -160,12 +165,21 @@ describe('LivesController', () => {
     async (userId: string, opts?: { isGlobalAdmin?: boolean }) =>
       opts?.isGlobalAdmin === true || userId === MODERATOR
   );
+  const LIVE = '22222222-2222-4222-8222-222222222222';
+  const OTHER_LIVE = '33333333-3333-4333-8333-333333333333';
+  /** The scope (owner, 2026-11-02): `MODERATOR`'s BDE governs `LIVE`, not `OTHER_LIVE`. */
+  const mayModerateLive = jest.fn(
+    async (userId: string, liveId: string, opts?: { isGlobalAdmin?: boolean }) =>
+      opts?.isGlobalAdmin === true || (userId === MODERATOR && liveId === LIVE)
+  );
+  const refuseModeration = jest.fn(() =>
+    Promise.reject(new ForbiddenException({ code: 'MODERATION_OUT_OF_SCOPE' }))
+  );
   const controller = new LivesController(
-    { ingest, manifest, cut, rulesStatus } as unknown as LivesService,
-    { isContentModerator } as unknown as AssociationsService,
+    { ingest, manifest, cut, rulesStatus, readArrivals, blockedFor } as unknown as LivesService,
+    { isContentModerator, mayModerateLive, refuseModeration } as unknown as AssociationsService,
     { read } as unknown as LiveChatService
   );
-  const LIVE = '22222222-2222-4222-8222-222222222222';
 
   beforeEach(() => jest.clearAllMocks());
 
@@ -217,6 +231,17 @@ describe('LivesController', () => {
       expect(cut).toHaveBeenLastCalledWith('d'.repeat(64), LIVE, body);
       expect(isContentModerator).toHaveBeenLastCalledWith('d'.repeat(64), { isGlobalAdmin: true });
     });
+
+    it('refuses a BDE moderator a live outside its governed spaces, with the typed 403', async () => {
+      await expect(controller.cut(OTHER_LIVE, MODERATOR, undefined, body)).rejects.toMatchObject({
+        status: HttpStatus.FORBIDDEN,
+        response: { code: 'MODERATION_OUT_OF_SCOPE' },
+      });
+      expect(cut).not.toHaveBeenCalled();
+      // The platform admin is never scoped.
+      await controller.cut(OTHER_LIVE, 'd'.repeat(64), 'true', body);
+      expect(cut).toHaveBeenLastCalledWith('d'.repeat(64), OTHER_LIVE, body);
+    });
   });
 
   it('answers the caller its first-live rules standing', async () => {
@@ -232,14 +257,56 @@ describe('LivesController', () => {
       liveId: 'm',
       chat: { messages: [] },
     });
-    expect(read).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, {
-      messagesAfter: undefined,
-      reactionsAfter: undefined,
-    });
+    expect(read).toHaveBeenLastCalledWith(
+      'b'.repeat(64),
+      LIVE,
+      { messagesAfter: undefined, reactionsAfter: undefined, arrivalsAfter: undefined },
+      { withheld: undefined, blocked: expect.any(Set) }
+    );
     await controller.manifest(LIVE, 'b'.repeat(64), '3', '1', '41', '0');
-    expect(read).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, {
-      messagesAfter: 41,
-      reactionsAfter: 0,
+    expect(read).toHaveBeenLastCalledWith(
+      'b'.repeat(64),
+      LIVE,
+      { messagesAfter: 41, reactionsAfter: 0, arrivalsAfter: undefined },
+      { withheld: undefined, blocked: expect.any(Set) }
+    );
+  });
+
+  it("hands the watch statement's chatWithheld to the chat read, and never serves it as a manifest field", async () => {
+    manifest.mockResolvedValueOnce({ liveId: 'm', chatWithheld: true });
+    await expect(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1')).resolves.toEqual({
+      liveId: 'm',
+      chat: { messages: [] },
+    });
+    expect(read).toHaveBeenLastCalledWith(
+      'b'.repeat(64),
+      LIVE,
+      { messagesAfter: undefined, reactionsAfter: undefined, arrivalsAfter: undefined },
+      { withheld: true, blocked: expect.any(Set) }
+    );
+    manifest.mockResolvedValueOnce({ liveId: 'm', chatWithheld: true });
+    await expect(controller.manifest(LIVE, 'b'.repeat(64))).resolves.toEqual({ liveId: 'm' });
+  });
+
+  it('adds the arrival fields to the chat block, and NEVER to a withheld reader (owner, 2026-11-07)', async () => {
+    const block = { arrivals: [{ userId: 'x', seq: 1 }], arrivalsMore: 2, arrivalsCursor: 7 };
+    readArrivals.mockResolvedValueOnce(block);
+    await expect(
+      controller.manifest(LIVE, 'b'.repeat(64), undefined, '1', '1', '1', '6')
+    ).resolves.toEqual({ liveId: 'm', chat: { messages: [], ...block } });
+    expect(readArrivals).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, 6, expect.any(Set));
+    // A reader the chat is withheld from: the arrivals are not even read.
+    readArrivals.mockClear();
+    manifest.mockResolvedValueOnce({ liveId: 'm', chatWithheld: true });
+    await expect(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1')).resolves.toEqual({
+      liveId: 'm',
+      chat: { messages: [] },
+    });
+    expect(readArrivals).not.toHaveBeenCalled();
+    // A refusal of the arrivals (null) leaves the block as the chat made it.
+    await expect(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1')).resolves.toEqual({
+      liveId: 'm',
+      chat: { messages: [] },
     });
   });
 

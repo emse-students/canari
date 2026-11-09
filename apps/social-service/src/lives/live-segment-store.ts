@@ -15,6 +15,14 @@ export interface LivePurgeResult {
   remaining: number;
 }
 
+/** What `POST media/internal/live-segments-delete` answers - see `LiveSegmentsService.deleteSegments` there. */
+export interface LiveTrimResult {
+  /** Names the store no longer holds (already absent counts). */
+  deleted: string[];
+  /** Names the store refused to delete: still stored. */
+  failed: string[];
+}
+
 /** The injection token of the segment store, so a spec can hand the service an in-memory one. */
 export const LIVE_SEGMENT_STORE = Symbol('LIVE_SEGMENT_STORE');
 
@@ -28,6 +36,8 @@ export interface LiveSegmentStore {
   store(liveId: string, name: string, data: Buffer): Promise<void>;
   /** Deletes every segment of a live and re-lists. THROWS on a transport failure. */
   purge(liveId: string): Promise<LivePurgeResult>;
+  /** Deletes named segments of a RUNNING live (the trim behind its window). THROWS on a transport failure. */
+  deleteSegments(liveId: string, names: string[]): Promise<LiveTrimResult>;
   /** The live ids that have a `live/<id>/` folder in the store - the orphan reaper's listing. */
   listLives(): Promise<string[]>;
 }
@@ -70,6 +80,23 @@ export class HttpLiveSegmentStore implements LiveSegmentStore {
     ) {
       // An answer that does not say "empty" is not a proof of empty: the caller keeps the row.
       throw new Error('the media service answered the live purge without its three counts');
+    }
+    return body;
+  }
+
+  async deleteSegments(liveId: string, names: string[]): Promise<LiveTrimResult> {
+    this.logger.debug(`[LIVE_TRIM] deleting ${names.length} segment(s) of live ${liveId}`);
+    const res = await firstValueFrom(
+      this.http.post<LiveTrimResult>(
+        mediaUrl('media/internal/live-segments-delete'),
+        { liveId, names },
+        { headers: internalHeaders() }
+      )
+    );
+    const body = res.data;
+    if (!Array.isArray(body?.deleted) || !Array.isArray(body.failed)) {
+      // An answer that does not say what went is not a proof: the rows stay, the next pass asks again.
+      throw new Error('the media service answered the live trim without its two lists');
     }
     return body;
   }

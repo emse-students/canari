@@ -2,52 +2,57 @@
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
-  import { slugify } from '$lib/utils/textFold';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
   import { goto } from '$app/navigation';
   import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import {
     ensureAssociationSuperAdmin,
-    listAssociationCategories,
-    createAssociationCategory,
-    updateAssociationCategory,
-    deleteAssociationCategory,
-    reorderAssociationCategories,
     listPosterProjects,
+    listCarteSpaces,
     createPosterProject,
     deletePosterProject,
-    type AssociationCategory,
+    type CarteSpace,
     type PosterProject,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { Map, Plus, Trash2, ChevronUp, ChevronDown, Pencil } from '@lucide/svelte';
+  import { Map, Plus, Trash2, Pencil, Globe } from '@lucide/svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { m } from '$lib/paraglide/messages';
+  import Button from '$lib/components/ui/Button.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
+  import { carteSpaceLabel } from '$lib/carte/spaceLabel';
 
   let ready = $state(false);
   let loading = $state(true);
   let error = $state<string | null>(null);
 
-  // ── Categories ──────────────────────────────────────────────────────────────
-  let categories = $state<AssociationCategory[]>([]);
-  let newCategoryLabel = $state('');
-  let addingCategory = $state(false);
-  const busyCategoryIds = new SvelteSet<string>();
-
-  // ── Poster projects ─────────────────────────────────────────────────────────
+  // ── Poster projects: each map belongs to ONE space (owner, 2026-11-08) ──────
   let projects = $state<PosterProject[]>([]);
+  /** The spaces the caller may draw maps for: its BDE's, or every one for the platform admin. */
+  let spaces = $state<CarteSpace[]>([]);
   let newProjectName = $state('');
+  let newProjectSpaceId = $state('');
   let creatingProject = $state(false);
   const busyProjectIds = new SvelteSet<string>();
+
+  const spaceOptions = $derived<PickerOption[]>(
+    spaces.map((s) => ({ value: s.id, label: carteSpaceLabel(s) }))
+  );
+  /** A map's space as words; a map listed here is one the server let the caller see. */
+  const spaceName = (id: string | null): string => {
+    const space = id ? spaces.find((s) => s.id === id) : undefined;
+    return space ? carteSpaceLabel(space) : m.carte_space_none();
+  };
 
   async function load() {
     loading = true;
     error = null;
     try {
-      [categories, projects] = await Promise.all([
-        listAssociationCategories(),
-        listPosterProjects(),
-      ]);
+      [projects, spaces] = await Promise.all([listPosterProjects(), listCarteSpaces()]);
+      // One space in charge is the usual case: nothing to choose.
+      if (spaces.length === 1) newProjectSpaceId = spaces[0].id;
+      Log.d('admin.carte.load', { projects: projects.length, spaces: spaces.length });
     } catch (e) {
       Log.d('admin.carte.load failed', e);
       error = m.common_load_error();
@@ -56,92 +61,16 @@
     }
   }
 
-  async function handleAddCategory() {
-    const label = newCategoryLabel.trim();
-    const slug = slugify(label);
-    if (!label || !slug || addingCategory) return;
-    addingCategory = true;
-    error = null;
-    try {
-      const created = await createAssociationCategory({
-        label,
-        slug,
-        sortOrder: categories.length,
-      });
-      categories = [...categories, created];
-      newCategoryLabel = '';
-    } catch (e) {
-      Log.d('admin.carte.handleAddCategory failed', e);
-      error = m.common_generic_error_label();
-    } finally {
-      addingCategory = false;
-    }
-  }
-
-  async function handleRenameCategory(cat: AssociationCategory, label: string) {
-    const trimmed = label.trim();
-    if (!trimmed || trimmed === cat.label || busyCategoryIds.has(cat.id)) return;
-    busyCategoryIds.add(cat.id);
-    error = null;
-    try {
-      const updated = await updateAssociationCategory(cat.id, { label: trimmed });
-      categories = categories.map((c) => (c.id === cat.id ? updated : c));
-    } catch (e) {
-      Log.d('admin.carte.handleRenameCategory failed', e);
-      error = m.common_save_error();
-    } finally {
-      busyCategoryIds.delete(cat.id);
-    }
-  }
-
-  async function handleDeleteCategory(cat: AssociationCategory) {
-    if (
-      !(await showConfirm(m.carte_category_delete_confirm({ label: cat.label }), {
-        danger: true,
-        confirmLabel: m.common_remove_label(),
-      }))
-    )
-      return;
-    busyCategoryIds.add(cat.id);
-    error = null;
-    try {
-      await deleteAssociationCategory(cat.id);
-      categories = categories.filter((c) => c.id !== cat.id);
-    } catch (e) {
-      Log.d('admin.carte.handleDeleteCategory failed', e);
-      error = m.common_delete_error();
-    } finally {
-      busyCategoryIds.delete(cat.id);
-    }
-  }
-
-  /** Moves a category up (-1) or down (+1) and persists the new order. */
-  async function handleMoveCategory(index: number, delta: -1 | 1) {
-    const target = index + delta;
-    if (target < 0 || target >= categories.length) return;
-    const reordered = [...categories];
-    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
-    categories = reordered;
-    error = null;
-    try {
-      categories = await reorderAssociationCategories(reordered.map((c) => c.id));
-    } catch (e) {
-      Log.d('admin.carte.handleMoveCategory failed', e);
-      error = m.common_save_error();
-      void load();
-    }
-  }
-
   async function handleCreateProject() {
     const name = newProjectName.trim();
-    if (!name || creatingProject) return;
+    if (!name || !newProjectSpaceId || creatingProject) return;
     creatingProject = true;
     error = null;
     try {
-      const created = await createPosterProject({ name });
+      const created = await createPosterProject({ name, spaceId: newProjectSpaceId });
       projects = [created, ...projects];
       newProjectName = '';
-      void goto(resolve(`/admin/carte/${created.id}`));
+      void goto(resolve(`admin/carte/${created.id}`));
     } catch (e) {
       Log.d('admin.carte.handleCreateProject failed', e);
       error = m.common_generic_error_label();
@@ -181,7 +110,7 @@
   onMount(async () => {
     await ensureAssociationSuperAdmin();
     if (!isGlobalAdmin() && !isAssociationSuperAdmin()) {
-      void goto(resolve('/admin'), { replaceState: true });
+      void goto(resolve('/admin'), { replace: true });
       return;
     }
     ready = true;
@@ -214,87 +143,6 @@
         ></div>
       </div>
     {:else}
-      <!-- Categories -->
-      <section class="space-y-3">
-        <div>
-          <h3 class="text-text-main text-base font-bold">{m.carte_categories_heading()}</h3>
-          <p class="text-text-muted text-sm">{m.carte_categories_subtitle()}</p>
-        </div>
-
-        <form
-          class="flex flex-col gap-2 sm:flex-row"
-          onsubmit={(e) => {
-            e.preventDefault();
-            void handleAddCategory();
-          }}
-        >
-          <input
-            bind:value={newCategoryLabel}
-            placeholder={m.carte_category_label_placeholder()}
-            class="border-cn-border bg-cn-bg/30 text-text-main min-w-0 flex-1 rounded-xl border px-4 py-2.5 text-sm"
-          />
-          <button
-            type="submit"
-            disabled={addingCategory || !newCategoryLabel.trim()}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
-          >
-            <Plus size={16} />
-            {addingCategory ? m.common_saving_label() : m.carte_category_add_button()}
-          </button>
-        </form>
-
-        <div
-          class="border-cn-border divide-cn-border/70 divide-y overflow-hidden rounded-2xl border bg-(--cn-surface)"
-        >
-          {#if categories.length === 0}
-            <p class="text-text-muted px-4 py-8 text-center text-sm">
-              {m.carte_categories_empty()}
-            </p>
-          {:else}
-            {#each categories as cat, index (cat.id)}
-              <div class="flex items-center gap-2 px-3 py-2.5">
-                <div class="flex flex-col">
-                  <button
-                    type="button"
-                    onclick={() => void handleMoveCategory(index, -1)}
-                    disabled={index === 0 || busyCategoryIds.has(cat.id)}
-                    title={m.carte_category_move_up()}
-                    class="text-text-muted hover:text-text-main disabled:opacity-30"
-                  >
-                    <ChevronUp size={16} />
-                  </button>
-                  <button
-                    type="button"
-                    onclick={() => void handleMoveCategory(index, 1)}
-                    disabled={index === categories.length - 1 || busyCategoryIds.has(cat.id)}
-                    title={m.carte_category_move_down()}
-                    class="text-text-muted hover:text-text-main disabled:opacity-30"
-                  >
-                    <ChevronDown size={16} />
-                  </button>
-                </div>
-                <input
-                  value={cat.label}
-                  onblur={(e) => void handleRenameCategory(cat, e.currentTarget.value)}
-                  disabled={busyCategoryIds.has(cat.id)}
-                  class="text-text-main hover:border-cn-border focus:border-cn-border focus:bg-cn-bg/30 min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1.5 text-sm font-semibold focus:outline-none"
-                />
-                <span class="text-text-muted hidden shrink-0 text-xs sm:inline">{cat.slug}</span>
-                <button
-                  type="button"
-                  onclick={() => handleDeleteCategory(cat)}
-                  disabled={busyCategoryIds.has(cat.id)}
-                  title={m.common_remove_label()}
-                  class="ui-icon-button border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 rounded-lg border transition-colors disabled:opacity-50"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            {/each}
-          {/if}
-        </div>
-      </section>
-
       <!-- Poster projects -->
       <section class="space-y-3">
         <div>
@@ -307,27 +155,40 @@
         {#if coarsePointer}
           <p class="text-text-muted text-sm">{m.carte_desktop_only_short()}</p>
         {:else}
-          <form
-            class="flex flex-col gap-2 sm:flex-row"
-            onsubmit={(e) => {
-              e.preventDefault();
-              void handleCreateProject();
-            }}
-          >
-            <input
-              bind:value={newProjectName}
-              placeholder={m.carte_project_name_placeholder()}
-              class="border-cn-border bg-cn-bg/30 text-text-main min-w-0 flex-1 rounded-xl border px-4 py-2.5 text-sm"
-            />
-            <button
-              type="submit"
-              disabled={creatingProject || !newProjectName.trim()}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
+          {#if spaces.length === 0}
+            <p class="text-text-muted text-sm">{m.carte_spaces_none()}</p>
+          {:else}
+            <form
+              class="flex flex-col gap-2 sm:flex-row"
+              onsubmit={(e) => {
+                e.preventDefault();
+                void handleCreateProject();
+              }}
             >
-              <Plus size={16} />
-              {creatingProject ? m.common_saving_label() : m.carte_project_create_button()}
-            </button>
-          </form>
+              <input
+                bind:value={newProjectName}
+                placeholder={m.carte_project_name_placeholder()}
+                class="border-cn-border bg-cn-bg/30 text-text-main min-w-0 flex-1 rounded-xl border px-4 py-2.5 text-sm"
+              />
+              {#if spaces.length > 1}
+                <Picker
+                  value={newProjectSpaceId}
+                  options={spaceOptions}
+                  onValueChange={(v) => (newProjectSpaceId = v)}
+                  label={m.carte_space_pick()}
+                  placeholder={m.carte_space_pick()}
+                  variant="field"
+                />
+              {/if}
+              <Button
+                type="submit"
+                disabled={creatingProject || !newProjectName.trim() || !newProjectSpaceId}
+              >
+                <Plus size={16} />
+                {creatingProject ? m.common_saving_label() : m.carte_project_create_button()}
+              </Button>
+            </form>
+          {/if}
         {/if}
 
         <div
@@ -342,7 +203,11 @@
                   <span class="text-text-main block truncate text-sm font-semibold">
                     {project.name}
                   </span>
-                  <span class="text-text-muted block truncate text-xs">
+                  <span class="text-text-muted flex items-center gap-1.5 truncate text-xs">
+                    {#if project.publishedAt}
+                      <Globe size={12} class="text-green-600 dark:text-green-400" />
+                    {/if}
+                    {spaceName(project.spaceId)} -
                     {m.carte_project_updated_at({
                       date: new Date(project.updatedAt).toLocaleDateString(),
                     })}
@@ -350,7 +215,7 @@
                 </div>
                 <div class="flex shrink-0 items-center gap-2">
                   <a
-                    href={resolve(`/admin/carte/${project.id}`)}
+                    href={resolve(`admin/carte/${project.id}`)}
                     class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-semibold"
                   >
                     <Pencil size={14} />

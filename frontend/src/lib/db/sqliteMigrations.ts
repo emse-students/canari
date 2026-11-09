@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 18;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -86,4 +86,134 @@ export function conversationAwaitingAdmissionStatement(columns: readonly string[
   return columns.includes('awaiting_admission')
     ? null
     : 'ALTER TABLE conversations ADD COLUMN awaiting_admission INTEGER';
+}
+
+/**
+ * The v15 -> v16 step, second half: the message row gains `order_at`, the key a page is read on
+ * (`storedOrderAt`), and `order_pending`, set while that key is only PROVISIONAL. The server time the
+ * key is derived from is inside the ciphertext, which a migration run before the device key is known
+ * cannot read, so the rows already stored are keyed on their `timestamp` and flagged
+ * ({@link MESSAGE_PROVISIONAL_ORDER_FILL}); a page read derives the real key behind it
+ * (`$lib/db/orderKeyDerivation`). Only the columns the file lacks are added.
+ */
+export function messageOrderColumnsStatements(columns: readonly string[]): string[] {
+  return [
+    ...(columns.includes('order_at') ? [] : ['ALTER TABLE messages ADD COLUMN order_at INTEGER']),
+    ...(columns.includes('order_pending')
+      ? []
+      : ['ALTER TABLE messages ADD COLUMN order_pending INTEGER']),
+  ];
+}
+
+/**
+ * Keys every row the v16 step finds unkeyed on its `timestamp`, PROVISIONALLY: one statement, no
+ * decryption, so the step costs the same whatever the store holds, and every row is in the page
+ * index from the first read on.
+ */
+export const MESSAGE_PROVISIONAL_ORDER_FILL =
+  'UPDATE messages SET order_at = timestamp, order_pending = 1 WHERE order_at IS NULL';
+
+/**
+ * The page read's index (`getMessagesPage`) on the order key, ties broken by id - the pair a page
+ * boundary is drawn on. Created where the columns are known to exist - the fresh schema and the v16
+ * step - never with the unconditional statements that run before the migrations.
+ */
+export const MESSAGE_ORDER_INDEX_STATEMENT =
+  'CREATE INDEX IF NOT EXISTS idx_messages_conv_order ON messages(conversation_id, order_at, id)';
+
+/**
+ * The rows with NO order key at all - PARTIAL, so it is empty in the ordinary case. Only a build older
+ * than v16 writes one: it can still open this file (it runs no migration above its own version) and
+ * its insert names no `order_at`. Every open of a v16 file re-keys them provisionally through this
+ * index ({@link MESSAGE_PROVISIONAL_ORDER_FILL}), so a downgrade and an upgrade back cannot leave a
+ * row that no page reaches (legacy-compatibility.md, "a downgrade below the server-time order").
+ */
+export const MESSAGE_ORDER_MISSING_INDEX_STATEMENT =
+  'CREATE INDEX IF NOT EXISTS idx_messages_order_missing ON messages(id) WHERE order_at IS NULL';
+
+/**
+ * The provisional rows of each conversation, by id - what a derivation reads, chunk after chunk.
+ * PARTIAL: it holds the pending rows only, so it is empty once a store is derived and costs nothing
+ * on a save.
+ */
+export const MESSAGE_ORDER_PENDING_INDEX_STATEMENT =
+  'CREATE INDEX IF NOT EXISTS idx_messages_order_pending ON messages(conversation_id, id) WHERE order_pending = 1';
+
+/** The `[conversation_id, timestamp]` index the page read used before v16; nothing reads it since. */
+export const LEGACY_MESSAGE_TIME_INDEX_DROP = 'DROP INDEX IF EXISTS idx_messages_conv_time';
+
+/**
+ * The v15 -> v16 step: the conversation row gains `server_read_watermarks`, the read marks taken on
+ * the SERVER's clock (`$lib/utils/chat/readState`, owner 2026-10-31). Additive and NULL on arrival:
+ * the stamped marks already held keep covering what they covered, and the next reading writes the
+ * first server mark.
+ */
+export function conversationServerReadWatermarksStatement(
+  columns: readonly string[]
+): string | null {
+  return columns.includes('server_read_watermarks')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN server_read_watermarks TEXT';
+}
+
+/**
+ * The v16 -> v17 step: the conversation row gains `started_at`, the server's record of the group's
+ * creation (`ConversationMeta.startedAt`). It was declared as persisted and was not on this backend:
+ * IndexedDB stores the whole object, SQLite only its named columns, so a phone forgot it on every
+ * reload until the next group sweep. History reconciliation reads it to tell a coverage shortfall
+ * that predates the group from a real one. NULL on arrival, which reads as unknown - the next sweep
+ * fills it (`recordGroupStart`). Returns `null` when the column is there, so the step is a no-op twice.
+ *
+ * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
+ */
+export function conversationStartedAtStatement(columns: readonly string[]): string | null {
+  return columns.includes('started_at')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN started_at INTEGER';
+}
+
+/**
+ * The v17 -> v18 table: mutations whose message is not here yet (`PendingMutation`). Created by
+ * every open, fresh or not, like `feed_pages`. Keyed by TAGS of the message, the sender and the slot
+ * (`pendingMutationCodec.ts`) plus the kind, so one sender's later frame of the same kind REPLACES its
+ * earlier one by `rank`, in the upsert itself - and nothing at rest names who reacted to what. No
+ * foreign key to `conversations`: an entry may be written before the conversation row reaches the
+ * store, and it names the conversation only to be cleared with it.
+ */
+export const PENDING_MUTATIONS_TABLE_STATEMENT = `
+            CREATE TABLE IF NOT EXISTS pending_mutations (
+                conversation_id TEXT    NOT NULL,
+                message_tag     TEXT    NOT NULL,
+                sender_tag      TEXT    NOT NULL,
+                kind            TEXT    NOT NULL,
+                slot_tag        TEXT    NOT NULL,
+                tier            INTEGER NOT NULL,
+                rank            INTEGER NOT NULL,
+                at              INTEGER NOT NULL,
+                iv              TEXT,
+                cipher_text     TEXT,
+                PRIMARY KEY (conversation_id, message_tag, sender_tag, kind, slot_tag)
+            )
+        `;
+
+/**
+ * The eviction order of `pending_mutations` within one sender: reactions before deletions and
+ * edits, oldest frame first - IndexedDB's `bySenderTierAt`. A read by message is a prefix of the
+ * primary key and needs no index of its own.
+ */
+export const PENDING_MUTATIONS_ORDER_INDEX_STATEMENT =
+  'CREATE INDEX IF NOT EXISTS idx_pending_mutations_sender_tier_at ON pending_mutations(conversation_id, sender_tag, tier, at)';
+
+/**
+ * The v18 column of `messages`: `rev`, the row's revision, raised by EVERY write - the compare half
+ * of the compare-and-set every rewrite goes through (`messageCas.ts`). An existing row starts at 0.
+ * Returns `null` when the column is there (a fresh file has it from `CREATE TABLE`), so the step is a
+ * no-op twice.
+ *
+ * @param columns Column names of the `messages` table, from `PRAGMA table_info(messages)`.
+ */
+export function messageRevisionStatement(columns: readonly string[]): string | null {
+  return columns.includes('rev')
+    ? null
+    : 'ALTER TABLE messages ADD COLUMN rev INTEGER NOT NULL DEFAULT 0';
 }

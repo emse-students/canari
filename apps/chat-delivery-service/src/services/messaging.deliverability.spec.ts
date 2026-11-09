@@ -18,6 +18,8 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { SeatEviction } from '../entities/seat-eviction.entity';
+import { JoinAskPush } from '../entities/join-ask-push.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 
 /**
@@ -104,7 +106,7 @@ describe('MessagingService - a tombstone is not a destination', () => {
     keys: jest.fn().mockResolvedValue([]),
   };
 
-  const fetch = () => service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+  const fetch = () => service.fetchMessages('u1', 'd1', 'u1', 500, undefined);
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -239,6 +241,8 @@ describe('MessagingService - a tombstone is not a destination', () => {
       GroupInvite,
       GroupMembershipInterval,
       SeatEviction,
+      JoinAskPush,
+      RevokedDeviceGroup,
       UserDismissedGroup,
     ]);
     expect(warnings.some((w) => w.includes('absent from dm_groups'))).toBe(true);
@@ -267,7 +271,7 @@ describe('MessagingService - a tombstone is not a destination', () => {
     // costs a Redis round-trip per request, per group, for ever.
     groups['g-dead'] = { id: 'g-dead', deletedAt: new Date(BASE) };
 
-    const out = await service.getHistory('g-dead', undefined, 'u1', 'true');
+    const out = await service.getHistory('g-dead', undefined, 'u1');
 
     expect(out).toEqual({ rows: [] });
     expect(redis.xrange).not.toHaveBeenCalled();

@@ -22,6 +22,7 @@
     MessageCircle,
     MessageCircleOff,
     Radio,
+    Share2,
     Volume2,
     VolumeX,
     X,
@@ -41,6 +42,7 @@
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { LivePlayer, type LivePlayerDeps, type LiveVideoLike } from '$lib/live/livePlayer';
   import { fetchLiveLimits } from '$lib/live/api';
+  import { shareLiveLink } from '$lib/live/shareLive';
   import {
     LiveChatSession,
     type LiveChatDeps,
@@ -48,8 +50,7 @@
     type LiveChatSendFailure,
   } from '$lib/live/liveChat';
   import { currentUserId } from '$lib/stores/userState.svelte';
-  import { isContentModerator, isGlobalAdmin } from '$lib/stores/user';
-  import { ensureContentModerator } from '$lib/associations/api';
+  import { isGlobalAdmin } from '$lib/stores/user';
   import { formatLiveElapsed } from '$lib/live/openLives';
   import { isTerminalLiveState, type LiveViewerState } from '$lib/live/liveViewerState';
   import type { LiveListItem } from '$lib/live/types';
@@ -64,18 +65,9 @@
     chatDeps?: Partial<LiveChatDeps>;
     /** Replaces the limits fetch - for tests. */
     fetchLimits?: typeof fetchLiveLimits;
-    /** Replaces the content-moderator probe - for tests. */
-    probeModerator?: typeof ensureContentModerator;
   }
 
-  let {
-    live,
-    onClose,
-    deps,
-    chatDeps,
-    fetchLimits = fetchLiveLimits,
-    probeModerator = ensureContentModerator,
-  }: Props = $props();
+  let { live, onClose, deps, chatDeps, fetchLimits = fetchLiveLimits }: Props = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
   /** The final screen's one button (retry or back), focused when that screen appears. */
@@ -96,12 +88,19 @@
   // The key from the player, and the account READ REACTIVELY: an account that loads after the viewer
   // opened enables the composer then, not never.
   let chatKeyed = $state(false);
-  const chatCanWrite = $derived(chatKeyed && currentUserId() !== null);
+  /**
+   * The server withholds the chat from this named reader (owner, 2026-11-04): the session says. The
+   * comments rule exactly (lead, 2026-11-04): no chat area, no toggle, no line explaining it.
+   */
+  let chatWithheld = $state(false);
+  const chatCanWrite = $derived(chatKeyed && !chatWithheld && currentUserId() !== null);
   let chatOpen = $state(true);
-  // STAFF HIDE (C14): the server opens the hide route to the broadcaster and to the content
-  // moderators; a viewer screen shows the button to the same tier the moderation page opens to (a
-  // platform admin, or `ensureContentModerator`), read reactively - the probe answers after mount.
-  const chatCanModerate = $derived(isGlobalAdmin() || isContentModerator());
+  // STAFF HIDE (C14): the server opens the hide route to the broadcaster and to the moderators of
+  // THIS live - a platform admin, read reactively, or a BDE whose spaces hold it.
+  // A BDE moderator is SCOPED (2026-11-02): the server says per live whether its governed spaces hold
+  // it (`viewerModerates`, on the list AND on `GET /lives/:id`). Absent means no button: falling back
+  // to the door would draw a control the server refuses.
+  const chatCanModerate = $derived(isGlobalAdmin() || live.viewerModerates === true);
   let reactions = $state<LiveReactionsLayer | null>(null);
 
   const overlay = bindHistoryOverlay(
@@ -130,6 +129,9 @@
       },
       get seeking() {
         return el.seeking;
+      },
+      get readyState() {
+        return el.readyState;
       },
       async play() {
         try {
@@ -176,15 +178,14 @@
         chatLines = lines;
       },
       onFloat: (kind, count) => reactions?.add(kind, count),
+      onWithheld: (withheld) => {
+        chatWithheld = withheld;
+      },
       // A write answered "the live is over" shows the screen the player's own poll would have shown.
       onLiveOver: (verdict) => player?.refusedElsewhere(verdict),
       deps: chatDeps,
     });
     chat = session;
-    probeModerator().catch((e: unknown) => {
-      // No answer: no hide button for staff here; the moderation page still reaches the message.
-      console.warn(`[LIVE_CHAT] the moderator probe failed (${String(e)})`);
-    });
     fetchLimits().then(
       (limits) => {
         session.setLimits(limits);
@@ -208,8 +209,8 @@
         viewers = count;
       },
       chat: {
-        onKey: (key) => {
-          session.onKey(key);
+        onKey: (key, opened) => {
+          session.onKey(key, opened);
           chatKeyed = session.keyed;
         },
         query: () => session.query(),
@@ -300,33 +301,28 @@
     <div
       class="absolute inset-x-0 top-0 flex items-center gap-2 bg-linear-to-b from-black/60 to-transparent p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
     >
-      <button
-        bind:this={closeButton}
-        type="button"
-        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
-        aria-label={m.live_viewer_close()}
-        title={m.live_viewer_close()}
-        onclick={() => overlay.dismissFromUi()}
-        data-live-close
-      >
-        <X size={24} strokeWidth={2.5} />
-      </button>
-      <span class="min-w-0 flex-1 text-sm">
+      <!-- Instagram Live's corner: who, then LIVE, the time and the audience; the controls and the
+           close X at the right. -->
+      <span class="flex min-w-0 flex-1 flex-col items-stretch gap-1 text-sm">
         <LiveIdentity {live} size="sm" onName={(n) => (name = n)} />
-      </span>
-      <LiveBadge />
-      {#if elapsedMs !== null}
-        <span
-          class="rounded-full bg-black/40 px-2 py-0.5 text-xs tabular-nums"
-          aria-label={m.live_viewer_elapsed({ time: formatLiveElapsed(elapsedMs) })}
-          data-live-elapsed
-        >
-          {formatLiveElapsed(elapsedMs)}
+        <span class="flex items-center gap-1.5">
+          {#if viewerState.kind !== 'ended'}
+            <LiveBadge />
+          {/if}
+          {#if elapsedMs !== null}
+            <span
+              class="rounded-full bg-black/40 px-2 py-0.5 text-xs tabular-nums"
+              aria-label={m.live_viewer_elapsed({ time: formatLiveElapsed(elapsedMs) })}
+              data-live-elapsed
+            >
+              {formatLiveElapsed(elapsedMs)}
+            </span>
+          {/if}
+          {#if !terminal}
+            <LiveViewerCount count={viewers} />
+          {/if}
         </span>
-      {/if}
-      {#if !terminal}
-        <LiveViewerCount count={viewers} />
-      {/if}
+      </span>
       <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
       <button
         type="button"
@@ -343,20 +339,46 @@
           <Volume2 size={22} />
         {/if}
       </button>
+      <!-- Withheld: no toggle either - a button that shows and hides nothing is a dead control. -->
+      {#if !chatWithheld}
+        <button
+          type="button"
+          class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-cn-yellow rounded-full outline-none focus-visible:ring-2"
+          aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+          title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+          aria-pressed={chatOpen}
+          onclick={() => (chatOpen = !chatOpen)}
+          data-live-chat-toggle
+        >
+          {#if chatOpen}
+            <MessageCircle size={22} />
+          {:else}
+            <MessageCircleOff size={22} />
+          {/if}
+        </button>
+      {/if}
+      {#if !terminal}
+        <button
+          type="button"
+          class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+          aria-label={m.live_share_label()}
+          title={m.live_share_label()}
+          onclick={() => shareLiveLink(live.id)}
+          data-live-share
+        >
+          <Share2 size={22} />
+        </button>
+      {/if}
       <button
+        bind:this={closeButton}
         type="button"
-        class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-cn-yellow rounded-full outline-none focus-visible:ring-2"
-        aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
-        title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
-        aria-pressed={chatOpen}
-        onclick={() => (chatOpen = !chatOpen)}
-        data-live-chat-toggle
+        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        aria-label={m.live_viewer_close()}
+        title={m.live_viewer_close()}
+        onclick={() => overlay.dismissFromUi()}
+        data-live-close
       >
-        {#if chatOpen}
-          <MessageCircle size={22} />
-        {:else}
-          <MessageCircleOff size={22} />
-        {/if}
+        <X size={24} strokeWidth={2.5} />
       </button>
     </div>
 
@@ -370,15 +392,16 @@
 
     {#if !terminal}
       <div
-        class="from-cn-scrim/60 pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-linear-to-t to-transparent p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
+        class="from-cn-scrim/60 via-cn-scrim/30 pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-linear-to-t to-transparent p-3 pt-24 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
       >
         <div class="min-w-0 flex-1">
-          {#if chatOpen}
+          {#if chatOpen && !chatWithheld}
             <LiveChatPanel
               lines={chatLines}
               canWrite={chatCanWrite}
               maxChars={chatMaxChars}
               canModerate={chatCanModerate}
+              hostId={live.broadcasterId}
               send={sendChat}
               retry={(id) => void chat?.retry(id)}
               discard={(id) => chat?.discard(id)}

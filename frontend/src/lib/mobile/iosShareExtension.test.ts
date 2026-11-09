@@ -127,6 +127,84 @@ describe('the names the extension, the app and Android share', () => {
     );
   });
 
+  it('writes a waiting share locked with the device: the folder, every copy, the manifest', () => {
+    // `CompleteUnlessOpen`: a closed file is unreadable while the phone is locked, and a capture the
+    // lock interrupts can still finish (sharing.md, "At rest"). Never plain `Complete` here.
+    expect(swiftCapture).toMatch(
+      /static let lockedAtRest: \[FileAttributeKey: Any\] = \[\.protectionKey: FileProtectionType\.completeUnlessOpen\]/
+    );
+    expect(swiftCapture).toMatch(
+      /createDirectory\(\s*at: dir, [^)]*attributes: ShareCapture\.lockedAtRest\)/
+    );
+    expect(swiftCapture).toMatch(
+      /createFile\(\s*atPath: target\.path, [^)]*attributes: ShareCapture\.lockedAtRest\)/
+    );
+    expect(swiftCapture).toMatch(
+      /data\.write\(to: staging, options: \[\.completeFileProtectionUnlessOpen\]\)/
+    );
+    expect(swiftCapture).not.toMatch(/FileProtectionType\.complete\b(?!UnlessOpen)/);
+    expect(swiftCapture).not.toMatch(/\.completeFileProtection\b(?!UnlessOpen)/);
+  });
+
+  it('puts a locked waiting manifest back, classified by domain and code, never deleted', () => {
+    const claimBody = swiftCapture.slice(
+      swiftCapture.indexOf('private func claimPending('),
+      swiftCapture.indexOf('private func deleteClaim(')
+    );
+    // The put-back comes before any delete, and refuses to overwrite what landed meanwhile.
+    expect(claimBody).toContain('if ShareCapture.isLockedRead(error) {');
+    expect(claimBody).toContain('renamex_np(claimed.path, pending, UInt32(RENAME_EXCL))');
+    expect(claimBody.indexOf('return .locked')).toBeLessThan(claimBody.indexOf('deleteClaim('));
+    const locked = swiftCapture.slice(
+      swiftCapture.indexOf('static func isLockedRead('),
+      swiftCapture.indexOf('private func writePending(')
+    );
+    expect(locked).toContain('NSPOSIXErrorDomain');
+    expect(locked).toContain('Int(EPERM)');
+    expect(locked).toContain('NSUnderlyingErrorKey');
+    expect(locked).not.toMatch(/localizedDescription|\.description/);
+    // The Rust side reads the same code, and puts back the same way (handoff.rs).
+    const handoff = read(resolve(TAURI, 'src/commands/handoff.rs'));
+    expect(handoff).toContain('const EPERM: i32 = 1;');
+    expect(handoff).toContain('libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL)');
+  });
+
+  it('asks UIKit about the lock only where the application object exists', () => {
+    const ios = read(resolve(APPLE, 'Sources/canari/canari_ios.mm'));
+    // The bootstrap runs before `ffi::start_app()` creates the application object: a question put
+    // to it there answers NO on every launch, and skipped the sweep on every cold start.
+    const bootstrap = ios.slice(
+      ios.indexOf('void canari_ios_bootstrap(void) {'),
+      ios.indexOf('bool canari_ios_is_in_foreground(void)')
+    );
+    expect(bootstrap).not.toContain('isProtectedDataAvailable');
+    expect(bootstrap).toContain('CanariImportAppGroupShare(@"launch")');
+    const importBody = ios.slice(
+      ios.indexOf('static BOOL CanariImportAppGroupShare('),
+      ios.indexOf('static void CanariImportAppGroupShareIfUnlocked(')
+    );
+    expect(importBody).not.toContain('isProtectedDataAvailable');
+    expect(ios.match(/isProtectedDataAvailable/g)?.length).toBe(1);
+    expect(ios).toContain('CanariImportAppGroupShareIfUnlocked(@"activation")');
+    expect(ios).toContain('CanariImportAppGroupShareIfUnlocked(@"share ready")');
+    // The unlock imports, and offers a share a locked drain left in the app data (no timer).
+    expect(bootstrap).toMatch(
+      /addObserverForName:UIApplicationProtectedDataDidBecomeAvailable\s[^}]*CanariOnProtectedDataAvailable\(\)/
+    );
+    const unlockStart = ios.indexOf('static void CanariOnProtectedDataAvailable(void) {');
+    const unlock = ios.slice(unlockStart, ios.indexOf('\n}\n', unlockStart));
+    expect(unlock).toContain('CanariShareManifestWaits(CanariTauriDataDir())');
+    expect(unlock).toContain('CanariTellPageOfShare(@"unlock")');
+    // The manifest the native side stats is the one Rust writes.
+    const header = read(resolve(APPLE, 'Sources/canari/canari_rust_bridge.h'));
+    expect(capture(header, /#define CANARI_SHARE_PENDING_FILE "([^"]+)"/)).toBe(
+      capture(
+        read(resolve(TAURI, 'src/commands/handoff.rs')),
+        /PENDING_SHARE_FILE: &str = "([^"]+)"/
+      )
+    );
+  });
+
   it('answers the native side in codes both sides read the same way', () => {
     // The launch import and sweep run before the Rust logger exists: their codes ARE the log.
     const header = read(resolve(APPLE, 'Sources/canari/canari_rust_bridge.h'));
@@ -138,14 +216,32 @@ describe('the names the extension, the app and Android share', () => {
       const shift = /^1u? << (\d+)$/.exec(expr.trim());
       return shift ? 1 << Number(shift[1]) : Number(expr.trim());
     };
-    const imports = ['IMPORTED', 'NOTHING', 'BUSY', 'DROPPED', 'NO_DIRS', 'NO_GROUP', 'FAILED'];
+    const imports = [
+      'IMPORTED',
+      'NOTHING',
+      'BUSY',
+      'DROPPED',
+      'PROTECTED',
+      'DROPPED_OVER_LOCKED',
+      'NO_DIRS',
+      'NO_GROUP',
+      'FAILED',
+    ];
+    // Every code is said by its own case: at launch that line is the only logger.
+    const ios = read(resolve(APPLE, 'Sources/canari/canari_ios.mm'));
     for (const name of imports) {
       expect(asNumber(headerDefine(`IMPORT_${name}`)), name).toBe(
         asNumber(rustConst(`IMPORT_${name}`))
       );
+      expect(ios, name).toContain(`case CANARI_SHARE_IMPORT_${name}:`);
     }
+    expect([...rustGroup.matchAll(/const IMPORT_(\w+): i32/g)].map((m) => m[1]).sort()).toEqual(
+      [...imports].sort()
+    );
+    // A drop over a locked share is a loss, said at ERROR.
+    expect(ios).toMatch(/case CANARI_SHARE_IMPORT_DROPPED_OVER_LOCKED:[^;]*ERROR/);
     const sweeps = [...rustGroup.matchAll(/const SWEEP_(\w+): u32/g)].map((m) => m[1]);
-    expect(sweeps.length).toBe(9);
+    expect(sweeps.length).toBe(12);
     for (const name of sweeps) {
       expect(asNumber(headerDefine(`SWEEP_${name}`)), name).toBe(
         asNumber(rustConst(`SWEEP_${name}`))
@@ -168,22 +264,35 @@ describe('the names the extension, the app and Android share', () => {
 
   it('sweeps exactly the leftover names the two writers can leave', () => {
     const pendingFile = capture(swiftCapture, /static let pendingFile = "([^"]+)"/);
-    const leftovers = [
-      ...capture(rustGroup, /GROUP_LEFTOVERS: \[&str; \d+\] = \[([^\]]+)\]/).matchAll(/"([^"]+)"/g),
-    ]
-      .map((m) => m[1])
-      .sort();
-    expect(leftovers).toEqual(
+    const names = (constant: string) =>
       [
+        ...capture(
+          rustGroup,
+          new RegExp(`${constant}: \\[&str; \\d+\\] = \\[([^\\]]+)\\]`)
+        ).matchAll(/"([^"]+)"/g),
+      ]
+        .map((m) => m[1])
+        .sort();
+    // A claim holds a whole share: put back, or deleted as lost - said either way.
+    expect(names('CLAIM_LEFTOVERS')).toEqual(
+      [
+        `${pendingFile}.draining`, // the page's drain (handoff::take_handoff)
         `${pendingFile}.importing`, // the app's claim (import_group_share)
-        `${pendingFile}.replacing`, // the extension's claim, and the app's sweep claim
+        `${pendingFile}.replacing`, // the extension's claim, and the app's hand-over and sweep claims
+      ].sort()
+    );
+    expect(names('STAGING_LEFTOVERS')).toEqual(
+      [
         `${pendingFile}.tmp`, // either side's manifest write
         `${capture(swiftCapture, /static let epochFile = "([^"]+)"/)}.tmp`, // the epoch copy's write
       ].sort()
     );
     expect(swiftCapture).toContain('ShareCapture.pendingFile + ".replacing"');
     expect(swiftCapture).toContain('ShareCapture.pendingFile + ".tmp"');
-    expect(rustGroup).toContain('claim(group, PENDING_SHARE_FILE, "importing")');
+    expect(rustGroup).toContain('claim(group, PENDING_SHARE_FILE, "importing", read)');
+    expect(read(resolve(TAURI, 'src/commands/handoff.rs'))).toContain(
+      'claim_and_read(dir, name, "draining", read_handoff)'
+    );
   });
 
   it('tells the app a share is ready only once the lock is released, under an expiring activity', () => {
@@ -288,6 +397,126 @@ describe('the extension bundle', () => {
       [...swiftController.matchAll(/NSLocalizedString\("([^"]+)"/g)].map((m) => m[1])
     );
     expect([...asked].sort()).toEqual(fr);
+  });
+});
+
+describe('the conversation suggestions (lot S5, the iOS twin of Android sharing shortcuts)', () => {
+  const PLUGIN = resolve(TAURI, 'plugins/tauri-plugin-gallery');
+  const suggestions = read(resolve(PLUGIN, 'ios/Sources/ShareSuggestions.swift'));
+  const plugin = read(resolve(PLUGIN, 'ios/Sources/GalleryPlugin.swift'));
+  const mobileRs = read(resolve(PLUGIN, 'src/mobile.rs'));
+  const commandsRs = read(resolve(PLUGIN, 'src/commands.rs'));
+  const kotlinTargets = read(resolve(PLUGIN, 'android/src/main/java/ShareTargets.kt'));
+  const native = read(resolve(here, '../sharing/shareTargetsNative.ts'));
+
+  it('declares INSendMessageIntent among the extension attributes, or the sheet offers none', () => {
+    const info = withoutXmlComments(read(resolve(SHARE, 'Info.plist')));
+    const attributes = capture(
+      info,
+      /<key>NSExtensionAttributes<\/key>\s*<dict>([\s\S]*)<\/dict>\s*<key>NSExtensionPointIdentifier/
+    );
+    expect(attributes).toMatch(
+      /<key>IntentsSupported<\/key>\s*<array>\s*<string>INSendMessageIntent<\/string>\s*<\/array>/
+    );
+  });
+
+  it('the app declares INSendMessageIntent in NSUserActivityTypes, or every donation is refused (1901)', () => {
+    const info = withoutXmlComments(read(resolve(APPLE, 'canari_iOS/Info.plist')));
+    expect(info).toMatch(
+      /<key>NSUserActivityTypes<\/key>\s*<array>\s*<string>INSendMessageIntent<\/string>\s*<\/array>/
+    );
+  });
+
+  it('donates one outgoing INSendMessageIntent per target, in its own group', () => {
+    expect(suggestions).toContain('import Intents');
+    expect(suggestions).toMatch(/INSendMessageIntent\(\s*recipients: nil,/);
+    expect(suggestions).toContain('conversationIdentifier: target.id,');
+    expect(suggestions).toContain(
+      'speakableGroupName: INSpeakableString(spokenPhrase: target.label)'
+    );
+    expect(suggestions).toContain('interaction.groupIdentifier = groupIdentifier');
+    expect(suggestions).toContain('interaction.direction = .outgoing');
+    expect(suggestions).toContain('interaction.donate {');
+    expect(capture(suggestions, /static let groupIdentifier = "([^"]+)"/)).toBe(
+      'fr.emse.canari.share-suggestions'
+    );
+  });
+
+  it('deletes by its own group identifier - before every publish and at every clear', () => {
+    // ONE delete, the group's: never `deleteAll`, which would take what the system learned of the
+    // app beyond the suggestions.
+    expect(suggestions).not.toContain('deleteAll');
+    expect(suggestions.match(/INInteraction\.delete\(with: groupIdentifier\b/g)?.length).toBe(1);
+    const publish = capture(
+      suggestions,
+      /static func publish\(([\s\S]*?)\n {2}\/\/\/ Deletes every/
+    );
+    expect(publish.indexOf('deleteGroup()')).toBeGreaterThan(-1);
+    expect(publish.indexOf('deleteGroup()')).toBeLessThan(publish.indexOf('donate(target)'));
+    // A failed delete donates nothing: the old account's suggestions must not stay beside these.
+    expect(publish).toMatch(
+      /if let code = deleteGroup\(\) \{[\s\S]*?done\(\.failure[\s\S]*?return\s*\}/
+    );
+    const clear = capture(
+      suggestions,
+      /static func clear\(([\s\S]*?)\n {2}\/\/\/ Deletes the donation group/
+    );
+    expect(clear).toContain('deleteGroup()');
+  });
+
+  it('validates a target with the bounds Android and the page use', () => {
+    expect(capture(suggestions, /static let idPrefix = "([^"]+)"/)).toBe(
+      capture(kotlinTargets, /ID_PREFIX = "([^"]+)"/)
+    );
+    expect(capture(suggestions, /static let maxIdLength = (\d+)/)).toBe(
+      capture(kotlinTargets, /MAX_ID_LENGTH = (\d+)/)
+    );
+    expect(capture(suggestions, /static let maxLabelLength = (\d+)/)).toBe(
+      capture(kotlinTargets, /MAX_LABEL_LENGTH = (\d+)/)
+    );
+    expect(capture(suggestions, /static let maxIdLength = (\d+)/)).toBe(
+      capture(native, /MAX_SHARE_TARGET_ID_LENGTH = (\d+)/)
+    );
+  });
+
+  it('answers the commands the Rust side runs on iOS, which it no longer refuses there', () => {
+    for (const name of ['publishShareTargets', 'clearShareTargets']) {
+      expect(mobileRs).toContain(`"${name}"`);
+      expect(plugin).toContain(`@objc public func ${name}(_ invoke: Invoke)`);
+    }
+    expect(plugin).toContain(
+      'invoke.resolve(["present": published.present, "leftover": published.leftover])'
+    );
+    expect(plugin).toContain('invoke.resolve(["removed": removed])');
+    const publish = capture(commandsRs, /(fn publish_share_targets[\s\S]*?\n\})/);
+    const clear = capture(commandsRs, /(fn clear_share_targets[\s\S]*?\n\})/);
+    for (const body of [publish, clear]) {
+      expect(body).toContain('#[cfg(mobile)]');
+      expect(body).not.toContain('AndroidOnly');
+    }
+  });
+
+  it('carries the picked suggestion into the manifest as Android does', () => {
+    expect(swiftController).toContain('import Intents');
+    expect(swiftController).toContain('extensionContext?.intent as? INSendMessageIntent');
+    expect(swiftController).toContain('ShareRules.suggestedTarget(intent.conversationIdentifier)');
+    expect(swiftController).toContain('ShareCapture().run(items: items, target: target)');
+    expect(swiftCapture).toContain('outcome = self.captureLocked(items: items, target: target)');
+    // Android's key, which the Rust import carries through and `sharedInbox.ts` reads.
+    expect(kotlinShare).toContain('payload.put("target", target)');
+    expect(swiftCapture).toContain('payload["target"] = target');
+    // The same shape and bound as Android's `suggestedTarget`.
+    expect(kotlinShare).toContain('id.startsWith("c:") && id.length in 3..200');
+    expect(swiftRules).toContain('id.hasPrefix("c:") && (3...200).contains(id.count)');
+  });
+
+  it('erases the suggestions at sign-out on iOS too, and no conversation shortcut it never had', () => {
+    const erase = capture(native, /(export function eraseAccountShortcuts[\s\S]*?\n\})/);
+    expect(erase).toContain('if (!isMobileTauriRuntime()) return Promise.resolve();');
+    expect(erase).toContain('clearShareTargets(reason, { force: true })');
+    expect(erase).toContain('if (!isAndroidTauriRuntime()) return suggestions;');
+    const auth = read(resolve(here, '../stores/auth.ts'));
+    expect(auth).toContain("eraseAccountShortcuts('signed out')");
   });
 });
 
@@ -485,6 +714,23 @@ describe('the pbxproj builds, embeds and signs the extension', () => {
     const deps = ids(app.target.dependencies).map((d) => obj(d).target);
     expect(deps).toContain(share.id);
     expect(ids(obj(project.rootObject).targets)).toContain(share.id);
+  });
+
+  it('links Intents into the app (the donations) and the extension (the picked intent)', () => {
+    const frameworksOf = (name: string) => {
+      const phases = ids(nativeTarget(name).target.buildPhases)
+        .map(obj)
+        .filter((p) => p.isa === 'PBXFrameworksBuildPhase');
+      expect(phases.length, name).toBe(1);
+      // A Swift package product (Firebase) is a `productRef`, not a file: only files are read.
+      return ids(phases[0].files)
+        .map(obj)
+        .filter((b) => b.fileRef !== undefined)
+        .map((b) => obj(b.fileRef).path as string);
+    };
+    for (const name of ['canari_iOS', 'CanariShare']) {
+      expect(frameworksOf(name), name).toContain('System/Library/Frameworks/Intents.framework');
+    }
   });
 
   it('compiles every Swift file of canari_Share', () => {

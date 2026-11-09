@@ -2,14 +2,16 @@ import { ConflictException, ForbiddenException, Logger } from '@nestjs/common';
 import { RefusalCode, refusalBody } from './refusal-codes';
 import { In, IsNull, Not, type EntityManager, type Repository } from 'typeorm';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
-import { GroupMember } from '../entities/group-member.entity';
+import { GroupMember, isGroupUuid } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { Group } from '../entities/group.entity';
+import { canonicalUserId } from './sanitize';
 import { RepeatCounter, cutUserId } from './log-repeat';
 import {
   bumpSeatGeneration,
   heldKeyPackages,
+  takeSeatLock,
   takeSharedSeatLock,
   withSeatLock,
 } from './seat-eviction';
@@ -49,7 +51,10 @@ const logger = new Logger('GroupMembership');
  * the clock `sendMessage` stamps `queued_message.createdAt` with - the server time a window is
  * compared against. The database's `now()` is a different clock; the two agree only by accident.
  * Every column is `timestamp WITHOUT time zone`, so the stated invariant is that this container
- * runs in UTC (measured on production 2026-10-14, as is Postgres) - see history-reconciliation.
+ * runs in UTC (measured on production 2026-10-14, as is Postgres) - see history-reconciliation. It
+ * is ASSERTED at every boot, at ERROR, by `checkDatabaseClockAgreement` (`utils/clock-agreement.ts`):
+ * this function, which compares a `new Date()` against a `now()`-dated device row, is the other
+ * instance it guards.
  *
  * **AND IT RECORDS AN ADMISSION THAT PRECEDED IT** (review of #2226). When a device row of this
  * person in this group is older than the enrolment - a commit admitted an invitee who came online
@@ -137,9 +142,17 @@ export async function ensureGroupMember(
 /**
  * What {@link writePendingSeats} did: the seats written, or why none was. `not_admitted` only for a
  * caller that asked for an admitted seat (`requireAdmitted`): the roster row awaits a member's
- * admission.
+ * admission. `roster_taken` and `not_creator` only for a `'creator'` enrolment, and nothing was
+ * written: someone else is already on the roster, or the group's recorded creator (`Group.createdBy`)
+ * is not this person - none recorded included.
  */
-export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster' | 'not_admitted';
+export type PendingSeatsOutcome =
+  | 'written'
+  | 'group_gone'
+  | 'not_on_roster'
+  | 'not_admitted'
+  | 'roster_taken'
+  | 'not_creator';
 
 /**
  * Writes `pending` device memberships for `deviceIds` of `userId` in `groupId` - the seats a member
@@ -152,10 +165,17 @@ export type PendingSeatsOutcome = 'written' | 'group_gone' | 'not_on_roster' | '
  * in the one order (`utils/seat-eviction.ts`), so a removal either ran before - and the roster
  * read finds no row - or waits, then deletes what this wrote.
  *
- * @param enrol true for an invite acceptance, which writes the roster row itself in the same
- *   transaction ({@link ensureGroupMember}) as a seat AWAITING A MEMBER'S ADMISSION - no member chose
- *   this person, the link did (`GroupMember.awaitingAdmission`); false for a device registration,
- *   which writes seats only where its owner is ALREADY on the roster.
+ * @param enrol how the roster row is written, in the same transaction ({@link ensureGroupMember}):
+ *   `'awaiting_admission'` for an invite acceptance - a seat AWAITING A MEMBER'S ADMISSION, since no
+ *   member chose this person, the link did (`GroupMember.awaitingAdmission`); `'creator'` for a
+ *   group's creator enrolling itself into its empty roster (`MembersController.addGroupMember`),
+ *   admitted - and ONLY for the group's recorded creator (`Group.createdBy`, else `not_creator`) while
+ *   the roster is empty, both re-read here under the seat lock taken EXCLUSIVE:
+ *   the route's own "empty roster" read is unlocked, so two callers who both read it empty were both
+ *   enrolled admitted (review of #2585). Exclusive, two creators run one after the other, and the
+ *   second finds the first's committed row and gets `roster_taken`. The caller's own row does not
+ *   count: a creator's retry stays the no-op it was; false for a device registration, which writes seats only where its owner is ALREADY
+ *   on the roster.
  * @param opts.requireAdmitted (with `enrol` false) the owner's roster row must also be ADMITTED - not
  *   awaiting a member: the member-add route, which writes the device seats of a person an accepted
  *   commit admitted and never admits anyone itself (`MembersController.addGroupMember`). Read under
@@ -168,19 +188,47 @@ export async function writePendingSeats(
   groupId: string,
   userId: string,
   deviceIds: readonly string[],
-  enrol: boolean,
+  enrol: false | 'awaiting_admission' | 'creator',
   opts: { requireAdmitted?: boolean } = {}
 ): Promise<PendingSeatsOutcome> {
   return manager.transaction(async (m) => {
-    await takeSharedSeatLock(m, groupId);
+    // A creator decides who the group's first member is: exclusive, so no second creator reads the
+    // roster empty beside it. Every other writer only adds seats beside an existing one: shared.
+    if (enrol === 'creator') await takeSeatLock(m, groupId);
+    else await takeSharedSeatLock(m, groupId);
     const [group] = await m.getRepository(Group).find({
       where: { id: groupId },
-      select: { id: true, deletedAt: true },
+      select: { id: true, deletedAt: true, createdBy: true },
       lock: { mode: 'pessimistic_read' },
     });
     if (!group || group.deletedAt) return 'group_gone';
+    if (enrol === 'creator') {
+      // THE CREATOR ALONE, read here under the lock as the roster is. The creation bootstrap enrols
+      // the group's recorded creator (`createdBy`) and nobody else; a group with no recorded creator
+      // is bootstrapped by nobody. Compared in canonical form ({@link canonicalUserId}).
+      if (!group.createdBy || group.createdBy !== canonicalUserId(userId)) {
+        seatsLogger.warn(
+          `[PENDING_SEATS] REFUSED not_creator group=${groupId} user=${cutUserId(userId)} ` +
+            `creator=${group.createdBy ? cutUserId(group.createdBy) : 'none'} - nothing written`
+        );
+        return 'not_creator';
+      }
+      const other = await m.getRepository(GroupMember).findOne({
+        where: { groupId, userId: Not(userId) },
+        select: { id: true, userId: true },
+      });
+      if (other) {
+        seatsLogger.warn(
+          `[PENDING_SEATS] REFUSED roster_taken group=${groupId} user=${cutUserId(userId)} ` +
+            `- enrolling as the creator, but ${cutUserId(other.userId)} is already on the roster; nothing written`
+        );
+        return 'roster_taken';
+      }
+    }
     if (enrol) {
-      await ensureGroupMember(m, groupId, userId, { awaitingAdmission: true });
+      await ensureGroupMember(m, groupId, userId, {
+        awaitingAdmission: enrol === 'awaiting_admission',
+      });
     } else {
       const seat = await m.getRepository(GroupMember).findOne({
         where: { groupId, userId },
@@ -493,6 +541,20 @@ export async function callerSeatStandings(
 export const ADMITTED_SEAT = { awaitingAdmission: false } as const;
 
 /**
+ * Whether a person's seat still awaits a member's admission: its roster flag is set AND none of
+ * their devices is `active` in the group. An active device is in the tree - a Welcome admitted it -
+ * so the person is a member whatever the flag says. THE ONE PREDICATE: the commit gate
+ * (`seatAwaitsAdmission`) and the groups list (`getUserGroups`) both ask it, so a device with no
+ * row is never told "awaiting" while another device of the same person is active (review of #2894).
+ *
+ * @param flagged the roster row's `awaitingAdmission`.
+ * @param activeDevices how many of the person's device rows in the group are `active`.
+ */
+export function seatStillAwaits(flagged: boolean, activeDevices: number): boolean {
+  return flagged && activeDevices === 0;
+}
+
+/**
  * The refusal of a seat still awaiting a member's admission: a 409 `awaiting_admission`, NEVER the
  * 403 of no seat at all - a client reads a 403 on a membership question as "I am not a member" and
  * retires the conversation (`NotAGroupMemberError`), while this person is a pending member who waits.
@@ -575,6 +637,78 @@ export function isKeyDistributionGroup(
   return !!(group?.distributionWorkspaceId || group?.distributionChannelId);
 }
 
+/**
+ * Whether `group` withholds what precedes a person's arrival ({@link withheldWindows}): a GROUP
+ * conversation does, a 1:1 does not, and a key-distribution group is read as a 1:1 (its roster is
+ * social-service's, and Graine decides what its past goes to). A missing row is read as a 1:1 - the
+ * caller says so, since that answer withholds nothing before an arrival.
+ *
+ * ONE predicate for the two readers of a person's arrival: the exclusions route a history answer is
+ * filtered on, and the server's own filter of the history stream (`MessagingService.getHistory`), so
+ * the two can never disagree on which conversations the span applies to.
+ */
+export function withholdsArrivalSpan(
+  group: Pick<Group, 'isGroup' | 'distributionWorkspaceId' | 'distributionChannelId'> | null
+): boolean {
+  return group?.isGroup === true && !isKeyDistributionGroup(group);
+}
+
+/**
+ * DATES A LINK JOINER'S ARRIVAL AT THE MEMBER'S ADD THAT ADMITS THEM, in the transaction `m` of the
+ * accepted commit that lifts their `awaitingAdmission` (`MessagingService.liftAwaitingAdmission`, the
+ * one door that lifts it).
+ *
+ * **WHY.** A newcomer reads nothing from before their arrival, and the arrival is the ADD (user,
+ * 2026-10-21: "added = arrived", as on WhatsApp). The invitation link writes the seat - the roster
+ * row, its open interval and `pending` device rows - when the person ASKS (`acceptGroupInvite`),
+ * which can be days before a member answers. {@link withheldWindows} reads the arrival from exactly
+ * those: the interval's `joinedAt` and the earliest device row. Left as written, every history answer
+ * and the history stream handed the person what was sent while they were waiting outside - the
+ * person was never a member then (a Decline DELETES that interval for the same reason,
+ * {@link withdrawAwaitingSeat}). So the lift moves both to the admission:
+ *
+ * - the open interval's `joinedAt` becomes this instant, and its `admittedAt` is cleared - the
+ *   device rows it was copied from predate the admission too;
+ * - the person's device rows in the group are dated the SAME instant, which is what
+ *   {@link withheldWindows} reads them as: "a device row is written when a commit admits the device".
+ *
+ * **ONE VALUE FOR BOTH COLUMNS, NEVER `now()` FOR ONE OF THEM.** Both are `timestamp WITHOUT time
+ * zone`: a JavaScript `Date` is stored as this process's local wall time, `now()` as the database
+ * session's, and both are read back as this process's. Two sources made the arrival - the earlier of
+ * the two - wrong by the offset between the two zones whenever they differ: measured an hour early
+ * under `TZ=Europe/Paris` against a UTC database, an hour of the group's past handed to the newcomer
+ * (review of #2800). One value also removes the transaction-start skew `now()` carried. The other
+ * writer that still mixes the two clocks is {@link ensureGroupMember}; the boot check
+ * `checkDatabaseClockAgreement` (`utils/clock-agreement.ts`) accuses any estate where they disagree.
+ *
+ * A former member asking again through a link keeps their closed intervals: the gap since their
+ * departure now runs to this admission, so the time they spent waiting is withheld with it - the
+ * 2026-10-14 rule.
+ *
+ * @param m the commit's transactional manager - the lift, this and the advance commit together.
+ * @param userIds the people whose ask this commit answered (their flag was just lifted).
+ * @returns how many intervals and device rows were re-dated, for the caller's log line.
+ */
+export async function dateArrivalAtAdmission(
+  m: EntityManager,
+  groupId: string,
+  userIds: readonly string[]
+): Promise<{ intervals: number; devices: number }> {
+  if (userIds.length === 0) return { intervals: 0, devices: 0 };
+  const people = [...userIds];
+  const at = new Date();
+  const intervals = await m
+    .getRepository(GroupMembershipInterval)
+    .update({ groupId, userId: In(people), leftAt: IsNull() }, { joinedAt: at, admittedAt: null });
+  const devices = await m
+    .createQueryBuilder()
+    .update(DeviceGroupMembership)
+    .set({ createdAt: at })
+    .where('"groupId" = :groupId AND "userId" IN (:...people)', { groupId, people })
+    .execute();
+  return { intervals: intervals.affected ?? 0, devices: devices.affected ?? 0 };
+}
+
 /** One count per (route, group, caller) for the refusals of {@link assertCallerActsOnGroup}. */
 const notAMemberRepeats = new RepeatCounter();
 
@@ -583,7 +717,8 @@ const notAMemberRepeats = new RepeatCounter();
  * member of it. Authentication (`HeaderAuthGuard`, or a PushSecret bound to a user and device) says
  * WHO is asking; this says whether that person may touch THIS group.
  *
- * - no seat - never a member, removed, departed, or the group is absent or tombstoned - is the 403
+ * - no seat - never a member, removed, departed, the group absent or tombstoned, or an id that is
+ *   not a uuid (refused before any query) - is the 403
  *   `NOT_A_MEMBER`, the SAME answer for an unknown and a known group, so the route is no oracle of
  *   which ids exist. A tombstoned group is read as absent HERE, by its `deletedAt`, never trusted to
  *   have lost every seat: a seat a purge left behind is not a member of a conversation that ended.
@@ -604,6 +739,11 @@ export async function assertCallerActsOnGroup(
   groupId: string,
   callerUserId: string
 ): Promise<GroupKindRow> {
+  // An id that cannot name a group IS an unknown group: the same 403, asked of no table - a uuid
+  // column answers a string it refuses with a 500 (22P02), and that 500 named no one's fault.
+  if (!isGroupUuid(groupId)) {
+    throw refuseNotAMember(log, route, groupId, callerUserId, ' groupFound=false');
+  }
   const group = await repos.groups.findOne({
     where: { id: groupId, deletedAt: IsNull() },
     select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
@@ -611,13 +751,70 @@ export async function assertCallerActsOnGroup(
   const standing = group ? await standingOnGroupOfKind(repos, group, groupId, callerUserId) : null;
   if (group && standing === 'admitted') return group;
   if (standing === 'awaiting') throw refuseAwaitingSeat(log, route, groupId, callerUserId);
+  throw refuseNotAMember(log, route, groupId, callerUserId, ` groupFound=${group !== null}`);
+}
+
+/**
+ * THE GATE OF A ROUTE A SEAT AWAITING ADMISSION LEGITIMATELY CALLS - `mls/welcome-request`, whose
+ * main caller is exactly that seat asking a member to let it in. So, unlike
+ * {@link assertCallerActsOnGroup}, ANY seat passes, admitted or awaiting; what is refused is the
+ * caller with none:
+ *
+ * - an id that is not a uuid, an absent or tombstoned group, or no roster row: the 403
+ *   `NOT_A_MEMBER` ({@link refuseNotAMember}) - the same for an unknown and a known id;
+ * - a key-distribution group, with the same 403: its roster is social-service's and it is never
+ *   entered by a Welcome a member is asked for, so no row here can vouch for the caller.
+ *
+ * @returns the caller's standing, so the route can say what kind of ask it relays without a second
+ *          read of the seat.
+ */
+export async function assertCallerHoldsSeat(
+  repos: Pick<GroupStandingRepos, 'groups' | 'seats'>,
+  log: Pick<Logger, 'warn'>,
+  route: string,
+  groupId: string,
+  callerUserId: string
+): Promise<SeatStanding> {
+  if (!isGroupUuid(groupId)) {
+    throw refuseNotAMember(log, route, groupId, callerUserId, ' groupFound=false');
+  }
+  const group = await repos.groups.findOne({
+    where: { id: groupId, deletedAt: IsNull() },
+    select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
+  });
+  if (!group) throw refuseNotAMember(log, route, groupId, callerUserId, ' groupFound=false');
+  if (isKeyDistributionGroup(group)) {
+    throw refuseNotAMember(log, route, groupId, callerUserId, ' keyDistribution=true');
+  }
+  const standing = await callerSeatStanding(repos.seats, groupId, callerUserId);
+  if (standing === null) {
+    throw refuseNotAMember(log, route, groupId, callerUserId, ' groupFound=true');
+  }
+  return standing;
+}
+
+/**
+ * The refusal of a caller who holds no seat in the group a route names: the 403 `NOT_A_MEMBER`, with
+ * its WARN line at the 1st, 10th, 100th... refusal of one caller on one route of one group. THE ONE
+ * SHAPE of that refusal - {@link assertCallerActsOnGroup}'s, and a salon's whose roster is
+ * social-service's (`MessagingService.assertCallerReactsIn`) - so a client reads one answer.
+ *
+ * @param detail appended to the line as is: start it with a space.
+ */
+export function refuseNotAMember(
+  log: Pick<Logger, 'warn'>,
+  route: string,
+  groupId: string,
+  callerUserId: string,
+  detail = ''
+): ForbiddenException {
   const nth = notAMemberRepeats.hit(`${route}|${groupId}|${callerUserId}`);
   if (nth !== null) {
     log.warn(
-      `[${route}] REFUSED group=${groupId} caller=${cutUserId(callerUserId)} groupFound=${group !== null} - the caller holds no seat in this group (403 NOT_A_MEMBER, repeat=${nth}, said at 1, 10, 100...)`
+      `[${route}] REFUSED group=${groupId} caller=${cutUserId(callerUserId)}${detail} - the caller holds no seat in this group (403 NOT_A_MEMBER, repeat=${nth}, said at 1, 10, 100...)`
     );
   }
-  throw new ForbiddenException(
+  return new ForbiddenException(
     refusalBody(RefusalCode.NOT_A_MEMBER, 'Caller is not a member of this group')
   );
 }
@@ -759,8 +956,8 @@ export type ExclusionWindow = { from: number; until: number | null };
  * A window is the stretch between the END of one interval and the START of the next - and, when the
  * latest interval is closed, from its end onwards. **The time before the FIRST interval is never a
  * window HERE**: that span is a group-conversation rule, added by {@link withheldWindows}, and this
- * function also feeds the server's own stream filter and the legacy `exclusions` field, whose
- * readers take a union. A person with one open interval has no window at all, and that
+ * function also feeds the legacy `exclusions` field, whose readers take a union, and the server's own
+ * stream filter in a 1:1 or a key group. A person with one open interval has no window at all, and that
  * is also what a brand-new device of a continuous member sees - intervals are per USER, never per
  * device, so a wipe or a new phone opens nothing.
  *
@@ -888,7 +1085,10 @@ export function insideExclusion(at: number, windows: readonly ExclusionWindow[])
  * leaf, and every frame sent while they were out is sealed at an epoch their old state can still
  * open. Live delivery and the queue never reach them (their device rows are gone), so the one road
  * back is this stream, walked after a re-add. The server knows both the window and the row's time,
- * so it withholds the ciphertext itself - a control that holds whatever the reader's build.
+ * so it withholds the ciphertext itself - a control that holds whatever the reader's build. In a
+ * group conversation the windows also hold the span before the reader's arrival
+ * ({@link withheldWindows}): a newcomer is served no ciphertext of the group's past, so its absence
+ * rests on this server and not on the newcomer's restraint.
  *
  * **DROPPED, NEVER MARKED.** A marked row (`{ id, withheld }`, the first shape) stalled every store
  * build shipped before it for good: the old walk decodes `content` unconditionally, the decode

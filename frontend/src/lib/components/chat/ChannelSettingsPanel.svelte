@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { Log } from '$lib/utils/Log';
   import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
@@ -30,6 +31,7 @@
   import NotificationLevelControl from './NotificationLevelControl.svelte';
   import type { PickerOption } from '../ui/picker';
   import { admitSalonGrantee } from '$lib/utils/graine/admitNewcomer';
+  import { commitSalonRevoke, committingDeviceId } from '$lib/utils/graine/commitRemoval';
   import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 
   interface ChannelSidebarItem {
@@ -428,10 +430,18 @@
     const channelId = selectedChannelId;
     const base = accessRevision;
     try {
-      const answer = await channelService.removeMemberFromChannel(channelId, userId);
+      const answer = await channelService.removeMemberFromChannel(
+        channelId,
+        userId,
+        committingDeviceId()
+      );
       // The per-member route needs no base (it removes exactly one name), but its answer moves the
       // revision, which this panel must follow to keep its next write valid.
       await afterAccessWrite(channelId, base, answer);
+      // Whoever removes somebody commits the Remove (channel-encryption section 10): the server has
+      // unrouted them, and only a holder of the salon's key group can take their leaves out of it.
+      // Not awaited and never throws - the revoke has already succeeded, every outcome is logged.
+      if (answer.isPrivate) void commitSalonRevoke(channelService, channelId, userId, appendLog);
       // Also remove from displayed member list
       channelMembers = channelMembers.filter((m) => m.userId !== userId);
     } catch (e) {
@@ -591,15 +601,13 @@
               />
             </div>
             {#if canManage}
-              <button
-                type="button"
+              <Button
                 onclick={handleRenameChannel}
                 disabled={!channelNameInput.trim() ||
                   channelNameInput.trim() === selectedChannel?.name}
-                class="text-cn-ink rounded-xl bg-amber-500 px-6 py-3 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
               >
                 {m.chat_rename_channel_button()}
-              </button>
+              </Button>
             {/if}
           </div>
         </div>
@@ -635,24 +643,16 @@
                community, so there is no per-member access to give up. Leaving is a community-level
                action there (the community panel's own "leave"). -->
             {#if selectedChannel?.isPrivate}
-              <button
-                type="button"
-                onclick={handleLeaveChannel}
-                class="flex w-full items-center justify-center gap-3 rounded-xl border border-orange-500/20 bg-orange-500/10 px-4 py-3.5 text-sm font-bold text-orange-600 transition-all active:scale-[0.98] dark:text-orange-400"
-              >
+              <Button variant="danger-outline" class="w-full" onclick={handleLeaveChannel}>
                 <LogOut size={18} strokeWidth={2.5} />
                 {m.chat_leave_channel_button()}
-              </button>
+              </Button>
             {/if}
             {#if canManage}
-              <button
-                type="button"
-                onclick={handleDeleteChannel}
-                class="flex w-full items-center justify-center gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3.5 text-sm font-bold text-red-600 transition-all active:scale-[0.98] dark:text-red-400"
-              >
+              <Button variant="danger-outline" class="w-full" onclick={handleDeleteChannel}>
                 <Trash2 size={18} strokeWidth={2.5} />
                 {m.chat_delete_channel_button()}
-              </button>
+              </Button>
             {/if}
           </div>
         {/if}
@@ -853,11 +853,9 @@
                           excludeIds={accessAllowedUserIds}
                         />
                       </div>
-                      <button
-                        type="button"
+                      <Button
                         onclick={() => void addAllowedUser()}
                         disabled={!addingUserId.trim() || memberAdding}
-                        class="text-cn-ink mt-0 flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {#if memberAdding}
                           <Loader size={14} class="animate-spin" />
@@ -865,7 +863,7 @@
                           <Check size={14} strokeWidth={3} />
                         {/if}
                         {m.common_add_button()}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 {/if}

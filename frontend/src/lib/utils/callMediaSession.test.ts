@@ -3,7 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const logs: string[] = [];
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: (l: string) => logs.push(l) }));
 
-import { applyCallMediaSession, clearCallMediaSession } from './callMediaSession';
+import {
+  applyCallMediaSession,
+  clearCallMediaSession,
+  resetCallMediaSessionForTest,
+} from './callMediaSession';
 
 /** A media session that knows only the actions it is given, and throws on the rest like Chromium. */
 function fakeSession(known: string[]) {
@@ -32,6 +36,8 @@ const params = () => ({
 });
 
 beforeEach(() => {
+  // A new page: what the previous test's page said is said again.
+  resetCallMediaSessionForTest();
   logs.length = 0;
 });
 
@@ -39,6 +45,25 @@ describe('the call on the OS media session', () => {
   it('says so, and does nothing else, on an engine without the API', () => {
     expect(applyCallMediaSession({}, params())).toBe(false);
     expect(logs.join('\n')).toContain('no Media Session API');
+  });
+
+  // 313 identical lines in 46 s of a video ring (Android 1.5.3, 2026-10-31): the surface re-applies
+  // the session on every change it shows, and the engine's answer does not change within a page.
+  it('says a missing API ONCE per page life, across re-applies and across calls', () => {
+    for (let i = 0; i < 50; i++) applyCallMediaSession({}, params());
+    clearCallMediaSession({});
+    applyCallMediaSession({}, params());
+    expect(logs.filter((l) => l.includes('no Media Session API'))).toHaveLength(1);
+  });
+
+  it('names a refused action once per page life, the next call included', () => {
+    const session = fakeSession(['hangup']);
+    const host = { mediaSession: session as unknown as MediaSession };
+    applyCallMediaSession(host, params());
+    applyCallMediaSession(host, params());
+    clearCallMediaSession(host);
+    applyCallMediaSession(host, params());
+    expect(logs.filter((l) => l.includes("'togglemicrophone' unsupported"))).toHaveLength(1);
   });
 
   it('wires hang-up and the microphone, and mirrors the mute', () => {
@@ -58,6 +83,33 @@ describe('the call on the OS media session', () => {
     applyCallMediaSession({ mediaSession: session as unknown as MediaSession }, params());
     expect(session.handlers.has('hangup')).toBe(true);
     expect(logs.join('\n')).toContain("'togglemicrophone' unsupported");
+  });
+
+  // WebKit has no `hangup` action, and the iPhone logged its refusal on every call (2026-11-07):
+  // where that is known, the page passes no hang-up and the engine is never asked.
+  it('never asks for an action the caller knows the engine lacks (`onHangup: null`), and says nothing', () => {
+    const session = fakeSession(['togglemicrophone']);
+    const p = { ...params(), onHangup: null };
+    applyCallMediaSession({ mediaSession: session as unknown as MediaSession }, p);
+    expect(session.handlers.has('hangup')).toBe(false);
+    expect(session.handlers.has('togglemicrophone')).toBe(true);
+    expect(logs.filter((l) => l.includes('unsupported'))).toEqual([]);
+  });
+
+  it('leaves `hangup` alone when clearing in the iOS app, where it was never set', () => {
+    // An engine that throws on `hangup`, as WebKit does: not even asked.
+    const session = fakeSession(['togglemicrophone']);
+    const asked: string[] = [];
+    const setActionHandler = session.setActionHandler.bind(session);
+    session.setActionHandler = (action: string, h: (() => void) | null) => {
+      asked.push(action);
+      setActionHandler(action, h);
+    };
+    const host = { mediaSession: session as unknown as MediaSession };
+    applyCallMediaSession(host, { ...params(), onHangup: null });
+    clearCallMediaSession(host, false);
+    expect(asked).toEqual(['togglemicrophone', 'togglemicrophone']);
+    expect(session.handlers.get('togglemicrophone')).toBeNull();
   });
 
   it('clears the handlers and the state when the call goes', () => {

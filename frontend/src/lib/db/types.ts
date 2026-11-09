@@ -27,6 +27,12 @@ export interface ConversationMeta {
    */
   readWatermarks?: ReadWatermarks;
   /**
+   * The same read state on the SERVER's clock - compared against a message's server time, the key
+   * the conversation is sorted by. Next to `readWatermarks`, never instead of it: see
+   * `$lib/utils/chat/readState` for which map a mark belongs to.
+   */
+  serverReadWatermarks?: ReadWatermarks;
+  /**
    * Where the shared history of this conversation begins, merged as `max` across members. Stored
    * next to the read state because both are properties of the conversation rather than of any
    * message, and both travel in the same reconciliation frames.
@@ -52,6 +58,12 @@ export interface ConversationMeta {
    */
   awaitingAdmission?: boolean;
 }
+
+/**
+ * Why an own attachment was retired unsent for the GROUP's sake - the conversation was deleted, or
+ * this device is no longer in it - rather than refused by the server (review of #2874, M4).
+ */
+export type UnsentReason = 'group-deleted' | 'not-a-member';
 
 /** A decrypted message as stored in and read from the local database. */
 export interface StoredMessage {
@@ -100,7 +112,56 @@ export interface StoredMessage {
   deleteProof?: RecordedAuthorship;
   /** Restored from a bundle with no author proof: see `AddMessageToChatOptions.restoredUnverified`. */
   restoredUnverified?: boolean;
+  /**
+   * Why this own attachment was retired UNSENT, when the reason was the group's (see
+   * {@link UnsentReason}). Written by the outbox as it retires the entry - the entry and its bytes go,
+   * and this is what lets the bubble still say why after a reload or in another tab.
+   */
+  unsentReason?: UnsentReason;
+  /**
+   * When THIS device met the `410` of the conversation reel this message carries (Unix ms, its own
+   * clock), RC-6. A LOCAL fact - never relayed, never a peer's - read by the tile to draw "CanaReel
+   * supprime" (before the sender's expiry hint) or "expire" (after) across reloads, so the `410` is
+   * asked once per message per device, never once per scroll. It is the viewer's FIRST-TAP clock
+   * after the loss, compared with the sender's hint on the sender's clock: an imprecision that only
+   * moves the label between the two words, never whether the tile is a tombstone.
+   */
+  mediaPurgedAt?: number;
+  /**
+   * Where the page read that returned this row found it on the store's order key. Set by
+   * `getMessagesPage` only, never persisted (the payload projection names its fields), and carried
+   * onto the screen row so "load older" pages below what the STORE handed back - never below a row
+   * that reached memory another way.
+   */
+  pageKey?: PageKey;
 }
+
+/**
+ * A position on the store's order key: the pair a page is read on, ties broken by id. `provisional`
+ * is true when the conversation still held a row keyed provisionally on its `sentAt` at the read
+ * (`$lib/db/orderKeyDerivation`): such a row may rise above this position once keyed, so a page read
+ * below a provisional position re-reads what lies above it as well.
+ */
+export interface PageKey {
+  orderAt: number;
+  id: string;
+  provisional: boolean;
+}
+
+/** The answer of {@link IStorage.getMessagesByIds}. */
+export interface StoredRowsById {
+  /** The rows found and opened, by id - only rows of the conversation asked about. */
+  rows: Map<string, StoredMessage>;
+  /** The ids a row of that conversation stands under that this device cannot open - never written over. */
+  unreadable: Set<string>;
+}
+
+/**
+ * How {@link IStorage.mergeMessages} rewrites a row: given the row as the store holds it NOW, the
+ * row to write, or `null` to leave it as it is. Called again with the fresher row whenever another
+ * writer committed in between, so it must be a pure function of its argument.
+ */
+export type StoredMessageMerge = (current: StoredMessage) => StoredMessage | null;
 
 /**
  * The fields of a stored message a mutation is allowed to change.
@@ -109,6 +170,88 @@ export interface StoredMessage {
  * message to another conversation. Applied by `mergeStoredMessage`.
  */
 export type StoredMessagePatch = Partial<Omit<StoredMessage, 'id' | 'conversationId'>>;
+
+/** What a {@link PendingMutation} does to its message once the message is here. */
+export type PendingMutationKind = 'delete' | 'edit' | 'reaction';
+
+/**
+ * How many entries the store of {@link PendingMutation}s keeps: per sender within a conversation, and
+ * per conversation (`putPendingMutation`, which evicts within these bounds).
+ */
+export interface PendingMutationLimits {
+  perSender: number;
+  perConversation: number;
+}
+
+/**
+ * A mutation whose target message is NOT on this device yet - a deletion, an edit or a reaction
+ * that arrived before its message (2026-11-02, the owner's deleted-message report).
+ *
+ * Kept in its own local store, never as a message row: it is never shown, never put in memory as a
+ * message, never counted by the reconciliation (the digest manifest, the state key) and never relayed
+ * in a bundle. When the message arrives it is settled against the message's AUTHOR
+ * (`settleAgainstPending`, `pendingMutations.ts`): only the author's deletion and edit apply, and
+ * everyone's reactions do.
+ *
+ * Keyed by (`conversationId`, `messageId`, `sender`, `kind`, `slot`): one entry per sender and kind,
+ * and per emoji for a reaction. Two entries under one key keep the larger `rank`, the first on a tie,
+ * decided by the store in the write itself - there is no read-then-write. At rest the message id, the
+ * sender and the slot are stored only as TAGS under the device key (`pendingMutationCodec.ts`), and
+ * in full only inside the sealed payload.
+ */
+export interface PendingMutation {
+  conversationId: string;
+  messageId: string;
+  /** The frame's MLS-authenticated sender, canonical (`canonicalUserId`). */
+  sender: string;
+  kind: PendingMutationKind;
+  /** `''` for a deletion or an edit; the emoji for a reaction - a reactor holds one state per emoji. */
+  slot: string;
+  /**
+   * What decides between two entries under one key, larger winning: the edit's `editedAt`, the
+   * reaction's `at` (the same last-write-wins as `applyReaction`), 0 for a deletion (all alike).
+   */
+  rank: number;
+  /** The frame's SERVER time (Unix ms) - the order the store evicts in within a tier, oldest first. */
+  at: number;
+  /** An edit's replacement text. Sealed. */
+  text?: string;
+  /** A reaction taken back. */
+  removed?: boolean;
+  /** The frame's own author proof, when it carried one. Sealed. */
+  proof?: RecordedAuthorship;
+}
+
+/** What {@link IStorage.putPendingMutation} did. */
+export interface PendingMutationWrite {
+  /** False when an entry under the same key already ranked at least as high. */
+  written: boolean;
+  /**
+   * Whether the entry written is still there once the bounds were applied - false when the same
+   * write evicted it (its sender was the one over the bound, and it was that sender's lowest).
+   */
+  kept: boolean;
+  /** How many entries the bounds evicted in this write. */
+  evicted: number;
+}
+
+/** What {@link IStorage.getPendingMutations} found. */
+export interface PendingMutationRead {
+  entries: PendingMutation[];
+  /**
+   * Entries found under this device key's tags that did not open under it (corrupted bytes): removed
+   * in the same read, since nothing could ever apply them. Counted so the caller can say so once.
+   */
+  removedUnreadable: number;
+}
+
+/** What {@link IStorage.resealPendingMutations} did. */
+export interface PendingMutationReseal {
+  resealed: number;
+  alreadyNew: number;
+  /** Entries open under neither key - left as they are, like every other sealed store. */
+  unreadable: number;
+}
 
 /**
  * Raw encrypted message row as persisted on disk (IndexedDB or SQLite).
@@ -136,6 +279,21 @@ export interface OutboxMediaUploadedRef {
   iv: string;
   /** How the blob is sealed - see `MediaRef.encoding`. Absent: the single block. */
   encoding?: string;
+}
+
+/**
+ * A file a chat-reel take ADOPTED from the CanaReels publish step (reels-in-chat 15.5): the post's
+ * upload, with the description of THAT file - the raw take beside it keeps its own until the chat
+ * hold is placed and the adopted file becomes the take's `uploadedRef`.
+ */
+export interface OutboxAdoptedUpload extends OutboxMediaUploadedRef {
+  mimeType: string;
+  size: number;
+  fileName?: string;
+  width?: number;
+  height?: number;
+  /** The declared duration of the published reel (whole ms). */
+  durationMs?: number;
 }
 
 /** Sensitive media descriptor for a queued media message. */
@@ -174,9 +332,21 @@ export interface OutboxMediaPayload {
   /**
    * The bytes in the blob are the RAW take and still owe a preparation before upload (reels-in-chat
    * RC-5): the outbox runs it inside the upload task, then replaces the blob with the prepared file.
-   * Absent: the bytes are what is uploaded.
+   * Absent: the bytes are what is uploaded. Only a `reel-take` row carries it (RC-13).
    */
   prepare?: 'chat-reel';
+  /**
+   * A SEND of a chat reel (RC-13): the `reel-take` row whose file this message carries. The send
+   * holds no bytes and never uploads; it is sendable once its take holds an `uploadedRef`.
+   */
+  takeId?: string;
+  /**
+   * A take's file ADOPTED from the CanaReels publish step (reels-in-chat 15.5): the post's upload,
+   * written here BEFORE the post is created. Not yet `uploadedRef`, because the chat hold is not
+   * placed yet - and until it is, the raw take is kept, so a hold the server refuses leaves the take
+   * its own file to prepare and upload.
+   */
+  adoptedRef?: OutboxAdoptedUpload;
   /**
    * The resumable upload session this entry's bytes are going through (RC-5). Persisted BEFORE the
    * first part leaves, so a relaunch asks the server which parts it holds instead of re-sending them.
@@ -198,6 +368,39 @@ export interface OutboxBlobRef {
   slot?: 'b';
 }
 
+/** One conversation a chat-reel take is sent to (RC-13), as the take row records it. */
+export interface OutboxReelTakeSend {
+  /** The send's message id: its outbox row while it is queued, its message once sent. */
+  id: string;
+  /** The conversation (MLS group id) it was queued for at the press. */
+  conversationId: string;
+  /** Written BEFORE the send's row is deleted: this send reached its conversation. */
+  sent?: true;
+  /** The sender deleted this message for everyone since ("Supprimer pour tout le monde"). */
+  deleted?: true;
+}
+
+/**
+ * What a `reel-take` row knows beyond its file (reels-in-chat 15.2, 15.7). The sends it names are
+ * FIXED at the press, written in the same transaction as their rows: the take lives while one of
+ * those rows is still queued - read from the rows, never counted.
+ */
+export interface OutboxReelTake {
+  sends: OutboxReelTakeSend[];
+  /**
+   * `sending` (absent): the file is being made or sent. `sent`: every send row is gone and at least
+   * one went - the small SENT-TAKE RECORD, kept to the take's expiry for "Supprimer partout".
+   * `releasing`: the file is owed its owner `DELETE` (no send went, or the last live message was
+   * deleted); the row goes once the server answered.
+   */
+  state?: 'sent' | 'releasing';
+  /**
+   * The CanaReels publish step of this press may still upload the file (15.5). Honoured only while
+   * that step is alive in this page life: after a relaunch the take uploads its own.
+   */
+  awaitsPublish?: true;
+}
+
 /** What survives a kill of a resumable upload: enough to address the same session and re-seal the same bytes. */
 export interface OutboxResumableUpload {
   /** Hex CEK the blob is sealed under. Secret: lives only in the encrypted outbox row. */
@@ -212,6 +415,11 @@ export interface OutboxResumableUpload {
   uploadId?: string;
   /** The part size the session was opened with (the server's answer). */
   partBytes?: number;
+  /**
+   * `single-block` when the blob is ONE AES-GCM block (a post photo); absent for `segmented-v1`,
+   * which every state written before the field existed was.
+   */
+  encoding?: 'single-block';
 }
 
 /**
@@ -230,7 +438,13 @@ export interface OutboxEntry {
   conversationId: string;
   /** Compose time (Unix ms) - IMMUTABLE; the canonical ordering key, sent as proto sentAt. */
   sentAt: number;
-  kind: 'text' | 'reply' | 'media' | 'control';
+  /**
+   * `reel-take` (RC-13): the file of a chat reel sent to one or more conversations - no message of its
+   * own, no lane, its `conversationId` is {@link REEL_TAKE_QUEUE}. Its sends are `media` rows naming it.
+   */
+  kind: 'text' | 'reply' | 'media' | 'control' | 'reel-take';
+  /** A `reel-take` row's sends and state (encrypted with the payload). */
+  take?: OutboxReelTake;
   /** Sensitive payload (encrypted at rest): plain text body for text/reply. */
   text?: string;
   /** Quoted message reference for replies. */
@@ -525,15 +739,26 @@ export interface IStorage {
    * makes the work grow with the square of the number of conversations.
    */
   getConversation(id: string): Promise<ConversationMeta | null>;
-  /** Delete the conversation row and cascade-delete all of its messages. */
+  /** Delete the conversation row and cascade-delete all of its messages and pending mutations. */
   deleteConversation(id: string): Promise<void>;
-  /** Delete all messages for a conversation without removing its metadata row. */
+  /** Delete all messages (and the mutations awaiting them) for a conversation, keeping its metadata row. */
   deleteMessagesForConversation(conversationId: string): Promise<void>;
 
   // Messages (content encrypted with device key)
 
   /** Encrypt and persist a single message to the local store. */
   saveMessage(msg: StoredMessage, deviceKeyB64: string): Promise<void>;
+  /**
+   * Persist each of `msgs` ONLY where no row is stored under its id - an insert, never a replace.
+   *
+   * For an ARRIVING message, which must never overwrite a row another writer put there between the
+   * caller's read and this write (the archive replay writes outside the inbound drain). The absence
+   * is decided by the store's own key constraint, in the write itself; an undecryptable row counts as
+   * present, which `getMessage` alone cannot tell.
+   *
+   * @returns the ids this call wrote - the others were already there
+   */
+  saveMessagesIfAbsent(msgs: StoredMessage[], deviceKeyB64: string): Promise<Set<string>>;
   /** Encrypt and persist a batch of messages in a single atomic write. */
   saveMessages(msgs: StoredMessage[], deviceKeyB64: string): Promise<void>;
   /**
@@ -550,13 +775,38 @@ export interface IStorage {
     deviceKeyB64: string
   ): Promise<void>;
   /**
-   * Merge `patch` into the stored message (read-modify-write; re-encrypts the payload).
-   * No-op if the row is absent or undecryptable.
+   * Merge `patch` into the stored message, re-encrypting the payload. No-op if the row is absent or
+   * undecryptable.
    *
    * The way to persist a MUTATION of an existing message: `saveMessage` replaces the whole row, so
    * a handler using it erases every field it did not itself carry. See `mergeStoredMessage`.
+   *
+   * A COMPARE-AND-SET on the row's revision ({@link mergeMessages}), never a read, an await and a
+   * blind write: a patch merged onto a row another writer changed in between is merged again onto
+   * what that writer left. SCOPED like every lookup by id: a row of another conversation than
+   * `conversationId` is left alone.
    */
-  updateMessage(id: string, patch: StoredMessagePatch, deviceKeyB64: string): Promise<void>;
+  updateMessage(
+    conversationId: string,
+    id: string,
+    patch: StoredMessagePatch,
+    deviceKeyB64: string
+  ): Promise<void>;
+  /**
+   * Rewrites the rows of `conversationId` stored under `ids` from their CURRENT state: each row is
+   * read with its revision, `merge` gives the row to write, and the write applies only while the
+   * revision is still the one read - on IndexedDB a get-compare-put in ONE readwrite transaction
+   * (every payload sealed before it opens), on SQLite `UPDATE ... WHERE rev = ?`. A row that moved
+   * in between is read again and merged again; each retry means another writer COMMITTED, so the
+   * loop ends. A row absent, unreadable or of another conversation is left alone. Resolves with the
+   * ids written.
+   */
+  mergeMessages(
+    conversationId: string,
+    ids: readonly string[],
+    merge: StoredMessageMerge,
+    deviceKeyB64: string
+  ): Promise<Set<string>>;
   /**
    * Remove one message row outright. No-op when the row is absent.
    *
@@ -581,8 +831,78 @@ export interface IStorage {
    * caller that needs the pair to be indivisible must run where nothing else writes.
    */
   getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null>;
+  /**
+   * The rows of `conversationId` stored under `ids`, read by primary key in one pass - what a seam
+   * that is handed a batch of messages asks before it writes, so a row stored but not on screen is
+   * never written over. Its cost is the batch's, never the conversation's.
+   *
+   * SCOPED TO THE CONVERSATION: a message id is global in the store, and a frame of one
+   * conversation naming a row of another must not reach it (a member removed from B deleting her
+   * old B message through a frame sent in A). A row of another conversation reads as absent, and is
+   * said at warn.
+   *
+   * `unreadable` names the ids a row stands under that this device key cannot open: `getMessage`
+   * reports those as `null` like an absent row, and only an absent one may be written.
+   */
+  getMessagesByIds(
+    conversationId: string,
+    ids: readonly string[],
+    deviceKeyB64: string
+  ): Promise<StoredRowsById>;
   /** Decrypt and return all messages for a conversation, sorted oldest-first. */
   getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]>;
+  /**
+   * The messages of a conversation whose `timestamp` is at or after `since`, decrypting only those:
+   * what a reconciliation reads, whose window is `since` - its cost is the window's, never the whole
+   * conversation's. Oldest-first.
+   */
+  getMessagesSince(
+    conversationId: string,
+    since: number,
+    deviceKeyB64: string
+  ): Promise<StoredMessage[]>;
+
+  // Mutations whose message is not here yet (see PendingMutation)
+
+  /**
+   * Keep `entry` until its message arrives: written only where no entry under its key ranks at least
+   * as high, then held to `limits` - its sender's entries first (a sender over `perSender` loses its
+   * own), then the conversation's (over `perConversation`, the sender holding the most loses one).
+   * Within a sender, reactions go before deletions and edits, and older before newer. The rank
+   * comparison is atomic with the write on both backends - never a read, an await, then a write.
+   *
+   * The message id, the sender and the slot are stored only as tags under the device key
+   * (`deviceKeyTag`) and sealed with the rest: nothing at rest says who reacted to what.
+   */
+  putPendingMutation(
+    entry: PendingMutation,
+    limits: PendingMutationLimits,
+    deviceKeyB64: string
+  ): Promise<PendingMutationWrite>;
+  /**
+   * The entries waiting for any of `messageIds` in `conversationId`, read by key prefix - one range
+   * per message, never the conversation's whole set. An entry found that does not open under this
+   * key is removed in the same read and counted (`removedUnreadable`).
+   */
+  getPendingMutations(
+    conversationId: string,
+    messageIds: readonly string[],
+    deviceKeyB64: string
+  ): Promise<PendingMutationRead>;
+  /**
+   * Removes exactly the entries given, each only while it still holds the `rank` read - an entry a
+   * later frame raised meanwhile is a different version and stays.
+   */
+  deletePendingMutations(entries: readonly PendingMutation[], deviceKeyB64: string): Promise<void>;
+  /**
+   * Moves every entry from the old device key to the new one: its payload re-sealed AND its tags
+   * re-derived, since both are under the key. Resumable like the other sealed stores - an entry
+   * already under the new key is done, one under neither is left as it is.
+   */
+  resealPendingMutations(
+    oldDeviceKeyB64: string,
+    newDeviceKeyB64: string
+  ): Promise<PendingMutationReseal>;
   /**
    * How many rows the store holds for a conversation, decrypting NONE of them.
    *
@@ -602,17 +922,33 @@ export interface IStorage {
    * no longer names cannot find it through {@link getConversations}.
    */
   getMessageConversationIds(prefix: string): Promise<string[]>;
-  /** Return the most recent `limit` messages, optionally those strictly before `beforeTimestamp`. */
+  /**
+   * Return the most recent `limit` messages on the ORDER key (`storedOrderAt`: the server's receive
+   * time when the row knows it, `sentAt` otherwise - the key the timeline sorts on), optionally
+   * those strictly below `before` on the pair `(orderAt, id)`, oldest first, each carrying its
+   * {@link PageKey}. Paging on any other key loses a late message: older by `sentAt` than the page
+   * boundary, newer by the key the screen sorts on. A `before` that is `provisional` also returns
+   * every row at or above it, read once the conversation's keys are derived: a row whose real key
+   * rose past the boundary is in neither page otherwise.
+   *
+   * Never waits for the derivation of provisional keys on a first page (`before` absent): it walks
+   * the index as it stands and starts the derivation behind it.
+   */
   getMessagesPage(
     conversationId: string,
     deviceKeyB64: string,
     limit: number,
-    beforeTimestamp?: number
+    before?: PageKey
   ): Promise<StoredMessage[]>;
 
   // Garbage collection - delete messages older than the given threshold.
 
-  /** Delete messages older than `maxAgeMs` milliseconds and return the count of deleted rows. */
+  /**
+   * Delete messages older than `maxAgeMs` milliseconds and return the count of deleted rows. The
+   * pending mutations whose FRAME is older than the same cutoff go with them: a frame's time is an
+   * upper bound on its target's, so the message such an entry waits for is older still, and would
+   * be collected the moment it arrived.
+   */
   deleteOldMessages(maxAgeMs: number): Promise<number>;
 
   // Backup helpers - expose raw encrypted rows so backups don't require
@@ -640,12 +976,32 @@ export interface IStorage {
   /** Encrypt and upsert a queued outbound message. */
   saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void>;
   /**
+   * A chat-reel TAKE and its N SENDS in ONE outbox transaction (reels-in-chat RC-13, 15.2), with each
+   * send's optimistic message: a kill leaves neither a take nobody sends nor a send with no take.
+   * The take's bytes go to the blob store first (as for any attachment). On SQLite the N + 1 outbox
+   * rows are ONE statement (the largest unit of atomicity the plugin gives, `sqliteBatch.ts`) and the
+   * messages a second - the entries first, as for a single send; on IndexedDB all of it is one
+   * transaction. Throws `OutboxEntryWrittenAloneError` (named by the take) when the rows landed and
+   * their messages did not: the queue owns them, nothing may be written or given back a second time.
+   */
+  saveReelTake(
+    take: OutboxEntry,
+    sends: Array<{ entry: OutboxEntry; message: StoredMessage }>,
+    deviceKeyB64: string
+  ): Promise<void>;
+  /**
    * The queue as the flusher polls it: every entry sorted by `sentAt`, but a `media` entry carries
    * its scheduling columns ONLY (`media` undefined) - its payload is the whole file, and reading
    * the queue several times per flush must not decode it. Ask {@link getOutboxEntry} for the one
-   * entry about to be sent.
+   * entry about to be sent. A SENT-TAKE RECORD (RC-13, `REEL_TAKE_RECORDS`) is not queued work and
+   * is left out - see {@link getReelTakeRecords}.
    */
   getOutboxQueue(deviceKeyB64: string): Promise<OutboxEntry[]>;
+  /**
+   * The SENT-TAKE RECORDS (RC-13, `conversationId` = `REEL_TAKE_RECORDS`), decoded, which the queue
+   * read leaves out: what "Supprimer partout" and a send deleted for everyone look a take up in.
+   */
+  getReelTakeRecords(deviceKeyB64: string): Promise<OutboxEntry[]>;
   /**
    * One entry with its full payload, or null when it is no longer queued. Throws
    * `OutboxPayloadUnreadableError` when the row exists but cannot be decrypted.
@@ -669,7 +1025,12 @@ export interface IStorage {
     conversationId: string,
     deviceKeyB64: string
   ): Promise<OutboxEntry[]>;
-  /** Merge `patch` into the stored entry (read-modify-write; re-encrypts the payload). No-op if absent. */
+  /**
+   * Merge `patch` into the stored entry (read-modify-write; re-encrypts the payload). No-op if absent,
+   * and STILL a no-op when the row is deleted between the read and the write: the write is
+   * conditional on the row (an `UPDATE` on SQLite, a get-then-put in one transaction on IndexedDB),
+   * so a late patch never resurrects a withdrawn or sent row.
+   */
   updateOutboxEntry(id: string, patch: Partial<OutboxEntry>, deviceKeyB64: string): Promise<void>;
   /** Remove a queued entry (after a confirmed send or a permanent failure). */
   deleteOutboxEntry(id: string): Promise<void>;

@@ -13,8 +13,14 @@
 //! FileProvider, iOS `UIActivityViewController`), and `share_text` opens it on a text. See
 //! `docs/wiki/frontend/share-out.md`.
 //!
-//! And, on Android only, the conversations the share sheet SUGGESTS (sharing lot S5):
-//! `publish_share_targets` replaces them, `clear_share_targets` removes them at sign-out, and
+//! It serves the SAVE dialog too, on Android: `write_staged_document` copies a staged file into the
+//! document `ACTION_CREATE_DOCUMENT` created, through the provider's own stream, because the
+//! `plugin-fs` write detaches the descriptor and the provider records a size of 0
+//! (`utils/fileDownload.ts`).
+//!
+//! And the conversations the share sheet SUGGESTS (sharing lot S5), on both phones:
+//! `publish_share_targets` replaces them (Android sharing shortcuts, iOS `INSendMessageIntent`
+//! donations), `clear_share_targets` removes them at sign-out, and - Android only -
 //! `clear_conversation_shortcuts` removes the notifications' conversation shortcuts then too. See
 //! `docs/wiki/frontend/sharing.md`.
 #[cfg(mobile)]
@@ -60,6 +66,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::share_text,
             commands::share_staged,
             commands::discard_shared_out,
+            commands::write_staged_document,
             commands::publish_share_targets,
             commands::clear_share_targets,
             commands::clear_conversation_shortcuts

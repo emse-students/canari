@@ -8,8 +8,12 @@ import { decodeAppMessage, type IAppMessage } from '$lib/proto/codec';
 import { recordAuthorship } from '$lib/crypto/messageAuthorship';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { drainForkFindings } from '$lib/mls-client/integrityFindings';
-import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
-import { applyReaction } from '$lib/utils/chat/messageReactions';
+import {
+  appMessageSentAtMs,
+  appMsgToEnvelope,
+  normalizeMessageId,
+} from '$lib/utils/chat/messageUtils';
+import { receivedNoticeTime } from '$lib/utils/chat/visibleNotices';
 import {
   requestReAdd,
   cancelReAdd,
@@ -27,6 +31,7 @@ import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
 import { noteUnackedFrame, refusedBacklogIsQueued } from './unackedFrames';
+import type { StoredMessage } from '$lib/db';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
 import {
   answerAfterMailboxDrained,
@@ -47,9 +52,10 @@ import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { SenderMismatchError } from '../verifiedSender';
 import { isFrameFromThisDevice } from '../ownDeviceFrame';
 import { createMlsStatePersister } from '../mlsStatePersister';
-import { receiveCheckpointSkipBudget } from '../receiveCheckpointSkip';
+import { receiveSkipBudgetFromServer } from '../receiveCheckpointSkip';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
+import { applyReactionFrame } from './reactionFrame';
 import type { MessageHandlerDeps } from './deps';
 import {
   membershipIsDurablyLost,
@@ -58,12 +64,16 @@ import {
   retractEvictionNotice,
 } from '$lib/utils/chat/eviction';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
-import { restoredConversationRow } from '$lib/utils/chat/conversations';
+import {
+  findDirectConversationByPeer,
+  restoredConversationRow,
+} from '$lib/utils/chat/conversations';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isDistributionGroupMeta } from '$lib/utils/chat/groupLifecycle';
 import type { GroupMeta } from '../IMlsService';
 import { channelScope, workspaceScope } from '../distributionScope';
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
+import { noteServerTime } from '$lib/utils/chat/serverClock';
 export type { MessageHandlerDeps } from './deps';
 
 /**
@@ -142,6 +152,24 @@ const noMatchKpFailures = new Map<string, number>();
  * 2. `requestReAdd` replaces every escalation (no Poison Pill, no counters).
  * 3. Recovery state (cooldowns) is in-memory only - reset on every session.
  */
+/** The device-wide freeze list a dev build of #2815 wrote; read by nothing since #2817. */
+const LEGACY_ADMISSION_FREEZE_KEY = 'canari_admission_frozen';
+
+/**
+ * Removes {@link LEGACY_ADMISSION_FREEZE_KEY} once per session. It deafens nothing any more, but a
+ * dead key is a question for the next reader of a dev device's storage, so it goes rather than
+ * lingering. The mls-core half - a persisted `closed` classification - is dropped at load.
+ */
+function forgetLegacyAdmissionFreeze(log: (msg: string) => void): void {
+  try {
+    if (localStorage.getItem(LEGACY_ADMISSION_FREEZE_KEY) === null) return;
+    localStorage.removeItem(LEGACY_ADMISSION_FREEZE_KEY);
+    log('[ADMISSION] a freeze list left by an earlier build was removed - nothing read it');
+  } catch (e) {
+    log(`[ADMISSION] the freeze list left by an earlier build could not be removed: ${String(e)}`);
+  }
+}
+
 export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // No `userId` here any more: its only consumer at this scope was the state persister's config, and
   // the platform now owns where a checkpoint lands (`IMlsService.persistCheckpoint`). The handlers
@@ -155,14 +183,18 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   resetReAddCooldowns();
   // And the open history asks: an addressed answer is accepted only by the session that asked.
   forgetHistoryAsks();
+  // And what a dev build of #2815 left behind (review of #2817): nothing reads it any more.
+  forgetLegacyAdmissionFreeze(log);
 
-  const receiveSkipBudget = receiveCheckpointSkipBudget();
-  if (receiveSkipBudget > 0) {
-    console.warn(
-      `[MLS] MEASUREMENT SWITCH ON (non-production build): live receive-only drains skip their checkpoint while fewer than ${receiveSkipBudget} frames are unsaved`
-    );
-  }
-  const statePersister = createMlsStatePersister({ mlsService, log, receiveSkipBudget });
+  // WP-CHECKPOINT-SKIP: the server's switch, read at every drain end (not once here), so a mode
+  // moved at `/admin/platform` - or the first `/api/version` answer of a cold start - reaches this
+  // session without a restart. `off` until a live answer says `on`, and 0 off native mobile; the
+  // persister logs each change. Pinned by setupMessageHandler.checkpointSkip.test.ts.
+  const statePersister = createMlsStatePersister({
+    mlsService,
+    log,
+    receiveSkipBudget: receiveSkipBudgetFromServer,
+  });
   registerMlsStatePersister(statePersister);
   installMlsStatePersisterLifecycle(statePersister);
 
@@ -215,6 +247,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       addMessageToChat: deps.addMessageToChat,
       onChannelMemberJoined: deps.onChannelMemberJoined,
       onChannelMemberKicked: deps.onChannelMemberKicked,
+      onChannelRemovalReleased: deps.onChannelRemovalReleased,
       onChannelUpdated: deps.onChannelUpdated,
       onRolePermissionsChanged: deps.onRolePermissionsChanged,
       onChannelDeleted: deps.onChannelDeleted,
@@ -234,6 +267,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     async (sender, content, groupId, isWelcome, ratchetTreeBytes, isCommit, deliveryMeta) => {
       // The ONE canonical user id (leafIdentity.ts): ASCII letters folded, as MLS and the replay do.
       const senderNorm = canonicalUserId(sender);
+      // What the server says of every frame bounds the read marks this account may take (serverClock.ts).
+      noteServerTime(deps.userId, deliveryMeta?.queuedCreatedAt);
 
       // ── Welcome ──────────────────────────────────────────────────────────────
       if (isWelcome) {
@@ -291,7 +326,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           groupId,
           senderNorm,
           content,
-          deliveryMeta?.senderDeviceId
+          deliveryMeta?.senderDeviceId,
+          deliveryMeta?.aheadOfMailbox === true
         );
       }
 
@@ -580,7 +616,7 @@ async function handleWelcome({
     void mlsService
       .updateInvitationStatus(mlsService.getDeviceId(), userId, terminalId, 'active')
       .catch(() => {});
-    onGroupReady?.(terminalId);
+    onGroupReady(terminalId);
     log(
       `[WELCOME] ${terminalId.slice(0, 8)}… already held - redelivered Welcome ignored (idempotent)`
     );
@@ -762,6 +798,7 @@ async function handleWelcome({
                       convoKey: joinedGroupId,
                       senderNorm: msg.sender,
                       messageId: normalizeMessageId(appMsg.messageId),
+                      sentAt: appMessageSentAtMs(appMsg.sentAt),
                       deliveryMeta: msg.deliveryMeta,
                       ...(authorship ? { authorship } : {}),
                     });
@@ -808,7 +845,7 @@ async function handleWelcome({
 
       // History: delegated to onWelcomeProcessed (after reinject) to avoid blocking
       // the queue under the MLS lock (createDecryptSession re-acquires the same mutex).
-      onGroupReady?.(joinedGroupId);
+      onGroupReady(joinedGroupId);
       log(`[WELCOME] Group ${joinedGroupId.slice(0, 8)}… ready`);
       return null;
     } catch (e) {
@@ -1148,6 +1185,12 @@ async function handleKnownGroup({
         conversations,
         groupId,
         evidence: 'remove-commit',
+        // The server's acceptance of THIS Remove commit: the instant the removal happened, and the
+        // date of the notice - never when this device merged it.
+        removedAt: deliveryMeta?.queuedCreatedAt,
+        // A Remove commit reached through the replay carries no delivery time: the server's record.
+        askRemovedAt: () => mlsService.ownRemovalAt(groupId),
+        ownerId: userId,
         reAddInFlight: reAddIsInFlight(groupId),
         saveConversation,
         addMessageToChat,
@@ -1221,42 +1264,27 @@ async function handleKnownGroup({
         log(`[MLS] Empty envelope for ${convoKey.slice(0, 8)}… - nothing to display`);
       }
     } else if (msg.reaction) {
-      const msgId = msg.reaction.messageId ?? '';
-      const emoji = msg.reaction.emoji ?? '';
-      const reactions = messageReactions.get(msgId) || [];
-      // Both legs arrive here: `removed` says which. A frame from before the field existed carries
-      // false, which is what it meant - it could only ever place a reaction.
-      // `at` is the sender's clock; an undated frame reads as 0 and loses to anything dated.
-      const updated = applyReaction(
-        reactions,
+      await applyReactionFrame(
+        {
+          storage,
+          deviceKey,
+          conversations,
+          messageReactions,
+          log,
+        },
+        convoKey,
         sender,
-        emoji,
-        Number(msg.reaction.at ?? 0),
-        msg.reaction.removed === true,
-        authorship
+        msg.reaction,
+        authorship,
+        deliveryMeta?.queuedCreatedAt
       );
-      if (updated) {
-        messageReactions.set(msgId, updated);
-        const c = conversations.get(convoKey);
-        if (c) {
-          const idx = c.messages.findIndex((m) => m.id === msgId);
-          if (idx !== -1) {
-            const next = [...c.messages];
-            next[idx] = { ...next[idx], reactions: updated };
-            conversations.set(convoKey, { ...c, messages: next });
-            if (storage) {
-              // A reaction changes the reactions. Writing the whole row here used to clear the
-              // delete/edit flags, so reacting to an edited message resurrected the original body
-              // on the next reload.
-              await storage
-                .updateMessage(next[idx].id, { reactions: updated }, deviceKey())
-                .catch(() => {});
-            }
-          }
-        }
-      }
     } else if (msg.call) {
-      onCallSignal?.(sender, groupId, msg.call);
+      onCallSignal?.(
+        sender,
+        groupId,
+        msg.call,
+        receivedNoticeTime(appMessageSentAtMs(msg.sentAt), deliveryMeta?.queuedCreatedAt)
+      );
     } else if (msg.system) {
       const event = msg.system.event ?? '';
       let data: any = {};
@@ -1284,6 +1312,7 @@ async function handleKnownGroup({
         convoKey,
         senderNorm: sender,
         messageId: normalizeMessageId(msg.messageId),
+        sentAt: appMessageSentAtMs(msg.sentAt),
         deliveryMeta,
         ...(authorship ? { authorship } : {}),
       });
@@ -1322,6 +1351,8 @@ async function handleKnownGroup({
         conversations,
         groupId,
         evidence: 'inbound-frame',
+        askRemovedAt: () => mlsService.ownRemovalAt(groupId),
+        ownerId: userId,
         reAddInFlight: reAddIsInFlight(groupId),
         saveConversation,
         addMessageToChat,
@@ -1546,10 +1577,7 @@ async function upsertConversation(
   let matchedExisting = false;
 
   if (isDirect) {
-    const existingDirect = Array.from(conversations.entries()).find(([, c]) => {
-      if ((c.conversationType ?? 'group') !== 'direct') return false;
-      return (c.directPeerId ?? c.contactName).toLowerCase() === directPeerId;
-    });
+    const existingDirect = findDirectConversationByPeer(conversations, directPeerId);
     if (existingDirect) {
       newConvoKey = existingDirect[0];
       matchedExisting = true;
@@ -1582,10 +1610,31 @@ async function upsertConversation(
       // Without this, loadHistoryForConversation (which reads from the new groupId's IndexedDB)
       // would overwrite the in-memory list with an empty array, making messages disappear
       // until the next login where mergeDirectConversationDuplicates migrates them properly.
-      const msgs = existing.messages ?? [];
+      const msgs = (existing.messages ?? []).filter((m) => m.id && m.status !== 'sending');
       if (deps.storage && msgs.length > 0) {
-        const toSave = msgs
-          .filter((m) => m.id && m.status !== 'sending')
+        // A MOVE, built from the STORED rows. A row the old conversation already stores is moved as
+        // stored - its sealed proofs, reactions, edit and deletion included, which the copy on screen
+        // does not carry and a write built from it erased. Only a row no store holds yet is written
+        // from memory, and only where none stands. A move changes the row's conversation, which the
+        // scoped compare-and-set (`mergeMessages`) refuses by design; what it cannot see is a write
+        // to the old conversation's row after this read, and the old conversation has just left
+        // memory (`conversations.delete` above), so no shown path writes to it.
+        const ids = msgs.map((m) => m.id);
+        const found = await deps.storage
+          .getMessagesByIds(existing.id, ids, deps.deviceKey())
+          .catch((e: unknown) => {
+            deps.log(
+              `[WELCOME] could not read the stored rows of ${existing.id.slice(0, 8)}… to re-key them: ${String(e)} - only rows no store holds are written`
+            );
+            return null;
+          });
+        const stored = found?.rows ?? new Map<string, StoredMessage>();
+        const movedRows = [...stored.values()].map((row) => ({
+          ...row,
+          conversationId: joinedGroupId,
+        }));
+        const fresh: StoredMessage[] = msgs
+          .filter((m) => !stored.has(m.id) && !found?.unreadable.has(m.id))
           .map((m) => ({
             id: m.id,
             conversationId: joinedGroupId,
@@ -1597,14 +1646,18 @@ async function upsertConversation(
             isEdited: m.isEdited,
             serverTimestamp: m.serverTimestamp,
           }));
+        const toSave = [...movedRows, ...fresh];
         if (toSave.length > 0) {
           // THE LINE BELOW USED TO PRINT WHETHER OR NOT THE WRITE HAPPENED. `.catch(() => {})`
           // swallowed the failure and the next statement announced `persisted` regardless, so a
           // store that refuses writes produced a log CLAIMING a durable write that did not occur.
           // That is worse than silence: it answers, wrongly, the exact question a reader chasing a
           // conversation empty after a reload would come here to ask.
-          const persisted = await deps.storage
-            .saveMessages(toSave, deps.deviceKey())
+          const storage = deps.storage;
+          const persisted = await Promise.all([
+            movedRows.length > 0 ? storage.saveMessages(movedRows, deps.deviceKey()) : null,
+            fresh.length > 0 ? storage.saveMessagesIfAbsent(fresh, deps.deviceKey()) : null,
+          ])
             .then(() => true)
             .catch((e: unknown) => {
               deps.log(

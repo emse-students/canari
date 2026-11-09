@@ -37,8 +37,16 @@ export const BOOKINGS_NO_OVERLAP_EXPRESSION = `USING gist ("resourceId" WITH =, 
 @Index('bookings_holder_idx', ['holderId', 'startsAt'])
 @Index('bookings_resource_starts_idx', ['resourceId', 'startsAt'])
 @Index('bookings_ends_idx', ['endsAt'])
+// The reminder cron's scan (migration 115): only the rows still owed one.
+@Index('bookings_reminder_due_idx', ['startsAt'], {
+  where: `"reminderSentAt" IS NULL AND "reminderMinutes" IS NOT NULL AND "cancelledAt" IS NULL`,
+})
 @Check('bookings_order', `"startsAt" < "endsAt"`)
 @Check('bookings_cancellation_pair', `("cancelledAt" IS NULL) = ("cancelledById" IS NULL)`)
+@Check(
+  'bookings_reminder_range',
+  `"reminderMinutes" IS NULL OR "reminderMinutes" BETWEEN 5 AND 10080`
+)
 export class Booking {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -80,6 +88,20 @@ export class Booking {
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   cancelledById: string | null;
+
+  /**
+   * The bookings reminder (WP-N, D53, migration 115): THIS person's delay before the slot, in
+   * minutes (NULL = none), when it was chosen, and the CLAIM stamped before the reminder is sent.
+   * `BookingReminderScheduler` is the only reader of the last two.
+   */
+  @Column({ type: 'int', nullable: true })
+  reminderMinutes: number | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  reminderSetAt: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  reminderSentAt: Date | null;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

@@ -47,6 +47,8 @@ export const PRIVATE_PREFIXES = [
   '/communities',
   '/dashboard',
   '/dev',
+  // Help written for members of an association (a new Lydia cashier): not a search result.
+  '/help',
   '/directory',
   '/documents',
   '/events',
@@ -75,25 +77,22 @@ export const PRIVATE_PREFIXES = [
 const LEGAL_SEO: Record<string, () => SeoMeta> = {
   '/legal/cgu': () => ({
     title: m.legal_cgu_title(),
-    description:
-      "Conditions générales d'utilisation de Canari, plateforme de communication sécurisée pour l'EMSE.",
+    description: m.seo_legal_cgu_description(),
     path: '/legal/cgu',
   }),
   '/legal/privacy': () => ({
     title: m.legal_privacy_title(),
-    description: 'Comment Canari traite vos données personnelles, cookies et droits RGPD.',
+    description: m.seo_legal_privacy_description(),
     path: '/legal/privacy',
   }),
   '/legal/child-safety': () => ({
     title: m.legal_child_safety_title(),
-    description:
-      'Engagements de Canari pour la protection des mineurs et le signalement de contenus.',
+    description: m.seo_legal_child_safety_description(),
     path: '/legal/child-safety',
   }),
   '/legal/miconnect': () => ({
     title: m.legal_miconnect_title(),
-    description:
-      "Conditions d'utilisation de MiConnect et données transmises aux services de l'École.",
+    description: m.seo_legal_miconnect_description(),
     path: '/legal/miconnect',
   }),
 };
@@ -125,6 +124,7 @@ function adminTitle(section: string): string {
  * exactly once across the whole app. Lazy for the reason `LEGAL_SEO` is.
  */
 const PAGE_TITLES: Record<string, () => string> = {
+  '/help/lydia-pro': () => m.help_lydia_pro_title(),
   '/account/purchases': () => m.purchases_heading(),
   '/admin': () => m.admin_title(),
   '/admin/agenda': () => adminTitle(m.admin_pending_agenda_label()),
@@ -250,30 +250,32 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
     // inside, never a second indexable page: the hub is the one page the sitemap offers, and a
     // section is `noindex` on the server answer too, so a crawler that finds one by a link does not
     // list it beside its hub.
+    // THE SLUG IS NEVER A TITLE: it is an identifier, and this baseline is what the tab shows until
+    // the page hands its real name over (`pageTitle`) or the server enriches it. The path carries no
+    // kind either (association, list and institution share `/associations/<slug>`), so the baseline
+    // is the neutral word, and the real name replaces it.
     const sectionMatch = path.match(ASSOCIATION_SECTION_PATH);
     if (sectionMatch) {
-      return appPageSeo(path, decodeURIComponent(sectionMatch[1]));
+      return appPageSeo(path, m.seo_association_title());
     }
-    const slugMatch = path.match(/^\/associations\/([^/]+)$/);
-    if (slugMatch) {
-      const slug = decodeURIComponent(slugMatch[1]);
+    if (/^\/associations\/[^/]+$/.test(path)) {
       return {
-        title: slug,
-        description: `Page publique de l'association ${slug} sur Canari : actualités, agenda et formulaires.`,
+        title: m.seo_association_title(),
+        description: m.seo_association_description(),
         path,
       };
     }
     return {
-      title: 'Associations',
-      description: 'Découvrez les associations EMSE sur Canari : fil, événements et inscriptions.',
+      title: m.assoc_list_heading(),
+      description: m.seo_associations_description(),
       path: '/associations',
     };
   }
 
   if (path.startsWith('/posts/')) {
     return {
-      title: 'Publication',
-      description: 'Publication sur le fil social Canari.',
+      title: m.seo_post_title(),
+      description: m.seo_post_description(),
       path,
       ogType: 'article',
     };
@@ -283,8 +285,8 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
   // does: previewing for whoever holds the link is the point, being searchable is not.
   if (path.startsWith('/f/')) {
     return {
-      title: 'Formulaire',
-      description: 'Formulaire Canari : répondez en ligne, sans compte.',
+      title: m.seo_form_title(),
+      description: m.seo_form_guest_description(),
       path,
       noindex: true,
     };
@@ -292,8 +294,8 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
 
   if (path.startsWith('/forms/')) {
     return {
-      title: 'Formulaire',
-      description: 'Formulaire Canari : inscription ou réponse en ligne.',
+      title: m.seo_form_title(),
+      description: m.seo_form_description(),
       path,
     };
   }

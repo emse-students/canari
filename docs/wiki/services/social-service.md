@@ -101,6 +101,8 @@ its migrations are already recorded, so the query succeeds there whatever the co
   failure costs more than a retry.
 - Tests: `post-media-retention.reels.spec.ts` (both passes failing, only one failing, a healthy schema).
 
+**UPDATE 2026-10-30 - THE ORDER ABOVE IS NO LONGER THE DEPLOY'S (checked while reviewing #2707, which adds `post_notifications.meta`, migration 117).** `deploy-environment.sh` now brings up ONLY postgres, runs `apply_migrations`, and only then replaces the services one by one (`rolling.sh`, #1563), so new code never reads a column before its migration on a deploy: a new column the whole API selects (`meta` on every notification read and insert) has NO few-seconds window of 500s. The two exposures that remain are narrower - a ROLLBACK across a migration (old code on a newer schema: harmless for an additive nullable column the old entity never names, as here) and a migration that fails (the script stops before any service is replaced). The 2026-10-02 incident above (069, and 090's deploy-window text) predates that order; no other column has been found exposed since it, so no backlog entry is opened for a general gap that the script no longer has.
+
 **A column every request would read (migration 090, 2026-10-17; the deploy-window reasoning below is HISTORICAL - since #1563 the deploy applies the migrations BEFORE it replaces any service, so only a rollback across a migration meets old code on a newer schema).** `channel_messages."clientMessageId"` is the salon send's idempotence key: a partial unique index on `(authorId, channelId, clientMessageId)`, and a repeated `POST /api/channels/:id/messages` with the same `messageId` is answered with the stored row - nothing written, published or pushed; two racing repeats are settled by the index, the loser answered with the winner's row. On the entity it is `select: false, update: false`, so no history read and no pin names it before the migration. **Every INSERT does**: TypeORM lists each insertable column in its INSERT (`DEFAULT` for an absent value), so on a schema without 090 EVERY salon INSERT fails - a send with or without a client id, an edit, a reaction, a system notice - whole, storing nothing. A `messageId` that is not a UUID is refused 400 `CHANNEL_CLIENT_MESSAGE_ID_INVALID`. The answer echoes `clientMessageId`, which is how a client learns a repeat is safe. A message delete first writes the id's tombstone (`channel_message_client_tombstones`, cascaded with its salon), and a repeat that meets it is refused 410 `CHANNEL_MESSAGE_DELETED` - so a delete, too, fails whole on such a schema. The delete locks the message ROW before the client id's advisory lock (`deleteChannelMessage`), so a delete racing an account erasure waits for it and writes no tombstone of the erased author. A tombstone is kept **30 days** (decision 2026-10-18): `ChannelRetentionScheduler.purgeExpiredClientTombstones`, daily at 03:50, deletes the ones whose `deletedAt` is older, at the instant it is handed. Tests: `channel.service.spec.ts`, `channel-message-client-id.integration.spec.ts` (needs `SOCIAL_IT_DATABASE_URL`; the deploy-window case fails without `select: false`). Why: [offline-and-weak-network](../frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17).
 
 **A salon row's broadcast and push come from an outbox (migration 093, 2026-10-18).** `sendMessage` inserts the row AND a `channel_message_fanout` entry (`messageId`, a `payload` holding the cleartext mentions and the seed frame the push carries) in ONE transaction, answers, then publishes `channel.message.created` and rings the phones off the request path; the entry is deleted only when BOTH were handed off (each failure is logged by branch). The entry cascades with its message. **What it covers: PROCESS DEATH and DATABASE failures (an audience, member or workspace read that throws) - NOT a Redis outage**: `RedisService.publish` swallows its own errors, so the frame counts as handed off and the entry is deleted.
@@ -152,8 +154,9 @@ The numbers and what they imply are in
 | DELETE | `/api/posts/:postId` | Delete post (author or admin) |
 | POST | `/api/posts/:postId/reactions` | Add/toggle emoji reaction |
 | POST | `/api/posts/:postId/comments` | Add comment |
-| PATCH | `/api/posts/:postId/pin` | Pin post (admin only) |
-| PATCH | `/api/posts/:postId/unpin` | Unpin post (admin only) |
+| PATCH | `/api/posts/:postId/pin` | Pin the post in ONE space, body `{ spaceId }` (WP-PIN, `SpacePinsService`): the platform admin, or `MODERATE` in that space's BDE; at most 3 shown per space ([spaces-and-audiences-reform](../spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)) |
+| PATCH | `/api/posts/:postId/unpin` | Unpin the post from ONE space, body `{ spaceId }` |
+| GET | `/api/posts/space-pins/:spaceId` | The governor's pins of a space, `shown` then `pending` ("en attente") |
 | POST | `/api/posts/:postId/republication-requests` | Ask the AUTHOR of a personal post to let an association carry it (D38b; `POST_AS_ASSO` held, typed `REPOST_PERSONAL_*` refusals, [profiles-and-access](../profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | GET | `/api/posts/me/republication-requests` | The caller's inbox of requests to answer (D38b); answered through `POST /api/associations/proposals/:id/accept` or `/refuse` (409 `PROPOSAL_SENDER_GONE` when the asker no longer speaks for the association) |
 | GET | `/api/posts/me/republication-requests/count` | `{ pending }`, the count alone, for `/notifications` (D38b); like the inbox, it leaves out a request whose asker no longer speaks for the association |
@@ -174,6 +177,8 @@ added later without the pipe fails there.
 | GET | `/api/channels/workspaces/user/me` | List caller's workspaces; each carries `viewerCanManage` (true iff the caller holds MANAGE_WORKSPACE) and `viewerCanManageChannels` (`roleGrantsChannelManagement`: `channel.manage` or `workspace.manage`) so the client can gate admin controls without deriving permissions itself. Ordered by the caller's personal `sortOrder` |
 | PATCH | `/api/channels/workspaces/reorder` | Persist the caller's top-to-bottom community order (`{ orderedIds }`, workspace ids). Personal per-member setting, stored on `channel_members.sortOrder` (migration 024) - not shared across members of the same workspace |
 | GET | `/api/channels/workspaces/:workspaceId/members` | The whole community roster. Exists for the caller that holds no channel id - a device that has just joined the Graine distribution group and must name who to ask for history |
+| GET | `/api/channels/workspaces/:workspaceId/nicknames` | Every nickname state of the community, set and cleared (dated), for a member of it ([chat](../frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)) |
+| PUT | `/api/channels/workspaces/:workspaceId/nicknames/:userId` | `{ nickname: string \| null }`. A moderator names a member; the member may clear their own. Refusals `nickname_too_long`, `NICKNAME_REQUIRES_MODERATION`, `NICKNAME_TARGET_NOT_MEMBER`, `USER_BLOCKED`; announced on `workspace.updated { nickname }` (migration 149, columns read and written by raw SQL only) |
 | PATCH | `/api/channels/workspaces/:workspaceId/history-visibility` | Set what a newcomer may read: `shared` or `joined`, MANAGE_WORKSPACE only. Stored on `channel_workspaces."historyVisibility"` (migration 039) and broadcast as `workspace.updated`. **The server enforces nothing here** - it holds no seed; members apply the rule ([channel-encryption](../protocols/channel-encryption.md)) |
 | GET | `/api/channels/workspace/:workspaceId/user/me` | List channels in workspace for caller |
 | POST | `/api/channels` | Create channel in a workspace |
@@ -184,7 +189,8 @@ added later without the pipe fails there.
 | GET | `/api/channels/:channelId/members` | Roster of THIS channel (private = `allowedUsers` + admins); `?scope=workspace` for the whole community |
 | DELETE | `/api/channels/:channelId` | Delete a salon outright - its row, its `channel_messages` and its distribution group. MANAGE_CHANNEL **or** MANAGE_WORKSPACE, and no confirmation argument - see "Deleting a channel" |
 | DELETE | `/api/channels/workspaces/:workspaceId` | Delete a whole community for every member, irreversibly. MANAGE_WORKSPACE **only**, and the body must carry `{confirmationName}` equal to the community name or it is refused with `WORKSPACE_CONFIRMATION_MISMATCH` - see "Deleting a community" |
-| DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS) |
+| DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS). Optional `?actorDevice=`: the actor's committing device, echoed as `actorDeviceId` in `channel.member.kicked` |
+| POST | `/api/channels/workspaces/:workspaceId/members/:userId/removal-released`, `/api/channels/:channelId/members/:userId/removal-released` | The actor of a removal RELEASES the key-group Remove it claimed and knows it did not commit; `?actorDevice=` (the releasing device) required, same permission as the removal, `409` while the person is still in the scope, `503` when it cannot be announced, throttled per user (60/min). Publishes `channel.member.removal-released` with `releasedBy` and `releasedByDevice` ([channel-encryption](../protocols/channel-encryption.md#the-actor-of-a-removal-commits-it---2026-10-27)) |
 | PATCH | `/api/channels/workspaces/:workspaceId/members/:userId/role` | Set a member's workspace role, replacing existing roles (MANAGE_WORKSPACE / MANAGE_ROLES) |
 | GET \| PATCH | `/api/channels/:channelId/access` | Get/set channel visibility (`isPrivate`), `allowedUsers`, and `writePolicy` (MANAGE_CHANNEL to write) |
 | GET \| PATCH | `/api/channels/roles/:roleId/permissions` | Read a role's base permissions; **PATCH** grants/revokes ONE key (`{key, granted}`). The whole-list PUT is gone since `minClientVersion` 1.2.7. MANAGE_WORKSPACE / MANAGE_ROLES |
@@ -288,6 +294,41 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   wart:** `normalizeRoleLabelToCanonical` folds any unrecognised role name to `member`, so such a role
   shows in the member list as "Membre" while holding whatever permissions it was given - a display
   fault waiting for the day somebody uses the route.
+
+#### A community may name its three roles (owner, 2026-11-08)
+
+The three roles stay fixed (identity, permissions); each community may give them **display names**
+("Presidence", "Bureau", "Musicien"). LABELS ONLY.
+
+- **Storage: a separate nullable column, `channel_roles."displayLabel"` (migration 150, varchar 40),
+  never the existing `name`.** `name` is the role's IDENTITY (the names `createWorkspace` seeds:
+  Administrateur, the accented moderator name, Membre): `mapRoleInputToWorkspaceRoleName`, invitations, assignment and every client of
+  `minClientVersion` 1.6.6 resolve a role from it, and `normalizeRoleLabelToCanonical` folds an
+  unknown name to `member`. Writing a free-text label into `name` would show an administrator as
+  "Membre" on an old client (and break the by-name lookups). With its own column an old client ignores the
+  field it does not know and sees exactly what it saw before; the listing (`roles`) simply carries
+  `displayLabel` beside `name`. NULL = no name of its own, every client shows the localized default
+  (`chat_role_admin` / `chat_role_moderator` / `chat_role_member`).
+- **Write: `PATCH /channels/roles/:roleId/label` `{ label: string | null }`** (`setRoleDisplayLabel`); the `label` KEY is required (`roleLabelOfBody`): a body without it is a 400, only an explicit null or blank resets.
+  Only an administrator (`workspace.manage`, read under the community removal lock so a demotion
+  committing meanwhile is honoured); anyone else is refused 403 `ROLE_RENAME_REQUIRES_ADMIN`. The
+  client receives no role name to decide on: it mounts the editor from `viewerCanManage`, the existing
+  decision flag. `validateRoleLabel`: trimmed, at most 40 code points, no control, invisible-formatting (`\p{Cf}`: zero-width, bidi, BOM, tag) or line-separator
+  character (400 `ROLE_LABEL_INVALID`); a blank or null value RESETS. One name per role.
+- **Live update: the existing `workspace.role.permissions` event** is the role's one public
+  publish (`announceRoleToCommunity`) to the whole membership, shared by a permission edit and a rename,
+  each carrying only what ITS write changed: a rename adds `label` (string, or null for the default), a
+  permission toggle OMITS it, so a toggle's late publish cannot restore an old name. Absent `label`
+  means unchanged on every client. A rename changes no standing, so no `workspace.role.changed`.
+- **Nothing keys on a label.** Consumers audited: the roster rows and `normalizeRoleLabelToCanonical`
+  read `name`; permission checks read `permissions`; invite and assignment lookups read `name`; the
+  client folds `name` (never the label) through `canonicalRoleOf`; `mapRoleInputToWorkspaceRoleName`
+  receives the canonical English/French input of the client. The ONE client resolver is
+  `resolveRoleLabel` (`utils/chat/communityRoleLabel.ts`): the member list badges, the invite and
+  role pickers, the permission grid headers and the editor placeholders all call it, from the store
+  (`globalChannels.roleLabels`, keyed by role id) that the announcement keeps current. No push or
+  notification text names a role. Tests: `role-label.integration.spec.ts` (PostgreSQL),
+  `role-label.spec.ts`.
 
 #### Message moderation (`channel.moderate`)
 
@@ -594,7 +635,7 @@ channel id, migration 066), one instant per reader, only ever raised.
 - `GET /api/channels/:channelId/read-marks` - every CURRENT reader's mark; the client reads it beside
   every history page, since live events only carry what moved while it was connected.
 - Distinct from `POST :id/read` above, on purpose: that one dismisses this account's notifications
-  on arrival; the receipt waits for the same focus guard and 2 s debounce as a DM's
+  on arrival; the receipt waits for the same focus guard and leading-edge 2 s throttle (sent at once, burst coalesced) as a DM's
   (`MainChatPage`), so a phone in a pocket never tells a sender it read anything.
 
 The client merges both into the conversation's `readWatermarks`, so "Lu par", the avatars and `+N`
@@ -613,7 +654,7 @@ skew made the reader's own device re-POST the identical mark at every load, sinc
 server's, `createdAt`) never reached the row's `sentAt` key. Pinned by `salonRowClock.test.ts` (heads
 under the last message: 2 before the reload, 2 after; 0 before the fix).
 
-**"Mark as read" from a salon NOTIFICATION, app shut (Android, 2026-10-10).** A shut phone has no session, so the two public calls above are out of reach. Its action calls chat-delivery's `POST /api/mls/push/channel-read` `{ userId, deviceId, channelId, at }` under `Authorization: PushSecret` (which proves the caller is a device of `userId`); chat-delivery forwards it with `x-internal-secret` to `POST /api/internal/channels/:channelId/read` (`InternalChannelReadController`, never exposed by the edge), which runs `advanceChannelReadMark` (membership still checked here, `at` bounded by the newest message) and then `markChannelRead` so the user's other devices clear their banner. `at` is the notification's own `createdAt`, never the phone's clock. A refused or failed call is logged on both sides (`[CHANNEL_READ_PUSH]`) and never retried: the banner is already gone locally and the receipt rises the next time the salon is opened. Reply is NOT offered on a salon: see [mobile](../frontend/mobile.md#a-salon-mark-as-read-only-and-why-reply-is-not-offered-decided-2026-10-10-android).
+**"Mark as read" from a salon NOTIFICATION, app shut (Android, 2026-10-10).** A shut phone has no session, so the two public calls above are out of reach. Its action calls chat-delivery's `POST /api/mls/push/channel-read` `{ userId, deviceId, channelId, at }` under `Authorization: PushSecret` (which proves the caller is a device of `userId`); chat-delivery forwards it with `x-internal-secret` to `POST /api/internal/channels/:channelId/read` (`InternalChannelReadController`, never exposed by the edge), which runs `advanceChannelReadMark` (membership still checked here, `at` bounded by the newest message) and then `markChannelRead` so the user's other devices clear their banner. `at` is the notification's own `createdAt`, never the phone's clock. A refused or failed call is logged on both sides (`[CHANNEL_READ_PUSH]`) and never retried: the banner is already gone locally and the receipt rises the next time the salon is opened. The same controller answers chat-delivery's second salon question, `POST /api/internal/channels/:channelId/reader` `{ userId }` -> `{ reader }` (`ChannelService.isReaderOfChannel`: a public salon's community member, a private salon's reader), which gates a salon reaction's push to its author - a "no" is logged `[SALON_READER] ... is not a reader` once per user and salon, then at each power of ten (`common/log-repeat.ts`) ([chat-delivery](chat-delivery.md#the-relay-routes-ask-the-group-2026-11-01)). Reply is NOT offered on a salon: see [mobile](../frontend/mobile.md#a-salon-mark-as-read-only-and-why-reply-is-not-offered-decided-2026-10-10-android).
 
 **Clearing a community without reading it (2026-10-13).** `POST /api/channels/workspaces/:workspaceId/unread/clear` `{ upTo }` (`clearWorkspaceUnread`) raises `channel_members."clearedMarks"` (migration 082) for every salon the caller may read, in one statement, to `LEAST(upTo, the salon's newest createdAt)` and never lower; `listUnreadCounts` counts from the later of `readMarks` and `clearedMarks`. It never touches `readMarks` and never publishes `channel.read`: only `channel.unread.cleared` to the caller, and one silent `channel_read` push per salon that moved. The column is on the TypeORM entity with `select`/`insert`/`update: false` (raw SQL only): off the entity, `synchronize` DROPPED it at every local boot; as a plain column it would be in every membership `SELECT` during the deploy's window before migrations run. A salon with no message gets no mark (`LEAST` ignores a NULL, so it is filtered first; measured on Postgres). Why: [chat](../frontend/modules/chat.md#mark-a-whole-community-as-read-2026-10-13).
 
@@ -673,8 +714,8 @@ Live broadcasts, behind `LIVE_ENABLED`; every route, its rights and its refusal 
 | GET | `/api/associations` | List all associations |
 | GET | `/api/associations/:id` | Get association detail |
 | POST | `/api/associations` | Create association (global admin or BDE `MANAGE_ASSO` flag) |
-| PATCH | `/api/associations/:id` | Update association (admin with `MANAGE_MEMBERS`) |
-| GET/PUT/DELETE | `/api/associations/:id/push-mute` | The caller's push mute of one association; `GET /api/associations/me/push-mutes` lists them |
+| PATCH | `/api/associations/:id` | Update details: each field asks its own right (`UPDATE_FIELD_RIGHTS`: profile `EDIT_PROFILE`, `archived` `MANAGE_MEMBERS`, cotisation `MANAGE_PRODUCTS`, quota and a list's parent the platform admin) - [the field table](../association-permissions.md#edit_profile-bit-12-the-profile-is-not-the-roster-and-patch-id-is-not-one-flag-owner-2026-11-02) |
+| GET/PUT/DELETE | `/api/associations/:id/push-mute` | LEGACY (builds older than the bell, engagement WP-3): the caller's bell on one association read as a mute (`none`); `GET /api/associations/me/push-mutes` lists them |
 | POST | `/api/associations/:id/members` | Add member to association |
 | POST | `/api/associations/:id/events` | Create calendar event |
 | PATCH | `/api/associations/:id/events/:eventId` | Update calendar event |
@@ -782,8 +823,10 @@ all eight routes that answer a row, so a column added later is private until som
 payout account has its own read, `GET :id/payout-account` (`canManagePayoutAccount`). Story and
 test: [forms](../frontend/modules/forms.md#what-a-client-reads-of-a-submission-is-an-allowlist-2026-10-15).
 
-**The Lydia Business private token is write-only (2026-10-16, migration 100).** `PUT :id/lydia-business-key`
-(`canManagePayoutAccount`) stores it encrypted (`common/secret-box.ts`, `LYDIA_KEY_ENCRYPTION_SECRET`,
+**The Lydia Business private token is write-only (2026-10-16, migration 100).** Since enrolment lot 1 it is
+written ONLY by the internal `POST :id/lydia-account` at `business/create` (`setLydiaAccountId`); the old
+`PUT :id/lydia-business-key` is a shim answering `410 LYDIA_KEY_PASTE_RETIRED` and writing nothing
+([legacy-compatibility](../legacy-compatibility.md)). It is stored encrypted (`common/secret-box.ts`, `LYDIA_KEY_ENCRYPTION_SECRET`,
 bound to the association and its vendor token) in `"lydiaBusinessKeyCiphertext"`, a column the entity
 maps `select`/`insert`/`update: false` and only raw SQL touches; `GET` on the same path answers `{ set }`.
 The one route that answers it decrypted is the internal `POST /api/internal/associations/lydia-callback-key`
@@ -906,7 +949,7 @@ and reach whoever happened to open the feed. `PostAnnounceScheduler` closes that
 
 | | Association post | Personal post |
 | --- | --- | --- |
-| Recipients | everyone who can SEE the post (`announceRecipientsSql`, WP6b), minus its author | the author's followers (`user_follows`) who can see it |
+| Recipients | everyone who can SEE the post (`announceRecipientsSql`, WP6b), minus its author | the author's ACCEPTED followers (`user_follows`, [WP-F1](#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)) who can see it |
 | Notification `type` | `association_post` | `followed_post` |
 | Push `actorName` | the ASSOCIATION's name | the author's display name |
 | Measured rate (17 weeks to 2026-09-10) | 0.53/week to 356 people | ~6.5/week to 2.84 people each |
@@ -942,46 +985,158 @@ where "Suivre" is defined.
 Pinned by `post-announce.scheduler.spec.ts`, whose first assertion is the stamp/send ORDER rather
 than the recipients.
 
-### Follow, mute and read grants: three different facts (decided by the user, 2026-10-08)
+### Follow, bell and read grants: three different facts (decided by the user, 2026-10-08; the mute became the bell, engagement WP-3, 2026-11-08)
 
 | | What it is | Does it decide who is PUSHED? |
 | --- | --- | --- |
-| **Follow** (`association_follows`, button "Suivre") | a reading preference: it feeds the "followed" view of the feed | **No.** Every association post is pushed to everyone who can SEE it; the follow table is not consulted for announcing (STATUS QUO, chosen on purpose) |
-| **Mute** (`association_push_mutes`, migration 080) | "stop pushing me THIS association", and only that | **Yes - it removes the recipient from the PUSH**, never from the feed or the bell |
+| **Follow** (`association_follows`, button "Suivre") | a reading preference: it feeds the "followed" view of the feed | **No** for an association: every association post is pushed to everyone who can SEE it; the follow table is not consulted for announcing (STATUS QUO, chosen on purpose). A PERSON's accepted followers are their announcement audience |
+| **Bell** (`account_bells`, migrations 142-143) | what the reader receives from ONE account, a person they follow or an association: posts and lives (no row, the default), `lives`, or `none`. The old association **mute** (`association_push_mutes`, migration 080) is the level `none`, copied by 143 | **Yes - it removes the recipient from the PUSH**, never from the feed or the bell list |
 | **Nominative read grant** (`read_grants`) | access to read | **No.** A read grant is access, not subscription: its holders are not announced to |
 
-**Where a mute is applied: ONE place, server-side.** `PostNotificationsService.createNotifications`
-asks `AssociationPushMutesService.mutedAmong(associationId, recipients)` just before the push loop
-and drops the muted. The in-app `post_notifications` row is still written (the bell is the record, a
-push is the interruption), and the announce SQL is untouched. Nothing is filtered by the client, and
-no cache or feed key is involved.
+**Where the bell is applied: ONE place, server-side.** `PostNotificationsService.fanOutPush` asks
+`AccountBellsService.withheldAmong(target, recipients)` just before the push loop and drops the
+withheld (`bellTargetOf`: the association when the push carries one, the person acting otherwise). The
+in-app `post_notifications` row is still written (the bell list is the record, a push is the
+interruption), and the announce SQL is untouched. Nothing is filtered by the client, and no cache or
+feed key is involved. The full design, the levels and why a new follow resets the row:
+[engagement](../engagement.md#the-bell---data-model-and-how-it-combines-with-categories-and-mutes).
 
-**If the mute lookup fails the push FAILS CLOSED and LOUD**: `[NOTIFY] mute lookup failed` at error level, the error rethrown to the caller's own warning, the in-app rows kept. Pushing everyone would override a stated choice. The announce stamp is a CONDITIONAL update (`feedNotifiedAt IS NULL`), so two overlapping instances cannot both announce a post. Account deletion purges the account's mutes (`internal.controller.ts`).
+**If the bell lookup fails the push FAILS CLOSED and LOUD**: `[NOTIFY] bell lookup failed` at error level, the error rethrown to the caller's own warning, the in-app rows kept. Pushing everyone would override a stated choice. The announce stamp is a CONDITIONAL update (`feedNotifiedAt IS NULL`), so two overlapping instances cannot both announce a post. Account deletion purges the account's bells and every bell on it (`account-erasure.ts`).
 
-**Per type, and the list is an ALLOWLIST** (`MUTABLE_PUSH_TYPES`; a new type is never muted by
+**Per type, and the list is an ALLOWLIST** (`BELL_PUSH_KINDS`; a new type is never withheld by
 accident):
 
-| Type | Recipient is | Muted by a mute? |
-| --- | --- | --- |
-| `association_post` | a reader | yes |
-| `association_repost` | a reader the republication newly reached (the mute is the REPUBLISHING association's) | yes |
-| `live_started` | a follower of the association broadcasting a live (WP-L7; push only, no bell row - `pushNotice`, [lives](lives.md#the-push-to-the-followers-wp-l7-server-half)) | yes |
-| `repost_proposed`, `coorganise_proposed` | managers who must accept | **no** - operational |
-| `repost_personal_requested` | the author of a personal post an association asks to carry (D38b) | **yes** - the author's mute of the asking association |
-| `event_proposed/validated/rejected/updated/deleted/pending` | validators and proposers | **no** - operational |
-| `followed_post`, `mention`, `reply`, `reaction`, `comment` | addressed to you by a person | **no** - not an association's push |
+| Type | Recipient is | Its bell | Withheld at `lives`? at `none`? |
+| --- | --- | --- | --- |
+| `association_post` | a reader | the association's | yes / yes |
+| `association_repost` | a reader the republication newly reached | the REPUBLISHING association's | yes / yes |
+| `live_started` | a reader who sees the account broadcasting (WP-L7; push only, no bell row - `pushNotice`, [lives](lives.md#the-push-to-the-followers-wp-l7-server-half)) | the association's, or the broadcasting person's | **no** / yes |
+| `followed_post`, `member_repost` | an accepted follower | the author's, the reposter's (L17) | yes / yes |
+| `repost_personal_requested` | the author of a personal post an association asks to carry (D38b) | the asking association's | yes / yes |
+| `repost_proposed`, `coorganise_proposed` | managers who must accept | - | **never** - operational |
+| `event_proposed/validated/rejected/updated/deleted/pending` | validators and proposers | - | **never** - operational |
+| `mention`, `reply`, `reaction`, `comment` | addressed to you by a person | - | **never** |
 
 **Routes** (own rows only: the caller's id is the `x-user-id` header, never a body field):
-`GET|PUT|DELETE /api/associations/:id/push-mute` (status, mute, unmute - idempotent) and
-`GET /api/associations/me/push-mutes` (the settings list). UI: a "Couper les notifications" button
-beside "Suivre" on the association page, and a "muted associations" list with an unmute button in
-the notification settings (`SettingsMutedAssociations.svelte`). The account-wide `posts` switch
-still applies first, in chat-delivery.
+`GET /api/posts/me/bells` (the settings list), `GET|PUT /api/posts/me/bells/:kind/:targetId` (read,
+set `{ level }` - idempotent; a person only while followed, accepted). **Legacy, for builds older than
+the bell control** ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---an-association-mute-set-by-a-build-older-than-the-bell-designed-2026-11-07)):
+`GET|PUT|DELETE /api/associations/:id/push-mute` and `GET /api/associations/me/push-mutes`, which read
+and write `account_bells` (mute = `none`, unmute = no row). UI: the bell (`AccountBell.svelte`)
+beside "Suivre" on the association page and on a followed person's profile, and the "Notifications
+réduites" list with a "Tout recevoir" button in the notification settings
+(`SettingsAccountBells.svelte`). The account-wide `posts` switch still applies, in chat-delivery.
 
 **Measured on the local estate (2026-10-08, sandbox accounts, a build of this branch beside the
 old container).** Association post, recipients: follower, muted follower, non-follower member. The
 new build logged `push withheld from 1 muted of 3` and pushed the other two; the pre-mute container
 pushed all three (`[INTERNAL_PUSH]` in chat-delivery), which is the baseline.
+
+### A follow of a PERSON is a request first (WP-F1, migration 114; decided 2026-10-25)
+
+Every personal account is private (Q1 of the
+[backlog](../backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)):
+`POST /api/posts/users/:userId/follow` writes a `user_follows` row with `status = 'pending'`, and
+only the followed person's answer makes it `accepted`. An association, a list or an institution
+(`association_follows`) is followed at once and has no status.
+
+**Only an ACCEPTED row is a follow, and every reader says so through ONE fragment**,
+`acceptedFollowSql` in `follows/follow-status.ts`: the Suivis feed
+(`FollowsService.getFollowedUserIdsForUser`), the announce sweep (`announceRecipientsSql(true)`),
+the personal republication's newly-reached rule (whose follower exclusion must match the sweep's,
+or a pending follower is told by neither) and the live push (`liveAudienceSql`). The erasure and
+the block severing delete rows whatever their status. A pending row in each of the three
+PostgreSQL specs fails its assertion when the fragment is replaced by `TRUE` (control, 2026-10-27).
+
+**The two defaults of migration 114 are deliberate.** The column is added with `DEFAULT 'accepted'`,
+which records every existing follow as accepted (decision 3); the default is then set to
+`'pending'`, so a writer that forgets the column fails closed - and the old image, serving the
+seconds of a deploy, writes requests rather than follows.
+
+**114 also adds `acceptedAt`** (when the person said yes; existing follows backfilled from
+`createdAt`, a CHECK keeps every accepted row dated) **and `user_follow_notices`**, the durable
+"already told" of WP-F2: one row per (asker, person, kind), so a request deleted and asked again
+never notifies twice. The account erasure deletes both sides of it.
+
+**The schema on dev and production comes from this migration alone**: `synchronize` runs only
+when `NODE_ENV` is not `production`, and both estates pin `NODE_ENV: production` on
+social-service (`docker-compose.dev.yml`, `docker-compose.prod.yml`), so the entity's `pending`
+default never reaches an existing table there. A LOCAL database built by `synchronize` does get it,
+and its existing follows become requests - local only, and the dev seed writes `accepted`.
+
+**A request is ONE `INSERT ... ON CONFLICT DO NOTHING`** (`FollowsService.recordFollowRequest`),
+never a read then a write: a double tap used to read "no row" twice and 500 on the unique key. A
+conflict leaves an accepted follow accepted; `created` is true for the one call that wrote, so the
+request is notified once. Eight concurrent taps write one row (PostgreSQL spec).
+
+`GET .../follow-status` answers `{ following, status }`; `following` is true for a pending request
+too, the meaning a client older than the request screens gives it
+([legacy-compatibility](../legacy-compatibility.md)). Answering, listing and removing followers are
+WP-F3 (below).
+
+**Answering a request (WP-F2), `follows/follow-requests.service.ts`.** The follow routes moved out
+of `PostsController` into `FollowRequestsController` (same URLs), in a module of its own because it
+notifies through `PostsModule` - which already imports `FollowsModule`.
+
+- **Ask**: ONE `INSERT ... SELECT ... ON CONFLICT DO NOTHING` whose SELECT carries both conditions,
+  so neither is a check-then-insert: the target is a PERSON (a `users` row; an association's id or
+  an unknown one is 404 `FOLLOW_TARGET_NOT_FOUND`) and no block stands, either direction (403
+  `FOLLOW_BLOCKED` - core-service's block status already tells either side, so refusing hides
+  nothing). A MUTED account may not ask (403): a request is a push to a person. The route is
+  throttled per CALLER (`FOLLOW_ASKS_PER_MINUTE`, all targets together), and the same SELECT caps
+  the asker: `FOLLOW_PENDING_MAX` (100) unanswered requests at once (409 `FOLLOW_PENDING_LIMIT`)
+  and `FOLLOW_ASKS_PER_DAY` (50) NEW people told per rolling day, counted from the notice rows
+  (429 `FOLLOW_DAILY_LIMIT`; re-asking someone already told costs no push and is not counted). One
+  account cannot push its name to the whole directory (review 2026-10-27). **Both caps are counts,
+  so they hold only serialised**: under READ COMMITTED two statements counting at once see the same
+  total and both insert. Each ask is ONE transaction that first takes a transaction-scoped advisory
+  lock keyed by the asker, then inserts the request AND claims its `request` notice row, so the
+  next ask of the same account counts both - the daily cap reads the claims exactly, never a push
+  still on its way. Asks by different accounts never wait on each other. A request across a block
+  is not counted against the pending cap, as it is not in the asker's sent list either. Proof: the
+  PostgreSQL spec runs 24 asks at once at 99 pending and at 49 told, and exactly one is written.
+- **The block race**: an ask whose statement began before a block committed, and committed after
+  the severing ran, re-reads the block once its insert committed - the block committed BEFORE the
+  severing was called, so the read sees it - and deletes the row it wrote, refusing 403. The
+  notification path re-reads the block too, just before it writes anything, so an acceptance racing
+  a block pushes nothing. Both interleavings are forced with a trigger in the PostgreSQL spec.
+- **Told once per pair, from durable state**: the first `follow_request` (and the first
+  `follow_accepted`) for a pair claims a `user_follow_notices` row and only that call notifies (a
+  request's claim is made in the ask's transaction, above; a claim whose notice is never sent - the
+  ask retracted, a block landing before the push, a notification that throws - is released, so the
+  pair never reads as told when nobody was), so
+  ask -> withdraw -> ask in a loop pushes once. Never a clock. A re-asked request gets its bell
+  row back WITHOUT a push (deleted and rewritten, so one per pair), since the request is real
+  again; a claim whose notification then failed is logged and not retried.
+- **Accept**: ONE conditional `UPDATE ... WHERE status = 'pending' AND no block`, which dates
+  `acceptedAt` and takes the row lock; a withdraw racing it ends with no row either way (20 races against PostgreSQL). The
+  block term is in the statement because the block severing is a best-effort cross-service call.
+  The asker gets `follow_accepted`.
+- **Refuse**: the row is deleted, nobody is told, the asker may ask again. The request's bell row
+  goes with it, as it does on a withdraw; an acceptance keeps its history.
+- **Withdraw / unfollow**: ONE `DELETE ... RETURNING status`, so a withdrawn REQUEST's bell row is
+  dropped on the status the delete itself returned, never a read a racing accept could outdate.
+- **Pushes**: `social_follow_request` / `social_follow_accepted`, mapped by
+  `PostNotificationsService.pushContent` (pinned through the REAL mapping in
+  `follow-requests.integration.spec.ts`), with their native strings in both languages on both
+  platforms. A request carries the `follow-requests` target (`fr.emse.canari://follow-requests`,
+  the inbox), an acceptance the `notifications` one (its bell row opens the accepter's profile).
+  Both file under the `follows` category in chat-delivery, which the settings screen switches
+  (WP-F4).
+- **Block severing**: `DELETE /internal/follows/between` removes every row between the two,
+  pending or accepted, both directions, and the `follow_request` bell rows between them (an
+  acceptance's stays, as history) - pinned in `follow-requests.integration.spec.ts`.
+
+**The caller's own lists (WP-F3).** `GET me/followers` (accepted, the most recently ACCEPTED first,
+each dated by `acceptedAt`), `DELETE me/followers/:userId` (the follow is deleted and NOBODY is
+told; the removed person may ask again, which is a new request that lands in the inbox without a
+second push - the notice is once per pair; a pending request is refused, not removed; the announce
+sweep and the live push stop at once, pinned in the reader-spaces and lives PostgreSQL specs,
+and the feed cache is dropped as on a block, so the removed person's Suivis does not keep serving
+this account's posts for its 30-second TTL) and `GET me/follow-requests/sent`
+(the unanswered asks, each withdrawn with `DELETE users/:userId/follow`). Only the caller's own
+lists exist as routes: no rule says who may read another person's followers, so none is open. A
+pair a block stands between is left out of every list, as of every reader.
 
 ### Who may touch a calendar event
 
@@ -1066,6 +1221,8 @@ having at least been visible before. The association's own admins get
 `notifyAssocAdminsOfEventAction(..., 'pending')`, which is the sixth key in `PushContentKey`
 (`event_pending`) and therefore owes a string in all six native tables
 ([mobile](../frontend/mobile.md)).
+
+**One announcement, whatever the cause (WP-Q2, 2026-11-03).** The demotion's two notifications now live in `announceEventReopened(event, reason, actorId)`: the validators as for a proposal, and the organiser plus every accepted partner with the reason (`event_pending` for a moved date, `event_pending_coorganiser` when a partner accepted a validated event - [profiles-and-access](../profiles-and-access.md#wp-q2-an-acceptance-on-a-validated-event-reopens-it-2026-11-03)). Both are best effort and run after the write committed.
 ### A school-wide break is not an association's to declare
 
 `kind` was a free field. `event` renders as a card on the owning association's row; `break` renders
@@ -1129,6 +1286,46 @@ fallback each line already declared was the right answer. With those gone `/cale
 `frontend/src/lib/associations/serverProse.test.ts`, the guard that owns this rule. That is what
 stops the next one: the guard is extended by a tree, never by an allowlist entry.
 
+## A post created twice is the same post (2026-11-06)
+
+`POST /api/posts` takes an optional `id` (a UUID minted by the client, `CreatePostDto.id`). The
+post's PRIMARY KEY is the idempotency key, so no column and no migration were added. `createPost`
+looks the id up first (`replayClientId`): absent, the post is INSERTED under it (`insert`, never
+`save`, which would update a row); present and the caller's, the stored post is returned as if just
+created (`[POST-CREATE] post <id> sent again`); present and another author's, `409`
+(`clientIdVerdict`, `post-client-id.ts`). Two concurrent creates with one id meet at the primary
+key: the loser's `23505` is read through `violatesUniqueColumns(e, ['id'])` and answered as a
+replay (and the reel claim it made is NOT handed back - it is the winning row's). A request without
+`id` keeps the server-generated one. The id must be a random UUID v4 (`@IsUUID('4')`: the nil UUID
+and other versions are refused). The client that sends it is the background publish queue
+([posts](../frontend/modules/posts.md#the-background-publish-queue)): a create whose answer was lost
+is sent again with the same id.
+
+**A deleted post is never created again** (decided 2026-11-06, review of #3061). Migration 135
+(additive) adds `deleted_post_ids (id, "deletedAt")` and an `AFTER DELETE ON posts` trigger that
+writes it, so EVERY hard delete path writes it - the service's delete, the account erasure, the reel
+retention, a cascade, any later one - with nothing for a writer to remember. The table holds the id
+and a date and nothing else: no author, no content. A create under a retired id is `410`.
+`POST /api/posts/:id/withdraw {mediaIds}` is the queue's Delete: it writes the tombstone FIRST,
+then deletes the row if one is there (`{ deleted }` says which), then deletes the named media the
+queue uploaded EXCEPT any a live post, comment or salon message cites
+(`PostMediaRetentionService.deleteWithdrawnMedia`, one SQL read of `posts.images`, the comments'
+media and `channel_messages."reelMediaId"`, then media-service's
+`internal/own-archive-delete` under the caller as uploader). A create racing it re-reads the
+tombstone AFTER its own insert and removes itself, so in every interleaving the post does not exist
+once the withdrawal answered. **Only ever the caller's own post, a platform admin included**: the
+author is checked before the tombstone (`409`, nothing written) and again on the row it would
+delete; another author's row that appeared between the two reads is left, the tombstone this call
+wrote is deleted again, and the answer is `409`. The row is deleted as its author, never with the
+admin flag, and WITHOUT releasing the ids the queue named (`deletePost`'s `keep`): released to
+`ephemeral` they would no longer be `archive`, media-service would refuse them, and they would wait
+out the idle sweep.
+
+**The existence oracle, accepted.** A create naming an id answers `409` (another author's post holds
+it) or `410` (a deleted post held it), which tells the caller that a post holds or held that id. Low:
+the ids are random v4 UUIDs (122 bits) nobody guesses, and a live post's id is shown to everyone who
+can read the post anyway. Tests: `post-client-id.spec.ts`, `posts.service.client-id.spec.ts`.
+
 ## Redis events published
 
 The social-service publishes to `chat:channel_events`:
@@ -1138,6 +1335,7 @@ The social-service publishes to `chat:channel_events`:
 | `channel.member.joined` | **channel creation**, join, invite accept, admin join, member added |
 | `channel.member.kicked` | `kickFromWorkspace`, `leaveWorkspace` |
 | `channel.member.removed` | `removeMemberFromChannel` |
+| `channel.member.removal-released` | `releaseWorkspaceRemoval`, `releaseChannelRemoval` - to the scope's remaining members, never the actor; carries `releasedBy` and `releasedByDevice` |
 | `channel.message.created` / `.deleted` | send, delete |
 | `channel.updated` / `.deleted` | rename, **access change** (carries `viewerCanWrite`, one publish per verdict), delete |
 | `workspace.updated` / `.deleted` | cover image change, soft delete |

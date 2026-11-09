@@ -61,6 +61,15 @@ describe('the ongoing-call foreground service declaration', () => {
     }
   });
 
+  it('video calls add no camera foreground service: the camera is OFF while the app is hidden', () => {
+    // 1.5.2 ships video, and `CallService.installBackgroundHandler` turns the camera off when the
+    // activity announces the background (`canari:foreground` false - the Android WebView never fires
+    // `visibilitychange`), capture stopped, and on again on return, so the service never holds the
+    // camera (pinned in CallService.p2p.test.ts, "on Android, where the WebView stays visible"). A `camera` type would be a second Play declaration for a use the app does not make.
+    expect(declares(mainManifest, 'FOREGROUND_SERVICE_CAMERA')).toBe(false);
+    expect(mainManifest).not.toMatch(/foregroundServiceType="[^"]*camera/);
+  });
+
   it('the Android workflow reads the BUILT manifests and fails on a service where calls are not placed', () => {
     const workflow = read(resolve(here, '../../../../.github/workflows/android.yml'));
     expect(workflow).toContain(
@@ -89,12 +98,17 @@ describe('the bridge, both sides of the WebView', () => {
     expect(bridgeTs).toContain('canariCall?: AndroidCallBridge');
   });
 
-  it('the four methods the page calls are the four the interface exposes', () => {
+  it('the nine methods the page calls are the nine the interface exposes', () => {
     for (const method of [
       'start(json: String)',
       'update(json: String)',
       'stop(callId: String, reason: String)',
       'pageLoaded()',
+      'ringStart(json: String)',
+      'ringStop(callId: String, reason: String)',
+      'isDndRegrantOwed()',
+      'dndRegrantAnswered(how: String)',
+      'openCallChannelSettings()',
     ]) {
       expect(bridgeKt).toMatch(
         // Every metacharacter, backslash included, so the signature is matched as literal text.
@@ -106,6 +120,11 @@ describe('the bridge, both sides of the WebView', () => {
       'update(json: string): void;',
       'stop(callId: string, reason: string): void;',
       'pageLoaded(): void;',
+      'ringStart(json: string): void;',
+      'ringStop(callId: string, reason: string): void;',
+      'isDndRegrantOwed(): boolean;',
+      'dndRegrantAnswered(how: string): void;',
+      'openCallChannelSettings(): void;',
     ]) {
       expect(bridgeTs).toContain(method);
     }
@@ -136,7 +155,7 @@ describe('the bridge, both sides of the WebView', () => {
   it('a destroyed activity takes the call service down with its page, and a loaded page releases an orphan', () => {
     expect(activityKt).toContain('CallForegroundService.stopForPageGone(this)');
     expect(layout).toMatch(
-      /if \(isAndroidTauriRuntime\(\)\) releaseCallServiceOfPreviousPage\(window\);/
+      /if \(isAndroidTauriRuntime\(\)\) \{\s*releaseCallServiceOfPreviousPage\(window\);/
     );
   });
 });

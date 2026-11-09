@@ -204,7 +204,7 @@ change failing.
   `changelog.d/` or repo files - check `lineEndings`, `googleVerification`, `svelteConfigStamp`) to
   `.github/scripts/tests` as `bun` scripts wired into `test-ci-scripts`
   (`recipe-covers-tests.test.mjs` then enforces the wiring); build the production frontend on PRs
-  that touch `frontend/package.json`, `bun.lock`, `patches/`, `svelte.config.js` or `vite.config.js`
+  that touch `frontend/package.json`, `bun.lock`, `patches/`, `kit.config.js` or `vite.config.js`
   (+0.7 min on those PRs only).
 - **Removes**: defects 3.1, 3.2 and 3.3. Minutes: none; this WP buys catches.
 - **Risk**: none for behaviour. Revalidate: a docs-only PR with a bad fragment goes red; a jest
@@ -308,7 +308,7 @@ was no wherever the subject is one of these:
   `buildConversationRow.onePolicy`, `groupSweep`, `fixedPopover`, `GifPickerModal.overlay`,
   `cardGrid`, `postMarkdownBlocks`, `ModalOverlay`, `sidePanelInset`, `sidePanelWidth`,
   `serverProse`, `markupSources`, `feedAudience`, `AssociationTile` (the walls half),
-  `associationsHeader`, and the one inventory case inside `outbox` (exactly three sites raise a
+  `associationsHeader`, and the one inventory case inside `outbox` (exactly four sites raise a
   flush) and `distributionGroup` (three entrances, one per moment). An inventory of CALLERS cannot be
   replaced by calling the callee.
 - **A wiring statement in `sessionAuth.ts` (2,475 lines) or `ChatBackgroundService.svelte` (2,187)**,
@@ -673,3 +673,68 @@ now holds the lock with A, queues B and C, releases A twice, and asserts B is gr
 blocked, which is the harm a double release could do.
 
 **Left of the WP:** WP-T7, the rig change in one campaign session (not a desk task).
+
+## 8. Intermittent local failures under load, read 2026-10-30
+
+Local runs on Windows with many workers (and several agents at once) failed tests that pass alone.
+Reproduced with 16 workers plus 32 busy threads, one full run: 3 failures in 2 files, none on the
+tests first reported - **the class is real, the victims are random.** Four causes, three fixed:
+
+- **`outbox.reelResume` "KILL MID-UPLOAD" was a real race in the TEST.** It waited on
+  `partsReceived() === 2`, which is true the instant part 1 lands, BEFORE part 2's request reaches
+  the injected fault (the one that kills the life). The test then cleared the fault and started the
+  second life while the first was still uploading. A 150 ms stall before part 2 fails the old test
+  deterministically (`expected 0 to be 1`) and not the new one. The wait is now on the fault having
+  been HIT (`hangPart`), not on a count that merely passes through the value.
+- **A first import paid inside a test.** `callsAvailability` "needs the server open" imports the
+  app-version store graph under `vi.resetModules`: 1.8 s alone, 46 ms for every later test. It is
+  now imported once at file scope, outside any test deadline.
+- **`environment.test` walked and read ~1,200 files inside the test** (a 5 s timeout under load);
+  it now reads the run's shared snapshot like every other scan.
+- **Not a code cost: the sync bookings date tests** (`availability`, `dashboard`, `spaceSettings`,
+  `stranded`) take 0-23 ms and import nothing lazily. Vitest checks the wall clock when a test
+  returns (`deadline.exceeded()`, even for a synchronous one), so a worker frozen for 5 s by CPU
+  oversubscription fails whichever test it was in. Nothing in those files can be fixed; the lever is
+  the load (fewer workers per run when several runs share a machine, `--maxWorkers`), and a per-file
+  timeout would only hide the next victim.
+
+**Second reading, 2026-11-02** (CI shard 4/4 of #2908, an unrelated CSS change, failed
+`outbox.reelResume`; reproduced with 48 busy threads and 6 concurrent runs of the file: about half the
+runs failed, 8 different cases). Three causes - two in the test, one in the product:
+(a) `expectDeliveredOnce` and a few cases read the take record once after the sends count and the row's
+presence were true, but the record says `sent` one write later (`expected undefined to be 'sent'`, the
+most frequent victim) - `takeRecordSent` now waits for the state;
+(b) every `vi.waitFor` ran on its 1 s default and every case on the 5 s test deadline, both tighter than
+a starved worker. `src/test/loadBound.ts` gives `waitForEvent` (20 s ceiling) and `useLoadBounds()`
+(30 s test deadline), used by `outbox.reelResume` ONLY - the other files keep the 1 s default, and a
+per-file timeout elsewhere is still refused (the first reading above). A ceiling is only how long a test
+accepts being told an event never comes - nothing asserts a duration, and a real hang still fails.
+The one case that fakes timers uses `waitForEventNoClock`, since `vi.waitFor` advances a faked clock by
+its interval on every poll and a loaded machine polls enough to cross the backoff by itself;
+(c) **PRODUCT CODE CHANGED (`outbox.ts`, `uploadAttachment`)**: the stall-hint interval was cleared only
+when the upload settled, so a disposed or withdrawn transfer stuck behind a dead socket kept writing
+`stalled` into the view of whatever took the id next. It now clears on abort, and `onProgress` ignores a
+late event of an aborted transfer (`persist` is deliberately not guarded: a session opened after the
+abort must still reach `openSessions`, which is what releases it). Two cases prove both and fail without
+the code (checked by removing each).
+
+**Third reading, 2026-11-02** (`outbox.reelResume`, "a cancel of an entry PARKED AS FAILED", failing as
+`expected 2 to be greater than or equal to 3` on a branch that already had the second reading's fixes;
+reproduced 1 run in 31 with 48 busy threads and 8 concurrent runs of that one case). **The cause was in
+the test, not the outbox:** the case drove the faked backoff timer with a loop of at most 50
+advance-and-look steps. `uploadViewOf(VIEW).phase` reads `waiting` BEFORE `scheduleBackoff` arms its
+timer (a queue read on fake-IndexedDB, which answers on real macrotask turns), so on a starved worker the
+50 looks were spent on an empty timer queue, the loop ended, and attempt 3 never started - the wait for
+`settled >= 3` then timed out. A bound counted in looks is a clock by another name. The loop now waits
+for the EVENT (`vi.getTimerCount() > 0`, or the attempt having moved on) and advances exactly one timer
+per pass; nothing asserts a duration and a genuine hang still fails at the wait's own ceiling.
+
+**Fourth reading, 2026-11-06** (`messagesPage` and `pendingMutationsStore` sqlite cases, `audioSession.captureSites`,
+`conversations.retire`, all 5 s timeouts in one full run). Measured, not guessed: the sqlite cases take 16-760 ms
+alone (the heavy ones carry their own 60 s deadline), two of the four victims were 5 ms-class cases, four parallel
+runs of the two files and 40 busy threads did not reproduce it, and a later full run failed seven DIFFERENT tests
+in six other files (one `beforeAll` import hit its 60 s hook ceiling) while other agents' dev servers and test
+runs shared the machine. That is section 8's class: the victims are random, the lever is the load. The ONE code
+cause found: `audioSession.captureSites` still walked the disk (readdir/stat/read of the whole tree inside the
+test); it now reads the shared snapshot. `conversations.retire` already did (686 ms alone, a filter over strings).
+`useConversations.salonStoredPage` had five deadline-based `vi.waitFor` calls; they now wait on the event itself.

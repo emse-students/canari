@@ -70,7 +70,10 @@ Now:
   THAT directory creates (`Créer l'association`, `Créer une liste`, `Créer une institution`). The lists and
   institutions pages lost their "back to Associations" link: the nav carries it.
 - `AssociationCreatePage.svelte` is the one creation flow, `kind = association | list | institution`; the
-  three `/new` routes are three lines. A list adds campaign and parent fields; an institution adds an
+  three `/new` routes are three lines. A list adds a campaign field. An association or a list asks
+  for its governing BDE only when there is a choice (`createParentField`, reform 2.8): a creator
+  managing several BDEs picks one, one managing a single BDE is told which, the platform admin may
+  pick any or none; a list may instead be SHOWN under a non-BDE (the G3 label). An institution adds an
   **audience choice**: none (default, D36 - visible to its members only), the whole School, one campus, or one
   campus x formation (`reachChoiceToRules` in `audienceRules.ts`; a half-filled choice yields no rule and the
   submit is disabled, never a wider reach). The rule is written right after the creation with the grid's own
@@ -80,6 +83,47 @@ Now:
   `POST_AS_ASSO | PROPOSE_EVENT`), which is the DEFAULT when the association is an institution.
 - Test: `associationsHeader.test.ts` (wiring), `audienceRules.test.ts` (`reachChoiceToRules`). Read on the
   local estate at 390 and 1280 (no horizontal scroll, nav wraps cleanly).
+
+## The slug is a technical id: derived by the server, never shown, typed or edited (user, 2026-10-26)
+
+The product rule is *a technical id is never shown to, typed by, or edited by a person*. For an
+association, list or institution it means: no `@slug` under the detail title (a list keeps its
+parent's name), none in the edit subtitles (a list keeps its promo year), and no "Slug (URL)" field
+on the shared creation flow. The slug remains the URL segment (`/associations/<slug>`) and the
+unique key.
+
+The server derives it: `CreateAssociationDto.slug` is optional, and `AssociationsService.create`
+walks `slugCandidates(name)` from `association-slug.util.ts` - lowercase, accents folded, hyphenated,
+at most 50 characters, then `-2`, `-3`... Each candidate is its OWN transaction and the unique index
+is the arbiter (a unique violation aborts the transaction it happens in, and a check-then-insert
+would let two concurrent creates both pass). A slug SENT explicitly (an old client) is still
+validated and refused `400` when taken, including when it loses the race at the index.
+
+Four guards: only a unique violation of the SLUG column is retried, never any other `23505` - and
+it is classified by the COLUMNS of the index the driver names (`violatesUniqueColumns` in
+`common/pg-errors.ts`, one catalog read on the violation path), not by the constraint's NAME,
+because production's schema is not built by `synchronize` and nothing proves its slug constraint
+carries the name TypeORM would give it (a hand-named one would have turned every derived collision
+into a `500`); a derived candidate whose cotisation stem would collide with another
+association's (`bde-2026-2027` beside `bde`, `assertCotisationStemFree`, recognised by its typed
+`COTISATION_TAG_COLLISION` code through `isCotisationStemCollision`) walks to the next suffix, while
+an explicit slug keeps the `409`; a slug equal to a static route word (`new`, `edit`: `RESERVED_SLUGS`,
+held equal to the route folders by a spec) is never derived bare and is refused when sent; letters
+NFKD cannot decompose (`oe`, `ae`, `ss`...) are expanded before folding, and NFKD (not NFD) folds
+full-width and other compatibility forms (`ＢＤＥ` is `bde`). `association-slug-derivation.integration.spec.ts`
+proves it against a real PostgreSQL (`SOCIAL_IT_DATABASE_URL`), including a slug constraint renamed
+by hand.
+
+**The walk is capped.** A name with no Latin letter or digit folds to `asso`, so every such name
+shares one base; after `SLUG_MAX_ATTEMPTS` (50) candidates the create is refused `400` with the
+typed code `ASSOCIATION_SLUG_EXHAUSTED`, which the creation page maps to
+`m.assoc_new_error_slug_exhausted()` (add a word to the name) - never the server's English message.
+
+**Order of shipping: the server first.** A store build EMBEDS its frontend, so a build that sends no
+slug must never meet a server that still requires one. The server change ships (production deploy)
+BEFORE, or in the same release as, the first store build carrying the new form - never after. The
+explicit-slug branch kept for old clients is a shim with a removal condition:
+[legacy-compatibility](../../legacy-compatibility.md#no-date-yet---an-explicit-slug-sent-on-association-creation-by-a-client-older-than-the-derived-slug).
 
 ## The audience tab and the campus prompt (WP-B, 2026-10-08)
 
@@ -92,13 +136,64 @@ The edit page has an **Audience** tab (`EditAudienceTab.svelte`) for a global ad
 
 A list is NOT its own entity: it is a row in `associations` discriminated by `type = 'list'`, so the
 entity, the DTOs, the service, the frontend types and `AssociationTile` are all shared with
-associations. Four columns are list-only: `promo` (the campaign year), `parentAssociationId` (the
-association that runs it, surfaced on the read side as the denormalised `parentName`), and
-`name2` / `logoMediaId2` - the SECOND THEME.
+associations. Four columns are list-only: `promo` (the campaign year), `displayParentAssociationId`
+(the association a list is SHOWN under, the G3 label), and `name2` / `logoMediaId2` - the SECOND
+THEME. `parentAssociationId`, the governing BDE, is no longer list-only since WP-D1 (an association
+has one too, [reform 2.8](../../spaces-and-audiences-reform.md#28-wp-d1-as-built-2026-11-03---built-its-three-migrations-held-for-the-owner));
+a list's read side surfaces the label, else the parent, as the denormalised `parentName`.
 
 **A campaign list can run two themes at once**, a public one and the one it is actually called, so
 it carries two names and two logos. Migration `015_list_second_theme.sql` added both columns; they
 are always optional and associations leave them NULL.
+
+### What a list and an institution manage (owner, 2026-10-31)
+
+*Lists re-decided by the owner on 2026-11-02 (below); the heading keeps its date so its links hold.*
+
+ONE table, `EDIT_SECTIONS_BY_KIND` in `editSections.ts`, says which management sections each kind has;
+the hub, the route guard and the permission editor all read it. An association has every section.
+
+**A list keeps the shop, its cotisation, paid forms, purchases and the vault, but holds NO Lydia
+account of its own** (owner, 2026-11-02): it collects ONLY through a payment delegation to an
+association that accepts it (`paymentParentAssociationId`). Its sections are the eight selling-free
+ones - profile, members, documents, forms, bookings, partnerships, the republication / co-organisation
+queue and danger - plus payments (the shop only: no bank-account or Lydia enrolment card), purchases,
+cotisations and delegation. **An institution sells nothing**: the eight, plus its audience (global
+admin only). The list route `/lists/[slug]/edit/[[section]]` renders them with the SAME tab components
+as the association page; `/associations/<slug>/edit` of a list forwards to the list route.
+
+**Who enters the edit area** is `mayEnterEditArea` (global admin, the BDE governing the entity, or its
+own officer), and both edit pages AWAIT the BDE reach before deciding: the list page used to fire it
+and forget it, so a BDE governing a list - not a member of it - was sent to the public page and could
+not delete its lists (F2).
+
+**The kind table is `TYPE_EXCLUDED_FLAGS`** (server: `association-member.entity.ts`; client mirror in
+`api.ts`, compared against the server source by `permissions.test.ts`): a list never holds
+`MANAGE_PAYOUT_ACCOUNT`, an institution never holds `MANAGE_PRODUCTS` or `MANAGE_PAYOUT_ACCOUNT` -
+whoever asks, the platform admin included. `mayAct` and `mayActOnAny` read it ABOVE every tier;
+`writablePermissions` strips those bits on `addMember` / `updateMemberRole`; the role editor
+(`permissionMaskFor`) never offers them, so a new list admin's preset is 7455 (with `EDIT_PROFILE`,
+bit 12, since #2964: a list and an institution have a profile too, and the flag survives
+`writablePermissions` on every kind).
+
+**Whether an entity may collect is ONE predicate, `mayCollect`** (`associations/collection-policy.ts`,
+derived from the same table): an association always, a list only with an APPROVED delegation, an
+institution never. `assertMayCollect` refuses at every entry point - product create and update (taking
+a product OFF sale is always allowed), the cotisation provisioning and `cotisationEnabled: true`, a form
+price (`POST` / `PUT`, judged MERGED by `priceFingerprint` as before) - with a typed 403: a list without
+an approved delegate gets `LIST_DELEGATE_REQUIRED` (WARN), an institution
+`ASSOCIATION_KIND_DOES_NOT_SELL` (ERROR). A list's own Lydia link is refused up front with
+`LIST_NO_OWN_LYDIA_ACCOUNT`, and a list or institution can never RECEIVE a delegation. The client reads
+each refusal by its code (`providerRefusalMessage`), never the server's English; the not-ready banners
+of the list's shop and forms tabs link to its delegation section.
+
+**Readiness is the server's**: every member read of an association carries the derived
+`paymentsReady` (`withPaymentsReady`: its own Lydia, or its approved delegate's), and the client asks
+`canTakePayments` - which also fixed a delegating ASSOCIATION, told "payments not configured" while it
+collected through its parent. The delegation lifecycle (who may accept, the acceptance record, the
+pause and resume) is in [payments](payments.md#payment-delegation-parent-association-routing). The form editor draws its price
+section for every kind with a `payments` section; for an institution a priced form is shown frozen
+with a "make this form free" button (`FormPaymentSection`, `associationSells`).
 
 ### The half that could only ever be turned off
 
@@ -212,8 +307,12 @@ total so the same data cannot render two ways, and both asserted apart in `listS
 Permissions are checked at the component level using the `X-Global-Admin` header and association-level role flags injected by Nginx. The key flags are:
 
 - `MANAGE_MEMBERS` — add/remove members, edit roles
-- `MANAGE_ASSO` — edit profile, create products, manage forms
+- `EDIT_PROFILE` — edit the profile and the logos (`editRights().profile`, read from the per-field
+  table `updateFields.ts`); archiving is `MANAGE_MEMBERS` (`editRights().archive`)
+- `MANAGE_ASSO` — BDE only: the super-admin tier over its children (`parentAssociationId`, WP-D2)
 - Global admin — can do everything
+
+The full table is [association-permissions](../../association-permissions.md).
 
 ## Stripe Connect
 
@@ -290,3 +389,15 @@ left in its kind).
 `/associations/me/list` filters them out. If archived associations are ever to be refused as
 authors, the refusal goes in `canPostAs` first and the group turns `disabled` with a reason in the
 same change - the picker must never offer what the server refuses, nor hide what it accepts.
+
+## The external profile projection
+
+`GET /api/external/profile/:sub` (core-service, `x-api-key`, consumed by Sky) relays social-service's
+internal `GET users/:userId/associations` unchanged - there is no DTO or whitelist in between. Both
+arrays, `current` and `former`, carry `type` (`association` | `list` | `institution`) and `promo`
+(a list's campaign year, else `null`); `former` rows also carry `slug` (`null` when the association
+no longer exists). The fields are additive: the only consumer of the route is that controller.
+Sky shows a list only until 1 August of its `promo` (`isPastCampaignList`, mirrored from
+`frontend/src/lib/associations/campaign.ts`), never in its former section, and matches a past
+mandate against a current one by `slug`.
+Pinned by `apps/social-service/src/internal/internal-user-associations.spec.ts`.

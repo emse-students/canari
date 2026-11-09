@@ -7,8 +7,10 @@
   import EcosystemLauncher from './EcosystemLauncher.svelte';
   import PostNotificationBell from './PostNotificationBell.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+  import { slowLink } from '$lib/stores/slowLink.svelte';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
 
   // While mounted, `app.css` paints the status strip above the header with its surface (U8).
   $effect(() => {
@@ -82,6 +84,7 @@
       {#if onPosts}
         <a
           href={resolve('/posts?compose=1')}
+          use:guideAnchor={'posts.compose'}
           title={m.posts_publish_button()}
           aria-label={m.posts_publish_button()}
           class="ui-icon-button text-text-muted hover:text-text-main hover:bg-text-main/10 rounded-full"
@@ -103,9 +106,13 @@
         <button
           type="button"
           onclick={() => goto('/profile')}
-          title={m.nav_my_profile_title()}
+          use:guideAnchor={'nav.profile'}
+          title={slowLink.active ? m.slow_indicator_label() : m.nav_my_profile_title()}
           aria-label={m.nav_my_profile_label()}
-          class="ui-icon-button rounded-2xl ring-2 ring-transparent transition-all duration-200 hover:ring-amber-400"
+          data-slow-link={slowLink.active || undefined}
+          class="ui-icon-button rounded-2xl ring-3 transition-all duration-200 {slowLink.active
+            ? 'ring-amber-warn'
+            : 'ring-transparent hover:ring-amber-400'}"
         >
           <Avatar userId={globalSession.userId} size="md" />
         </button>

@@ -189,6 +189,30 @@ export function buildReference({ seed = 1, gain = 1, talkOnly = false } = {}) {
   return out;
 }
 
+/** SNR of the noisy reference: the speech segment's RMS over the background's, dB. */
+export const NOISY_SNR_DB = 10;
+
+/**
+ * The reference under a STEADY background, for the noise-suppression rows: band-shaped noise
+ * (80 Hz - 5 kHz, a room's fan or a street) plus a 100 Hz hum, from start to end of the loop - gaps
+ * included - at {@link NOISY_SNR_DB} below the speech segment's RMS. Seeded, so deterministic. The
+ * row is still SCORED against the clean reference: what a suppressor removes is what it is for.
+ */
+export function withBackground(ref, { seed = 3, snrDb = NOISY_SNR_DB } = {}) {
+  const rand = prng(seed);
+  const white = new Float64Array(ref.length);
+  for (let i = 0; i < white.length; i++) white[i] = rand() * 2 - 1;
+  const bed = bandShape(white, 80, 5000);
+  const bedRms = rms(bed) || 1;
+  for (let i = 0; i < bed.length; i++) {
+    bed[i] = bed[i] / bedRms + 0.5 * Math.sin((2 * Math.PI * 100 * i) / RATE);
+  }
+  const sp = SEGMENTS[1];
+  const speechRms = rms(ref, Math.round(sp.start * RATE), Math.round(sp.end * RATE));
+  const g = speechRms / 10 ** (snrDb / 20) / (rms(bed) || 1);
+  return ref.map((v, i) => Math.max(-1, Math.min(1, v + bed[i] * g)));
+}
+
 /** Encodes mono samples in [-1, 1] as a 16-bit PCM WAV - the format Chrome's fake capture reads. */
 export function encodeWav(samples, rate = RATE) {
   const n = samples.length;

@@ -19,6 +19,7 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
       addReaction: jest.fn(),
       addComment: jest.fn(),
       likeComment: jest.fn(),
+      editComment: jest.fn(),
     };
     const associations = { findCalendarEventByLinkedPost: jest.fn() };
     const controller = new PostsController(
@@ -26,7 +27,6 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
       interactions as never,
       {} as never,
       associations as never,
-      {} as never,
       { isUserMuted: jest.fn(() => Promise.resolve(false)) } as never
     );
     return { controller, assertVisible, assertMayVote, interactions, associations };
@@ -46,15 +46,51 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
       (c: PostsController) => c.addComment('reader', undefined, POST, { text: 'x' } as never),
     ],
     ['likeComment', (c: PostsController) => c.likeComment('reader', undefined, POST, 'comment')],
+    [
+      'editComment',
+      (c: PostsController) =>
+        c.editComment('reader', undefined, POST, 'comment', { text: 'x' } as never),
+    ],
   ] as const)('%s answers 404 and writes nothing', async (name, call) => {
     const { controller, assertVisible, assertMayVote, interactions } = make();
     await expect(call(controller)).rejects.toBeInstanceOf(NotFoundException);
     const [gate, args] =
       name === 'votePoll'
         ? [assertMayVote, [POST, 'reader']]
-        : [assertVisible, [POST, 'reader', 'READ_OR_REACT']];
+        : name === 'addReaction'
+          ? [assertVisible, [POST, 'reader', 'READ_OR_REACT']]
+          : name === 'editComment'
+            ? // Its answer serves the comment, who liked it included (owner, 2026-11-04).
+              [assertVisible, [POST, 'reader', 'COMMENT', { allowHidden: false }]]
+            : // A comment and a comment like ask the comments' gate (owner, 2026-11-04).
+              [assertVisible, [POST, 'reader', 'COMMENT']];
     expect(gate).toHaveBeenCalledWith(...args);
     expect(interactions[name]).not.toHaveBeenCalled();
+  });
+
+  it('a reaction, added or taken back, answers with the reactions served to its reader', async () => {
+    // The stored map names who reacted: both routes hand it to `serveReactionsTo` (owner,
+    // 2026-11-04), the removal included, which is not gated and must not list reactors to an id.
+    const stored = { ok: true, reactions: { me: 'like', other: 'love' } };
+    const served = { ok: true, reactions: { me: 'like' }, otherReactionCounts: { love: 1 } };
+    const serveReactionsTo = jest.fn(() => Promise.resolve(served));
+    const interactions = {
+      addReaction: jest.fn(() => Promise.resolve(stored)),
+      removeReaction: jest.fn(() => Promise.resolve(stored)),
+    };
+    const controller = new PostsController(
+      { assertVisible: jest.fn(() => Promise.resolve({ post: {} })), serveReactionsTo } as never,
+      interactions as never,
+      {} as never,
+      {} as never,
+      { isUserMuted: jest.fn(() => Promise.resolve(false)) } as never
+    );
+    await expect(
+      controller.addReaction('me', POST, { reactionType: 'like' } as never)
+    ).resolves.toBe(served);
+    await expect(controller.removeReaction('me', POST)).resolves.toBe(served);
+    expect(serveReactionsTo).toHaveBeenNthCalledWith(1, POST, 'me', stored);
+    expect(serveReactionsTo).toHaveBeenNthCalledWith(2, POST, 'me', stored);
   });
 
   it("the post's calendar link answers 404 without reading the event", async () => {

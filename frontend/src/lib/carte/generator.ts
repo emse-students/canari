@@ -1,4 +1,4 @@
-import type { Association, AssociationCategory, AssociationMember } from '$lib/associations/api';
+import type { Association, AssociationMember, PosterZone as MapZone } from '$lib/associations/api';
 import { associationAccent } from '$lib/associations/accent';
 import { sortByFamilyName } from '$lib/utils/users/familyNameOrder';
 
@@ -86,11 +86,8 @@ const GENERIC_ROLES = new Set(['membre', 'member', 'adherent', 'adherente']);
 
 /** Whether a role is one of those, ignoring case and accents. */
 function isGenericRole(role: string): boolean {
-  const plain = role
-    .normalize('NFD')
-    .replaceAll(/[̀-ͯ]/g, '')
-    .trim()
-    .toLowerCase();
+  const stripped = role.normalize('NFD').replaceAll(/[̀-ͯ]/g, '');
+  const plain = stripped.trim().toLowerCase();
   return GENERIC_ROLES.has(plain);
 }
 
@@ -125,10 +122,10 @@ export interface PosterBubble {
   memberCount: number;
 }
 
-/** A category zone grouping the associations that belong to it. */
+/** A zone of the map grouping the associations placed in it. */
 export interface PosterZone {
-  /** Category id, or null for the "uncategorized" catch-all zone. */
-  categoryId: string | null;
+  /** The map's zone id, or null for the catch-all zone of unzoned associations. */
+  zoneId: string | null;
   label: string;
   bubbles: PosterBubble[];
 }
@@ -162,20 +159,25 @@ function findPresident(members: AssociationMember[]): PosterMemberRef | null {
 }
 
 /**
- * Builds the poster render model from live data: keeps regular (non-archived) associations,
- * resolves each one's brand color + president, then groups them into category zones ordered by
- * `sortOrder` (uncategorized last, only when non-empty). Bubbles are sorted alphabetically.
+ * Builds the poster render model from live data: keeps the regular (non-archived) associations the
+ * map SHOWS, resolves each one's brand color + president, then groups them into the map's own zones
+ * ordered by `sortOrder` (unzoned last, only when non-empty). Bubbles are sorted alphabetically.
  *
- * @param associations - All associations (lists and archived ones are filtered out).
- * @param categories - Managed category rows, in any order (re-sorted here).
+ * Zones are the map's since migration 147 (owner, 2026-11-08): no platform taxonomy is read here.
+ *
+ * @param associations - The associations to draw: the caller passes the switched-on ones of the
+ *   map's space (lists and archived ones are filtered out here too).
+ * @param zones - The map's zones, in any order (re-sorted here).
+ * @param zoneOf - Each association's zone on this map; absent or unknown = unzoned.
  * @param membersByAsso - Roster per association id, used to detect presidents.
- * @param uncategorizedLabel - Localized label for the catch-all zone.
+ * @param unzonedLabel - Localized label for the catch-all zone.
  */
 export function buildPosterModel(
   associations: Association[],
-  categories: AssociationCategory[],
+  zones: Pick<MapZone, 'id' | 'label' | 'sortOrder'>[],
+  zoneOf: Record<string, string | null>,
   membersByAsso: Record<string, AssociationMember[]>,
-  uncategorizedLabel: string
+  unzonedLabel: string
 ): PosterModel {
   const regular = associations.filter((a) => a.type === 'association' && !a.archived);
 
@@ -203,27 +205,30 @@ export function buildPosterModel(
     };
   };
 
-  const orderedCategories = [...categories].sort((x, y) => x.sortOrder - y.sortOrder);
-  const zones: PosterZone[] = [];
+  const ordered = [...zones].sort((x, y) => x.sortOrder - y.sortOrder);
+  const out: PosterZone[] = [];
 
-  for (const cat of orderedCategories) {
+  for (const zone of ordered) {
     const bubbles = regular
-      .filter((a) => a.categoryId === cat.id)
+      .filter((a) => zoneOf[a.id] === zone.id)
       .map(bubbleOf)
       .sort((x, y) => x.name.localeCompare(y.name));
     if (bubbles.length > 0) {
-      zones.push({ categoryId: cat.id, label: cat.label, bubbles });
+      out.push({ zoneId: zone.id, label: zone.label, bubbles });
     }
   }
 
-  const knownIds = new Set(orderedCategories.map((c) => c.id));
-  const uncategorized = regular
-    .filter((a) => !a.categoryId || !knownIds.has(a.categoryId))
+  const knownIds = new Set(ordered.map((z) => z.id));
+  const unzoned = regular
+    .filter((a) => {
+      const zoneId = zoneOf[a.id];
+      return !zoneId || !knownIds.has(zoneId);
+    })
     .map(bubbleOf)
     .sort((x, y) => x.name.localeCompare(y.name));
-  if (uncategorized.length > 0) {
-    zones.push({ categoryId: null, label: uncategorizedLabel, bubbles: uncategorized });
+  if (unzoned.length > 0) {
+    out.push({ zoneId: null, label: unzonedLabel, bubbles: unzoned });
   }
 
-  return { zones, totalAssos: regular.length };
+  return { zones: out, totalAssos: regular.length };
 }

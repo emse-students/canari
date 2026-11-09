@@ -351,6 +351,13 @@ fn graine_seeds(bytes: &[u8]) -> Option<Vec<serde_json::Value>> {
     Some(out)
 }
 
+/// The `kind` of a decrypted frame that takes a reaction back: nothing to announce, ever.
+pub const KIND_REACTION_WITHDRAWN: &str = "reaction_withdrawn";
+
+/// The `kind` of a system event [`format_system_event_text`] silences by name (an edit, a pin, a
+/// receipt...): nothing to announce, ever.
+pub const KIND_SILENT_EVENT: &str = "silent_event";
+
 /// Extracts the full metadata of a decrypted `AppMessage` protobuf for push display.
 ///
 /// `language` words every sentence this function composes itself (a system event, a reaction, a
@@ -412,7 +419,9 @@ pub fn extract_full_message_info(bytes: &[u8], language: PushLanguage) -> serde_
             );
         }
         if removed {
-            return serde_json::json!({ "ok": false });
+            // NAMED, so a salon push can tell "nothing to announce" from "could not read it": a bare
+            // `ok: false` drew the generic "new message" banner for a withdrawn reaction.
+            return serde_json::json!({ "ok": false, "kind": KIND_REACTION_WITHDRAWN });
         }
     }
 
@@ -506,7 +515,9 @@ pub fn extract_full_message_info(bytes: &[u8], language: PushLanguage) -> serde_
             if let Some(text) = format_system_event_text(&event, &data, language) {
                 return ok_message_json(text, message_id, sent_at, "system");
             }
-            return serde_json::json!({ "ok": false });
+            // Silenced BY NAME (`format_system_event_text`): an event that is never news, named so
+            // a salon push posts nothing rather than the generic line.
+            return serde_json::json!({ "ok": false, "kind": KIND_SILENT_EVENT });
         }
     }
 
@@ -659,24 +670,35 @@ pub fn build_text_app_message(message_id: &str, sent_at: i64, content: &str) -> 
     wrap_app_message(1, &text_msg, message_id, sent_at)
 }
 
-/// Builds a plaintext `AppMessage{ system: SystemMsg{ event: "read_watermark", data: {"at"} } }`
-/// proto for the "mark as read" notification quick action, and for a quick reply - which means the
-/// same thing, since a user who answered a conversation has read it.
+/// Builds a plaintext `AppMessage{ call: CallMsg{ call_id, device_id, hangup, end_reason } }`
+/// proto: the hangup a callee sends when it refuses a ring, built for the Decline button of the
+/// NATIVE ring (Android's CallStyle notification and call screen), which runs with no webview.
 ///
-/// AN INSTANT, NOT A LIST OF IDS, and that is the whole point of this function. The id-based
-/// `read_receipt` this replaces was read out of `fcm_message_cache.ndjson`, which the app CLEARS at
-/// every boot (`consumeFcmCache`), so "mark as read" from the shade sent nothing at all whenever
-/// the app had been opened since the notification arrived - silently, because an empty id list is
-/// indistinguishable from a conversation with nothing to acknowledge.
+/// It is byte-for-byte what the in-app Decline sends (`mkCallHangup(callId, deviceId, 'declined')`
+/// through `sendMlsNotification`, which sets `message_id` and `sent_at` on the envelope): the
+/// caller's client reads one frame for both, ends its ring at once and files the call as declined,
+/// where before the native Decline sent nothing and the caller rang out its whole window.
 ///
-/// `at` MUST be the sender's `sent_at` for the message the notification is about, carried down from
-/// the push, and never this device's clock: watermarks merge by `max` across devices, so a phone
-/// whose clock runs fast would mark future messages read permanently and unfixably. That is the
-/// same rule `watermarkAfterReading` (readState.ts) states for the foreground path.
-///
-/// `message_id`/`sent_at` on the envelope are left unset like every other control event
-/// (`enqueueControlEvent` encodes the system message with no envelope fields). Sent `silent` by the
-/// caller, so it reaches peers and our own other devices without ringing any of them.
+/// `end_reason` is the wire value of `CallEndReason` (DECLINED = 2); 0 is left off, as proto3 does.
+pub fn build_call_hangup_app_message(
+    message_id: &str,
+    sent_at: i64,
+    call_id: &str,
+    device_id: &str,
+    end_reason: u32,
+) -> Vec<u8> {
+    let mut call = Vec::with_capacity(call_id.len() + device_id.len() + 12);
+    write_string_field(&mut call, 1, call_id);
+    write_tag(&mut call, 5, 0);
+    write_varint(&mut call, 1);
+    write_string_field(&mut call, 8, device_id);
+    if end_reason != 0 {
+        write_tag(&mut call, 10, 0);
+        write_varint(&mut call, end_reason as u64);
+    }
+    wrap_app_message(7, &call, message_id, sent_at)
+}
+
 /// Builds a `GraineMsg` body: channel 1, session 2, seed 3, created_at 5.
 ///
 /// TEST-ONLY, AND SHARED, because `background.rs` proves the same seed over a REAL MLS frame and a
@@ -747,8 +769,38 @@ pub(crate) fn build_graine_v2_app_message(
     msg
 }
 
-pub fn build_read_watermark_app_message(at: i64) -> Vec<u8> {
-    let data = serde_json::json!({ "at": at }).to_string();
+/// Builds a plaintext `AppMessage{ system: SystemMsg{ event: "read_watermark", data: {"at", "serverAt"?} } }`
+/// proto for the "mark as read" notification quick action, and for a quick reply - which means the
+/// same thing, since a user who answered a conversation has read it.
+///
+/// AN INSTANT, NOT A LIST OF IDS, and that is the whole point of this function. The id-based
+/// `read_receipt` this replaces was read out of `fcm_message_cache.ndjson`, which the app CLEARS at
+/// every boot (`consumeFcmCache`), so "mark as read" from the shade sent nothing at all whenever
+/// the app had been opened since the notification arrived - silently, because an empty id list is
+/// indistinguishable from a conversation with nothing to acknowledge.
+///
+/// `at` MUST be the sender's `sent_at` for the message the notification is about, carried down from
+/// the push, and never this device's clock: watermarks merge by `max` across devices, so a phone
+/// whose clock runs fast would mark future messages read permanently and unfixably. That is the
+/// same rule `watermarkAfterReading` (readState.ts) states for the foreground path.
+///
+/// `server_at` is the SERVER's `createdAt` of that same message, when the notification carries it
+/// (Android since 2026-10-31; 0 otherwise). The conversation is ordered and read on the server's
+/// clock (readState.ts), and a frame carrying it is the shape `readWatermarkFrameData` sends from
+/// the app: `serverAt` AND `at`, the same value, `at` kept for a client that reads it alone. With
+/// no server time the frame is the older shape, `{at}` on the sender's clock, which every client
+/// reads into its stamped map (`readWatermarkFrameMark`).
+///
+/// `message_id`/`sent_at` on the envelope are left unset like every other control event
+/// (`enqueueControlEvent` encodes the system message with no envelope fields). Sent `silent` by the
+/// caller, so it reaches peers and our own other devices without ringing any of them.
+pub fn build_read_watermark_app_message(at: i64, server_at: i64) -> Vec<u8> {
+    let data = if server_at > 0 {
+        serde_json::json!({ "at": server_at, "serverAt": server_at })
+    } else {
+        serde_json::json!({ "at": at })
+    }
+    .to_string();
     let mut system_msg = Vec::with_capacity(data.len() + 24);
     write_string_field(&mut system_msg, 1, "read_watermark");
     write_string_field(&mut system_msg, 2, &data);
@@ -1055,7 +1107,7 @@ mod tests {
 
     #[test]
     fn build_read_watermark_app_message_carries_the_instant_and_stays_silent() {
-        let bytes = build_read_watermark_app_message(1_700_000_000_000);
+        let bytes = build_read_watermark_app_message(1_700_000_000_000, 0);
         // Silent like every control frame: no preview may be fabricated for it.
         assert_eq!(
             extract_full_message_info(&bytes, PushLanguage::French)["ok"],
@@ -1069,6 +1121,24 @@ mod tests {
         // The number, not a string: `systemMessageHandler` reads it as `Number(data.at)` and a
         // quoted instant would parse the same, which is exactly how such a drift stays invisible.
         assert_eq!(data_json["at"], serde_json::json!(1_700_000_000_000i64));
+        // No server time known: the older shape, read into the stamped map.
+        assert!(data_json.get("serverAt").is_none());
+    }
+
+    /// With the server's `createdAt` the frame is the one the app sends (`readWatermarkFrameData`):
+    /// the server instant under both names, so the shade's mark lands on the clock the
+    /// conversation is ordered by, and an older client still reads `at`.
+    #[test]
+    fn build_read_watermark_app_message_states_the_server_clock_when_known() {
+        let bytes = build_read_watermark_app_message(1_700_000_000_000, 1_700_000_060_000);
+        let system_msg = find_length_delimited_field(&bytes, 5).expect("system field present");
+        let data = find_length_delimited_field(&system_msg, 2).unwrap();
+        let data_json: serde_json::Value = serde_json::from_slice(&data).unwrap();
+        assert_eq!(
+            data_json["serverAt"],
+            serde_json::json!(1_700_000_060_000i64)
+        );
+        assert_eq!(data_json["at"], serde_json::json!(1_700_000_060_000i64));
     }
 
     /// EVERY name the app can send as a system event must be classified, because the fallback arm
@@ -1128,10 +1198,24 @@ mod tests {
         let mut msg = Vec::new();
         write_bytes_field(&mut msg, 3, &reaction);
 
-        assert_eq!(
-            extract_full_message_info(&msg, PushLanguage::French)["ok"],
-            false
-        );
+        let info = extract_full_message_info(&msg, PushLanguage::French);
+        assert_eq!(info["ok"], false);
+        // Named, so a salon push posts nothing instead of the generic line (2026-11-04).
+        assert_eq!(info["kind"], KIND_REACTION_WITHDRAWN);
+    }
+
+    #[test]
+    fn a_silenced_system_event_says_so() {
+        // SystemMsg { event=1, data=2 } as AppMessage field 5.
+        let mut system = Vec::new();
+        write_string_field(&mut system, 1, "edit_message");
+        write_string_field(&mut system, 2, "{}");
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 5, &system);
+
+        let info = extract_full_message_info(&msg, PushLanguage::French);
+        assert_eq!(info["ok"], false);
+        assert_eq!(info["kind"], KIND_SILENT_EVENT);
     }
 
     #[test]
@@ -1432,5 +1516,27 @@ mod tests {
         let info = extract_full_message_info(&msg, PushLanguage::French);
         assert_eq!(info["type"], "call_control");
         assert_eq!(info["callEnded"], true);
+    }
+
+    #[test]
+    fn native_decline_builds_the_hangup_the_in_app_decline_sends() {
+        // The native ring's Decline: CallMsg { call_id, hangup, device_id, end_reason=DECLINED },
+        // in an envelope with message_id and sent_at, as `sendMlsNotification` sends it.
+        let msg = build_call_hangup_app_message("mid-1", 1_700_000_000_000, "room-1", "dev-9", 2);
+
+        let call = find_length_delimited_field(&msg, 7).expect("a CallMsg in field 7");
+        assert_eq!(find_length_delimited_field(&call, 1).unwrap(), b"room-1");
+        assert_eq!(find_varint_field(&call, 5), Some(1));
+        assert_eq!(find_length_delimited_field(&call, 8).unwrap(), b"dev-9");
+        assert_eq!(find_varint_field(&call, 10), Some(2));
+        assert_eq!(find_length_delimited_field(&msg, 6).unwrap(), b"mid-1");
+        assert_eq!(find_varint_field(&msg, 8), Some(1_700_000_000_000));
+
+        // And every native reader of it sees the call end, never a preview.
+        let info = extract_full_message_info(&msg, PushLanguage::French);
+        assert_eq!(info["type"], "call_control");
+        assert_eq!(info["callId"], "room-1");
+        assert_eq!(info["callEnded"], true);
+        assert_eq!(info["text"], "");
     }
 }

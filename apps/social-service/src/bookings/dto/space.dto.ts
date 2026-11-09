@@ -17,7 +17,12 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { FormItemDto } from '../../forms/dto/form.dto';
-import { ZONED_INSTANT, ZONED_INSTANT_MESSAGE } from './booking.dto';
+import {
+  REMINDER_MAX_MINUTES,
+  REMINDER_MIN_MINUTES,
+  ZONED_INSTANT,
+  ZONED_INSTANT_MESSAGE,
+} from './booking.dto';
 
 /** At most this many questions, availability lines and exceptions: far above any real space. */
 export const MAX_SPACE_ITEMS = 50;
@@ -30,6 +35,14 @@ export const MAX_AVAILABILITY_EXCEPTIONS = 100;
  */
 export const MAX_PERSONAL_SPACES = 20;
 export const MAX_RESOURCES_PER_SPACE = 60;
+
+/**
+ * The length of one fixed slot a 'slots' space may store (migration 116): the creation wizard's
+ * choices span it (`SLOT_LENGTH_CHOICES`, 15 to 120 minutes), and the CHECK
+ * `booking_spaces_slot_minutes` holds the same pair.
+ */
+export const SLOT_MINUTES_MIN = 15;
+export const SLOT_MINUTES_MAX = 120;
 
 /** A wall time `HH:MM` or `HH:MM:SS`, `24:00` included (the end of a day). */
 export const WALL_TIME = /^(([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?|24:00(:00)?)$/;
@@ -121,6 +134,18 @@ export class SpaceSettingsDto {
   @Max(96)
   maxSteps?: number | null;
 
+  /**
+   * How long one fixed slot lasts, on a 'slots' space only (a step space carrying one is refused
+   * `slot-shape`); null = not stored, the painter infers it from the lines. Absent on a switch to
+   * 'step' = cleared by the service.
+   */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsInt()
+  @Min(SLOT_MINUTES_MIN)
+  @Max(SLOT_MINUTES_MAX)
+  slotMinutes?: number | null;
+
   @IsOptional()
   @IsIn(['names', 'occupied'])
   nameVisibility?: 'names' | 'occupied';
@@ -204,25 +229,20 @@ export class SpaceSettingsDto {
   @Max(30)
   retentionDays?: number;
 
+  /** The default reminder delay before a slot (WP-N, D53, Q-R1); null = no reminder. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsInt()
+  @Min(REMINDER_MIN_MINUTES)
+  @Max(REMINDER_MAX_MINUTES)
+  reminderMinutes?: number | null;
+
   /** The poster (D35), encrypted by the client; null removes it. */
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
   @ValidateNested()
   @Type(() => PosterDto)
   poster?: PosterDto | null;
-}
-
-/** `POST bookings/spaces` - a new space, personal or of an entity the actor manages (D2, D16). */
-export class CreateSpaceDto extends SpaceSettingsDto {
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(120)
-  declare name: string;
-
-  /** The owning association, list or institution; absent = a personal space. */
-  @IsOptional()
-  @IsUUID()
-  associationId?: string;
 }
 
 /** A resource's own fields (D10, D32). */
@@ -310,4 +330,31 @@ export class AvailabilityDto {
   @ValidateNested({ each: true })
   @Type(() => AvailabilityExceptionDto)
   exceptions: AvailabilityExceptionDto[];
+}
+
+/**
+ * `POST bookings/spaces` - a new space, personal or of an entity the actor manages (D2, D16).
+ * Declared after {@link AvailabilityDto} because it names it as a property type, whose decorator
+ * metadata is read when this class is defined.
+ */
+export class CreateSpaceDto extends SpaceSettingsDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  declare name: string;
+
+  /** The owning association, list or institution; absent = a personal space. */
+  @IsOptional()
+  @IsUUID()
+  associationId?: string;
+
+  /**
+   * The first hours of the space's ONE default column (D44), written in the creation's own
+   * transaction, so the creation wizard (D52) never leaves a space without them when a second call
+   * fails. Absent = the column starts closed, as a column added later does.
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AvailabilityDto)
+  availability?: AvailabilityDto;
 }

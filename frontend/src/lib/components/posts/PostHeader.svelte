@@ -3,6 +3,8 @@
   import type { PostEntity } from '$lib/posts/api';
   import PostAuthorAvatar from './PostAuthorAvatar.svelte';
   import RevealedAuthorLine from './RevealedAuthorLine.svelte';
+  import StudentsOnlyChip from './StudentsOnlyChip.svelte';
+  import FollowChip from '$lib/components/follows/FollowChip.svelte';
   import { Clock, Repeat2, Send } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
@@ -18,9 +20,11 @@
   interface Props {
     /** The post whose author/association and creation time are displayed. */
     post: PostEntity;
+    /** Whether "Suivre" is offered beside the publisher; off in the moderation preview. */
+    showFollow?: boolean;
   }
 
-  let { post }: Props = $props();
+  let { post, showFollow = true }: Props = $props();
 
   /**
    * Who wrote an anonymous post, when the server told this reader (author, moderator, admin): drawn
@@ -35,9 +39,12 @@
 
   /**
    * "Republie par X, Y +N" (D38): one card per post, however many associations carry it - on the
-   * time's line, "2 h . Republie par BDE" (user, 2026-10-24), not a line of its own.
+   * time's line, "2 h . Republie par BDE" (user, 2026-10-24), not a line of its own. The reader
+   * who reposted it reads "vous" first - "Republie par vous et Marie" (WP-F6, owner 2026-11-02).
    */
-  const republished = $derived(republishedByText(post.republishedBy));
+  const republished = $derived(
+    republishedByText(post.republishedBy, post.repostedBy, post.repostedByMe === true)
+  );
 
   /**
    * "Demande envoyee au nom de X" (D38b): what the reader's associations asked the author of this
@@ -93,15 +100,20 @@
       />
     {/if}
     <div
-      class="text-text-muted text-2xs mt-0.5 flex min-w-0 items-center gap-1.5 font-medium opacity-80"
+      class="text-text-muted text-2xs mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium opacity-80"
       data-post-time-line
     >
       <Clock size={12} strokeWidth={2.5} class="shrink-0" />
       <span class="shrink-0" title={exactDate(post.publishedAt)}>{timeAgo(post.publishedAt)}</span>
+      {#if post.studentsOnly}
+        <StudentsOnlyChip />
+      {/if}
       {#if republished}
-        <span class="shrink-0" aria-hidden="true">&middot;</span>
-        <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
-        <span class="truncate" data-post-republished-by><EmojiText text={republished} /></span>
+        <!-- One wrapping unit: beside the time and the "Entre etudiants" chip it was squeezed to "Republie par Cl..." on a phone, so it drops to its own line when the three do not fit. -->
+        <span class="flex max-w-full min-w-0 items-center gap-1.5" data-post-republished-unit>
+          <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
+          <span class="truncate" data-post-republished-by><EmojiText text={republished} /></span>
+        </span>
       {/if}
     </div>
     {#if requested.length > 0}
@@ -113,4 +125,21 @@
       </div>
     {/if}
   </div>
+  <!--
+    "Suivre" for whoever published this, when the reader does not follow them yet (engagement WP-2).
+    An association post offers the association; a personal post offers its author; an anonymous post
+    offers nothing - there is nobody to follow, and a revealed author is never turned into a button.
+  -->
+  {#if !showFollow}
+    <!-- the moderation preview: a moderator reads the post, they do not follow its author from there -->
+  {:else if post.association}
+    <FollowChip
+      kind="association"
+      targetId={post.association.id}
+      name={post.association.name}
+      iconOnlyOnPhone
+    />
+  {:else if post.authorId && !post.anonymous}
+    <FollowChip kind="user" targetId={post.authorId} name={getPostAuthorName()} iconOnlyOnPhone />
+  {/if}
 </div>

@@ -7,9 +7,22 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
-vi.mock('$lib/stores/auth', () => ({ getToken: vi.fn().mockResolvedValue('') }));
+vi.mock('$lib/stores/auth', () => ({
+  getToken: vi.fn().mockResolvedValue(''),
+  signOutGeneration: () => 0,
+}));
 
-import { SavedStateOfAnotherAccountError, SavedStateUnopenedError } from '$lib/mls-client';
+import {
+  MlsSessionVacantError,
+  SavedStateOfAnotherAccountError,
+  SavedStateUnopenedError,
+} from '$lib/mls-client';
+import { setMlsSessionLostHandler } from '$lib/mls-client/mlsSessionLoss';
+import {
+  KeystoreKeyUnavailableError,
+  MlsSlotMoveUnfinishedError,
+  MlsSlotOwnerUnrecordedError,
+} from '$lib/mls-client/mlsStateLoadError';
 import { TauriMlsService } from './TauriMlsService';
 
 /**
@@ -39,13 +52,25 @@ const BOB = 'bob';
 const KEY = 'k'.repeat(44);
 const PAUSE_FOR_PIN = { noFreshStart: true, stateOnDisk: true, legacyPin: '1234' };
 
-const ALTERED = 'STATE_ALTERED: v1 tag did not verify under the key its header names';
-const ROTATED = "STATE_KEY_MISMATCH: the state's header names a different device key";
+/** What `initialiser_mls` rejects with: `mls-core`'s `StateLoadRefusal`, the code as a FIELD. */
+type StateLoadRefusal = { code: string | null; message: string };
+const ALTERED: StateLoadRefusal = {
+  code: 'STATE_ALTERED',
+  message: 'v1 tag did not verify under the key its header names',
+};
+const ROTATED: StateLoadRefusal = {
+  code: 'STATE_KEY_MISMATCH',
+  message: "the state's header names a different device key",
+};
+const UNDECRYPTABLE: StateLoadRefusal = {
+  code: 'STATE_UNDECRYPTABLE',
+  message: 'aead::Error',
+};
 
 /** `initialiser_mls` refuses with `loadError`; `mls_state_owner` answers `owner`. */
-function disk(loadError: string, owner: string | null): void {
+function disk(loadError: StateLoadRefusal, owner: string | null): void {
   invoke.mockImplementation((cmd: string) => {
-    if (cmd === 'initialiser_mls') return Promise.reject(new Error(loadError));
+    if (cmd === 'initialiser_mls') return Promise.reject(loadError);
     if (cmd === 'mls_state_owner') return Promise.resolve(owner);
     return Promise.resolve(undefined);
   });
@@ -76,7 +101,7 @@ describe("TauriMlsService init - another account's mls.bin, and a state no PIN o
   });
 
   it("refuses a state recorded as ANOTHER account's - nothing rotated, no legacy re-seal, nothing written", async () => {
-    disk('STATE_UNDECRYPTABLE: aead::Error', 'alice');
+    disk(UNDECRYPTABLE, 'alice');
     const { svc, rotate } = makeService();
 
     const err = await settle(svc._initImpl(BOB, KEY, undefined, PAUSE_FOR_PIN));
@@ -86,6 +111,29 @@ describe("TauriMlsService init - another account's mls.bin, and a state no PIN o
     // ONE load: a second would be the legacy re-seal, which PERSISTS a rewritten mls.bin.
     expect(calls('initialiser_mls')).toBe(1);
     expect(calls('sauvegarder_mls_et_persister')).toBe(0);
+  });
+
+  it('answers an unfinished move between two accounts with nothing - no owner read, no re-seal, no rotation', async () => {
+    disk({ code: 'SLOT_MOVE_UNFINISHED', message: 'a cut park' }, 'alice');
+    const { svc, rotate } = makeService();
+
+    const err = await settle(svc._initImpl(BOB, KEY, undefined, { stateOnDisk: true }));
+
+    expect(err).toBeInstanceOf(MlsSlotMoveUnfinishedError);
+    expect(rotate).not.toHaveBeenCalled();
+    expect(calls('initialiser_mls')).toBe(1);
+    expect(calls('mls_state_owner')).toBe(0);
+  });
+
+  it('answers an owner record that could not be written with nothing either', async () => {
+    disk({ code: 'SLOT_OWNER_UNRECORDED', message: 'disk full' }, 'alice');
+    const { svc, rotate } = makeService();
+
+    const err = await settle(svc._initImpl(BOB, KEY, undefined, { stateOnDisk: true }));
+
+    expect(err).toBeInstanceOf(MlsSlotOwnerUnrecordedError);
+    expect(rotate).not.toHaveBeenCalled();
+    expect(calls('mls_state_owner')).toBe(0);
   });
 
   it('refuses it whatever the cause - even an ALTERED one, which would otherwise rotate', async () => {
@@ -102,7 +150,7 @@ describe("TauriMlsService init - another account's mls.bin, and a state no PIN o
   it('CONTROL: a record naming THIS account, or none at all, is no proof - the ordinary pause', async () => {
     for (const owner of [BOB, null]) {
       invoke.mockReset();
-      disk('STATE_UNDECRYPTABLE: aead::Error', owner);
+      disk(UNDECRYPTABLE, owner);
       const { svc, rotate } = makeService();
 
       const err = await settle(svc._initImpl(BOB, KEY, undefined, PAUSE_FOR_PIN));
@@ -144,5 +192,134 @@ describe("TauriMlsService init - another account's mls.bin, and a state no PIN o
     expect((err as SavedStateUnopenedError).reason).toBe('rotated');
     expect(rotate).not.toHaveBeenCalled();
     expect(calls('initialiser_mls')).toBe(1);
+  });
+});
+
+/**
+ * A DESTRUCTIVE REPAIR IS GATED ON KNOWING THE STATE IS BROKEN, WHATEVER THE CALLER PASSES. With
+ * `mls.bin` on disk, a refused biometric sheet (`KEYSTORE_KEY_UNAVAILABLE`) and an untyped failure
+ * prove nothing about its bytes: nothing is rotated or written, with or without `noFreshStart` -
+ * before 2026-11-01 an `unknown` cause still rotated when the caller had not set it.
+ */
+describe('TauriMlsService init - a cause that proves nothing destroys nothing', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    localStorage.clear();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  it.each([{ stateOnDisk: true }, { stateOnDisk: true, noFreshStart: true }])(
+    'a keystore refusal with a state on disk reaches the PIN modal typed, nothing rotated (%o)',
+    async (opts) => {
+      disk({ code: 'KEYSTORE_KEY_UNAVAILABLE', message: 'the sheet was cancelled' }, BOB);
+      const { svc, rotate } = makeService();
+
+      const err = await settle(svc._initImpl(BOB, '', undefined, opts));
+
+      expect(err).toBeInstanceOf(KeystoreKeyUnavailableError);
+      expect(rotate).not.toHaveBeenCalled();
+      expect(calls('initialiser_mls')).toBe(1);
+      expect(calls('sauvegarder_mls_et_persister')).toBe(0);
+    }
+  );
+
+  it.each([{ stateOnDisk: true }, { stateOnDisk: true, noFreshStart: true }])(
+    'an untyped failure with a state on disk pauses as `unknown`, nothing rotated (%o)',
+    async (opts) => {
+      disk({ code: null, message: 'Failed to lock state' }, BOB);
+      const { svc, rotate } = makeService();
+
+      const err = await settle(svc._initImpl(BOB, KEY, undefined, opts));
+
+      expect(err).toBeInstanceOf(SavedStateUnopenedError);
+      expect((err as SavedStateUnopenedError).reason).toBe('unknown');
+      expect(rotate).not.toHaveBeenCalled();
+      expect(calls('sauvegarder_mls_et_persister')).toBe(0);
+    }
+  );
+});
+
+/**
+ * A FAILED INSTALL LEAVES NO SESSION BEHIND, AND THE PAGE DOES NOT END ONE. The native install guard
+ * ends exactly the session its selection claimed, on every exit that did not install (round 4 of the
+ * review of #2919). The page used to end the native session after a failed `initialiser_mls` too,
+ * UNCLAIMED - and after a reload that ended a previous page's sign-in still loading natively. The
+ * install's own error is what propagates.
+ */
+describe('TauriMlsService init - a refused initialiser_mls is not followed by a page teardown', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    localStorage.clear();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+  });
+
+  afterEach(() => {
+    delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  });
+
+  it("ends nothing from the page, and rethrows the install's own error", async () => {
+    disk(UNDECRYPTABLE, 'alice');
+    const { svc } = makeService();
+
+    const err = await settle(svc._initImpl(BOB, KEY, undefined, PAUSE_FOR_PIN));
+
+    expect(err).toBeInstanceOf(SavedStateOfAnotherAccountError);
+    expect(invoke.mock.calls.map((c) => c[0])).not.toContain('terminer_session_mls');
+  });
+});
+
+/**
+ * A RESUME INTO AN EMPTY SLOT IS NOT A WARNING. With no native session under a signed-in one, every
+ * later MLS command is refused while the screen looks alive - so the vacancy is reported (the shell
+ * ends the session into the sign-in screen) and the resume sequence is told to stop, typed.
+ */
+describe('TauriMlsService resume - no native session under a signed-in one', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => setMlsSessionLostHandler(null));
+
+  it('reports the vacancy and rejects with MlsSessionVacantError', async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === 'recharger_mls_au_resume'
+        ? Promise.reject(
+            new Error('MLS_MANAGER_ABSENT: no MLS session is installed in this process')
+          )
+        : Promise.resolve(undefined)
+    );
+    const lost = vi.fn();
+    setMlsSessionLostHandler(lost);
+    const svc = new TauriMlsService() as unknown as {
+      _deviceKeyB64: string;
+      reloadStateFromDisk(): Promise<void>;
+    };
+    svc._deviceKeyB64 = KEY;
+
+    await expect(svc.reloadStateFromDisk()).rejects.toBeInstanceOf(MlsSessionVacantError);
+    expect(lost).toHaveBeenCalledWith('resume found no native session');
+  });
+
+  it('any other reload failure is logged and the resume carries on, as before', async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === 'recharger_mls_au_resume'
+        ? Promise.reject(new Error('reload mls.bin: aead::Error'))
+        : Promise.resolve(undefined)
+    );
+    const lost = vi.fn();
+    setMlsSessionLostHandler(lost);
+    const svc = new TauriMlsService() as unknown as {
+      _deviceKeyB64: string;
+      reloadStateFromDisk(): Promise<void>;
+    };
+    svc._deviceKeyB64 = KEY;
+
+    await expect(svc.reloadStateFromDisk()).resolves.toBeUndefined();
+    expect(lost).not.toHaveBeenCalled();
   });
 });

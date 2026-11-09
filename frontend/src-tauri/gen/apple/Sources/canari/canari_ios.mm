@@ -3,6 +3,7 @@
 #import "canari_rust_bridge.h"
 #import "KeyboardMediaBridge.h"
 
+#import <AVFoundation/AVFoundation.h>
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
@@ -134,6 +135,7 @@ static void CanariSetupFirebaseIfAvailable(void) {
 
 static void CanariPublishSafeAreaInsets(void);
 static void CanariPublishDynamicType(void);
+static void CanariPublishForeground(NSString *_Nullable opening);
 
 /// Puts the WebView's own scroll view back inside its content whenever it has left it.
 ///
@@ -386,6 +388,168 @@ static void CanariObserveTheme(void) {
   NSLog(@"[CanariIOS] listening for the app theme");
 }
 
+/// THE SCREEN GOES DARK AGAINST THE CHEEK DURING A CALL ON THE RECEIVER. iOS turns the screen off
+/// near the face only while `UIDevice.proximityMonitoringEnabled` is set, and a WebView never sets it.
+/// The page posts a boolean through `webkit.messageHandlers.canariProximity` (`iosCallProximity.ts`):
+/// true while a call holds the microphone and the page did not put it on the loudspeaker, false
+/// otherwise and at the call's end - and once at every page boot, so a reload or a WebContent kill
+/// mid-call never leaves the sensor armed. Anything but a boolean is logged and ignored.
+///
+/// THE ROUTE DECIDES, NOT THE PAGE'S TOGGLE: the page's loudspeaker is a best-effort `setSinkId`, and
+/// AirPods or a car take the voice without the page knowing. So monitoring is on only while the page
+/// asks AND the audio session's output is the built-in RECEIVER; every route change re-decides it and
+/// logs the output port types, which is what tells receiver from speaker in a reading.
+@interface CanariProximityHandler : NSObject <WKScriptMessageHandler>
+@property(nonatomic) BOOL pageWants;
+/// The outputs and the monitoring state of the last line written: a route change that moves
+/// neither (iOS posts several per route switch, and some for a category change alone) is not
+/// worth another.
+@property(nonatomic, copy) NSString *lastLogged;
+- (void)apply:(NSString *)why;
+@end
+@implementation CanariProximityHandler
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+  if (![message.body isKindOfClass:[NSNumber class]]) {
+    NSLog(@"[CanariIOS] proximity ignored, the page posted something that is not a boolean");
+    return;
+  }
+  self.pageWants = [(NSNumber *)message.body boolValue];
+  [self apply:@"the page asked"];
+}
+
+- (void)apply:(NSString *)why {
+  NSArray<AVAudioSessionPortDescription *> *outputs =
+      AVAudioSession.sharedInstance.currentRoute.outputs;
+  NSMutableArray<NSString *> *ports = [NSMutableArray arrayWithCapacity:outputs.count];
+  BOOL onReceiver = NO;
+  for (AVAudioSessionPortDescription *port in outputs) {
+    [ports addObject:port.portType];
+    if ([port.portType isEqualToString:AVAudioSessionPortBuiltInReceiver]) {
+      onReceiver = YES;
+    }
+  }
+  BOOL enabled = self.pageWants && onReceiver;
+  UIDevice *device = UIDevice.currentDevice;
+  device.proximityMonitoringEnabled = enabled;
+  // Read back: a device without a sensor leaves it NO, and that is what the reading should show.
+  NSString *state = [NSString stringWithFormat:@"page=%d outputs=[%@] receiver=%d now=%d",
+                                               self.pageWants, [ports componentsJoinedByString:@","],
+                                               onReceiver, device.proximityMonitoringEnabled];
+  // A page's ask is always written; a route change only when it moved the outputs or the state.
+  BOOL routeChange = [why isEqualToString:@"the audio route changed"];
+  if (routeChange && [state isEqualToString:self.lastLogged]) {
+    return;
+  }
+  self.lastLogged = state;
+  NSLog(@"[CanariIOS] call proximity (%@): %@", why, state);
+}
+@end
+
+static void CanariObserveCallProximity(void) {
+  static CanariProximityHandler *handler = nil;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil || handler != nil) {
+    return;
+  }
+  handler = [CanariProximityHandler new];
+  [webView.configuration.userContentController addScriptMessageHandler:handler name:@"canariProximity"];
+  CanariProximityHandler *observer = handler;
+  [[NSNotificationCenter defaultCenter]
+      addObserverForName:AVAudioSessionRouteChangeNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(NSNotification *_Nonnull note) {
+                (void)note;
+                // Silent outside a call: only a page that asks makes a route change worth a line.
+                if (observer.pageWants || UIDevice.currentDevice.proximityMonitoringEnabled) {
+                  [observer apply:@"the audio route changed"];
+                }
+              }];
+  NSLog(@"[CanariIOS] listening for the call proximity");
+}
+
+/// THE SCREEN STAYS ON DURING A VIDEO CALL AND A LIVE. WKWebView refuses the Screen Wake Lock API
+/// (`NotAllowedError`), so the page posts through `webkit.messageHandlers.canariIdleTimer`
+/// (`screenAwake.ts`) `{owner, hold}` - `owner` is `call` or `live` - when a holder takes or lets go
+/// of the screen, and `{reset: true}` once at every page boot, so a reload or a WebContent kill
+/// mid-call never leaves the screen on.
+///
+/// A SET OF OWNERS, NOT A BOOLEAN: a call and a live can overlap, and the release of one must not
+/// drop the other's hold. `idleTimerDisabled` is YES exactly while the set is not empty. Adding an
+/// owner already held, or removing one not held, changes nothing (idempotent). The property belongs
+/// to the running app: a kill or a crash returns it to the system, and iOS ignores it while the app
+/// is not in the foreground. A malformed message is logged and ignored.
+@interface CanariIdleTimerHandler : NSObject <WKScriptMessageHandler>
+@property(nonatomic, strong) NSMutableSet<NSString *> *owners;
+@end
+@implementation CanariIdleTimerHandler
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+  if (self.owners == nil) {
+    self.owners = [NSMutableSet set];
+  }
+  NSDictionary *body = [message.body isKindOfClass:[NSDictionary class]] ? message.body : nil;
+  NSString *change = nil;
+  if ([body[@"reset"] isKindOfClass:[NSNumber class]] && [body[@"reset"] boolValue]) {
+    [self.owners removeAllObjects];
+    change = @"reset";
+  } else if ([body[@"owner"] isKindOfClass:[NSString class]] &&
+             [body[@"hold"] isKindOfClass:[NSNumber class]]) {
+    NSString *owner = body[@"owner"];
+    if ([body[@"hold"] boolValue]) {
+      [self.owners addObject:owner];
+      change = [@"hold " stringByAppendingString:owner];
+    } else {
+      [self.owners removeObject:owner];
+      change = [@"release " stringByAppendingString:owner];
+    }
+  } else {
+    NSLog(@"[CanariIOS] idle timer ignored, the page posted neither {owner, hold} nor {reset}");
+    return;
+  }
+  UIApplication *app = UIApplication.sharedApplication;
+  BOOL was = app.idleTimerDisabled;
+  app.idleTimerDisabled = self.owners.count > 0;
+  NSLog(@"[CanariIOS] idle timer (%@): owners=[%@] disabled=%d (was %d)", change,
+        [self.owners.allObjects componentsJoinedByString:@","], app.idleTimerDisabled, was);
+}
+@end
+
+static void CanariObserveCallIdleTimer(void) {
+  static CanariIdleTimerHandler *handler = nil;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil || handler != nil) {
+    return;
+  }
+  handler = [CanariIdleTimerHandler new];
+  [webView.configuration.userContentController addScriptMessageHandler:handler name:@"canariIdleTimer"];
+  NSLog(@"[CanariIOS] listening for the screen idle timer");
+}
+
+/// THE ONE REGISTRATION POINT of the call's page handlers (`canariProximity`, `canariIdleTimer`),
+/// called wherever the WebView may have just come to exist: at the scene's connection (a PushKit
+/// launch of a killed app connects the scene and loads the page IN THE BACKGROUND, with no
+/// `didBecomeActive` before the call is answered on CallKit - a handler registered only at the
+/// activation was absent when the call screen posted its hold), at the end of a page load, and at
+/// every activation. Each handler keeps its own `static handler != nil` guard, so a second call
+/// registers nothing twice. The first point that found the WebView is logged once.
+static void CanariRegisterCallPageHandlers(NSString *where) {
+  static BOOL registered = NO;
+  if (CanariFindWebView() == nil) {
+    if (!registered) {
+      NSLog(@"[CanariIOS] call page handlers: no WebView yet at %@", where);
+    }
+    return;
+  }
+  CanariObserveCallProximity();
+  CanariObserveCallIdleTimer();
+  if (!registered) {
+    registered = YES;
+    NSLog(@"[CanariIOS] call page handlers registered at %@", where);
+  }
+}
+
 /// Publishes the home indicator's inset to the page as `--safe-area-inset-bottom` - the iOS peer of
 /// what Android's window insets give the same 35 consumers (`app.html` names that variable "the one
 /// place this is decided").
@@ -414,8 +578,10 @@ static void CanariObserveTheme(void) {
                         change:(NSDictionary *)change
                        context:(void *)context {
   if ([keyPath isEqualToString:@"loading"] && ![(WKWebView *)object isLoading]) {
+    CanariRegisterCallPageHandlers(@"page load");
     CanariPublishSafeAreaInsets();
     CanariPublishDynamicType();
+    CanariPublishForeground(nil);
   }
 }
 @end
@@ -456,6 +622,88 @@ static void CanariPublishSafeAreaInsets(void) {
     published = inset;
     NSLog(@"[CanariIOS] safe area published to the page: bottom %.0f pt, top %.0f pt", inset, top);
   }
+}
+
+/// Whether the app is ON SCREEN: false from `didEnterBackground` until the resume completes. Not
+/// `g_isInForeground`, which is ACTIVE only and turns false for the Face ID sheet, Control Center or a
+/// permission alert - none of which takes the conversation off the screen, and every one of which
+/// would have re-run the page's "back in the foreground" work in the middle of an unlock.
+static volatile bool g_isOnScreen = true;
+
+/// True from `willEnterForeground` until the resume is PUBLISHED to the page - which is not at
+/// `didBecomeActive` itself but one round trip to the notification center later (see the observer).
+/// A tapped notification noted while this is true belongs to this resume: its link rides the edge,
+/// and the page does not read the conversation left on screen (owner, 2026-11-02;
+/// `resumeOpening.svelte.ts`). Main thread only.
+static bool g_resumePending = false;
+
+/// The link the resume in progress opens (a tapped notification), or nil. Main thread only.
+static NSString *_Nullable g_resumeOpening = nil;
+
+void CanariNoteResumeOpening(NSString *deepLink) {
+  void (^note)(void) = ^{
+    UIApplicationState state = [UIApplication sharedApplication].applicationState;
+    // A tap on an app that is active with NO resume in progress (a banner over the open app) is not
+    // a resume. Active WITH one in progress is: the delegate may run after `didBecomeActive`, and
+    // the edge is not published until the round trip below says it has had its chance.
+    if (state == UIApplicationStateActive && !g_resumePending) {
+      NSLog(@"[CanariIOS] notification tap on an active app - not a resume, nothing held");
+      return;
+    }
+    g_resumeOpening = [deepLink copy];
+    NSLog(@"[CanariIOS] notification tap during a resume (state=%ld, resumePending=%d): its link rides the foreground edge",
+          (long)state, g_resumePending ? 1 : 0);
+  };
+  // Synchronously on the main thread: the order against `didBecomeActive` is the whole point.
+  if ([NSThread isMainThread]) {
+    note();
+  } else {
+    dispatch_sync(dispatch_get_main_queue(), note);
+  }
+}
+
+/// Hands the page whether the app is on screen, in the contract the Android shell already speaks
+/// (`MainActivity.pushForeground`): `window.__canariForeground` for whoever asks later, and a
+/// `canari:foreground` event for whoever reacts at the edge. ONE implementation in the page
+/// (`appForeground.ts`, `appForegroundState.svelte.ts`) then serves both phones.
+///
+/// WHY: the page asked `isAppInForeground()`, which answers `true` where the global is absent - so on
+/// iOS it was always `true`, and a frame the page processed in the seconds before suspension, in the
+/// conversation left open, counted as read on arrival (owner, 2026-11-02;
+/// docs/wiki/frontend/modules/chat.md, "Read state between devices").
+///
+/// Sent on both edges and after every page load (a page that loads while backgrounded - a launch by
+/// a push - must not start believing it is on screen).
+static void CanariPublishForeground(NSString *_Nullable opening) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    NSLog(@"[CanariIOS] foreground=%d not published: no WebView yet (the page load publishes it)",
+          g_isOnScreen ? 1 : 0);
+    return;
+  }
+  NSString *value = g_isOnScreen ? @"true" : @"false";
+  // The link as a JSON string literal: page data, never code.
+  NSString *openingJs = @"null";
+  if (opening.length > 0) {
+    NSData *json = [NSJSONSerialization dataWithJSONObject:opening
+                                                   options:NSJSONWritingFragmentsAllowed
+                                                     error:nil];
+    if (json != nil) openingJs = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
+  }
+  NSString *js = [NSString
+      stringWithFormat:@"window.__canariForeground=%@;"
+                        "window.dispatchEvent(new CustomEvent('canari:foreground',{detail:{foreground:%@,opening:%@}}));",
+                       value, value, openingJs];
+  [webView evaluateJavaScript:js
+            completionHandler:^(__unused id result, NSError *error) {
+              if (error != nil) {
+                // A page that cannot be told keeps its last value; said, because a silent failure
+                // here reads exactly like the defect this exists to fix.
+                NSLog(@"[CanariIOS] ERROR foreground=%@ not published to the page: %@", value, error);
+              }
+            }];
+  NSLog(@"[CanariIOS] foreground=%@ published to the page (opens a link=%d)", value,
+        opening.length > 0 ? 1 : 0);
 }
 
 /// Hands the page the user's Dynamic Type body size, as `canari:dynamic-type` (detail `bodyPx`) and
@@ -575,48 +823,30 @@ static NSString *const kCanariShareNotificationId = @"canari.share.ready";
 /// The Darwin notification the Share Extension posts when a share waits in the App Group.
 static CFStringRef const kCanariShareReadyNotification = CFSTR("fr.emse.canari.share-ready");
 
-/// Carries a share another app made INTO Canari out of the App Group, where the Share Extension left
-/// it, into the app's own handoff (`canari_ios_import_app_group_share`, commands/app_group_share.rs),
-/// then tells a live page - `canari:incoming-share`, the event Android's MainActivity dispatches. A
-/// page not loaded yet drains the file at mount instead. `why` names the call site in the log.
-static void CanariImportAppGroupShare(NSString *why) {
-  NSString *dataDir = CanariTauriDataDir();
-  NSString *cacheDir = CanariTauriCacheDir();
-  if (dataDir == nil || cacheDir == nil) {
-    NSLog(@"[CanariShare] import (%@) NOT run: the app data or cache directory is unresolved", why);
-    return;
+/// Whether a share manifest waits in `dir` - a STAT, never a read, so it answers while the device is
+/// locked too (Data Protection guards a file's contents, not its name). NO for a nil `dir`.
+static BOOL CanariShareManifestWaits(NSString *dir) {
+  if (dir == nil) {
+    return NO;
   }
-  int code = canari_ios_import_app_group_share(dataDir.UTF8String, cacheDir.UTF8String);
-  // The CODE is the log: the launch call runs before the Rust logger exists.
-  switch (code) {
-    case CANARI_SHARE_IMPORT_IMPORTED:
-      break;
-    case CANARI_SHARE_IMPORT_NOTHING:
-      return;
-    case CANARI_SHARE_IMPORT_BUSY:
-      NSLog(@"[CanariShare] import (%@): the Share Extension is copying - imported at the next activation", why);
-      return;
-    case CANARI_SHARE_IMPORT_DROPPED:
-      NSLog(@"[CanariShare] import (%@) ERROR: the App Group manifest was unreadable and was dropped", why);
-      return;
-    case CANARI_SHARE_IMPORT_NO_DIRS:
-      NSLog(@"[CanariShare] import (%@) ERROR: the directories did not reach Rust", why);
-      return;
-    case CANARI_SHARE_IMPORT_NO_GROUP:
-      NSLog(@"[CanariShare] import (%@) ERROR: the App Group container is unavailable", why);
-      return;
-    case CANARI_SHARE_IMPORT_FAILED:
-      NSLog(@"[CanariShare] import (%@) ERROR: the share could not be moved or handed over", why);
-      return;
-    default:
-      NSLog(@"[CanariShare] import (%@) ERROR: unknown code %d", why, code);
-      return;
-  }
-  [[UNUserNotificationCenter currentNotificationCenter]
-      removeDeliveredNotificationsWithIdentifiers:@[ kCanariShareNotificationId ]];
+  NSString *manifest = [dir stringByAppendingPathComponent:[NSString stringWithUTF8String:CANARI_SHARE_PENDING_FILE]];
+  return [[NSFileManager defaultManager] fileExistsAtPath:manifest];
+}
+
+/// The App Group container's path, or nil when it is unavailable.
+static NSString *CanariShareAppGroupDir(void) {
+  return [[NSFileManager defaultManager]
+             containerURLForSecurityApplicationGroupIdentifier:@"group.fr.emse.canari"]
+      .path;
+}
+
+/// Tells a live page a share waits in the app data directory - `canari:incoming-share`, the event
+/// Android's MainActivity dispatches - so it drains it now. A page not loaded yet drains the file at
+/// mount instead. `why` names the call site in the log.
+static void CanariTellPageOfShare(NSString *why) {
   WKWebView *webView = CanariFindWebView();
   if (webView == nil) {
-    NSLog(@"[CanariShare] share imported (%@) before the WebView: the page drains it at mount", why);
+    NSLog(@"[CanariShare] a share waits (%@) before the WebView: the page drains it at mount", why);
     return;
   }
   [webView evaluateJavaScript:@"window.dispatchEvent(new CustomEvent('canari:incoming-share'));"
@@ -626,7 +856,91 @@ static void CanariImportAppGroupShare(NSString *why) {
                       CanariErrorReason(error));
               }
             }];
-  NSLog(@"[CanariShare] share imported (%@), the page was told", why);
+  NSLog(@"[CanariShare] a share waits (%@), the page was told", why);
+}
+
+/// Carries a share another app made INTO Canari out of the App Group, where the Share Extension left
+/// it, into the app's own handoff (`canari_ios_import_app_group_share`, commands/app_group_share.rs),
+/// then tells a live page. YES when a share was imported (and the page told).
+///
+/// NO UIKIT HERE: the bootstrap calls it before the application object exists, where
+/// `[UIApplication sharedApplication]` is nil and any question put to it answers NO. A locked device
+/// is Rust's to answer, and it answers it safely: `CANARI_SHARE_IMPORT_PROTECTED`, nothing moved and
+/// nothing deleted (docs/wiki/frontend/sharing.md, "At rest").
+static BOOL CanariImportAppGroupShare(NSString *why) {
+  NSString *dataDir = CanariTauriDataDir();
+  NSString *cacheDir = CanariTauriCacheDir();
+  if (dataDir == nil || cacheDir == nil) {
+    NSLog(@"[CanariShare] import (%@) NOT run: the app data or cache directory is unresolved", why);
+    return NO;
+  }
+  int code = canari_ios_import_app_group_share(dataDir.UTF8String, cacheDir.UTF8String);
+  // The CODE is the log: the launch call runs before the Rust logger exists.
+  switch (code) {
+    case CANARI_SHARE_IMPORT_IMPORTED:
+      break;
+    case CANARI_SHARE_IMPORT_NOTHING:
+      return NO;
+    case CANARI_SHARE_IMPORT_BUSY:
+      NSLog(@"[CanariShare] import (%@): the Share Extension is copying - imported at the next activation", why);
+      return NO;
+    case CANARI_SHARE_IMPORT_DROPPED:
+      NSLog(@"[CanariShare] import (%@) ERROR: the App Group manifest was unreadable and was dropped", why);
+      return NO;
+    case CANARI_SHARE_IMPORT_PROTECTED:
+      NSLog(@"[CanariShare] import (%@): the share is locked with the device - imported once it is unlocked", why);
+      return NO;
+    case CANARI_SHARE_IMPORT_DROPPED_OVER_LOCKED:
+      // A LOSS, and at launch this is its only trace: the Rust logger does not exist yet.
+      NSLog(@"[CanariShare] import (%@) ERROR: the share was dropped - the share already waiting is locked with the device and was kept", why);
+      return NO;
+    case CANARI_SHARE_IMPORT_NO_DIRS:
+      NSLog(@"[CanariShare] import (%@) ERROR: the directories did not reach Rust", why);
+      return NO;
+    case CANARI_SHARE_IMPORT_NO_GROUP:
+      NSLog(@"[CanariShare] import (%@) ERROR: the App Group container is unavailable", why);
+      return NO;
+    case CANARI_SHARE_IMPORT_FAILED:
+      NSLog(@"[CanariShare] import (%@) ERROR: the share could not be moved or handed over", why);
+      return NO;
+    default:
+      NSLog(@"[CanariShare] import (%@) ERROR: unknown code %d", why, code);
+      return NO;
+  }
+  [[UNUserNotificationCenter currentNotificationCenter]
+      removeDeliveredNotificationsWithIdentifiers:@[ kCanariShareNotificationId ]];
+  NSLog(@"[CanariShare] share imported (%@)", why);
+  CanariTellPageOfShare(why);
+  return YES;
+}
+
+/// The import where the application object EXISTS (an activation, the extension's "share ready"),
+/// which may therefore ask whether protected data is available. While the device is locked a waiting
+/// share cannot be read: the import is not tried - the unlock imports it
+/// (`CanariOnProtectedDataAvailable`) - and the deferral is said only when a share waits, so a locked
+/// phone that has none logs nothing.
+static void CanariImportAppGroupShareIfUnlocked(NSString *why) {
+  if (![UIApplication sharedApplication].isProtectedDataAvailable) {
+    if (CanariShareManifestWaits(CanariShareAppGroupDir())) {
+      NSLog(@"[CanariShare] import (%@) deferred: the device is locked - imported once it is unlocked", why);
+    }
+    return;
+  }
+  CanariImportAppGroupShare(why);
+}
+
+/// THE UNLOCK (`UIApplicationProtectedDataDidBecomeAvailable`, which iOS also delivers to an app it
+/// resumes after the unlock): what Data Protection held back is readable now. The App Group share is
+/// imported, and a share already in the app data directory - one a drain found locked, after a
+/// locked launch - is offered to the page: no activation and no import would tell it otherwise, and
+/// the page drains only at its mount and on `canari:incoming-share`. An event, not a retry.
+static void CanariOnProtectedDataAvailable(void) {
+  if (CanariImportAppGroupShare(@"unlock")) {
+    return;
+  }
+  if (CanariShareManifestWaits(CanariTauriDataDir())) {
+    CanariTellPageOfShare(@"unlock");
+  }
 }
 
 /// Says what the launch sweep did: it runs before the Rust logger exists, so its report is the
@@ -644,6 +958,9 @@ static void CanariLogShareSweep(CanariShareSweep sweep) {
       CANARI_SHARE_SWEEP_EPOCH_REPAIRED,
       CANARI_SHARE_SWEEP_EPOCH_REPAIR_FAILED,
       CANARI_SHARE_SWEEP_LEFTOVER_FAILED,
+      CANARI_SHARE_SWEEP_PROTECTED,
+      CANARI_SHARE_SWEEP_CLAIM_RESTORED,
+      CANARI_SHARE_SWEEP_CLAIM_LOST,
   };
   NSArray<NSString *> *whats = @[
     @"already ran in this process - nothing done",
@@ -654,7 +971,10 @@ static void CanariLogShareSweep(CanariShareSweep sweep) {
     @"ERROR: the share epoch is unreadable - every waiting share treated as stale",
     @"ERROR: the App Group epoch was behind the app's (a sign-out's copy had failed) - rewritten",
     @"ERROR: the App Group epoch is behind the app's and could NOT be rewritten",
-    @"ERROR: a leftover file in the App Group could not be deleted",
+    @"ERROR: a leftover claim or staging file could not be put back or deleted",
+    @"a waiting share is locked with the device - its inbox was left whole",
+    @"a share a dead process had claimed was put back - it is offered again",
+    @"ERROR: a share a dead process had claimed was deleted - a newer one waits, so it is lost",
   ];
   for (NSUInteger i = 0; i < whats.count; i++) {
     if (sweep.flags & bits[i]) {
@@ -669,7 +989,7 @@ static void CanariOnShareReady(__unused CFNotificationCenterRef center, __unused
                                __unused CFNotificationName name, __unused const void *object,
                                __unused CFDictionaryRef userInfo) {
   dispatch_async(dispatch_get_main_queue(), ^{
-    CanariImportAppGroupShare(@"share ready");
+    CanariImportAppGroupShareIfUnlocked(@"share ready");
   });
 }
 
@@ -681,6 +1001,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariApplyEdgeToEdge();
   CanariObserveDocumentScrollRange();
   CanariObserveTheme();
+  CanariRegisterCallPageHandlers(@"activation");
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();
   CanariPublishDynamicType();
@@ -697,9 +1018,11 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   // the frontend asks for the cache at login.
   CanariDrainAppGroupFcmCache();
   // A share the Share Extension made while Canari was away - the banner's tap lands here.
-  CanariImportAppGroupShare(@"activation");
-  // Refresh the App Group mirror so the NSE decrypts against the state as of the app's last
-  // active moment (the foreground advances mls.bin; there is no Rust write hook to mirror on).
+  CanariImportAppGroupShareIfUnlocked(@"activation");
+  // Refresh the App Group mirror: the push context, the seeds and the secret. Its mls.bin half is
+  // no longer what keeps the extension current - every write of the state carries the copy along
+  // (`write_slot_mls_bin`, concurrency.rs), since a process killed in the foreground never reaches
+  // willResignActive; here it only re-copies the slot as it stands.
   CanariMirrorPushStateToAppGroup();
   // The FCM token, asked for HERE and not at bootstrap. By the time the app is active,
   // registerForRemoteNotifications has run and APNs has usually answered - which is the
@@ -714,8 +1037,8 @@ static void CanariOnWillResignActive(__unused NSNotification *note) {
   g_isInForeground = false;
   CanariSetAppGroupForegroundFlag(NO);
   canari_ios_on_pause();
-  // Snapshot the latest decrypt state into the App Group container before suspending, so a push
-  // arriving while backgrounded is decrypted by the NSE against fresh state.
+  // Snapshot the push context, seeds and secret into the App Group container before suspending
+  // (mls.bin already follows each of its writes - see didBecomeActive).
   CanariMirrorPushStateToAppGroup();
   // The quick-action titles are the one native string iOS lets us re-register, and this is the last
   // moment before a notification can be seen - so a language changed in the foreground reaches the
@@ -754,6 +1077,9 @@ static CanariSceneWillConnectIMP CanariOrigSceneWillConnect = NULL;
 static void CanariSceneWillConnect(id self, SEL _cmd, UIScene *scene, UISceneSession *session,
                                    UISceneConnectionOptions *options) {
   CanariOrigSceneWillConnect(self, _cmd, scene, session, options);
+  // The scene now holds its window, on a background launch too; whether the WebView is in it yet
+  // is logged (`registered at scene connection`, or `no WebView yet` and a later point).
+  CanariRegisterCallPageHandlers(@"scene connection");
   NSSet<UIOpenURLContext *> *urls = options.URLContexts;
   NSUInteger webActivities = 0;
   for (NSUserActivity *activity in options.userActivities) {
@@ -819,6 +1145,71 @@ void canari_ios_bootstrap(void) {
               usingBlock:^(NSNotification *note) {
                 CanariOnWillResignActive(note);
               }];
+  // ON SCREEN OR NOT - the background/foreground pair, never the active pair (see g_isOnScreen).
+  [nc addObserverForName:UIApplicationDidFinishLaunchingNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                // A launch by a push or a background task starts off screen.
+                g_isOnScreen = [UIApplication sharedApplication].applicationState != UIApplicationStateBackground;
+              }];
+  [nc addObserverForName:UIApplicationDidEnterBackgroundNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                g_isOnScreen = false;
+                g_resumePending = false;
+                g_resumeOpening = nil;
+                CanariPublishForeground(nil);
+              }];
+  // The resume BEGINS here and is announced when it completes (`g_resumePending`): a tapped
+  // notification reaches the delegate in between, and its link rides the edge.
+  [nc addObserverForName:UIApplicationWillEnterForegroundNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                g_resumePending = true;
+              }];
+  // THE RESUME IS PUBLISHED WHEN A TAP THAT CAUSED IT HAS HAD ITS CHANCE TO BE NOTED, IN EITHER
+  // ORDER. UIKit does not promise whether `didReceiveNotificationResponse` runs before or after
+  // `didBecomeActive` (with scenes it can come after). So `didBecomeActive` does not publish: it asks
+  // the notification center a question and publishes from the ANSWER, on the main queue. A response
+  // that caused this activation either came with the activation itself (FrontBoard's scene action,
+  // handled before the activation completes) or on the notification center's own connection. That
+  // the connection delivers the response before the answer to a question asked AFTER it was sent is
+  // LIKELY BUT UNPROVEN: Apple documents no such ordering, so it is an ordering argument, not a
+  // delay, and it is what device-verification LA steps 5 and 8 measure (the two NSLogs below, read
+  // against `[RESUME-OPEN]`, show whether the tap was noted before the edge was published).
+  //
+  // Only the didBecomeActive that completes a resume publishes; one after Control Center or a Face
+  // ID sheet finds no resume pending, says nothing, and drops any link a cold launch left behind.
+  [nc addObserverForName:UIApplicationDidBecomeActiveNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                if (!g_resumePending) {
+                  g_resumeOpening = nil;
+                  return;
+                }
+                NSLog(@"[CanariIOS] didBecomeActive: awaiting the notification-center round trip "
+                      @"before publishing the edge (opening noted so far: %@)",
+                      g_resumeOpening ? @"yes" : @"no");
+                [[UNUserNotificationCenter currentNotificationCenter]
+                    getNotificationSettingsWithCompletionHandler:^(__unused UNNotificationSettings *s) {
+                      dispatch_async(dispatch_get_main_queue(), ^{
+                        // Left again meanwhile (didEnterBackground cleared it): nothing to publish.
+                        if (!g_resumePending) return;
+                        g_resumePending = false;
+                        g_isOnScreen = true;
+                        NSString *opening = g_resumeOpening;
+                        g_resumeOpening = nil;
+                        NSLog(@"[CanariIOS] round trip answered: publishing the foreground edge "
+                              @"(opening: %@)",
+                              opening ? @"yes" : @"no");
+                        CanariPublishForeground(opening);
+                      });
+                    }];
+              }];
   [nc addObserverForName:UIKeyboardWillChangeFrameNotification
                   object:nil
                    queue:[NSOperationQueue mainQueue]
@@ -862,6 +1253,10 @@ void canari_ios_bootstrap(void) {
   // A share into Canari: first the sweep, once per process and before any page exists to be staging
   // a copy (Android sweeps at its first onCreate for the same reason), then the import, so the
   // page's first drain finds it.
+  // NO UIKIT QUESTION HERE: the application object does not exist yet (`ffi::start_app()` creates
+  // it), so asking it whether protected data is available answers NO on every launch. A launch
+  // while the device is locked (a push) is Rust's to answer: a locked manifest leaves its inbox
+  // whole (SWEEP_PROTECTED) and its share in place (CANARI_SHARE_IMPORT_PROTECTED).
   NSString *shareDataDir = CanariTauriDataDir();
   NSString *shareCacheDir = CanariTauriCacheDir();
   if (shareDataDir != nil && shareCacheDir != nil) {
@@ -871,6 +1266,12 @@ void canari_ios_bootstrap(void) {
     NSLog(@"[CanariShare] launch sweep NOT run: the app data or cache directory is unresolved");
   }
   CanariImportAppGroupShare(@"launch");
+  [nc addObserverForName:UIApplicationProtectedDataDidBecomeAvailable
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                CanariOnProtectedDataAvailable();
+              }];
   CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, CanariOnShareReady,
                                   kCanariShareReadyNotification, NULL,
                                   CFNotificationSuspensionBehaviorDeliverImmediately);

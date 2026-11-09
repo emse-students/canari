@@ -30,9 +30,25 @@
     value?: string;
     /** The picker's element id, unique on the page. */
     id: string;
+    /**
+     * Whether "Anonyme" is offered. A post and a reel may be anonymous; a booking space's owner
+     * ("Creer en tant que", wizard step 1) may not, so it reuses this picker with it off.
+     */
+    allowAnonymous?: boolean;
+    /** The picker's accessible name; the posts' "Publier en tant que" unless a caller says otherwise. */
+    label?: string;
+    /** The personal option's text, when it should not be the member's own name ("Moi"). */
+    personalOptionLabel?: string;
   }
 
-  let { associations, value = $bindable(''), id }: Props = $props();
+  let {
+    associations,
+    value = $bindable(''),
+    id,
+    allowAnonymous = true,
+    label,
+    personalOptionLabel,
+  }: Props = $props();
 
   const isAnonymousSelected = $derived(value === ANONYMOUS_POST_IDENTITY);
   const selectedAssociation = $derived(
@@ -44,7 +60,9 @@
    * author line ("Jolan Boudin" and a chevron, as Facebook heads its composer), and a heading that
    * read "Profil personnel" would say what kind of identity this is rather than whose.
    */
-  const personalLabel = getSavedDisplayName() || m.post_create_personal_profile_label();
+  const personalLabel = $derived(
+    personalOptionLabel || getSavedDisplayName() || m.post_create_personal_profile_label()
+  );
 
   /**
    * Who may publish, in the app's own picker: the member, anonymous, then the associations and lists
@@ -53,7 +71,9 @@
    */
   const identityOptions = $derived<PickerOption[]>([
     { value: '', label: personalLabel },
-    { value: ANONYMOUS_POST_IDENTITY, label: m.post_create_anonymous_label() },
+    ...(allowAnonymous
+      ? [{ value: ANONYMOUS_POST_IDENTITY, label: m.post_create_anonymous_label() }]
+      : []),
     ...associationPickerOptions(associations),
   ]);
 </script>
@@ -64,6 +84,7 @@
       <AnonymousAvatar fill />
     {:else if selectedAssociation}
       <AssociationAvatar
+        id={selectedAssociation.id}
         fill
         shape="circle"
         name={selectedAssociation.name}
@@ -79,7 +100,7 @@
       {value}
       options={identityOptions}
       onValueChange={(v) => (value = v)}
-      label={m.post_create_post_as_label()}
+      label={label ?? m.post_create_post_as_label()}
       triggerClass="text-text-main flex max-w-full items-center gap-1 rounded-lg py-1 pr-1.5 pl-1 text-base font-bold outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500/40 dark:hover:bg-white/10"
     >
       {#snippet leading(option)}
@@ -93,6 +114,7 @@
           {:else}
             {@const asso = associations.find((a) => a.id === option.value)}
             <AssociationAvatar
+              id={asso?.id ?? option.value}
               fill
               shape="circle"
               name={asso?.name ?? option.label}

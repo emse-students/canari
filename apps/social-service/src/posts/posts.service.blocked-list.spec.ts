@@ -40,7 +40,6 @@ describe('PostsService hides a blocked account, and only where the author was vi
     polls: [],
     forms: [],
     reactions: [],
-    pinned: false,
     scheduledAt: null,
     hiddenByModeration: false,
     commentCount: 0,
@@ -57,15 +56,23 @@ describe('PostsService hides a blocked account, and only where the author was vi
    * `blocks` is what the `user_blocks` read returns - the branch has to come first, because that
    * query names no table the other branches match on.
    */
+  /**
+   * What only the reader's own block lookup (`blockedUserIdsFor`) says: since WP-F5 the visibility
+   * predicate of every feed query names `user_blocks` too (a follower's opening checks the block).
+   */
+  const BLOCK_READ = 'AS "otherId" FROM user_blocks';
+
   function makeQueryMock(blocks: string[] = [BLOCKED]) {
     const calls: string[] = [];
     const query = jest.fn((sql: string, _params?: unknown[]) => {
       calls.push(sql);
-      if (sql.includes('FROM user_blocks')) {
+      if (sql.includes(BLOCK_READ)) {
         return Promise.resolve(blocks.map((otherId) => ({ otherId })));
       }
       // The one-row visibility read (WP6b): every reader here is inside the post's audience.
       if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
+      // No reader here is a named reader: nothing is withheld (`commentsWithheldPostIds`).
+      if (sql.includes('read_grant_readers')) return Promise.resolve([]);
       if (sql.includes('FROM posts')) return Promise.resolve([{ ...POST }]);
       if (sql.includes('FROM users WHERE id = ANY')) return Promise.resolve([]);
       return Promise.resolve([]);
@@ -78,6 +85,8 @@ describe('PostsService hides a blocked account, and only where the author was vi
     const associations = {
       mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
       isContentModerator: jest.fn(() => Promise.resolve(false)),
+      moderatedPostIds: () => Promise.resolve(new Set<string>()),
+      mayModeratePost: () => Promise.resolve(false),
     };
     const follows = {
       getFollowedAssociationIdsForUser: jest.fn(() => Promise.resolve([])),
@@ -93,9 +102,9 @@ describe('PostsService hides a blocked account, and only where the author was vi
     );
   }
 
-  /** The feed query, which is the one naming `FROM posts` rather than `FROM user_blocks`. */
+  /** The feed query, which is the one naming `FROM posts` rather than the block lookup. */
   const feedSql = (calls: string[]) =>
-    calls.find((sql) => sql.includes('FROM posts') && !sql.includes('FROM user_blocks')) ?? '';
+    calls.find((sql) => sql.includes('FROM posts') && !sql.includes(BLOCK_READ)) ?? '';
 
   it('reads the block list in BOTH directions, so it hides the blocker from the blocked too', async () => {
     const { query, calls } = makeQueryMock();
@@ -103,7 +112,7 @@ describe('PostsService hides a blocked account, and only where the author was vi
 
     await service.listPosts({ limit: 10, offset: 0, feed: 'all', viewerUserId: 'viewer-1' });
 
-    const blocksQuery = calls.find((sql) => sql.includes('FROM user_blocks')) ?? '';
+    const blocksQuery = calls.find((sql) => sql.includes(BLOCK_READ)) ?? '';
     expect(blocksQuery).toMatch(/"blockerId" = \$1/);
     expect(blocksQuery).toMatch(/"blockedId" = \$1/);
     expect(blocksQuery).toMatch(/UNION/);
@@ -147,6 +156,10 @@ describe('PostsService hides a blocked account, and only where the author was vi
     // An anonymous or association comment is exempt, or a block would probe its writer.
     const exemptions = sql.match(/elem->>'anonymous' = 'true'/g) ?? [];
     expect(exemptions).toHaveLength(2);
+    // So is a moderation tombstone, in the window AND the count: hiding it from whoever blocked its
+    // real writer would name that writer (second review of #2999).
+    const tombstones = sql.match(/elem->>'removedByModeration' = 'true'/g) ?? [];
+    expect(tombstones).toHaveLength(2);
   });
 
   it('emits no clause at all when the viewer has blocked nobody', async () => {
@@ -157,7 +170,8 @@ describe('PostsService hides a blocked account, and only where the author was vi
 
     const sql = feedSql(calls);
     expect(sql).not.toMatch(/<> ALL/);
-    expect(sql).toMatch(/jsonb_array_length/);
+    // The count still leaves out the moderation tombstones (lead's review of #2999).
+    expect(sql).toMatch(/elem->>'removedByModeration', ''\) <> 'true'/);
   });
 
   it('filters the associations feed like the others - a member post an association carries is in it', async () => {
@@ -217,7 +231,7 @@ describe('PostsService hides a blocked account, and only where the author was vi
         (c: unknown[]) =>
           typeof c[0] === 'string' &&
           (c[0] as string).includes('FROM posts') &&
-          !(c[0] as string).includes('FROM user_blocks')
+          !(c[0] as string).includes(BLOCK_READ)
       );
       const [sql, params = []] = call;
       const placeholder = /<> ALL\(\$(\d+)::text\[\]\)/.exec(sql);
@@ -244,7 +258,74 @@ describe('PostsService hides a blocked account, and only where the author was vi
 
     await service.searchPosts('test', 20, 0, { viewerUserId: 'admin-1', isAdmin: true });
 
-    expect(feedSql(calls)).not.toMatch(/hiddenByModeration/);
+    // The FEED's filter on hidden posts is absent; the pin rank in the ORDER BY reads the column of
+    // the PINNED post (`rk_post`) - a pin is never shown for a hidden post (WP-PIN).
+    expect(feedSql(calls)).not.toMatch(/posts\."hiddenByModeration"/);
+  });
+
+  /**
+   * The feed and search hand a page through `viewerContext` and `shapeListRow` - the SHIPPED path,
+   * not the shaping helpers on a fixture: deleting the withholding call there must fail here.
+   */
+  describe('a page of posts, for a reader the comments predicate names (owner, 2026-11-04)', () => {
+    const ROW = {
+      ...POST,
+      authorId: 'someone-else',
+      commentCount: 1,
+      comments: [{ id: 'c1', userId: 'someone-else', text: 'a student speaks', likes: [] }],
+      reactions: { 'someone-else': 'like' },
+    };
+    /** `withheld`: what `commentsWithheldPostIds` answers. The page's post is never grant-free. */
+    function pageMock(withheld: string[]) {
+      return jest.fn((sql: string) => {
+        if (sql.includes(BLOCK_READ)) return Promise.resolve([]);
+        if (sql.includes('read_grant_readers'))
+          return Promise.resolve(withheld.map((id) => ({ id })));
+        if (sql.includes('AS "firstHand"')) return Promise.resolve([]);
+        if (sql.includes('FROM posts')) return Promise.resolve([{ ...ROW }]);
+        return Promise.resolve([]);
+      });
+    }
+    const pages = {
+      feed: (service: PostsService) =>
+        service.listPosts({ limit: 10, offset: 0, feed: 'all', viewerUserId: 'viewer-1' }),
+      search: (service: PostsService) =>
+        service.searchPosts('student', 20, 0, { viewerUserId: 'viewer-1' }),
+    };
+
+    it.each(Object.keys(pages) as (keyof typeof pages)[])(
+      'the %s drops the comments, their count and who reacted',
+      async (page) => {
+        const rows = (await pages[page](makeService(pageMock(['p1'])))) as Record<string, any>[];
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).not.toHaveProperty('comments');
+        expect(rows[0]).not.toHaveProperty('commentCount');
+        expect(rows[0].canSeeComments).toBe(false);
+        expect(rows[0].reactions).toEqual({});
+        expect(rows[0].otherReactionCounts).toEqual({ like: 1 });
+      }
+    );
+
+    it.each(Object.keys(pages) as (keyof typeof pages)[])(
+      'the %s serves everything to a reader it names not',
+      async (page) => {
+        const rows = (await pages[page](makeService(pageMock([])))) as Record<string, any>[];
+        expect(rows[0].commentCount).toBe(1);
+        expect(rows[0].canSeeComments).toBe(true);
+        expect(rows[0].reactions).toEqual({ 'someone-else': 'like' });
+      }
+    );
+
+    it('asks the predicate nothing for an ordinary reader, whose page is grant-free', async () => {
+      const { query, calls } = makeQueryMock([]);
+      await makeService(query).listPosts({
+        limit: 10,
+        offset: 0,
+        feed: 'all',
+        viewerUserId: 'viewer-1',
+      });
+      expect(calls.some((sql) => sql.includes('read_grant_readers'))).toBe(false);
+    });
   });
 
   describe('a single post read by id', () => {
@@ -283,6 +364,36 @@ describe('PostsService hides a blocked account, and only where the author was vi
       expect(shaped.authorId).toBeUndefined();
     });
 
+    it('withholds the comments and the people from a reader the comments predicate names', async () => {
+      // `commentsWithheldPostIds` answers p1 (owner, 2026-11-04): the served post carries no
+      // comment, no count, and the reactions as the reader's own plus a tally.
+      const comments = [{ id: 'c1', userId: 'someone-else', text: 'a student speaks' }];
+      const findOne = jest.fn(() =>
+        Promise.resolve(
+          entity({
+            authorId: 'someone-else',
+            comments,
+            reactions: { 'someone-else': 'like' },
+          } as unknown as Partial<typeof POST>)
+        )
+      );
+      const { query } = makeQueryMock([]);
+      query.mockImplementation((sql: string) => {
+        if (sql.includes('read_grant_readers')) return Promise.resolve([{ id: 'p1' }]);
+        if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
+        return Promise.resolve([]);
+      });
+      const service = makeService(query, findOne);
+
+      const shaped = (await service.getById('p1', { viewerId: 'viewer-1' })) as Record<string, any>;
+
+      expect(shaped).not.toHaveProperty('comments');
+      expect(shaped).not.toHaveProperty('commentCount');
+      expect(shaped.canSeeComments).toBe(false);
+      expect(shaped.reactions).toEqual({});
+      expect(shaped.otherReactionCounts).toEqual({ like: 1 });
+    });
+
     it('drops a blocked account comments from a post written by somebody else', async () => {
       const comments = [
         { id: 'c1', userId: 'someone-else', text: 'kept' },
@@ -299,6 +410,26 @@ describe('PostsService hides a blocked account, and only where the author was vi
       };
 
       expect(shaped.comments.map((c) => c.id)).toEqual(['c1']);
+    });
+
+    it('keeps a moderation tombstone whose writer the reader blocked, and the reply it holds', async () => {
+      // A legacy tombstone still carries its writer's id; a new one carries none. Both stay.
+      const comments = [
+        { id: 't-old', userId: BLOCKED, text: '', removedByModeration: true },
+        { id: 't-new', text: '', removedByModeration: true },
+        { id: 'r', userId: 'officer', associationId: 'inst', parentId: 't-old', text: 'kept' },
+      ];
+      const findOne = jest.fn(() =>
+        Promise.resolve(entity({ authorId: 'someone-else', comments } as Partial<typeof POST>))
+      );
+      const { query } = makeQueryMock();
+      const service = makeService(query, findOne);
+
+      const shaped = (await service.getById('p1', { viewerId: 'viewer-1' })) as {
+        comments: { id: string }[];
+      };
+
+      expect(shaped.comments.map((c) => c.id)).toEqual(['t-old', 't-new', 'r']);
     });
 
     it('lets a platform admin open it anyway - the same flag that opens a hidden post', async () => {

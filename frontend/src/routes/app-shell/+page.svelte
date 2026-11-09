@@ -12,6 +12,6 @@
    * the honest answer to that is the home feed.
    */
   onMount(() => {
-    void goto(resolve('/posts'), { replaceState: true });
+    void goto(resolve('/posts'), { replace: true });
   });
 </script>

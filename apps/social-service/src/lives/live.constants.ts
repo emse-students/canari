@@ -23,34 +23,26 @@ export const LIVE_SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
  */
 export const LIVE_RECONNECT_WINDOW_MS = 60_000;
 
-/** L4 (live.md): a first-version live lasts at most an hour; past it, the live is ended. */
-export const LIVE_MAX_DURATION_MS = 60 * 60_000;
-
 /** How many segments one manifest answer lists at most - a viewer polls from its last index. */
 export const LIVE_MANIFEST_WINDOW = 10;
 
 /**
- * The bitrate the plan sizes a live for (live.md: 720p at ~2.5 Mb/s, as C3 targets for reels), in
- * bits per second. Only the byte budget below is derived from it; nothing measures a live's bitrate.
+ * HOW MANY OF THE NEWEST SEGMENTS A RUNNING LIVE KEEPS in the store: twice the manifest window
+ * (owner, 2026-10-31: nothing outlives what viewers can still ask for). A manifest names at most
+ * {@link LIVE_MANIFEST_WINDOW} segments ending at the newest, so the newest ten are all a viewer is ever
+ * TOLD about; the other ten are the margin for a viewer that fetched its manifest just before a trim
+ * and is still downloading. A viewer polls every second and a segment is ~2 s, so ten more segments
+ * are ~20 s of margin against a download of a segment of about 1 MB; and a viewer further behind than
+ * its buffer policy allows jumps to the newest (`livePlayer`, backlog) instead of walking the past.
+ * Every segment is self-contained, so a viewer never needs an older one for its init.
+ *
+ * Stored bytes per live are therefore bounded by this many segments of at most
+ * {@link LIVE_SEGMENT_MAX_BYTES} (plus the few still waiting for a retried delete), whatever its duration.
  */
-export const LIVE_PLANNING_BITRATE_BPS = 2_500_000;
+export const LIVE_RETAINED_SEGMENTS = 2 * LIVE_MANIFEST_WINDOW;
 
-/**
- * The margin on top of the planning bitrate over a full hour: an encoder overshoots its target on a
- * scene change, and every segment carries its container and the AEAD tag. 1.5x is a planning figure
- * like the bitrate, to be re-read on the WP-L1 bench.
- */
-export const LIVE_BYTE_BUDGET_MARGIN = 1.5;
-
-/**
- * THE MOST ONE LIVE MAY STORE, in bytes: the planning bitrate for the longest live, plus the margin
- * (312 500 B/s x 3 600 s x 1.5 = 1 687 500 000 B). Counted durably on the row (`storedBytes`); a
- * segment that would cross it is REFUSED (413 `LIVE_BUDGET_EXHAUSTED`) and the live stays open with
- * nothing more accepted, so it ends by its broadcaster or by the reconnect window like any other.
- */
-export const LIVE_BYTE_BUDGET = Math.round(
-  (LIVE_PLANNING_BITRATE_BPS / 8) * (LIVE_MAX_DURATION_MS / 1000) * LIVE_BYTE_BUDGET_MARGIN
-);
+/** The most segments one trim pass deletes: bounds a pass that catches up after a media-service outage. */
+export const LIVE_TRIM_BATCH = 50;
 
 /**
  * The shortest segment the server expects, in ms. The plan cuts segments of a few seconds (about
@@ -70,6 +62,13 @@ export const LIVE_SEGMENT_BURST = 15;
 
 /** How many lives one account may START in a rolling hour (`live_starts`); 429 `LIVE_START_RATE`. */
 export const LIVE_STARTS_PER_HOUR = 6;
+
+/**
+ * At most one ANNOUNCED live per association in this many hours (WP-1b, docs/wiki/engagement.md L16):
+ * an association's live reaches its whole audience, so ending and restarting must not ring it again.
+ * Read against `associations."lastLiveAnnouncedAt"` in segment 0's claim (`LivesService.confirm`).
+ */
+export const LIVE_ASSOCIATION_ANNOUNCE_INTERVAL_HOURS = 6;
 
 /** The rolling window of {@link LIVE_STARTS_PER_HOUR}, and how long a `live_starts` row is kept. */
 export const LIVE_START_WINDOW_MS = 60 * 60_000;
@@ -137,7 +136,7 @@ export const LIVE_VIEWER_CAP = Math.floor(
 export const LIVE_SEAT_LEASE_MS = 30_000;
 
 /** Why a live ended - the `endReason` column. `cut`: staff ended it (WP-L8, `POST /api/lives/:id/cut`). */
-export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased' | 'cut';
+export type LiveEndReason = 'broadcaster' | 'dropped' | 'erased' | 'cut';
 
 /**
  * THE REASON CODES OF A STAFF CUT - the report reasons of `content_reports`
@@ -261,6 +260,22 @@ export const LIVE_CHAT_BACKLOG = 50;
 export const LIVE_CHAT_PAGE = 100;
 
 /**
+ * THE ARRIVAL LINES' RATE RULE (owner, 2026-11-07, "X a rejoint" visible to every viewer,
+ * rate-limited): a poll names at most this many arrivals; the rest of what it read is folded into a
+ * count ("et N autres"). A COUNT PER POLL, never a clock: the same arrivals give the same answer.
+ */
+export const LIVE_ARRIVALS_PER_POLL = 3;
+
+/** The most arrivals one poll reads after its cursor (above the viewer cap, so one poll reads all). */
+export const LIVE_ARRIVALS_PAGE = 50;
+
+/** The arrivals log keeps this many newest entries per live; the dedupe set is the live's own. */
+export const LIVE_ARRIVALS_LOG_MAX = 100;
+
+/** How long the arrival keys live without a take: a live's own length, deleted at its purge. */
+export const LIVE_ARRIVALS_TTL_MS = 6 * 60 * 60 * 1000;
+
+/**
  * THE FIVE FLOATING REACTIONS (owner, 2026-10-20, superseding C8): ❤️ like (heart), 😂 laugh,
  * 👏 clap (bravo), 🔥 fire, 🐤 canari (the canary chick). No sad, no angry. ASCII wire names; the
  * client draws the Noto picture. A burst naming an older kind (`love`, `happy`) is 400
@@ -286,13 +301,75 @@ export const LIVE_REACTION_TAPS_PER_WINDOW = 10;
 /** The most bursts one poll sums after its cursor; the rest come with the next poll. */
 export const LIVE_REACTION_PAGE = 500;
 
+/**
+ * THE LONGEST LIVE TITLE, in characters (Unicode code points - what PostgreSQL's `varchar(80)` and
+ * `char_length` count): owner, 2026-11-07. The title is OPTIONAL, entered on the launch screen and
+ * editable while on air; without one the card reads "X est en direct" as before. Plain text the
+ * server stores and serves, like a post's text (lives.md, "Titles and the preview").
+ */
+export const LIVE_TITLE_MAX_CHARS = 80;
+
+/**
+ * THE LARGEST SEALED PREVIEW IMAGE ("poster") the server accepts, in bytes (owner, 2026-11-07: a
+ * refreshed still image on the feed card). The broadcaster sends a JPEG 480 px wide at quality 0.7
+ * (a 480 x 854 portrait frame is tens of kB), sealed under the poster key (HKDF of the live key); 256 KiB leaves room for a
+ * busy frame and is a sixteenth of a segment. Refused 413 `LIVE_POSTER_TOO_LARGE` above it.
+ */
+export const LIVE_POSTER_MAX_BYTES = 256 * 1024;
+
+/**
+ * THE ONE PERIOD OF THE PREVIEW, in ms (review of #3135: two cadences, 10 s sent and 15 s read,
+ * left a third of the posters unseen). BOTH ends read it from the limits:
+ *
+ * - the BROADCASTER sends a poster every `round(previewPeriodMs / segment length)` segments (8 with
+ *   its 2 s segments), counted on the durable segment index, never on a timer - no segment, no
+ *   poster, and a paused camera leaves the last image with its age;
+ * - a FEED CARD on screen, in a visible page, re-reads `GET /api/lives` once per period, so each
+ *   poster sent is the one the next read names.
+ *
+ * Served, never compiled into a client, so the load can be shaped without a release. It is a cost
+ * knob and nothing else: wrong, the picture is staler or the list read more often; nothing is
+ * decided from it.
+ */
+export const LIVE_PREVIEW_PERIOD_MS = 16_000;
+
+/**
+ * THE SHORTEST GAP BETWEEN TWO STORED POSTERS of one live, in ms, decided on the row's `posterAt`
+ * (the database's clock): a poster sooner than this is 429 `LIVE_POSTER_TOO_FAST`. Half the
+ * {@link LIVE_PREVIEW_PERIOD_MS}: never met by an honest broadcaster, and a dishonest one is bounded
+ * at 7.5 stores a minute.
+ */
+export const LIVE_POSTER_MIN_INTERVAL_MS = LIVE_PREVIEW_PERIOD_MS / 2;
+
+/**
+ * WHAT A POSTER TYPICALLY WEIGHS, in bytes - a planning figure (a 480 x 854 JPEG at quality 0.7 is
+ * tens of kB), to be replaced by the reading owed on both phones. It sizes the budget below.
+ */
+export const LIVE_POSTER_TYPICAL_BYTES = 48 * 1024;
+
+/**
+ * THE PREVIEW'S EGRESS BOUND PER ADDRESS, in bits per second (review of #3135) - a PER-ADDRESS bound,
+ * NOT a host budget. Posters are served by their OWN nginx location and zones
+ * (`/api/media/public/live-poster/`), so a card reader never spends the segments' per-address quota;
+ * that location bounds ONE address at `limit_conn` x `limit_rate` = this number -
+ * `live-segments-route.test.mjs` recomputes it, and that the live share plus one address's bound fits
+ * the host's uplink.
+ *
+ * Nothing caps posters host-wide: every zone is keyed on the client address, as the segments' are,
+ * and the segments' global bound is the SEAT cap, which a poster does not take. Host-wide, posters
+ * cost readers-on-screen x ~24.6 kb/s (one {@link LIVE_POSTER_TYPICAL_BYTES} poster per
+ * {@link LIVE_PREVIEW_PERIOD_MS}), which reaches the 18 Mb/s the live share leaves near 730 readers at
+ * once (lives.md, "What the preview costs", says why no global cap was added). What this bound buys:
+ * ~325 card readers behind ONE campus address before a 429 - which costs a card a stale picture,
+ * never a seated viewer a segment.
+ */
+export const LIVE_POSTER_EGRESS_PER_ADDRESS_BPS = 8_000_000;
+
 /** The numbers as the API serves them. */
 export function liveLimits(): {
   segmentMaxBytes: number;
   reconnectWindowMs: number;
-  maxDurationMs: number;
   manifestWindow: number;
-  byteBudget: number;
   segmentMinDurationMs: number;
   segmentBurst: number;
   startsPerHour: number;
@@ -310,13 +387,14 @@ export function liveLimits(): {
   reactionTapsPerWindow: number;
   strikeWindowMs: number;
   suspensionMs: number;
+  titleMaxChars: number;
+  posterMaxBytes: number;
+  previewPeriodMs: number;
 } {
   return {
     segmentMaxBytes: LIVE_SEGMENT_MAX_BYTES,
     reconnectWindowMs: LIVE_RECONNECT_WINDOW_MS,
-    maxDurationMs: LIVE_MAX_DURATION_MS,
     manifestWindow: LIVE_MANIFEST_WINDOW,
-    byteBudget: LIVE_BYTE_BUDGET,
     segmentMinDurationMs: LIVE_SEGMENT_MIN_DURATION_MS,
     segmentBurst: LIVE_SEGMENT_BURST,
     startsPerHour: LIVE_STARTS_PER_HOUR,
@@ -334,5 +412,8 @@ export function liveLimits(): {
     reactionTapsPerWindow: LIVE_REACTION_TAPS_PER_WINDOW,
     strikeWindowMs: LIVE_STRIKE_WINDOW_MS,
     suspensionMs: LIVE_SUSPENSION_MS,
+    titleMaxChars: LIVE_TITLE_MAX_CHARS,
+    posterMaxBytes: LIVE_POSTER_MAX_BYTES,
+    previewPeriodMs: LIVE_PREVIEW_PERIOD_MS,
   };
 }

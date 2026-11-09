@@ -17,7 +17,9 @@ import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimatio
 // `adoptTransitionAnimations`.
 afterAll(adoptTransitionAnimations());
 
-vi.mock('$app/paths', () => ({ resolve: (path: string) => path }));
+vi.mock('$app/paths', () => ({
+  resolve: (path: string) => (path.startsWith('/') ? path : `/${path}`),
+}));
 vi.mock('$lib/components/reels/ReelViewer.svelte', async () => ({
   default: (await import('./ReelViewerStub.test-helper.svelte')).default,
 }));
@@ -65,6 +67,8 @@ it('draws ONE row: the three tabs, then the named clap icon at its right end', (
   const { target, row, icon } = renderRow();
   expect(target.querySelectorAll('[data-feed-tab-row]')).toHaveLength(1);
   expect(row.children).toHaveLength(2);
+  // The (i) button is gone: the tabs are explained by the guided hint (`hint-feed-tabs`).
+  expect(row.querySelector('[data-feed-tabs-info]')).toBeNull();
   expect(row.lastElementChild).toBe(icon);
   expect(icon.getAttribute('aria-label')).toBe(m.posts_reels_open());
   expect(icon.querySelector('svg')).not.toBeNull();
@@ -97,6 +101,16 @@ it('at a narrow width the TABS scroll and the icon stays: the row never wraps', 
   expect(icon.classList).toContain('ui-icon-button');
 });
 
+it('the tabs sit in ONE glass pill and the reels entry is a matching glass button, no band', () => {
+  const { row, icon } = renderRow();
+  const pill = row.querySelector<HTMLElement>('[data-feed-pill]')!;
+  expect(pill.classList).toContain('glass-chrome');
+  expect(pill.classList).toContain('rounded-full');
+  expect(pill.querySelectorAll('[data-feed-tab]')).toHaveLength(3);
+  expect(icon.classList).toContain('glass-chrome');
+  expect(row.className).not.toMatch(/\bbg-/);
+});
+
 it('a tab tap is handed to the page', () => {
   const { row, onFeed } = renderRow();
   row.querySelector<HTMLButtonElement>('[data-feed-tabs] button')!.click();
@@ -110,7 +124,8 @@ it('the icon opens the viewer at the newest reel, across every tab', async () =>
   await settle();
   expect(listPosts).toHaveBeenCalledWith({
     kind: 'reel',
-    singlePhotos: true,
+    multiMedia: true,
+    withLinks: true,
     feed: 'all',
     offset: 0,
     limit: 10,

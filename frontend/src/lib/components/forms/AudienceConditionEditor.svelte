@@ -1,8 +1,16 @@
 <script lang="ts">
   import CheckboxGroup from '$lib/components/ui/CheckboxGroup.svelte';
+  import Select from '$lib/components/ui/Select.svelte';
   import { CONTROL_HINT_CLASS } from '$lib/components/ui/controlClasses';
   import type { MembershipTier } from '$lib/associations/api';
   import type { AudienceCondition } from '$lib/forms/api';
+  import {
+    cotisationKey,
+    cotisationModeOf,
+    withCotisationMode,
+    type CotisationMode,
+  } from '$lib/forms/audience';
+  import { Log } from '$lib/utils/Log';
   import PromoPicker from '$lib/components/pricing/PromoPicker.svelte';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
@@ -46,8 +54,19 @@
 
   const isEmpty = $derived(Object.keys(condition ?? {}).length === 0);
 
+  /** The mode picked while no tier is ticked yet; a stored criterion overrides it. */
+  let preferredMode = $state<CotisationMode>('holds');
+  const mode = $derived(cotisationModeOf(condition, preferredMode));
+  const key = $derived(cotisationKey(mode));
+
+  function setMode(next: CotisationMode) {
+    Log.d('AudienceConditionEditor', `cotisation mode -> ${next}`);
+    preferredMode = next;
+    if (condition) condition = withCotisationMode(condition, next);
+  }
+
   const tierSelection = $derived.by(() => {
-    const c = condition?.cotisation;
+    const c = condition?.[key];
     if (!c) return [];
     if (c.anyTier) return ['*'];
     return (c.variantKeys ?? []).map((k) => k ?? TIER_BASE);
@@ -58,8 +77,20 @@
   <p class={CONTROL_HINT_CLASS}>{m.form_audience_hint()}</p>
 
   {#if tiers.length > 0}
+    <Select
+      label={m.form_condition_cotisation_mode_label()}
+      value={mode}
+      options={[
+        { value: 'holds', label: m.form_condition_cotisation_mode_holds() },
+        { value: 'notHolds', label: m.form_condition_cotisation_mode_not_holds() },
+      ]}
+      hint={mode === 'notHolds' ? m.form_condition_not_cotisation_hint() : undefined}
+      onValueChange={(v) => setMode(v === 'notHolds' ? 'notHolds' : 'holds')}
+    />
     <CheckboxGroup
-      label={m.form_condition_cotisation_label()}
+      label={mode === 'notHolds'
+        ? m.form_condition_not_cotisation_label()
+        : m.form_condition_cotisation_label()}
       options={[
         { value: '*', label: m.form_criterion_any_tier() },
         ...tiers.map((t) => ({ value: t.variantKey ?? TIER_BASE, label: t.name })),
@@ -67,14 +98,14 @@
       bind:selected={
         () => tierSelection,
         (next) => {
-          if (next.length === 0) return drop('cotisation');
+          if (next.length === 0) return drop(key);
           // "Any tier" swallows the specific ones, so it is never stored beside them.
           if (next.includes('*') && !tierSelection.includes('*')) {
-            return update({ cotisation: { anyTier: true } });
+            return update({ [key]: { anyTier: true } });
           }
           const keys = next.filter((k) => k !== '*');
-          if (keys.length === 0) return drop('cotisation');
-          update({ cotisation: { variantKeys: keys.map((k) => (k === TIER_BASE ? null : k)) } });
+          if (keys.length === 0) return drop(key);
+          update({ [key]: { variantKeys: keys.map((k) => (k === TIER_BASE ? null : k)) } });
         }
       }
     />

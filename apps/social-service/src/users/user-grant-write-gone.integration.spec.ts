@@ -85,11 +85,14 @@ maybe('a tag, moderation, report or role history write against PostgreSQL', () =
     return () => ran;
   };
 
+  // ONE issuer for every grant: a renewal is a grant by the association that issued the row (a
+  // grant never renews a row another association issued).
+  const ISSUER = crypto.randomUUID();
   const grant = (userId: string, grantedBy: string, metadata: Record<string, unknown>) =>
     tagService.grantOrRenew({
       userId,
       tagName: 'cotisant:it-2026-2027',
-      issuingAssocId: crypto.randomUUID(),
+      issuingAssocId: ISSUER,
       grantedBy,
       expiresAt: new Date('2027-09-01T00:00:00Z'),
       metadata,
@@ -119,7 +122,7 @@ maybe('a tag, moderation, report or role history write against PostgreSQL', () =
     mutes = ds.getRepository(UserModeration);
     tagService = new UserTagService(tags);
     reports = ds.getRepository(ContentReport);
-    moderation = new ModerationService(reports, mutes);
+    moderation = new ModerationService(reports, mutes, {} as never);
     history = ds.getRepository(AssociationRoleHistory);
     // The association reads only LABEL a role history row and check an id exists; the rows judged
     // here are the role history's, so those two answer from a stub.
@@ -142,7 +145,7 @@ maybe('a tag, moderation, report or role history write against PostgreSQL', () =
   it('a renewal across a revoke grants a NEW row, never the revoked one written back', async () => {
     const userId = crypto.randomUUID();
     const first = await grant(userId, 'first-grantor', { first: true });
-    const ran = interleave(tags, () => tagService.revokeByName(userId, first.tagName));
+    const ran = interleave(tags, () => tagService.revokeByName(userId, first.tagName, ISSUER));
     await grant(userId, 'second-grantor', { second: true });
     expect(ran()).toBe(true);
     const row = await tagOf(userId);

@@ -49,8 +49,6 @@
   const os = detectRuntimeDeviceOs('desktop');
   const isPhone = isPhoneOs(os);
 
-  let isCopied = $state(false);
-  let copyFailed = $state(false);
   let appOpenFailed = $state(false);
 
   const googleUrl = $derived(googleCalendarSubscribeUrl(icsUrl));
@@ -58,13 +56,7 @@
 
   async function copyCalendarLink() {
     if (!icsUrl) return;
-    const copied = await copyText(icsUrl, 'calendar feed URL');
-    copyFailed = !copied;
-    if (!copied) return;
-    isCopied = true;
-    setTimeout(() => {
-      isCopied = false;
-    }, 2000);
+    await copyText(icsUrl, { what: 'link' });
   }
 
   /**
@@ -100,12 +92,9 @@
         onclick={copyCalendarLink}
         class="border-cn-border hover:bg-cn-bg shrink-0 rounded-xl border px-4 py-2 text-sm font-semibold transition-colors"
       >
-        {isCopied ? m.asso_calendar_copied() : m.asso_calendar_copy_button()}
+        {m.asso_calendar_copy_button()}
       </button>
     </div>
-    {#if copyFailed}
-      <p class="text-red-err text-xs" role="alert">{m.calendar_subscribe_copy_failed()}</p>
-    {/if}
   {/if}
 {/snippet}
 

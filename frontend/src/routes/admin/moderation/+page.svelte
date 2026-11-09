@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -19,8 +20,10 @@
   import ModerationPostPreviewModal from '$lib/components/moderation/ModerationPostPreviewModal.svelte';
   import ModerationMuteDialog from '$lib/components/moderation/ModerationMuteDialog.svelte';
   import ModerationLiveBlock from '$lib/components/moderation/ModerationLiveBlock.svelte';
+  import ModerationChatLineBlock from '$lib/components/moderation/ModerationChatLineBlock.svelte';
   import type { LiveCutResult, LiveWithdrawalResult } from '$lib/live/types';
   import { liveStateLabels } from '$lib/moderation/liveState';
+  import { describeModerationRefusal } from '$lib/moderation/moderationRefusal';
   import { createLatestOnly } from '$lib/utils/latestOnly';
   import {
     listReports,
@@ -41,7 +44,7 @@
   } from '$lib/posts/api';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { ensureContentModerator } from '$lib/associations/api';
-  import { goto, replaceState } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { parseTab, tabUrl } from '$lib/navigation/tabQuery';
   import { internalPath } from '$lib/utils/internalPath';
@@ -57,7 +60,7 @@
   const TABS = ['reports', 'hidden', 'muted'] as const;
   type Tab = (typeof TABS)[number];
 
-  // `?tab=` keeps the segment across a reload; written with `replaceState`, see `tabQuery`.
+  // `?tab=` keeps the segment across a reload; written as a shallow `goto`, see `tabQuery`.
   let tab = $state<Tab>(parseTab(page.url.searchParams.get('tab'), TABS, 'reports'));
   let reports = $state<ContentReport[]>([]);
   let mutedUsers = $state<MutedUser[]>([]);
@@ -178,7 +181,11 @@
   async function switchTab(t: Tab) {
     tab = t;
     error = '';
-    replaceState(resolve(internalPath(tabUrl(page.url, t, 'reports'))), page.state);
+    void goto(resolve(internalPath(tabUrl(page.url, t, 'reports'))), {
+      shallow: true,
+      replace: true,
+      state: page.state,
+    });
     if (t === 'muted' && mutedUsers.length === 0) void loadMuted();
     if (t === 'hidden' && hiddenPosts.length === 0) void loadHidden();
   }
@@ -241,7 +248,7 @@
       if (tab === 'hidden') void loadHidden();
     } catch (e) {
       Log.d('admin.moderation.handleHidePost failed', e);
-      error = m.moderation_hide_error();
+      error = describeModerationRefusal(e) ?? m.moderation_hide_error();
       processingId = null;
     }
   }
@@ -263,7 +270,7 @@
       hiddenPosts = hiddenPosts.filter((p) => p.id !== report.contentId);
     } catch (e) {
       Log.d('admin.moderation.handleDeletePost failed', e);
-      error = m.moderation_delete_error();
+      error = describeModerationRefusal(e) ?? m.moderation_delete_error();
       processingId = null;
     }
   }
@@ -284,7 +291,7 @@
       await handleReview(report.id, 'reviewed');
     } catch (e) {
       Log.d('admin.moderation.handleDeleteComment failed', e);
-      error = m.moderation_delete_comment_error();
+      error = describeModerationRefusal(e) ?? m.moderation_delete_comment_error();
       processingId = null;
     }
   }
@@ -309,7 +316,7 @@
       hiddenPosts = hiddenPosts.filter((p) => p.id !== postId);
     } catch (e) {
       Log.d('admin.moderation.handleRestore failed', e);
-      error = m.moderation_restore_error();
+      error = describeModerationRefusal(e) ?? m.moderation_restore_error();
     } finally {
       processingId = null;
     }
@@ -322,7 +329,7 @@
       hiddenPosts = hiddenPosts.filter((p) => p.id !== postId);
     } catch (e) {
       Log.d('admin.moderation.handleDeleteHidden failed', e);
-      error = m.moderation_delete_error();
+      error = describeModerationRefusal(e) ?? m.moderation_delete_error();
     } finally {
       processingId = null;
     }
@@ -362,6 +369,8 @@
     comment: m.moderation_comment(),
     user: m.moderation_user(),
     live: m.moderation_type_live(),
+    live_chat: m.moderation_type_live_chat(),
+    nickname: m.moderation_type_nickname(),
   });
 
   const liveStateLabel = $derived(liveStateLabels());
@@ -534,7 +543,13 @@
                 onCut={handleLiveCut}
                 onWithdrawn={handleLiveWithdrawn}
                 onStale={() => void loadReports()}
+                mayActOnBroadcaster={report.canMuteReportedUser === true}
               />
+            {/if}
+
+            <!-- The reported chat line: its integrity, and the live it was written in -->
+            {#if report.contentType === 'live_chat'}
+              <ModerationChatLineBlock line={report.liveChat ?? null} />
             {/if}
 
             <!-- Content preview -->
@@ -612,40 +627,48 @@
             <!-- Actions -->
             <div class="border-cn-border/40 space-y-2 border-t pt-2">
               <div class="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="compact"
                   onclick={() => handleReview(report.id, 'reviewed')}
                   disabled={processingId === report.id}
-                  class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-40"
                 >
                   <Check size={13} />
                   {m.moderation_marquer_traite()}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="compact"
                   onclick={() => handleReview(report.id, 'dismissed')}
                   disabled={processingId === report.id}
-                  class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-gray-400 hover:text-gray-600 disabled:opacity-40"
                 >
                   <X size={13} />
                   {m.moderation_ignorer()}
-                </button>
+                </Button>
               </div>
               <div class="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onclick={() =>
-                    openMuteDialog(report.reporterId, displayNameFor(report.reporterId), report.id)}
-                  disabled={processingId === report.id}
-                  class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-orange-400 hover:text-orange-600 disabled:opacity-40"
-                  title={m.moderation_mute_reporter_hint()}
-                >
-                  <UserX size={13} />
-                  {m.moderation_muter_signaleur()}
-                </button>
-                {#if report.reportedUserId}
-                  <button
-                    type="button"
+                <!-- A BDE moderator mutes the people of its own spaces only (2026-11-02). -->
+                {#if report.canMuteReporter === true}
+                  <Button
+                    variant="danger-outline"
+                    size="compact"
+                    onclick={() =>
+                      openMuteDialog(
+                        report.reporterId,
+                        displayNameFor(report.reporterId),
+                        report.id
+                      )}
+                    disabled={processingId === report.id}
+                    title={m.moderation_mute_reporter_hint()}
+                  >
+                    <UserX size={13} />
+                    {m.moderation_muter_signaleur()}
+                  </Button>
+                {/if}
+                {#if report.reportedUserId && report.canMuteReportedUser === true}
+                  <Button
+                    variant="danger-outline"
+                    size="compact"
                     onclick={() =>
                       openMuteDialog(
                         report.reportedUserId!,
@@ -653,45 +676,44 @@
                         report.id
                       )}
                     disabled={processingId === report.id}
-                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
                     title={m.moderation_mute_author_hint()}
                   >
                     <UserX size={13} />
                     {m.moderation_muter_auteur()}
-                  </button>
+                  </Button>
                 {/if}
               </div>
               {#if report.contentType === 'post'}
                 <div class="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="compact"
                     onclick={() => handleHidePost(report)}
                     disabled={processingId === report.id}
-                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-amber-400 hover:text-amber-600 disabled:opacity-40"
                   >
                     <EyeOff size={13} />
                     {m.moderation_masquer_post()}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="danger-outline"
+                    size="compact"
                     onclick={() => handleDeletePost(report)}
                     disabled={processingId === report.id}
-                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
                   >
                     <Trash2 size={13} />
                     {m.moderation_supprimer_post()}
-                  </button>
+                  </Button>
                 </div>
               {:else if report.contentType === 'comment'}
-                <button
-                  type="button"
+                <Button
+                  variant="danger-outline"
+                  size="compact"
                   onclick={() => handleDeleteComment(report)}
                   disabled={processingId === report.id}
-                  class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
                 >
                   <Trash2 size={13} />
                   {m.moderation_supprimer_commentaire()}
-                </button>
+                </Button>
               {/if}
             </div>
           </div>
@@ -848,25 +870,28 @@
           <div
             class="flex items-center gap-2 border-t border-orange-200/60 pt-2 dark:border-orange-900/30"
           >
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="compact"
               onclick={() => openPostPreview(post.id)}
-              class="border-cn-border text-text-muted hover:text-cn-yellow flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-amber-400"
               title={m.moderation_preview_full_label()}
             >
               <Eye size={13} />
               {m.moderation_apercu()}
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="secondary"
+              size="compact"
               onclick={() => handleRestore(post.id)}
               disabled={processingId === post.id}
-              class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-40"
               title={m.moderation_restore_hint()}
             >
               {m.moderation_restaurer()}
-            </button>
+            </Button>
             {#if post.authorId}
-              <button
+              <Button
+                variant="danger-outline"
+                size="compact"
                 onclick={async () => {
                   processingId = post.id;
                   try {
@@ -877,22 +902,23 @@
                   await handleDeleteHidden(post.id);
                 }}
                 disabled={processingId === post.id}
-                class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-orange-400 hover:text-orange-600 disabled:opacity-40"
                 title={m.moderation_delete_mute_hint()}
               >
                 <UserX size={13} />
                 {m.moderation_supprimer_muter()}
-              </button>
+              </Button>
             {/if}
-            <button
+            <Button
+              variant="danger-outline"
+              size="compact"
+              class="ml-auto"
               onclick={() => handleDeleteHidden(post.id)}
               disabled={processingId === post.id}
-              class="border-cn-border text-text-muted ml-auto flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
               title={m.moderation_delete_permanently_hint()}
             >
               <Trash2 size={13} />
               {m.common_delete_button()}
-            </button>
+            </Button>
           </div>
         </div>
       {/each}
@@ -941,14 +967,15 @@
               </p>
             {/if}
           </div>
-          <button
+          <Button
+            variant="secondary"
+            size="compact"
             onclick={() => handleUnmute(user.userId)}
             disabled={processingId === user.userId}
-            class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-40"
           >
             <UserCheck size={14} />
             {m.moderation_demuter()}
-          </button>
+          </Button>
         </div>
       {/each}
     </div>

@@ -13,6 +13,8 @@ pub enum Error {
     BadMime,
     #[error("the file name is empty or names a path")]
     BadName,
+    #[error("the save destination is not a content:// document")]
+    BadUri,
     #[error("the staging session is not a plain token")]
     BadSession,
     #[error("a chunk of the video is not base64")]
@@ -27,7 +29,7 @@ pub enum Error {
     #[error("the phone's gallery exists only on Android and iOS")]
     Unsupported,
     #[cfg(not(target_os = "android"))]
-    #[error("share suggestions exist only on Android")]
+    #[error("the save dialog and the notification conversation shortcuts exist only on Android")]
     AndroidOnly,
 }
 

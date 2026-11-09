@@ -4,7 +4,7 @@
  * Run: `bun test tools/call-audio-fidelity`.
  */
 import { describe, expect, it } from 'bun:test';
-import { transformInPath, verdict, videoChecks, witnessLines } from './matrix.mjs';
+import { nsChecks, transformInPath, verdict, videoChecks, witnessLines } from './matrix.mjs';
 
 /** A result shaped like `rig.mjs` writes one, every metric clean. */
 function clean(log = []) {
@@ -36,6 +36,20 @@ describe('verdict', () => {
     ]);
     expect(witnessLines(r)).toBe(2);
     expect(verdict(r)).toMatchObject({ pass: false, failed: ['witness'] });
+  });
+
+  it('fails a noise-suppression row whose sender did not carry the processed track to the end', () => {
+    const on = { state: 'on', sendsProcessed: true, fallbacks: 0, stats: { frames: 3000 } };
+    expect(nsChecks({ ...clean(), ns: on })).toEqual([['ns-on', true]]);
+    expect(nsChecks(clean())).toEqual([]);
+    for (const ns of [
+      { ...on, state: 'unavailable', sendsProcessed: false, fallbacks: 1 },
+      { ...on, sendsProcessed: false },
+      { ...on, fallbacks: 1 },
+      { ...on, stats: null },
+    ]) {
+      expect(verdict({ ...clean(), ns })).toMatchObject({ pass: false, failed: ['ns-on'] });
+    }
   });
 
   it('reads a result saved before the log existed as having no witness lines', () => {

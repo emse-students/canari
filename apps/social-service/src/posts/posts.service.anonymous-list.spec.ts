@@ -38,7 +38,6 @@ describe('PostsService feed queries mask an anonymous personal post', () => {
     polls: [],
     forms: [],
     reactions: [],
-    pinned: false,
     scheduledAt: null,
     hiddenByModeration: false,
     commentCount: 0,
@@ -74,6 +73,9 @@ describe('PostsService feed queries mask an anonymous personal post', () => {
     const associations = {
       mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
       isContentModerator: jest.fn((userId: string) => Promise.resolve(moderators.includes(userId))),
+      moderatedPostIds: jest.fn((userId: string, ids: string[]) =>
+        Promise.resolve(new Set(moderators.includes(userId) ? ids : []))
+      ),
     };
     const follows = {
       getFollowedAssociationIdsForUser: jest.fn(() => Promise.resolve([])),

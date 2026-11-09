@@ -21,7 +21,7 @@
    * So the page sends NO Referer: its own requests - its chunks, the confirmation call, the retry
    * link - would otherwise carry the whole URL, receipt included, into the access log's referer
    * field, which the request-line redaction (`Dockerfile.frontend`) does not cover. The policy is a
-   * response HEADER of every `/f/` page (`$public_form_referrer_policy`), because this page boots on
+   * response HEADER of every `/f/` page (`$capability_referrer_policy`), because this page boots on
    * the client and its first chunks leave before any <meta> can apply; the <meta> below restates it
    * for a shell served without that header (a dev server, a preview).
    *

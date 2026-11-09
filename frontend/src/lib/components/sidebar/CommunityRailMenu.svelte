@@ -43,7 +43,7 @@
 
   /** Same row box as the post menu, so the two menus read as one family. */
   const ROW =
-    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors';
+    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors [&>svg]:shrink-0';
 </script>
 
 <div
@@ -54,7 +54,7 @@
   tabindex="-1"
   aria-label={m.sidebar_community_menu_label({ name: communityName })}
   data-community-menu
-  class="bg-surface-elevated border-cn-border fixed z-(--z-popover) flex w-56 flex-col gap-0.5 overflow-auto rounded-xl border p-1.5 shadow-lg"
+  class="glass-chrome border-cn-border fixed z-(--z-popover) flex w-56 flex-col gap-0.5 overflow-auto rounded-xl p-1.5"
   onkeydown={(e) => {
     if (e.key === 'Escape') {
       e.stopPropagation();

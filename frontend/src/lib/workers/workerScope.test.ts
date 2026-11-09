@@ -46,7 +46,15 @@ const WORKER_IMPORT = /import\s+\w+\s+from\s+['"]([^'"?]+)\?worker(?:&[^'"]*)?['
  * prebuilt `?url` asset of the library, not one of ours, and matches none of these.)
  */
 const OTHER_WORKER_FORM =
-  /new\s+(?:Shared)?Worker\s*\(\s*new\s+URL|\?sharedworker|audioWorklet\.addModule|serviceWorker\.register/;
+  /new\s+(?:Shared)?Worker\s*\(\s*new\s+URL|\?sharedworker|serviceWorker\.register/;
+
+/**
+ * An AudioWorklet module is loaded by `audioWorklet.addModule(url)`, and the ONE place allowed to
+ * call it is the call microphone's noise suppressor, whose URL comes from a `?worker&url` import
+ * (`callNoiseSuppressionAssets.ts`) - so the worklet is in the inventory below like any worker.
+ */
+const AUDIO_WORKLET_LOADER = /audioWorklet\.addModule/;
+const AUDIO_WORKLET_LOADERS = ['src/lib/utils/callNoiseSuppression.ts'];
 
 /** A worker entry: its frontend-root POSIX path. */
 function workerEntries(): string[] {
@@ -60,6 +68,11 @@ function workerEntries(): string[] {
       OTHER_WORKER_FORM.test(file.text),
       `${file.path} starts a worker in a form this test does not build`
     ).toBe(false);
+    if (AUDIO_WORKLET_LOADER.test(file.text)) {
+      expect(AUDIO_WORKLET_LOADERS, `${file.path} loads an AudioWorklet module`).toContain(
+        file.path
+      );
+    }
     for (const match of file.text.matchAll(WORKER_IMPORT)) {
       const spec = match[1];
       const base = spec.startsWith('$lib/')
@@ -109,6 +122,39 @@ function loadInWorkerScope(url: string): Promise<LoadVerdict> {
   return new Promise((settle) => {
     const thread = new Worker(bootstrap, { eval: true, workerData: { url } });
     thread.once('message', (verdict: LoadVerdict) => {
+      void thread.terminate();
+      settle(verdict);
+    });
+    thread.once('error', (error: Error) =>
+      settle({ ok: false, error: String(error.stack ?? error) })
+    );
+    thread.once('exit', (code) =>
+      settle({ ok: false, error: `the thread exited (${code}) before reporting` })
+    );
+  });
+}
+
+/**
+ * Imports `url` in a thread shaped like an AudioWorkletGlobalScope: no `self`, no `fetch`, no DOM,
+ * and the three globals the scope gives a processor (`AudioWorkletProcessor`, `registerProcessor`,
+ * `sampleRate`). Settles on the thread's report: the module loaded AND registered a processor.
+ */
+function loadInAudioWorkletScope(url: string): Promise<LoadVerdict & { registered?: string[] }> {
+  const bootstrap = `
+    const { parentPort, workerData } = require('node:worker_threads');
+    delete globalThis.fetch;
+    const registered = [];
+    globalThis.sampleRate = 48000;
+    globalThis.AudioWorkletProcessor = class { constructor() { this.port = { postMessage() {} }; } };
+    globalThis.registerProcessor = (name) => registered.push(name);
+    import(workerData.url).then(
+      () => parentPort.postMessage({ ok: true, registered }),
+      (error) => parentPort.postMessage({ ok: false, error: String(error && error.stack || error) })
+    );
+  `;
+  return new Promise((settle) => {
+    const thread = new Worker(bootstrap, { eval: true, workerData: { url } });
+    thread.once('message', (verdict: LoadVerdict & { registered?: string[] }) => {
       void thread.terminate();
       settle(verdict);
     });
@@ -176,16 +222,19 @@ afterAll(() => {
 });
 
 describe('every worker loads in a worker scope', () => {
-  it('reads the four workers the app spawns from the source, not from a list', () => {
+  it('reads the four workers and the one AudioWorklet the app spawns from the source, not from a list', () => {
     expect(entries).toEqual([
       'src/lib/workers/encryption.worker.ts',
       'src/lib/workers/mlsCrypto.worker.ts',
       'src/lib/workers/mlsEncrypt.worker.ts',
       'src/lib/workers/mlsKeyPackage.worker.ts',
+      'src/lib/workers/rnnoise.worklet.ts',
     ]);
   });
 
-  it.each(entries)(
+  const isWorklet = (path: string) => path.endsWith('.worklet.ts');
+
+  it.each(entries.filter((p) => !isWorklet(p)))(
     '%s loads with no window, no document and no SvelteKit runtime',
     async (path) => {
       const built = bundles.get(path);
@@ -193,6 +242,20 @@ describe('every worker loads in a worker scope', () => {
       const { dir } = built as { dir: string };
       const url = pathToFileURL(join(dir, `${posix.basename(path, '.ts')}.mjs`)).href;
       expect(await loadInWorkerScope(url)).toEqual({ ok: true });
+    }
+  );
+
+  it.each(entries.filter(isWorklet))(
+    '%s loads in an AudioWorklet scope (no fetch, no self) and registers its processor',
+    async (path) => {
+      const built = bundles.get(path);
+      expect(built && 'error' in built ? built.error : null).toBeNull();
+      const { dir } = built as { dir: string };
+      const url = pathToFileURL(join(dir, `${posix.basename(path, '.ts')}.mjs`)).href;
+      expect(await loadInAudioWorkletScope(url)).toEqual({
+        ok: true,
+        registered: ['canari-rnnoise'],
+      });
     }
   );
 });

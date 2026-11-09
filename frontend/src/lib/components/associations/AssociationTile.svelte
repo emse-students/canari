@@ -44,6 +44,7 @@
   import { associationSecondLogoSrc, type Association } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
+  import FollowChip from '$lib/components/follows/FollowChip.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import { associationAccent } from '$lib/associations/accent';
   import { m } from '$lib/paraglide/messages';
@@ -96,21 +97,28 @@
   const showsMemberCount = $derived(!isList);
 </script>
 
-<a {href} class="block h-full">
-  <CardTile
-    accentColor={accent}
-    class="h-full {association.archived ? 'opacity-75 transition-opacity hover:opacity-100' : ''}"
-  >
-    <div class="flex h-full flex-col gap-2 p-4">
-      <div class="flex items-start gap-3">
-        <AssociationAvatar name={association.name} logoUrl={association.logoUrl} size="lg" />
-        <div class="min-w-0 flex-1">
-          {#if association.parentName}
-            <div class="text-text-muted text-2xs font-bold tracking-wide uppercase">
-              {association.parentName}
-            </div>
-          {/if}
-          <!--
+<!-- The chip is the anchor's SIBLING, never its child: a button inside a link is invalid and a tap would reach both. -->
+<div class="flex h-full flex-col gap-1.5">
+  <a {href} class="block min-h-0 flex-1">
+    <CardTile
+      accentColor={accent}
+      class="h-full {association.archived ? 'opacity-75 transition-opacity hover:opacity-100' : ''}"
+    >
+      <div class="flex h-full flex-col gap-2 p-4">
+        <div class="flex items-start gap-3">
+          <AssociationAvatar
+            id={association.id}
+            name={association.name}
+            logoUrl={association.logoUrl}
+            size="lg"
+          />
+          <div class="min-w-0 flex-1">
+            {#if association.parentName}
+              <div class="text-text-muted text-2xs font-bold tracking-wide uppercase">
+                {association.parentName}
+              </div>
+            {/if}
+            <!--
             `line-clamp-3` and NOT `truncate`: the clamp is a MAXIMUM, so a one-word name still
             costs one line and only a genuinely long one spends three - which is why three rather
             than two, after seeing a real wall render at the real 15rem column with the real
@@ -119,13 +127,13 @@
             and without this it widens its grid column instead of wrapping, which is the one way a
             card wall stops being a wall.
           -->
-          <h3 class="text-text-main line-clamp-3 leading-snug font-bold [overflow-wrap:anywhere]">
-            {association.name}
-          </h3>
+            <h3 class="text-text-main line-clamp-3 leading-snug font-bold [overflow-wrap:anywhere]">
+              {association.name}
+            </h3>
+          </div>
         </div>
-      </div>
 
-      <!--
+        <!--
         THE SECOND THEME, SMALL, UNDER BOTH MAIN ONES (user, 2026-09-22: *"affiche, s'ils sont
         presents, les logos et titres fake en petit en dessous des principaux"*). It is a campaign
         list's other identity, so it is subordinate on purpose: `sm` is the 24px avatar against the
@@ -135,73 +143,86 @@
         (*"c'est deja dans Campagnes 2026, pourquoi doubler ?"*), which is the only place the year
         needs saying.
       -->
-      {#if hasSecondTheme}
-        <div class="-mt-1 flex items-center gap-2">
-          <AssociationAvatar
-            name={secondName || association.name}
-            logoUrl={secondLogoUrl}
-            size="sm"
-          />
-          {#if secondName}
-            <span
-              class="text-text-muted line-clamp-2 min-w-0 text-xs font-semibold [overflow-wrap:anywhere]"
-            >
-              {secondName}
-            </span>
-          {/if}
-        </div>
-      {/if}
+        {#if hasSecondTheme}
+          <div class="-mt-1 flex items-center gap-2">
+            <AssociationAvatar
+              id={association.id}
+              name={secondName || association.name}
+              logoUrl={secondLogoUrl}
+              size="sm"
+            />
+            {#if secondName}
+              <span
+                class="text-text-muted line-clamp-2 min-w-0 text-xs font-semibold [overflow-wrap:anywhere]"
+              >
+                {secondName}
+              </span>
+            {/if}
+          </div>
+        {/if}
 
-      {#if description}
-        <!--
+        {#if description}
+          <!--
           The clamp is on THIS element and not on the markdown's paragraphs - see the docblock: a
           `-webkit-box` clamps everything it contains as one run of lines, and clamping a paragraph
           instead renders more lines than it promises (95px against the 57px asked for).
         -->
-        <div
-          class="text-text-muted line-clamp-3 [&_.post-markdown]:text-sm [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0"
-        >
-          <ProfileBioMarkdown source={description} compact />
-        </div>
-      {/if}
+          <div
+            class="text-text-muted line-clamp-3 [&_.post-markdown]:text-sm [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0"
+          >
+            <ProfileBioMarkdown source={description} compact />
+          </div>
+        {/if}
 
-      <!--
+        <!--
         `mt-auto` pins the footer to the bottom of whatever height the grid row settles on, so the
         roles and the counts line up across a row instead of floating at five different heights.
 
         The role REPLACES the count rather than joining it, and it is the same pill that used to sit
         beside the name rather than a second styling of one idea - see the docblock.
       -->
-      {#if association.role}
-        <div class="mt-auto pt-1">
-          <span class="text-cn-dark bg-cn-yellow/20 rounded-full px-2 py-0.5 text-xs font-semibold">
-            {association.role}
-          </span>
-        </div>
-      {:else if showsMemberCount || association.archived || isMember}
-        <p class="text-text-muted mt-auto pt-1 text-xs">
-          {#if showsMemberCount}
-            {memberCount !== 1
-              ? m.assoc_member_count_many({ count: memberCount })
-              : m.assoc_member_count_one({ count: memberCount })}
-          {/if}
-          <!--
+        {#if association.role}
+          <div class="mt-auto pt-1">
+            <span
+              class="text-cn-dark bg-cn-yellow/20 rounded-full px-2 py-0.5 text-xs font-semibold"
+            >
+              {association.role}
+            </span>
+          </div>
+        {:else if showsMemberCount || association.archived || isMember}
+          <p class="text-text-muted mt-auto pt-1 text-xs">
+            {#if showsMemberCount}
+              {memberCount !== 1
+                ? m.assoc_member_count_many({ count: memberCount })
+                : m.assoc_member_count_one({ count: memberCount })}
+            {/if}
+            <!--
             The separator belongs to the COUNT, not to the note: a list prints no count, so a
             leading middot would open the line with punctuation standing for nothing.
           -->
-          {#if association.archived}
-            <span class="font-semibold">
-              {#if showsMemberCount}&#183;{/if}
-              {m.assoc_list_archived_badge()}
-            </span>
-          {:else if isMember}
-            <span class="text-cn-dark font-semibold">
-              {#if showsMemberCount}&#183;{/if}
-              {m.assoc_list_member_badge()}
-            </span>
-          {/if}
-        </p>
-      {/if}
-    </div>
-  </CardTile>
-</a>
+            {#if association.archived}
+              <span class="font-semibold">
+                {#if showsMemberCount}&#183;{/if}
+                {m.assoc_list_archived_badge()}
+              </span>
+            {:else if isMember}
+              <span class="text-cn-dark font-semibold">
+                {#if showsMemberCount}&#183;{/if}
+                {m.assoc_list_member_badge()}
+              </span>
+            {/if}
+          </p>
+        {/if}
+      </div>
+    </CardTile>
+  </a>
+  <!-- Its own row UNDER the card, never over the text: the footer of a card is as long as its role or count line, and a chip laid on it covered it at 15rem. -->
+  <div class="flex justify-end empty:hidden">
+    <FollowChip
+      kind="association"
+      targetId={association.id}
+      name={association.name}
+      archived={association.archived === true}
+    />
+  </div>
+</div>

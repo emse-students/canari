@@ -1,9 +1,15 @@
 // Same import-cycle break as the other BaseMlsService specs.
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
+const authority = vi.hoisted(() => ({ refuses: false }));
+vi.mock('$lib/mls-client/stateAuthority', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/stateAuthority')>()),
+  refusesCommitsHere: () => authority.refuses,
+}));
 
 import { BaseMlsService } from './BaseMlsService';
 import { toBase64 } from '$lib/utils/hex';
+import { FollowerTabKeyPackageError } from '$lib/mls-client/commitSubmission';
 
 /**
  * A PURGE EMPTIED THE SERVER AND LEFT THE DEVICE HOLDING THE WHOLE POOL.
@@ -62,7 +68,27 @@ const republish = (ctx: unknown): Promise<void> =>
   ).republishKeyMaterial.call(ctx, 'device-key');
 
 describe('republishKeyMaterial completes the purge it starts', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    authority.refuses = false;
+  });
+
+  it('on a copy that may not mint, purges NOTHING and forgets nothing: refused, typed, before the purge', async () => {
+    // A follower's copy, or a promoted tab before its reload: `generateKeyPackage` would refuse the
+    // remint, so a purge here would empty the server pool and the local forget strand nothing to
+    // replace it with.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    authority.refuses = true;
+    const { ctx, deleteAllOneTimePrekeys, forgetKeyPackages, generateKeyPackage } = makeCtx([
+      toBase64(ONE),
+    ]);
+
+    await expect(republish(ctx)).rejects.toBeInstanceOf(FollowerTabKeyPackageError);
+    expect(deleteAllOneTimePrekeys).not.toHaveBeenCalled();
+    expect(forgetKeyPackages).not.toHaveBeenCalled();
+    expect(generateKeyPackage).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('republish refused'));
+  });
 
   it('forgets exactly the bundles the server reported deleting', async () => {
     const { ctx, forgetKeyPackages, generateKeyPackage } = makeCtx([toBase64(ONE), toBase64(TWO)]);
@@ -73,6 +99,8 @@ describe('republishKeyMaterial completes the purge it starts', () => {
     const handed = forgetKeyPackages.mock.calls[0][0] as Uint8Array[];
     expect(handed.map((b) => Array.from(b))).toEqual([Array.from(ONE), Array.from(TWO)]);
     expect(generateKeyPackage).toHaveBeenCalledTimes(1);
+    // FRESH, never a join: a round already in flight may have counted the pool before the purge.
+    expect(generateKeyPackage).toHaveBeenCalledWith('device-key', { fresh: true });
   });
 
   it('forgets NOTHING when the purge reported nothing, because a failed purge returns an empty list', async () => {

@@ -12,10 +12,19 @@
   import {
     createAssociation,
     listAssociations,
+    listDependencies,
+    listMyAssociations,
     setAssociationAudiences,
     type Association,
   } from '$lib/associations/api';
-  import { associationPickerOptions } from '$lib/associations/selectGroups';
+  import {
+    createParentField,
+    creatorBdes,
+    dependencyRefusalMessage,
+    labelCandidates,
+    parentCandidates,
+    type CreateParentField,
+  } from '$lib/associations/dependencies';
   import { reachChoiceToRules, type Cell, type ReachChoice } from '$lib/associations/audienceRules';
   import CellPicker from '$lib/components/associations/CellPicker.svelte';
   import {
@@ -34,8 +43,8 @@
     audienceRefusalText,
   } from '$lib/associations/audienceRefusal';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { ASSOCIATION_SLUG_EXHAUSTED, SocialApiError } from '$lib/associations/api';
   import { m } from '$lib/paraglide/messages';
-  import { slugify } from '$lib/utils/textFold';
 
   interface Props {
     /** What this page creates: the three directories share ONE flow and differ by what it asks. */
@@ -45,13 +54,21 @@
   let { kind }: Props = $props();
 
   let name = $state('');
-  let slug = $state('');
   let description = $state('');
   let contactEmail = $state('');
   /** Lists only. */
   let promo = $state<number | ''>('');
   let parentAssociationId = $state('');
-  let parents = $state<Association[]>([]);
+  /**
+   * The parent field (WP-D1, reform 2.5): the BDE the new entity depends on - its creator's only
+   * one, or one picked among several - and, for a list, an association to be shown under (G3).
+   */
+  let parentField = $state<CreateParentField>({
+    options: [],
+    initial: '',
+    fixed: null,
+    required: false,
+  });
   /** Institutions only: the ceiling of their reach, written right after the creation. */
   let reach = $state<ReachChoice>('none');
   let reachCampus = $state<Campus | ''>('');
@@ -76,7 +93,6 @@
         backHref: '/associations',
         nameLabel: m.assoc_new_name_label(),
         namePlaceholder: m.assoc_new_name_placeholder(),
-        slugPlaceholder: 'bureau-des-eleves',
         descPlaceholder: m.assoc_new_desc_placeholder(),
         emailPlaceholder: 'contact@asso.fr',
         submit: m.assoc_new_create_btn(),
@@ -88,7 +104,6 @@
         backHref: '/lists',
         nameLabel: m.list_new_name_label(),
         namePlaceholder: m.list_new_name_placeholder(),
-        slugPlaceholder: 'liste-canari-2027',
         descPlaceholder: m.list_new_desc_placeholder(),
         emailPlaceholder: 'contact@liste.fr',
         submit: m.list_new_create_btn(),
@@ -100,7 +115,6 @@
         backHref: '/institutions',
         nameLabel: m.inst_new_name_label(),
         namePlaceholder: m.inst_new_name_placeholder(),
-        slugPlaceholder: 'maison-des-eleves-gardanne',
         descPlaceholder: m.inst_new_desc_placeholder(),
         emailPlaceholder: 'contact@emse.fr',
         submit: m.inst_new_create_btn(),
@@ -109,10 +123,6 @@
     }[kind]
   );
 
-  const parentOptions = $derived<PickerOption[]>([
-    { value: '', label: m.list_new_parent_none() },
-    ...associationPickerOptions(parents),
-  ]);
   const reachOptions = $derived<PickerOption[]>([
     { value: 'none', label: m.inst_new_reach_none() },
     { value: 'school', label: m.inst_new_reach_school() },
@@ -139,7 +149,7 @@
     // D20/D24: the server refuses anyone else, so a reader who cannot create one is sent back
     // rather than shown a form that can only fail.
     if (kind === 'institution' && !isGlobalAdmin()) {
-      void goto(resolve('/institutions'), { replaceState: true });
+      void goto(resolve('/institutions'), { replace: true });
       return;
     }
     if (kind !== 'institution') {
@@ -151,23 +161,44 @@
         Log.d('create.profile failed', err);
       }
     }
-    if (kind === 'list') {
-      try {
-        parents = await listAssociations('association');
-      } catch (err) {
-        Log.d('create.parents failed', err);
-        parents = [];
-      }
-    }
+    if (kind !== 'institution') await loadParentField(kind);
   });
 
-  function onNameInput() {
-    slug = slugify(name);
+  /**
+   * Reads who the new entity may depend on: every BDE for a platform admin (the Dependencies
+   * panel's own list), the creator's `MANAGE_ASSO` BDEs otherwise. A failed read leaves the field
+   * empty - the server still applies the default parent, and refuses with a typed code if it must.
+   */
+  async function loadParentField(of: 'association' | 'list') {
+    const admin = isGlobalAdmin();
+    try {
+      if (admin) {
+        const all = await listDependencies();
+        parentField = createParentField(of, true, parentCandidates(all), labelCandidates(all));
+      } else {
+        const [mine, catalogue] = await Promise.all([
+          listMyAssociations(),
+          of === 'list' ? listAssociations('association') : Promise.resolve([] as Association[]),
+        ]);
+        const labels = catalogue.filter((a) => !a.isBDE && !a.archived);
+        parentField = createParentField(of, false, creatorBdes(mine), labels);
+      }
+      parentAssociationId = parentField.initial;
+      Log.d(
+        `create.parents (${of}): ${parentField.options.length} option(s), fixed ${parentField.fixed?.id ?? 'none'}, required ${parentField.required}`
+      );
+    } catch (err) {
+      Log.d('create.parents failed', err);
+    }
   }
 
   async function handleSubmit() {
-    if (!name.trim() || !slug.trim()) {
+    if (!name.trim()) {
       error = m.assoc_new_error_required();
+      return;
+    }
+    if (parentField.required && !parentAssociationId) {
+      error = m.dependency_err_parent_choice_required();
       return;
     }
     submitting = true;
@@ -175,29 +206,29 @@
     try {
       const created = await createAssociation({
         name: name.trim(),
-        slug: slug.trim(),
         type: kind === 'association' ? undefined : kind,
         description: description.trim() || undefined,
         contactEmail: contactEmail.trim() || undefined,
-        ...(kind === 'list'
-          ? {
-              promo: promo !== '' ? Number(promo) : undefined,
-              parentAssociationId: parentAssociationId || undefined,
-            }
-          : {}),
+        ...(kind === 'list' ? { promo: promo !== '' ? Number(promo) : undefined } : {}),
+        ...(kind !== 'institution' && parentAssociationId ? { parentAssociationId } : {}),
       });
       if (kind === 'institution') {
         await finishInstitution(created);
         return;
       }
-      await goto(resolve(`${kind === 'list' ? '/lists' : '/associations'}/${created.slug}`));
+      await goto(resolve(`${kind === 'list' ? 'lists' : 'associations'}/${created.slug}`));
     } catch (err) {
       Log.d(`create.submit failed (${kind})`, err);
       const refusal = audienceRefusalCode(err);
       if (refusal === AUDIENCE_REFUSAL.CREATOR_CAMPUS_REQUIRED) {
         campusMissing = true;
+      } else if (err instanceof SocialApiError && err.code === ASSOCIATION_SLUG_EXHAUSTED) {
+        Log.d(`create.submit: no free slug for this name (${kind})`);
+        error = m.assoc_new_error_slug_exhausted();
       } else {
-        error = refusal ? audienceRefusalText(refusal) : copy.failure;
+        error = refusal
+          ? audienceRefusalText(refusal)
+          : (dependencyRefusalMessage(err) ?? copy.failure);
       }
     } finally {
       submitting = false;
@@ -220,7 +251,7 @@
         showToast(m.inst_new_reach_error());
       }
     }
-    await goto(resolve(`/associations/${created.slug}/edit/members`));
+    await goto(resolve(`associations/${created.slug}/edit/members`));
   }
 </script>
 
@@ -237,18 +268,7 @@
         handleSubmit();
       }}
     >
-      <Input
-        label={copy.nameLabel}
-        bind:value={name}
-        oninput={onNameInput}
-        placeholder={copy.namePlaceholder}
-        required
-      />
-
-      <Input label="Slug (URL)" bind:value={slug} placeholder={copy.slugPlaceholder} required />
-      <p class="text-text-muted -mt-3 text-xs">
-        {m.assoc_new_slug_hint()}
-      </p>
+      <Input label={copy.nameLabel} bind:value={name} placeholder={copy.namePlaceholder} required />
 
       {#if kind === 'list'}
         <Input
@@ -257,21 +277,29 @@
           bind:value={promo}
           placeholder="2027"
         />
+      {/if}
 
-        <div>
+      {#if kind !== 'institution' && parentField.options.length > 0}
+        {@const parentLabel = kind === 'list' ? m.list_new_parent_label() : m.create_parent_label()}
+        <div data-create-parent>
           <label for="create-parent" class="text-text-main mb-2 ml-1 block text-sm font-bold"
-            >{m.list_new_parent_label()}</label
+            >{parentLabel}</label
           >
           <Picker
             id="create-parent"
             value={parentAssociationId}
-            options={parentOptions}
-            label={m.list_new_parent_label()}
+            options={parentField.options}
+            label={parentLabel}
             variant="field"
             density="default"
+            invalid={parentField.required && !!error && !parentAssociationId}
             onValueChange={(v) => (parentAssociationId = v)}
           />
         </div>
+      {:else if kind !== 'institution' && parentField.fixed}
+        <p class="text-text-muted text-sm" data-create-parent-fixed>
+          {m.create_parent_only({ name: parentField.fixed.name })}
+        </p>
       {/if}
 
       <Textarea
@@ -359,7 +387,7 @@
 
       <button
         type="submit"
-        disabled={submitting || !name.trim() || !slug.trim() || reachIncomplete}
+        disabled={submitting || !name.trim() || reachIncomplete}
         class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
       >
         {submitting ? m.common_creating_label() : copy.submit}

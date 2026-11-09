@@ -11,8 +11,8 @@ message, a picture or a post opens the system sheet.
 | --- | --- | --- |
 | S1+S2 | Share IN on Android: the intent filter, the native copy, the "Envoyer a..." picker, the composer staging | built (this page) |
 | S3 | Share OUT (Android + iOS): `share_text` / `share_staged`, message and post menus | built - [share-out](share-out.md) |
-| S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a third signing profile; **the iOS conversation suggestions (`INSendMessageIntent`) follow it**, since they need that extension | **built (2026-10-22), owed the iPhone readings** - [the iOS path](#share-in-ios---the-path) |
-| S5 | Conversation suggestions in the Android sheet (Direct Share / sharing shortcuts) | built (Android), [below](#share-suggestions-android---lot-s5) |
+| S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a third signing profile | **built (2026-10-22), owed the iPhone readings** - [the iOS path](#share-in-ios---the-path) |
+| S5 | Conversation suggestions in the share sheet: Android sharing shortcuts, iOS `INSendMessageIntent` donations read back by `CanariShare` | built - [Android](#share-suggestions-android---lot-s5); **iOS built (2026-10-27), owed a CI compile and the iPhone readings** - [iOS](#share-suggestions-ios---lot-s5) |
 | S6 | A post's or a reel's share sheet, Instagram's: send into a conversation, copy the link, the system sheet; a shared reel's card opens the viewer | built, design decided 2026-10-23 - [below](#a-post-or-a-reel-shared-from-its-sheet---lot-s6) |
 
 ## Share IN, Android - the path
@@ -37,6 +37,16 @@ message, a picture or a post opens the system sheet.
    Names are reduced to their last segment and a conservative character set
    (`share/SharedFileName.kt`). `onCreate` skips a relaunch (`savedInstanceState`,
    `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`) so a share is never offered twice.
+   **A share that kept no file keeps no folder**: a text share, or one whose every stream was
+   refused, deletes its `shared_inbox/<id>/` before the manifest is written. No manifest entry names
+   that folder, so nothing else would delete it while the process lives - text shares left one
+   empty folder each until 2026-10-27 (Mi 9T); `sweepOrphansOnce` removes those at the next process
+   start. Guard: `androidShareInbox.test.ts`.
+   **At rest**: the manifest (files dir) and the copies (`cache/shared_inbox/`) live in the app's
+   credential-encrypted storage - unreadable until the first unlock after boot, then readable by the
+   app's uid alone - and neither is backed up (the cache never is; the data domain is excluded).
+   Nothing is added on top: an app-held key protects nothing against an attacker who can already
+   act as the app (the reasoning is under the iOS path, "At rest").
 3. **The handoff is a file, `pending_share.json`** in the Tauri data directory, because a cold start
    gets the intent before the page exists and a value pushed into a page that then navigates is
    lost. It is written to a `.tmp` and renamed into place, so a drain on a return to the foreground
@@ -69,8 +79,12 @@ message, a picture or a post opens the system sheet.
    (`share_items_lost`).
 5. **"Envoyer a..."** is the forward picker (`ForwardMessageModal`, `variant="share"`): DMs, groups
    and salons. It opens only when the session is up, so the PIN always comes first, with no clock.
-   The pick is published as a deep-link landing (`notifNav.navigate` + `chatDeepLinkRoute`), so the
-   conversation opens exactly as a tapped notification would, salons under `/communities` included.
+   The pick is published as a deep-link landing (`notifNav.navigate`, and NOTHING else), so the
+   conversation opens exactly as a tapped notification would, salons under `/communities` included:
+   the landing effect in `ChatBackgroundService` routes and selects. `landShareOn` used to `goto`
+   the route as well, and on a phone already on `/chat` that navigation's `beforeNavigate` drained
+   the overlay stack AFTER the effect had opened the conversation - the share was staged in a
+   composer that closed at once (read on the Mi 9T, 2026-10-27, `1.5.0`).
    **A landing that ends without displaying its target** (abandoned, or the member went elsewhere)
    gives the share back to the picker (`incomingShare.releaseTarget`): the landing ending is the
    fact that says so.
@@ -127,6 +141,19 @@ preselection, never a destination by itself.
   (`CanariFirebaseMessagingService.publishConversationShortcut`) share the dynamic set. NOT
   long-lived: the sheet needs no cached copy, so removing the dynamic shortcut removes it
   everywhere. Capped at `getMaxShortcutCountPerActivity`.
+- **A salon never publishes a conversation shortcut** (2026-11-01), though its notification takes
+  the group shape since then: the cap above is shared, a busy salon posting one per message would
+  evict the DMs' shortcuts and these suggestions, and the sheet offers conversations, not salons.
+  `showMessageNotification` skips `publishConversationShortcut` for a `channel_` id and keeps the
+  large icon (the speaker's face or initials). The `chat_channel_*` shortcuts the WebSocket trigger
+  published before that are retired ONCE PER INSTALL: `CanariApplication` calls
+  `ConversationShortcuts.removeRecordedWithPrefix` (`removeLongLivedShortcuts`, the record rewritten,
+  the count logged at INFO) and then writes the done flag `salon_shortcuts_retired`
+  (SharedPreferences `canari_one_time_steps`) - only after a removal that did not fail, and never on
+  an unreadable record (`ShortcutRecord.readOrNull` answers null), so either is tried again at the
+  next start. **A salon shortcut the user pinned to the home screen is disabled
+  too** (`disablePinnedShortcuts`): it stays on the launcher, greyed out, and says it is no longer
+  available.
 - **Erased at sign-out, with the notifications' conversation shortcuts** (an account switch
   included, the user's rule for the pending share too: nothing of an account stays for the next
   one). `clearAuthUnderway` calls `eraseAccountShortcuts` beside `discardSharedOut`, for
@@ -147,7 +174,7 @@ preselection, never a destination by itself.
   (`conversationIdFromShareTarget`) and preselects it only if the signed-in account's list holds
   that conversation (`suggestionIfHeld`) - a stale shortcut from another account targets nothing,
   and says so in the log.
-- **The setting** "Suggestions dans le partage" (Settings > Preferences, Android app only, ON by
+- **The setting** "Suggestions dans le partage" (Settings > Preferences, both phone apps, ON by
   default, per device): off clears at once. The names leave Canari for the system (launcher, share
   sheet), which the user accepted knowingly; the privacy policy (section 7) and the register (C22)
   say so.
@@ -155,8 +182,86 @@ preselection, never a destination by itself.
 **Known limits.** Android 9 (API 28, the app's minimum) does not list them: that needs
 `androidx.sharetarget` and its chooser service, not shipped for one API level. A shortcut the
 member PINNED from the launcher menu cannot be removed by any app: it is disabled at the next
-publish or clear that drops it, and the launcher decides whether its label stays. iOS: none - the
-suggestions need the Share Extension, so they are part of S4.
+publish or clear that drops it, and the launcher decides whether its label stays. iOS: its own
+half, [below](#share-suggestions-ios---lot-s5).
+
+## Share suggestions, iOS - lot S5
+
+The iPhone twin of the Android suggestions above, with the same decisions: the same list (the
+picker's destinations, `lifecycle === 'active'`, named, `compareConversationRecency`, the top
+`MAX_SHARE_TARGETS` = 5), the same JS path (`syncShareTargets` -> `publishShareTargets` /
+`clearShareTargets`, the "last told" state, the queue), the same setting (now shown on both phone
+apps), the same erase at sign-out, and the same rule that **the picked suggestion is only a hint
+and the picker still opens**. What differs is only what the platform holds.
+
+- **What is donated** (`tauri-plugin-gallery/ios/Sources/ShareSuggestions.swift`, behind the same
+  `publish_share_targets` / `clear_share_targets` commands, which no longer refuse iOS): one
+  `INInteraction` per target, OUTGOING, wrapping an `INSendMessageIntent` whose
+  `conversationIdentifier` is the Android shortcut id `c:<conversation id>` and whose
+  `speakableGroupName` is the name; no recipients and no image (Apple's own example donates a group
+  name alone; the avatar is out of reach here, as on Android). Each carries the group identifier
+  `fr.emse.canari.share-suggestions`, and is donated oldest first so the most recent is the last
+  the system learns. The targets are validated with Android's bounds (`c:` prefix, 200 for the id,
+  100 for the label).
+- **What is removed, and how it is known.** `INInteraction.delete(with: groupIdentifier)` - the
+  group is a name this app alone writes, so the delete takes exactly what the suggestions donated,
+  whichever process donated it, and never `deleteAll` (what the system learned of the app beyond
+  them). A publish DELETES the group FIRST and donates only once the delete succeeded: a failed
+  delete donates nothing and fails the call, so the page forgets what it told the native side and
+  sends the next list whatever it asks - the old account's suggestions are never left beside new
+  ones. The platform neither lists nor counts donations, so `present` is the number it accepted,
+  `leftover` is always 0, and a clear answers how many the last publish left (`UserDefaults`). One
+  serial queue orders a sign-out's clear after a publish in flight.
+- **ON by default on iOS too - owner decision, 2026-11-08.** A donated `INSendMessageIntent` with a
+  `speakableGroupName` feeds Siri suggestions BEYOND the share sheet: the names may appear in
+  Spotlight, the Siri suggestions widget and possibly the lock screen (while Canari's "Show on Lock
+  Screen" is on in iOS Settings). The owner kept the Android default (ON) and asked that it be said
+  plainly: the setting's own text (`settings_share_suggestions_desc`), the privacy policy's iPhone
+  row and register row C22 name those places and say that the setting turns it off. Turning it off
+  deletes the donation group (`clear_share_targets`). No behaviour differs from Android's.
+- **What is never donated**: a message. The intent's `content`, `recipients`, `sender` and
+  `attachments` are all nil - a conversation's NAME and its id are all the system receives (no
+  avatar either: the plugin has no file of it, as on Android). The native lines log counts and
+  `NSError` codes only, through `GalleryLog` (`Logger`, every interpolation `.public` and never a
+  label), never a Swift `NSLog` (`nativeLogContent.test.ts`).
+- **Erased at sign-out**, an account switch included (on one install, B signs in only after A
+  signed out, [backlog](../backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)): `eraseAccountShortcuts` asks `clear_share_targets` on iOS too, ALWAYS
+  (`force`); it does not ask `clear_conversation_shortcuts`, which stays Android-only: the iOS
+  notification extension donates no intent and publishes no shortcut, so there is no second set.
+- **The pick comes back through the Share Extension.** Its `Info.plist` declares
+  `IntentsSupported` = [`INSendMessageIntent`] under `NSExtensionAttributes` - without it the sheet
+  offers none of the donations. When the member picks a suggestion, `extensionContext.intent` is
+  that `INSendMessageIntent`; `ShareViewController` reads its `conversationIdentifier`, checks the
+  shape Android checks (`ShareRules.suggestedTarget`: `c:` and 3 to 200 characters, a malformed one
+  logged and dropped) and the capture writes it into `pending_share.json` under Android's key
+  `target`. The app's import carries every manifest key through unchanged (a Rust test pins
+  `target`), and from there the page is Android's: `conversationIdFromShareTarget`, then
+  `suggestionIfHeld` against the signed-in account.
+- **Intents is linked by hand** in `project.pbxproj` into the app (where the plugin's static library
+  donates) and `CanariShare` (which reads the picked intent). No capability, no entitlement and no
+  portal step: Apple documents none for donating an interaction or declaring `IntentsSupported` in
+  a share extension (the Siri capability is for apps that HANDLE intents); the iPhone reading
+  confirms it.
+- **What Apple's text was read for** ([Supporting suggestions in your app's share
+  extension](https://developer.apple.com/documentation/foundation/supporting-suggestions-in-your-app-s-share-extension)):
+  the extension's `IntentsSupported`, the donation of an `INSendMessageIntent` with
+  `speakableGroupName` and `conversationIdentifier`, `extensionContext.intent` in the extension.
+  It does not mention `NSUserActivityTypes` in the app's `Info.plist`, so none was added at first -
+  **and that was the defect**: the first iPhone syslog (2026-11-08, `1.6.8-alpha.3`) read
+  `publishShareTargets: 5 target(s)`, five `Can NOT donate INSendMessageIntent for fr.emse.canari`,
+  `target #N was not donated (code 1901)`, `publish: 0 of 5 donated`. The donating app must declare
+  the intent in `NSUserActivityTypes`; `canari_iOS/Info.plist` now does (a tracked, hand-kept file:
+  `gen/apple/README.md` forbids a blind `tauri ios init`, `tauri.conf.json` carries no plist merge,
+  and CI only patches the export-compliance key into it, so the key survives). No entitlement was
+  added. **A compile proves nothing about a donation: the iPhone reading after the next pre-release
+  (`donate`, not `0 of N`, then the sheet offering the conversations) is the proof, and is owed.** It says to donate when a message is sent or
+  received; this donates the recency list instead, the Android decision - whether iOS ranks such
+  donations into the sheet is the first thing the iPhone reading answers.
+- Guards: `iosShareExtension.test.ts` (the plist key, the donation, the group delete before every
+  publish and at every clear, the bounds against Kotlin and the page, the commands both sides name,
+  the intent read and the `target` key, the sign-out path, Intents in both frameworks phases),
+  `shareTargets.test.ts` (iOS publishes and clears through the same commands, and erases no
+  conversation shortcut), `app_group_share.rs` (`target` survives the import).
 
 ## A post or a reel, shared from its sheet - lot S6
 
@@ -192,7 +297,11 @@ post page's header all open it. Canari has no presence and no story, so neither 
   picked - so the S1 picker never opens for it - `landShareOn` opens that conversation as a tapped
   notification would, and the chat page puts the link in the composer (`takeFor`). **The member
   sends with Send; a word can be typed first**, which is Instagram's message field without a second
-  one. The navigation drains the overlay stack, so the sheet and the reel viewer close with it.
+  one. The landing does not navigate when the conversation's section is already shown, so nothing
+  drains the overlay stack then: the sheet closes itself, and **the reel viewer closes on the
+  sheet's `onSentInApp`**, called only when the landing was published (`sendPostLinkInApp` returns
+  true). Without it a reel sent from `/chat` or `/communities` left the viewer over the composer
+  holding the link (review of #2609, 2026-10-27).
 - The sheet is loaded on its first open (`import()`), never with a card: it reads the conversation
   list (`globalChatSingleton`), which a feed scrolled past must not pay for.
 - `offerTo` stamps the share with the page's current FLOOR (the last sign-out it saw): it was made
@@ -237,7 +346,7 @@ the viewer) and from the post page; a tap lands in the conversation with the lin
 Send draws the card; a tap on a reel's card opens the viewer; the recipient without the post's space
 sees "unavailable"; "Copier le lien" and "Partager via..." from both. Tests:
 `PostShareSheet.svelte.test.ts`, `sharePost.test.ts`, `shareDestinations.test.ts`,
-`incomingShare.svelte.test.ts` (`offerTo`), `ReelViewer.rail` (the send opens the sheet),
+`incomingShare.svelte.test.ts` (`offerTo`), `ReelViewer.rail` (the send opens the sheet, a sent reel closes the viewer),
 `LinkPreviewCard.reel.svelte.test.ts` and `canariLinkPreview.test.ts` (a reel's card opens the
 viewer, a post's its page).
 
@@ -279,17 +388,18 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    only opens the app - it never reaches the push routing (which would accuse a missing target).
    A running app also gets the Darwin notification `fr.emse.canari.share-ready`.
 3. **The app imports** (`commands/app_group_share.rs`, Rust so it is tested here and so ONE
-   implementation serves every caller): at bootstrap, on `didBecomeActive`, on the Darwin signal, and
-   inside `read_and_clear_pending_share` itself before its claim. It TRIES the lock (never waits: a
+   implementation serves every caller): at bootstrap, on `didBecomeActive`, on the Darwin signal, at
+   the unlock (item 5), and inside `read_and_clear_pending_share` itself before its claim. It TRIES the lock (never waits: a
    capture in progress is `Busy`, and the next activation imports), claims the group manifest by
    rename, MOVES `<AppGroup>/shared_inbox/<id>` to the app cache's `shared_inbox/<id>` (one volume,
    a rename - a failed move deletes the source and errors, there is no copy fallback), rewrites each
    path to the moved file of the same name, and hands over to the data directory's
    `pending_share.json` with Android's replace-by-epoch semantics. When it imported, `canari_ios.mm`
    removes the banner and dispatches `canari:incoming-share`. The once-per-process orphan sweep
-   covers BOTH inboxes (the App Group one only when the lock is free), and with the lock held deletes
-   the App Group root's leftover claim and staging files (an allowlist: `pending_share.json.importing`,
-   `.replacing`, `.tmp`, `share_epoch.tmp` - the NSE's files sit beside them). **The launch import
+   covers BOTH inboxes (the App Group one only when the lock is free), and settles the leftover claim
+   and staging files of the app data directory and - with the lock held - of the App Group root (an
+   allowlist: `pending_share.json.draining`, `.importing`, `.replacing`, `.tmp`, `share_epoch.tmp` -
+   the NSE's files sit beside them; a claim is put back or deleted as lost, item 5). **The launch import
    and sweep run before the Rust logger exists**, so they answer CODES that `canari_ios.mm` NSLogs
    (`IMPORT_*`; the sweep's `CanariShareSweep` report with its `SWEEP_*` bits), pinned on both sides
    by the vitest. Deferring them until the logger exists was refused: Tauri creates the WebView
@@ -314,9 +424,79 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    `writePending` and the app's `write_pending` (`native_cache::exclude_from_backup`, the native
    caches' helper, [mobile](mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
    The extension also excludes the WHOLE `<AppGroup>/shared_inbox/` directory on every capture - it
-   holds share copies and nothing else, unlike the App Group root. Sealing the manifests is NOT done:
-   three writers (Kotlin, Swift, Rust) and the extension holds no key; the gap is a P2 in
-   [backlog](../backlog.md#p2---a-waiting-share-is-plaintext-at-rest-the-manifest-carries-the-shared-text-found-2026-10-24).
+   holds share copies and nothing else, unlike the App Group root.
+   **At rest, a waiting share is LOCKED WITH THE DEVICE (2026-10-27).** The extension writes its
+   folder, every copy and the manifest under Data Protection's `CompleteUnlessOpen` class
+   (`ShareCapture.lockedAtRest`, `.completeFileProtectionUnlessOpen`): a CLOSED file cannot be opened
+   while the phone is locked, as under `Complete`, but a capture the lock interrupts can finish - it
+   runs under an expiring activity (a long iCloud video), and under `Complete` its open copies stop
+   writing and no new file can be created once the phone locks, losing the share. The app's
+   `write_pending` gives the app-side manifest `Complete` while it is still empty
+   (`native_cache::protect_until_unlocked`, failing closed - a persistent refusal there loses the
+   share, said at ERROR, never routed around). The App Group's default,
+   `CompleteUntilFirstUserAuthentication`, left all of it readable on a locked phone once it had been
+   unlocked since boot. The move into the app cache is a rename, and a class belongs to the file, not
+   the path; the import READS it back on the first copy (`[SHARE] share <id>: moved copy protection =
+   ...`) rather than assuming it.
+   **A locked read deletes nothing.** Every claim goes through `handoff::claim_and_read` (the
+   extension's `claimPending` is its Swift twin): a read refused with `EPERM` - the OS error CODE iOS
+   answers for a protected file while locked, never a message; in Swift the POSIX error under
+   Foundation's read error, by domain and code - moves the claim back and answers `Protected`. The
+   move back is `renamex_np(RENAME_EXCL)`, so a manifest that landed meanwhile is never overwritten:
+   the claim then stays under its claim name. Any other failure is a broken file and is still
+   deleted, so "locked" is no hiding place for corruption. **The code cannot say why**: an `EPERM`
+   from another cause is treated the same, and that file is kept - put back at every claim, its
+   inbox never swept, said each time.
+   **The app consumes nothing while its side is locked.** Before it claims the App Group manifest,
+   the import reads (never claims) the app data's waiting manifest and probes a protected write
+   there (`app_side_locked`, `probe_protected_write`); either refused by Data Protection answers
+   `IMPORT_PROTECTED` with the share still whole in the App Group, and the unlock imports it with
+   the ordinary newest-wins rule, both shares readable then. Only a lock in the instant between
+   that check and the hand-over's claim still meets a locked waiting share: that answers its own
+   code, `IMPORT_DROPPED_OVER_LOCKED`, NSLogged at ERROR (at launch the only logger), never the
+   "imported once unlocked" of `IMPORT_PROTECTED`. The probe's refusal keeps its code at every
+   step - the create, the protection (`native_cache::protect_until_unlocked` reads the `NSError`'s
+   POSIX code, top level or under `NSUnderlyingErrorKey`) and the reopen - so a locked device is
+   classified, never reported as a failed hand-over. A lock landing AFTER the hand-over has claimed
+   the waiting share and before it writes the new manifest refuses both writes: both shares are
+   lost, in a window of a few file calls, and one ERROR line names both.
+   **A share arriving over a LOCKED waiting one is the one that goes - keep-old, against the usual
+   newest-wins, deliberately.** It is reached in that instant on the app side, and in the extension
+   when the phone locks during a capture (a long iCloud video) while an older share waits. Why: the
+   waiting share cannot be read, so neither its session (epoch) nor its copies can be known - to
+   replace it would delete a share the member was already told is ready ("Choisissez la
+   conversation"), unseen; dropping the new one is said to the member who is sharing right now (the
+   extension answers `.failed`, its card says the share could not be prepared), and at ERROR in both
+   logs. The alternative (leave the old claim as `.replacing`, write the new manifest, and let the
+   launch sweep delete the old as `SWEEP_CLAIM_LOST`) was rejected: once an import has carried the
+   newer share out, no manifest waits beside that claim, so the sweep PUTS IT BACK and the next
+   import replaces the newer share with the older one.
+   **The sweep** leaves an inbox whose manifest is locked whole (`SWEEP_PROTECTED`): which copies it
+   names cannot be read. A CLAIM a dead process left (`.draining`, `.importing`, `.replacing`, in the
+   app data directory and the App Group) is a whole share nobody took: put back when no manifest
+   waits (`SWEEP_CLAIM_RESTORED`) - a rename, which works while locked - and deleted as lost when one
+   does (`SWEEP_CLAIM_LOST`, an ERROR line). A staging `.tmp` is deleted.
+   **Who asks about the lock.** The launch sweep and import run from `canari_ios_bootstrap`, BEFORE
+   `ffi::start_app()` creates the application object, so they put no question to UIKit (one put there
+   answers NO on every launch) - a locked launch is Rust's to answer, safely. Where the application
+   object exists (an activation, the extension's signal) the import is not tried while
+   `isProtectedDataAvailable` is false, and says so only when a share waits. **The unlock is an
+   event**: `UIApplicationProtectedDataDidBecomeAvailable` (also delivered to an app resumed after
+   it) imports the App Group share and, when a manifest already waits in the app data directory - a
+   drain that found it locked after a locked launch - sends the page `canari:incoming-share`, the
+   page draining only at its mount and on that event. Nothing retries on a timer. Tests:
+   `handoff.rs` (a locked read leaves the file, a file landing meanwhile is never overwritten, a
+   broken one is deleted), `app_group_share.rs` (a locked manifest leaves both inboxes whole; a
+   locked App Group share, a locked app data manifest and a refused protected write consume
+   nothing; a share or refusals arriving over a locked one answer `DroppedOverLocked` and delete
+   nothing waiting; a leftover claim is put back or deleted as lost), `iosShareExtension.test.ts`
+   (the classes, the put-back, every import code said by its own case, no UIKit question at
+   bootstrap, the unlock observer).
+   **Why not an app-level seal.** The backlog's first shape sealed the text with the install's cache
+   key (`CNSEAL1`). Rejected: it protected the text while the copies stayed plain, cost two crypto
+   twins of the envelope (Kotlin, Swift) or the Rust library in a memory-capped extension, and an
+   attacker who reads the app's files on an unlocked phone can use its Keystore or Keychain entry
+   too. The platform's protection covers text and files alike.
    **No log line names a shared file**: a copy is `<index>_<sender's name>`, so `take_picked_file`
    and `discard_picked_file` say the share id and the byte count, never the path.
 
@@ -396,4 +576,37 @@ Android leaves - from there, steps 3 to 6 above are the same code.
   cancel path (a long video shared, then the sheet left at once). The project itself is linted by
   Xcode at the start of every `ios.yml` run (`plutil -lint`, `xcodebuild -list`) and parsed whole by
   the vitest, after a pbxproj with two unclosed objects passed every Windows check.
-  Suggested next lot: iOS conversation suggestions (`INSendMessageIntent`, the S5 twin).
+- **S5 on the iPhone - first a CI compile** (`compile-ios-app` in `ci.yml` on the pull request, then
+  `ios.yml`: the plugin's `ShareSuggestions.swift`, the extension's `import Intents`, the two Intents
+  links), then:
+  - after a few conversations, they appear in the share sheet's suggestion row of Photos and
+    Safari. Apple ranks donations itself - whether a recency list with no message sent is ranked at
+    all is THE question. **Read a "never appears" with this in mind: `publish()` deletes the whole
+    donation group before every donation**, so each publish resets whatever frequency or recency
+    signal Apple had accumulated for those conversations; an empty row may be that reset, not a
+    refusal of recency lists;
+  - **where else the names show** (`speakableGroupName` feeds Siri suggestions, not only the sheet):
+    the lock screen (with Canari's "Show on Lock Screen" in Settings > Siri on and off), Spotlight
+    (a search and the empty-search suggestions), and the Siri suggestions widget - each read, and
+    each gone once the setting is turned off;
+  - picking one opens Canari's picker with it preselected, cold and warm, with the PIN gate up;
+  - a suggestion picked after a sign-out and a second account preselects nothing (the
+    `[SHARE] ... ignored` line);
+  - the toggle off and a sign-out remove them from the sheet;
+  - **a kill right after a sign-out** (before the queued clear reaches Swift) leaves the previous
+    account's names in the sheet and Siri's suggestions until the next sign-in's publish (or the
+    next clear) replaces them - expected from the code, to be seen and timed;
+  - the logs - `[ShareSuggestions]` and `[GalleryPlugin]` lines (`GalleryLog`, Console category
+    `gallery`, each donate or delete error by its code), Console category `share` for the
+    extension's `suggestion=true`, and the page's `[SHARE]` lines.
+
+## One copy helper, one share-failure path (2026-10-30)
+
+A tap on "Copier le lien" in the bookings space page, the message long-press sheet and the two invite panels gave NO confirmation (owner report, 2026-10-30): each call site wrote `navigator.clipboard.writeText` itself, and the ones that confirmed drew a private "Copie" state that stayed true when the write had been refused.
+
+- **`utils/clipboard.ts` `copyText(text, { what })`** is the only clipboard write. `what` (`link | code | text | id`) picks the Paraglide confirmation toast; a refusal or a context without `navigator.clipboard` returns a typed `CopyResult` (`refused` / `unavailable`), is logged, and shows `clipboard_copy_failed`. `silent` skips only the success toast. One backend, no `execCommand` fallback: the web and the Tauri WebViews all expose `navigator.clipboard`, and no Tauri clipboard plugin is installed.
+- `copyPublicShareLink(path)` (`utils/copyShareLink.ts`) is `copyText` over the public origin; `copyId` is `copyText` for an id.
+- **`sharing/shareOut.ts` `runShareOut(what, open)`** runs any share-sheet call and owns the log and the `share_out_failed` toast (message bubble and post sheet shared two copies). It never falls back to a copy: the sheet's rows are only drawn where a sheet exists (`canShareOut`).
+- The inline "Copie" states (forms list and page, calendar subscribe, backup code, group and community invite panels) were deleted: the toast is the single confirmation.
+- The async invite panels copy after a network round trip, outside the tap's gesture: Safari may refuse, and the failure toast then points at the link field the panel keeps visible.
+- **A text still being produced goes to `copyText` as a PROMISE, synchronously from the tap.** WebKit refuses a clipboard write after an awaited round trip, and both invite panels mint their link on the tap (a server call), so they cannot pre-hold it. A promise takes `navigator.clipboard.write([new ClipboardItem({ 'text/plain': blobPromise })])`, which WebKit accepts inside the gesture while the promise resolves; a rejection of the promise is rethrown to the panel (its own error line), never reported as a copy failure. Superseded: the previous bullet's "Safari may refuse" caveat.

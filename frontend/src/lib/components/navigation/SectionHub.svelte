@@ -2,6 +2,7 @@
   import { ChevronRight } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import { guideAnchorWhen } from '$lib/guidance/guideAnchors.svelte';
   import type { HubRow } from './breadcrumb';
 
   interface Props {
@@ -24,7 +25,7 @@
   class="border-cn-border bg-cn-surface divide-cn-border divide-y overflow-hidden rounded-2xl border shadow-sm"
 >
   {#each rows as row (row.key)}
-    <li>
+    <li use:guideAnchorWhen={row.guideAnchor}>
       {#if row.onSelect}
         <button
           type="button"
@@ -60,7 +61,7 @@
   {#if row.avatarUserId}
     <Avatar userId={row.avatarUserId} size="sm" />
   {:else if row.logo?.logoUrl}
-    <AssociationAvatar name={row.logo.name} logoUrl={row.logo.logoUrl} size="sm" />
+    <AssociationAvatar id={row.logo.id} name={row.logo.name} logoUrl={row.logo.logoUrl} size="sm" />
   {:else if row.icon}
     {@const Icon = row.icon}
     <Icon size={20} />

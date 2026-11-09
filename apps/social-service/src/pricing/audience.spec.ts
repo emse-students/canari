@@ -1,5 +1,6 @@
 import {
   bucketFor,
+  failedCriterion,
   findOverlappingBuckets,
   matchesCondition,
   needsProfile,
@@ -162,6 +163,43 @@ describe('audience predicate', () => {
       expect(
         matchesCondition({ formation: { values: ['ICM'] } }, facts({ formation: 'ICM' }))
       ).toBe(true);
+    });
+  });
+
+  // Owner, 2026-10-30: "ne detient pas" - nobody pays a cotisation twice.
+  describe('notCotisation', () => {
+    const notBde = { notCotisation: { variantKeys: ['bde'] } };
+
+    it('refuses a holder of a named tier and admits everybody else', () => {
+      expect(failedCriterion(notBde, facts({ cotisationTiers: ['bde'] }))).toBe('notCotisation');
+      expect(matchesCondition(notBde, facts())).toBe(true);
+      expect(matchesCondition(notBde, facts({ cotisationTiers: ['other'] }))).toBe(true);
+    });
+
+    it('names the base tier by null, a value and not a missing one', () => {
+      const notBase = { notCotisation: { variantKeys: [null] } };
+      expect(matchesCondition(notBase, facts({ cotisationTiers: [null] }))).toBe(false);
+      expect(matchesCondition(notBase, facts({ cotisationTiers: ['bde'] }))).toBe(true);
+    });
+
+    it('anyTier refuses a holder of any tier', () => {
+      const none = { notCotisation: { anyTier: true } };
+      expect(matchesCondition(none, facts({ cotisationTiers: ['x'] }))).toBe(false);
+      expect(matchesCondition(none, facts())).toBe(true);
+    });
+
+    // The refusal names it whenever it fails, so the typed "you already hold it" is never masked by
+    // another failing criterion of the same condition.
+    it('is the criterion reported first when several fail', () => {
+      const both = { promo: { values: [2028] }, ...notBde };
+      expect(failedCriterion(both, facts({ promo: 2020, cotisationTiers: ['bde'] }))).toBe(
+        'notCotisation'
+      );
+      expect(failedCriterion(both, facts({ promo: 2020 }))).toBe('promo');
+    });
+
+    it('needs no identity-provider profile', () => {
+      expect(needsProfile({ notCotisation: { anyTier: true } })).toBe(false);
     });
   });
 

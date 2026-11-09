@@ -242,7 +242,7 @@ function managedRow(a: Association): HubRow {
     label: a.name,
     summary: a.role || undefined,
     icon: a.type === 'list' ? Building2 : a.type === 'institution' ? Landmark : Users,
-    logo: { name: a.name, logoUrl: a.logoUrl },
+    logo: { id: a.id, name: a.name, logoUrl: a.logoUrl },
   };
 }
 

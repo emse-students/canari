@@ -21,6 +21,7 @@
  *    pinned Noto, or a well-formed but unassigned one, stays text rather than becoming a broken image.
  */
 import emojiSet from './emojiSvgNames.json';
+import { graphemes } from './emoji';
 
 const AVAILABLE: ReadonlySet<string> = new Set(emojiSet.names);
 
@@ -47,11 +48,8 @@ export type EmojiTextPart =
   | { kind: 'text'; value: string }
   | { kind: 'emoji'; value: string; src: string };
 
-let segmenter: Intl.Segmenter | null = null;
-function graphemes(text: string): Iterable<string> {
-  segmenter ??= new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-  return Array.from(segmenter.segment(text), (s) => s.segment);
-}
+/** Whole string made of ASCII: the one shape that cannot hold an emoji picture. */
+const ASCII_ONLY = /^[\t\n\r\u0020-\u007f]*$/;
 
 /**
  * The picture's file name for one grapheme: its code points in lower-case hex, padded to four
@@ -89,6 +87,11 @@ export function emojiSvgSrc(grapheme: string): string | null {
  * run, so a sentence with no emoji comes back as exactly one part and costs one text node.
  */
 export function splitEmojiText(text: string): EmojiTextPart[] {
+  // PURE ASCII IS NEVER A PICTURE: its graphemes are single ASCII characters (or CRLF), and no file
+  // the build wrote is named for one (`asciiGraphemesHaveNoPicture` pins it). Segmenting such a
+  // string was the largest self-time function of the tab tap and of every salon open on the Mi 9T
+  // (45-50 ms, 2026-11-02 profiles): every message body and every feed card paid it for nothing.
+  if (ASCII_ONLY.test(text)) return text ? [{ kind: 'text', value: text }] : [];
   const parts: EmojiTextPart[] = [];
   let run = '';
   for (const grapheme of graphemes(text)) {

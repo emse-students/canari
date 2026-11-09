@@ -1,4 +1,6 @@
+import { MlsResetUnsettledError, mlsStateLoadErrorOf } from '$lib/mls-client/mlsStateLoadError';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
+import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { withDeviceKeyHeld } from '$lib/db/deviceKeyGate';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
@@ -314,7 +316,7 @@ async function writeMlsState(
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('save_mls_state', { data: Array.from(bytes) });
+      await invoke('save_mls_state', { userId, data: Array.from(bytes) });
       return 'written';
     } catch (e) {
       console.warn('[MLS] save_mls_state failed:', e);
@@ -468,18 +470,125 @@ const stateOrAbsent = (bytes: Uint8Array | null | undefined): Uint8Array | null 
  * a state written short by an interrupted flush is damage, not history, and must not arm
  * `noFreshStart` against the device it belongs to.
  *
- * Throws nothing: an unreadable answer is reported as 0 by the command, which is the same verdict
- * as a first install - the only safe one, since the alternative is refusing a login on a stat.
+ * **AN ANSWER NOBODY HAS REJECTS, NEVER A 0** (round 4 of the review of #2919): a state that could
+ * not be located or examined is the command's ERROR, and it propagates. A 0 is "no state", and a
+ * login that believed it would start fresh over a state it could not see.
+ *
+ * THE ACCOUNT IS AN ARGUMENT (owner, 2026-11-02): an install keeps one state per account, and a
+ * size with no subject answered for whichever account used the install last
+ * (`mls_account_state.rs`).
+ *
+ * WHETHER A STATE OF UNPROVEN OWNER COUNTS IS DECIDED NATIVELY (round 8 of the review of #2919): only
+ * for an account a state has OPENED for on this install (`mls_opened/<hash>`, written by
+ * `initialiser_mls` once it installed one). Nothing the WebView holds can answer it - the device id
+ * is written by `resolveDeviceId` at the PIN check, BEFORE any state opens.
  */
-export async function mlsStateSize(): Promise<number> {
+export async function mlsStateSize(userId: string): Promise<number> {
   if (!isTauriRuntime()) return 0;
+  const { invoke } = await import('@tauri-apps/api/core');
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    return (await invoke<number>('mls_state_size')) ?? 0;
+    return await invoke<number>('mls_state_size', { userId });
   } catch (e) {
-    console.warn('[MLS] mls_state_size failed:', e);
-    return 0;
+    // TYPED at the boundary, like `initialiser_mls`'s refusals (`{ code, message }`): an unfinished
+    // move of this account's own state is `MlsSlotMoveUnfinishedError`, which the gate answers. An
+    // unsettled PIN reset is EXPECTED - it waits for the server, and the gate says so - so the typing
+    // says it at WARN with its reason (round 11), and only an untyped failure is accused here.
+    const typed = mlsStateLoadErrorOf(e);
+    if (!(typed instanceof MlsResetUnsettledError)) {
+      console.error('[MLS] mls_state_size failed - the saved state is not known, not absent:', e);
+    }
+    throw typed;
   }
+}
+
+/**
+ * A step of the "forgot PIN" reset the native side REFUSED, with its code (round 9 of the review of
+ * #2919): `RESET_NOT_STAGED_BY_THIS_PAGE` (the page asking did not stage the reset, or is gone),
+ * `RESET_NOTHING_SET_APART`, or `RESET_FAILED`. Typed at the boundary, so no caller reads a sentence.
+ */
+export class MlsResetRefusedError extends Error {
+  constructor(
+    readonly code: string,
+    detail: string
+  ) {
+    super(`${code}: ${detail}`);
+    this.name = 'MlsResetRefusedError';
+  }
+}
+
+/** The native refusal `{ code, message }` of a reset command as a typed error; anything else as is. */
+function resetRefusalOf(e: unknown): unknown {
+  if (e !== null && typeof e === 'object' && 'code' in e && 'message' in e) {
+    const { code, message } = e as { code: unknown; message: unknown };
+    if (typeof code === 'string') return new MlsResetRefusedError(code, String(message));
+  }
+  return e;
+}
+
+/**
+ * Invokes a reset command naming THIS document (`thisDocumentGeneration`): the native side refuses a
+ * step of a page that is gone, so a late commit of a reloaded page acts on nothing.
+ */
+async function invokeResetStep<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  const { thisDocumentGeneration } = await import('$lib/services/pageGatewaySocket');
+  const document = await thisDocumentGeneration();
+  try {
+    return await invoke<T>(command, { ...args, document });
+  } catch (e) {
+    throw resetRefusalOf(e);
+  }
+}
+
+/**
+ * STEP ONE OF THE "FORGOT PIN" RESET of `userId`, run BEFORE the server resets the PIN (round 6 of
+ * the review of #2919): on a phone, the native session ends WITHOUT a sweep and the account's state is
+ * SET APART, never removed (`stage_user_mls_reset`) - so a server reset that fails is rolled back
+ * ({@link rollbackMlsStateReset}) and one that lands is committed ({@link removeMlsState}). A slot
+ * holding a state no owner record names is set aside for its owner in the same hold, never removed.
+ * A rejection means nothing was moved: the server must not be asked. The web keeps one store per
+ * account and stages nothing - its removal is the commit.
+ *
+ * `serverBasis` is the fingerprint of the account's PIN salt NOW, before the server is asked (round 9):
+ * journalled with the stage, it is what a later page compares the server's salt with when this page
+ * is gone before it settled the reset ({@link adoptUnsettledMlsReset}).
+ */
+export async function stageMlsStateReset(userId: string, serverBasis: string): Promise<void> {
+  if (!isTauriRuntime()) return;
+  await endNativeMlsSession('state reset', { sweepState: false });
+  await invokeResetStep('stage_user_mls_reset', { userId, serverBasis });
+  console.log("[MLS] the account's local MLS state is set apart for the PIN reset");
+}
+
+/**
+ * Undoes {@link stageMlsStateReset} when the server did NOT reset the PIN: the account's state goes
+ * back where it was, so the old PIN still opens it (`rollback_user_mls_reset`). A no-op on the web.
+ */
+export async function rollbackMlsStateReset(userId: string): Promise<void> {
+  if (!isTauriRuntime()) return;
+  await invokeResetStep('rollback_user_mls_reset', { userId });
+  console.warn("[MLS] the PIN reset is rolled back - the account's local MLS state is back");
+}
+
+/**
+ * A "forgot PIN" reset a page that is gone staged and never settled, adopted by THIS page to settle it
+ * from the server's answer (`adopt_unsettled_user_mls_reset`, round 9 of the review of #2919): the
+ * server basis it was staged under, or `null` when there is none. The caller then commits
+ * ({@link removeMlsState}) or rolls back ({@link rollbackMlsStateReset}). `null` on the web, which
+ * stages nothing. `handOver`: THIS page's own steps lost the server's answer and hand their staged
+ * reset over to the settle of the next sign-in attempt (round 10).
+ */
+export async function adoptUnsettledMlsReset(
+  userId: string,
+  { handOver = false }: { handOver?: boolean } = {}
+): Promise<string | null> {
+  if (!isTauriRuntime()) return null;
+  return (
+    (await invokeResetStep<string | null>('adopt_unsettled_user_mls_reset', {
+      userId,
+      handOver,
+    })) ?? null
+  );
 }
 
 /**
@@ -495,7 +604,7 @@ export async function mlsStateSize(): Promise<number> {
  * way each store can answer it.
  */
 export async function hasMlsState(userId: string): Promise<boolean> {
-  if (isTauriRuntime()) return (await mlsStateSize()) > 0;
+  if (isTauriRuntime()) return (await mlsStateSize(userId)) > 0;
   return !!(await loadMlsState(userId));
 }
 
@@ -509,11 +618,13 @@ async function readMlsState(userId: string): Promise<Uint8Array | null> {
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      const res = await invoke<number[] | null>('load_mls_state');
+      const res = await invoke<number[] | null>('load_mls_state', { userId });
       return res && Array.isArray(res) ? stateOrAbsent(Uint8Array.from(res)) : null;
     } catch (e) {
-      console.warn('[MLS] load_mls_state failed:', e);
-      return null;
+      // NOT "no state" (round 11 of the review of #2919): a refusal the native side TYPED - an
+      // unsettled PIN reset, an unfinished move - reaches its caller as that type.
+      console.warn('[MLS] load_mls_state refused - the saved state is not known, not absent:', e);
+      throw mlsStateLoadErrorOf(e);
     }
   }
 
@@ -551,7 +662,12 @@ async function readMlsState(userId: string): Promise<Uint8Array | null> {
   return stateOrAbsent(bytes);
 }
 
-/** Remove the MLS state for `userId` from IndexedDB (and legacy localStorage). */
+/**
+ * Removes `userId`'s MLS state: from IndexedDB (and legacy localStorage) on the web; on a phone, the
+ * commit of the PIN reset {@link stageMlsStateReset} staged. Its ONE caller is that reset - the
+ * revoked device's wipe and the deleted account's wipe remove the native state themselves
+ * (`delete_user_mls_state`, `clear_app_data`), never through a step that can refuse.
+ */
 export async function removeMlsState(userId: string): Promise<void> {
   // Remove legacy localStorage entry always
   try {
@@ -561,12 +677,14 @@ export async function removeMlsState(userId: string): Promise<void> {
   }
 
   if (isTauriRuntime()) {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('delete_mls_state');
-    } catch (e) {
-      console.warn('[MLS] delete_mls_state failed:', e);
-    }
+    // THE COMMIT OF A STAGED PIN RESET, AND ONLY OF THIS ACCOUNT'S STATE (rounds 5 and 6 of the review
+    // of #2919): {@link stageMlsStateReset} set it apart once the native session had ended without a
+    // sweep - a sweep removes the slot whoever it belongs to, and B's reset with A in the slot deleted
+    // A's state. This removes what was set apart and the account's residue
+    // (`commit_user_mls_reset`). A failure propagates: a reset that removed nothing must not be
+    // reported as done.
+    const removed = await invokeResetStep<number>('commit_user_mls_reset', { userId });
+    console.log(`[MLS] the account's local MLS state reset: ${removed} director(y/ies) removed`);
     return;
   }
 

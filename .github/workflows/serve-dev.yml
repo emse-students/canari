@@ -121,9 +121,9 @@ jobs:
           # is on it, and auto-merge lands pull requests unattended for as long as the arms take.
           # Resolving `main` here would be a SECOND resolution of a reference the caller already
           # resolved once, and the `dev-deployed` tag below would then name a commit this tree is
-          # not on. The bump's commit is always an ancestor of `main` (the ruleset forbids a
-          # force-push), so fetching the branch makes it reachable, and `reset` fails loudly if
-          # it somehow is not.
+          # not on. The bump's commit lives on `release/vX.Y.Z` (2026-10-30, docs/wiki/cicd.md), so
+          # it is fetched BY SHA - GitHub serves any commit a ref reaches - and `reset` fails loudly
+          # if it somehow is not there.
           git reset --hard "${{ inputs.sha }}"
           echo "dev checkout at $(git rev-parse --short HEAD)"
 
@@ -179,6 +179,11 @@ jobs:
           DEV_LYDIA_KEY_ENCRYPTION_SECRET: ${{ secrets.DEV_LYDIA_KEY_ENCRYPTION_SECRET }}
           # Seals each live's key at rest (migration 110). Dev's OWN value, for the same reason.
           DEV_LIVE_KEY_ENCRYPTION_SECRET: ${{ secrets.DEV_LIVE_KEY_ENCRYPTION_SECRET }}
+          # Signs the viewer-bound avatar token. Dev's OWN value, so a dev token opens nothing in prod.
+          DEV_AVATAR_TOKEN_SECRET: ${{ secrets.DEV_AVATAR_TOKEN_SECRET }}
+          # Signs the sign-in handoff. Dev's OWN key, or none: a dev token is wrong_issuer at every
+          # production site, so it stays unset until a site test instance trusts dev's issuer.
+          DEV_HANDOFF_SIGNING_KEY: ${{ secrets.DEV_HANDOFF_SIGNING_KEY }}
           DEV_APNS_VOIP_KEY_P8: ${{ secrets.DEV_APNS_VOIP_KEY_P8 }}
           DEV_APNS_VOIP_KEY_ID: ${{ secrets.DEV_APNS_VOIP_KEY_ID }}
           DEV_APNS_VOIP_TEAM_ID: ${{ secrets.DEV_APNS_VOIP_TEAM_ID }}
@@ -225,7 +230,9 @@ jobs:
             *) pull="$pull frontend frontend-ssr" ;;
             esac
           fi
-          bash infrastructure/deploy/deploy-environment.sh \
+          # EXEC, so a cancelled job signals the deploy itself and its INT/TERM traps put a service
+          # in flight back in rotation (docs/wiki/cicd.md, the rollback invariant).
+          exec bash infrastructure/deploy/deploy-environment.sh \
             --environment dev \
             --path "${{ env.DEV_DEPLOY_PATH }}" \
             --tag dev \

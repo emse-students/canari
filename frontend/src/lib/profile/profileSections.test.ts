@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type { UserMembershipRow } from '$lib/profile/api';
 import {
   PROFILE_SECTIONS,
+  associationsSummary,
   PROFILE_SELF_SEGMENT,
   mayOpenProfileSection,
   parseProfileSection,
@@ -9,7 +11,22 @@ import {
   profileTrail,
 } from './profileSections';
 
-const NONE = { membershipCount: null, careerCount: null, hasSponsorship: false };
+const row = (
+  id: string,
+  type: UserMembershipRow['type'],
+  promo: number | null = null
+): UserMembershipRow => ({
+  associationId: id,
+  name: id,
+  slug: id,
+  logoUrl: null,
+  role: 'Membre',
+  isAdmin: false,
+  type,
+  promo,
+});
+
+const NONE = { memberships: null, careerCount: null, hasSponsorship: false };
 
 describe('profile sections', () => {
   it('parses only known keys', () => {
@@ -43,7 +60,11 @@ describe('profile sections', () => {
   it('carries a summary only for a list that has loaded', () => {
     const loading = profileHubRows(NONE);
     expect(loading.every((r) => r.summary === undefined)).toBe(true);
-    const loaded = profileHubRows({ ...NONE, membershipCount: 3, careerCount: 1 });
+    const loaded = profileHubRows({
+      ...NONE,
+      memberships: [row('a', 'association')],
+      careerCount: 1,
+    });
     expect(loaded.find((r) => r.key === 'associations')?.summary).toBeTruthy();
     expect(loaded.find((r) => r.key === 'career')?.summary).toBeTruthy();
     expect(loaded.find((r) => r.key === 'bio')?.summary).toBeUndefined();
@@ -54,5 +75,23 @@ describe('profile sections', () => {
     expect(trail).toHaveLength(2);
     expect(trail[0].href).toBe('/profile');
     expect(trail[1].href).toBe('/profile/me/career');
+  });
+
+  it('the associations row counts by kind, as the section lists them', () => {
+    const summary = associationsSummary([
+      ...['a', 'b', 'c'].map((id) => row(id, 'association')),
+      row('l1', 'list', 2999),
+      row('i1', 'institution'),
+      row('i2', 'institution'),
+      // A finished campaign list is not listed by the section, so it is not counted.
+      row('old', 'list', 2000),
+    ]);
+    expect(summary).toBe('3 associations · 1 liste · 2 institutions');
+  });
+
+  it('a kind with none is omitted, and an empty reader still reads "0 association"', () => {
+    expect(associationsSummary([row('a', 'association')])).toBe('1 association');
+    expect(associationsSummary([row('l1', 'list', 2999)])).toBe('1 liste');
+    expect(associationsSummary([])).toBe('0 association');
   });
 });

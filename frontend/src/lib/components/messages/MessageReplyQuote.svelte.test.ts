@@ -12,8 +12,8 @@ import MessageReplyQuote from './MessageReplyQuote.svelte';
 import { cutReplyPreview } from '$lib/utils/chat/messageDisplay';
 
 vi.mock('$lib/utils/users/displayName', () => ({
-  getUserDisplayNameSync: () => 'Jeanne BOUSSONNIERE',
-  resolveUserDisplayName: () => Promise.resolve('Jeanne BOUSSONNIERE'),
+  getUserDisplayNameSync: () => 'Jeanne VALCOURNIERE',
+  resolveUserDisplayName: () => Promise.resolve('Jeanne VALCOURNIERE'),
 }));
 
 const ID = '3f9a1c2e11114222833344445555666677778888999900001111222233334444';
@@ -58,7 +58,7 @@ describe('MessageReplyQuote - a truncated quote ends with an ellipsis', () => {
   it('shows the mention as a name and the ellipsis of a cut that happened after it', () => {
     const stored = cutReplyPreview(`@[${ID}] , ${'pas de news '.repeat(10)}`);
     const text = quoteText(stored);
-    expect(text.startsWith('@Jeanne BOUSSONNIERE')).toBe(true);
+    expect(text.startsWith('@Jeanne VALCOURNIERE')).toBe(true);
     expect(text.endsWith('…')).toBe(true);
   });
 

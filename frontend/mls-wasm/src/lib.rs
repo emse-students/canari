@@ -1,6 +1,6 @@
 use log::{Level, Metadata, Record};
 use mls_core::pending_submission::PendingSubmissionRead;
-use mls_core::MlsManager;
+use mls_core::{MlsManager, StateLoadRefusal};
 use wasm_bindgen::prelude::*;
 
 mod pin_crypto;
@@ -136,6 +136,21 @@ pub fn state_blob_verdict(
     }
 }
 
+/// A failed state load as the JS object `{ code: string | null, message: string }` - the same two
+/// fields the Tauri `initialiser_mls` command rejects with, so `mlsStateLoadErrorOf` (TypeScript)
+/// builds ONE typed error from either boundary and never reads a recovery out of `message`.
+fn state_load_refusal_to_js(refusal: StateLoadRefusal) -> JsValue {
+    let obj = js_sys::Object::new();
+    let code = refusal.code.map_or(JsValue::NULL, JsValue::from_str);
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("code"), &code);
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("message"),
+        &JsValue::from_str(&refusal.message),
+    );
+    obj.into()
+}
+
 // ----------------------------------------------------
 
 /// `{ data: Uint8Array, sender: string | null, author: 'unsigned' | 'verified' | 'refused' }` for
@@ -246,9 +261,9 @@ impl WasmMlsClient {
         {
             log::info!("Loading encrypted state with device key");
             let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64)
-                .map_err(|e| JsValue::from_str(&e))?;
+                .map_err(|e| state_load_refusal_to_js(StateLoadRefusal::from(e)))?;
             MlsManager::load_with_key(user_id, device_id, Some(blob), &key)
-                .map_err(|e| JsValue::from_str(&e.to_string()))?
+                .map_err(|e| state_load_refusal_to_js(StateLoadRefusal::from(e)))?
         } else {
             if state_bytes.is_none() && device_key_b64.is_some() && state_was_expected {
                 log::warn!(
@@ -257,7 +272,7 @@ impl WasmMlsClient {
             }
             log::info!("Loading/Creating clean state");
             MlsManager::load_or_create(user_id, device_id, state_bytes)
-                .map_err(|e| JsValue::from_str(&e.to_string()))?
+                .map_err(|e| state_load_refusal_to_js(StateLoadRefusal::from(e)))?
         };
 
         Ok(WasmMlsClient { manager })
@@ -876,6 +891,21 @@ impl WasmMlsClient {
             .collect())
     }
 
+    /// Classifies `group_id` for the admission rule (`mls_core::admission`): `"closed"` for a
+    /// conversation, `"open"` for a community or salon key group, whose members enter by external
+    /// commit by design. Any other name is rejected. The caller checkpoints the state after it.
+    #[wasm_bindgen]
+    pub fn set_admission_policy(
+        &mut self,
+        group_id: String,
+        policy: String,
+    ) -> Result<(), JsValue> {
+        let policy = mls_core::AdmissionPolicy::parse(&policy)
+            .ok_or_else(|| JsValue::from_str(&format!("unknown admission policy '{policy}'")))?;
+        self.manager.set_admission_policy(&group_id, policy);
+        Ok(())
+    }
+
     /// Remove all devices of one or more users from a group.
     /// `user_ids` is a JS Array of strings (usernames/identities).
     /// Returns [commit: Uint8Array, group_info: Uint8Array]: the commit to broadcast to remaining
@@ -1094,6 +1124,18 @@ impl WasmMlsClient {
     pub fn export_group_info(&self, group_id: String) -> Result<Vec<u8>, JsValue> {
         self.manager
             .export_group_info(&group_id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Whether an external commit built on this GroupInfo would bring this device in as a FURTHER
+    /// DEVICE OF A MEMBER (`MlsManager::external_join_is_a_further_device`).
+    #[wasm_bindgen]
+    pub fn external_join_is_a_further_device(
+        &self,
+        group_info_bytes: Vec<u8>,
+    ) -> Result<bool, JsValue> {
+        self.manager
+            .external_join_is_a_further_device(&group_info_bytes)
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 

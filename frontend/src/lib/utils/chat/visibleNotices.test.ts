@@ -26,6 +26,7 @@ import { inviteMembersToGroup } from './groupCreation';
 import { buildHistoryDigest, diffHistoryDigest, isEmptyHistoryDiff } from './historyManifest';
 import { historyStateKey } from './historyStateKey';
 import { sendVisibleNotice, type NoticeWriter } from './visibleNotices';
+import { appMessageSentAtMs } from './messageUtils';
 import { handleSystemEvent } from '$lib/mls-client/messagePipeline/systemMessageHandler';
 import { applyReplaySystemEvent } from './historySystemEvents';
 
@@ -84,6 +85,7 @@ function inviteDeps(addMessageToChat: Mock<NoticeWriter>) {
   const mlsService = createMlsServiceStub();
   vi.mocked(mlsService.fetchUserDevices).mockResolvedValue([{ deviceId: 'bob-dev' }] as never);
   vi.mocked(mlsService.acquireAddLock).mockResolvedValue(true);
+  vi.mocked(mlsService.acquireAddLockAnswer).mockResolvedValue('taken');
   vi.mocked(mlsService.addMembersBulk).mockResolvedValue({
     addedDeviceIds: ['bob-dev'],
     skipped: [],
@@ -327,6 +329,7 @@ describe('the archive replay draws the photo notice too', () => {
       deletedMessages: new Map(),
       editedMessages: new Map(),
       readWatermarkUpdates: {},
+      serverReadWatermarkUpdates: {},
       historyFloorUpdate: { at: 0 },
       pushPendingMessage: (entry: { messageId?: string; senderId: string }) => pushed.push(entry),
       dropOwnExcluded: async (messages: unknown) => messages,
@@ -359,6 +362,7 @@ async function memberRowIdFor(frame: NonNullable<ReturnType<typeof decodeAppMess
     convoKey: GROUP,
     senderNorm: ALICE,
     messageId: frame.messageId ?? undefined,
+    sentAt: appMessageSentAtMs(frame.sentAt),
     persistMlsStateNow: vi.fn(),
   } as never);
   const calls = addMessageToChat.mock.calls as unknown as Array<
@@ -367,3 +371,88 @@ async function memberRowIdFor(frame: NonNullable<ReturnType<typeof decodeAppMess
   expect(calls).toHaveLength(1);
   return calls[0][3].messageId;
 }
+
+describe('every copy of a notice is ordered by the server acceptance of its frame', () => {
+  const writer = () => ({
+    contactName: GROUP,
+    actor: ALICE,
+    addMessageToChat: vi.fn<NoticeWriter>(async () => {}),
+  });
+
+  it("the acting device's own row carries the server time its send was answered with", async () => {
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.sendMessage).mockResolvedValue({
+      sealed: new Uint8Array(),
+      receivedAt: AT + 40,
+    } as never);
+    const own = writer();
+    await sendVisibleNotice(mlsService, GROUP, 'groupRenamed', { newName: 'x' }, own);
+    const [frame] = sentFrames(mlsService);
+    const options = own.addMessageToChat.mock.calls[0][3];
+    expect(options?.serverTimestamp).toBe(AT + 40);
+    expect(options?.timestamp?.getTime()).toBe(appMessageSentAtMs(frame!.sentAt));
+  });
+
+  it('a send answered with no server time is reported at ERROR, the row still written', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = createMlsServiceStub();
+    vi.mocked(mlsService.sendMessage).mockResolvedValue({
+      sealed: new Uint8Array(),
+      receivedAt: null,
+    } as never);
+    const own = writer();
+    await sendVisibleNotice(mlsService, GROUP, 'groupRenamed', { newName: 'x' }, own);
+    expect(own.addMessageToChat).toHaveBeenCalledTimes(1);
+    expect(own.addMessageToChat.mock.calls[0][3]?.serverTimestamp).toBeUndefined();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('no receive time'));
+    error.mockRestore();
+  });
+
+  /** Replays `frame` from the archive with `timestamp` as the server's time. */
+  async function replay(
+    frame: NonNullable<ReturnType<typeof decodeAppMessage>>,
+    timestamp: string
+  ) {
+    const pushed: Array<{ messageId?: string; timestamp?: Date; serverTimestamp?: number }> = [];
+    await applyReplaySystemEvent({
+      parsed: { system: frame.system, messageId: frame.messageId ?? '', sentAt: frame.sentAt },
+      msg: { sender_id: ALICE, timestamp },
+      contactName: GROUP,
+      userId: 'bob',
+      conversationId: GROUP,
+      getConversation: () => ({ id: GROUP, messages: [] }),
+      setConversation: vi.fn(),
+      messageReactions: new Map(),
+      reactionUpdates: new Map(),
+      deletedMessages: new Map(),
+      editedMessages: new Map(),
+      readWatermarkUpdates: {},
+      serverReadWatermarkUpdates: {},
+      historyFloorUpdate: { at: 0 },
+      pushPendingMessage: (entry: (typeof pushed)[number]) => pushed.push(entry),
+      dropOwnExcluded: async (messages: unknown) => messages,
+    } as never);
+    return pushed;
+  }
+
+  it('the archive replay carries the frame sentAt and the archive server time', async () => {
+    const mlsService = createMlsServiceStub();
+    await sendVisibleNotice(mlsService, GROUP, 'groupRenamed', { newName: 'x' }, writer());
+    const [frame] = sentFrames(mlsService);
+    const pushed = await replay(frame!, '2026-10-25T10:00:00.000Z');
+    expect(pushed).toHaveLength(1);
+    expect(pushed[0].timestamp?.getTime()).toBe(appMessageSentAtMs(frame!.sentAt));
+    expect(pushed[0].serverTimestamp).toBe(Date.parse('2026-10-25T10:00:00.000Z'));
+  });
+
+  it('an archive row with no readable time and a frame with no sentAt is REFUSED, never clock-dated', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mlsService = createMlsServiceStub();
+    await sendVisibleNotice(mlsService, GROUP, 'groupRenamed', { newName: 'x' }, writer());
+    const [frame] = sentFrames(mlsService);
+    const pushed = await replay({ ...frame!, sentAt: undefined } as never, 'not a date');
+    expect(pushed).toHaveLength(0);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('REFUSED'));
+    error.mockRestore();
+  });
+});

@@ -7,9 +7,7 @@
     deleteAssociationLogo,
     associationSecondLogoSrc,
     listAssociations,
-    listAssociationCategories,
     type Association,
-    type AssociationCategory,
     type LogoSlot,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -17,6 +15,8 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
   import { wordingFor } from '$lib/associations/kindWording';
+  import { dependencyRefusalMessage } from '$lib/associations/dependencies';
+  import { Log } from '$lib/utils/Log';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { associationPickerOptions } from '$lib/associations/selectGroups';
@@ -28,13 +28,19 @@
 
   interface Props {
     asso: Association;
-    /** Whether the caller may edit the profile and logo (MANAGE_MEMBERS / global admin). */
+    /** Whether the caller may edit the profile and logo (`EDIT_PROFILE`, `editRights().profile`). */
     canEdit: boolean;
+    /**
+     * Whether the caller may change a list's parent association: the platform administrator alone
+     * (`UPDATE_FIELD_RIGHTS.parentAssociationId`, `editRights().parent`). Anyone else is never
+     * shown the picker, and the save never sends the field.
+     */
+    canEditParent?: boolean;
     /** Called with the refreshed association after any successful mutation. */
     onUpdated: (a: Association) => void;
   }
 
-  let { asso, canEdit, onUpdated }: Props = $props();
+  let { asso, canEdit, canEditParent = false, onUpdated }: Props = $props();
 
   // Editable copies seeded once from the association passed at mount.
   const initial = untrack(() => asso);
@@ -45,41 +51,38 @@
   let editColor = $state(initial.color ?? '');
   /** Public contact e-mail, or "" when none. */
   let editContactEmail = $state(initial.contactEmail ?? '');
-  /** Primary thematic category id ("" = uncategorized), used by the "Carte de la Vie Asso" poster. */
-  let editCategoryId = $state(initial.categoryId ?? '');
-  /** Managed thematic categories, loaded once for the picker. */
-  let categoryOptions = $state<AssociationCategory[]>([]);
 
-  // ── List-only fields (campaign year, parent association, optional 2nd theme) ──
+  // ── List-only fields (campaign year, optional 2nd theme; the parent for the platform admin) ──
   const isList = initial.type === 'list';
   let editPromo = $state<number | ''>(initial.promo ?? '');
-  let editParentId = $state(initial.parentAssociationId ?? '');
   let editName2 = $state(initial.name2 ?? '');
-  /** Candidate parent associations (regular associations only), for the select. */
+  /**
+   * The parent association is platform-admin only (`UPDATE_FIELD_RIGHTS`): drawn and sent for
+   * that reader alone, so a profile editor's save never carries a field the server refuses them.
+   */
+  const showParent = $derived(isList && canEditParent);
+  let editParentId = $state(initial.parentAssociationId ?? '');
+  /**
+   * Candidate GOVERNING parents: the BDEs (WP-D1, reform 2.2 - an association governing a space).
+   * A list shown under a non-BDE (G3) is set on `/admin/spaces`, the only place labels are written.
+   */
   let parentOptions = $state<Association[]>([]);
   const parentPickerOptions = $derived<PickerOption[]>([
     { value: '', label: m.list_new_parent_none() },
     ...associationPickerOptions(parentOptions),
   ]);
-  const categoryPickerOptions = $derived<PickerOption[]>([
-    { value: '', label: m.asso_edit_category_none() },
-    ...categoryOptions.map((c) => ({ value: c.id, label: c.label })),
-  ]);
 
   onMount(async () => {
-    // Load the thematic categories for regular associations (used by the poster generator).
-    if (!isList) {
+    if (isList) {
+      if (!untrack(() => canEditParent)) return;
       try {
-        categoryOptions = await listAssociationCategories();
-      } catch {
-        categoryOptions = [];
+        parentOptions = (await listAssociations('association')).filter(
+          (a) => !a.archived && a.isBDE && !a.parentAssociationId
+        );
+      } catch (err) {
+        console.warn('[ASSO] parent candidates unavailable for the profile picker', err);
+        parentOptions = [];
       }
-      return;
-    }
-    try {
-      parentOptions = (await listAssociations('association')).filter((a) => !a.archived);
-    } catch {
-      parentOptions = [];
     }
   });
 
@@ -126,24 +129,27 @@
         ...(isList
           ? {
               promo: editPromo === '' ? null : Number(editPromo),
-              parentAssociationId: editParentId || null,
               name2: editName2.trim() || null,
+              // Sent only when changed: an unchanged parent is not a dependency write to judge.
+              ...(showParent && (editParentId || null) !== (asso.parentAssociationId ?? null)
+                ? { parentAssociationId: editParentId || null }
+                : {}),
             }
-          : { categoryId: editCategoryId || null }),
+          : {}),
       });
       editDescription = updated.description ?? '';
       editBioMarkdown = updated.bioMarkdown ?? '';
       editColor = updated.color ?? '';
       editContactEmail = updated.contactEmail ?? '';
-      editCategoryId = updated.categoryId ?? '';
       editPromo = updated.promo ?? '';
-      editParentId = updated.parentAssociationId ?? '';
       editName2 = updated.name2 ?? '';
+      editParentId = updated.parentAssociationId ?? '';
       onUpdated(updated);
       saveSuccess = true;
       setTimeout(() => (saveSuccess = false), 3500);
     } catch (err) {
-      settingsError = m.common_save_error();
+      Log.d('asso.profile.save failed', err);
+      settingsError = dependencyRefusalMessage(err) ?? m.common_save_error();
     } finally {
       saving = false;
     }
@@ -198,7 +204,7 @@
         <p class="text-text-main ml-1 text-sm font-bold">{label}</p>
       {/if}
       <div class="flex flex-wrap items-start gap-4">
-        <AssociationAvatar name={asso.name} logoUrl={currentLogo} size="lg" />
+        <AssociationAvatar id={asso.id} name={asso.name} logoUrl={currentLogo} size="lg" />
         {#if canEdit}
           <div class="flex flex-wrap gap-2">
             <button
@@ -249,19 +255,21 @@
       bind:value={editPromo}
       placeholder="2027"
     />
-    <div>
-      <label for="edit-list-parent" class="text-text-main mb-2 ml-1 block text-sm font-bold">
-        {m.list_new_parent_label()}
-      </label>
-      <Picker
-        id="edit-list-parent"
-        value={editParentId}
-        options={parentPickerOptions}
-        onValueChange={(v) => (editParentId = v)}
-        label={m.list_new_parent_label()}
-        variant="field"
-      />
-    </div>
+    {#if showParent}
+      <div>
+        <label for="edit-list-parent" class="text-text-main mb-2 ml-1 block text-sm font-bold">
+          {m.list_new_parent_label()}
+        </label>
+        <Picker
+          id="edit-list-parent"
+          value={editParentId}
+          options={parentPickerOptions}
+          onValueChange={(v) => (editParentId = v)}
+          label={m.list_new_parent_label()}
+          variant="field"
+        />
+      </div>
+    {/if}
   {/if}
 
   <Input
@@ -318,23 +326,6 @@
       <ColorPicker bind:value={editColor} label={m.asso_edit_color_picker_label()} />
     </div>
   </div>
-
-  {#if !isList}
-    <div>
-      <label for="edit-asso-category" class="text-text-main mb-2 ml-1 block text-sm font-bold">
-        {m.asso_edit_category_label()}
-      </label>
-      <Picker
-        id="edit-asso-category"
-        value={editCategoryId}
-        options={categoryPickerOptions}
-        onValueChange={(v) => (editCategoryId = v)}
-        label={m.asso_edit_category_label()}
-        variant="field"
-      />
-      <p class="text-text-muted mt-1.5 ml-1 text-xs">{m.asso_edit_category_hint()}</p>
-    </div>
-  {/if}
 
   <div class="border-cn-border/70 bg-cn-bg text-text-muted space-y-3 rounded-xl border p-3 text-xs">
     <p class="text-text-main font-semibold">{m.asso_edit_preview_label()}</p>

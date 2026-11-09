@@ -9,6 +9,9 @@ import {
 } from './groupActions';
 import { enumerateNotReadyGroups, markGroupNotReady } from './notReadyRegistry';
 
+vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
+import { showToast } from '$lib/stores/toast.svelte';
+
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
 }));
@@ -842,9 +845,9 @@ describe('discoverMissingGroups - a 1v1 pending deletion must not block its repl
 /**
  * A CONVERSATION THIS ACCOUNT WAS NEVER ADMITTED TO: a declined joiner, or a link ask nobody
  * answered, kept a sidebar row captioned as an established channel that never existed. The server's
- * list says, of this device's seat, whether it is an invitation-link ask
- * (`deviceMembership.awaitingAdmission`); the row carries it durably, and a never-admitted row the
- * list stops naming goes.
+ * list says, of the account's seat, whether it is an invitation-link ask (`awaitingAdmission` on the
+ * row, said whether or not this device holds a device row there); the row carries it durably, and a
+ * never-admitted row the list stops naming goes.
  */
 describe('discoverMissingGroups - a never-admitted conversation', () => {
   const row = (id: string, awaitingAdmission?: boolean): Conversation => ({
@@ -868,6 +871,7 @@ describe('discoverMissingGroups - a never-admitted conversation', () => {
       admitted: false,
       awaitingAdmission,
     },
+    awaitingAdmission,
   });
   const run = (
     conversations: Map<string, Conversation>,
@@ -914,6 +918,37 @@ describe('discoverMissingGroups - a never-admitted conversation', () => {
     expect(conversations.has('declined-id')).toBe(false);
     expect(deleteConversation).toHaveBeenCalledWith('declined-id');
     expect(mlsService.getGroupServerStatus).not.toHaveBeenCalledWith('declined-id');
+  });
+
+  it('tells the person once, in plain words, that the request was not accepted or expired', async () => {
+    vi.mocked(showToast).mockClear();
+    const conversations = new Map([['declined-id', row('declined-id', true)]]);
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue([listed('other-id', false)]),
+    });
+
+    await run(conversations, mlsService);
+    // A second pass finds no row any more: nothing more is said.
+    await run(conversations, mlsService);
+
+    expect(showToast).toHaveBeenCalledTimes(1);
+    const [text, type] = vi.mocked(showToast).mock.calls[0]!;
+    expect(type).toBe('info');
+    expect(text).toMatch(/pas été acceptée|was not accepted/);
+    expect(text).not.toMatch(/session|MLS|epoch|serveur|server/i);
+  });
+
+  it('says nothing while the list cannot be believed, because nothing was removed', async () => {
+    vi.mocked(showToast).mockClear();
+    const conversations = new Map([['ask-id', row('ask-id', true)]]);
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue([]),
+      getLocalGroups: vi.fn().mockReturnValue(['held-id']),
+    });
+
+    await run(conversations, mlsService);
+
+    expect(showToast).not.toHaveBeenCalled();
   });
 
   it('leaves an unflagged placeholder absent from the list to the fate decision, as before', async () => {

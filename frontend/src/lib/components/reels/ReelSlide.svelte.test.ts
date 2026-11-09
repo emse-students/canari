@@ -11,11 +11,23 @@ import { flushSync, mount, unmount } from 'svelte';
 import ReelSlide from './ReelSlide.svelte';
 import type { PostEntity } from '$lib/posts/api';
 import { m } from '$lib/paraglide/messages';
+import { fireResize, useResizeObserverStub } from '../../../test/resizeObserverStub';
+
+useResizeObserverStub();
 
 vi.mock('$lib/reels/reelPreload', () => ({
   ReelPreload: class {
     stop() {}
   },
+}));
+/** The first frames this device decoded, by media id (`reelPosters`). */
+const devicePosters = new Map<string, string>();
+vi.mock('$lib/reels/reelPosters.svelte', () => ({
+  reelPosterUrl: (id: string) => devicePosters.get(id) ?? null,
+  captureReelPoster: async () => {},
+}));
+vi.mock('$lib/utils/mediaPlaceholder', () => ({
+  placeholderDataUrl: (hash?: string) => (hash ? `data:image/png;thumbhash,${hash}` : null),
 }));
 vi.mock('$lib/components/posts/PostMedia.svelte', async () => ({
   default: (await import('./PostMediaStub.test-helper.svelte')).default,
@@ -63,6 +75,7 @@ afterEach(() => {
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
   tall = true;
+  devicePosters.clear();
 });
 
 function reel(overrides: Partial<PostEntity> = {}): PostEntity {
@@ -85,12 +98,15 @@ function reel(overrides: Partial<PostEntity> = {}): PostEntity {
   };
 }
 
-function render(post: PostEntity, active = true) {
+function render(post: PostEntity, active = true, extra: Record<string, unknown> = {}) {
   const target = document.body.appendChild(document.createElement('div'));
   const instance = mount(ReelSlide, {
     target,
-    props: { post, authToken: 'tok', active, preload: false },
+    props: { post, authToken: 'tok', active, preload: false, ...extra },
   });
+  flushSync();
+  // The caption's first overflow read is answered by the observer's first callback (`watchClampOverflow`).
+  fireResize();
   flushSync();
   mounted.push(() => unmount(instance));
   const q = <T extends Element>(s: string) => target.querySelector<T>(s);
@@ -288,4 +304,62 @@ it('a reel with its video, or one off screen, says nothing', () => {
   } finally {
     error.mockRestore();
   }
+});
+
+/**
+ * WHAT A REEL SHOWS BEFORE ITS FIRST FRAME (owner, 2026-10-31: a yellow play glyph on a neutral box
+ * while a reel loaded). Its first frame - the sharp one this device decoded, else the publisher's
+ * ThumbHash - on the reel on screen and on its neighbour alike, and never the glyph.
+ */
+const withHash = () =>
+  reel({
+    media: [
+      {
+        type: 'video',
+        mediaId: 'm-r1',
+        key: 'k',
+        iv: 'i',
+        mimeType: 'video/mp4',
+        size: 1,
+        placeholder: 'HASH',
+      },
+    ],
+  });
+
+it('a neighbour draws the publisher first-frame ThumbHash, not a play glyph', () => {
+  const { q } = render(withHash(), false);
+  expect(q('[data-video-first-frame-poster]')!.getAttribute('src')).toBe(
+    'data:image/png;thumbhash,HASH'
+  );
+  expect(q('.bg-cn-yellow')).toBeNull();
+});
+
+it('the sharp first frame this device decoded wins over the ThumbHash', () => {
+  devicePosters.set('m-r1', 'blob:frame');
+  const { q } = render(withHash(), false);
+  expect(q('[data-video-first-frame-poster]')!.getAttribute('src')).toBe('blob:frame');
+});
+
+it('the reel on screen hands its first frame to the player while it loads', () => {
+  const { q } = render(withHash(), true);
+  expect(q('[data-post-media-stub]')!.getAttribute('data-poster')).toBe(
+    'data:image/png;thumbhash,HASH'
+  );
+});
+
+it('an old reel with no picture of its frame draws the black frame, not a play glyph', () => {
+  const { q } = render(reel(), false);
+  expect(q('[data-video-first-frame-poster]')).toBeNull();
+  expect(q('.bg-cn-yellow')).toBeNull();
+});
+
+it("tells the opener its file is GONE on a 410 only - a conversation's reel records it (RC-6)", () => {
+  const onMediaGone = vi.fn();
+  const { q } = render(reel(), true, { onMediaGone });
+  const stub = q<HTMLElement>('[data-post-media-stub]')!;
+  stub.dispatchEvent(new CustomEvent('stubfailed', { detail: 'unreachable' }));
+  stub.dispatchEvent(new CustomEvent('stubfailed', { detail: 'not-found' }));
+  expect(onMediaGone).not.toHaveBeenCalled();
+  stub.dispatchEvent(new CustomEvent('stubfailed', { detail: 'expired' }));
+  expect(onMediaGone).toHaveBeenCalledTimes(1);
 });

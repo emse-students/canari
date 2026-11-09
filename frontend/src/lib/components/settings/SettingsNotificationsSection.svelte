@@ -7,7 +7,7 @@
     type NotificationCategory,
   } from '$lib/notifications/categories';
   import { m } from '$lib/paraglide/messages';
-  import SettingsMutedAssociations from './SettingsMutedAssociations.svelte';
+  import SettingsAccountBells from './SettingsAccountBells.svelte';
 
   /**
    * One switch per notification category, per ACCOUNT: the choice is stored server-side, which
@@ -24,6 +24,9 @@
     reactions: { label: m.settings_notif_reactions_label, desc: m.settings_notif_reactions_desc },
     events: { label: m.settings_notif_events_label, desc: m.settings_notif_events_desc },
     forms: { label: m.settings_notif_forms_label, desc: m.settings_notif_forms_desc },
+    follows: { label: m.settings_notif_follows_label, desc: m.settings_notif_follows_desc },
+    bookings: { label: m.settings_notif_bookings_label, desc: m.settings_notif_bookings_desc },
+    birthdays: { label: m.settings_notif_birthdays_label, desc: m.settings_notif_birthdays_desc },
   };
 
   let loadError = $state(false);
@@ -96,5 +99,5 @@
     {/each}
   </div>
 
-  <SettingsMutedAssociations />
+  <SettingsAccountBells />
 </div>

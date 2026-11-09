@@ -58,12 +58,13 @@ export const LIVE_RECORDER_MIME = 'video/mp4;codecs=avc1.42E01F,mp4a.40.2';
 export const LIVE_MANIFEST_POLL_MS = 1_000;
 
 /**
- * The SMALLEST buffer a viewer aims to hold ahead of its position, in ms: one segment plus one poll.
+ * The SHORTEST wait for the next media the buffer policy assumes, in ms: one segment plus one poll.
  * A regular producer delivers a segment every {@link LIVE_SEGMENT_MS}, and the viewer learns of it up
  * to one {@link LIVE_MANIFEST_POLL_MS} later, so the wait for the next media is at most their sum - the
- * 3 s behind its buffer's end at which the WP-L1 Mi 9T viewer played 21 min with 0 stalls. The policy
- * raises it to the longest delivery gap it MEASURES (`liveBufferPolicy.ts`): an Android recorder that
- * hands its fragments over in pairs every 4 s (L-F1, 2026-10-26) needs ~5 s.
+ * 3 s at which the WP-L1 Mi 9T viewer played 21 min with 0 stalls. The policy raises it from the
+ * deliveries it sees (`liveBufferPolicy.ts`): an Android recorder that hands its fragments over in
+ * pairs (L-F1, LIVE-STALL-1) waits up to two segments plus a poll, ~5 s. The player ANCHORS one poll
+ * past that wait, 4 s at this floor.
  */
 export const LIVE_PLAYER_MIN_TARGET_BUFFER_MS = LIVE_SEGMENT_MS + LIVE_MANIFEST_POLL_MS;
 
@@ -75,12 +76,12 @@ export const LIVE_PLAYER_MIN_TARGET_BUFFER_MS = LIVE_SEGMENT_MS + LIVE_MANIFEST_
 export const LIVE_PLAYER_CADENCE_WINDOW = 30;
 
 /**
- * How many of the newest segments the join appends: enough to hold
- * {@link LIVE_PLAYER_MIN_TARGET_BUFFER_MS} ahead of the first frame (two), so a viewer does not start
- * on one segment and run dry before the second arrives.
+ * How many of the newest segments the join appends: enough to hold the anchor at the floor
+ * ({@link LIVE_PLAYER_MIN_TARGET_BUFFER_MS} plus one poll, 4 s) ahead of the first frame (two), so a
+ * viewer does not start on one segment and run dry before the second arrives.
  */
 export const LIVE_PLAYER_JOIN_SEGMENTS = Math.ceil(
-  LIVE_PLAYER_MIN_TARGET_BUFFER_MS / LIVE_SEGMENT_MS
+  (LIVE_PLAYER_MIN_TARGET_BUFFER_MS + LIVE_MANIFEST_POLL_MS) / LIVE_SEGMENT_MS
 );
 
 /**
@@ -124,18 +125,22 @@ export const LIVE_PLANNING_VIEWER_BPS = 3_100_000;
 export const LIVE_PLAYER_DRIFT_SLACK_MS = 2 * LIVE_SEGMENT_MS;
 
 /**
- * How many NEW segments one manifest may bring before the viewer skips to the newest instead of
- * playing them all: more than two means it fell behind (a background, a lost network, a slow link),
- * and catching up by playing the backlog would keep it behind for good.
- */
-export const LIVE_PLAYER_CATCHUP_SEGMENTS = 2;
-
-/**
  * How long the broadcaster may go without a stored segment before the viewer says "reconnecting",
  * in ms: three segments. Read from the manifest's `serverNow - lastSegmentAt`, both the database's
  * clock - never the device's. The live itself ends on the SERVER's 60 s window, never on this.
  */
 export const LIVE_BROADCASTER_QUIET_MS = 3 * LIVE_SEGMENT_MS;
+
+/**
+ * The longest the engine's own wait (a `waiting` with media buffered ahead in the playhead's range:
+ * a decoder or renderer behind, nothing missing) may hold the picture before it counts as a stall,
+ * in ms. Under it the viewer neither seeks nor stalls - the old forward seek skipped media for a wait
+ * no seek shortens (LIVE-STALL-1, `1.5.1-alpha.8`: ~130 ms at 55.56, then 0.44 s skipped). No policy
+ * constant measures a freeze, so half a second: about where a viewer reads a pause as a hitch. ONE
+ * value, printed by the player and read by the rig's judge (`liverows.mjs`), which counts a longer
+ * hold as a stall.
+ */
+export const LIVE_PLAYER_HELD_WAIT_BUDGET_MS = 500;
 
 /** How much played media the viewer keeps behind its position, in ms, before trimming the buffer. */
 export const LIVE_PLAYER_KEEP_BEHIND_MS = 10_000;

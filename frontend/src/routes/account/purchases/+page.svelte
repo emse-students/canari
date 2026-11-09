@@ -20,7 +20,7 @@
     productId: string | null;
     amountCents: number;
     paymentMethod: 'online' | 'stripe' | 'cash';
-    status: 'paid' | 'pending_cash' | 'cancelled' | 'expired';
+    status: 'paid' | 'paid_not_granted' | 'pending_cash' | 'cancelled' | 'expired' | 'refunded';
     stripePaymentIntentId: string | null;
     associationId: string;
     productName: string;
@@ -65,9 +65,11 @@
     return (
       {
         paid: m.purchases_status_paid(),
+        paid_not_granted: m.purchases_status_paid_not_granted(),
         pending_cash: m.purchases_status_pending_cash(),
         cancelled: m.purchases_status_cancelled(),
         expired: m.purchases_status_expired(),
+        refunded: m.purchases_status_refunded(),
       }[status] ?? status
     );
   }
@@ -75,7 +77,7 @@
   function statusClass(status: PurchaseRecord['status']): string {
     return status === 'paid'
       ? 'bg-emerald-100 text-emerald-700'
-      : status === 'pending_cash'
+      : status === 'pending_cash' || status === 'paid_not_granted'
         ? 'bg-amber-100 text-amber-700'
         : 'bg-cn-surface-alt text-text-muted';
   }

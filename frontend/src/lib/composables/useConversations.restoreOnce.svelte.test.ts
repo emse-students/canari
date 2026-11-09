@@ -16,6 +16,19 @@ vi.mock('$lib/utils/chat/conversations', async (importOriginal) => {
   return { ...actual, loadExistingConversations };
 });
 
+// The archive read each owed replay makes: counted, and the place a test drops the link mid-replay.
+const withMlsBulkIngest = vi.hoisted(() =>
+  vi.fn(async (_mls: unknown, run: () => unknown) => run())
+);
+vi.mock('$lib/mls-client/mlsBulkIngest', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/mls-client/mlsBulkIngest')>();
+  return { ...actual, withMlsBulkIngest };
+});
+vi.mock('$lib/utils/chat/history', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/utils/chat/history')>();
+  return { ...actual, replayConversationHistory: vi.fn(async () => undefined) };
+});
+
 // Same isolation reasoning as the other composable tests: `useConversations` is reachable from the
 // global chat singleton's own module-scope instantiation, so importing it directly closes a cycle.
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
@@ -29,6 +42,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 
 const { useConversations } = await import('./useConversations.svelte');
 const { reportRejectionOnce } = await import('$lib/utils/reportRejectionOnce');
+const { connectivity } = await import('$lib/stores/connectivity.svelte');
 
 function makeCtx(userId = 'u1') {
   const mls = {
@@ -260,5 +274,162 @@ describe('loadAndRestoreConversations - one restore at a time, at most one queue
     await convs.loadAndRestoreConversations(makeCtx());
     await convs.loadAndRestoreConversations(makeCtx());
     expect(loadExistingConversations).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * THE ARCHIVES A RESTORE SKIPPED ON A LINK KNOWN DOWN ARE REPLAYED ON THE NEXT RECONNECT, ONCE.
+ * The restore runs at boot and on a Welcome only; without this a skipped archive waited for the
+ * conversation's next open (review of #2726).
+ */
+describe('archive replays a restore skipped on a link known down', () => {
+  beforeEach(() => {
+    connectivity.reset();
+    // Node's `navigator` has no `onLine`, which `reset` reads as "no network": start online.
+    connectivity.isOnline = true;
+    // Node has no `localStorage`; no stream cursor held, so each load goes straight to the replay.
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {}, removeItem: () => {} });
+  });
+  afterEach(() => {
+    connectivity.reset();
+    vi.unstubAllGlobals();
+  });
+
+  /** A restore that seeds `g-1` and reports its archive replay skipped. */
+  function restoreThatSkips() {
+    loadExistingConversations.mockImplementation(
+      async (args: {
+        conversations: Map<string, unknown>;
+        onArchiveReplaysSkipped?: (ids: string[]) => void;
+      }) => {
+        args.conversations.set('g-1', { id: 'g-1', messages: [] });
+        args.onArchiveReplaysSkipped?.(['g-1']);
+      }
+    );
+  }
+
+  const replayLines = (ctx: never) =>
+    (ctx as unknown as { log: ReturnType<typeof vi.fn> }).log.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .filter((l: string) => l.includes('[CATCHUP] link back'));
+
+  it('replays them at the first reconnect the server answers, and only then', async () => {
+    restoreThatSkips();
+    const convs = useConversations();
+    const ctx = makeCtx();
+    connectivity.notifyServerUnreachable();
+
+    await convs.loadAndRestoreConversations(ctx);
+    expect(replayLines(ctx)).toEqual([]);
+
+    connectivity.notifyServerReachable();
+    await settle();
+    expect(replayLines(ctx)).toEqual([
+      '[CATCHUP] link back - replaying 1 archive(s) skipped while it was down',
+    ]);
+
+    // ONCE: a later edge owes nothing.
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await settle();
+    expect(replayLines(ctx)).toHaveLength(1);
+  });
+
+  it('re-owes what is left when the link drops mid-replay, and replays it at the next reconnect', async () => {
+    loadExistingConversations.mockImplementation(
+      async (args: {
+        conversations: Map<string, unknown>;
+        onArchiveReplaysSkipped?: (ids: string[]) => void;
+      }) => {
+        args.conversations.set('g-1', { id: 'g-1', messages: [] });
+        args.conversations.set('g-2', { id: 'g-2', messages: [] });
+        args.onArchiveReplaysSkipped?.(['g-1', 'g-2']);
+      }
+    );
+    const convs = useConversations();
+    const ctx = makeCtx();
+    connectivity.notifyServerUnreachable();
+    await convs.loadAndRestoreConversations(ctx);
+    expect(withMlsBulkIngest).not.toHaveBeenCalled();
+
+    // The first archive's read gets no answer: the link is known down again.
+    withMlsBulkIngest.mockImplementationOnce(async () => {
+      connectivity.notifyServerUnreachable();
+    });
+    connectivity.notifyServerReachable();
+    await settle();
+    await settle();
+    expect(withMlsBulkIngest).toHaveBeenCalledTimes(1);
+    const lines = (ctx as unknown as { log: ReturnType<typeof vi.fn> }).log.mock.calls.map(
+      (c: unknown[]) => String(c[0])
+    );
+    expect(lines.filter((l) => l.includes('dropped again'))).toEqual([
+      '[CATCHUP] the link dropped again - 1 archive replay(s) owed to the next reconnect',
+    ]);
+
+    // The next answered reconnect replays the one left, and only it.
+    connectivity.notifyServerReachable();
+    await settle();
+    await settle();
+    expect(withMlsBulkIngest).toHaveBeenCalledTimes(2);
+    expect(replayLines(ctx)).toEqual([
+      '[CATCHUP] link back - replaying 2 archive(s) skipped while it was down',
+      '[CATCHUP] link back - replaying 1 archive(s) skipped while it was down',
+    ]);
+    vi.unstubAllGlobals();
+  });
+
+  // The fast path's store reads throw OUT of the load (outside its own catch): said, and the ids
+  // after it are still replayed - an escape under `void` would end them all, unlogged.
+  it('logs an archive whose load throws and goes on to the next', async () => {
+    loadExistingConversations.mockImplementation(
+      async (args: {
+        conversations: Map<string, unknown>;
+        onArchiveReplaysSkipped?: (ids: string[]) => void;
+      }) => {
+        args.conversations.set('g-1', { id: 'g-1', messages: [] });
+        args.conversations.set('g-2', { id: 'g-2', messages: [] });
+        args.onArchiveReplaysSkipped?.(['g-1', 'g-2']);
+      }
+    );
+    let reads = 0;
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        reads++;
+        if (reads === 1) throw new Error('storage refused');
+        return null;
+      },
+      setItem: () => {},
+      removeItem: () => {},
+    });
+    const convs = useConversations();
+    const ctx = makeCtx();
+    connectivity.notifyServerUnreachable();
+    await convs.loadAndRestoreConversations(ctx);
+
+    connectivity.notifyServerReachable();
+    await settle();
+    await settle();
+
+    const lines = (ctx as unknown as { log: ReturnType<typeof vi.fn> }).log.mock.calls.map(
+      (c: unknown[]) => String(c[0])
+    );
+    expect(lines).toContain('[CATCHUP] owed archive replay of g-1 failed: Error: storage refused');
+    expect(withMlsBulkIngest).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('drops what a sign-out left owed', async () => {
+    restoreThatSkips();
+    const convs = useConversations();
+    const ctx = makeCtx();
+    connectivity.notifyServerUnreachable();
+    await convs.loadAndRestoreConversations(ctx);
+
+    convs.invalidateRestores();
+    connectivity.notifyServerReachable();
+    await settle();
+
+    expect(replayLines(ctx)).toEqual([]);
   });
 });

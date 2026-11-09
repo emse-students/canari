@@ -42,15 +42,32 @@ export const ACCOUNT_KEY = {
    */
   owedInvitations: (userId: string) => `mls_owed_invitations:v1:${userId}`,
   /**
+   * `owedRemovalNotices.ts`: the groups whose "you were removed" line is owed - the removal recorded,
+   * its instant not answered yet (a route this server does not serve, or no answer) - a JSON array.
+   */
+  owedRemovalNotices: (userId: string) => `chat_owed_removal_notices:v1:${userId}`,
+  /**
    * `addLockMarkers.ts`: the add locks this device took and has not had a release ANSWERED for - per
    * group, the token of the acquisition, cleared when its release is answered.
    */
   addLockMarkers: (userId: string) => `mls_add_lock_markers:v1:${userId}`,
+  /** `postComposerDraft.ts`: the account's unsent post (its text and choices, never its media). */
+  postComposerDraft: (userId: string) => `canari_post_composer_draft:${userId}`,
+  /** `postCommentDraft.ts`: the account's unsent comment on one post. */
+  postCommentDraft: (userId: string, postId: string) =>
+    `canari_post_comment_draft:${userId}:${postId}`,
+  /**
+   * `workspaceSnapshot.ts`: the account's last community list, drawn before the network answers.
+   * Called with `''` it is the prefix every sign-out erases.
+   */
+  workspaceSnapshot: (userId: string) => `canari_workspace_snapshot:v1:${userId}`,
   /** `deviceKeyGate.ts`: the device-key change epoch. */
   deviceKeyEpoch: (userId: string) => `canari-device-key-epoch:${userId}`,
   /** `conversations.ts`: the archived conversation ids (lower-cased, as it always was). */
   archivedConversations: (userId: string) =>
     `canari_archived_conversations_${userId.toLowerCase()}`,
+  /** `noHolder.svelte.ts`: conversations the user took off their list because no holder came back. */
+  unopenableHidden: (userId: string) => `canari_unopenable_hidden:v1:${userId}`,
   /** `seenLedgerBounds.ts`: the index of the per-group seen ledgers. */
   seenCipherIndex: (userId: string) => `history_seen_cipher_index:${userId}`,
   /**
@@ -81,8 +98,23 @@ export const ACCOUNT_KEY = {
   salonUnsent: (userId: string) => `canari.salon-unsent.${userId.toLowerCase()}`,
   /** `salonReadMarkQueue.ts`: the salon read marks still owed to the server (lower-cased). */
   salonReadMarks: (userId: string) => `canari.salonReadMarks.${userId.toLowerCase()}`,
-  /** `salonReadMarkQueue.ts`: the DM and group read marks still owed to the outbox (lower-cased). */
+  /**
+   * `salonReadMarkQueue.ts`: the DM and group read marks still owed to the outbox, written before
+   * 2026-10-31 and so on the authors' `sentAt` clock (lower-cased). Read, flushed as `{at}`, never
+   * written again.
+   */
   dmReadMarks: (userId: string) => `canari.dmReadMarks.${userId.toLowerCase()}`,
+  /**
+   * `salonReadMarkQueue.ts`: the DM and group read marks still owed to the outbox since 2026-10-31,
+   * on the SERVER's clock (lower-cased). A key of its own, because a bare number cannot say which
+   * clock it is on and the two leave as different frames.
+   */
+  dmServerReadMarks: (userId: string) => `canari.dmServerReadMarks.${userId.toLowerCase()}`,
+  /**
+   * `serverClock.ts`: the newest instant the server stated to this account on this device - one
+   * number, the ceiling of its own server-clock read marks (lower-cased).
+   */
+  serverClock: (userId: string) => `canari.serverClock.${userId.toLowerCase()}`,
   /**
    * `controlRefusals.svelte.ts`: the reactions, edits, pins and deletes the outbox refused, still
    * offered for Retry - message and group ids, an emoji and instants, never a message's text.
@@ -127,8 +159,20 @@ export const ACCOUNT_KEY = {
    * backups made before it no longer open here; cleared by the next export.
    */
   backupOwedAfterKeyMove: (userId: string) => `canari_backup_owed_after_key_move:v1:${userId}`,
+  /**
+   * `guidance/seenHelps.svelte.ts`: the first-time helps this account has seen, and those whose
+   * record the server has not acknowledged yet - help ids only. The server's `help_seen` is the
+   * truth; this is the optimistic copy that keeps a help from replaying offline.
+   */
+  seenHelps: (userId: string) => `canari_seen_helps:v1:${userId}`,
   /** No longer written; removed by the device reset and the deletion where an old build left it. */
   syncGuideSeen: (userId: string) => `canari_sync_guide_seen_${userId}`,
+  /**
+   * `conversationNicknames.svelte.ts`: one DM's or group's nickname register - names other members
+   * set, so text about people: erased at sign-out as well as by the deletion.
+   */
+  conversationNicknames: (userId: string, groupId: string) =>
+    `canari_nicknames:v1:${userId}:${groupId}`,
   /** `history.ts`: the processed-ciphertext fingerprints of one group. */
   seenCipher: (userId: string, groupId: string) => `history_seen_cipher:${userId}:${groupId}`,
   /** `history.ts`: the last stream id fetched for one group. */
@@ -181,10 +225,14 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.deviceId(userId),
     ACCOUNT_KEY.retiringDeviceIds(userId),
     ACCOUNT_KEY.owedInvitations(userId),
+    ACCOUNT_KEY.owedRemovalNotices(userId),
     ACCOUNT_KEY.addLockMarkers(userId),
     ACCOUNT_KEY.deviceKeyEpoch(userId),
     ACCOUNT_KEY.archivedConversations(userId),
+    ACCOUNT_KEY.unopenableHidden(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),
+    ACCOUNT_KEY.postComposerDraft(userId),
+    ACCOUNT_KEY.workspaceSnapshot(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
     ACCOUNT_KEY.admissionLedger(userId),
     ACCOUNT_KEY.historyClosedSeen(userId),
@@ -192,11 +240,14 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.salonUnsent(userId),
     ACCOUNT_KEY.salonReadMarks(userId),
     ACCOUNT_KEY.dmReadMarks(userId),
+    ACCOUNT_KEY.dmServerReadMarks(userId),
+    ACCOUNT_KEY.serverClock(userId),
     ACCOUNT_KEY.controlRefusals(userId),
     ACCOUNT_KEY.deviceNotices(userId),
     ACCOUNT_KEY.feedStoreEpoch(userId),
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),
+    ACCOUNT_KEY.seenHelps(userId),
     ACCOUNT_KEY.lastActive(userId),
     ACCOUNT_KEY.restoreKeyRegistered(userId),
     ACCOUNT_KEY.backupRecoveryCode(userId),
@@ -208,6 +259,7 @@ function exactKeys(userId: string): string[] {
 function keyPrefixes(userId: string): string[] {
   return [
     ACCOUNT_KEY.seenCipher(userId, ''),
+    ACCOUNT_KEY.conversationNicknames(userId, ''),
     ACCOUNT_KEY.lastStreamId(userId, ''),
     ACCOUNT_KEY.retryCipher(userId, ''),
     ACCOUNT_KEY.lastConnected(userId, ''),
@@ -216,6 +268,7 @@ function keyPrefixes(userId: string): string[] {
     ACCOUNT_KEY.deviceName(userId, ''),
     ACCOUNT_KEY.leafRefresh(userId, ''),
     ACCOUNT_KEY.refusedDevices(userId, ''),
+    ACCOUNT_KEY.postCommentDraft(userId, ''),
   ];
 }
 
@@ -232,7 +285,7 @@ const ID_NAMING_KEYS = [
  * The OTHER account ids this device holds data for that differ from `userId` only by letter case.
  *
  * TWO IDS THAT CASE-FOLD TOGETHER SHARE STORAGE. Four keys lower-case the id (`archivedConversations`,
- * `salonUnsent`, `salonReadMarks`, `dmReadMarks`), and the native database file `canari_<id>.db`
+ * `salonUnsent`, `salonReadMarks`, `dmReadMarks`, `dmServerReadMarks`, `serverClock`), and the native database file `canari_<id>.db`
  * lives on a case-INSENSITIVE filesystem on Windows and macOS: wiping `Abc` there would remove
  * `abc`'s unsent texts and its database. MiConnect subjects are not promised to be case-distinct-safe, so a deletion
  * asks this first and REFUSES when it is not empty - never a guess at which rows are whose.

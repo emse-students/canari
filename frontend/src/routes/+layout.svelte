@@ -2,13 +2,15 @@
   import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import '../app.css';
+  import { pageScrollPaddingClass } from '$lib/components/layout/pageScrollPadding';
+  import { retryFailedMyAssociationsProbe } from '$lib/associations/api';
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
+  import { markRouterReady } from '$lib/navigation/routerReady';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import CallBanner from '$lib/components/layout/CallBanner.svelte';
-  import TabFollowerBanner from '$lib/components/chat/TabFollowerBanner.svelte';
   import Navbar from '$lib/components/navigation/Navbar.svelte';
   import MobileHeader from '$lib/components/navigation/MobileHeader.svelte';
   import AppSidebar from '$lib/components/navigation/AppSidebar.svelte';
@@ -17,7 +19,14 @@
   import NativeTabBar, { nativeTabBar } from '$lib/components/navigation/NativeTabBar.svelte';
   import { screenCover } from '$lib/actions/coversScreen.svelte';
   import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
-  import { releaseCallServiceOfPreviousPage } from '$lib/mobile/androidCallService';
+  import {
+    askCallChannelDndIfOwed,
+    DND_REGRANT_TOAST_MS,
+    releaseCallServiceOfPreviousPage,
+  } from '$lib/mobile/androidCallService';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { releaseIosProximityOfPreviousPage } from '$lib/mobile/iosCallProximity';
+  import { releaseIosIdleTimerOfPreviousPage } from '$lib/mobile/screenAwake';
   import {
     clearEdgeExclusionsForNewDocument,
     excludeLeftEdgeOver,
@@ -26,6 +35,7 @@
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
   import ConfirmDialog from '$lib/components/shared/ConfirmDialog.svelte';
   import AnnouncementModal from '$lib/components/shared/AnnouncementModal.svelte';
+  import GuideOverlay from '$lib/components/guidance/GuideOverlay.svelte';
   import { page } from '$app/state';
   import {
     initHistoryOverlayStack,
@@ -35,7 +45,10 @@
     refreshAppVersionCheck,
     getAppVersionCheck,
     isBelowMinClientVersion,
+    serverFormDrafts,
   } from '$lib/stores/appVersionCheck.svelte';
+  import BootGate from '$lib/components/layout/BootGate.svelte';
+  import { bootSessionBlocks } from '$lib/stores/bootSession.svelte';
   import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
   import IdentitySplitOverlay from '$lib/components/shared/IdentitySplitOverlay.svelte';
   import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
@@ -44,9 +57,12 @@
   import { accountLiveness, clearAuthLocally } from '$lib/stores/auth';
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
-  import NewDeviceBanner from '$lib/components/shared/NewDeviceBanner.svelte';
-  import JoinRequestBanner from '$lib/components/shared/JoinRequestBanner.svelte';
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
+  import PublishQueueBanner from '$lib/components/posts/PublishQueueBanner.svelte';
+  import { startPublishQueue, stopPublishQueue } from '$lib/posts/publishQueue/publishQueue.svelte';
+  import { followBirthdaysToday } from '$lib/birthdays/birthdaysToday.svelte';
+  import { startFormDraftResend, stopFormDraftResend } from '$lib/forms/draftResend';
+  import SlowLinkAnnouncer from '$lib/components/shared/SlowLinkAnnouncer.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
@@ -93,6 +109,9 @@
     pathname === '/login' || pathname.startsWith('/legal') || pathname.startsWith('/f/')
   );
 
+  /** The session question is open: no page is mounted (it would fetch with no token), `BootGate` speaks. */
+  const bootBlocked = $derived(bootSessionBlocks(pathname));
+
   const showMaintenanceAdminBanner = $derived.by(() => {
     const info = getAppVersionCheck();
     return !isBelowMinClientVersion() && info?.maintenance.enabled === true && isGlobalAdmin();
@@ -126,7 +145,12 @@
   const keyboardViewport = $derived(getKeyboardViewport());
   const isKeyboardOpen = $derived(keyboardViewport.isOpen);
 
-  beforeNavigate(({ from, to }) => {
+  beforeNavigate(({ from, to, shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
+    // A membership probe that failed is owed one retry on the next navigation (never a timer).
+    void retryFailedMyAssociationsProbe();
     drainHistoryOverlayStack();
     const fromPath = from?.url.pathname ?? '';
     const toPath = to?.url.pathname ?? '';
@@ -139,11 +163,19 @@
   });
 
   onMount(() => {
+    // The router exists from here: inputs consumed once (the iOS notification tap) wait for this.
+    markRouterReady();
     // A click goes to the component the press began on, never to what a layout change put under it.
     const disposePressedClickGuard = installPressedClickGuard();
     // A page that has just loaded holds no call: an ongoing-call service still up is the orphan of
     // the page before it (a reload mid-call). Once per page load (WP-C-BG-A).
-    if (isAndroidTauriRuntime()) releaseCallServiceOfPreviousPage(window);
+    if (isAndroidTauriRuntime()) {
+      releaseCallServiceOfPreviousPage(window);
+    }
+    // Its iOS twins: the proximity sensor and the idle timer (a call's or a live's) a reloaded page
+    // may have left set.
+    if (isIosTauriRuntime()) releaseIosProximityOfPreviousPage();
+    if (isIosTauriRuntime()) releaseIosIdleTimerOfPreviousPage();
     themeStore.init();
     startTabIndicator();
     publishTextZoom();
@@ -177,7 +209,7 @@
       endSession: async (userId) => {
         await clearAuthLocally();
         await globalSession.releaseDeletedAccount(userId);
-        await goto(resolve('/login'), { replaceState: true });
+        await goto(resolve('/login'), { replace: true });
       },
     });
 
@@ -218,6 +250,17 @@
     );
   });
 
+  // ── The calls channel's Do Not Disturb ask (Android, Canari's ring, 2026-11-01) ──────
+  // Once the user is IN - logged in and past the PIN - never on the login screen, once per page load.
+  let dndAskDone = false;
+  $effect(() => {
+    if (dndAskDone || !isAndroidTauriRuntime() || !globalSession.isLoggedIn) return;
+    dndAskDone = true;
+    askCallChannelDndIfOwed(window, (message, action, onClose) =>
+      showToast(message, 'warning', DND_REGRANT_TOAST_MS, action, onClose)
+    );
+  });
+
   // ── Push notification init ───────────────────────────────────────────────────
   $effect(() => {
     // Wait until the session is fully established (logged in + user info + token present).
@@ -237,6 +280,30 @@
 
       return () => clearTimeout(timer);
     }
+  });
+
+  // -- The background publish queue: the signed-in account's queued posts go on being sent -----
+  // Started once the session is up (its requests need the token), stopped at sign-out; what it holds
+  // stays on the device, so the account's next sign-in resumes it (`posts/publishQueue`).
+  $effect(() => {
+    const userId = globalSession.isLoggedIn ? globalSession.userId : null;
+    if (userId) startPublishQueue(userId);
+    else stopPublishQueue();
+  });
+
+  // -- Today's birthdays: the ring every avatar draws (docs/wiki/birthdays.md) -----------------
+  // Asked once the session is up and on every return to the foreground; forgotten at sign-out.
+  $effect(() => {
+    const userId = globalSession.isLoggedIn ? globalSession.userId : null;
+    if (userId) return followBirthdaysToday(userId);
+  });
+
+  // -- The forms' device copies: edits a closed editor left unsent reach the server -------------
+  // Once the session is up AND the estate says it stores revisions; again at each `online`.
+  $effect(() => {
+    const userId = globalSession.isLoggedIn ? globalSession.userId : null;
+    if (userId && serverFormDrafts() === true) startFormDraftResend(userId);
+    else stopFormDraftResend();
   });
 
   // -- The banner column's height, published so the floating cards can follow it ------------
@@ -513,6 +580,7 @@
    * loses is the slide - `afterNavigate` still plays the entrance the app had before.
    */
   onNavigate((navigation) => {
+    if (navigation.shallow && navigation.type === 'goto') return;
     const slide = swipeNavSlide;
     swipeNavSlide = null;
     if (!slide) return;
@@ -602,7 +670,10 @@
    * `swipeEnterClass` was written - which `onNavigate` does BEFORE the route changes, so the class
    * landed on the page being left and had to be re-added when the path caught up.
    */
-  afterNavigate(() => {
+  afterNavigate(({ shallow, type }) => {
+    // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
+    // change on the same page: not a page the hook is about.
+    if (shallow && type === 'goto') return;
     if (!swipeEnterClass || !pageScrollWrap) return;
     const cls = swipeEnterClass;
     const wrap = pageScrollWrap;
@@ -678,7 +749,11 @@
        included; at 390px it was 84px tall and hid the whole 56px mobile header, so the phone showed
        no top bar at all. A row in the shell's own column cannot overlap it, at any width and for any
        number of banners, with nothing measured and no variable to keep in step. -->
-  <div bind:this={bannerColumn} class="app-banner-column z-(--z-banner) flex shrink-0 flex-col">
+  <div
+    bind:this={bannerColumn}
+    class="app-banner-column z-(--z-banner) flex shrink-0 flex-col"
+    inert={bootBlocked}
+  >
     <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
          property of the whole deployment, so a transient notice must not push it off screen. -->
     <EnvironmentBanner />
@@ -686,25 +761,19 @@
       <MaintenanceAdminBanner />
     {/if}
     <MlsFatalErrorBanner />
-    <!-- A device joined this account: a security fact the owner must see, until seen. -->
-    <NewDeviceBanner />
-    <!-- A new person asking to join a group: only a member's own Add lets them in, so it waits here. -->
-    <JoinRequestBanner />
     <!-- A MINIMISED CALL (2026-10-19) - right after the interrupting facts, before the transients: a
          call in progress is what the reader is doing, and its hang-up must stay at the top of the
          screen, the one edge no native chrome is drawn over (CallBanner). -->
     <CallBanner />
-    <!-- THE LAST TWO JOINED THE COLUMN ON 2026-09-22, and they are the reason it publishes its
-         height. Both were rendered inside the CONTENT column instead, under a comment claiming
-         "pleine largeur, jamais dans la rangee sidebar" - which is the one thing that placement
-         cannot give them, because that column reserves the rail's 6rem gutter. Measured locally in
-         a second tab of one account: the follower banner sat 108px from the left edge and 12px
-         from the right, and it displaced the brand bar 50px down INTO the rail, which is fixed to
-         the window and does not move - so the bar's subtitle was clipped by the rail's card.
-         Strong first, then the two subtle ones: an interrupting fact is never pushed off by a
-         transient. -->
-    <TabFollowerBanner />
+    <!-- THE OFFLINE BANNER JOINED THE COLUMN ON 2026-09-22, and it is the reason the column publishes
+         its height: rendered inside the CONTENT column instead, a banner sits inside the rail's 6rem
+         gutter and displaces the brand bar down INTO the rail, which is fixed to the window (measured
+         then with the follower-tab banner, removed 2026-11-08). Strong first, then the subtle one: an
+         interrupting fact is never pushed off by a transient. -->
     <OfflineBanner />
+    <!-- A post being sent in the background (owner, 2026-11-06): one discreet row per queued post. -->
+    <PublishQueueBanner />
+    <SlowLinkAnnouncer />
     <!-- Only inside the browser built into Messenger, Facebook or Instagram; it decides itself. -->
     <OpenInAppBanner />
   </div>
@@ -714,7 +783,7 @@
        the wrapper above owns `h-(--app-viewport-height,100dvh)` and its padding, and this only ever
        divides what is left. `min-h-0` because a flex child's default `min-height:auto` refuses to
        shrink below its content, which is what turns an overflowing chat list into a page scroll. -->
-  <div class="flex min-h-0 w-full flex-1">
+  <div class="flex min-h-0 w-full flex-1" inert={bootBlocked}>
     <svelte:boundary onerror={(e) => console.error('[ChatBackgroundService] crash recovered:', e)}>
       <ChatBackgroundService />
     </svelte:boundary>
@@ -743,27 +812,16 @@
       <main id="main-content" class="relative flex-1 overflow-hidden">
         <div
           bind:this={pageScrollWrap}
-          class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-(--bottom-nav-reserve) md:pb-0"
+          class="page-scroll-wrap absolute inset-0 overflow-y-auto {pageScrollPaddingClass(
+            !isLoginPage
+          )}"
         >
-          <!-- console.error enters the in-app log (appLog.ts); the route id names the page there,
-               where no URL bar does, and carries no member's id. -->
-          <svelte:boundary
-            onerror={(e) => console.error(`[Layout] page crash on ${page.route.id ?? '?'}:`, e)}
-          >
+          <!-- NO BOUNDARY HERE: SvelteKit 3 wraps every route node in its own, closer to the page,
+               armed with `+error.svelte` and reported through `handleClientError` - one held here
+               could never catch anything (docs/wiki/frontend/architecture.md#a-page-that-crashes). -->
+          {#if !bootBlocked}
             {@render children?.()}
-            {#snippet failed(_error, reset)}
-              <div class="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
-                <p class="text-text-muted text-sm">{m.layout_error_boundary_message()}</p>
-                <button
-                  type="button"
-                  onclick={reset}
-                  class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold"
-                >
-                  {m.common_retry_button()}
-                </button>
-              </div>
-            {/snippet}
-          </svelte:boundary>
+          {/if}
         </div>
       </main>
 
@@ -778,7 +836,11 @@
              the WebView, so no modal can paint over it the way it paints over the web bar. -->
         {#if !isLoginPage}
           <NativeTabBar
-            visible={!isKeyboardOpen && !isMobileConvoOpen && !isFullScreen && !screenCover.covered}
+            visible={!isKeyboardOpen &&
+              !isMobileConvoOpen &&
+              !isFullScreen &&
+              !screenCover.covered &&
+              !bootBlocked}
           />
         {/if}
       {:else if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen && !isFullScreen}
@@ -787,7 +849,10 @@
     </div>
   </div>
 
+  <BootGate />
   <ToastContainer />
   <ConfirmDialog />
   <AnnouncementModal />
+  <!-- The guided tours and first-time hints: it decides itself when the app is quiet enough. -->
+  <GuideOverlay chromeless={isLoginPage} />
 </div>

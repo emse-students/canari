@@ -10,6 +10,8 @@ import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { FormFile } from './entities/form-file.entity';
+import { FormItemImage } from './entities/form-item-image.entity';
+import { FormItemImagesService } from './form-item-images.service';
 import { FormFilesService } from './form-files.service';
 import { FormOrganiserAlertService } from './organiser-alert.service';
 import { FormFileRetentionScheduler } from './form-file-retention.scheduler';
@@ -20,10 +22,22 @@ import { PostsModule } from '../posts/posts.module';
 import { UserTagModule } from '../users/user-tag.module';
 import { PurchaseRecordModule } from '../users/purchase-record.module';
 import { PricingModule } from '../pricing/pricing.module';
+import { ProductCheckout } from '../associations/entities/product-checkout.entity';
+import { LydiaReconciliationService } from './lydia-reconciliation.service';
+import { LydiaReconciliationScheduler } from './lydia-reconciliation.scheduler';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Form, Submission, FormReminder, FormRespondent, FormFile]),
+    TypeOrmModule.forFeature([
+      Form,
+      Submission,
+      FormReminder,
+      FormRespondent,
+      FormFile,
+      FormItemImage,
+      // The boutique attempts the Lydia reconciliation reads (`lydia-reconciliation.service.ts`).
+      ProductCheckout,
+    ]),
     HttpModule.register({ timeout: 30_000, maxRedirects: 0 }),
     ConfigModule,
     AssociationsModule,
@@ -37,8 +51,11 @@ import { PricingModule } from '../pricing/pricing.module';
     FormsService,
     FormOrganiserAlertService,
     FormFilesService,
+    FormItemImagesService,
     FormReminderScheduler,
     FormFileRetentionScheduler,
+    LydiaReconciliationService,
+    LydiaReconciliationScheduler,
     PushService,
   ],
   // FormFilesService: the store and the purge of the `form-file` class, which a booking's file

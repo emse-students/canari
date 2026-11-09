@@ -15,16 +15,42 @@
  * so the loudest reaches -3 dBFS, which keeps the relative levels the palette was chosen with
  * (a reaction stays softer than a message). Files are 44.1 kHz mono 16-bit WAV, the tail trimmed where
  * it falls under -70 dBFS. Only message, mention and reaction ship: send and read are in-app tones.
+ *
+ * THE CALLER'S RINGBACK is rendered here too (`RINGBACK_PHRASE` of the same palette file), into
+ * `frontend/static/sounds/canari_ringback.wav`: one exact loop, at its own lower level - see the
+ * block near the end.
+ *
+ * THE INCOMING-CALL RING (`RING_PHRASE`, the owner's "C1" of 2026-11-01) is rendered last: one
+ * seamless loop of `RING_PERIOD_S` into `res/raw/canari_ring.wav` (Android) and
+ * `static/sounds/canari_ring.wav` (the web page), and five loops of it into the iPhone's CallKit
+ * ringtone `gen/apple/CallSounds/canari_ring_callkit.wav` - see the last block.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GAZOUILLIS, MASTER_GAIN } from '../../frontend/src/lib/utils/soundPalette.ts';
+import {
+  GAZOUILLIS,
+  MASTER_GAIN,
+  RING_PERIOD_S,
+  RING_PHRASE,
+  RINGBACK_PERIOD_S,
+  RINGBACK_PHRASE,
+} from '../../frontend/src/lib/utils/soundPalette.ts';
 
 const SR = 44100;
 const OUT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../frontend/src-tauri/gen/android/app/src/main/res/raw'
+);
+/** The ringback is a WEB asset (played by the page on every platform), served from `static/`. */
+const RINGBACK_OUT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../frontend/static/sounds'
+);
+/** The iPhone's CallKit ringtone is an app-bundle resource, beside the hand-maintained project. */
+const CALLKIT_OUT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../frontend/src-tauri/gen/apple/CallSounds'
 );
 const SHIPPED = ['message', 'mention', 'reaction'];
 const PEAK_TARGET = 0.7; // -3 dBFS
@@ -43,11 +69,24 @@ function prng(seed) {
   };
 }
 
+/** Compares `data` with the committed `file` under `--check`, or writes it; returns the drift count. */
+function emit(file, data, label) {
+  if (check) {
+    if (existsSync(file) && sameSound(readFileSync(file), data)) return 0;
+    console.error(`DRIFT: ${file} differs from the palette`);
+    return 1;
+  }
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, data);
+  console.log(`${label}, ${data.length} bytes -> ${file}`);
+  return 0;
+}
+
 /** The room: noise shaped by (1 - i/len)^3.2, as in the prototype (mono: the files are mono). */
 function impulse() {
   const rand = prng(0x0ca17a);
   const len = Math.floor(SR * REVERB_SECONDS);
-  const ir = new Float32Array(len);
+  const ir = new Float64Array(len);
   let power = 0;
   for (let i = 0; i < len; i++) {
     ir[i] = (rand() * 2 - 1) * (1 - i / len) ** 3.2;
@@ -94,27 +133,86 @@ function renderVoice(v, dry, send) {
   }
 }
 
-/** Direct convolution of `x` with `ir`, skipping silent input (the sounds are short). */
-function convolve(x, ir) {
-  const y = new Float32Array(x.length);
-  for (let i = 0; i < x.length; i++) {
-    const xi = x[i];
-    if (xi === 0) continue;
-    const m = Math.min(ir.length, y.length - i);
-    for (let k = 0; k < m; k++) y[i + k] += xi * ir[k];
+/** In-place iterative radix-2 complex FFT (`inverse` scales by 1/n). */
+function fft(re, im, inverse) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
   }
-  return y;
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = ((inverse ? 2 : -2) * Math.PI) / len;
+    const wr = Math.cos(ang);
+    const wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1;
+      let ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k;
+        const b = a + len / 2;
+        const xr = re[b] * cr - im[b] * ci;
+        const xi = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - xr;
+        im[b] = im[a] - xi;
+        re[a] += xr;
+        im[a] += xi;
+        const ncr = cr * wr - ci * wi;
+        ci = cr * wi + ci * wr;
+        cr = ncr;
+      }
+    }
+  }
+  if (inverse) {
+    for (let i = 0; i < n; i++) {
+      re[i] /= n;
+      im[i] /= n;
+    }
+  }
+}
+
+/**
+ * Convolution of `x` with `ir`, truncated to `x`'s length, by FFT: the ring is five seconds of
+ * sustained notes, where a direct convolution would take minutes. Same result as the direct sum to
+ * far under a 16-bit step.
+ */
+function convolve(x, ir) {
+  let n = 1;
+  while (n < x.length + ir.length) n <<= 1;
+  const ar = new Float64Array(n);
+  const ai = new Float64Array(n);
+  const br = new Float64Array(n);
+  const bi = new Float64Array(n);
+  ar.set(x);
+  br.set(ir);
+  fft(ar, ai, false);
+  fft(br, bi, false);
+  for (let i = 0; i < n; i++) {
+    const r = ar[i] * br[i] - ai[i] * bi[i];
+    ai[i] = ar[i] * bi[i] + ai[i] * br[i];
+    ar[i] = r;
+  }
+  fft(ar, ai, true);
+  return ar.subarray(0, x.length);
 }
 
 function renderSound(name, ir) {
-  const voices = GAZOUILLIS[name];
+  return renderVoices(GAZOUILLIS[name], ir);
+}
+
+/** Renders a list of voices with its room: dry + 18 % wet, the reverb tail included. */
+function renderVoices(voices, ir) {
   const end = Math.max(...voices.map((v) => v.offset + v.dur + 0.05));
   const len = Math.ceil((end + REVERB_SECONDS) * SR);
-  const dry = new Float32Array(len);
-  const send = new Float32Array(len);
+  const dry = new Float64Array(len);
+  const send = new Float64Array(len);
   for (const v of voices) renderVoice(v, dry, send);
   const wet = convolve(send, ir);
-  const out = new Float32Array(len);
+  const out = new Float64Array(len);
   for (let i = 0; i < len; i++) out[i] = dry[i] + wet[i] * WET;
   return out;
 }
@@ -134,7 +232,9 @@ function wav(samples) {
   buf.writeUInt16LE(16, 34);
   buf.write('data', 36);
   buf.writeUInt32LE(samples.length * 2, 40);
-  samples.forEach((s, i) => buf.writeInt16LE(Math.round(Math.max(-1, Math.min(1, s)) * 32767), 44 + i * 2));
+  samples.forEach((s, i) =>
+    buf.writeInt16LE(Math.round(Math.max(-1, Math.min(1, s)) * 32767), 44 + i * 2)
+  );
   return buf;
 }
 
@@ -155,7 +255,8 @@ function sameSound(committed, fresh) {
   if (Math.abs(committed.length - fresh.length) > CHECK_TOLERANCE_SAMPLES * 2) return false;
   const end = Math.min(committed.length, fresh.length) - 1;
   for (let i = 44; i < end; i += 2) {
-    if (Math.abs(committed.readInt16LE(i) - fresh.readInt16LE(i)) > CHECK_TOLERANCE_LSB) return false;
+    if (Math.abs(committed.readInt16LE(i) - fresh.readInt16LE(i)) > CHECK_TOLERANCE_LSB)
+      return false;
   }
   return true;
 }
@@ -173,18 +274,73 @@ for (const { name, samples } of rendered) {
   const kept = samples.slice(0, last + 1).map((s) => s * gain);
   const fade = Math.min(kept.length, Math.floor(SR * 0.02));
   for (let i = 0; i < fade; i++) kept[kept.length - 1 - i] *= i / fade;
-  const file = resolve(OUT, `canari_gazouillis_${name}.wav`);
   const data = wav(kept);
-  if (check) {
-    if (!existsSync(file) || !sameSound(readFileSync(file), data)) {
-      console.error(`DRIFT: ${file} differs from the palette`);
-      drift++;
-    }
-    continue;
-  }
-  mkdirSync(OUT, { recursive: true });
-  writeFileSync(file, data);
-  console.log(`${name}: ${(kept.length / SR).toFixed(2)} s, ${data.length} bytes -> ${file}`);
+  drift += emit(
+    resolve(OUT, `canari_gazouillis_${name}.wav`),
+    data,
+    `${name}: ${(kept.length / SR).toFixed(2)} s`
+  );
 }
 console.log(`common gain x${gain.toFixed(2)} (loudest peak -3 dBFS)`);
+
+// THE CALLER'S RINGBACK (`RINGBACK_PHRASE`, calls.md "The caller's ringback"). Its own level, not the
+// notifications' common gain: it plays for up to the whole ring window, on the earpiece, so its
+// loudest peak sits at RINGBACK_PEAK_DBFS. The file is EXACTLY one loop - the phrase, its room, then
+// silence up to RINGBACK_PERIOD_S - because the `<audio loop>` playing it repeats the whole file, and
+// the pause between phrases is that silence. No fade: the tail is already under the floor long before
+// the end, and the loop point is silence on both sides.
+{
+  const RINGBACK_PEAK_DBFS = -14;
+  const phrase = renderVoices(RINGBACK_PHRASE, ir);
+  const length = Math.round(RINGBACK_PERIOD_S * SR);
+  if (phrase.length > length) {
+    console.error(
+      `RINGBACK: the phrase (${phrase.length} samples) is longer than its loop (${length})`
+    );
+    process.exit(1);
+  }
+  const ringPeak = Math.max(...phrase.map(Math.abs));
+  const ringGain = 10 ** (RINGBACK_PEAK_DBFS / 20) / ringPeak;
+  const loop = new Float32Array(length);
+  for (let i = 0; i < phrase.length; i++) loop[i] = phrase[i] * ringGain;
+  drift += emit(
+    resolve(RINGBACK_OUT, 'canari_ringback.wav'),
+    wav(loop),
+    `ringback: ${RINGBACK_PERIOD_S} s loop`
+  );
+}
+
+// THE INCOMING-CALL RING (`RING_PHRASE`, the owner's "C1" of 2026-11-01; calls.md "The incoming
+// ring"). Rendered exactly as the candidate the owner approved: the voices with their room, then
+// FOLDED circularly onto one loop of RING_PERIOD_S - every sample past the loop's end (the cadence's
+// tail, the room) is added back at its start - so a player's `loop` repeats it with no seam. Its own
+// level, -1 dBFS: a ring must carry across a room, and it plays on the RINGTONE stream, whose volume
+// the user sets apart from the notifications'.
+//
+// Three files, one rendering: the loop for Android (`res/raw`, the channel and the native in-app
+// ring) and for the web page (`static/sounds`, the tone output), and FIVE loops - 25 s, seamless,
+// under the 30 s Apple allows a bundled sound - for CallKit's `ringtoneSound`, which repeats it.
+{
+  const RING_PEAK_DBFS = -1;
+  const CALLKIT_LOOPS = 5;
+  const length = Math.round(RING_PERIOD_S * SR);
+  const voices = renderVoices(RING_PHRASE, ir);
+  const loop = new Float64Array(length);
+  for (let i = 0; i < voices.length; i++) loop[i % length] += voices[i];
+  let ringPeak = 0;
+  for (const s of loop) ringPeak = Math.max(ringPeak, Math.abs(s));
+  const ringGain = 10 ** (RING_PEAK_DBFS / 20) / ringPeak;
+  for (let i = 0; i < length; i++) loop[i] *= ringGain;
+  const one = wav(loop);
+  const label = `ring: ${RING_PERIOD_S} s loop`;
+  drift += emit(resolve(OUT, 'canari_ring.wav'), one, label);
+  drift += emit(resolve(RINGBACK_OUT, 'canari_ring.wav'), one, label);
+  const callkit = new Float64Array(length * CALLKIT_LOOPS);
+  for (let r = 0; r < CALLKIT_LOOPS; r++) callkit.set(loop, r * length);
+  drift += emit(
+    resolve(CALLKIT_OUT, 'canari_ring_callkit.wav'),
+    wav(callkit),
+    `ring (CallKit): ${CALLKIT_LOOPS * RING_PERIOD_S} s`
+  );
+}
 if (drift) process.exit(1);

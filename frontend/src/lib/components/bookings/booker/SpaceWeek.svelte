@@ -1,0 +1,538 @@
+<script lang="ts">
+  import { onMount, untrack, type Snippet } from 'svelte';
+  import { guideAnchorWhen } from '$lib/guidance/guideAnchors.svelte';
+  import MineHereCard from '$lib/components/bookings/booker/MineHereCard.svelte';
+  import { mineHere } from '$lib/bookings/mineHere';
+  import SpaceGrid from '$lib/components/bookings/booker/SpaceGrid.svelte';
+  import PlanningList from '$lib/components/bookings/booker/PlanningList.svelte';
+  import RangeForm from '$lib/components/bookings/booker/RangeForm.svelte';
+  import { planningDays, planningKind } from '$lib/bookings/planning';
+  import ColumnSelect from '$lib/components/bookings/booker/ColumnSelect.svelte';
+  import DayStrip from '$lib/components/bookings/booker/DayStrip.svelte';
+  import WeekBar from '$lib/components/bookings/booker/WeekBar.svelte';
+  import BookingSheet from '$lib/components/bookings/booker/BookingSheet.svelte';
+  import BlockSheet from '$lib/components/bookings/booker/BlockSheet.svelte';
+  import UnitDetailSheet from '$lib/components/bookings/booker/UnitDetailSheet.svelte';
+  import {
+    getSlots,
+    myBookings,
+    type BookerResource,
+    type BookerSpace,
+    type MyBooking,
+    type ResourceSlots,
+    type SlotUnit,
+  } from '$lib/bookings/api';
+  import {
+    BLOCK_LENGTH_CHOICES,
+    bookingUnitLimit,
+    formatWeekRange,
+    freeCount,
+    freeRunFrom,
+    unitDay,
+    unitsInOrder,
+    weekDates,
+    weekLayout,
+    weekReadRange,
+    windowRefusal,
+    WEEK_DAYS,
+  } from '$lib/bookings/grid';
+  import { addDays, localDate } from '$lib/bookings/zonedTime';
+  import {
+    editChoices,
+    editPeople,
+    type EditChoices,
+    type EditPerson,
+  } from '$lib/bookings/editRange';
+  import { currentUserId } from '$lib/stores/userState.svelte';
+  import { describeBookingRefusal } from '$lib/bookings/refusals';
+  import {
+    SCHEDULE_AGENDA_QUERY,
+    isScheduleAgendaViewport,
+    onViewportChange,
+  } from '$lib/utils/viewport';
+  import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
+
+  /**
+   * THE WEEK OF ONE SPACE, ONE COLUMN AT A TIME (WP-B5, WP-R2, WP-R5): days as columns on a desktop
+   * and a planning list under a week strip on a phone (D46, D55; the width decides, as the agenda's
+   * does), the column selector, and the sheets that book, block and read a taken unit. THE WEEK
+   * ROLLS: seven days from today (owner, 2026-11-01), moved by sevens. ONE read holds the week and
+   * the day before it, so the strip's dots, the planning rows, the grid and the column counts come
+   * from the same answer. The booker's page and the organiser's dashboard both draw it - the dashboard in
+   * `block` mode, where a drag or a tap on free units opens "Indisponible" (D50) instead of a booking.
+   */
+  interface Props {
+    space: BookerSpace;
+    /**
+     * The device's clock: it decides what is OFFERED (a unit whose start the booking window
+     * refuses is not), while the server's clock decides every request.
+     */
+    nowMs: number;
+    /** `block`: the organiser's dashboard, a free unit opens the block sheet (WP-R5). */
+    mode?: 'book' | 'block';
+    /** Called after every read of the week, with what it holds: the dashboard's counters. */
+    onWeekRead?: (slots: ResourceSlots[], week: string[]) => void;
+    /** Called after a sheet changed something (a booking, a block, a cancel). */
+    onChanged?: () => void;
+    /** Under "Vos reservations ici" in the side column of the booker's page (`book` mode only). */
+    aside?: Snippet;
+  }
+
+  let { space, nowMs = $bindable(), mode = 'book', onWeekRead, onChanged, aside }: Props = $props();
+
+  type Sheet =
+    | {
+        kind: 'book';
+        resource: BookerResource;
+        run: SlotUnit[];
+        /** The units a drag over the grid already selected (1 for a tap). */
+        initialCount: number;
+        blockRun: SlotUnit[];
+      }
+    | { kind: 'block'; resource: BookerResource; run: SlotUnit[]; initialCount: number }
+    | { kind: 'detail'; resource: BookerResource; unit: SlotUnit }
+    | {
+        kind: 'edit';
+        resource: BookerResource;
+        bookingId: string;
+        choices: EditChoices;
+        participants: EditPerson[];
+        revision: string;
+      };
+
+  let slots = $state<ResourceSlots[]>([]);
+  let loaded = $state<{ from: string; to: string } | null>(null);
+  let mine = $state<Map<string, MyBooking>>(new Map());
+  let slotsError = $state('');
+  /** A phone draws the planning list under the strip; wider screens draw the grid. */
+  let narrow = $state(isScheduleAgendaViewport());
+  /** The day the phone's strip marks, and the planning list scrolls to. */
+  let date = $state(untrack(() => localDate(nowMs, space.timeZone)));
+  /** The first day of the rolling week shown: today at first (owner, 2026-11-01), then moved by sevens. */
+  let start = $state(untrack(() => localDate(nowMs, space.timeZone)));
+  /** The column shown: a space with several columns shows one at a time (D44, D46). */
+  let resourceId = $state(untrack(() => space.resources[0]?.id ?? ''));
+  let sheet = $state<Sheet | null>(null);
+  /**
+   * The LATEST start the server refused as `started` or `notice` while the device's clock still
+   * took it. Both refusals only grow with time, so every start at or before it is refused too: with
+   * a clock behind the server's, one refusal retires every earlier unit, not one refusal per unit.
+   * It holds for the life of this view, whatever the device's clock says.
+   */
+  let lastRefusedStart = $state<number | null>(null);
+  /** The grid's scroll, kept here so a week with nothing offered (which unmounts the grid) does not lose it. */
+  let gridScroll = $state<number | null>(null);
+
+  const today = $derived(localDate(nowMs, space.timeZone));
+  const resource = $derived(space.resources.find((r) => r.id === resourceId) ?? space.resources[0]);
+  const weekAll = $derived(start ? weekDates(start) : []);
+  const columnUnits = $derived(resource ? unitsInOrder(slots, resource.id) : []);
+  /** The week of the chosen column: the strip's dots, the planning rows and the grid. */
+  const week = $derived(weekLayout(columnUnits, weekAll, space, nowMs));
+  /** Whether the read holding the week shown has landed (false while a moved-to week loads). */
+  const weekHeld = $derived.by(() => {
+    const want = weekReadRange(start);
+    return loaded !== null && loaded.from <= want.from && want.to <= loaded.to;
+  });
+  /**
+   * The grid of the last week whose read landed, kept on screen, inert and dimmed, while the week
+   * moved to loads. Dropping it for the empty line collapsed the page, and the browser clamped the
+   * scroll to the top on every arrow (owner, 2026-10-31): the page must stay where the reader is.
+   */
+  let lastDrawn: typeof week | null = null;
+  const drawn = $derived.by(() => {
+    if (weekHeld || !lastDrawn) lastDrawn = week;
+    return lastDrawn;
+  });
+  /** The phone's planning: the same week, one list of rows per day. */
+  const planning = $derived(
+    planningDays(
+      drawn,
+      planningKind(space, nowMs, lastRefusedStart, mode === 'block'),
+      space.slotMode === 'slots'
+    )
+  );
+  /** The range form (the planning's "+" or a tapped free row), or null while closed. */
+  let range = $state<{ resourceId: string; unit?: SlotUnit; endMs?: number } | null>(null);
+  const freeCounts = $derived(
+    new Map(
+      space.resources.map((r) => [
+        r.id,
+        freeCount(
+          unitsInOrder(slots, r.id).filter((u) => weekAll.includes(unitDay(u, space.timeZone))),
+          space,
+          nowMs
+        ),
+      ])
+    )
+  );
+  const mineRows = $derived(mineHere(mine.values(), space.id, nowMs));
+  const weekLabel = $derived(weekAll.length ? formatWeekRange(weekAll) : '');
+
+  onMount(() =>
+    onViewportChange(SCHEDULE_AGENDA_QUERY, (isNarrow) => {
+      narrow = isNarrow;
+    })
+  );
+
+  onMount(() => {
+    void reread();
+  });
+
+  // The dashboard's counters follow every read and every week moved to.
+  $effect(() => {
+    const read = slots;
+    const days = weekAll;
+    if (loaded) untrack(() => onWeekRead?.(read, days));
+  });
+
+  /** What is true now: the grid and the reader's bookings, read again after a write. */
+  export async function reread() {
+    await Promise.all([readMine(), ensureSlots(true)]);
+  }
+
+  /** The reader's own bookings, by id: who holds what, and the private texts (D32). */
+  async function readMine() {
+    try {
+      const rows = await myBookings();
+      mine = new Map(rows.map((b) => [b.id, b]));
+    } catch (e) {
+      // The grid still reads; only the holder's cancel and the private texts wait for a reload.
+      Log.i('BOOKINGS', `my bookings unavailable on the space page: ${String(e)}`);
+    }
+  }
+
+  /** The last read asked for: an older answer arriving after it is for a week no longer shown. */
+  let slotsRead = 0;
+
+  /** The week shown, read when it is not already (or `force`d after a write). */
+  async function ensureSlots(force = false) {
+    // Bumped on EVERY call, the cache hit included: a slow read for a week left behind must not
+    // land once the view came back to a week already held.
+    const ticket = ++slotsRead;
+    const { from, to } = weekReadRange(start);
+    if (!force && loaded && loaded.from <= from && to <= loaded.to) return;
+    slotsError = '';
+    try {
+      const read = await getSlots(space.id, from, to);
+      if (ticket !== slotsRead) return;
+      slots = read;
+      loaded = { from, to };
+      nowMs = Date.now();
+    } catch (e) {
+      if (ticket !== slotsRead) return;
+      Log.i('BOOKINGS', `slots read failed ${from}..${to}: ${String(e)}`);
+      slotsError = describeBookingRefusal(e, m.common_load_error());
+    }
+  }
+
+  /** Seven days at a time: the day shown moves with the window, so a phone strip keeps its place. */
+  function moveWeek(weeks: number) {
+    start = addDays(start, weeks * WEEK_DAYS);
+    date = addDays(date, weeks * WEEK_DAYS);
+    void ensureSlots();
+  }
+
+  /** A day of the strip's window; one outside it starts a new window. */
+  function chooseDate(next: string) {
+    date = next;
+    if (!weekAll.includes(next)) start = next;
+    void ensureSlots();
+  }
+
+  /** "Aujourd'hui": the window starts on today again, whichever of its days holds today now. */
+  function goToday() {
+    start = today;
+    date = today;
+    void ensureSlots();
+  }
+
+  /**
+   * What tapping a unit opens: the reading of a taken unit; on a free one, the booking sheet - with
+   * "block instead" for whoever may - or, in block mode, the block sheet with the run a drag drew.
+   * A free unit that cannot be booked now (over, too soon, too far, not open yet) is not offered:
+   * the grid draws it inert and nothing opens. Should the server still refuse at the send, its
+   * typed refusal is said in plain words (`refusals.ts`).
+   */
+  function pick(picked: BookerResource, unit: SlotUnit, count = 1) {
+    if (unit.state !== 'free') {
+      sheet = { kind: 'detail', resource: picked, unit };
+      return;
+    }
+    if (
+      mode !== 'block' &&
+      (windowRefusal(space, unit.startMs, nowMs) !== null ||
+        (lastRefusedStart !== null && unit.startMs <= lastRefusedStart))
+    ) {
+      Log.d('BOOKINGS', 'pick ignored: the unit is outside the booking window');
+      return;
+    }
+    const units = unitsInOrder(slots, picked.id);
+    if (mode === 'block') {
+      Log.d('BOOKINGS', `dashboard block from a ${count}-unit range`);
+      sheet = {
+        kind: 'block',
+        resource: picked,
+        run: freeRunFrom(units, unit, BLOCK_LENGTH_CHOICES),
+        initialCount: count,
+      };
+      return;
+    }
+    const mayBlock = space.canManage || picked.linkedToMe;
+    sheet = {
+      kind: 'book',
+      resource: picked,
+      run: freeRunFrom(units, unit, bookingUnitLimit(space)),
+      initialCount: count,
+      blockRun: mayBlock ? freeRunFrom(units, unit, BLOCK_LENGTH_CHOICES) : [],
+    };
+  }
+
+  /**
+   * "Modifier" on a taken unit (owner, 2026-11-02): the booking sheet in edit mode, its choices
+   * read from the week held (`editChoices`), its people from the booking as this reader got it.
+   * Null - and no button - when the week does not hold the booking's own start.
+   */
+  function editOf(picked: BookerResource, unit: SlotUnit): (() => void) | undefined {
+    if (unit.state !== 'booked') return undefined;
+    const booking = unit.booking;
+    const choices = editChoices(
+      unitsInOrder(slots, picked.id),
+      booking,
+      space,
+      nowMs,
+      lastRefusedStart
+    );
+    if (!choices) return undefined;
+    // Sent wherever the names are, so to whoever may edit; a view without it was not read for an
+    // editor, and an edit from it could not be checked against the booking's state.
+    const revision = booking.revision;
+    if (revision === undefined) {
+      Log.i('BOOKINGS', `edit not offered: no revision on booking=${booking.id.slice(0, 8)}`);
+      return undefined;
+    }
+    // Read from the booking itself, never from the reader's own list: that list is capped
+    // (`MINE_LIMIT`), and a booking past it would make its holder look like a participant (review
+    // of #2945). `holderId` is always sent to whoever may edit - its holder, or a manager.
+    const me = currentUserId();
+    return () => {
+      Log.d('BOOKINGS', `edit sheet opened booking=${booking.id.slice(0, 8)}`);
+      sheet = {
+        kind: 'edit',
+        resource: picked,
+        bookingId: booking.id,
+        choices,
+        participants: editPeople(
+          booking,
+          me ? { id: me, isParticipant: booking.mine && booking.holderId !== me } : null,
+          m.bookings_edit_you()
+        ),
+        revision,
+      };
+    };
+  }
+
+  /**
+   * The edit was refused `stale` (owner review of #2945): the booking changed since the sheet
+   * opened. The week is read again and the sheet reopened on the booking as it now is - or closed,
+   * the line saying why, when the new read no longer offers its edit (cancelled, started).
+   */
+  async function reopenEdit(picked: BookerResource, bookingId: string) {
+    await reread();
+    onChanged?.();
+    const unit = unitsInOrder(slots, picked.id).find(
+      (u) => u.state === 'booked' && u.booking.id === bookingId
+    );
+    const open = unit ? editOf(picked, unit) : undefined;
+    if (!open) {
+      Log.i('BOOKINGS', `stale edit not reopened: booking=${bookingId.slice(0, 8)} not editable`);
+      sheet = null;
+      return;
+    }
+    open();
+  }
+
+  async function closeSheet(changed: boolean) {
+    sheet = null;
+    if (!changed) return;
+    await reread();
+    onChanged?.();
+  }
+</script>
+
+<!-- The track is `minmax(0,1fr)`, never the implicit `auto` one: an auto track grows to the widest
+     unbreakable text of its items (a `truncate` line counts at its full length), which pushed the
+     whole week and the aside past a phone's right edge (owner, 2026-11-08). -->
+<div
+  class={mode === 'book'
+    ? 'grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start'
+    : ''}
+  data-week-layout
+>
+  <div class="min-w-0 space-y-4">
+    {#if space.resources.length > 1 && resource}
+      <div use:guideAnchorWhen={mode === 'book' && loaded ? 'bookings.column' : undefined}>
+        <ColumnSelect
+          resources={space.resources}
+          value={resource.id}
+          counts={freeCounts}
+          onSelect={(id) => (resourceId = id)}
+        />
+      </div>
+    {/if}
+
+    {#if slotsError}
+      <p
+        class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm"
+        role="alert"
+      >
+        {slotsError}
+      </p>
+    {:else if resource}
+      {#if narrow}
+        <DayStrip
+          days={week.days}
+          {date}
+          {today}
+          label={weekLabel}
+          onSelect={chooseDate}
+          onPrevious={() => moveWeek(-1)}
+          onNext={() => moveWeek(1)}
+          away={date !== today || start !== today}
+          onToday={goToday}
+        />
+      {:else}
+        <WeekBar
+          label={weekLabel}
+          away={start !== today}
+          onPrevious={() => moveWeek(-1)}
+          onNext={() => moveWeek(1)}
+          onToday={goToday}
+        />
+      {/if}
+      <div
+        class="transition-opacity {weekHeld ? '' : 'opacity-50'}"
+        inert={!weekHeld}
+        data-week-grid
+        use:guideAnchorWhen={mode === 'book' && loaded ? 'bookings.week' : undefined}
+      >
+        {#if drawn.endMin === drawn.startMin}
+          <p class="text-text-muted py-8 text-center text-sm">
+            {m.bookings_week_empty()}
+          </p>
+        {:else if narrow}
+          <PlanningList
+            days={planning}
+            {space}
+            {resource}
+            {nowMs}
+            {lastRefusedStart}
+            blockMode={mode === 'block'}
+            focusDate={date}
+            {today}
+            onOpen={(unit) => pick(resource, unit)}
+            onFree={(run) => {
+              Log.d('BOOKINGS', 'planning: a free row opens the range form');
+              range = { resourceId: resource.id, unit: run.units[0], endMs: run.endMs };
+            }}
+            onAdd={() => {
+              Log.d('BOOKINGS', 'planning: the "+" opens the range form blank');
+              range = { resourceId: resource.id };
+            }}
+          />
+        {:else}
+          <SpaceGrid
+            {space}
+            {resource}
+            layout={drawn}
+            blockMode={mode === 'block'}
+            {nowMs}
+            {lastRefusedStart}
+            bind:scrollTop={gridScroll}
+            onPick={pick}
+          />
+        {/if}
+      </div>
+    {/if}
+  </div>
+  {#if mode === 'book'}
+    <aside class="min-w-0 space-y-3">
+      <MineHereCard bookings={mineRows} />
+      {@render aside?.()}
+    </aside>
+  {/if}
+</div>
+
+{#if range}
+  <RangeForm
+    {space}
+    resources={space.resources}
+    unitsOf={(id) => unitsInOrder(slots, id)}
+    dates={weekAll}
+    {nowMs}
+    {lastRefusedStart}
+    blockMode={mode === 'block'}
+    initial={range}
+    onSubmit={(picked, first, count) => {
+      range = null;
+      pick(picked, first, count);
+    }}
+    onClose={() => (range = null)}
+  />
+{/if}
+
+{#if sheet}
+  {#if sheet.kind === 'book'}
+    {@const s = sheet}
+    <BookingSheet
+      {space}
+      resource={s.resource}
+      run={s.run}
+      initialCount={s.initialCount}
+      onReread={reread}
+      onStartRefused={(startMs) => {
+        lastRefusedStart = Math.max(lastRefusedStart ?? startMs, startMs);
+      }}
+      onBlockInstead={s.blockRun.length
+        ? () => (sheet = { kind: 'block', resource: s.resource, run: s.blockRun, initialCount: 1 })
+        : undefined}
+      onClose={closeSheet}
+    />
+  {:else if sheet.kind === 'edit'}
+    {@const edited = sheet}
+    <BookingSheet
+      {space}
+      resource={sheet.resource}
+      run={sheet.choices.runOf(sheet.choices.starts[sheet.choices.startIndex])}
+      editing={{
+        bookingId: sheet.bookingId,
+        choices: sheet.choices,
+        participants: sheet.participants,
+        revision: sheet.revision,
+        onStale: () => reopenEdit(edited.resource, edited.bookingId),
+      }}
+      onReread={reread}
+      onClose={closeSheet}
+    />
+  {:else if sheet.kind === 'block'}
+    <BlockSheet
+      {space}
+      resource={sheet.resource}
+      run={sheet.run}
+      initialCount={sheet.initialCount}
+      onReread={reread}
+      onClose={closeSheet}
+    />
+  {:else}
+    <UnitDetailSheet
+      {space}
+      resource={sheet.resource}
+      unit={sheet.unit}
+      mine={sheet.unit.state === 'booked' ? mine.get(sheet.unit.booking.id) : undefined}
+      {nowMs}
+      onClose={closeSheet}
+      onEdit={editOf(sheet.resource, sheet.unit)}
+    />
+  {/if}
+{/if}

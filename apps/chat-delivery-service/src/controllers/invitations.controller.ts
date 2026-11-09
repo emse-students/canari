@@ -35,10 +35,11 @@ import { In } from 'typeorm';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
 import { groupInviteIsValid, resolveGroupInvitePreview } from '../utils/group-invite';
 import { activeRevocationWhere } from '../utils/revocation';
-import { readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
 import { cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
-import { announceJoinAsk } from '../utils/join-ask-announce';
+import { announceJoinAsk, pushJoinAsk } from '../utils/join-ask-announce';
+import { assertGroupStaysOnOneSide } from '../utils/review-cohort-groups';
 import {
   assertCallerActsOnGroup,
   isKeyDistributionGroup,
@@ -90,16 +91,12 @@ export class InvitationsController {
   }
 
   /**
-   * Caller must be an ADMITTED member of the group unless they are a global admin. A seat still
+   * Caller must be an ADMITTED member of the group - a platform global admin included (owner,
+   * 2026-11-02: no platform-admin bypass on conversation data). A seat still
    * awaiting a member's admission mints no invitation link and vouches for no device: it is
    * answered the 409 `awaiting_admission` ({@link callerSeatStanding}), never the 403 of no seat.
    */
-  private async assertCallerIsGroupMember(
-    callerUserId: string,
-    groupId: string,
-    headerGlobalAdmin?: string
-  ): Promise<void> {
-    if (headerGlobalAdmin === 'true') return;
+  private async assertCallerIsGroupMember(callerUserId: string, groupId: string): Promise<void> {
     const standing = await callerSeatStanding(this.groupMemberRepo, groupId, callerUserId);
     if (standing === 'awaiting') {
       throw refuseAwaitingSeat(this.logger, 'INVITATIONS', groupId, callerUserId);
@@ -119,12 +116,11 @@ export class InvitationsController {
   async createGroupInvite(
     @Param('groupId') groupId: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
     @Body() body?: { expiresAt?: string | null; maxUses?: number | null }
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const callerId = sanitizeQueryValue(headerUserId ?? '', 'userId');
-    await this.assertCallerIsGroupMember(callerId, safeGroupId, headerGlobalAdmin);
+    await this.assertCallerIsGroupMember(callerId, safeGroupId);
     const group = await this.groupRepo.findOne({
       where: { id: safeGroupId, deletedAt: IsNull() },
     });
@@ -188,6 +184,14 @@ export class InvitationsController {
       where: { groupId: group.id, userId: callerId },
     });
     if (existing) return { groupId: group.id, alreadyMember: true };
+    // A link never seats a review account among members, nor a member among review accounts.
+    await assertGroupStaysOnOneSide(
+      this.groupMemberRepo.manager,
+      group.id,
+      callerId,
+      undefined,
+      '[GROUP_INVITE]'
+    );
 
     // The invitee needs at least one non-revoked KeyPackage so a member can add them.
     const keyPackages = await this.keyPackageRepo.find({
@@ -222,7 +226,7 @@ export class InvitationsController {
       group.id,
       callerId,
       deviceIds,
-      true
+      'awaiting_admission'
     );
     if (outcome !== 'written') {
       this.logger.warn(
@@ -252,6 +256,15 @@ export class InvitationsController {
         group.id,
         { userId: callerId, askId: seat.id },
         deviceIds
+      );
+      // AND ONE ORDINARY PUSH PER ASK to the admitted members (`pushJoinAsk`), claimed on the seat
+      // row so a re-follow of the link or a second replica sends none. Never the joiner's own.
+      pushJoinAsk(
+        this.deviceGroupRepo.manager,
+        group.id,
+        { userId: callerId, askId: seat.id },
+        (userId, title, body, data) =>
+          this.messagingService.sendPushToUser(userId, title, body, data)
       );
     } else {
       this.logger.log(
@@ -289,15 +302,13 @@ export class InvitationsController {
   async getPendingInvitations(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const traceId = this.makeTraceId('pending');
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     assertCallerOwnsUserId(
       headerUserId,
-      headerGlobalAdmin,
       safeUserId,
       'Cannot list pending invitations for another user'
     );
@@ -450,14 +461,12 @@ export class InvitationsController {
   async getDeviceMemberships(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     assertCallerOwnsUserId(
       headerUserId,
-      headerGlobalAdmin,
       safeUserId,
       "Cannot list another user's device memberships"
     );
@@ -466,7 +475,7 @@ export class InvitationsController {
     });
 
     const pendingGroupIds = memberships.filter((m) => m.status === 'pending').map((m) => m.groupId);
-    const { welcomed, locked } = await readPendingMembershipFacts(
+    const facts = await readPendingMembershipFacts(
       this.queuedMessageRepo,
       this.redis,
       safeDeviceId,
@@ -485,8 +494,8 @@ export class InvitationsController {
 
     const answer = memberships.map((m) => ({
       ...m,
-      welcomeQueued: welcomed.has(m.groupId),
-      addInFlight: locked.has(m.groupId),
+      welcomeQueued: facts.welcomed.has(m.groupId),
+      addInFlight: addInFlightOf(facts, m.groupId),
       // An ACTIVE row is in the tree whatever the roster flag says, so it never reads as awaiting.
       awaitingAdmission: m.status !== 'active' && awaiting.has(m.groupId),
     }));
@@ -496,7 +505,11 @@ export class InvitationsController {
     // only past its own window. A non-zero count here on a device that keeps asking IS the defect.
     // A seat awaiting a member's answer is not stranded: a member is the one who answers it.
     const stranded = answer.filter(
-      (m) => m.status === 'pending' && !m.welcomeQueued && !m.addInFlight && !m.awaitingAdmission
+      (m) =>
+        m.status === 'pending' &&
+        !m.welcomeQueued &&
+        m.addInFlight === false &&
+        !m.awaitingAdmission
     ).length;
     const statuses = answer
       .map(
@@ -553,8 +566,7 @@ export class InvitationsController {
       groupId: string;
       status: 'pending' | 'active';
     },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     // IDENTITIES on the only path that can CREATE an `active` membership from nothing - the one
     // that stored a placeholder as a member of a real conversation on 2026-08-27. The
@@ -570,8 +582,8 @@ export class InvitationsController {
     // getPendingInvitations from re-serving a device provably already in the tree every sync.
     const caller = headerUserId ? sanitizeQueryValue(headerUserId, 'x-user-id') : undefined;
     const isSelfReport = caller === safeUserId;
-    if (headerGlobalAdmin !== 'true' && caller && !isSelfReport) {
-      await this.assertCallerIsGroupMember(caller, safeGroupId, headerGlobalAdmin);
+    if (caller && !isSelfReport) {
+      await this.assertCallerIsGroupMember(caller, safeGroupId);
     }
 
     const validStatuses = ['pending', 'active'];
@@ -629,14 +641,13 @@ export class InvitationsController {
   @Post('mls/kick-stale-user')
   async kickStaleUser(
     @Body() body: { userId: string; groupId: string },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     if (!headerUserId) throw new BadRequestException('Missing X-User-Id header');
     const callerUserId = sanitizeQueryValue(headerUserId, 'userId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
-    await this.assertCallerIsGroupMember(callerUserId, safeGroupId, headerGlobalAdmin);
+    await this.assertCallerIsGroupMember(callerUserId, safeGroupId);
 
     const memberships = await this.deviceGroupRepo.find({
       where: { userId: safeUserId, groupId: safeGroupId },
@@ -686,15 +697,14 @@ export class InvitationsController {
   /** Resets a single device membership in a group back to `pending` so it can be re-invited. */
   async kickStaleDevice(
     @Body() body: { deviceId: string; userId: string; groupId: string },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     if (!headerUserId) throw new BadRequestException('Missing X-User-Id header');
     const callerUserId = sanitizeQueryValue(headerUserId, 'userId');
     const safeDeviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
     const safeGroupId = sanitizeQueryValue(body.groupId, 'groupId');
-    await this.assertCallerIsGroupMember(callerUserId, safeGroupId, headerGlobalAdmin);
+    await this.assertCallerIsGroupMember(callerUserId, safeGroupId);
 
     const membership = await this.deviceGroupRepo.findOne({
       where: {
@@ -755,14 +765,13 @@ export class InvitationsController {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
     @Param('groupId') groupId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const caller = sanitizeQueryValue(headerUserId ?? '', 'x-user-id');
-    const forAnotherUser = caller !== safeUserId && headerGlobalAdmin !== 'true';
+    const forAnotherUser = caller !== safeUserId;
     if (forAnotherUser) {
       const group = await assertCallerActsOnGroup(
         { groups: this.groupRepo, seats: this.groupMemberRepo, devices: this.deviceGroupRepo },
@@ -856,14 +865,12 @@ export class InvitationsController {
   async deleteAllDeviceMemberships(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     assertCallerOwnsUserId(
       headerUserId,
-      headerGlobalAdmin,
       safeUserId,
       "Cannot end another user's device memberships"
     );

@@ -125,8 +125,11 @@ export async function closeOutboxBlobStores(): Promise<number> {
   return held.length;
 }
 
-/** Promise form of an IDB request, rejecting with the request's own error. */
-function request<T>(req: IDBRequest<T>): Promise<T> {
+/**
+ * Promise form of an IDB request, rejecting with the request's own error. Exported, with
+ * {@link idbCommitted}, for every per-account IndexedDB store that is not an ORM (the publish queue).
+ */
+export function idbRequest<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -263,9 +266,9 @@ export class OutboxBlobStore {
   async get(id: string, keyB64: string): Promise<Uint8Array> {
     Log.d('outboxBlob.get', { id });
     const db = await this.open();
-    const record = (await request(db.transaction(STORE, 'readonly').objectStore(STORE).get(id))) as
-      | BlobRecord
-      | undefined;
+    const record = (await idbRequest(
+      db.transaction(STORE, 'readonly').objectStore(STORE).get(id)
+    )) as BlobRecord | undefined;
     if (!record) {
       Log.d('outboxBlob.get.missing', { id });
       throw new OutboxBlobMissingError(id);

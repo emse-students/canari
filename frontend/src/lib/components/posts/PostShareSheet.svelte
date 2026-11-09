@@ -15,7 +15,7 @@
    * Mounted by the post menu (`PostActionsMenu`) and by the reel viewer (`ReelViewer`): from inside
    * the viewer, `Modal` takes the viewer's dialog rung on its own (`utils/viewerLayer.ts`).
    */
-  import { Hash, Link, Search, Share2 } from '@lucide/svelte';
+  import { Hash, Link, Repeat2, Search, Share2 } from '@lucide/svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
@@ -27,7 +27,12 @@
   } from '$lib/stores/globalChatSingleton.svelte';
   import { missingPeerNameIds, shareCandidates } from '$lib/sharing/shareDestinations';
   import { canShareOut } from '$lib/sharing/shareOut';
-  import { copyPostLink, sendPostLinkInApp, sharePostLinkOut } from '$lib/posts/sharePost';
+  import {
+    copyPostLink,
+    sendPostLinkInApp,
+    sharePostLinkOut,
+    toggleMyRepost,
+  } from '$lib/posts/sharePost';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
 
@@ -36,9 +41,29 @@
     /** The post (a reel is a post) whose link is shared. */
     postId: string;
     onClose: () => void;
+    /**
+     * The link was sent INTO a conversation and its landing published. A surface drawn over the
+     * conversations (the reel viewer) closes on it: the landing no longer navigates, so nothing
+     * else would take it off the composer the link waits in.
+     */
+    onSentInApp?: () => void;
+    /** WP-F6: the reader may repost it to their followers (the server's `canRepost`). */
+    canRepost?: boolean;
+    /** WP-F6: the reader reposted it - the row offers to take it back instead. */
+    repostedByMe?: boolean;
+    /** WP-F6: the repost's state after the reader's tap, as the server answered it. */
+    onRepostChange?: (postId: string, repostedByMe: boolean) => void;
   }
 
-  let { open, postId, onClose }: Props = $props();
+  let {
+    open,
+    postId,
+    onClose,
+    onSentInApp,
+    canRepost = false,
+    repostedByMe = false,
+    onRepostChange,
+  }: Props = $props();
 
   let query = $state('');
   /** DM names fetched after the grid was first drawn - see `missingPeerNameIds`. */
@@ -76,10 +101,15 @@
     onClose();
   }
 
-  /** Each row closes the sheet, then acts. */
-  function act(action: () => void) {
+  /**
+   * Each row closes the sheet, then acts - on the id read BEFORE the close. A host that unmounts
+   * the sheet by clearing what it passed as `postId` (the reel viewer's `shareFor = null`) would
+   * otherwise hand the action a null id, and every row would do nothing.
+   */
+  function act(action: (id: string) => void) {
+    const id = postId;
     close();
-    action();
+    action(id);
   }
 
   /** The round action of the bottom row: one shape for every entry. */
@@ -113,7 +143,10 @@
             <li>
               <button
                 type="button"
-                onclick={() => act(() => sendPostLinkInApp(postId, cand.conversation.id))}
+                onclick={() =>
+                  act((id) => {
+                    if (sendPostLinkInApp(id, cand.conversation.id)) onSentInApp?.();
+                  })}
                 aria-label={m.post_share_send_to({ name: cand.label })}
                 class="flex w-full flex-col items-center gap-1.5 rounded-xl px-1 py-1 text-center transition-colors hover:bg-black/5 dark:hover:bg-white/5"
               >
@@ -132,9 +165,9 @@
                     </span>
                   {:else}
                     <GroupAvatar
+                      id={cand.conversation.id}
                       imageMediaId={cand.conversation.imageMediaId}
                       name={cand.label}
-                      variant="group"
                       fill
                     />
                   {/if}
@@ -159,12 +192,27 @@
       role="group"
       aria-label={m.post_share_label()}
     >
-      <button type="button" class={ACTION} onclick={() => act(() => copyPostLink(postId))}>
+      {#if repostedByMe || canRepost}
+        <button
+          type="button"
+          class={ACTION}
+          data-repost-row
+          onclick={() =>
+            act((id) => {
+              const write = toggleMyRepost(id, repostedByMe);
+              void write.then((reposted) => onRepostChange?.(id, reposted));
+            })}
+        >
+          <span class={ACTION_DISC}><Repeat2 size={20} strokeWidth={2.25} /></span>
+          {repostedByMe ? m.post_repost_undo_label() : m.post_repost_label()}
+        </button>
+      {/if}
+      <button type="button" class={ACTION} onclick={() => act(copyPostLink)}>
         <span class={ACTION_DISC}><Link size={20} strokeWidth={2.25} /></span>
         {m.post_copy_link_label()}
       </button>
       {#if nativeShare}
-        <button type="button" class={ACTION} onclick={() => act(() => sharePostLinkOut(postId))}>
+        <button type="button" class={ACTION} onclick={() => act(sharePostLinkOut)}>
           <span class={ACTION_DISC}><Share2 size={20} strokeWidth={2.25} /></span>
           {m.post_share_system_label()}
         </button>

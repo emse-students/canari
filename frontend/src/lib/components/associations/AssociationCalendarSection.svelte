@@ -1,7 +1,8 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { onMount } from 'svelte';
   import { page } from '$app/state';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import {
     listAssociationCalendarEvents,
     createAssociationCalendarEvent,
@@ -13,6 +14,7 @@
     icsSubscriptionRangeISO,
     getCalendarEventLinkedToPost,
     listEventCoOrganisers,
+    getEventWriteSide,
     type AssociationCalendarEvent,
     type AssociationCalendarFeedEvent,
     type AssociationLinkCandidates,
@@ -42,6 +44,7 @@
     blankEventFormValues,
     eventFormValuesFrom,
     loadCoOrganiserFields,
+    withdrawalCoOwnerIds,
     toCreatePayload,
     toUpdatePayload,
     type EventFormValues,
@@ -68,6 +71,12 @@
      * field the API will refuse is how a control comes to look broken rather than forbidden.
      */
     canDeclareBreak?: boolean;
+    /**
+     * Whether the viewer may file a NEUTRAL event here ("Campus", no association; owner,
+     * 2026-11-08): this association is a BDE and the viewer files its events. The server refuses
+     * anyone else (`CALENDAR_NEUTRAL_NOT_A_BDE`, and the route's PROPOSE_EVENT).
+     */
+    canPresentNeutral?: boolean;
   }
 
   let {
@@ -75,6 +84,7 @@
     associationSlug,
     canEdit = false,
     canDeclareBreak = false,
+    canPresentNeutral = false,
   }: Props = $props();
 
   /**
@@ -123,7 +133,13 @@
    * forms. A band speaks for the SCHOOL, so it needs the authority that speaks for it; a linked form
    * is this association's own, so it needs the right to edit this association.
    */
-  const capabilities = $derived({ canSetKind: canDeclareBreak, canLinkForm: canEdit });
+  const capabilities = $derived({
+    canSetKind: canDeclareBreak,
+    canLinkForm: canEdit && formValues.writeSide === 'organiser',
+    // Only this BDE's OWN events: one it co-organises belongs to another association, which is
+    // never a BDE's to present as "Campus".
+    canSetPresentation: canPresentNeutral && formValues.targetAssociationId === associationId,
+  });
 
   let showSubscribeModal = $state(false);
 
@@ -261,8 +277,10 @@
     modalOpen = true;
     // D39: the co-organisers' states (accepted / pending / refused) arrive after the form opens; the
     // list stays unsent until they do. Through THIS association, the route the save will use.
-    const fields = await loadCoOrganiserFields(formValues, () =>
-      listEventCoOrganisers(associationId, ev.id)
+    const fields = await loadCoOrganiserFields(
+      formValues,
+      () => listEventCoOrganisers(associationId, ev.id),
+      () => getEventWriteSide(associationId, ev.id)
     );
     if (editingId === ev.id) formValues = { ...formValues, ...fields };
     await ensureLinkCandidates();
@@ -299,6 +317,29 @@
     } else {
       await createAssociationCalendarEvent(associationId, toCreatePayload(values, capabilities));
     }
+    dismissEventModal(false);
+    await agenda.reload();
+  }
+
+  /**
+   * A PARTNER's withdrawal (E2): the co-organiser list without this association, the one list change
+   * the server lets a partner make. The event stays with its organiser, so it leaves this agenda.
+   */
+  async function withdrawFromEvent() {
+    if (!editingId) return;
+    // Withdrawing ends this association's part in the event and is not undone from here: asked,
+    // like the delete it sits beside.
+    if (
+      !(await showConfirm(m.asso_calendar_partner_withdraw_confirm(), {
+        danger: true,
+        confirmLabel: m.common_leave_button(),
+      }))
+    )
+      return;
+    Log.d('[asso-calendar] withdrawing from event', editingId);
+    await updateAssociationCalendarEvent(associationId, editingId, {
+      coOwnerIds: withdrawalCoOwnerIds(formValues.coOwnerStates, associationId),
+    });
     dismissEventModal(false);
     await agenda.reload();
   }
@@ -341,32 +382,23 @@
       </p>
     </div>
     <div class="flex flex-wrap gap-2">
-      <button
-        type="button"
-        onclick={() => (showSubscribeModal = true)}
-        class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors"
-      >
+      <Button variant="secondary" onclick={() => (showSubscribeModal = true)}>
         <CalendarSync size={18} />
         {m.asso_calendar_subscribe_button()}
-      </button>
-      <button
-        type="button"
+      </Button>
+      <Button
+        variant="secondary"
         onclick={exportMonthIcs}
         disabled={agenda.loading || validatedEvents.length === 0}
-        class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-40"
       >
         <Download size={18} />
         {m.asso_calendar_export_ics_button()}
-      </button>
+      </Button>
       {#if canEdit}
-        <button
-          type="button"
-          onclick={openCreate}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
-        >
+        <Button onclick={openCreate}>
           <CalendarPlus size={18} />
           {m.asso_calendar_propose_event_button()}
-        </button>
+        </Button>
       {/if}
     </div>
   </div>
@@ -473,7 +505,7 @@
       agenda.detailEvent = null;
     }}
     onEdit={handleDetailEdit}
-    onDelete={handleDetailDelete}
+    onDelete={agenda.detailEvent?.associationId === associationId ? handleDetailDelete : undefined}
   />
 
   {#if canEdit && !agenda.loading && sortedPendingEvents.length > 0}
@@ -497,15 +529,15 @@
             <p class="text-text-muted mt-0.5 text-xs">{formatEventDateTimeRange(ev)}</p>
           </div>
           <div class="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="compact"
               onclick={() => validateEvent(ev.id)}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-bold"
               title={m.asso_calendar_validate_title()}
             >
               <Check size={14} />
               {m.common_validate_button()}
-            </button>
+            </Button>
             <button
               type="button"
               onclick={() => openEdit(ev)}
@@ -514,14 +546,16 @@
             >
               <Pencil size={16} />
             </button>
-            <button
-              type="button"
-              onclick={() => removeEvent(ev.id)}
-              class="ui-icon-button border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border"
-              title={m.common_delete_button()}
-            >
-              <Trash2 size={16} />
-            </button>
+            {#if ev.associationId === associationId}
+              <button
+                type="button"
+                onclick={() => removeEvent(ev.id)}
+                class="ui-icon-button border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border"
+                title={m.common_delete_button()}
+              >
+                <Trash2 size={16} />
+              </button>
+            {/if}
           </div>
         </div>
       {/each}
@@ -554,14 +588,16 @@
             {/if}
           </div>
           <div class="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              onclick={() => removeEvent(ev.id)}
-              class="ui-icon-button border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border"
-              title={m.common_delete_button()}
-            >
-              <Trash2 size={16} />
-            </button>
+            {#if ev.associationId === associationId}
+              <button
+                type="button"
+                onclick={() => removeEvent(ev.id)}
+                class="ui-icon-button border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border"
+                title={m.common_delete_button()}
+              >
+                <Trash2 size={16} />
+              </button>
+            {/if}
           </div>
         </div>
       {/each}
@@ -581,6 +617,7 @@
   submitLabel={m.common_save_button()}
   savingLabel={m.asso_calendar_saving_label()}
   onSubmit={submitEvent}
+  onWithdraw={formValues.writeSide === 'partner' ? withdrawFromEvent : null}
   onClose={closeModal}
 />
 

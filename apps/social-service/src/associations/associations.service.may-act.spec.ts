@@ -1,8 +1,12 @@
+import { Logger } from '@nestjs/common';
 import { AssociationsService } from './associations.service';
 import {
   ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
-  BDE_FLAG_HOLDERS_OVER_SQL,
+  BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
+  HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
   HOLDS_BDE_FLAG_OVER_SQL,
+  PLATFORM_ADMINS_SQL,
+  TARGETS_AN_UNGOVERNED_SPACE_SQL,
 } from '../spaces/bde';
 import {
   AssociationPermissionFlag,
@@ -30,7 +34,15 @@ interface Row {
   governs?: string[];
 }
 
-function makeService(rows: Row[]) {
+function makeService(rows: Row[], kinds: Record<string, string> = {}) {
+  /** The entity's kind, read only for a flag some kind excludes (`TYPE_EXCLUDED_FLAGS`). */
+  const kindOf = (id: string) => ({ id, type: kinds[id] ?? 'association' });
+  const assoRepo = {
+    findOne: jest.fn(({ where: { id } }: { where: { id: string } }) => Promise.resolve(kindOf(id))),
+    find: jest.fn(({ where: { id } }: { where: { id: { value: string[] } } }) =>
+      Promise.resolve(id.value.map(kindOf))
+    ),
+  };
   /** The two scoped BDE queries `mayAct` / `mayActOnAny` reach, answered from the seeded rows. */
   const query = jest.fn((sql: string, params: unknown[]) => {
     if (sql === HOLDS_BDE_FLAG_OVER_SQL) {
@@ -78,11 +90,11 @@ function makeService(rows: Row[]) {
     query,
   };
 
-  // POSITIONAL, AND THIRTEEN LONG - so a constructor change silently shifts every argument after
+  // POSITIONAL, AND FOURTEEN LONG - so a constructor change silently shifts every argument after
   // the one it touched. The comments are the guard: keep them aligned with the parameter list in
   // `associations.service.ts`, and change them in the same commit that changes it.
   const service = new AssociationsService(
-    undefined as never, // assoRepo
+    assoRepo as never, // assoRepo
     memberRepo as never, // memberRepo
     undefined as never, // calendarRepo
     undefined as never, // coOwnerRepo
@@ -94,13 +106,20 @@ function makeService(rows: Row[]) {
     undefined as never, // redis
     undefined as never, // httpService
     undefined as never, // notifications
-    undefined as never // userTagService
+    undefined as never, // userTagService
+    { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
   return { service, memberRepo };
 }
 
-const { MANAGE_MEMBERS, MANAGE_ASSO, MANAGE_FORMS, MANAGE_PAYOUT_ACCOUNT, POST_AS_ASSO } =
-  AssociationPermissionFlag;
+const {
+  MANAGE_MEMBERS,
+  MANAGE_ASSO,
+  MANAGE_FORMS,
+  MANAGE_PAYOUT_ACCOUNT,
+  MANAGE_PRODUCTS,
+  POST_AS_ASSO,
+} = AssociationPermissionFlag;
 
 describe('AssociationsService.mayAct', () => {
   it('grants a platform administrator a right they hold in no association', async () => {
@@ -147,6 +166,17 @@ describe('AssociationsService.mayAct', () => {
       },
     ]);
     await expect(service.mayAct('bde', 'asso1', MANAGE_MEMBERS)).resolves.toBe(true);
+  });
+
+  // EDIT_PROFILE (2026-11-02) is administration like the MANAGE_MEMBERS it was split from, so the
+  // super-admin tier keeps editing the profiles of the associations it governs.
+  it('grants a BDE super-admin EDIT_PROFILE on an association it governs', async () => {
+    const { service } = makeService([
+      { userId: 'bde', associationId: 'bde-asso', permissions: MANAGE_ASSO, governs: ['asso1'] },
+    ]);
+    await expect(
+      service.mayAct('bde', 'asso1', AssociationPermissionFlag.EDIT_PROFILE)
+    ).resolves.toBe(true);
   });
 
   // WP6c step 2: MANAGE_ASSO reaches the associations the BDE's space governs, and no others.
@@ -196,6 +226,48 @@ describe('AssociationsService.mayAct', () => {
     ).resolves.toBe(true);
   });
 
+  // Owner, 2026-11-02: the KIND sits above every tier. A list collects only through a delegate, so
+  // nobody - its own member, a BDE, the platform administrator - holds its payout account; it keeps
+  // its shop. An institution collects nothing: neither.
+  it('holds a list payout account for NOBODY, the platform administrator included', async () => {
+    const { service } = makeService(
+      [
+        {
+          userId: 'u1',
+          associationId: 'list1',
+          permissions: MANAGE_PAYOUT_ACCOUNT | MANAGE_PRODUCTS,
+        },
+      ],
+      { list1: 'list' }
+    );
+    await expect(service.mayAct('u1', 'list1', MANAGE_PAYOUT_ACCOUNT)).resolves.toBe(false);
+    await expect(
+      service.mayAct('admin', 'list1', MANAGE_PAYOUT_ACCOUNT, { isGlobalAdmin: true })
+    ).resolves.toBe(false);
+    await expect(service.mayAct('u1', 'list1', MANAGE_PRODUCTS)).resolves.toBe(true);
+  });
+
+  it('holds an institution shop for nobody', async () => {
+    const { service } = makeService([], { inst1: 'institution' });
+    await expect(
+      service.mayAct('admin', 'inst1', MANAGE_PRODUCTS, { isGlobalAdmin: true })
+    ).resolves.toBe(false);
+  });
+
+  it('withoutGoverningBde drops the BDE tier and keeps the own member', async () => {
+    const { service } = makeService([
+      { userId: 'bde', associationId: 'bde-asso', permissions: MANAGE_ASSO, governs: ['asso1'] },
+      { userId: 'u1', associationId: 'asso1', permissions: MANAGE_PRODUCTS },
+    ]);
+    await expect(service.mayAct('bde', 'asso1', MANAGE_PRODUCTS)).resolves.toBe(true);
+    await expect(
+      service.mayAct('bde', 'asso1', MANAGE_PRODUCTS, { withoutGoverningBde: true })
+    ).resolves.toBe(false);
+    await expect(
+      service.mayAct('u1', 'asso1', MANAGE_PRODUCTS, { withoutGoverningBde: true })
+    ).resolves.toBe(true);
+  });
+
   it('keeps the exclusion set to the two flags that are not administration', () => {
     expect(SUPER_ADMIN_EXCLUDED_FLAGS).toBe(MANAGE_PAYOUT_ACCOUNT | POST_AS_ASSO);
   });
@@ -231,6 +303,20 @@ describe('AssociationsService.mayActOnAny', () => {
     ]);
     await expect(service.mayActOnAny(undefined, ['a'], POST_AS_ASSO)).resolves.toEqual(new Set());
     expect(memberRepo.find).not.toHaveBeenCalled();
+  });
+
+  it('drops the associations whose KIND excludes the flag, for the platform administrator too', async () => {
+    const { service } = makeService([], { list1: 'list', inst1: 'institution' });
+    await expect(
+      service.mayActOnAny('admin', ['a', 'list1', 'inst1'], MANAGE_PAYOUT_ACCOUNT, {
+        isGlobalAdmin: true,
+      })
+    ).resolves.toEqual(new Set(['a']));
+    await expect(
+      service.mayActOnAny('admin', ['a', 'list1', 'inst1'], MANAGE_PRODUCTS, {
+        isGlobalAdmin: true,
+      })
+    ).resolves.toEqual(new Set(['a', 'list1']));
   });
 
   it('queries nothing when there is no association to judge', async () => {
@@ -297,12 +383,22 @@ describe('AssociationsService.mayActOnAny', () => {
  * the service asks it about the right association and hands its answer through untouched.
  */
 describe('AssociationsService scoped event governance', () => {
-  function makeGovernanceService(opts: { holds?: boolean; holders?: string[] }) {
+  function makeGovernanceService(opts: {
+    holds?: boolean;
+    holders?: string[];
+    /** Whether the proposing association targets a space no BDE governs. */
+    ungoverned?: boolean;
+    admins?: string[];
+  }) {
     const query = jest.fn((sql: string) =>
       Promise.resolve(
-        sql === HOLDS_BDE_FLAG_OVER_SQL
+        sql === HOLDS_BDE_AGENDA_RIGHT_OVER_SQL
           ? [{ holds: opts.holds ?? false }]
-          : (opts.holders ?? []).map((userId) => ({ userId }))
+          : sql === TARGETS_AN_UNGOVERNED_SPACE_SQL
+            ? [{ ungoverned: opts.ungoverned ?? false }]
+            : sql === PLATFORM_ADMINS_SQL
+              ? (opts.admins ?? []).map((userId) => ({ userId }))
+              : (opts.holders ?? []).map((userId) => ({ userId }))
       )
     );
     const calendarRepo = {
@@ -324,7 +420,8 @@ describe('AssociationsService scoped event governance', () => {
       undefined as never, // redis
       undefined as never, // httpService
       notifications as never, // notifications
-      undefined as never // userTagService
+      undefined as never, // userTagService
+      { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
     );
     return { service, query, notifications };
   }
@@ -332,11 +429,8 @@ describe('AssociationsService scoped event governance', () => {
   it("judges an event on its OWN association's BDE, read from the row", async () => {
     const { service, query } = makeGovernanceService({ holds: true });
     await expect(service.mayValidateEvent('bde1', 'ev1')).resolves.toBe(true);
-    expect(query).toHaveBeenCalledWith(HOLDS_BDE_FLAG_OVER_SQL, [
-      'bde1',
-      'owner-asso',
-      AssociationPermissionFlag.VALIDATE_EVENTS,
-    ]);
+    // The AGENDA predicate (owner, 2026-11-03), never the management one.
+    expect(query).toHaveBeenCalledWith(HOLDS_BDE_AGENDA_RIGHT_OVER_SQL, ['bde1', 'owner-asso']);
   });
 
   it('refuses when the BDE does not govern the event association', async () => {
@@ -369,12 +463,72 @@ describe('AssociationsService scoped event governance', () => {
       }
     ).notifyEventValidatorsOfProposal.bind(service);
     await notify('club', 'author', 'Gala');
-    expect(query).toHaveBeenCalledWith(BDE_FLAG_HOLDERS_OVER_SQL, [
-      'club',
-      AssociationPermissionFlag.VALIDATE_EVENTS,
-    ]);
+    expect(query).toHaveBeenCalledWith(BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL, ['club']);
     expect(notifications.createNotifications).toHaveBeenCalledWith(
       expect.objectContaining({ recipientIds: ['se1', 'ga1'], type: 'event_proposed' })
     );
+    // Every targeted space has a BDE: the platform admins are not asked about.
+    expect(query).not.toHaveBeenCalledWith(PLATFORM_ADMINS_SQL);
+  });
+
+  it('tells the platform admins too when a targeted space has no BDE (an institution, say)', async () => {
+    const { service, notifications } = makeGovernanceService({
+      holders: ['se1'],
+      ungoverned: true,
+      admins: ['admin1', 'se1'],
+    });
+    const notify = (
+      service as unknown as {
+        notifyEventValidatorsOfProposal: (a: string, actor: string, t: string) => Promise<string[]>;
+      }
+    ).notifyEventValidatorsOfProposal.bind(service);
+    const told = await notify('school', 'author', 'Forum');
+    expect(notifications.createNotifications).toHaveBeenCalledWith(
+      expect.objectContaining({ recipientIds: ['se1', 'admin1'], type: 'event_proposed' })
+    );
+    // The ids returned are the caller's dedupe set (`announceEventReopened`): the admins are in it,
+    // so an admin who is also a party of a reopened event is told once, not twice.
+    expect(told).toEqual(['se1', 'admin1']);
+  });
+
+  it('warns only when nobody at all could be told', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { service, notifications } = makeGovernanceService({ ungoverned: true, admins: [] });
+    notifications.createNotifications.mockResolvedValueOnce(0);
+    const notify = (
+      service as unknown as {
+        notifyEventValidatorsOfProposal: (a: string, actor: string, t: string) => Promise<void>;
+      }
+    ).notifyEventValidatorsOfProposal.bind(service);
+    await notify('orphan', 'author', 'Soiree');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('nobody who may validate it'));
+    warn.mockRestore();
+  });
+
+  it("never rejects the proposers' notice: a failure is logged at WARN with the association and its stack", async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { service } = makeGovernanceService({ ungoverned: false, admins: [] });
+    Object.assign((service as unknown as { memberRepo: object }).memberRepo, {
+      find: jest.fn(() => Promise.reject(new Error('db down'))),
+    });
+    try {
+      const notify = (
+        service as unknown as {
+          notifyAssocAdminsOfEventAction: (
+            a: string,
+            actor: string,
+            t: string,
+            action: 'validated'
+          ) => Promise<void>;
+        }
+      ).notifyAssocAdminsOfEventAction.bind(service);
+      await expect(notify('asso-y', 'author', 'Soiree', 'validated')).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('asso-y'),
+        expect.stringContaining('db down')
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

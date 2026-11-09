@@ -1,4 +1,4 @@
-import type { HandleServerError } from '@sveltejs/kit';
+import type { HandleServerError } from '@sveltejs/kit/hooks';
 
 /**
  * A 404 IS A CORRECT ANSWER; A 500 IS THIS APPLICATION FAILING. THEY MAY NOT SHARE A LEVEL.
@@ -18,16 +18,21 @@ import type { HandleServerError } from '@sveltejs/kit';
  * LEVEL, the colour, and the fact that a 5xx now carries its stack.
  *
  * It lives here rather than inside `hooks.server.ts` so it can be tested without dragging that
- * file's SEO imports - and `$env/dynamic/private` under them - into a unit test.
+ * file's SEO imports - and `$app/env/private` under them - into a unit test.
  */
-export const handleError: HandleServerError = ({ error, event, status, message }) => {
+export const handleError: HandleServerError = (caught) => {
+  const { error, event } = caught;
+  // SvelteKit 3 hands over a DISCRIMINATED error instead of `status` and `message` (and calls the
+  // hook for the expected ones too): an `unknown` one is a throw nobody named, hence a 500, and every
+  // other kind carries its own status. Nothing is returned, so SvelteKit's own status and SAFE
+  // message stand - which is what `{ message }` used to hand back.
+  const status = caught.kind === 'unknown' ? 500 : caught.error.status;
   const where = `[${status}] ${event.request.method} ${event.url.pathname}`;
 
   if (status < 500) {
     console.warn(where);
-    return { message };
+    return;
   }
 
   console.error(`${where}\n${error instanceof Error ? error.stack : String(error)}`);
-  return { message };
 };

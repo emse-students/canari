@@ -18,6 +18,8 @@ import { GroupInvite } from '../entities/group-invite.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { SeatEviction } from '../entities/seat-eviction.entity';
+import { JoinAskPush } from '../entities/join-ask-push.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 
 /**
  * This function is the single definition of "what a group owns", so what is pinned here is the
@@ -26,7 +28,7 @@ import { SeatEviction } from '../entities/seat-eviction.entity';
  * It is worth pinning because the omission is invisible: prod carried 21 orphaned `mls_group_info`
  * rows out of 69 and 293 of 452 `mls_commit_log` for as long as those two tables were missing from
  * the reaper, and nothing anywhere said so. A table dropped from this list would regress exactly
- * that way, silently, so the test names all ten.
+ * that way, silently, so the test names all eleven.
  */
 describe('deleteGroupOwnedRows', () => {
   /**
@@ -46,6 +48,8 @@ describe('deleteGroupOwnedRows', () => {
     GroupInvite,
     GroupMembershipInterval,
     SeatEviction,
+    JoinAskPush,
+    RevokedDeviceGroup,
     UserDismissedGroup,
   ];
 
@@ -83,9 +87,11 @@ describe('deleteGroupOwnedRows', () => {
       invites: 3,
       membershipIntervals: 3,
       seatEvictions: 3,
+      joinAskPushes: 3,
+      revokedDeviceGroups: 3,
       dismissals: 3,
     });
-    expect(totalGroupOwnedRows(counts)).toBe(30);
+    expect(totalGroupOwnedRows(counts)).toBe(36);
   });
 
   it('spares the per-user dismissal markers when the group row SURVIVES', async () => {
@@ -140,8 +146,8 @@ describe('deleteGroupOwnedRows', () => {
 
     await deleteGroupOwnedRows(manager, ['g1', 'g2']);
 
-    // An allowlist: ten deletes, each carrying the same explicit id set and nothing else.
-    expect(deletes).toHaveLength(10);
+    // An allowlist: twelve deletes, each carrying the same explicit id set and nothing else.
+    expect(deletes).toHaveLength(12);
     for (const where of deletes) {
       expect(Object.keys(where as object)).toEqual(['groupId']);
       expect(JSON.stringify(where)).toContain('g1');

@@ -17,6 +17,9 @@
          because Android names a channel once, at creation, from the app's resources. -->
     <string name="notif_channel_call_ongoing_name">Appel en cours</string>
     <string name="notif_channel_call_ongoing_desc">La notification affichée pendant un appel, avec le bouton pour raccrocher</string>
+    <!-- The ongoing-call notification's microphone action; its label is the state it goes TO. -->
+    <string name="notif_action_call_mute">Couper le micro</string>
+    <string name="notif_action_call_unmute">Réactiver le micro</string>
     <string name="notif_channel_mentions_name">Mentions Canari</string>
     <string name="notif_channel_mentions_desc">Messages qui vous mentionnent (@)</string>
     <string name="notif_channel_reactions_name">Réactions à vos messages</string>
@@ -56,6 +59,7 @@
          placeholder: a token is replaced by its label, whole. -->
     <string name="notif_mention_you">vous</string>
     <string name="notif_mention_someone">quelqu\'un</string>
+    <string name="notif_wake_unavailable">Un message n\'a pas pu être chargé. Ouvrez Canari pour le lire.</string>
 
     <!-- Rendered under the reactor's name in the conversation's notification, so it reads
          "Claire: a réagi 😂 à votre message". %1$s is the emoji. -->
@@ -67,10 +71,16 @@
          on its own, so the notification is re-posted with this line: the reply is kept and retried,
          but the shade must not keep showing "sending" forever. %1$s is the text the user typed. -->
     <string name="notif_reply_pending">%1$s · non envoyé, nouvelle tentative en cours</string>
+    <!-- The ring's title for a caller this phone has never named (the push carries no name). -->
+    <string name="notif_call_unknown_caller">Appel Canari</string>
     <string name="notif_incoming_call">Appel entrant</string>
     <string name="notif_incoming_video_call">Appel vidéo entrant</string>
     <string name="notif_action_answer_call">Répondre</string>
     <string name="notif_action_decline_call">Refuser</string>
+    <!-- The incoming-call screen's subtitle under the caller's name: WHICH call rings, the words of
+         the in-app ring (`call_audio_only_label`, `chat_video_call_label`). -->
+    <string name="call_screen_kind_audio">Appel audio</string>
+    <string name="call_screen_kind_video">Appel vidéo</string>
     <!-- Server-composed pushes, moved here 2026-08-19: the services do not know the reader's
          language, so they send a `contentKey` and at most a name and one fragment, and the phone
          writes the sentence. %1$s is the person who acted; %2$s the reaction. -->
@@ -91,6 +101,8 @@
     <string name="notif_social_followed_post_body">Nouvelle publication</string>
     <string name="notif_social_association_repost_title">%1$s a relayé une publication</string>
     <string name="notif_social_association_repost_body">Nouvelle publication</string>
+    <string name="notif_social_member_repost_title">%1$s a republié une publication</string>
+    <string name="notif_social_member_repost_body">Nouvelle publication</string>
     <string name="notif_social_repost_proposed_title">%1$s propose de relayer une publication</string>
     <string name="notif_social_repost_proposed_body">Publication à relayer</string>
     <string name="notif_social_repost_personal_requested_title">%1$s demande à relayer votre publication</string>
@@ -99,18 +111,51 @@
     <string name="notif_social_coorganise_proposed_body">Événement à co-organiser</string>
     <string name="notif_social_live_started_title">%1$s est en live</string>
     <string name="notif_social_live_started_body">Appuyez pour regarder</string>
+    <string name="notif_social_follow_request_title">%1$s demande à vous suivre</string>
+    <string name="notif_social_follow_request_body">Appuyez pour répondre</string>
+    <string name="notif_chat_join_ask_title">%1$s veut rejoindre</string>
+    <string name="notif_chat_join_ask_body">cette conversation</string>
+    <string name="notif_chat_join_ask_anon_title">Quelqu\'un veut rejoindre</string>
+    <string name="notif_social_follow_accepted_title">%1$s a accepté votre demande</string>
+    <string name="notif_social_follow_accepted_body">Votre demande a été acceptée</string>
+    <string name="notif_social_birthday_title">C\'est l\'anniversaire de %1$s</string>
+    <string name="notif_social_birthday_body">Souhaitez-lui un bon anniversaire</string>
     <string name="notif_social_live_cut_title">Votre live a été interrompu</string>
     <string name="notif_social_live_cut_body">La modération a coupé votre live. Ceci est un avertissement.</string>
     <string name="notif_social_live_suspended_title">Lives suspendus</string>
     <string name="notif_social_live_suspended_body">Après une nouvelle coupure par la modération, vous ne pouvez plus lancer de live pour le moment.</string>
     <string name="notif_social_live_withdrawn_title">Droit de lancer un live retiré</string>
     <string name="notif_social_live_withdrawn_body">La modération vous a retiré le droit de lancer un live.</string>
+    <string name="notif_social_booking_cancelled_title">%1$s a annulé une réservation</string>
+    <string name="notif_social_booking_cancelled_body">Elle n\'aura pas lieu</string>
+    <string name="notif_social_booking_withdrawn_title">%1$s a quitté votre réservation</string>
+    <string name="notif_social_booking_withdrawn_body">Votre réservation est maintenue</string>
+    <string name="notif_social_booking_added_title">%1$s vous a inscrit à une réservation</string>
+    <string name="notif_social_booking_added_body">Retrouvez-la dans Réservations</string>
+    <string name="notif_social_booking_reminder_title">Rappel de réservation</string>
+    <string name="notif_social_booking_reminder_body">Votre réservation commence bientôt</string>
+    <string name="notif_social_booking_changed_title">%1$s a modifié votre réservation</string>
+    <string name="notif_social_booking_changed_body">Retrouvez le nouvel horaire dans Réservations</string>
+    <string name="notif_social_booking_removed_title">%1$s vous a retiré d\'une réservation</string>
+    <string name="notif_social_booking_removed_body">Vous n\'en faites plus partie</string>
     <string name="notif_form_opening_soon_title">Formulaire bientôt ouvert</string>
     <string name="notif_form_opening_soon_body">Un formulaire que vous suivez ouvre dans 5 minutes !</string>
     <string name="notif_form_open_title">Formulaire ouvert !</string>
     <string name="notif_form_open_body">Le formulaire est disponible - dépêchez-vous, les places sont limitées !</string>
     <string name="notif_form_paid_over_capacity_title">Paiement sur un formulaire complet</string>
     <string name="notif_form_paid_over_capacity_body">« %1$s » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.</string>
+    <string name="notif_lydia_payments_active_title">Paiements Lydia actifs</string>
+    <string name="notif_lydia_payments_active_body">Les paiements Lydia de %1$s sont actifs.</string>
+    <string name="notif_lydia_payments_paused_title">Paiements Lydia suspendus</string>
+    <string name="notif_lydia_payments_paused_body">Les paiements Lydia de %1$s sont suspendus : Lydia a refusé une demande de paiement.</string>
+    <string name="notif_lydia_refund_issued_title">Remboursement</string>
+    <string name="notif_lydia_refund_issued_body">%1$s vous a remboursé un paiement.</string>
+    <string name="notif_delegation_revoked_title">Paiements en pause</string>
+    <string name="notif_delegation_revoked_body">L\'association qui recevait les paiements de %1$s a mis fin à la délégation : ses paiements sont en pause.</string>
+    <string name="notif_delegation_receiver_not_ready_title">Paiements en pause</string>
+    <string name="notif_delegation_receiver_not_ready_body">L\'association qui reçoit les paiements de %1$s ne peut plus les encaisser : ses paiements sont en pause.</string>
+    <string name="notif_delegation_resumed_title">Paiements rétablis</string>
+    <string name="notif_delegation_resumed_body">Les paiements de %1$s reprennent.</string>
     <!-- The agenda's five pairs, added 2026-09-09 with the notifications themselves. `proposed`
          is the only one naming an actor, because it is the only one where WHO acted is the useful
          half: the other four are always "the BDE".
@@ -130,4 +175,6 @@
     <string name="notif_event_deleted_body">« %1$s » a été supprimé par le BDE</string>
     <string name="notif_event_pending_title">Événement à revalider</string>
     <string name="notif_event_pending_body">« %1$s » doit être revalidé : ses dates ont changé</string>
+    <string name="notif_event_pending_coorganiser_title">Événement à revalider</string>
+    <string name="notif_event_pending_coorganiser_body">« %1$s » doit être revalidé : une association a accepté de co-organiser</string>
 </resources>

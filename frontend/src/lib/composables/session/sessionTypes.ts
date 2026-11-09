@@ -94,7 +94,20 @@ export interface ChatSessionCallbacks {
   selectConversation: (name: string) => void;
   onChannelMemberJoined?: (event: any) => void;
   onChannelMemberKicked?: (event: any) => void;
-  onRolePermissionsChanged?: (event: { roleId: string; permissions: string[] }) => void;
+  onChannelRemovalReleased?: (event: {
+    workspaceId: string;
+    channelId: string;
+    removedUserId: string;
+    /** The actor who released it - never elected for it. */
+    releasedBy: string;
+    /** The actor's device that released it - re-decided only where the tree holds its leaf. */
+    releasedByDevice: string;
+  }) => void;
+  onRolePermissionsChanged?: (event: {
+    roleId: string;
+    permissions: string[];
+    label?: string | null;
+  }) => void;
   onChannelUpdated?: (event: {
     channelId: string;
     name?: string;
@@ -197,9 +210,10 @@ export interface SessionContext {
   resetMls(only?: IMlsService): void;
   /**
    * Lets go of the MLS client at a sign-out and destroys it once `finalWrite` (the teardown's final
-   * checkpoint) has landed - see `mlsHolder.ts`. The next `ensureMls` builds a fresh client.
+   * checkpoint) has landed - see `mlsHolder.ts`. The next `ensureMls` builds a fresh client. `why`
+   * names the end in the native log (a sign-out unless given).
    */
-  retireMls(finalWrite: Promise<void>): Promise<void>;
+  retireMls(finalWrite: Promise<void>, why?: 'sign-out' | 'lost session'): Promise<void>;
   /** Settles once every retired client's final checkpoint has landed; a login waits for it. */
   whenMlsRetired(): Promise<void>;
   /** True while a retired client's final checkpoint is still being written. */
@@ -213,6 +227,11 @@ export interface SessionContext {
   setIsLoggedIn(v: boolean): void;
   isWsConnected(): boolean;
   setIsWsConnected(v: boolean): void;
+  /**
+   * The opened socket's post-connect catch-up is done (`ConnectionDeps.onCaughtUp`): what a call
+   * answered on the native ring waits for before it joins.
+   */
+  onConnectionCaughtUp(): void;
   getLoginError(): string;
   setLoginError(v: string): void;
   isReconnecting(): boolean;
@@ -277,8 +296,14 @@ export interface SessionContext {
     Array<{ requesterUserId: string; requesterDeviceId: string }>
   >;
 
-  /** Updates the reactive flag exposed by useChatSession to the UI (follower banner). */
+  /** Updates the reactive flag exposed by useChatSession to the UI. */
   setIsTabLeader(v: boolean): void;
+  /**
+   * Reloads the page so it loads the MLS state as the leader it has become - the promotion handler's
+   * own path, taken by a login that was promoted after it loaded the state as a follower
+   * (`promotedSinceLoad`) instead of going live on that copy.
+   */
+  reloadForPromotion(log: (message: string) => void): void;
   /** Callback for the tab-leader promotion -> WebSocket reconnection. */
   setTabLeaderSessionCb(cb: ChatSessionCallbacks | null): void;
 

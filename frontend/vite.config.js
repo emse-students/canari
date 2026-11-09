@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { sveltekit } from '@sveltejs/kit/vite';
+import kitConfig from './kit.config.js';
 import tailwindcss from '@tailwindcss/vite';
 import { paraglideVitePlugin } from '@inlang/paraglide-js';
 
@@ -142,15 +143,15 @@ export default defineConfig(async () => ({
     platformMlsService(),
     tailwindcss(),
     // Paraglide must compile before SvelteKit so the generated runtime in
-    // src/lib/paraglide is available to the app. SPA mode (ssr=false): locale
-    // detection is client-side via localStorage then the browser's preferred
-    // language, falling back to the base locale (fr).
+    // src/lib/paraglide is available to the app. EVERY compiler option (strategy, isServer, output
+    // structure) lives in project.inlang/paraglide.config.js, which the `paraglide:compile` CLI reads
+    // too: the two writers must emit byte-identical files or they invalidate each other's cache and
+    // `vite dev` rewrites ~4,500 files before listening (docs/wiki/frontend/i18n.md).
     paraglideVitePlugin({
       project: './project.inlang',
       outdir: './src/lib/paraglide',
-      strategy: ['localStorage', 'preferredLanguage', 'baseLocale'],
     }),
-    sveltekit(),
+    sveltekit(kitConfig),
     oneWasmAsset(),
     protobufPatch(),
   ],

@@ -137,6 +137,24 @@ describe('the ONE writer of a pending membership', () => {
     expect(written()).not.toHaveProperty('kickedAt');
   });
 
+  /**
+   * THE ADMISSION FLOOR (`admittedByBaseEpoch`, `commitFloorOf`): a kick takes the leaf out of the
+   * tree, so it ends the admission; a demotion with no kick (the cron, a self-report) leaves the leaf
+   * and must leave the floor, or the device would be re-floored at a later epoch for nothing.
+   */
+  it('a KICK clears the admission floor', async () => {
+    await service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: new Date(0) });
+
+    expect(written()).toMatchObject({ admittedByBaseEpoch: null, admissionInferred: false });
+  });
+
+  it('a demotion with no kick LEAVES the admission floor alone', async () => {
+    await service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: null });
+
+    expect(written()).not.toHaveProperty('admittedByBaseEpoch');
+    expect(written()).not.toHaveProperty('admissionInferred');
+  });
+
   it('RESTARTS the seat clock, because a demotion restarts the wait', async () => {
     // The fresh grace window the purge always intended a demoted device to have, and could not
     // give it: `cleanupStalePendingInvitations` was reading `updatedAt`, which somebody else's
@@ -170,6 +188,11 @@ describe('the ONE writer of a pending membership', () => {
       service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: null })
     ).resolves.toBe(true);
     expect(deviceGroupRepo.update).toHaveBeenCalled();
+    // Swallowed, never silent: the route it leaves is what an erasure later finds unseated.
+    const holder = service as unknown as { logger: { warn: jest.Mock } };
+    expect(holder.logger.warn).toHaveBeenCalledWith(
+      expect.stringMatching(/route NOT removed group=g1 .*connection lost/)
+    );
   });
 
   it('never creates a seat: with no row it writes nothing, still drops the route, and says so', async () => {
@@ -219,7 +242,11 @@ describe('the KICK and INVITATION_STATUS doors', () => {
       controllers: [InvitationsController],
       providers: [
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
-        { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
+        // The kicking caller is an admitted member of the group: a kick is a member's act.
+        {
+          provide: getRepositoryToken(GroupMember),
+          useValue: { ...emptyRepo(), findOne: jest.fn().mockResolvedValue({ id: 'seat-u1' }) },
+        },
         { provide: getRepositoryToken(Group), useValue: emptyRepo() },
         { provide: getRepositoryToken(GroupInvite), useValue: emptyRepo() },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
@@ -243,7 +270,7 @@ describe('the KICK and INVITATION_STATUS doors', () => {
       { userId: 'u1', deviceId: 'd2', groupId: 'g1' },
     ]);
 
-    const answer = await controller.kickStaleUser({ userId: 'u1', groupId: 'g1' }, 'u1', 'true');
+    const answer = await controller.kickStaleUser({ userId: 'u1', groupId: 'g1' }, 'u1');
 
     expect(messaging.deactivateDeviceMembership).toHaveBeenCalledTimes(2);
     expect(messaging.deactivateDeviceMembership).toHaveBeenCalledWith(
@@ -260,7 +287,7 @@ describe('the KICK and INVITATION_STATUS doors', () => {
   it('kick-stale-device delegates, and stops writing the routing set itself', async () => {
     deviceGroupRepo.findOne.mockResolvedValue({ userId: 'u1', deviceId: 'd1', groupId: 'g1' });
 
-    await controller.kickStaleDevice({ deviceId: 'd1', userId: 'u1', groupId: 'g1' }, 'u1', 'true');
+    await controller.kickStaleDevice({ deviceId: 'd1', userId: 'u1', groupId: 'g1' }, 'u1');
 
     expect(messaging.deactivateDeviceMembership).toHaveBeenCalledWith(
       'u1',
@@ -284,7 +311,7 @@ describe('the KICK and INVITATION_STATUS doors', () => {
       async (_u: string, d: string) => d === 'd1'
     );
 
-    const user = await controller.kickStaleUser({ userId: 'u1', groupId: 'g1' }, 'u1', 'true');
+    const user = await controller.kickStaleUser({ userId: 'u1', groupId: 'g1' }, 'u1');
 
     expect(user).toMatchObject({ affected: 1, devices: [{ deviceId: 'd1', groupId: 'g1' }] });
     expect(messaging.deactivateDeviceMembership).toHaveBeenCalledWith(
@@ -301,7 +328,7 @@ describe('the KICK and INVITATION_STATUS doors', () => {
       groupId: 'g1',
     });
     await expect(
-      controller.kickStaleDevice({ deviceId: 'd2', userId: 'u1', groupId: 'g1' }, 'u1', 'true')
+      controller.kickStaleDevice({ deviceId: 'd2', userId: 'u1', groupId: 'g1' }, 'u1')
     ).resolves.toEqual({ status: 'not_found', affected: 0 });
   });
 
@@ -310,8 +337,7 @@ describe('the KICK and INVITATION_STATUS doors', () => {
 
     const answer = await controller.kickStaleDevice(
       { deviceId: 'd1', userId: 'u1', groupId: 'g1' },
-      'u1',
-      'true'
+      'u1'
     );
 
     expect(answer).toEqual({ status: 'not_found', affected: 0 });
@@ -321,8 +347,7 @@ describe('the KICK and INVITATION_STATUS doors', () => {
   it('the self-reported demotion delegates with NO kick - nobody removed this leaf', async () => {
     const answer = await controller.updateInvitationStatus(
       { deviceId: 'd1', userId: 'u1', groupId: 'g1', status: 'pending' },
-      'u1',
-      'false'
+      'u1'
     );
 
     expect(messaging.deactivateDeviceMembership).toHaveBeenCalledWith(
@@ -342,8 +367,7 @@ describe('the KICK and INVITATION_STATUS doors', () => {
     const refusal = (await controller
       .updateInvitationStatus(
         { deviceId: 'd1', userId: 'u1', groupId: 'g1', status: 'pending' },
-        'u1',
-        'false'
+        'u1'
       )
       .catch((e: unknown) => e)) as { getStatus(): number; getResponse(): unknown };
 

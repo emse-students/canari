@@ -16,11 +16,13 @@ vi.mock('$lib/utils/chat/groupSyncEligibility', async (importOriginal) => ({
 }));
 
 import { processPendingInvitations } from './actions';
+
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 import {
   DeviceTrustRefusedError,
   resetReportedDeviceTrustRefusals,
 } from '$lib/mls-client/deviceTrust';
+import { devicePackages } from '$lib/mls-client/test/fixtures/devicePackages';
 
 function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
   return {
@@ -76,9 +78,9 @@ describe('processPendingInvitations - leaf already in tree', () => {
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['peer:peer-dev']),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
+      ]),
     });
     const conversations = new Map<string, Conversation>([['g1', readyConversation('g1')]]);
     const log = vi.fn();
@@ -118,9 +120,9 @@ describe('processPendingInvitations - leaf already in tree', () => {
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:peer-dev']),
       // Empty, as a fresh-start leaves it. The old check read THIS and re-added over a live leaf.
       getGroupMembers: vi.fn().mockResolvedValue([]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
+      ]),
     });
     const log = vi.fn();
 
@@ -152,9 +154,9 @@ describe('processPendingInvitations - leaf already in tree', () => {
         ]),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
       getGroupMembers: vi.fn().mockResolvedValue([{ userId: 'peer', deviceId: 'peer-dev' }]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
+      ]),
       addMember,
     });
 
@@ -187,9 +189,9 @@ describe('processPendingInvitations - leaf already in tree', () => {
       getGroupMemberIdentities: vi
         .fn()
         .mockResolvedValue(['someone-else:peer-dev', 'peer:old-phone']),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
+      ]),
       addMember,
     });
 
@@ -221,9 +223,9 @@ describe('processPendingInvitations - leaf already in tree', () => {
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
       getGroupMemberIdentities: vi.fn().mockRejectedValue(new Error('GroupNotFound')),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
+      ]),
       addMember,
     });
     const log = vi.fn();
@@ -251,9 +253,9 @@ describe('processPendingInvitations - leaf already in tree', () => {
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
       getGroupMembers: vi.fn().mockResolvedValue([]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
+      ]),
       addMember: vi.fn().mockResolvedValue({
         welcome: new Uint8Array([2]),
         ratchetTree: new Uint8Array([4]),
@@ -295,9 +297,9 @@ describe('processPendingInvitations - leaf already in tree', () => {
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['peer:peer-dev']),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
+      ]),
     });
 
     await processPendingInvitations({
@@ -329,7 +331,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
         { id: 'i2', userId: 'peer', deviceId: 'dev-b', groupId: 'g1', status: 'pending' },
       ]),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['peer:dev-a', 'peer:dev-b']),
-      fetchUserDevices: vi.fn().mockResolvedValue([
+      fetchDeviceKeyPackage: devicePackages([
         { deviceId: 'dev-a', keyPackage: new Uint8Array([1]) },
         { deviceId: 'dev-b', keyPackage: new Uint8Array([2]) },
       ]),
@@ -368,7 +370,7 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
       ]),
       getGroupMembers: vi.fn().mockResolvedValue([]),
       getDeviceMemberships: vi.fn().mockResolvedValue([]),
-      fetchUserDevices: vi.fn().mockResolvedValue([
+      fetchDeviceKeyPackage: devicePackages([
         { deviceId: 'peer-dev-1', keyPackage: new Uint8Array([1]) },
         { deviceId: 'peer-dev-2', keyPackage: new Uint8Array([1]) },
       ]),
@@ -400,9 +402,9 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev-1', groupId: 'g1', status: 'pending' },
         ]),
       getGroupMembers: vi.fn().mockResolvedValue([]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev-1', keyPackage: new Uint8Array([1]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev-1', keyPackage: new Uint8Array([1]) },
+      ]),
       addMember: vi
         .fn()
         .mockRejectedValue(
@@ -451,7 +453,7 @@ describe('processPendingInvitations - the group is absent from THIS device', () 
         ]),
       // Present and live on the server: the group exists, we simply hold nothing for it.
       getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'g1', deletedAt: null }]),
-      sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+      sendWelcomeRequest: vi.fn().mockResolvedValue(null),
       deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
     });
   }
@@ -529,9 +531,9 @@ describe('processPendingInvitations - a device key this member refuses', () => {
         .mockResolvedValue([
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
+      ]),
       deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
       addMember: vi
         .fn()
@@ -575,9 +577,9 @@ describe('processPendingInvitations - a device key this member refuses', () => {
         .mockResolvedValue([
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
+      ]),
       deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
       addMember: vi
         .fn()
@@ -599,8 +601,8 @@ describe('processPendingInvitations - a device key this member refuses', () => {
     await sweep();
     await sweep();
 
-    expect(mlsService.fetchUserDevices).toHaveBeenCalledTimes(1);
-    expect(mlsService.fetchDeviceKeyPackage).not.toHaveBeenCalled();
+    expect(mlsService.fetchDeviceKeyPackage).toHaveBeenCalledTimes(1);
+    expect(mlsService.fetchUserDevices).not.toHaveBeenCalled();
     expect(mlsService.addMember).toHaveBeenCalledTimes(1);
     expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
     error.mockRestore();
@@ -617,9 +619,9 @@ describe('processPendingInvitations - a device key this member refuses', () => {
         .mockResolvedValue([
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
+      ]),
       deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
       addMember: vi
         .fn()
@@ -639,7 +641,8 @@ describe('processPendingInvitations - a device key this member refuses', () => {
     await sweep();
     await sweep();
 
-    expect(mlsService.fetchUserDevices).toHaveBeenCalledTimes(2);
+    expect(mlsService.fetchDeviceKeyPackage).toHaveBeenCalledTimes(2);
+    expect(mlsService.fetchUserDevices).not.toHaveBeenCalled();
     error.mockRestore();
   });
 });
@@ -667,9 +670,9 @@ describe('processPendingInvitations - a duplicate signature key', () => {
         .mockResolvedValue([
           { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
         ]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
+      ]),
       getGroupMemberIdentities: vi
         .fn()
         .mockResolvedValueOnce(['self:self-device', 'peer:old-phone'])

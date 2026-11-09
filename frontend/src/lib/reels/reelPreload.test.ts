@@ -4,7 +4,12 @@
  * resolves the cache's promise, never by a clock.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { ReelPreload, type ReelPreloadCache } from './reelPreload';
+import {
+  REEL_PRELOAD_MAX_BYTES,
+  ReelPreload,
+  worthPreloading,
+  type ReelPreloadCache,
+} from './reelPreload';
 import type { MediaRef } from '$lib/media';
 import { flushMacrotask } from '../../test/flush';
 
@@ -65,5 +70,34 @@ describe('ReelPreload', () => {
     p.stop();
     p.stop();
     expect(c.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands the decrypted URL over once the video is in, for its first frame', async () => {
+    const { c, resolve } = cache();
+    const onReady = vi.fn();
+    new ReelPreload(ref, c, onReady);
+    expect(onReady).not.toHaveBeenCalled();
+    resolve('blob:x');
+    await flush();
+    expect(onReady).toHaveBeenCalledWith('blob:x');
+  });
+
+  it('a preload stopped before it was in hands nothing over', async () => {
+    const { c, resolve } = cache();
+    const onReady = vi.fn();
+    const p = new ReelPreload(ref, c, onReady);
+    resolve('blob:x');
+    p.stop();
+    await flush();
+    expect(onReady).not.toHaveBeenCalled();
+  });
+});
+
+describe('worthPreloading', () => {
+  it('fetches a streamed video or a reel-sized one ahead, never a long unsegmented feed video', () => {
+    expect(worthPreloading({ encoding: 'segmented-v1', size: 900 * 1024 * 1024 })).toBe(true);
+    expect(worthPreloading({ size: REEL_PRELOAD_MAX_BYTES })).toBe(true);
+    expect(worthPreloading({ size: REEL_PRELOAD_MAX_BYTES + 1 })).toBe(false);
+    expect(worthPreloading({ encoding: undefined, size: 300 * 1024 * 1024 })).toBe(false);
   });
 });

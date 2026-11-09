@@ -59,7 +59,8 @@ void CanariScheduleOutboxRetryTask(void);
 
 /// Copies the push decrypt inputs (mls.bin, push_context.json, graine_seeds.json,
 /// push_secret.txt) into the `group.fr.emse.canari` App Group container for the Notification
-/// Service Extension. Call it on both foreground/background transitions.
+/// Service Extension. Call it on both foreground/background transitions. The extension's mls.bin
+/// does not wait for it: every write of the state copies it along (`write_slot_mls_bin`).
 void CanariMirrorPushStateToAppGroup(void);
 
 /// Carries the FCM cache entries the Notification Service Extension wrote into the App Group

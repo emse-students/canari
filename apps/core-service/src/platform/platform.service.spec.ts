@@ -45,6 +45,8 @@ describe('PlatformService', () => {
       paymentProvider: 'lydia' as const,
       callsMode: 'off' as const,
       livesMode: 'off' as const,
+      pushMode: 'full' as const,
+      checkpointSkipMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -58,6 +60,8 @@ describe('PlatformService', () => {
       paymentProvider: 'lydia' as const,
       callsMode: 'off' as const,
       livesMode: 'off' as const,
+      pushMode: 'full' as const,
+      checkpointSkipMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -73,6 +77,8 @@ describe('PlatformService', () => {
       paymentProvider: 'lydia',
       callsMode: 'off',
       livesMode: 'off',
+      pushMode: 'full',
+      checkpointSkipMode: 'off',
     });
 
     await service.ensureDefaults();
@@ -100,6 +106,15 @@ describe('PlatformService', () => {
     expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ livesMode: 'off' }));
   });
 
+  it('ensureDefaults creates the row with the checkpoint skip OFF - every drain checkpoints until an admin says otherwise', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    await service.ensureDefaults();
+
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ checkpointSkipMode: 'off' }));
+  });
+
   /** A config row with `minClientVersion` at `min`, wired into the repo mock. */
   const rowWithMin = (min: string): PlatformConfig => {
     const existing: PlatformConfig = {
@@ -110,6 +125,8 @@ describe('PlatformService', () => {
       paymentProvider: 'lydia',
       callsMode: 'off',
       livesMode: 'off',
+      pushMode: 'full',
+      checkpointSkipMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -159,6 +176,8 @@ describe('PlatformService', () => {
         paymentProvider: provider,
         callsMode: 'off',
         livesMode: 'off',
+        pushMode: 'full',
+        checkpointSkipMode: 'off',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -230,6 +249,8 @@ describe('PlatformService', () => {
         paymentProvider: provider,
         callsMode: 'off',
         livesMode: 'off',
+        pushMode: 'full',
+        checkpointSkipMode: 'off',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -286,6 +307,8 @@ describe('PlatformService', () => {
       paymentProvider: 'lydia',
       callsMode: 'off',
       livesMode: 'off',
+      pushMode: 'full',
+      checkpointSkipMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -306,6 +329,8 @@ describe('PlatformService', () => {
       paymentProvider: 'lydia',
       callsMode: 'off',
       livesMode: 'off',
+      pushMode: 'full',
+      checkpointSkipMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -352,6 +377,35 @@ describe('PlatformService', () => {
     expect(result.callsMode).toBe('audio');
     expect(result.minClientVersion).toBe('0.13.0');
     expect(warn.mock.calls.map((c) => String(c[0]))).toContain('livesMode off -> on by=aaaaaaaa');
+    warn.mockRestore();
+  });
+
+  it('updateConfig moves the push switch, logs it at warn with the actor, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.livesMode = 'on';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ pushMode: 'wake' }, ADMIN);
+
+    expect(result.pushMode).toBe('wake');
+    expect(result.livesMode).toBe('on');
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain('pushMode full -> wake by=aaaaaaaa');
+    warn.mockRestore();
+  });
+
+  it('updateConfig moves the checkpoint-skip switch, logs it at warn with the actor, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.pushMode = 'wake';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ checkpointSkipMode: 'on' }, ADMIN);
+
+    expect(result.checkpointSkipMode).toBe('on');
+    expect(result.pushMode).toBe('wake');
+    expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { checkpointSkipMode: 'on' });
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      'checkpointSkipMode off -> on by=aaaaaaaa'
+    );
     warn.mockRestore();
   });
 

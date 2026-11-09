@@ -41,24 +41,14 @@ describe('isValidFileRetention', () => {
 describe('fileQuestionProblem', () => {
   const form = (over: Record<string, unknown> = {}) => ({
     items: [FILE_ITEM],
-    isPublic: false,
-    anonymous: false,
     fileRetentionDays: 7,
     ...over,
   });
 
+  // A file on a public or anonymous form is a conflict of two options, judged by the shared rule
+  // (`formOptionRules.test.ts`), not here.
   it('says nothing about a form without a file question, whatever its settings', () => {
-    expect(
-      fileQuestionProblem(form({ items: [TEXT_ITEM], isPublic: true, fileRetentionDays: 0 }))
-    ).toBeNull();
-  });
-
-  it('refuses a public form with the public reason', () => {
-    expect(fileQuestionProblem(form({ isPublic: true }))).toBe(m.form_public_hint_blocked_file());
-  });
-
-  it('refuses an anonymous form with the anonymous reason', () => {
-    expect(fileQuestionProblem(form({ anonymous: true }))).toBe(m.form_anonymous_hint_file());
+    expect(fileQuestionProblem(form({ items: [TEXT_ITEM], fileRetentionDays: 0 }))).toBeNull();
   });
 
   it('refuses a retention outside 1 to 30', () => {

@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -166,16 +167,42 @@ export class UserBlocksService {
     return { ok: true };
   }
 
-  /** Lifts a block. Only the blocker can, which is why the row keeps its direction. */
+  /**
+   * Lifts a block. Only the blocker can, which is why the row keeps its direction.
+   *
+   * THE BLOCK ROW IS THE DURABLE RECORD THAT THE PAIR'S FOLLOWS ARE OWED A SEVERING (WP-F5, F2 of
+   * its review). The severing at `block` is best-effort, and while the block stands that costs
+   * nothing - every reader of a follow hides a pair a block stands between. But a follow row it
+   * missed would come back the moment the block went, and since WP-F5 an accepted follow OPENS the
+   * person's posts across spaces: lifting a block must not resurrect that. So the follows are
+   * severed (both directions, idempotent) BEFORE the row is deleted, and a severing that fails
+   * refuses the unblock with a 503 and leaves the block in place - retried by the person, never
+   * by a clock. Nothing can recreate a follow in between: an ask and an acceptance are both refused
+   * across a block inside their own statement, and the block is still there.
+   */
   async unblock(blockerId: string, blockedId: string): Promise<{ ok: true }> {
     this.logger.log(`[unblock] blocker=${blockerId} blocked=${blockedId}`);
+    const existing = await this.blockRepo.findOne({ where: { blockerId, blockedId } });
+    if (!existing)
+      throw new NotFoundException(
+        refusalBody(RefusalCode.NOT_BLOCKED, 'This person is not blocked')
+      );
+    try {
+      await this.severFollowsOrThrow(blockerId, blockedId);
+    } catch (err) {
+      this.logger.warn(
+        `[unblock] REFUSED, the block stays: the pair's follows could not be severed first, and ` +
+          `lifting it would re-open what a left-over follow opens: a=${blockerId} b=${blockedId}: ${String(err)}`
+      );
+      throw new ServiceUnavailableException('The block could not be lifted now, try again');
+    }
     const res = await this.blockRepo.delete({ blockerId, blockedId });
     if (!res.affected)
       throw new NotFoundException(
         refusalBody(RefusalCode.NOT_BLOCKED, 'This person is not blocked')
       );
-    // Lifting one restores no follow, so `severFollows` does not run here and this is the only
-    // thing telling the feed its cached pages are answers to a question that has changed.
+    // Lifting one restores no follow; this is what tells the feed its cached pages are answers to
+    // a question that has changed.
     await this.dropFeedCache();
     return { ok: true };
   }
@@ -204,13 +231,22 @@ export class UserBlocksService {
     }
   }
 
-  /** Asks social-service to drop both follow relationships between the two accounts. */
+  /** Asks social-service to drop both follow relationships between the two accounts; throws on failure. */
+  private async severFollowsOrThrow(a: string, b: string): Promise<void> {
+    await axios.delete(
+      socialUrl(`internal/follows/between/${encodeURIComponent(a)}/${encodeURIComponent(b)}`),
+      { headers: { 'x-internal-secret': this.internalSecret }, timeout: 5_000 }
+    );
+  }
+
+  /**
+   * The severing at BLOCK time: best-effort and loud, because the block is already durable and hides
+   * the pair's follows from every reader while it stands; `unblock` severs again, and THAT one may
+   * not fail.
+   */
   private async severFollows(a: string, b: string): Promise<void> {
     try {
-      await axios.delete(
-        socialUrl(`internal/follows/between/${encodeURIComponent(a)}/${encodeURIComponent(b)}`),
-        { headers: { 'x-internal-secret': this.internalSecret }, timeout: 5_000 }
-      );
+      await this.severFollowsOrThrow(a, b);
     } catch (err) {
       this.logger.warn(
         `[block] follow severing failed, the two accounts may still follow each other: ` +

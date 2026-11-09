@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -13,6 +14,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  Matches,
   MaxLength,
   Min,
   Validate,
@@ -23,6 +25,7 @@ import {
   type ValidatorConstraintInterface,
 } from 'class-validator';
 import { COMMENT_MAX_LENGTH, COMMENT_PAGE_MAX, type CommentOrder } from '../comment-page';
+import { LIST_POST_FEEDS, type ListPostsFeed } from '../list-feed';
 
 /**
  * A post needs a body OR a media entry - the rule the composer's Publier button already applies
@@ -46,6 +49,9 @@ export class PostBodyOrMediaConstraint implements ValidatorConstraintInterface {
     return 'markdown should not be empty unless the post carries media';
   }
 }
+
+/** A ThumbHash is at most a few dozen bytes; its base64 never approaches this. */
+export const MEDIA_PLACEHOLDER_MAX_LENGTH = 128;
 
 export class PostMediaDto {
   @IsString()
@@ -102,6 +108,20 @@ export class PostMediaDto {
   @IsOptional()
   @IsIn(['segmented-v1'])
   encoding?: string;
+
+  /**
+   * A ThumbHash of the medium's picture - a video's FIRST FRAME - as base64, made by the PUBLISHER
+   * (`frontend/src/lib/utils/mediaPlaceholder.ts`): the server transcodes nothing and draws no
+   * thumbnail (CanaReels C3), so this ~25-byte blur is the only picture a reel has before its
+   * bytes arrive. The reel viewer paints it from the first frame of the page instead of a play
+   * glyph. Declared so `whitelist: true` keeps it; bounded, since a ThumbHash is a few dozen bytes
+   * and anything longer is not one.
+   */
+  @IsString()
+  @IsOptional()
+  @MaxLength(MEDIA_PLACEHOLDER_MAX_LENGTH)
+  @Matches(/^[A-Za-z0-9+/]*={0,2}$/, { message: 'placeholder must be base64' })
+  placeholder?: string;
 }
 
 export class PollOptionInputDto {
@@ -240,7 +260,30 @@ export class FormInputDto {
   items: FormItemInputDto[];
 }
 
+/**
+ * The publish queue's withdrawal of a post it queued (`POST /posts/:id/withdraw`): the media it
+ * uploaded for it, which social-service deletes unless a live row cites them.
+ */
+export class WithdrawPostDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsUUID('all', { each: true })
+  mediaIds?: string[];
+}
+
 export class CreatePostDto {
+  /**
+   * The post's id, minted by the CLIENT when it queued the post, so a resend after a lost answer
+   * is answered from the row the first request wrote instead of making a second post
+   * (`post-client-id.ts`). A random v4 UUID only (the nil UUID and other versions are refused): its
+   * unguessability is what makes the 409 for another author's id harmless. Optional: without it
+   * the database generates the id, as before.
+   */
+  @IsUUID('4')
+  @IsOptional()
+  id?: string;
+
   @IsString()
   @IsOptional()
   authorId?: string;
@@ -306,6 +349,15 @@ export class CreatePostDto {
   @IsOptional()
   anonymous?: boolean;
 
+  /**
+   * "Entre étudiants" (owner, 2026-11-04): read only by students and the association's members.
+   * Absent is OFF. Refused, typed, on a post that is not an association's or a list's
+   * (`assertStudentsOnlyOffered`).
+   */
+  @IsBoolean()
+  @IsOptional()
+  studentsOnly?: boolean;
+
   @IsOptional()
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
   @IsUUID()
@@ -329,10 +381,10 @@ export class ListPostsQueryDto {
   @Min(0)
   offset?: number;
 
-  /** Default `all` when omitted. */
+  /** Default `all` when omitted; `reels` is the CanaReels viewer's list, not a tab (`list-feed.ts`). */
   @IsOptional()
-  @IsIn(['all', 'followed', 'custom', 'associations'])
-  feed?: 'all' | 'followed' | 'custom' | 'associations';
+  @IsIn([...LIST_POST_FEEDS])
+  feed?: ListPostsFeed;
 
   /**
    * Restricts the page to one kind. ABSENT MEANS BOTH - the feed shows reels where it shows posts
@@ -351,6 +403,38 @@ export class ListPostsQueryDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   singlePhotos?: boolean;
+
+  /**
+   * With `kind=reel`: the posts whose only content is ONE picture OR ONE video come too (owner,
+   * 2026-11-06: a feed video not filmed with the Canari camera is in CanaReels as a picture is).
+   * Wins over `singlePhotos`, which stays for an installed client that asks for pictures alone.
+   * Ignored without `kind=reel`.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  singleMedia?: boolean;
+
+  /**
+   * With `kind=reel`: the posts of TWO TO TEN pictures and videos and nothing else come too, as
+   * well as the single ones (owner, 2026-11-06: a carousel, swiped left and right as on
+   * Instagram). Wins over `singleMedia` and `singlePhotos`, which keep their meaning for an
+   * installed client that cannot draw a carousel. Ignored without `kind=reel`.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  multiMedia?: boolean;
+
+  /**
+   * With `multiMedia`: a post with a LINK in its text comes too, the client drawing the link in the
+   * caption (owner, 2026-11-06). Ignored without `multiMedia`, so an installed client that sends an
+   * older switch keeps the rule it was built for.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  withLinks?: boolean;
 
   /** Custom feed: filter by author promotion (personal posts only). */
   @IsOptional()
@@ -488,6 +572,14 @@ export class UpdatePostDto {
   @ValidateIf((_, v) => v != null && v !== '')
   @IsDateString()
   scheduledAt?: string | null;
+
+  /**
+   * "Entre étudiants", changed after publication, both ways (owner, 2026-11-04, decision 5). Absent
+   * leaves the stored value alone - a client older than the switch never clears it.
+   */
+  @IsBoolean()
+  @IsOptional()
+  studentsOnly?: boolean;
 }
 
 /**
@@ -497,4 +589,26 @@ export class UpdatePostDto {
 export class RepublicationTargetDto {
   @IsUUID()
   associationId: string;
+}
+
+/** The author's account-wide consent to member reposts (WP-F6). */
+export class RepostAccountConsentDto {
+  @IsBoolean()
+  allowReposts: boolean;
+}
+
+/** One post's override of that consent (WP-F6): `null` follows the account setting again. */
+export class RepostPostConsentDto {
+  @ValidateIf((_o, v) => v !== null)
+  @IsBoolean()
+  allowReposts: boolean | null;
+}
+
+/**
+ * The body of `PATCH /api/posts/:postId/pin|unpin` (WP-PIN): the space to pin in, REQUIRED - a
+ * request naming none is a 400, never a guess (the body-less shim of WP-PIN went with floor `1.6.6`).
+ */
+export class PinPostDto {
+  @IsUUID()
+  spaceId: string;
 }

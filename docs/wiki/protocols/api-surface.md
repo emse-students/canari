@@ -96,8 +96,10 @@ deployment change and is deliberately not bundled with a correctness fix.**
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/ws` | yes (JWT cookie) | WebSocket upgrade |
-| GET | `/api/presence` | yes | Online presence of the asked users the caller shares a conversation or a community with ([audience](../services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18)) |
-| GET | `/api/admin/presence` | yes (global admin) | Admin view of all connected devices |
+| POST | `/api/presence` | yes | Online presence of the asked users (`{ users: [...] }`, at most 1000 per request) the caller shares a conversation or a community with ([audience](../services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18), [why a body](../services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
+| GET | `/api/presence?users=` | yes | LEGACY, same answer, for clients installed before the POST ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-presence-ids-in-a-url)) |
+| GET | `/api/admin/presence` | yes (global admin) | Counts of connected people and devices, by platform and app version - no id ([census](../services/chat-gateway.md#the-anonymous-census-and-its-24-hour-series-2026-11-02)) |
+| GET | `/api/admin/presence/history` | yes (global admin) | The same counts, one sample a minute for the last 24 h |
 | GET | `/api/health` | no | Liveness probe |
 
 WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
@@ -140,10 +142,11 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | GET | `/api/mls/users/:userId/dismissed-groups` | List dismissed group IDs |
 | POST | `/api/mls/users/:userId/dismissed-groups` | Mark group dismissed |
 | DELETE | `/api/mls/users/:userId/dismissed-groups/:groupId` | Un-dismiss group |
-| POST | `/api/mls/groups/:groupId/members` | Write an ADMITTED person's device rows (`409 MEMBER_NOT_ADMITTED` otherwise); enrols only the caller, into an empty roster |
+| POST | `/api/mls/groups/:groupId/members` | Write an ADMITTED person's device rows (`409 MEMBER_NOT_ADMITTED` otherwise); enrols only the group's recorded creator (`createdBy`), into an empty roster |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members (`?withSeatGeneration=1`: `{ seatGeneration, members }`, the generation read first) |
 | GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member (current members only) |
 | POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read |
+| POST | `/api/mls/groups/:groupId/revoked-leaves` | Which sent leaf identities belong to a revoked device (key groups included) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
 
@@ -154,6 +157,8 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | POST | `/api/mls/send` | Send MLS message/commit; answers `receivedAt`, the instant every recipient's copy is dated by, which the sender stores as its own copy's `serverTimestamp` |
 | POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits since epoch N |
+| GET | `/api/mls/commits/:groupId/accepted-at?baseEpoch=N` | Members only, and 403 for a commit older than the one that admitted the requester: the commit log `createdAt` of the commit built on epoch N (`acceptedAt`, `null` when the log holds none) - the instant a device notice is dated by ([chat](../frontend/modules/chat.md#a-visible-notice-is-dated-by-its-frame-never-by-when-this-device-learnt-of-it)) |
+| GET | `/api/mls/groups/:groupId/own-removal` | The requester's OWN seat: when it was removed (`removedAt`: the closed stretch's `leftAt`, or this device's `kickedAt`; `null` when nothing removed it) - not membership-gated, the date of a removal notice |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
 | POST | `/api/mls/welcome` | Deliver Welcome to device |
@@ -164,7 +169,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | GET | `/api/mls/history/:groupId` | Incremental Redis Stream history |
 | GET | `/api/mls/messages/:userId/:deviceId` | Fetch queued messages |
 | POST | `/api/mls/messages/ack` | Acknowledge received messages |
-| POST | `/api/mls/notify-reaction` | Fire-and-forget reaction push |
+| POST | `/api/mls/notify-reaction` | Fire-and-forget reaction push; a member of the conversation only ([chat-delivery](../services/chat-delivery.md#the-relay-routes-ask-the-group-2026-11-01)) |
 
 ### Invitations / device sync
 
@@ -190,6 +195,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | DELETE | `/api/mls/push/unregister/:deviceId` | JWT | Unregister push token |
 | POST | `/api/mls/push/broadcast-test` | JWT | Test push to all devices |
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background service |
+| GET | `/api/mls/push/wake` | PushSecret (`PushSecretGuard` on the query, then 600/min per user) | The data map a content-free wake-up push left on the server (`{status: frame, fields}` or `{status: gone}`), [design](../backlog.d/push-payloads-carry-nothing-for-google-and-apple.md) |
 | GET | `/api/mls/push/avatar/:targetUserId` | PushSecret | Get avatar for notification |
 | POST | `/api/mls/push/refresh-token` | PushSecret | Refresh FCM token |
 | POST | `/api/mls/push/membership-active` | PushSecret | Mark membership active |
@@ -333,8 +339,21 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | DELETE | `/api/posts/:postId` | Delete post |
 | POST | `/api/posts/:postId/reactions` | Add/toggle reaction |
 | POST | `/api/posts/:postId/comments` | Add comment |
-| PATCH | `/api/posts/:postId/pin` | Pin post (admin) |
-| PATCH | `/api/posts/:postId/unpin` | Unpin post (admin) |
+| PATCH | `/api/posts/:postId/pin` | Pin the post in ONE space, body `{ spaceId }`, REQUIRED (a `400` without it, since floor `1.6.6`) (WP-PIN): the platform admin, or `MODERATE` in that space's BDE; typed 409 `space_pin_limit` / `post_not_in_space`, 403 `space_pin_forbidden` (checked FIRST: same answer whether the post exists or not), 404 `post_not_found`, and `space_not_found` to the admin only ([spaces-and-audiences-reform](../spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)) |
+| PATCH | `/api/posts/:postId/unpin` | Unpin the post from ONE space, body `{ spaceId }`; same tier and refusals |
+| GET | `/api/posts/space-pins/:spaceId` | The governor's pins of a space: `{ postId, pinnedAt, state }`, `shown` (the 3 readers see first) then `pending` ("en attente") |
+| POST | `/api/posts/users/:userId/follow` | Ask to follow a person: a `pending` request (`{ ok, status }`); 404 `FOLLOW_TARGET_NOT_FOUND` for an id that names no person, 403 `FOLLOW_BLOCKED` across a block, 409 `FOLLOW_PENDING_LIMIT` at 100 unanswered requests, 429 `FOLLOW_DAILY_LIMIT` at 50 new people a day; throttled per caller ([social-service](../services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)) |
+| DELETE | `/api/posts/users/:userId/follow` | Unfollow, or withdraw a request |
+| GET | `/api/posts/users/:userId/follow-status` | `{ following, status }` |
+| GET | `/api/posts/me/follow-requests` | Requests waiting for the caller's answer (`limit` <= 100, `offset`) |
+| GET | `/api/posts/me/follow-requests/count` | `{ pending }` |
+| POST | `/api/posts/me/follow-requests/:userId/accept` | Accept (404 when none pending); tells the asker |
+| POST | `/api/posts/me/follow-requests/:userId/refuse` | Refuse: deleted, nobody told (404 when none pending) |
+| GET | `/api/posts/me/follow-requests/sent` | The caller's unanswered requests (withdraw with `DELETE users/:userId/follow`) |
+| GET | `/api/posts/me/followers` | The caller's accepted followers, most recently accepted first; `createdAt` is the acceptance (`limit` <= 100, `offset`) |
+| DELETE | `/api/posts/me/followers/:userId` | Remove a follower: deleted, nobody told (404 when not one) |
+| GET | `/api/posts/me/bells/:kind/:targetId` | The caller's bell on one account, `kind` `user` or `association`: `{ level }`, `all` (posts and lives, the default) when none is stored ([engagement](../engagement.md#the-bell---data-model-and-how-it-combines-with-categories-and-mutes)) |
+| PUT | `/api/posts/me/bells/:kind/:targetId` | Set it, body `{ level }` (`all`, `lives`, `none`); idempotent; 400 `BELL_INVALID`, 404 `BELL_TARGET_NOT_FOUND` for an association that does not exist or a person the caller does not follow (accepted) |
 
 ### Channels
 
@@ -346,7 +365,8 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | DELETE | `/api/channels/workspaces/:workspaceId` | Delete a community for every member, irreversibly. MANAGE_WORKSPACE only, and the body must carry `{confirmationName}` equal to the community's name - `WORKSPACE_CONFIRMATION_MISMATCH` otherwise, which is also what an older client gets, since it sends no such field |
 | GET | `/api/channels/workspace/:workspaceId/user/me` | List channels for caller |
 | POST | `/api/channels/workspaces/:workspaceId/leave` | Leave a community. Refuses the sole admin (`WORKSPACE_WOULD_HAVE_NO_ADMIN`); the last member leaving deletes the community |
-| DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Kick. Consults the TARGET's roles, same refusal |
+| POST | `/api/channels/workspaces/:workspaceId/members/:userId/removal-released`, `/api/channels/:channelId/members/:userId/removal-released` | The actor of a removal RELEASES the key-group Remove it claimed and knows it did not commit; `?actorDevice=` (the releasing device) required, same permission as the removal, `409` while the person is still in the scope, `503` when it cannot be announced, throttled per user (60/min). Publishes `channel.member.removal-released` with `releasedBy` and `releasedByDevice` ([channel-encryption](channel-encryption.md#the-actor-of-a-removal-commits-it---2026-10-27)) |
+| DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Kick. Consults the TARGET's roles, same refusal. Optional `?actorDevice=` names the device that commits the key-group Remove, echoed in the broadcast |
 | POST | `/api/channels/workspaces/:workspaceId/invites` | Returns THE live invite (`{token, expiresAt, maxUses, uses}`), minting one if none. `rotate: true` revokes the live token and mints its replacement - the only way to get a new one |
 | GET | `/api/channels/workspaces/:workspaceId/distribution-group` | The community's Graine key-distribution group + its latest GroupInfo, for external join. **Members only** - the GroupInfo IS the capability. `groupInfo: null` means nobody has initialised the MLS group yet; `WORKSPACE_HAS_NO_DISTRIBUTION_GROUP` means there is no group at all |
 | POST | `/api/channels/workspaces/:workspaceId/distribution-group/group-info` | Publish a committed GroupInfo (`{groupInfo, baseEpoch}`). Members only, monotonic - `{stored: false}` is a refused regression, not a failure. Answers `{stored, publisherActive}`: the same call puts the publishing device into the group's delivery roster, and that half can be refused on its own (revoked device, no key package) without the store having failed |

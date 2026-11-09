@@ -18,6 +18,13 @@ import { PostRepublication } from './entities/post-republication.entity';
 import { RepublicationsService } from './republications.service';
 import { RepublicationsController } from './republications.controller';
 import { PersonalRepublicationsService } from './personal-republications.service';
+import { MemberRepost } from './entities/member-repost.entity';
+import { MemberRepostNotice } from './entities/member-repost-notice.entity';
+import { UserRepostSetting } from './entities/user-repost-setting.entity';
+import { MemberRepostsService } from './member-reposts.service';
+import { MemberRepostsController } from './member-reposts.controller';
+import { SpacePinsController } from './space-pins.controller';
+import { SpacePinsService } from './space-pins.service';
 import { ProposalsModule } from '../proposals/proposals.module';
 import { AssociationsModule } from '../associations/associations.module';
 import { FollowsModule } from '../follows/follows.module';
@@ -26,7 +33,14 @@ import { ModerationModule } from '../moderation/moderation.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Post, PostNotification, PostRepublication]),
+    TypeOrmModule.forFeature([
+      Post,
+      PostNotification,
+      PostRepublication,
+      MemberRepost,
+      MemberRepostNotice,
+      UserRepostSetting,
+    ]),
     ConfigModule,
     HttpModule.register({ timeout: 30_000, maxRedirects: 0 }),
     AssociationsModule,
@@ -36,12 +50,18 @@ import { ModerationModule } from '../moderation/moderation.module';
     // and their `repost-personal` kind (`PersonalRepublicationsService`, D38b).
     ProposalsModule,
   ],
-  controllers: [PostsController, RepublicationsController],
+  controllers: [
+    PostsController,
+    RepublicationsController,
+    MemberRepostsController,
+    SpacePinsController,
+  ],
   providers: [
     // A guard with an injected repository is resolved from this module's injector, so it belongs
     // here beside the services. `NginxAuthGuard` needs no entry because it injects nothing.
     FeedAudienceGuard,
     PostsService,
+    SpacePinsService,
     PostInteractionsService,
     CommentIdentityService,
     PostNotificationsService,
@@ -52,6 +72,8 @@ import { ModerationModule } from '../moderation/moderation.module';
     RepublicationsService,
     // D38b: the `repost-personal` kind, whose receiver is the post's author.
     PersonalRepublicationsService,
+    // WP-F6: a person reposts to their own accepted followers.
+    MemberRepostsService,
     PushService,
   ],
   // `PostPreviewService` is exported for `PublicModule` alone: the unauthenticated link-preview

@@ -1,24 +1,33 @@
-import { goto } from '$app/navigation';
-import { internalPath } from '$lib/utils/internalPath';
-import { resolve } from '$app/paths';
+import { gotoAppPath } from '$lib/navigation/gotoAppPath';
 import { isClaimedAppLinkPath } from '$lib/mobile/appSiteAssociation';
 import { inAppPathFromHref, inAppPathFromPublicUrl, isPublicAppUrl } from '$lib/utils/publicAppUrl';
+import { describeDeepLink } from '$lib/utils/logSanitize';
+import { noteOpenRoutedNowhere } from '$lib/utils/chat/resumeOpening.svelte';
 
 /**
  * Navigates to an in-app route when `href` is a public Canari URL or a supported relative path.
- * Returns true when navigation was handled.
+ * Returns true when navigation was handled, false when `href` names no in-app route or the
+ * navigation failed (said, never thrown).
+ *
+ * The path is of unknown origin (a link in a message, an App Link), so `gotoAppPath` asks the route
+ * table before navigating; it used to hand it to `goto` and load the document when that failed,
+ * which under SvelteKit 3 is learning from a rejection what `match` says up front.
  */
 export async function navigateInAppFromHref(href: string): Promise<boolean> {
   const path = inAppPathFromHref(href);
   if (!path) return false;
 
-  console.log('[appLink] In-app navigation →', path);
+  console.log(
+    '[appLink] In-app navigation ->',
+    describeDeepLink(new URL(path, 'https://app.invalid').href)
+  );
   try {
-    await goto(resolve(internalPath(path)));
-  } catch {
-    if (typeof window !== 'undefined') window.location.href = path;
+    await gotoAppPath(path);
+    return true;
+  } catch (err) {
+    console.error('[appLink] In-app navigation failed:', err);
+    return false;
   }
-  return true;
 }
 
 /**
@@ -36,10 +45,15 @@ export async function navigateInAppFromPublicUrl(url: string): Promise<boolean> 
  * Only a path the app CLAIMS opens: the same test the system applied before delivering an App
  * Link, so a URL that arrives by the custom scheme, which anyone can write, cannot reach anything
  * a link could not. A relative or malformed value is refused before its pathname is read.
+ *
+ * A navigation that then fails is said to a resume holding the conversation it found on screen
+ * (`noteOpenRoutedNowhere`): nothing will be shown in its place.
  */
 export function openClaimedAppLink(href: string): boolean {
   if (!isPublicAppUrl(href) || !inAppPathFromPublicUrl(href)) return false;
   if (!isClaimedAppLinkPath(new URL(href.trim()).pathname)) return false;
-  void navigateInAppFromPublicUrl(href);
+  void navigateInAppFromPublicUrl(href).then((navigated) => {
+    if (!navigated) noteOpenRoutedNowhere('a claimed app link whose navigation failed');
+  });
   return true;
 }

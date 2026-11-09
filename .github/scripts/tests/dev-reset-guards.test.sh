@@ -65,13 +65,13 @@ else
   fail "DEV_PROJECT must be 'readonly DEV_PROJECT=\"canari-dev\"' (found '${dev_project}')"
 fi
 
-if code_lines "$SCRIPT" | grep -qE 'canari-prod|PROD_|infrastructure-postgres'; then
+if code_lines "$SCRIPT" | grep -E 'canari-prod|PROD_|infrastructure-postgres' >/dev/null; then
   fail "the reset names a production project or container - it has no business knowing one"
 else
   ok "no production project, container or variable appears in the code"
 fi
 
-if code_lines "$SCRIPT" | grep -qE '(^|[^-[:alnum:]_])(pg_dump|pg_restore|ssh|scp)([[:space:]]|$)'; then
+if code_lines "$SCRIPT" | grep -E '(^|[^-[:alnum:]_])(pg_dump|pg_restore|ssh|scp)([[:space:]]|$)' >/dev/null; then
   fail "the reset INVOKES pg_dump, pg_restore, ssh or scp - it must read nothing from anywhere"
 else
   ok "it invokes no dump, restore or remote copy"
@@ -89,19 +89,19 @@ else
   fail "a docker exec outside the guarded routes: $outside"
 fi
 for route in dev_psql dev_psql_ro dev_redis dev_redis_ro; do
-  if fn_body "$SCRIPT" "$route" | grep -q 'require_dev'; then
+  if fn_body "$SCRIPT" "$route" | grep 'require_dev' >/dev/null; then
     ok "$route() re-checks the target's project label per call"
   else
     fail "$route() does not call require_dev"
   fi
 done
-if fn_body "$SCRIPT" require_dev | grep -q 'project_of'; then
+if fn_body "$SCRIPT" require_dev | grep 'project_of' >/dev/null; then
   ok "require_dev() reads the label Docker reports, not a name"
 else
   fail "require_dev() does not read the compose project label"
 fi
 for route in dev_psql dev_redis; do
-  if fn_body "$SCRIPT" "$route" | grep -q 'DRY_RUN'; then
+  if fn_body "$SCRIPT" "$route" | grep 'DRY_RUN' >/dev/null; then
     ok "$route() honours --dry-run"
   else
     fail "$route() ignores --dry-run, so the dry run is not dry"
@@ -113,12 +113,12 @@ done
 # ─────────────────────────────────────────────────────────────────────────────
 printf '\nthe truncate reaches every table but the ledger, by derivation:\n'
 
-if code_lines "$SCRIPT" | grep -q 'FROM pg_tables WHERE schemaname = .public.'; then
+if code_lines "$SCRIPT" | grep 'FROM pg_tables WHERE schemaname = .public.' >/dev/null; then
   ok "the table list is read from the catalogue, never typed"
 else
   fail "the truncate does not derive its table list from pg_tables"
 fi
-if code_lines "$SCRIPT" | grep -q 'schema_migrations'; then
+if code_lines "$SCRIPT" | grep 'schema_migrations' >/dev/null; then
   fail "the ledger's name is typed in the reset - it must come from infrastructure/lib/migrations.sh"
 else
   ok "the ledger's name is read from infrastructure/lib/migrations.sh"
@@ -149,20 +149,20 @@ else
 fi
 # A dev job that dumps production would be the copy rebuilt under another name.
 if awk '/^  dev-reset:/,/^  [a-z-]+:$/ { if ($0 !~ /^  dev-reset:/ && $0 ~ /^  [a-z-]+:$/) exit; print }' "$SCHEDULED" |
-  grep -vE '^[[:space:]]*#' | grep -qE 'pg_dump|canari-prod'; then
+  grep -vE '^[[:space:]]*#' | grep -E 'pg_dump|canari-prod' >/dev/null; then
   fail "the dev-reset job reads production"
 else
   ok "the dev-reset job reads nothing from production"
 fi
 
 job=$(awk '/^  dev-reset:/ { on = 1; print; next } on && /^  [a-z][a-z0-9-]*:$/ { exit } on { print }' "$SCHEDULED")
-if printf '%s' "$job" | grep -q 'bash infrastructure/dev/reset-dev-to-seed.sh --dry-run' &&
-  printf '%s' "$job" | grep -qE 'bash infrastructure/dev/reset-dev-to-seed.sh$'; then
+if grep -q 'bash infrastructure/dev/reset-dev-to-seed.sh --dry-run' <<<"$job" &&
+  grep -qE 'bash infrastructure/dev/reset-dev-to-seed.sh$' <<<"$job"; then
   ok "scheduled.yml's dev-reset job runs the reset, and passes --dry-run when asked"
 else
   fail "scheduled.yml's dev-reset job does not run reset-dev-to-seed.sh with and without --dry-run"
 fi
-if printf '%s' "$job" | grep -q 'if: inputs.dry_run != true'; then
+if grep -q 'if: inputs.dry_run != true' <<<"$job"; then
   ok "the 'estate answers' gate is skipped on a dry run, which proves nothing about the estate"
 else
   fail "the dev-reset job asserts the estate answers even after a dry run"
@@ -211,6 +211,7 @@ exec)
   *'count(*) FROM users;'*) echo "$STUB_USERS" ;;
   *'count(*) FROM push_token'*) echo 0 ;;
   *string_agg*) echo "" ;;
+  *'SELECT filename FROM'*) [ -n "$STUB_LEDGER" ] && printf '%s\n' "$STUB_LEDGER" ;;
   *'SELECT checksum FROM'*) echo "" ;;
   *'SELECT'*'(SELECT count(*)'*) echo 0 ;;
   esac
@@ -220,8 +221,15 @@ exit 0
 STUB
 chmod +x "$TMP/bin/docker"
 
+# The ledger the owner's hold reads: every migration file of the tree, as on a dev estate whose
+# schema-only restore carried production's ledger - so the historic DROP COLUMN files are history,
+# not requests, and this test stays about the reset's ORDER. The hold itself is
+# deploy-migrations.test.sh's subject. The per-file checksum query still answers nothing, so the
+# loop applies (and records) every file, which is what the order assertion below reads.
+stub_ledger="$(find apps/*/src/migrations -name '*.sql' | sort)"
+
 run_stubbed() {
-  STUB_LOG="$TMP/$1.log" STUB_STREAM="$TMP/$1.stream" STUB_PROJECT="$2" STUB_USERS="$seed_users" \
+  STUB_LEDGER="$stub_ledger" STUB_LOG="$TMP/$1.log" STUB_STREAM="$TMP/$1.stream" STUB_PROJECT="$2" STUB_USERS="$seed_users" \
     PATH="$TMP/bin:$PATH" bash "$SCRIPT" "${@:3}" </dev/null >"$TMP/$1.out" 2>&1
 }
 
@@ -234,7 +242,7 @@ fi
 # shape, any stop or start, any Redis write, or any stream at all is the dry run writing.
 writes='^(stop|start) |FLUSHALL|BGREWRITEAOF|^exec -i stub-pg psql -v '
 if grep -qE "$writes" "$TMP/dry.log" || [ -s "$TMP/dry.stream" ]; then
-  fail "the dry run stopped a service or wrote to a datastore: $(grep -E "$writes" "$TMP/dry.log" | head -3 | tr '\n' ' ')"
+  fail "the dry run stopped a service or wrote to a datastore: $(grep -E "$writes" "$TMP/dry.log" | sed -n 1,3p | tr '\n' ' ')"
 else
   ok "the dry run stops nothing, flushes nothing and streams nothing"
 fi
@@ -259,10 +267,10 @@ if run_stubbed real canari-dev; then
 else
   fail "a real run failed: $(tail -3 "$TMP/real.out")"
 fi
-line_of() { grep -nE "$1" "$TMP/real.log" | head -1 | cut -d: -f1; }
+line_of() { grep -nE "$1" "$TMP/real.log" | sed -n 1p | cut -d: -f1; }
 stop_at=$(line_of '^stop ')
 ledger_at=$(grep -nE 'INSERT INTO schema_migrations' "$TMP/real.log" | tail -1 | cut -d: -f1)
-reset_at=$(grep -nF -e '--single-transaction' "$TMP/real.log" | head -1 | cut -d: -f1)
+reset_at=$(grep -nF -e '--single-transaction' "$TMP/real.log" | sed -n 1p | cut -d: -f1)
 flush_at=$(line_of 'FLUSHALL')
 start_at=$(grep -nE '^start ' "$TMP/real.log" | tail -1 | cut -d: -f1)
 if [ -n "$stop_at" ] && [ -n "$ledger_at" ] && [ -n "$reset_at" ] && [ -n "$flush_at" ] && [ -n "$start_at" ] &&
@@ -289,7 +297,7 @@ else
   fail "the run did not verify"
 fi
 
-if STUB_LOG="$TMP/short.log" STUB_STREAM="$TMP/short.stream" STUB_PROJECT=canari-dev STUB_USERS=3 \
+if STUB_LEDGER="$stub_ledger" STUB_LOG="$TMP/short.log" STUB_STREAM="$TMP/short.stream" STUB_PROJECT=canari-dev STUB_USERS=3 \
   PATH="$TMP/bin:$PATH" bash "$SCRIPT" </dev/null >"$TMP/short.out" 2>&1; then
   fail "a reset that left the wrong number of users reported success"
 else
@@ -297,6 +305,23 @@ else
     ok "a reset that does not verify fails loudly, and still restarts the services"
   else
     fail "a failed verification is not reported, or the services were left stopped"
+  fi
+fi
+
+# THE RESET RUNS THE OWNER'S HOLD TOO. A held file the ledger has not recorded - here a real one, a
+# historic DROP COLUMN struck off the stub ledger - refuses the reset before it applies, truncates or
+# seeds anything, and the services come back.
+held_file='apps/chat-delivery-service/src/migrations/002_drop_group_member_left_at.sql'
+if [ -f "$held_file" ] && STUB_LEDGER="$(grep -vxF "$held_file" <<<"$stub_ledger")" STUB_LOG="$TMP/held.log" \
+  STUB_STREAM="$TMP/held.stream" STUB_PROJECT=canari-dev STUB_USERS="$seed_users" \
+  PATH="$TMP/bin:$PATH" bash "$SCRIPT" </dev/null >"$TMP/held.out" 2>&1; then
+  fail "the reset applied past an unrecorded held migration"
+else
+  if grep -q "::error::$held_file is HELD" "$TMP/held.out" && [ ! -s "$TMP/held.stream" ] &&
+    ! grep -q 'INSERT INTO schema_migrations' "$TMP/held.log" && grep -qE '^start ' "$TMP/held.log"; then
+    ok "an unrecorded held migration refuses the reset by name: nothing applied, truncated or seeded, services restarted"
+  else
+    fail "the reset's refusal of a held migration is missing, late or left the services down: $(tail -3 "$TMP/held.out")"
   fi
 fi
 

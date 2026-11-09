@@ -24,7 +24,8 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
         query: jest.fn((sql: string, params?: unknown[]) => {
           // The block lookup a named viewer triggers answers "nobody blocked"; only the post read
           // is recorded, which is what these assertions are about.
-          if (sql.includes('user_blocks')) return Promise.resolve([]);
+          // Matched on the lookup's own alias: the visibility predicate names `user_blocks` too.
+          if (sql.includes('AS "otherId" FROM user_blocks')) return Promise.resolve([]);
           // Nobody republished it (D38): the "Republie par" read answers empty, unrecorded.
           if (sql.includes('FROM post_republications pr')) return Promise.resolve([]);
           calls.push({ sql, params });
@@ -35,6 +36,8 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
     const associations = {
       mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
       isContentModerator: jest.fn(() => Promise.resolve(false)),
+      moderatedPostIds: () => Promise.resolve(new Set<string>()),
+      mayModeratePost: () => Promise.resolve(false),
     };
     const service = new PostsService(
       postRepo as unknown as Repository<Post>,
@@ -100,5 +103,14 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
     await service.findPostLinkedToCalendarEvent('event-1', 'reader-1', false);
     expect(calls[0].sql).toContain('vis_viewer.id = $2');
     expect(calls[0].params).toEqual(['event-1', 'reader-1']);
+  });
+
+  it('never returns the post of a neutral event: it joins the event, presented by its association', async () => {
+    // A post card names its association; a neutral event hides it (`event-presentation.ts`).
+    const { service, calls } = makeService([ROW]);
+    await service.findPostLinkedToCalendarEvent('event-1', 'reader-1', false);
+    expect(calls[0].sql).toMatch(
+      /JOIN association_calendar_events linked_ev\s+ON linked_ev\.id = posts\."linkedCalendarEventId" AND linked_ev\.presentation = 'association'/
+    );
   });
 });

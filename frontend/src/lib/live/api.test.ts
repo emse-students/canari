@@ -9,8 +9,17 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const apiFetch = vi.hoisted(() => vi.fn());
+/** The client-version header of each call, taken off BEFORE the route assertions below compare the rest. */
+const sentVersions = vi.hoisted(() => [] as (string | undefined)[]);
 const trackedFetch = vi.hoisted(() => vi.fn());
-vi.mock('$lib/utils/apiFetch', () => ({ apiFetch }));
+vi.mock('$lib/utils/apiFetch', () => ({
+  apiFetch: (url: string, init: { headers?: Record<string, string> } = {}) => {
+    const { headers = {}, ...rest } = init;
+    const { 'X-Canari-Client-Version': version, ...others } = headers;
+    sentVersions.push(version);
+    return apiFetch(url, Object.keys(others).length ? { ...rest, headers: others } : rest);
+  },
+}));
 vi.mock('$lib/utils/trackedFetch', () => ({ trackedFetch }));
 vi.mock('$lib/utils/apiUrl', () => ({
   socialUrl: () => 'https://social.test',
@@ -25,6 +34,7 @@ import {
   fetchLiveLimits,
   fetchLiveRules,
   fetchLiveManifest,
+  fetchLivePoster,
   fetchLiveSegment,
   isLiveCut,
   hideLiveMessage,
@@ -34,6 +44,7 @@ import {
   LiveRefusalError,
   LiveSegmentUploader,
   liveSegmentUrl,
+  livePosterUrl,
   manifestQuery,
   postLiveMessage,
   postLiveReactions,
@@ -68,12 +79,22 @@ async function refusal(p: Promise<unknown>): Promise<LiveRefusalError> {
 beforeEach(() => {
   apiFetch.mockReset();
   trackedFetch.mockReset();
+  sentVersions.length = 0;
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'debug').mockImplementation(() => {});
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
 describe('the routes', () => {
+  it('every lives call names the build, which is how the server keeps a build below 1.5.4 out', async () => {
+    apiFetch.mockImplementation(async () => json(200, { viewerCap: 24 }));
+    await fetchLiveLimits();
+    await listOpenLives();
+    await leaveLiveSeat(LIVE);
+    expect(sentVersions).toHaveLength(3);
+    for (const version of sentVersions) expect(version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
   it('limits and list are GETs on /api/lives', async () => {
     apiFetch.mockResolvedValueOnce(json(200, { viewerCap: 24, seatLeaseMs: 30000 }));
     expect((await fetchLiveLimits()).viewerCap).toBe(24);
@@ -213,6 +234,10 @@ describe('the routes', () => {
     );
     expect(apiFetch).not.toHaveBeenCalled();
     expect(liveSegmentUrl(LIVE, 'n')).toBe(`https://media.test/api/media/public/live/${LIVE}/n`);
+    // The preview has its OWN path, so nginx counts it apart from the segments (review of #3135).
+    expect(livePosterUrl(LIVE, 'n')).toBe(
+      `https://media.test/api/media/public/live-poster/${LIVE}/n`
+    );
   });
 
   it("the segment fetch carries the caller's signal, and nothing else is added for it", async () => {
@@ -222,6 +247,33 @@ describe('the routes', () => {
     const [, , init] = trackedFetch.mock.lastCall!;
     expect(init).toEqual({ method: 'GET', signal: ctrl.signal });
     expect(Object.keys(init).sort()).toEqual(['method', 'signal']);
+  });
+});
+
+describe('a poster fetch declares not-found expected', () => {
+  it('logs a poster 404 at debug, not warn, and still throws the typed refusal', async () => {
+    trackedFetch.mockResolvedValue(json(404, { statusCode: 404, message: 'Not Found' }));
+    const e = await refusal(fetchLivePoster(LIVE, 'abc'));
+    expect(e.kind).toBe('not-found');
+    expect(console.warn).not.toHaveBeenCalled();
+    expect(console.debug).toHaveBeenCalledWith(expect.stringContaining('expected'));
+  });
+
+  it('keeps the WARN for a poster 404 that is not the gateways (an edge page or bare nginx 404)', async () => {
+    trackedFetch.mockResolvedValueOnce(new Response('', { status: 404 }));
+    await refusal(fetchLivePoster(LIVE, 'abc'));
+    trackedFetch.mockResolvedValueOnce(html(404));
+    await refusal(fetchLivePoster(LIVE, 'abc'));
+    expect(console.warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the warn for every other poster refusal, and for a segment 404', async () => {
+    trackedFetch.mockResolvedValueOnce(new Response('', { status: 429 }));
+    await refusal(fetchLivePoster(LIVE, 'abc'));
+    expect(console.warn).toHaveBeenCalledTimes(1);
+    trackedFetch.mockResolvedValueOnce(json(404, { statusCode: 404 }));
+    await refusal(fetchLiveSegment(LIVE, 'abc'));
+    expect(console.warn).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -281,9 +333,9 @@ describe('refusals, typed at the throw', () => {
     expect(cut.endReason).toBe('cut');
     expect(isLiveCut(cut)).toBe(true);
 
-    apiFetch.mockResolvedValueOnce(json(410, { code: 'LIVE_ENDED', endReason: 'max_duration' }));
+    apiFetch.mockResolvedValueOnce(json(410, { code: 'LIVE_ENDED', endReason: 'dropped' }));
     const hour = await refusal(fetchLive(LIVE));
-    expect(hour.endReason).toBe('max_duration');
+    expect(hour.endReason).toBe('dropped');
     expect(isLiveCut(hour)).toBe(false);
   });
 
@@ -302,7 +354,6 @@ describe('refusals, typed at the throw', () => {
     [503, 'LIVE_STORE_UNAVAILABLE', 'retry-segment'],
     [503, 'LIVE_INGEST_BUSY', 'retry-segment'],
     [409, 'LIVE_SEGMENT_CONFLICT', 'refused'],
-    [413, 'LIVE_BUDGET_EXHAUSTED', 'refused'],
     [429, 'LIVE_SEGMENT_TOO_FAST', 'rate-limited'],
     [400, 'LIVE_SEGMENT_EMPTY', 'refused'],
     [410, 'LIVE_ENDED', 'ended'],

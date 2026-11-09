@@ -82,7 +82,11 @@ describe('parseServerVersionInfo', () => {
       maintenance: { enabled: true, message: 'Pause' },
       callsMode: 'off',
       livesMode: 'off',
+      checkpointSkipMode: 'off',
       oidcPkce: false,
+      presencePost: false,
+      publishQueue: false,
+      formDrafts: false,
     });
   });
 
@@ -90,6 +94,38 @@ describe('parseServerVersionInfo', () => {
     expect(parseServerVersionInfo({ version: '1.2.3', oidcPkce: true })?.oidcPkce).toBe(true);
     expect(parseServerVersionInfo({ version: '1.2.3' })?.oidcPkce).toBe(false);
     expect(parseServerVersionInfo({ version: '1.2.3', oidcPkce: 'true' })?.oidcPkce).toBe(false);
+  });
+
+  it('reads the presence POST capability, and an absent or non-true field as none', () => {
+    expect(parseServerVersionInfo({ version: '1.2.3', presencePost: true })?.presencePost).toBe(
+      true
+    );
+    expect(parseServerVersionInfo({ version: '1.2.3' })?.presencePost).toBe(false);
+    expect(parseServerVersionInfo({ version: '1.2.3', presencePost: 1 })?.presencePost).toBe(false);
+  });
+
+  it('reads the publish queue capability, absent or non-true as none, and stores it round-trip', () => {
+    const info = parseServerVersionInfo({ version: '1.2.3', publishQueue: true });
+    expect(info?.publishQueue).toBe(true);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.publishQueue).toBe(true);
+    expect(parseServerVersionInfo({ version: '1.2.3' })?.publishQueue).toBe(false);
+    expect(parseServerVersionInfo({ version: '1.2.3', publishQueue: 'yes' })?.publishQueue).toBe(
+      false
+    );
+  });
+
+  it('reads the form drafts capability, absent or non-true as none, and stores it round-trip', () => {
+    const info = parseServerVersionInfo({ version: '1.2.3', formDrafts: true });
+    expect(info?.formDrafts).toBe(true);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.formDrafts).toBe(true);
+    expect(parseServerVersionInfo({ version: '1.2.3' })?.formDrafts).toBe(false);
+    expect(parseServerVersionInfo({ version: '1.2.3', formDrafts: 1 })?.formDrafts).toBe(false);
+  });
+
+  it('stores the presence POST capability in the shape it is read back with', () => {
+    const info = parseServerVersionInfo({ version: '1.2.3', presencePost: true });
+    expect(info).not.toBeNull();
+    expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.presencePost).toBe(true);
   });
 
   it.each(['off', 'audio', 'audio_video'] as const)('reads the calls kill switch %s', (mode) => {
@@ -134,6 +170,30 @@ describe('parseServerVersionInfo', () => {
     expect(parseServerVersionInfo({ version: '1.2.3', lives })?.livesMode).toBe('off');
   });
 
+  it.each(['off', 'on'] as const)('reads the checkpoint-skip switch %s', (mode) => {
+    expect(
+      parseServerVersionInfo({ version: '1.2.3', checkpointSkip: { mode } })?.checkpointSkipMode
+    ).toBe(mode);
+  });
+
+  it.each([
+    ['absent (a server before the switch)', undefined],
+    ['not an object', 'on'],
+    ['an unknown value', { mode: 'ON' }],
+    ['a count instead of a mode', { mode: 100 }],
+  ])("reads the checkpoint skip as OFF when the field is %s - today's durability", (_n, raw) => {
+    expect(
+      parseServerVersionInfo({ version: '1.2.3', checkpointSkip: raw })?.checkpointSkipMode
+    ).toBe('off');
+  });
+
+  it('survives the cache round trip with the checkpoint skip on', () => {
+    const info = parseServerVersionInfo({ version: '1.2.3', checkpointSkip: { mode: 'on' } });
+    const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
+    expect(parseServerVersionInfo(cached)).toEqual(info);
+    expect(info?.checkpointSkipMode).toBe('on');
+  });
+
   it.each(['off', 'on'] as const)('survives the cache round trip with lives %s', (mode) => {
     const info = parseServerVersionInfo({
       version: '1.2.3',
@@ -160,7 +220,11 @@ describe('buildAppVersionCheckResult', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'audio',
       livesMode: 'on',
+      checkpointSkipMode: 'off',
       oidcPkce: true,
+      presencePost: false,
+      publishQueue: false,
+      formDrafts: false,
     });
     expect(result.callsMode).toBe('audio');
     expect(result.livesMode).toBe('on');
@@ -177,7 +241,11 @@ describe('buildAppVersionCheckResult', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
       livesMode: 'off',
+      checkpointSkipMode: 'off',
       oidcPkce: false,
+      presencePost: false,
+      publishQueue: false,
+      formDrafts: false,
     });
     expect(result.belowMinVersion).toBe(true);
   });
@@ -190,8 +258,16 @@ describe('buildAppVersionCheckResult', () => {
     expect(buildAppVersionCheckResult(null).livesMode).toBe('off');
   });
 
+  it('knows the checkpoint skip as off before any server has answered', () => {
+    expect(buildAppVersionCheckResult(null).checkpointSkipMode).toBe('off');
+  });
+
   it('offers no PKCE before any server has answered', () => {
     expect(buildAppVersionCheckResult(null).oidcPkce).toBe(false);
+  });
+
+  it('claims no presence POST before any server has answered', () => {
+    expect(buildAppVersionCheckResult(null).presencePost).toBe(false);
   });
 });
 
@@ -234,7 +310,11 @@ describe('fetchServerAppVersionReliable', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
       livesMode: 'off',
+      checkpointSkipMode: 'off',
       oidcPkce: false,
+      presencePost: false,
+      publishQueue: false,
+      formDrafts: false,
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });

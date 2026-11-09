@@ -1,6 +1,7 @@
 import { of } from 'rxjs';
 import type { HttpService } from '@nestjs/axios';
 import {
+  approvedDelegateIds,
   fetchActivePaymentProvider,
   isDelegating,
   resolvePaymentTarget,
@@ -48,7 +49,29 @@ describe('payment-delegation util', () => {
         connectAccountId: 'vendor_club',
         ready: true,
         delegated: false,
+        readinessCause: null,
       });
+    });
+
+    // Owner review of #2967: a LIST holds no Lydia account of its own - not delegating, it is never
+    // ready, whatever account id and onboarding flag a row from before the decision carries.
+    it('never resolves a non-delegating list ready on an account of its own', () => {
+      const stale = { lydiaAccountId: 'vendor_stale', lydiaOnboardingComplete: true };
+      const t = resolvePaymentTarget(asso({ type: 'list', ...stale }), null, 'lydia');
+      expect(t).toMatchObject({ ready: false, connectAccountId: null, delegated: false });
+      expect(
+        resolvePaymentTarget(asso({ type: 'institution', ...stale }), null, 'lydia').ready
+      ).toBe(false);
+      expect(
+        resolvePaymentTarget(asso({ type: 'association', ...stale }), null, 'lydia').ready
+      ).toBe(true);
+      const parent = asso({ id: 'p', lydiaAccountId: 'vendor_p', lydiaOnboardingComplete: true });
+      const delegating = asso({
+        type: 'list',
+        paymentParentAssociationId: 'p',
+        paymentDelegationStatus: 'approved',
+      });
+      expect(resolvePaymentTarget(delegating, parent, 'lydia').ready).toBe(true);
     });
 
     it('is not ready when the Lydia onboarding is not complete, an account id notwithstanding', () => {
@@ -77,6 +100,7 @@ describe('payment-delegation util', () => {
         connectAccountId: 'vendor_parent',
         ready: true,
         delegated: true,
+        readinessCause: null,
       });
     });
 
@@ -127,6 +151,7 @@ describe('payment-delegation util', () => {
         connectAccountId: null,
         ready: false,
         delegated: true,
+        readinessCause: null,
       });
     });
 
@@ -142,6 +167,7 @@ describe('payment-delegation util', () => {
         connectAccountId: null,
         ready: false,
         delegated: false,
+        readinessCause: null,
       });
     });
 
@@ -161,7 +187,46 @@ describe('payment-delegation util', () => {
         connectAccountId: null,
         ready: false,
         delegated: true,
+        readinessCause: null,
       });
+    });
+    it('carries the readiness cause of the account it routes to - the parent when delegated', () => {
+      const own = resolvePaymentTarget(
+        asso({ lydiaAccountId: 'vendor_club', lydiaReadinessCause: 'request-blocked' }),
+        null,
+        'lydia'
+      );
+      expect(own.readinessCause).toBe('request-blocked');
+      const delegated = resolvePaymentTarget(
+        asso({
+          lydiaReadinessCause: 'admin',
+          paymentParentAssociationId: 'parent',
+          paymentDelegationStatus: 'approved',
+        }),
+        asso({
+          id: 'parent',
+          lydiaAccountId: 'vendor_parent',
+          lydiaReadinessCause: 'request-refused',
+        }),
+        'lydia'
+      );
+      expect(delegated.readinessCause).toBe('request-refused');
+    });
+  });
+
+  describe('approvedDelegateIds - the ONE predicate both the release and the withhold read', () => {
+    it('asks for the APPROVED delegates of that parent, and answers their ids', async () => {
+      const find = jest.fn().mockResolvedValue([{ id: 'club-a' }, { id: 'club-b' }]);
+      await expect(approvedDelegateIds({ find } as never, 'parent')).resolves.toEqual([
+        'club-a',
+        'club-b',
+      ]);
+      expect(find).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          where: { paymentParentAssociationId: 'parent', paymentDelegationStatus: 'approved' },
+        })
+      );
     });
   });
 

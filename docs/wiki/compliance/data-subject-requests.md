@@ -50,11 +50,11 @@ WHERE "lastName" ILIKE :'last' AND "firstName" ILIKE :'first';`
 | --- | --- |
 | Profile | `users` (`id`), `profile_changes` (`userId`, `actorId`), `profile_correction_requests` (`userId`), `platform_announcement_seen` (`userId`) |
 | Sessions and devices | `auth_sessions` (`userId`), `session_push_endings` (`userId`), `device_revoked_sessions` (`userId`), `key_package`, `one_time_key_package`, `device_signature_key`, `push_token`, `pin_verifier`, `revoked_device`, `notification_preference` (all `userId`) |
-| Messaging (metadata only; content is ciphertext) | `dm_group_members`, `dm_group_membership_intervals`, `dm_device_group_memberships`, `dm_user_dismissed_groups` (`userId`); `queued_message` (`senderId`, `recipientId`); group names via `dm_groups` joined on the person's memberships |
+| Messaging (metadata only; content is ciphertext) | `dm_group_members`, `dm_group_membership_intervals`, `dm_device_group_memberships`, `dm_user_dismissed_groups` (`userId`); `queued_message` (`senderId`, `recipientId`); group names via `dm_groups` joined on the person's memberships; the groups the person created via `dm_groups` (`createdBy`) |
 | Communities | `channel_members` (`userId`), `channel_messages` (`authorId`; content is ciphertext) |
 | Feed | `posts` (`authorId`; comments and reactions are JSON inside `posts` - search `comments`/`reactions` for the id), `post_notifications` (`recipientId`, `actorId`), `post_republications` |
-| Associations | `association_members`, `association_role_history`, `association_push_mutes`, `user_tags`, `document_reviewer_grants` (`userId`); `association_follows`, `user_follows` (`followerUserId`, `followedUserId`); `association_calendar_events` (`createdBy`) |
-| Forms and payments | `submissions`, `form_respondents`, `form_reminders`, `purchase_records`, `webhook_deliveries`, `product_checkouts` (`userId`); `form_files` (`uploaderId`); `forms` (`ownerId`) |
+| Associations | `association_members`, `association_role_history`, `association_push_mutes`, `account_bells` (`userId`, and `targetId` for a bell on a person), `user_tags`, `document_reviewer_grants` (`userId`); `association_follows`, `user_follows` (`followerUserId`, `followedUserId`); `association_calendar_events` (`createdBy`) |
+| Forms and payments | `submissions`, `form_respondents`, `form_reminders`, `purchase_records`, `webhook_deliveries`, `product_checkouts` (`userId`); `purchase_record_closings` (`closedByUserId`); `form_files` (`uploaderId`); `forms` (`ownerId`) |
 | Moderation | `content_reports` (`reporterId`, `reportedUserId`), `user_blocks` (`blockerId`, `blockedId`), `user_moderation` (`userId`) |
 | Legacy | `legacy_cotisations` (`claimedByUserId`, or the match key (last name, first name, promo) for a person with no account) |
 | Games | `minesweeper_scores`, `minesweeper_challenges`, `minesweeper_bans` (`userId`) |
@@ -63,6 +63,40 @@ WHERE "lastName" ILIKE :'last' AND "firstName" ILIKE :'first';`
 Check the column names against the entity before running: the entity files are under
 `apps/*/src/**/entities/`, and an unnamed `@Entity()` takes the snake_case of its class
 (`push_token`, `key_package`).
+
+#### A guest with no account (a public form's answer, register C8)
+
+A guest has no `users` row, so nothing above finds them, and no account's erasure reaches their
+answer. They are found only by what the form asked them (migration 138, [forms](../frontend/modules/forms.md#a-guests-name-and-e-mail-when-the-form-asks-2026-11-06)) -
+always with `"userId" IS NULL`, which is what makes the row a guest's:
+
+```sql
+SELECT id, "formId", "createdAt", "paymentStatus", "totalPaid",
+       "guestLastName", "guestFirstName", "guestEmail", answers
+  FROM submissions
+ WHERE "userId" IS NULL
+   AND ("guestEmail" ILIKE :'email'
+        OR ("guestLastName" ILIKE :'last' AND "guestFirstName" ILIKE :'first'));
+```
+
+A form that asked nothing holds no identity column: such a guest is found only by what they
+wrote in the answers (a reference they quote, `guestReference` = the first eight hex digits of
+`id`), and the requester proves the answer is theirs - say so in the reply rather than guess.
+
+**Erasure is an ANONYMISATION of the row, never its deletion** - the same choice the account
+erasure makes for a member's answer (`submissions`: `"userId"`, `email` NULL, `answers = '{}'`):
+
+```sql
+UPDATE submissions
+   SET "guestLastName" = NULL, "guestFirstName" = NULL, "guestEmail" = NULL, answers = '{}'::jsonb
+ WHERE id = ANY(:'ids'::uuid[]) AND "userId" IS NULL;
+```
+
+Why not `DELETE`: a paid row is the association's accounting record (amount, status, Lydia request
+ids, `lines`; basis 6.1.c in C8), its `purchase_records` row points at it, and a waiting row holds
+a seat - deleting it would erase a payment and free a seat that was sold. Anonymised, the row
+keeps what accounting needs and names nobody. The `AND "userId" IS NULL` guard keeps the statement
+off any member's row. Like every production write, it waits for the owner's yes.
 
 ### MiConnect (Authentik)
 
@@ -74,9 +108,21 @@ the admin interface - the person then cannot sign in to any service.
 ### MiGallery (SQLite `data/migallery.db`, controller MiTV)
 
 `users` (`id_user`), `user_favorites` (`user_id`), `photo_access_permissions` (`owner_id`,
-`authorized_id`), `album_permissions`, `sessions` (`id_user`), `logs` (`actor`). The face link is
-`users.photos_id`; the face data itself is in Immich (person, faces) - access and erasure there go
-through the Immich admin, see [dpia-migallery-faces](dpia-migallery-faces.md#6-open-measures).
+`authorized_id`), `album_permissions`, `sessions` (`id_user`), `logs` (`actor`). Option C is
+deployed (MiGallery `v2.18.0`, seeded 2026-11-01, matching rules refined up to `v2.22.0`; the A8
+cutover ran on 2026-11-01, so Immich holds no face, person or embedding any more and
+`users.photos_id` points at nothing). A member's face data is `face_references`, `face_negatives`,
+the ledger tables, `face_matches` and `face_consents` (`user_id`), plus their crops under
+`data/cache/faces/members/`; withdrawal in the settings, or the account's deletion, erases all of it
+(a withdrawal keeps the closed consent row, which goes with the account). The face store
+(`data/faces.db`) holds one template per face of every
+photograph and names no one: it goes with its photograph (a photograph in Immich's trash keeps its
+templates until the trash is emptied). An encrypted copy of what lot A8 deleted from Immich is kept
+until 2026-12-01 and Immich's dumps from before it
+rotate out by 2026-11-15: a request touching that old data goes to the owner. Mechanism:
+[MiGallery
+face-matching-option-c](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/face-matching-option-c.md),
+[dpia-migallery-faces](dpia-migallery-faces.md#6-open-measures).
 
 ### Sky (SQLite)
 
@@ -89,7 +135,7 @@ through the Immich admin, see [dpia-migallery-faces](dpia-migallery-faces.md#6-o
 `perm_bartenders`, `sessions` (`uuid_user`). Erasure anonymises the account and keeps the ledger
 (accounting).
 
-### Audio calls (register C21)
+### Audio and video calls (register C21)
 
 **An export will not contain call metadata**: it exists only in Redis (room binding 60 s ring + 4 h, presence 2 h, deleted at hang-up) and in the technical logs (90 days at most, C13), never in a database table. Tell the person so in the answer, and search the logs for their user id only if the request names calls specifically. The call lines in a conversation (time, duration) are end-to-end encrypted messages and follow C3.
 

@@ -1,0 +1,155 @@
+/**
+ * WRITES `libs/contracts/handoff-token.cases.json`, the vectors every site's handoff verifier runs
+ * (docs/wiki/backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md,
+ * section 4 and "The contract MiGallery implements").
+ *
+ *   bun tools/handoff-vectors/generate.ts
+ *
+ * The tokens are signed with core-service's OWN signing code (`handoff-token.ts`), so a vector can
+ * never describe a token the mint would not write. The key is generated per run and thrown away:
+ * only its PUBLIC half is written, so the file is regenerated whole, never edited by hand.
+ * `handoff-token.cases.spec.ts` (core-service) checks every case against the contract's steps.
+ */
+import { createHmac, generateKeyPairSync, createPublicKey } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  HANDOFF_TOKEN_LIFETIME_SECONDS,
+  publicJwk,
+  signHandoffToken,
+} from '../../apps/core-service/src/auth/handoff/handoff-token';
+
+const OUT = join(import.meta.dir, '..', '..', 'libs', 'contracts', 'handoff-token.cases.json');
+const ISSUER = 'https://canari.example';
+const AUDIENCE = 'migallery';
+const IAT = 1_800_000_000;
+const SUB = '6f1c2a4e-0b7d-4c1e-9a55-3f0e8b2d7c10';
+
+const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+const jwk = publicJwk(privateKey);
+const other = publicJwk(generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey);
+
+const claims = (over: Record<string, unknown> = {}) => ({
+  iss: ISSUER,
+  aud: AUDIENCE,
+  sub: SUB,
+  jti: `vector-${Object.keys(over).join('-') || 'valid'}`,
+  iat: IAT,
+  exp: IAT + HANDOFF_TOKEN_LIFETIME_SECONDS,
+  dest: '/mes-photos',
+  ...over,
+});
+
+const sign = (over: Record<string, unknown> = {}, header: Record<string, unknown> = {}) =>
+  signHandoffToken(privateKey, jwk.kid, claims(over), header);
+
+const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString('base64url');
+
+/** `alg: none`: no signature at all. */
+const algNone = `${b64({ alg: 'none', typ: 'canari-handoff+jwt', kid: jwk.kid })}.${b64(claims({ jti: 'vector-alg-none' }))}.`;
+
+/** HS256 keyed with the PUBLIC key's PEM: the classic algorithm-confusion forgery. */
+const publicPem = createPublicKey(privateKey).export({ format: 'pem', type: 'spki' }).toString();
+const hsInput = `${b64({ alg: 'HS256', typ: 'canari-handoff+jwt', kid: jwk.kid })}.${b64(claims({ jti: 'vector-hs256' }))}`;
+const hs256 = `${hsInput}.${createHmac('sha256', publicPem).update(hsInput).digest('base64url')}`;
+
+const valid = sign();
+const [vh, , vs] = valid.split('.');
+const tamperedPayload = `${vh}.${b64({ ...claims(), sub: '00000000-0000-4000-8000-000000000000' })}.${vs}`;
+
+const cases = [
+  { name: 'valid', token: valid, now: IAT + 5, expect: 'ok', sub: SUB, dest: '/mes-photos' },
+  {
+    name: 'valid within the 30 s leeway after exp',
+    token: valid,
+    now: IAT + HANDOFF_TOKEN_LIFETIME_SECONDS + 20,
+    expect: 'ok',
+    sub: SUB,
+    dest: '/mes-photos',
+  },
+  {
+    name: 'expired',
+    token: valid,
+    now: IAT + HANDOFF_TOKEN_LIFETIME_SECONDS + 31,
+    expect: 'expired',
+  },
+  { name: 'issued in the future', token: valid, now: IAT - 31, expect: 'not_yet_valid' },
+  {
+    name: 'lifetime over 60 s',
+    token: sign({ exp: IAT + 120, jti: 'vector-too-long' }),
+    now: IAT + 5,
+    expect: 'too_long',
+  },
+  {
+    name: 'wrong issuer',
+    token: sign({ iss: 'https://dev.canari.example', jti: 'vector-iss' }),
+    now: IAT + 5,
+    expect: 'wrong_issuer',
+  },
+  {
+    name: 'wrong audience',
+    token: sign({ aud: 'sky', jti: 'vector-aud' }),
+    now: IAT + 5,
+    expect: 'wrong_audience',
+  },
+  {
+    name: 'wrong typ',
+    token: sign({ jti: 'vector-typ' }, { typ: 'JWT' }),
+    now: IAT + 5,
+    expect: 'invalid',
+  },
+  // `typ` is a media type: case-insensitive, `application/` optional (RFC 7515 4.1.9), which is
+  // what jose's `typ` option accepts. Pinned as `ok` so a hand-written verifier agrees with jose.
+  {
+    name: 'typ in another case',
+    token: sign({ jti: 'vector-typ-case' }, { typ: 'Canari-Handoff+JWT' }),
+    now: IAT + 5,
+    expect: 'ok',
+    sub: SUB,
+    dest: '/mes-photos',
+  },
+  {
+    name: 'typ with the application/ prefix',
+    token: sign({ jti: 'vector-typ-prefix' }, { typ: 'application/canari-handoff+jwt' }),
+    now: IAT + 5,
+    expect: 'ok',
+    sub: SUB,
+    dest: '/mes-photos',
+  },
+  { name: 'alg none', token: algNone, now: IAT + 5, expect: 'invalid' },
+  { name: 'HS256 keyed with the public key', token: hs256, now: IAT + 5, expect: 'invalid' },
+  {
+    name: 'unknown kid',
+    token: signHandoffToken(privateKey, other.kid, claims({ jti: 'vector-kid' })),
+    now: IAT + 5,
+    expect: 'invalid',
+  },
+  { name: 'tampered payload', token: tamperedPayload, now: IAT + 5, expect: 'invalid' },
+  {
+    name: 'no sub',
+    token: sign({ sub: undefined, jti: 'vector-no-sub' }),
+    now: IAT + 5,
+    expect: 'invalid',
+  },
+  {
+    name: 'dest outside the site',
+    token: sign({ dest: '//evil.example/x', jti: 'vector-dest' }),
+    now: IAT + 5,
+    expect: 'bad_dest',
+  },
+];
+
+const file = {
+  description:
+    "Vectors for the one-time sign-in handoff token (docs/wiki/backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md). Generated by `bun tools/handoff-vectors/generate.ts` with core-service's own signing code and a throwaway key whose public half is `jwks`; never edit by hand. A verifier configured with `issuer` and `audience` must answer `expect` for each case at time `now` (seconds). `replay` is a sequence: the same token redeemed twice against ONE ledger answers `ok`, then `replayed`. `bad_dest` is the site's own redirect validator refusing `//evil.example/x`.",
+  issuer: ISSUER,
+  audience: AUDIENCE,
+  leewaySeconds: 30,
+  maxLifetimeSeconds: HANDOFF_TOKEN_LIFETIME_SECONDS,
+  jwks: { keys: [jwk] },
+  cases,
+  replay: { token: valid, now: IAT + 5, expect: ['ok', 'replayed'] },
+};
+
+writeFileSync(OUT, `${JSON.stringify(file, null, 2)}\n`);
+console.log(`[handoff-vectors] wrote ${cases.length} cases + replay to ${OUT} (kid=${jwk.kid})`);

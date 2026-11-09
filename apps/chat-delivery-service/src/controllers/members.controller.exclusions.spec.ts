@@ -5,6 +5,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { MembersController } from './members.controller';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { GroupMember } from '../entities/group-member.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
@@ -14,6 +15,7 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 
 /**
@@ -257,11 +259,14 @@ describe('MembersController - membership intervals and the exclusions read', () 
         },
         { provide: getRepositoryToken(QueuedMessage), useValue: {} },
         { provide: getRepositoryToken(RevokedDevice), useValue: {} },
+        { provide: getRepositoryToken(RevokedDeviceGroup), useValue: {} },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: {} },
         { provide: 'REDIS_CLIENT', useValue: redis },
         { provide: DataSource, useValue: dataSource },
       ],
     })
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })
       .compile();
@@ -494,7 +499,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
   });
 
   it('a removal deletes the live row AND closes the interval in one transaction', async () => {
-    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+    await controller.removeGroupMember('g-1', 'bob', 'alice');
 
     expect(txDeletes).toContainEqual({
       entity: GroupMember,
@@ -509,7 +514,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
     // An external commit whose roster check ran before this removal holds a claim this record
     // overtakes, so its committer's seat is never written after the removal (`seat-eviction.ts`).
     // The roster row before the device rows: the order an add takes them in.
-    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+    await controller.removeGroupMember('g-1', 'bob', 'alice');
 
     expect(order).toEqual([
       'parting-recorded',
@@ -523,7 +528,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
   it('a removal takes the Welcomes still queued for the removed person, in the same transaction', async () => {
     // A queued Welcome is pulled by its device whatever the roster says: left behind, it would let
     // the removed person enter the epoch it was built for and read what members seal there.
-    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+    await controller.removeGroupMember('g-1', 'bob', 'alice');
 
     expect(txDeletes).toContainEqual({
       entity: QueuedMessage,
@@ -540,7 +545,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
     // entry it would never reach his devices (second review of #1878, P1-a). Written BEFORE the
     // delete: after it, a crash in between lost the entry and a retry had no rows to derive it from
     // (fourth review).
-    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+    await controller.removeGroupMember('g-1', 'bob', 'alice');
 
     expect(redis.hset).toHaveBeenCalledWith(
       'group:parting:g-1',
@@ -555,7 +560,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
   it('a failed removal rolls its device rows back with it, and the retry names them again', async () => {
     failTx = true;
 
-    await expect(controller.removeGroupMember('g-1', 'bob', 'alice', undefined)).rejects.toThrow(
+    await expect(controller.removeGroupMember('g-1', 'bob', 'alice')).rejects.toThrow(
       'serialization failure'
     );
     expect(redis.hset).toHaveBeenCalledWith(
@@ -570,13 +575,13 @@ describe('MembersController - membership intervals and the exclusions read', () 
     expect(deviceRows.filter((d) => d.userId === 'bob')).toHaveLength(2);
     redis.hset.mockClear();
     failTx = false;
-    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
+    await controller.removeGroupMember('g-1', 'bob', 'alice');
     expect(redis.hset).toHaveBeenCalledTimes(1);
     expect(deviceRows.filter((d) => d.userId === 'bob')).toHaveLength(0);
   });
 
   it('a self-leave makes no commit, and names nobody as parting', async () => {
-    await controller.removeGroupMember('g-1', 'bob', 'bob', undefined);
+    await controller.removeGroupMember('g-1', 'bob', 'bob');
 
     expect(redis.hset).not.toHaveBeenCalled();
   });

@@ -38,6 +38,8 @@ describe('every sign-out ends the live session on the device', () => {
   it('the teardown stops the session AND releases the latch the successful unlock left set', () => {
     const handler = body(shell, 'function handleSignedOut()');
     expect(handler).toContain('globalSession.endSession(sessionCb());');
+    // The deregistration promise is FORWARDED, or `clearAuth` has nothing to wait on.
+    expect(handler).toContain('return pushDeregistered;');
     expect(handler).toContain('_loginInProgress = false;');
   });
 
@@ -78,10 +80,7 @@ describe('every sign-out ends the live session on the device', () => {
   it('a login opens no state before a signed-out session has finished its final checkpoint', () => {
     // `mlsHolder.ts` hands the next sign-in a fresh client at once; what keeps that client from
     // reading a state still being written is this wait, ahead of every MLS and state access.
-    for (const head of [
-      'export async function loginImpl(',
-      'export async function recoverPinImpl(',
-    ]) {
+    for (const head of ['export async function loginImpl(', 'async function recoverPinSteps(']) {
       const fn = sessionAuth.slice(sessionAuth.indexOf(head));
       const wait = fn.indexOf('await ctx.whenMlsRetired();');
       expect(wait).toBeGreaterThan(-1);
@@ -93,11 +92,16 @@ describe('every sign-out ends the live session on the device', () => {
 
   it('a "forgot PIN" reset deletes the state only after a signed-out session has written its last', () => {
     // Otherwise the sign-out's late write puts back, under the OLD key, the state this deletes.
-    const fn = sessionAuth.slice(
-      sessionAuth.indexOf('export async function resetDeviceAsFreshImpl(')
-    );
-    const wait = fn.indexOf('await ctx.whenMlsRetired();');
-    expect(wait).toBeGreaterThan(-1);
-    expect(wait).toBeLessThan(fn.indexOf('removeMlsState('));
+    // Round 6 of the review of #2919: the state is SET APART first (the stage), so that is where the
+    // wait must come before; the commit asks again.
+    for (const [head, touch] of [
+      ['export async function stageDeviceResetImpl(', 'stageMlsStateReset('],
+      ['export async function resetDeviceAsFreshImpl(', 'removeMlsState('],
+    ]) {
+      const fn = sessionAuth.slice(sessionAuth.indexOf(head));
+      const wait = fn.indexOf('await ctx.whenMlsRetired();');
+      expect(wait).toBeGreaterThan(-1);
+      expect(wait).toBeLessThan(fn.indexOf(touch));
+    }
   });
 });

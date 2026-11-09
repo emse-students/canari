@@ -14,6 +14,7 @@ import { Submission } from './entities/submission.entity';
 import { guestReference, hashGuestReceipt } from './guest-receipt';
 import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './guest-visitor';
 import { InternalFormsController } from '../internal/internal-forms.controller';
+import { PricingFactsService } from '../pricing/pricing-facts.service';
 import {
   PENDING_HOLD_CUTOFF_SQL,
   PAYMENT_REQUEST_LIFETIME_SECONDS,
@@ -57,6 +58,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     organiserNotifiedAt?: Date | null;
     guestReceiptHash?: string | null;
     guestVisitorKey?: string | null;
+    /** The Business the row's request was issued to (written with the request ids). */
+    lydiaVendorToken?: string | null;
     answers?: Record<string, unknown>;
   };
   type Flag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
@@ -75,9 +78,17 @@ describe('FormsService - the seat a pending payment holds', () => {
     allowCashPayment?: boolean;
     /** Default true: most rows here are members whose payment grants a cotisation. */
     grantsCotisation?: boolean;
+    /** The form's price grid; default none, so `basePrice` is the price. */
+    priceMatrix?: unknown;
+    /** The facts builder; default a stub that knows nobody's promo, formation or cotisation. */
+    pricingFacts?: unknown;
   }) {
     let now = T0;
-    const rows: Row[] = opts.rows.map((row) => ({ ...row }));
+    // A seeded row naming a request was issued to the form's Business ('vendor'), as `submit` writes.
+    const rows: Row[] = opts.rows.map((row) => ({
+      lydiaVendorToken: row.stripeSessionId || row.paymentRequestId ? 'vendor' : null,
+      ...row,
+    }));
     let nextId = 0;
     const form = {
       id: 'f1',
@@ -87,7 +98,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       grantsCotisation: opts.grantsCotisation ?? true,
       cotisationVariantKey: null,
       basePrice: opts.basePrice ?? 0,
-      priceMatrix: null,
+      priceMatrix: opts.priceMatrix ?? null,
       submitCondition: null,
       anonymous: false,
       isPublic: opts.isPublic ?? false,
@@ -132,7 +143,16 @@ describe('FormsService - the seat a pending payment holds', () => {
         await roundTrip();
       }),
     };
-    const userTagService = { grantCotisant: jest.fn(() => Promise.resolve({})) };
+    const userTagService = {
+      grantCotisantIfARise: jest.fn(() => Promise.resolve({ granted: {} })),
+      // The paid form's pre-check before any payment request: no catalogue to check the tier
+      // against, and nothing held, so a rise.
+      listCotisationTiers: jest.fn(() => Promise.resolve([])),
+      cotisationModeOf: jest.fn(() => Promise.resolve('dated')),
+      rankCotisationTier: jest.fn(() => Promise.resolve('none')),
+      // Asked after a grant that failed: the tier is not held as this answer's delivery.
+      holdsTierDeliveredBy: jest.fn(() => Promise.resolve(false)),
+    };
 
     /** The two UPDATE shapes the service builds: the expiry job and a fulfilment claim. */
     function runUpdate(state: {
@@ -143,12 +163,13 @@ describe('FormsService - the seat a pending payment holds', () => {
       if (state.where[0] === '"paymentStatus" = :status') {
         expect(state.where).toEqual([
           '"paymentStatus" = :status',
-          `"paymentRequestedAt" <= ${PENDING_HOLD_CUTOFF_SQL}`,
+          '"paymentRequestedAt" <= CAST(:cutoff AS timestamptz)',
         ]);
+        const cutoff = state.params.cutoff as Date;
         const moved = rows.filter(
           (r) =>
             r.paymentStatus === state.params.status &&
-            r.paymentRequestedAt.getTime() <= now.getTime() - HOLD_MS
+            r.paymentRequestedAt.getTime() <= cutoff.getTime()
         );
         moved.forEach((r) => Object.assign(r, state.set));
         return { affected: moved.length };
@@ -196,7 +217,11 @@ describe('FormsService - the seat a pending payment holds', () => {
             Object.assign(state.params, params),
             builder
           ),
-          andWhere: (sql: string) => (state.where.push(sql), builder),
+          andWhere: (sql: string, params: Record<string, unknown> = {}) => (
+            state.where.push(sql),
+            Object.assign(state.params, params),
+            builder
+          ),
           execute: async () => {
             await roundTrip();
             return runUpdate(state);
@@ -277,7 +302,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       },
     };
     const formRepo: any = { findOne: jest.fn(async () => ({ ...form })) };
-    const pricingFacts: any = {
+    const pricingFacts: any = opts.pricingFacts ?? {
       build: jest.fn(async (input: { answers?: Record<string, string[]> }) => ({
         promo: null,
         formation: null,
@@ -289,13 +314,12 @@ describe('FormsService - the seat a pending payment holds', () => {
     // committed: those tests are about what the transaction wrote, not about the checkout.
     const associationsService: any = {
       assertPaymentsReady: jest.fn(async () => undefined),
+      collectsNow: jest.fn(async () => true),
       getPaymentAccountId: jest.fn(async () => 'vendor'),
-      // The account the form's money is paid into, whatever provider is active: what a verified
-      // callback's Business must be (`isCallbackPayee`).
-      getLydiaPayeeAccountId: jest.fn(async () => 'vendor'),
       // Nobody manages this form through the association: only its submitter may read its answer.
       mayAct: jest.fn(async () => false),
       getActivePaymentProvider: jest.fn(async () => opts.provider ?? 'disabled'),
+      revertLydiaReadinessAfterRefusal: jest.fn(async () => undefined),
     };
     // A fake core-service: every call is recorded with what the ROWS looked like when it was made,
     // and the cancel route answers what the test sets (core reads Lydia's error 2 as
@@ -317,6 +341,8 @@ describe('FormsService - the seat a pending payment holds', () => {
       duringState: null as null | (() => void),
       /** Runs inside the cancel call, as Lydia's own cancel callback for the old request may. */
       duringCancel: null as null | (() => Promise<unknown>),
+      /** What `create-checkout-session` answers instead of a request, when set (a core refusal). */
+      createAnswer: null as null | Error,
     };
     let requests = 0;
     jest.spyOn(axios, 'post').mockImplementation(async (url: string, body: any) => {
@@ -346,6 +372,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         return { data: { ok: true, state: core.stateAnswer, raw } };
       }
       expect(route).toBe('create-checkout-session');
+      if (core.createAnswer) throw core.createAnswer;
       requests += 1;
       return {
         data: {
@@ -368,11 +395,13 @@ describe('FormsService - the seat a pending payment holds', () => {
       {} as any,
       // FormFilesService: these forms ask for no file, so nothing here reaches it.
       {} as any,
-      organiserAlert as any
+      organiserAlert as any,
+      {} as any
     );
     return {
       service,
       rows,
+      associationsService,
       userTagService,
       purchaseRecordService,
       organiserAlert,
@@ -550,7 +579,7 @@ describe('FormsService - the seat a pending payment holds', () => {
           row({ id: 'paid', paymentStatus: 'paid', paymentRequestedAt: ago(10 * HOLD_MS) }),
         ],
       });
-      expect(await service.expireStalePendingPayments()).toBe(1);
+      expect(await service.expireStalePendingPayments(ago(HOLD_MS))).toBe(1);
       const first = rows.map((r) => [r.id, r.paymentStatus]);
       expect(first).toEqual([
         ['stale', 'expired'],
@@ -558,7 +587,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         ['cash', 'pending_cash'],
         ['paid', 'paid'],
       ]);
-      expect(await service.expireStalePendingPayments()).toBe(0);
+      expect(await service.expireStalePendingPayments(ago(HOLD_MS))).toBe(0);
       expect(rows.map((r) => [r.id, r.paymentStatus])).toEqual(first);
     });
   });
@@ -577,7 +606,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       // The settling id has its own column; the request's uuid is never overwritten with it.
       expect(rows[0].paymentSettledBy).toBe('req-1');
       expect(rows[0].stripeSessionId).toBeUndefined();
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
       expect(rows[0].cotisationGrantedAt).toBeTruthy();
       expect(rows[0].purchaseRecordedAt).toBeTruthy();
@@ -596,10 +625,14 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows[0].paymentStatus).toBe('paid_over_capacity');
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('late'));
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('1500 cents'));
-      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
       expect(rows[0].cotisationGrantedAt).toBeNull();
-      // The payer's trace that they paid stays: the refund happens outside the application.
+      // The payer's trace that they paid stays: the refund happens outside the application. It is
+      // MARKED: the form grants a tier, and no seat means no tier was granted.
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'paid_not_granted' })
+      );
     });
 
     it('treats a pending row past the hold as released even before the job ran', async () => {
@@ -741,7 +774,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.markPaid('s1', 'req-1');
       await Promise.all([service.markPaid('s1', 'req-1'), service.markPaid('s1', 'req-1')]);
       expect(rows[0].paymentStatus).toBe('paid');
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
 
@@ -751,11 +784,11 @@ describe('FormsService - the seat a pending payment holds', () => {
         maxSubmissions: 1,
         rows: [row({ id: 's1', paymentStatus: 'pending', paymentRequestedAt: ago(1000) })],
       });
-      userTagService.grantCotisant.mockRejectedValueOnce(new Error('core-service down'));
+      userTagService.grantCotisantIfARise.mockRejectedValueOnce(new Error('core-service down'));
       await service.markPaid('s1', 'req-1');
       expect(rows[0].cotisationGrantedAt).toBeNull();
       await service.markPaid('s1', 'req-1');
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(2);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(2);
       expect(rows[0].cotisationGrantedAt).toBeTruthy();
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
@@ -766,7 +799,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         rows: [row({ id: 's1', paymentStatus: 'paid', stripeSessionId: 'req-1' })],
       });
       await service.markPaid('s1', 'req-1');
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
 
@@ -808,7 +841,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.markPaid('s1', second);
       expect(rows[0].paymentStatus).toBe('paid');
       expect(rows[0]).toMatchObject({ paymentSettledBy: first, stripeSessionId: 'uuid-1' });
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
       expect(warn).not.toHaveBeenCalled();
       expect(error).not.toHaveBeenCalled();
@@ -836,7 +869,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(error).toHaveBeenCalledWith(expect.stringContaining('999'));
       expect(error).toHaveBeenCalledWith(expect.stringContaining('by 124'));
       expect(rows[0]).toMatchObject({ paymentStatus: 'paid', paymentSettledBy: '124' });
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
 
@@ -870,7 +903,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.markPaid('late', '777');
       expect(rows[0].paymentStatus).toBe('paid_over_capacity');
       expect(error).toHaveBeenCalledWith(expect.stringContaining('newer'));
-      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
     });
 
     it('is an ordinary late payment when the other answer is someone else', async () => {
@@ -995,7 +1028,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         service.cancelPendingSubmission('p', { requestId: '1' }, 'vendor')
       ).resolves.toEqual({ ok: true, outcome: 'paid' });
       expect(rows[0].paymentStatus).toBe('paid');
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
     });
 
     // A failed read is not a verdict: the seat is kept and core answers Lydia a retryable 503.
@@ -1118,7 +1151,23 @@ describe('FormsService - the seat a pending payment holds', () => {
         stripeSessionId: 'uuid-old',
         paymentSettledBy: '555',
       });
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
+    });
+
+    // The settle runs BEFORE the tier pre-check: the earlier request's grant makes the tier "held",
+    // and the pre-check would refuse that person (409 FORM_TIER_ALREADY_HELD) for a payment they
+    // made. Fails when the pre-check runs first.
+    it('answers alreadyPaid, not a 409, when the paid old request made its tier held', async () => {
+      const { service, core, userTagService } = makeStore({
+        maxSubmissions: 1,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [mine()],
+      });
+      core.cancelAnswer = 'already-settled';
+      core.stateAnswer = 'paid';
+      userTagService.rankCotisationTier.mockResolvedValue('held');
+      await expect(retry(service)).resolves.toEqual({ submissionId: 'mine', alreadyPaid: true });
     });
 
     // P2-a: a request that cannot be shown dead or paid refuses the retry instead of leaving two
@@ -1177,6 +1226,31 @@ describe('FormsService - the seat a pending payment holds', () => {
       ]);
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ paymentStatus: 'pending', stripeSessionId: 'uuid-1' });
+    });
+
+    // P1 (2026-10-27): the retry above reuses the row, and every request of it used to carry the
+    // SAME order_ref `form:<submissionId>`, which Lydia refuses on the second request/do (error 3,
+    // measured 2026-10-21). Control: with the order_ref back to `form:${id}` this test fails on the
+    // two keys being equal.
+    it('sends a NEW order_ref for the retry of a reused row, naming the same submission', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 1,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [],
+      });
+      await retry(service);
+      core.cancelAnswer = 'already-settled';
+      core.stateAnswer = 'declined';
+      await retry(service);
+      expect(rows).toHaveLength(1);
+      const keys = core.calls
+        .filter((c) => c.route === 'create-checkout-session')
+        .map((c) => c.body.idempotencyKey as string);
+      expect(keys).toHaveLength(2);
+      const perAttempt = new RegExp(`^form:${rows[0].id}:[0-9a-f]{8}$`);
+      for (const key of keys) expect(key).toMatch(perAttempt);
+      expect(keys[0]).not.toBe(keys[1]);
     });
 
     // P1-b (2026-10-21): a submit after a PAID answer issued a new request/do, and a second paid
@@ -1460,7 +1534,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         ['request-state', { sessionId: UUID_OLD, connectAccountId: 'vendor' }],
       ]);
       expect(rows[0]).toMatchObject({ paymentStatus: 'paid', paymentSettledBy: UUID_OLD });
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
     });
 
     it('then a late callback for the same payment is a replay, accused of nothing', async () => {
@@ -1474,7 +1548,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.confirmPayment('mine');
       await service.markPaid('mine', '555');
       expect(rows[0].paymentStatus).toBe('paid');
-      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
       expect(error).not.toHaveBeenCalled();
       // The same row, then confirmed by a request it never named: THAT is accused. Without this
@@ -1537,7 +1611,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.confirmPayment('mine');
       expect(rows[0].paymentStatus).toBe('pending');
       expect(rows[0].paymentSettledBy ?? null).toBeNull();
-      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledWith(expect.stringContaining(UUID_NEW));
     });
 
@@ -1581,7 +1655,7 @@ describe('FormsService - the seat a pending payment holds', () => {
           requestState: state,
         });
         expect(rows[0].paymentStatus).toBe('cancelled');
-        expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+        expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
         // The released row holds no seat and is not reused: the retry writes a new answer and
         // issues ONE request, with no cancel of the dead one.
         core.calls.length = 0;
@@ -1762,7 +1836,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       for (const step of steps) await r[step]();
       expect(r.rows[0].paymentStatus).toBe('paid');
       expect(r.transitions).toEqual(['s1:pending->paid']);
-      expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(r.userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
       expect(warn).not.toHaveBeenCalled();
     });
@@ -1771,7 +1845,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       const r = makeRoutes();
       await Promise.all([r.callback(), r.payerReturn()]);
       expect(r.transitions).toEqual(['s1:pending->paid']);
-      expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(r.userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
 
@@ -1831,10 +1905,10 @@ describe('FormsService - the seat a pending payment holds', () => {
         await r.cancelPending({ requestId: '1001' });
         await r.payerReturn();
         r.advance(10 * HOLD_MS);
-        await r.service.expireStalePendingPayments();
+        await r.service.expireStalePendingPayments(new Date(T0.getTime() + 9 * HOLD_MS));
         expect(r.rows[0].paymentStatus).toBe('paid');
         expect(r.transitions).toEqual(['s1:pending->paid']);
-        expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+        expect(r.userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       }
     );
 
@@ -1845,7 +1919,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       // race to a `paid`, or it won and the payment then lands on `cancelled` as a late payment.
       // The form has room either way, so both orders end `paid`.
       expect(r.rows[0].paymentStatus).toBe('paid');
-      expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(r.userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
       expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
 
@@ -1862,7 +1936,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await r.payerReturn();
       expect(r.rows[0].paymentStatus).toBe('paid_over_capacity');
       expect(r.transitions).toEqual(['s1:pending->cancelled', 's1:cancelled->paid_over_capacity']);
-      expect(r.userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(r.userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
       expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
   });
@@ -1936,6 +2010,52 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows[0].guestReceiptHash).toBe(hashGuestReceipt(receipt));
       // Never the submission id: the receipt is the only key the page holds.
       expect(checkout.body.successUrl).not.toContain(rows[0].id);
+    });
+
+    // A GUEST PAYS THE "EVERYONE ELSE" TIER of a grid on who the person is (owner, 2026-11-06),
+    // computed here from facts the server builds - never from a price the page sends. The REAL
+    // facts builder runs, with a cotisation store and a profile fetch that fail the test if a guest
+    // ever reaches them. Control: a guest given `cotisationTiers: [null]` lands in "_others|c1" and
+    // the total reads 1200.
+    it('charges a guest the "everyone else" tier of a grid on promo and cotisation', async () => {
+      const userTags = {
+        listHeldCotisationTiers: jest.fn(() => {
+          throw new Error('a guest has no cotisation to read');
+        }),
+      };
+      const profileFetch = jest.spyOn(axios, 'get');
+      const { service, rows, core } = makeStore({
+        maxSubmissions: null,
+        rows: [],
+        provider: 'lydia',
+        isPublic: true,
+        allowMultipleSubmissions: true,
+        grantsCotisation: false,
+        priceMatrix: {
+          dimensions: [
+            { id: 'd1', kind: 'promo', buckets: [{ id: 'b1', label: '1A', values: [2026] }] },
+            { id: 'd2', kind: 'cotisation', buckets: [{ id: 'c1', label: 'BDE', anyTier: true }] },
+          ],
+          cells: {
+            'b1|c1': 800,
+            'b1|_others': 1000,
+            '_others|c1': 1200,
+            '_others|_others': 2500,
+          },
+        },
+        pricingFacts: new PricingFactsService(userTags as any),
+      });
+      await service.submit(
+        'f1',
+        // A price in the body is not read: the server computes the total.
+        { payerEmail: 'guest@example.org', answers: {}, totalPaid: 1 } as any,
+        'guest',
+        VISITOR
+      );
+      expect(rows[0]).toMatchObject({ userId: null, paymentStatus: 'pending', totalPaid: 2500 });
+      expect(core.calls[0].route).toBe('create-checkout-session');
+      expect(userTags.listHeldCotisationTiers).not.toHaveBeenCalled();
+      expect(profileFetch).not.toHaveBeenCalled();
     });
 
     it('mints a different receipt for every guest answer', async () => {
@@ -2111,7 +2231,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(purchaseRecordService.create).toHaveBeenCalledWith(
         expect.objectContaining({ userId: null, source: 'form', amountCents: 1500 })
       );
-      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
     });
 
     // A granting form holding a guest row was made private after the guest answered (a public form
@@ -2130,7 +2250,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.markPaid('guest', '777');
       await service.markPaid('guest', GUEST_UUID);
       expect(rows[0].paymentStatus).toBe('paid');
-      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(userTagService.grantCotisantIfARise).not.toHaveBeenCalled();
       expect(error).toHaveBeenCalledTimes(1);
       expect(error).toHaveBeenCalledWith(expect.stringContaining('no account to grant it to'));
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
@@ -2146,6 +2266,79 @@ describe('FormsService - the seat a pending payment holds', () => {
         { id: '4', paymentStatus: 'paid_over_capacity' },
       ]);
       expect(ordered.map((r) => r.id)).toEqual(['2', '4', '1', '3']);
+    });
+  });
+
+  /** Lydia's error 5 / 2701 on a form's request/do (lot 2): the HOLDER stops being ready. */
+  describe('a request/do refused on the Business itself', () => {
+    const savedSecret = process.env.INTERNAL_SECRET;
+    // A guest's visitor key is an HMAC under the internal secret (`guest-visitor.ts`).
+    beforeAll(() => (process.env.INTERNAL_SECRET = 'internal-secret-for-test'));
+    afterAll(() => {
+      if (savedSecret === undefined) delete process.env.INTERNAL_SECRET;
+      else process.env.INTERNAL_SECRET = savedSecret;
+    });
+    const refusedBy = (code: string) =>
+      Object.assign(new Error('refused'), {
+        response: { status: 400, data: { code, providerCode: '5' } },
+      });
+
+    it.each([
+      [
+        'member',
+        'LYDIA_BUSINESS_NOT_VALIDATED',
+        'request-refused',
+        'PAYMENTS_NOT_ACTIVATED',
+        'form',
+      ],
+      ['guest', 'LYDIA_BUSINESS_BLOCKED', 'request-blocked', 'PAYMENTS_BLOCKED', 'form-guest'],
+    ])(
+      'a %s submit: the row released, the holder reverted on %s (%s), the typed 409 %s',
+      async (who, coreCode, cause, payerCode, path) => {
+        const guest = who === 'guest';
+        const { service, rows, core, associationsService } = makeStore({
+          maxSubmissions: 5,
+          rows: [],
+          basePrice: 1500,
+          provider: 'lydia',
+          isPublic: guest,
+          allowMultipleSubmissions: true,
+          grantsCotisation: false,
+        });
+        core.createAnswer = refusedBy(coreCode);
+        jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+        const err = await (
+          guest
+            ? service.submit(
+                'f1',
+                { payerEmail: 'guest@example.org', answers: {} } as any,
+                'guest',
+                '203.0.113.7'
+              )
+            : service.submit('f1', { userId: 'u1', answers: {} } as any)
+        ).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ConflictException);
+        expect((err as ConflictException).getResponse()).toMatchObject({ code: payerCode });
+        expect(rows.map((r) => r.paymentStatus)).toEqual(['cancelled']);
+        expect(associationsService.revertLydiaReadinessAfterRefusal).toHaveBeenCalledWith(
+          'vendor',
+          cause,
+          { path, id: rows[0].id }
+        );
+      }
+    );
+
+    it('any other refusal reverts nothing', async () => {
+      const { service, core, associationsService } = makeStore({
+        maxSubmissions: 5,
+        rows: [],
+        basePrice: 1500,
+        provider: 'lydia',
+      });
+      core.createAnswer = refusedBy('PAYMENT_PROVIDER_REFUSED');
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+      await service.submit('f1', { userId: 'u1', answers: {} } as any).catch(() => undefined);
+      expect(associationsService.revertLydiaReadinessAfterRefusal).not.toHaveBeenCalled();
     });
   });
 });

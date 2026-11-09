@@ -8,7 +8,8 @@ import { AssociationCalendarEvent } from './entities/association-calendar-event.
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { AssociationDocument } from './entities/association-document.entity';
 import { DocumentReviewerGrant } from './entities/document-reviewer-grant.entity';
-import { AssociationCategory } from './entities/association-category.entity';
+import { PosterZone } from './entities/poster-zone.entity';
+import { PosterEntry } from './entities/poster-entry.entity';
 import { PosterProject } from './entities/poster-project.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
@@ -19,6 +20,7 @@ import { PartnershipCode } from './entities/partnership-code.entity';
 import { Space } from '../spaces/space.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { SpacesController, AssociationAudiencesController } from '../spaces/spaces.controller';
+import { AdminAssociationsController } from './admin-associations.controller';
 import { SpacesService } from '../spaces/spaces.service';
 import { ReadGrantsController } from '../read-grants/read-grants.controller';
 import { ReadGrantsService } from '../read-grants/read-grants.service';
@@ -32,8 +34,10 @@ import { UserProfileService } from './user-profile.service';
 import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
 import { CercleDeliveryScheduler } from './cercle-delivery.scheduler';
-import { AssociationCategoriesService } from './association-categories.service';
+import { PaidNotGrantedScheduler } from './paid-not-granted.scheduler';
 import { PosterService } from './poster.service';
+import { LydiaCashierNotifier, LydiaPaymentsNotifier } from './lydia-payments-notifier.service';
+import { LydiaCashiersService } from './lydia-cashiers.service';
 import { AssociationsController } from './associations.controller';
 import { AssociationCategoriesController } from './association-categories.controller';
 import { PosterController } from './poster.controller';
@@ -45,6 +49,10 @@ import { PushService } from '../push/push.service';
 import { UserTagModule } from '../users/user-tag.module';
 import { PurchaseRecordModule } from '../users/purchase-record.module';
 import { PricingModule } from '../pricing/pricing.module';
+import { LydiaRefund } from './refunds/lydia-refund.entity';
+import { RefundsService } from './refunds/refunds.service';
+import { LydiaRefundNotifier } from './refunds/lydia-refund-notifier.service';
+import { RefundsController } from './refunds/refunds.controller';
 
 @Module({
   imports: [
@@ -57,7 +65,8 @@ import { PricingModule } from '../pricing/pricing.module';
       AssociationCalendarEventCoOwner,
       AssociationDocument,
       DocumentReviewerGrant,
-      AssociationCategory,
+      PosterZone,
+      PosterEntry,
       PosterProject,
       AssociationProduct,
       WebhookDelivery,
@@ -70,6 +79,7 @@ import { PricingModule } from '../pricing/pricing.module';
       PostNotification,
       Space,
       AssociationAudience,
+      LydiaRefund,
     ]),
     FollowsModule,
     UserTagModule,
@@ -85,7 +95,7 @@ import { PricingModule } from '../pricing/pricing.module';
     ProductsService,
     PartnershipsService,
     CercleDeliveryScheduler,
-    AssociationCategoriesService,
+    PaidNotGrantedScheduler,
     PosterService,
     GlobalAdminOrAssociationRoleGuard,
     GlobalAdminOrBdeSuperAdminGuard,
@@ -97,16 +107,23 @@ import { PricingModule } from '../pricing/pricing.module';
     // stateless, so a second instance costs nothing and buys the mapping that keeps a push
     // translatable.
     PostNotificationsService,
+    LydiaPaymentsNotifier,
+    LydiaCashierNotifier,
+    LydiaCashiersService,
+    RefundsService,
+    LydiaRefundNotifier,
   ],
-  // Category/poster controllers are listed FIRST so their literal `associations/categories`
+  // The category shim and the poster controller are listed FIRST so their literal `associations/categories`
   // and `associations/poster` routes register before the `associations/:id` matcher.
   controllers: [
     AssociationCategoriesController,
     SpacesController,
     ReadGrantsController,
     AssociationAudiencesController,
+    AdminAssociationsController,
     PosterController,
     AssociationsController,
+    RefundsController,
   ],
   exports: [
     AssociationsService,
@@ -114,6 +131,9 @@ import { PricingModule } from '../pricing/pricing.module';
     PartnershipsService,
     UserProfileService,
     PosterService,
+    LydiaPaymentsNotifier,
+    LydiaCashierNotifier,
+    LydiaCashiersService,
   ],
 })
 export class AssociationsModule {}

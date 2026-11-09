@@ -15,6 +15,34 @@ pub(crate) struct AppState {
     pub device_key: Arc<Mutex<Option<[u8; 32]>>>,
 }
 
+/// The code every MLS command answers when no manager is installed - never initialised in this
+/// process, or ended by [`crate::concurrency::end_native_session`] (a sign-out, an account switch, a
+/// failed `initialiser_mls`, a state sweep).
+///
+/// **IT IS THE CONTRACT THAT CROSSES THE TAURI BOUNDARY, NOT THE SENTENCE AFTER IT.** Unlike the
+/// `STATE_*` and `KEYSTORE_KEY_UNAVAILABLE` codes (typed `{ code, message }` since step 1), this one is
+/// still a string on the bridge, read by the TypeScript side (`isMlsManagerAbsent`) as a leading
+/// token and never the prose. It moves in the separately reviewed step 2, with the other string
+/// prefixes; until then the boundary has two conventions, on purpose. A command waiting on the manager mutex while a
+/// teardown holds it receives this once the teardown releases it - it never acts on the previous
+/// account's manager and never waits for a new one.
+pub(crate) const MLS_MANAGER_ABSENT: &str = "MLS_MANAGER_ABSENT";
+
+/// The error string of [`MLS_MANAGER_ABSENT`], built in one place so every command says it the same way.
+pub(crate) fn manager_absent_error() -> String {
+    format!("{MLS_MANAGER_ABSENT}: no MLS session is installed in this process")
+}
+
+/// The installed manager, or the [`MLS_MANAGER_ABSENT`] refusal. Read access.
+pub(crate) fn live_manager(slot: &Option<MlsManager>) -> Result<&MlsManager, String> {
+    slot.as_ref().ok_or_else(manager_absent_error)
+}
+
+/// The installed manager, or the [`MLS_MANAGER_ABSENT`] refusal. Write access.
+pub(crate) fn live_manager_mut(slot: &mut Option<MlsManager>) -> Result<&mut MlsManager, String> {
+    slot.as_mut().ok_or_else(manager_absent_error)
+}
+
 /// SQLite pool dedicated to queued MLS messages (Sender Ratchet gap).
 /// Separate from tauri-plugin-sql (JS side) so it stays reachable from Rust commands.
 pub(crate) struct PendingDb(pub Arc<sqlx::SqlitePool>);

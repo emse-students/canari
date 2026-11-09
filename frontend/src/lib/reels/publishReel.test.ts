@@ -54,6 +54,7 @@ function deps(calls: string[] = []): PublishReelDeps {
       };
     }),
     upload: vi.fn(async () => (calls.push('upload'), ref)),
+    placeholder: vi.fn(async () => null),
     createPost: vi.fn(async () => {
       calls.push('create');
       return { id: 'p-1' } as never;
@@ -127,6 +128,17 @@ describe('publishReel', () => {
     });
   });
 
+  it('carries the first frame ThumbHash of the uploaded file in the reel media', async () => {
+    const d = deps();
+    d.placeholder = vi.fn(async () => 'TH==');
+    await publishReel(input(), d);
+    const prepared = (await (d.prepare as ReturnType<typeof vi.fn>).mock.results[0].value).file;
+    expect(d.placeholder).toHaveBeenCalledWith(prepared);
+    expect(d.createPost).toHaveBeenCalledWith(
+      expect.objectContaining({ media: [{ ...ref, placeholder: 'TH==' }] })
+    );
+  });
+
   it('publishes as an association or anonymously, as a post would', async () => {
     const asso = deps();
     await publishReel(input({ identity: 'asso-1' }), asso);
@@ -136,6 +148,15 @@ describe('publishReel', () => {
     const anon = deps();
     await publishReel(input({ identity: ANONYMOUS_POST_IDENTITY }), anon);
     expect(anon.createPost).toHaveBeenCalledWith(expect.objectContaining({ anonymous: true }));
+  });
+
+  it('carries "Entre étudiants" when the step set it, and nothing when it did not', async () => {
+    const on = deps();
+    await publishReel(input({ identity: 'asso-1', studentsOnly: true }), on);
+    expect(on.createPost).toHaveBeenCalledWith(expect.objectContaining({ studentsOnly: true }));
+    const off = deps();
+    await publishReel(input({ identity: 'asso-1' }), off);
+    expect(vi.mocked(off.createPost).mock.calls[0][0]).not.toHaveProperty('studentsOnly');
   });
 
   it('names the stage it stopped at and keeps the cause', async () => {

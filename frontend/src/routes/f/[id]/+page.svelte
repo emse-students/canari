@@ -16,21 +16,39 @@
     firstMissingAnswer,
     formatAmount,
     initialSelections,
+    isOrderEmpty,
+    ORDER_MISSING_ID,
+    revealOrderMissing,
+    isItemAnswered,
     missingAnswerMessage,
     visibleAnswers,
     visibleItems as visibleItemsOf,
+    type MissingAnswer,
     type Selections,
   } from '$lib/forms/fillAnswers';
   import { fillPriceState, optionModifierOf } from '$lib/forms/fillPricing';
-  import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { appliedTierLabels, isProductGrid } from '$lib/forms/productGridFill';
+  import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
   import { formatFormOpensAt } from '$lib/posts/postComposerDraft';
   import FormHeader from '$lib/components/forms/FormHeader.svelte';
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
+  import FormViewerTier from '$lib/components/forms/FormViewerTier.svelte';
+  import ProductGridQuestion from '$lib/components/forms/ProductGridQuestion.svelte';
+  import ProductGridOrderBar from '$lib/components/forms/ProductGridOrderBar.svelte';
   import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
   import PayerEmailPrompt from '$lib/components/payments/PayerEmailPrompt.svelte';
+  import GuestIdentityFields from '$lib/components/forms/GuestIdentityFields.svelte';
+  import {
+    askedGuestFields,
+    emptyGuestIdentity,
+    firstGuestFieldProblem,
+    guestIdentityPayload,
+    payerPromptNeeded,
+  } from '$lib/forms/guestIdentity';
   import Button from '$lib/components/ui/Button.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { offersOnlyCash } from '$lib/forms/publish';
 
   /**
    * A PUBLIC FORM, ANSWERED WITHOUT AN ACCOUNT (user, 2026-09-30) - the page a shared link opens.
@@ -59,8 +77,21 @@
   /** The reference the server gave a cash answer, for the guest to give the organiser. */
   let cashReference = $state<string | null>(null);
   let paymentMethodChoice = $state<'online' | 'cash'>('online');
+  /** Online is paused and cash is accepted: the answer is paid in cash, no online choice shown. */
+  const cashOnly = $derived(offersOnlyCash(form));
+  $effect(() => {
+    if (cashOnly) paymentMethodChoice = 'cash';
+  });
   let askingPayerEmail = $state(false);
+  /** The required question the last send stopped on: its card says why, until it is answered. */
+  let missingAnswer = $state<MissingAnswer | null>(null);
+  /** The name and e-mail the form asks a guest, as typed ("Vos coordonnees"). */
+  let guestIdentity = $state(emptyGuestIdentity());
+  /** Whether a send was held on them: their fields then say what is missing. */
+  let guestIdentityChecked = $state(false);
 
+  /** What the form asks a guest about who they are; nothing by default (owner, 2026-11-06). */
+  const askedFields = $derived(askedGuestFields(form?.guestFields));
   const isNotOpenYet = $derived(!!form?.opensAt && new Date(form.opensAt) > new Date());
   const isClosed = $derived(!!form?.closedAt && new Date(form.closedAt) < new Date());
   // No profile half: the server refuses a public form whose questions depend on who answers.
@@ -73,11 +104,26 @@
       items: form?.items ?? [],
       visibleItems,
       selections,
+      productGridPrices: form?.productGridPrices,
     })
+  );
+  /** Whether a priced grid is shown: the footer then totals the order and sticks. */
+  const hasProductGrid = $derived(visibleItems.some(isProductGrid));
+  /** A guest's category on the priced grids - "everyone else" wherever the grid has categories. */
+  const tierLabels = $derived(appliedTierLabels(visibleItems, form?.productGridPrices));
+  /** Signing in may lower the price: the sign-in page, then this form's member page. */
+  const loginHref = $derived(
+    `${resolve('/login')}?returnTo=${encodeURIComponent(`/forms/${formId}`)}`
   );
   const total = $derived(form ? price.total : 0);
   const paysOnline = $derived(
     total > 0 && !(form?.allowCashPayment && paymentMethodChoice === 'cash')
+  );
+  /** What the payment note says about the address: kept when the form asked it, else not kept. */
+  const paymentNote = $derived(
+    askedFields.includes('email')
+      ? m.form_guest_payment_note_email_kept()
+      : m.form_guest_payment_note()
   );
   const blocked = $derived(
     !form || isNotOpenYet || isClosed || form.formFull || price.priceUnavailable
@@ -86,7 +132,7 @@
   onMount(async () => {
     if (currentUserId()) {
       Log.d('PublicForm', `member on a guest link, sent to the member page form=${formId}`);
-      await goto(resolve(`/forms/${formId}`), { replaceState: true });
+      await goto(resolve(`forms/${formId}`), { replace: true });
       return;
     }
     try {
@@ -107,13 +153,38 @@
   async function handleSubmit(payerEmail?: string) {
     if (!form || submitting || blocked) return;
     const missing = firstMissingAnswer(visibleItems, selections);
-    if (missing) {
-      error = missingAnswerMessage(missing);
+    missingAnswer = missing;
+    if (missing?.itemId === null) {
+      // An empty ORDER is the form's, no card's: said once, announced, and brought into view.
+      Log.d('PublicForm', 'submit held: the order across the grids is empty');
+      error = '';
+      await revealOrderMissing();
       return;
     }
-    // Lydia's request goes to an address, and Canari keeps none: the guest types it, and it is
-    // forwarded once (PP2).
-    if (paysOnline && !payerEmail) {
+    if (missing) {
+      // Said on the question's own card, brought into view.
+      error = '';
+      Log.d('PublicForm', `submit held: required question ${missing.itemId} (${missing.kind})`);
+      document
+        .getElementById(`q-${missing.itemId}`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    // The name and e-mail the creator asked, said on their own fields, brought into view.
+    const identityProblem = firstGuestFieldProblem(askedFields, guestIdentity);
+    if (identityProblem) {
+      guestIdentityChecked = true;
+      error = '';
+      Log.d('PublicForm', `submit held: guest ${identityProblem} missing or invalid`);
+      document
+        .getElementById('guest-identity')
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    // Lydia's request goes to an address. When the form asked the guest's e-mail, that one is it
+    // (typed once, kept with the answer); otherwise the guest types one here, forwarded once and
+    // never stored (PP2).
+    if (payerPromptNeeded(paysOnline, askedFields) && !payerEmail) {
       Log.d('PublicForm', `asking the payer address form=${form.id}`);
       askingPayerEmail = true;
       return;
@@ -124,6 +195,7 @@
       const reply = await submitPublicForm(form.id, {
         answers: visibleAnswers(visibleItems, selections),
         website: honeypot,
+        ...guestIdentityPayload(askedFields, guestIdentity),
         ...(payerEmail ? { payerEmail } : {}),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
@@ -139,25 +211,69 @@
       submitted = true;
     } catch (e) {
       Log.d('PublicForm', `submit refused form=${form.id}: ${e}`);
-      // A payment refusal is worded in the reader's language from its code; anything else is the
-      // server's sentence, English and for the log - the guest reads ours.
-      error = providerRefusalMessage(e) ?? m.form_guest_submit_failed();
+      // Worded in the reader's language from the refusal's code (a form's, then a payment's); the
+      // server's sentence is English and for the log - the guest reads ours.
+      error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
     } finally {
       submitting = false;
     }
+  }
+
+  /**
+   * The empty-order sentence, shown after a send refused for it and only while the order is still
+   * empty: it goes the moment a unit is added. The form's, no card's (`MissingAnswer` itemId null).
+   */
+  const orderMissing = $derived(
+    missingAnswer?.itemId === null && isOrderEmpty(visibleItems, selections)
+  );
+
+  /** What a question's card says after a refused send: why, while it is still unanswered. */
+  function questionError(item: { id: string }): string | null {
+    if (!missingAnswer || missingAnswer.itemId !== item.id) return null;
+    const shown = visibleItems.find((i) => i.id === item.id);
+    return shown && isItemAnswered(shown, selections[item.id])
+      ? null
+      : missingAnswerMessage(missingAnswer);
   }
 
   /** A public form takes several answers: start a fresh one from the same link. */
   function answerAgain() {
     if (!form) return;
     selections = initialSelections(form.items);
+    missingAnswer = null;
     submitted = false;
     cashOwedCents = null;
     cashReference = null;
+    // A shared device at an event: the next answer may be somebody else's.
+    guestIdentity = emptyGuestIdentity();
+    guestIdentityChecked = false;
     error = '';
     window.scrollTo({ top: 0 });
   }
 </script>
+
+<!-- The send button, one markup for the plain footer and the order bar of a priced grid. -->
+{#snippet guestPayButton()}
+  <Button
+    variant="primary"
+    disabled={blocked || submitting}
+    loading={submitting}
+    onclick={() => void handleSubmit()}
+  >
+    {#if total > 0}
+      <CreditCard size={16} class="mr-1.5" />{m.form_view_pay_button({
+        amount: formatAmount(total, form?.currency),
+      })}
+    {:else}
+      <Check size={16} class="mr-1.5" />{m.form_view_submit()}
+    {/if}
+  </Button>
+{/snippet}
+
+<!-- The price category a guest pays, and the sign-in that may lower it. -->
+{#snippet viewerTier()}
+  <FormViewerTier name={null} {tierLabels} {loginHref} />
+{/snippet}
 
 {#if askingPayerEmail}
   <PayerEmailPrompt
@@ -181,7 +297,7 @@
       <p class="text-red-err font-semibold">{loadError}</p>
     </div>
   {:else}
-    <FormHeader {form} {submitted} />
+    <FormHeader {form} {submitted} children={tierLabels.length > 0 ? viewerTier : undefined} />
 
     {#if submitted}
       <div class="border-cn-border space-y-4 rounded-3xl border bg-(--cn-surface) p-8 text-center">
@@ -220,18 +336,32 @@
         </p>
       {/if}
 
-      <div class="space-y-4">
+      <div class="space-y-3 sm:space-y-4">
         {#each visibleItems as item, index (item.id)}
-          <FormQuestion
-            {item}
-            {index}
-            bind:value={selections[item.id]}
-            disabled={isNotOpenYet || isClosed || form.formFull || submitting}
-            formId={form.id}
-            currency={form.currency}
-            optionModifier={(question, option) => optionModifierOf(price, question, option)}
-            optionClosed={(option) => !!option.id && price.unavailableOptionIds.has(option.id)}
-          />
+          <!-- A priced grid draws its own card: the product photo spans it, the price sits by the title. -->
+          {#if isProductGrid(item) && item.productGrid}
+            <ProductGridQuestion
+              {item}
+              grid={item.productGrid}
+              bind:value={selections[item.id]}
+              disabled={isNotOpenYet || isClosed || form.formFull || submitting}
+              prices={form.productGridPrices?.[item.id]}
+              currency={form.currency}
+              error={questionError(item)}
+            />
+          {:else}
+            <FormQuestion
+              {item}
+              {index}
+              bind:value={selections[item.id]}
+              disabled={isNotOpenYet || isClosed || form.formFull || submitting}
+              formId={form.id}
+              currency={form.currency}
+              optionModifier={(question, option) => optionModifierOf(price, question, option)}
+              optionClosed={(option) => !!option.id && price.unavailableOptionIds.has(option.id)}
+              error={questionError(item)}
+            />
+          {/if}
         {/each}
       </div>
 
@@ -248,7 +378,17 @@
         </div>
       {/if}
 
-      {#if total > 0 && form.allowCashPayment}
+      <!-- Only what the creator asked, after the questions and before how to pay: the e-mail here is
+           the one Lydia uses, never asked twice. -->
+      <GuestIdentityFields
+        asked={askedFields}
+        bind:values={guestIdentity}
+        showErrors={guestIdentityChecked}
+        emailPaysLydia={paysOnline}
+        disabled={isNotOpenYet || isClosed || form.formFull || submitting}
+      />
+
+      {#if total > 0 && form.allowCashPayment && !cashOnly}
         <PaymentMethodChoice bind:method={paymentMethodChoice} />
       {/if}
 
@@ -267,38 +407,55 @@
         </label>
       </div>
 
+      <!-- The empty order: the form's, announced, gone once a unit is added. -->
+      {#if orderMissing}
+        <p
+          id={ORDER_MISSING_ID}
+          role="alert"
+          class="text-red-err mt-4 text-center text-sm font-medium"
+        >
+          {m.form_view_error_order_empty()}
+        </p>
+      {/if}
       {#if error}
         <p class="text-red-err mt-4 text-center text-sm font-medium">{error}</p>
       {/if}
 
-      <div class="mt-6 flex flex-col items-center gap-2">
-        {#if total > 0}
-          <p class="text-text-muted text-xs font-medium">
-            {m.form_view_total_to_pay()}{price.appliedLabel}
-            <span class="text-cn-dark text-base font-bold">
-              {formatAmount(total, form.currency)}
-            </span>
-          </p>
-        {/if}
-        <Button
-          variant="primary"
-          class="px-8"
-          disabled={blocked || submitting}
-          loading={submitting}
-          onclick={() => void handleSubmit()}
+      {#if hasProductGrid && !price.priceUnavailable}
+        <!-- An order is totalled where it is paid, stuck to the bottom from the first item. -->
+        <div
+          data-order-bar-wrap
+          class="sticky bottom-0 z-50 mt-6 pb-[max(0.75rem,var(--safe-area-inset-bottom,0px))]"
         >
-          {#if total > 0}
-            <CreditCard size={16} class="mr-1.5" />{m.form_view_pay_button({
-              amount: formatAmount(total, form.currency),
-            })}
-          {:else}
-            <Check size={16} class="mr-1.5" />{m.form_view_submit()}
+          <ProductGridOrderBar
+            lines={price.gridLines}
+            totalCents={total}
+            currency={form.currency}
+            items={form.items}
+            action={guestPayButton}
+          />
+          {#if paysOnline}
+            <p class="text-text-muted mt-2 text-center text-xs">{paymentNote}</p>
           {/if}
-        </Button>
-        {#if paysOnline}
-          <p class="text-text-muted max-w-sm text-center text-xs">{m.form_guest_payment_note()}</p>
-        {/if}
-      </div>
+        </div>
+      {:else}
+        <div class="mt-6 flex flex-col items-center gap-2">
+          {#if total > 0}
+            <p class="text-text-muted text-xs font-medium">
+              {m.form_view_total_to_pay()}{price.appliedLabel}
+              <span class="text-cn-dark text-base font-bold">
+                {formatAmount(total, form.currency)}
+              </span>
+            </p>
+          {/if}
+          {@render guestPayButton()}
+          {#if paysOnline}
+            <p class="text-text-muted max-w-sm text-center text-xs">
+              {paymentNote}
+            </p>
+          {/if}
+        </div>
+      {/if}
     {/if}
 
     <p class="text-text-muted mt-10 pb-6 text-center text-xs">{m.form_guest_footer()}</p>
