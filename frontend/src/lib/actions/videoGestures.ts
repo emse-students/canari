@@ -93,6 +93,7 @@ export function videoGestures(node: HTMLElement, initial: VideoGestureParams) {
     clearHoldTimer();
     if (holding) {
       holding = false;
+      if (press && node.hasPointerCapture?.(press.id)) node.releasePointerCapture(press.id);
       swallowClick = true;
       Log.d('videoGestures', `hold ended: ${reason}`);
       params.onHoldEnd();
@@ -114,6 +115,15 @@ export function videoGestures(node: HTMLElement, initial: VideoGestureParams) {
     holdTimer = setTimeout(() => {
       holdTimer = null;
       holding = true;
+      // THE RELEASE MUST COME BACK HERE: a mouse held on the picture and let go outside it would
+      // otherwise leave the video paused and this press open, eating the next one.
+      if (press) {
+        try {
+          node.setPointerCapture?.(press.id);
+        } catch (err) {
+          console.warn('[videoGestures] pointer capture refused - a release outside is lost', err);
+        }
+      }
       Log.d('videoGestures', 'hold started');
       params.onHoldStart();
     }, HOLD_TO_PAUSE_MS);
@@ -133,12 +143,15 @@ export function videoGestures(node: HTMLElement, initial: VideoGestureParams) {
 
   function onClick(e: MouseEvent) {
     if (!enabled()) return;
+    // A keyboard or assistive activation (`detail` 0) is never a tap, and never the hold's click
+    // either: checked first, so a hold's pending swallow cannot eat an Enter.
+    if (e.detail === 0) return;
     if (swallowClick) {
       swallowClick = false;
       Log.d('videoGestures', 'the click of a hold - not a tap');
       return;
     }
-    if (e.detail === 0 || isControl(e.target)) return;
+    if (isControl(e.target)) return;
     if (params.waitForDouble) {
       taps.tap({ x: e.clientX, y: e.clientY, t: e.timeStamp });
       return;
