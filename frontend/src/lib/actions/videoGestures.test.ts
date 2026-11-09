@@ -196,6 +196,24 @@ describe('where a double tap likes', () => {
     expect(onTap).not.toHaveBeenCalled();
   });
 
+  it('reads the surface around when the caller does not say (a liking `doubleTapLike`)', () => {
+    destroy();
+    const surface = document.createElement('div');
+    surface.setAttribute('data-double-tap-likes', '');
+    surface.appendChild(node);
+    document.body.appendChild(surface);
+    wire();
+    tap(100, 1000);
+    tap(100, 1100);
+    vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 2);
+    expect(onDoubleTap).toHaveBeenCalledTimes(1);
+    expect(onTap).not.toHaveBeenCalled();
+
+    surface.removeAttribute('data-double-tap-likes');
+    tap();
+    expect(onTap, 'a surface whose like is off: at once').toHaveBeenCalledTimes(1);
+  });
+
   it('a lone tap acts once the double-tap window has passed, and not before', () => {
     tap(100, 1000);
     vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS - 1);

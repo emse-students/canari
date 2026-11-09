@@ -97,10 +97,6 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     count: 2,
     why: '16px cross on an attachment chip (the staged media, and the GIF still arriving)',
   },
-  'lib/components/shared/VideoPlayer.svelte': {
-    count: 1,
-    why: 'the 64px play disc centred on a paused picture - the one big target, matched to the poster glyph',
-  },
   'lib/components/shared/InlineVideo.svelte': {
     count: 2,
     why: "the sound toggle overlaying a playing video - Instagram-sized so it does not cover the picture, the download moved into the viewer - and a conversation video's play button, the one big target on a paused first frame (VideoPlayer's disc, 3.5rem)",

@@ -1069,11 +1069,6 @@
     "select": 0,
     "input": 1
   },
-  "src/lib/components/shared/VideoPlayer.svelte": {
-    "button": 4,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/shared/VideoPreparationProgress.svelte": {
     "button": 1,
     "select": 0,

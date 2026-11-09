@@ -1,4 +1,5 @@
 import { createTapDisambiguator, tapBelongsToInnerControl } from '$lib/utils/tapDisambiguator';
+import { DOUBLE_TAP_LIKES } from '$lib/actions/doubleTapLike';
 import { GESTURE } from '$lib/utils/viewerGestures';
 import { Log } from '$lib/utils/Log';
 
@@ -23,8 +24,9 @@ import { Log } from '$lib/utils/Log';
  * never came can never eat a later tap. A second finger, or a travel past the slop, ends the hold
  * (a pinch, a swipe) and resumes.
  *
- * THE DOUBLE TAP. Where a double tap LIKES (`waitForDouble`: a reel, a feed post - `doubleTapLike`
- * on the surface around), the single tap waits for the double-tap window (`createTapDisambiguator`,
+ * THE DOUBLE TAP. Where a double tap LIKES - the player sits inside a surface whose `doubleTapLike`
+ * is on (it says so with `data-double-tap-likes`, read at each tap), or the caller says
+ * `waitForDouble` - the single tap waits for the double-tap window (`createTapDisambiguator`,
  * the same `GESTURE.DOUBLE_TAP_MS` that `doubleTapLike` reads, so the two always agree) and a pair is
  * reported as `onDoubleTap` instead - the sound is never flipped twice, never audible for a quarter
  * second. Where no double tap means anything the tap acts at once.
@@ -47,7 +49,10 @@ export interface VideoGestureParams {
   onHoldEnd: () => void;
   /** Two taps in the window, where `waitForDouble` is set. The like itself is the surface's. */
   onDoubleTap?: () => void;
-  /** A double tap means something on this surface: the single tap waits for the window. */
+  /**
+   * A double tap means something here: the single tap waits for the window. Unset, it is read from
+   * the surface around (`data-double-tap-likes`, set by `doubleTapLike` while it is on).
+   */
   waitForDouble?: boolean;
   /** Off, the picture is inert. Default on. */
   enabled?: boolean;
@@ -152,7 +157,8 @@ export function videoGestures(node: HTMLElement, initial: VideoGestureParams) {
       return;
     }
     if (isControl(e.target)) return;
-    if (params.waitForDouble) {
+    const waits = params.waitForDouble ?? node.closest(`[${DOUBLE_TAP_LIKES}]`) !== null;
+    if (waits) {
       taps.tap({ x: e.clientX, y: e.clientY, t: e.timeStamp });
       return;
     }

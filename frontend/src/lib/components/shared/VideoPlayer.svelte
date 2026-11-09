@@ -1,13 +1,21 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { CircleAlert, Maximize, Minimize, Pause, Play, Volume2, VolumeX } from '@lucide/svelte';
+  import { CircleAlert, Maximize, Minimize, Pause, Play } from '@lucide/svelte';
+  import { videoGestures } from '$lib/actions/videoGestures';
+  import { videoGlass } from '$lib/utils/videoGlass';
+  import VideoChipButton from '$lib/components/ui/player/VideoChipButton.svelte';
+  import VideoPlayDisc from '$lib/components/ui/player/VideoPlayDisc.svelte';
+  import VideoScrubber from '$lib/components/ui/player/VideoScrubber.svelte';
+  import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
+  import VideoFeedbackGlyph, {
+    type VideoFeedbackKind,
+  } from '$lib/components/ui/player/VideoFeedbackGlyph.svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { followVideoSound, type VideoSoundScope } from '$lib/actions/playWhileVisible';
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import {
     CONTROLS_FADE_MS,
     bufferedFraction,
-    clampFraction,
     formatVideoTime,
     videoKeyAction,
   } from '$lib/utils/videoPlayback';
@@ -31,12 +39,20 @@
    * every engine: play/pause, a seek bar showing what is buffered, elapsed/duration, the app's ONE
    * sound answer (`followVideoSound`) and full screen where the engine offers it.
    *
+   * THE FULL PLAYER IS THE SHARED KIT'S (owner, 2026-11-09, `docs/wiki/frontend/modules/video-player.md`):
+   * one floating glass bar (`ui/player/`: play/pause, time, scrubber with its time bubble, the speaker,
+   * full screen), the glass play disc, and the gestures of every video surface (`videoGestures`): a
+   * TAP toggles the sound and brings the bar up, a PRESS HELD pauses while held and resumes on
+   * release. The tap used to toggle the bar (user, 2026-10-02); it now only RAISES it - the bar goes
+   * by itself after the fade.
+   *
    * THE CONTROLS FADE after {@link CONTROLS_FADE_MS} of playback without a touch, and come back on
    * ANY mouse movement over the player, a tap ANYWHERE on it, a key, or a pause (user, 2026-10-02:
-   * *"sur web, afficher les controles lors de tout mouvement de souris, sur mobile un appui
-   * n'importe ou sur l'ecran de la video ouverte en grand est un toggle des controles"*). Anywhere
-   * means the black around a letterboxed clip too, which a tap listener on the `<video>` alone never
-   * reached. A paused video keeps them: there is nothing to watch.
+   * *"sur web, afficher les controles lors de tout mouvement de souris"*). Anywhere means the black
+   * around a letterboxed clip too, which a tap listener on the `<video>` alone never reached. A paused
+   * video keeps them: there is nothing to watch - except a pause the reader is HOLDING, which is for
+   * watching the frame. A faded bar is UNMOUNTED, not transparent: a transparent layer with a backdrop
+   * filter still pays its blur over every frame.
    *
    * NO NATIVE POSTER, EVER: `poster` stays `TRANSPARENT_VIDEO_POSTER` (the Android WebView would
    * otherwise draw its grey play button), and until `loadeddata` says the first frame is in the
@@ -183,15 +199,20 @@
   /** Capability, not a fallback: an engine without element full screen draws no button for it. */
   const canFullscreen = typeof document !== 'undefined' && document.fullscreenEnabled === true;
 
-  const played = $derived(
-    Number.isFinite(duration) && duration > 0 ? clampFraction(currentTime / duration) : 0
-  );
-  const timeText = $derived(
-    m.video_time_value({
-      elapsed: formatVideoTime(currentTime),
-      duration: formatVideoTime(duration),
-    })
-  );
+  /**
+   * A PRESS IS HELD (`videoGestures`): the video is paused for the reader to look at a frame, so
+   * neither the bar nor the play disc comes up for that pause. `heldWasPlaying` is what the release
+   * restores - a hold on a paused video resumes nothing.
+   */
+  let holding = $state(false);
+  let heldWasPlaying = false;
+
+  /** What the reader's last gesture did, for the glyph (`VideoFeedbackGlyph`). */
+  let feedback = $state<{ kind: VideoFeedbackKind; n: number } | null>(null);
+  let feedbackCount = 0;
+  function showFeedback(kind: VideoFeedbackKind) {
+    feedback = { kind, n: ++feedbackCount };
+  }
 
   // The fade: only while playing, never mid-scrub, restarted by every `poke`.
   $effect(() => {
@@ -222,14 +243,10 @@
     buffered = bufferedFraction(video.buffered, video.currentTime, video.duration);
   }
 
-  /** The reel player's tap feedback: the icon of the state the reader just chose. */
-  let tapGlyph = $state<{ kind: 'play' | 'pause'; n: number } | null>(null);
-  let glyphCount = 0;
-
   function togglePlay() {
     if (!video) return;
     showControls();
-    if (minimal) tapGlyph = { kind: video.paused ? 'play' : 'pause', n: ++glyphCount };
+    if (minimal) showFeedback(video.paused ? 'play' : 'pause');
     if (video.paused) {
       video.play().catch((err: unknown) => {
         console.warn('[VideoPlayer] play() refused', {
@@ -242,11 +259,37 @@
     }
   }
 
+  /**
+   * The sound, from the speaker, the `m` key or a tap on the picture. In the `app` scope
+   * `followVideoSound` turns this element's change into the app's one answer (and remembers it); a
+   * `silent` video has no sound to give and only raises the bar.
+   */
   function toggleMute() {
     if (!video) return;
     showControls();
-    // In the `app` scope `followVideoSound` turns this element's change into the app's one answer.
+    if (soundScope === 'silent') return;
     video.muted = !video.muted;
+    showFeedback(video.muted ? 'sound-off' : 'sound-on');
+  }
+
+  /** A press held on the picture: pause for as long as it is held. */
+  function onHoldStart() {
+    if (!video) return;
+    holding = true;
+    heldWasPlaying = !video.paused;
+    if (heldWasPlaying) video.pause();
+  }
+
+  /** The hold ended: resume what it paused, and nothing it did not. */
+  function onHoldEnd() {
+    holding = false;
+    if (!video || !heldWasPlaying) return;
+    heldWasPlaying = false;
+    video.play().catch((err: unknown) => {
+      console.warn('[VideoPlayer] play() refused after a hold', {
+        name: err instanceof Error ? err.name : String(err),
+      });
+    });
   }
 
   function seekTo(seconds: number) {
@@ -316,47 +359,21 @@
   }
 
   /**
-   * A tap anywhere on the player - the picture or the black around it - brings the controls back, or
-   * hides them when they are up. Controls, the play button and the seek bar stop their own clicks, so
-   * only a tap that is nobody else's gets here.
+   * THE MINIMAL (REEL) PLAYER'S TAP, until the reel moves to the shared gestures: a tap anywhere on
+   * it plays or pauses. The full player's tap is `videoGestures`' (the sound). Controls, the play
+   * button and the seek line stop their own clicks, so only a tap that is nobody else's gets here.
    */
   function onPictureTap(e: MouseEvent) {
+    if (!minimal) return;
     e.stopPropagation();
-    if (minimal) {
-      togglePlay();
-      return;
-    }
-    if (controlsVisible && !paused) controlsVisible = false;
-    else showControls();
+    togglePlay();
   }
 
-  // ---- seek bar: a pointer drag, captured, so a finger leaving the bar keeps scrubbing ----
-  let track: HTMLDivElement | null = $state(null);
-
-  function fractionAt(clientX: number): number {
-    if (!track) return 0;
-    const rect = track.getBoundingClientRect();
-    return rect.width > 0 ? clampFraction((clientX - rect.left) / rect.width) : 0;
-  }
-
-  function onScrubStart(e: PointerEvent) {
-    if (!Number.isFinite(duration)) return;
-    e.stopPropagation();
-    scrubbing = true;
-    controlsVisible = true;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    seekTo(fractionAt(e.clientX) * duration);
-  }
-
-  function onScrubMove(e: PointerEvent) {
-    if (!scrubbing) return;
-    seekTo(fractionAt(e.clientX) * duration);
-  }
-
-  function onScrubEnd() {
-    if (!scrubbing) return;
-    scrubbing = false;
-    poke += 1;
+  /** A drag on the scrubber keeps the controls up; its end restarts the fade. */
+  function onScrubbingChange(next: boolean) {
+    scrubbing = next;
+    if (next) controlsVisible = true;
+    else poke += 1;
   }
 
   function onFullscreenChange() {
@@ -485,11 +502,17 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
   bind:this={root}
-  class="relative flex items-center justify-center overflow-hidden bg-black outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {klass}"
+  class="relative flex items-center justify-center overflow-hidden bg-black outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-white {klass}"
   role="group"
   aria-label={m.video_player_label()}
   tabindex="0"
   data-video-player
+  use:videoGestures={{
+    onTap: toggleMute,
+    onHoldStart,
+    onHoldEnd,
+    enabled: !minimal,
+  }}
   onkeydown={onKeydown}
   onfocusin={onFocusIn}
   onpointermove={onPointerMove}
@@ -535,7 +558,8 @@
     onpause={() => {
       buffering = false;
       sync();
-      controlsVisible = true;
+      // A pause the reader holds is for looking at the frame: the bar stays where it was.
+      if (!holding) controlsVisible = true;
     }}
     onvolumechange={sync}
     onerror={onVideoError}
@@ -568,21 +592,10 @@
            read as "tap to play" on a video that was only loading (owner, 2026-10-31). -->
     {/if}
 
-    {#if paused && (minimal ? autoplayRefused : frameReady)}
+    {#if paused && !holding && (minimal ? autoplayRefused : frameReady)}
       <!-- The one big target while nothing plays; the bar below repeats it for the keyboard. The
            minimal player draws it on a decided outcome only, with or without a first frame. -->
-      <button
-        type="button"
-        class="bg-cn-yellow text-cn-ink absolute top-1/2 left-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
-        aria-label={m.video_play_label()}
-        tabindex="-1"
-        onclick={(e) => {
-          e.stopPropagation();
-          togglePlay();
-        }}
-      >
-        <Play size={30} strokeWidth={2.25} fill="currentColor" class="ml-1" />
-      </button>
+      <VideoPlayDisc onclick={togglePlay} size={minimal ? 'lg' : 'md'} tabindex={-1} />
     {/if}
 
     {#if minimal && buffering}
@@ -590,184 +603,111 @@
       <MediaSpinner />
     {/if}
 
-    {#if minimal}
-      <!-- THE GLYPH IS THE FEEDBACK OF A TAP, NEVER A STATE (user, 2026-10-23): nothing at load, at
-           autoplay or at the end, only the icon of what the reader's tap (or key) just did, popping
-           and fading in 600 ms. Hidden under `prefers-reduced-motion`. Never a target. -->
-      {#key tapGlyph?.n}
-        {#if tapGlyph}
-          <div
-            class="reel-glyph pointer-events-none absolute top-1/2 left-1/2 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-black/45 text-white motion-reduce:hidden"
-            aria-hidden="true"
-            data-video-glyph={tapGlyph.kind}
-          >
-            {#if tapGlyph.kind === 'pause'}
-              <Pause size={30} strokeWidth={2.25} fill="currentColor" />
-            {:else}
-              <Play size={30} strokeWidth={2.25} fill="currentColor" class="ml-1" />
-            {/if}
-          </div>
-        {/if}
-      {/key}
+    <!-- THE GLYPH IS THE FEEDBACK OF A GESTURE, NEVER A STATE: a tap's sound, a reel's pause. -->
+    <VideoFeedbackGlyph {feedback} />
 
-      <!-- THE LINE: on the bottom edge (above the home indicator when the player reaches it), 32 px
-           tall to touch and 2 px to see. A drag on it is a seek (`data-video-controls` keeps the
-           viewer's swipe off it); the handle and the thicker line show only while touched or
-           focused from the keyboard. Always drawn: it is not part of the controls' fade. -->
+    {#if minimal}
+      <!-- THE LINE: on the bottom edge (above the home indicator when the player reaches it), above
+           the caption's vignette (`z-40` over its `z-20`). Always drawn: it is not part of the
+           controls' fade. -->
       <div
-        data-video-controls
-        data-video-progress
         class="absolute inset-x-0 bottom-0 z-40"
         style={safeBottom ? 'bottom: var(--safe-area-inset-bottom, 0px)' : undefined}
-        onpointerdown={(e) => e.stopPropagation()}
-        onclick={(e) => e.stopPropagation()}
-        role="presentation"
+        data-video-line-slot
       >
-        <div
-          bind:this={track}
-          class="group/seek relative flex h-8 w-full cursor-pointer touch-none items-end outline-none"
-          role="slider"
-          tabindex="0"
-          aria-label={m.video_seek_label()}
-          aria-valuemin={0}
-          aria-valuemax={Number.isFinite(duration) ? Math.floor(duration) : 0}
-          aria-valuenow={Math.floor(currentTime)}
-          aria-valuetext={timeText}
-          onpointerdown={onScrubStart}
-          onpointermove={onScrubMove}
-          onpointerup={onScrubEnd}
-          onpointercancel={onScrubEnd}
-        >
-          <div
-            class="relative w-full overflow-hidden bg-white/30 drop-shadow-sm transition-[height] duration-150 group-focus-visible/seek:h-1 motion-reduce:transition-none {scrubbing
-              ? 'h-1'
-              : 'h-0.5'}"
-            data-video-line
-          >
-            <div class="absolute inset-y-0 left-0 bg-white" style="width: {played * 100}%"></div>
-          </div>
-          <div
-            class="pointer-events-none absolute bottom-0 h-3 w-3 -translate-x-1/2 translate-y-1/2 rounded-full bg-white shadow transition-opacity duration-150 group-focus-visible/seek:opacity-100 motion-reduce:transition-none {scrubbing
-              ? 'opacity-100'
-              : 'opacity-0'}"
-            style="left: {played * 100}%"
-            data-video-handle
-          ></div>
-        </div>
+        <VideoScrubber
+          variant="line"
+          {currentTime}
+          {duration}
+          onSeek={seekTo}
+          {onScrubbingChange}
+        />
       </div>
-    {:else}
+    {:else if controlsVisible}
+      <!-- THE BAR, ONE FLOATING GLASS PILL over a free scrim gradient, UNMOUNTED when faded. Its
+           buttons draw no chip of their own: one blur per player. -->
       <div
         data-video-controls
-        class="from-cn-scrim/80 absolute inset-x-0 bottom-0 flex items-center gap-1 bg-linear-to-t to-transparent px-2 pt-8 text-white transition-opacity duration-300 {safeBottom
-          ? 'pb-[max(0.5rem,env(safe-area-inset-bottom))]'
-          : 'pb-2'} {controlsVisible ? 'opacity-100' : 'pointer-events-none opacity-0'}"
+        class="video-controls-in from-cn-scrim/60 absolute inset-x-0 bottom-0 bg-linear-to-t to-transparent px-3 pt-10 {safeBottom
+          ? 'pb-[max(0.75rem,env(safe-area-inset-bottom))]'
+          : 'pb-3'}"
         onpointerdown={(e) => e.stopPropagation()}
         onclick={(e) => e.stopPropagation()}
         role="presentation"
       >
-        <button
-          type="button"
-          class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500"
-          aria-label={paused ? m.video_play_label() : m.video_pause_label()}
-          onclick={togglePlay}
-        >
-          {#if paused}
-            <Play size={20} strokeWidth={2.25} fill="currentColor" />
-          {:else}
-            <Pause size={20} strokeWidth={2.25} fill="currentColor" />
-          {/if}
-        </button>
-
-        <span class="text-2xs shrink-0 font-semibold tabular-nums" aria-hidden="true">
-          {formatVideoTime(currentTime)} / {formatVideoTime(duration)}
-        </span>
-
         <div
-          bind:this={track}
-          class="group/seek relative mx-2 flex h-11 min-w-0 flex-1 cursor-pointer touch-none items-center outline-none"
-          role="slider"
-          tabindex="0"
-          aria-label={m.video_seek_label()}
-          aria-valuemin={0}
-          aria-valuemax={Number.isFinite(duration) ? Math.floor(duration) : 0}
-          aria-valuenow={Math.floor(currentTime)}
-          aria-valuetext={timeText}
-          onpointerdown={onScrubStart}
-          onpointermove={onScrubMove}
-          onpointerup={onScrubEnd}
-          onpointercancel={onScrubEnd}
+          class="glass-video flex w-full items-center gap-1 rounded-3xl px-1.5"
+          data-glass={videoGlass()}
+          data-video-bar
         >
-          <div class="relative h-1 w-full overflow-hidden rounded-full bg-white/25">
-            <div
-              class="absolute inset-y-0 left-0 bg-white/45"
-              style="width: {buffered * 100}%"
-            ></div>
-            <div
-              class="bg-cn-yellow absolute inset-y-0 left-0"
-              style="width: {played * 100}%"
-            ></div>
-          </div>
-          <div
-            class="bg-cn-yellow absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full shadow transition-transform group-focus-visible/seek:scale-125 group-focus-visible/seek:ring-2 group-focus-visible/seek:ring-white {scrubbing
-              ? 'scale-125'
-              : ''}"
-            style="left: {played * 100}%"
-          ></div>
-        </div>
-
-        <button
-          type="button"
-          class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500 {muted
-            ? ''
-            : 'text-cn-yellow'}"
-          aria-label={m.video_sound_label()}
-          aria-pressed={!muted}
-          disabled={soundScope === 'silent'}
-          onclick={toggleMute}
-        >
-          {#if muted}
-            <VolumeX size={20} strokeWidth={2.25} />
-          {:else}
-            <Volume2 size={20} strokeWidth={2.25} />
-          {/if}
-        </button>
-
-        {#if canFullscreen}
-          <button
-            type="button"
-            class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500"
-            aria-label={fullscreen ? m.video_exit_fullscreen_label() : m.video_fullscreen_label()}
-            onclick={() => void toggleFullscreen()}
+          <VideoChipButton
+            label={paused ? m.video_play_label() : m.video_pause_label()}
+            onclick={togglePlay}
+            glass={false}
           >
-            {#if fullscreen}
-              <Minimize size={20} strokeWidth={2.25} />
+            {#if paused}
+              <Play size={20} strokeWidth={2.25} fill="currentColor" class="drop-shadow" />
             {:else}
-              <Maximize size={20} strokeWidth={2.25} />
+              <Pause size={20} strokeWidth={2.25} fill="currentColor" class="drop-shadow" />
             {/if}
-          </button>
-        {/if}
+          </VideoChipButton>
+
+          <span class="text-2xs shrink-0 font-semibold tabular-nums" aria-hidden="true">
+            {formatVideoTime(currentTime)} / {formatVideoTime(duration)}
+          </span>
+
+          <VideoScrubber
+            variant="bar"
+            class="mx-2 min-w-0 flex-1"
+            {currentTime}
+            {duration}
+            {buffered}
+            onSeek={seekTo}
+            {onScrubbingChange}
+          />
+
+          <VideoSoundButton
+            {muted}
+            onToggle={toggleMute}
+            glass={false}
+            disabled={soundScope === 'silent'}
+          />
+
+          {#if canFullscreen}
+            <VideoChipButton
+              label={fullscreen ? m.video_exit_fullscreen_label() : m.video_fullscreen_label()}
+              onclick={() => void toggleFullscreen()}
+              glass={false}
+            >
+              {#if fullscreen}
+                <Minimize size={20} strokeWidth={2.25} class="drop-shadow" />
+              {:else}
+                <Maximize size={20} strokeWidth={2.25} class="drop-shadow" />
+              {/if}
+            </VideoChipButton>
+          {/if}
+        </div>
       </div>
     {/if}
   {/if}
 </div>
 
 <style>
-  /* The tap feedback of the reel player: pops in, fades out, and ends invisible. */
-  .reel-glyph {
-    animation: reel-glyph-pop 600ms ease-out forwards;
+  /* The bar comes in with a short fade; it leaves by being unmounted (a hidden blur must not pay). */
+  .video-controls-in {
+    animation: video-controls-in 150ms ease-out;
   }
-  @keyframes reel-glyph-pop {
-    0% {
-      opacity: 0;
-      transform: translate(-50%, -50%) scale(0.7);
+  @media (prefers-reduced-motion: reduce) {
+    .video-controls-in {
+      animation: none;
     }
-    25% {
+  }
+  @keyframes video-controls-in {
+    from {
+      opacity: 0;
+    }
+    to {
       opacity: 1;
-      transform: translate(-50%, -50%) scale(1);
-    }
-    100% {
-      opacity: 0;
-      transform: translate(-50%, -50%) scale(1.15);
     }
   }
 </style>
