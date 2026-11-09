@@ -114,7 +114,7 @@
           />
           <div class="min-w-0 flex-1">
             {#if association.parentName}
-              <div class="text-text-muted text-2xs font-bold tracking-wide uppercase">
+              <div class="text-text-muted text-2xs font-bold">
                 {association.parentName}
               </div>
             {/if}

@@ -391,9 +391,7 @@
     </h2>
 
     {#if isChannel}
-      <span
-        class="text-text-muted text-2xs inline-flex items-center font-semibold tracking-wider uppercase md:text-xs"
-      >
+      <span class="text-text-muted text-2xs inline-flex items-center font-semibold md:text-xs">
         {m.chat_community_channel_label()}
       </span>
     {:else}

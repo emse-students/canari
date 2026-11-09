@@ -387,9 +387,7 @@
                   {:else}
                     <div class="border-cn-border/70 overflow-x-auto rounded-lg border">
                       <table class="w-full text-sm">
-                        <thead
-                          class="bg-cn-bg text-text-muted text-left text-xs font-bold tracking-wide uppercase"
-                        >
+                        <thead class="bg-cn-bg text-text-muted text-left text-xs font-bold">
                           <tr>
                             <th class="px-3 py-2">{m.asso_achats_col_date()}</th>
                             <th class="px-3 py-2">{m.asso_achats_col_buyer()}</th>

@@ -164,7 +164,7 @@
           {shownNote ?? m.profile_backup_code_desc()}
         </p>
         <p
-          class="text-text-main mt-3 font-mono text-sm font-bold tracking-wide break-all select-all"
+          class="text-text-main mt-3 font-mono text-sm font-bold break-all select-all"
           data-testid="backup-recovery-code"
         >
           {shownCode}

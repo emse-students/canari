@@ -272,7 +272,7 @@
       {#if results.length === 0}
         <p class="text-text-muted p-4 text-center text-sm">{m.emoji_picker_no_results()}</p>
       {:else}
-        <h3 class="text-text-muted text-2xs px-1 pt-2 pb-1 font-bold tracking-widest uppercase">
+        <h3 class="text-text-muted text-2xs px-1 pt-2 pb-1 font-bold">
           {m.emoji_picker_search_results_label()}
         </h3>
         <div class="grid grid-cols-8 gap-0.5">
@@ -285,7 +285,7 @@
       {#each sections as section (section.category)}
         <section data-category={section.category}>
           <h3
-            class="bg-cn-surface text-text-muted text-2xs sticky top-0 z-10 px-1 pt-2 pb-1 font-bold tracking-widest uppercase"
+            class="bg-cn-surface text-text-muted text-2xs sticky top-0 z-10 px-1 pt-2 pb-1 font-bold"
           >
             {CATEGORY_LABELS[section.category]()}
           </h3>

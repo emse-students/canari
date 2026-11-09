@@ -222,13 +222,11 @@
       <div class="rounded-lg bg-amber-500/10 p-1.5 text-amber-600 dark:text-amber-400">
         <MessageCircle size={16} strokeWidth={2.5} />
       </div>
-      <span class="text-text-main text-sm font-bold tracking-wide"
-        >{m.post_conversations_panel_title()}</span
-      >
+      <span class="text-text-main text-sm font-bold">{m.post_conversations_panel_title()}</span>
     </div>
     <a
       href={resolve('/chat')}
-      class="text-2xs flex items-center gap-0.5 rounded font-bold tracking-wider text-amber-600 uppercase transition-colors outline-none hover:text-amber-500 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-500 dark:hover:text-amber-400"
+      class="text-2xs flex items-center gap-0.5 rounded font-bold text-amber-600 transition-colors outline-none hover:text-amber-500 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-500 dark:hover:text-amber-400"
     >
       {m.post_conversations_see_all_label()}
       <ChevronRight size={14} strokeWidth={2.5} />

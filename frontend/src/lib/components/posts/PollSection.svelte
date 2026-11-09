@@ -102,7 +102,7 @@
 >
   <!-- Header row -->
   <div class="mb-4 flex items-center justify-between gap-2">
-    <p class="text-text-muted text-2xs flex items-center gap-2 font-bold tracking-widest uppercase">
+    <p class="text-text-muted text-2xs flex items-center gap-2 font-bold">
       <ChartColumn size={16} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
       {m.post_poll_section_title()}
     </p>

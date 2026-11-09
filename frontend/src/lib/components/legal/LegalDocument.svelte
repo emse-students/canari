@@ -96,7 +96,7 @@
            nothing. Below it the same list renders as a closed `<details>` above the text. -->
       <nav class="hidden w-56 shrink-0 xl:block" aria-label={m.legal_toc_heading()}>
         <div class="sticky top-8">
-          <p class="text-text-muted text-2xs mb-3 font-semibold tracking-widest uppercase">
+          <p class="text-text-muted text-2xs mb-3 font-semibold">
             {m.legal_toc_heading()}
           </p>
           <ul class="space-y-0.5 text-xs">
@@ -129,7 +129,7 @@
   </button>
 
   <header class="border-cn-border mb-8 border-b pb-8">
-    <p class="text-text-muted text-2xs mb-2 font-semibold tracking-widest uppercase">
+    <p class="text-text-muted text-2xs mb-2 font-semibold">
       {m.legal_eyebrow()}
     </p>
     <h1 class="text-text-main text-3xl font-bold text-balance">{title}</h1>
