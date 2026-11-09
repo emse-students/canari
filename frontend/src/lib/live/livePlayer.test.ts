@@ -984,6 +984,24 @@ describe('a broadcaster on a bad link (owner, 2026-11-09)', () => {
     expect(seen.rates).toContain(0.9);
   });
 
+  it('a stall still open when the viewer restarts is closed to the screen, never left as a spinner', async () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const p = await joined();
+    clock = 2_000;
+    live.push(1);
+    await tickTimer();
+    video.currentTime = 8;
+    clock = 9_000;
+    p.noteStall();
+    expect(dry).toEqual([true]);
+    p.retry();
+    expect(dry).toEqual([true, false]);
+    expect(log.mock.calls.map((c) => String(c[0])).some((l) => l.includes('(restarted)'))).toBe(
+      true
+    );
+  });
+
   it('a dry buffer is told to the screen once per stall, and closed by ONE info line each', async () => {
     vi.spyOn(console, 'debug').mockImplementation(() => {});
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});

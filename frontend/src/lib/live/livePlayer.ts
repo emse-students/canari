@@ -327,6 +327,9 @@ export class LivePlayer {
   start(): void {
     console.debug(`[LIVE] viewer start ${this.liveId}`);
     this.teardownMedia();
+    // A stall still open at a restart is closed OUT LOUD: `resetRun` forgets it, and the screen's
+    // spinner (`onBuffering`) would otherwise stay up over the new run until a stall of its own.
+    this.endStall('restarted');
     const gen = ++this.generation;
     this.downloads = new AbortController();
     this.resetRun();
