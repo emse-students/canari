@@ -204,9 +204,9 @@ conversation media panel:
   raises the bar. **A held press pauses** and draws neither the disc nor the bar for that pause; the
   release resumes only what the hold paused.
 - **The glass play disc** (`VideoPlayDisc`) when paused, `tabindex="-1"` because the bar repeats it.
-- The minimal (reel) mode shares three pieces already: the `lg` glass disc on an autoplay refusal,
-  `VideoFeedbackGlyph` for its tap, and the `line` scrubber (its played part now yellow). Its tap is
-  still play/pause until step C.
+- The reel mode (`variant="reel"`, step C) shares three pieces: the `lg` glass disc on an autoplay
+  refusal, `VideoFeedbackGlyph` for its gestures, and the `line` scrubber (its played part yellow).
+  Since step C its tap is the sound and its hold the pause, like every player's.
 - **A surface that likes on double tap** (`doubleTapLike` on, `data-double-tap-likes`) makes the
   player's single tap wait for the double-tap window - so on a reel the like never flips the sound.
 
