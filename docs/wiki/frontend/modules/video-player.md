@@ -11,7 +11,7 @@ arbiter, the lightbox's zoom) is in [posts](posts.md#a-video-is-canaris-to-play-
 ## The owner's decisions (2026-11-09, final)
 
 1. **ONE player for every surface** - feed, CanaReels, chat video, lightbox, live viewer - with a
-   `variant` and ONE controls kit. The composer's previews (`PickedMediaPreview`, `ReelReview`, the
+   `variant` (`VideoPlayer`'s: `lightbox`, `reel`; `feed` and `chat` with step D) and ONE controls kit. The composer's previews (`PickedMediaPreview`, `ReelReview`, the
    editor, the publish sheet) are not players and stay as they are.
 2. **Liquid Glass**, from the existing `.glass-chrome` recipe plus one sibling token set
    (`--glass-video-*`), degrading without a timer. No SVG `feDisplacementMap` lensing: WebKit does
@@ -73,6 +73,9 @@ The gesture map is `actions/videoGestures.ts`; the glass decision `utils/videoGl
   reads, so the two cannot disagree - and a pair is a double tap, never two sound toggles: the sound is
   never audible for a quarter second. The like itself stays the surface's (`doubleTapLike`). Where no
   double tap means anything, the tap acts at once.
+- **The picture's tap goes no further** (`stopPropagation`): a message bubble or a card around the
+  player never also takes it; a surface's double tap still sees it, `doubleTapLike` listening in the
+  capture phase.
 - **Controls are never the gesture's**: anything inside `[data-video-controls]` or a nested control
   (`tapBelongsToInnerControl`).
 - Tests: `videoGestures.test.ts` - the pointer sequence with fake timers, never a wall clock.
@@ -213,6 +216,6 @@ conversation media panel:
 | --- | --- | --- |
 | A | tokens, fallback, the kit, the gestures, the remembered sound | built |
 | B | lightbox (`VideoPlayer` full mode) on the kit; the measurement protocol | built - readings owed ([the glass budget](#the-glass-budget)) |
-| C | CanaReels (`ReelSlide`, the minimal mode): its gestures and the rail's speaker | next (B already gave it the glass disc, the shared glyph and the yellow line) |
-| D | feed and chat (`InlineVideo`, deleted) | |
+| C | CanaReels (`variant="reel"`): tap = sound, hold = pause, the rail's speaker is the kit's | built - readings owed (a reel tap, a hold, a double-tap like on both phones) |
+| D | feed and chat (`InlineVideo`, deleted) | next |
 | E | the live viewer | |

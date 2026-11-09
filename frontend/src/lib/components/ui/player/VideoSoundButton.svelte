@@ -20,27 +20,47 @@
     glass?: boolean;
     /** A video with no sound to give (`soundScope="silent"`). */
     disabled?: boolean;
+    /**
+     * `rail`: the reel rail's - a bare 26px glyph beside the heart and the comments, the same
+     * button rather than a fourth copy of it. Otherwise 16px in a chip, 20px in a bar.
+     */
+    rail?: boolean;
     class?: string;
+    /** `data-*` markers of the call site. */
+    [data: `data-${string}`]: unknown;
   }
 
-  let { muted, onToggle, glass = true, disabled = false, class: klass = '' }: Props = $props();
+  let {
+    muted,
+    onToggle,
+    glass = true,
+    disabled = false,
+    rail = false,
+    class: klass = '',
+    ...markers
+  }: Props = $props();
+
+  const glyphSize = $derived(rail ? 26 : glass ? 16 : 20);
+  const shadow = $derived(rail ? 'drop-shadow-md' : 'drop-shadow');
 </script>
 
 <VideoChipButton
   label={m.video_sound_label()}
+  title={rail ? m.video_sound_label() : undefined}
   pressed={!muted}
   onclick={onToggle}
-  {glass}
+  glass={glass && !rail}
   {disabled}
   class={klass}
+  {...markers}
 >
   {#if muted}
-    <VolumeX size={glass ? 16 : 20} strokeWidth={2.25} class="drop-shadow" data-video-sound="off" />
+    <VolumeX size={glyphSize} strokeWidth={rail ? 2 : 2.25} class={shadow} data-video-sound="off" />
   {:else}
     <Volume2
-      size={glass ? 16 : 20}
-      strokeWidth={2.25}
-      class="text-cn-yellow drop-shadow"
+      size={glyphSize}
+      strokeWidth={rail ? 2 : 2.25}
+      class="text-cn-yellow {shadow}"
       data-video-sound="on"
     />
   {/if}
