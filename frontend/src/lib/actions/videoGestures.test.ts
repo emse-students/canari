@@ -143,6 +143,17 @@ describe('where no double tap means anything', () => {
     expect(onTap).not.toHaveBeenCalled();
   });
 
+  it('with no hold given (a live), a long press is never a pause', () => {
+    destroy();
+    const action = videoGestures(node, { onTap });
+    destroy = action.destroy;
+    pointer('pointerdown');
+    vi.advanceTimersByTime(HOLD_TO_PAUSE_MS * 3);
+    pointer('pointerup');
+    expect(onHoldStart).not.toHaveBeenCalled();
+    expect(onHoldEnd).not.toHaveBeenCalled();
+  });
+
   it("keeps the phone's long-press menu off the picture", () => {
     const e = new Event('contextmenu', { bubbles: true, cancelable: true });
     node.dispatchEvent(e);

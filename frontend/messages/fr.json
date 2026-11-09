@@ -5381,8 +5381,6 @@
   "live_association_unknown": "Une association",
   "live_viewer_label": "Live de {name}",
   "live_viewer_close": "Fermer le live",
-  "live_viewer_mute": "Couper le son",
-  "live_viewer_unmute": "Activer le son",
   "live_viewer_elapsed": "En direct depuis {time}",
   "live_viewer_connecting": "Connexion au live...",
   "live_viewer_reconnecting": "Reconnexion...",

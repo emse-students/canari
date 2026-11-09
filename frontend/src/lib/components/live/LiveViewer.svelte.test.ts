@@ -327,15 +327,33 @@ describe('LiveViewer', () => {
     expect(viewer().contains(flag)).toBe(true);
   });
 
-  it("the sound toggle sets the app's one sound answer", async () => {
+  it("the sound toggle is the kit's speaker and sets the app's one sound answer", async () => {
     await render();
     const button = document.querySelector<HTMLButtonElement>('[data-live-sound]')!;
-    expect(button.getAttribute('aria-label')).toBe(m.live_viewer_unmute());
+    expect(button.getAttribute('aria-label')).toBe(m.video_sound_label());
+    expect(button.getAttribute('aria-pressed')).toBe('false');
     button.click();
     flushSync();
     expect(videoSound.muted).toBe(false);
-    expect(button.getAttribute('aria-label')).toBe(m.live_viewer_mute());
+    expect(button.getAttribute('aria-pressed')).toBe('true');
     expect(document.querySelector<HTMLVideoElement>('[data-live-video]')!.muted).toBe(false);
+  });
+
+  /** THE TAP IS THE SOUND ON EVERY VIDEO (owner, 2026-11-09), the live's included, with its glyph. */
+  it('a tap on the picture toggles the sound and shows what it did', async () => {
+    await render();
+    const video = document.querySelector<HTMLVideoElement>('[data-live-video]')!;
+    video.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0 })
+    );
+    video.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+    video.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+    flushSync();
+    expect(videoSound.muted).toBe(false);
+    expect(video.muted).toBe(false);
+    expect(document.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
+      'sound-on'
+    );
   });
 
   it('Escape closes it and the seat goes back', async () => {

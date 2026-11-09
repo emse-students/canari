@@ -714,8 +714,10 @@ it needs no timer and never compares the device's clock with the server's.
 **The seat** goes back by `DELETE /api/lives/:id/seat` when the viewer closes and on `pagehide` (best
 effort: the 30 s lease is the bound); a key that arrives after a close gives its seat straight back;
 a page restored from the back-forward cache starts again. **A close or a retry aborts the run's segment downloads** (`fetchLiveSegment`'s `signal`), so no fetch keeps a connection beside the next run's under nginx's per-address `limit_conn`. **Sound** is the app's one answer
-(`videoSound`, `followVideoSound`): muted at every start; a `play()` refused with sound is retried
-muted; the toggle unmutes with a tap.
+(`videoSound`, `followVideoSound`), remembered per device since 2026-11-09; a `play()` refused with
+sound is retried muted for this session only (`muteForRefusedStart`, the stored choice kept); the
+kit's speaker or a tap on the picture unmutes, and a live has no hold-to-pause
+([video-player](video-player.md#the-live-viewer-on-the-kit-step-e)).
 
 **Logs** (`[LIVE]`): entry, every state change and decision at `debug`; refusals at `warn`; a defect
 or an unopenable segment at `error`; segments SUMMARISED (one line per 30 played and at the stop),
