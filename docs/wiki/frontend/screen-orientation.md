@@ -110,8 +110,12 @@ pure `fr.emse.canari.orientation.requestedOrientationFor` (unit-tested in `andro
   Landscape mask): an app-requested orientation is not an auto-rotation, so the lock does not stop it.
   `portrait` makes the same request with the Portrait mask, so the way back is immediate too. A refusal
   is logged (`ERROR the scene refused`).
-- **The safe area follows the scene**: the scene's `effectiveGeometry` (KVO-observable since iOS 16)
-  re-publishes `--safe-area-inset-*`, the sides included.
+- **The safe area follows UIKit's own signal**: `TaoUIViewController -viewSafeAreaInsetsDidChange` is
+  hooked the same idempotent way as the mask (`CanariHookTaoController`), calls tao's implementation,
+  logs `[CanariOrientation] safe area changed: top/left/bottom/right` and re-publishes
+  `--safe-area-inset-*`, the sides included. UIKit calls it in the layout pass with the turned insets
+  final; the first cut observed the scene's `effectiveGeometry` and hopped to the next run-loop turn,
+  which said nothing about whether the insets were updated yet (adversarial review, 2026-11-09).
 - An iPad keeps tao's mask (every orientation) for `portrait` and `auto`; only `landscape` and
   `locked` force it - the same rule as an Android tablet.
 
@@ -143,6 +147,21 @@ pads its sides with `utils/sideSafeArea.ts`.
   offered - the sheet and the chat are out of it (`data-no-double-tap`).
 - **The full-screen viewer and the live viewer**: owed, written in the backlog entry (their files are
   being rewritten by the video-player stack).
+
+## Known and accepted
+
+Found by the adversarial review of 2026-11-09 and accepted as they are (no code):
+
+- **A tablet's "back to portrait" is not forced.** On an Android tablet `portrait` is `UNSPECIFIED`,
+  and on an iPad the mask stays tao's free one, so the rotate button's second press does not hold the
+  screen upright against the way the tablet is held. A tablet is a PC here and rotates freely; only
+  `landscape` and `locked` bind it.
+- **An iPad leaving a forced landscape is asked for portrait.** `portrait` makes a geometry request
+  with the Portrait mask, which turns an iPad upright even if it is held sideways; the next physical
+  turn rotates it again under its free mask.
+- **The web camera is 16:9 in a landscape window.** The frame follows `viewportOrientation`, so a
+  desktop browser, or a phone browser turned, films 16:9 where it filmed 9:16. Accepted: the owner
+  allowed landscape CanaReels, and a landscape reel is letterboxed in the pager.
 
 ## Readings owed on the phones
 

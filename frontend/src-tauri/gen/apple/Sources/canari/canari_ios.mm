@@ -427,27 +427,55 @@ static UIInterfaceOrientationMask CanariSupportedOrientations(id self, SEL _cmd)
   return g_canariOrientationMask;
 }
 
-/// Replaces tao's `supportedInterfaceOrientations` once. tao declares its view controller class when
-/// it builds the first window, inside `didFinishLaunching`, so the hook is installed at the launch
-/// notification and retried at the scene's connection and at the first request. `class_addMethod`
-/// first, so a tao that stopped declaring its own getter gets ours ADDED rather than UIViewController's
-/// swizzled for every controller in the process.
-static void CanariInstallOrientationHook(NSString *where) {
-  if (CanariOrigSupportedOrientations != NULL) return;
+/// Replaces one method of tao's `TaoUIViewController` once, and returns the implementation it replaced
+/// (NULL while the class is not declared yet). tao declares the class when it builds the first window,
+/// inside `didFinishLaunching`, so the hooks are installed at the launch notification and retried at
+/// the scene's connection and at the first request. `class_addMethod` first, so a tao that stopped
+/// declaring the method itself gets ours ADDED rather than UIViewController's swizzled for every
+/// controller in the process; the replaced implementation is then UIViewController's, which is what a
+/// call to `super` would have run.
+static IMP CanariHookTaoController(SEL sel, IMP ours, NSString *what, NSString *where) {
   Class cls = NSClassFromString(@"TaoUIViewController");
-  SEL sel = @selector(supportedInterfaceOrientations);
   Method method = cls ? class_getInstanceMethod(cls, sel) : NULL;
   if (method == NULL) {
-    NSLog(@"[CanariOrientation] TaoUIViewController not declared yet at %@", where);
-    return;
+    NSLog(@"[CanariOrientation] TaoUIViewController not declared yet at %@ - %@ hook waits", where, what);
+    return NULL;
   }
-  IMP ours = (IMP)CanariSupportedOrientations;
-  if (class_addMethod(cls, sel, ours, method_getTypeEncoding(method))) {
-    CanariOrigSupportedOrientations = (CanariSupportedOrientationsIMP)method_getImplementation(method);
-  } else {
-    CanariOrigSupportedOrientations = (CanariSupportedOrientationsIMP)method_setImplementation(method, ours);
+  IMP replaced = class_addMethod(cls, sel, ours, method_getTypeEncoding(method))
+                     ? method_getImplementation(method)
+                     : method_setImplementation(method, ours);
+  NSLog(@"[CanariOrientation] %@ hook installed on TaoUIViewController at %@", what, where);
+  return replaced;
+}
+
+/// THE SIDES' SAFE AREA IS REPUBLISHED WHEN UIKIT SAYS IT CHANGED, AND THEN ONLY. In landscape the notch
+/// is on a SIDE, and WebKit reports every `env(safe-area-inset-*)` as 0 in this WebView, so the page
+/// learns the sides from `CanariPublishSafeAreaInsets` alone. `viewSafeAreaInsetsDidChange` on tao's
+/// root controller is called by UIKit's layout pass once the turned bounds and the new insets are in
+/// place - synchronously, with the values final, where a scene-geometry observer fires before the
+/// layout and needed a hop to the next run-loop turn that proved nothing about ordering.
+typedef void (*CanariSafeAreaDidChangeIMP)(id, SEL);
+static CanariSafeAreaDidChangeIMP CanariOrigSafeAreaDidChange = NULL;
+
+static void CanariSafeAreaDidChange(id self, SEL _cmd) {
+  CanariOrigSafeAreaDidChange(self, _cmd);
+  UIEdgeInsets insets = ((UIViewController *)self).view.safeAreaInsets;
+  NSLog(@"[CanariOrientation] safe area changed: top %.0f pt, left %.0f pt, bottom %.0f pt, right %.0f pt - republished",
+        insets.top, insets.left, insets.bottom, insets.right);
+  CanariPublishSafeAreaInsets();
+}
+
+/// Installs both hooks on tao's controller, each once: the orientation mask and the safe-area change.
+static void CanariInstallOrientationHook(NSString *where) {
+  if (CanariOrigSupportedOrientations == NULL) {
+    CanariOrigSupportedOrientations = (CanariSupportedOrientationsIMP)CanariHookTaoController(
+        @selector(supportedInterfaceOrientations), (IMP)CanariSupportedOrientations,
+        @"supported-orientations", where);
   }
-  NSLog(@"[CanariOrientation] supported-orientations hook installed on TaoUIViewController at %@", where);
+  if (CanariOrigSafeAreaDidChange == NULL) {
+    CanariOrigSafeAreaDidChange = (CanariSafeAreaDidChangeIMP)CanariHookTaoController(
+        @selector(viewSafeAreaInsetsDidChange), (IMP)CanariSafeAreaDidChange, @"safe-area", where);
+  }
 }
 
 /// Applies a mode the page asked for. One line per change; an unknown value is logged and ignored.
@@ -500,25 +528,6 @@ static void CanariApplyOrientation(NSString *mode) {
                                  }];
 }
 
-/// Re-publishes the safe area after the scene turned: in landscape the notch is on a SIDE, and WebKit
-/// reports every `env(safe-area-inset-*)` as 0 in this WebView, so the page learns the sides from
-/// `CanariPublishSafeAreaInsets` only. `effectiveGeometry` is key-value observable since iOS 16.
-@interface CanariGeometryObserver : NSObject
-@end
-@implementation CanariGeometryObserver
-- (void)observeValueForKeyPath:(NSString *)keyPath
-                      ofObject:(id)object
-                        change:(NSDictionary *)change
-                       context:(void *)context {
-  UIWindowScene *scene = (UIWindowScene *)object;
-  dispatch_async(dispatch_get_main_queue(), ^{
-    BOOL landscape = UIInterfaceOrientationIsLandscape(scene.effectiveGeometry.interfaceOrientation);
-    NSLog(@"[CanariOrientation] the scene turned: %@", landscape ? @"landscape" : @"portrait");
-    CanariPublishSafeAreaInsets();
-  });
-}
-@end
-
 @interface CanariOrientationHandler : NSObject <WKScriptMessageHandler>
 @end
 @implementation CanariOrientationHandler
@@ -530,7 +539,6 @@ static void CanariApplyOrientation(NSString *mode) {
 
 static void CanariObserveOrientation(void) {
   static CanariOrientationHandler *handler = nil;
-  static CanariGeometryObserver *geometryObserver = nil;
   WKWebView *webView = CanariFindWebView();
   if (webView == nil || handler != nil) {
     return;
@@ -538,13 +546,9 @@ static void CanariObserveOrientation(void) {
   handler = [CanariOrientationHandler new];
   [webView.configuration.userContentController addScriptMessageHandler:handler
                                                                   name:@"canariOrientation"];
-  UIWindowScene *scene = webView.window.windowScene;
-  if (scene != nil) {
-    geometryObserver = [CanariGeometryObserver new];
-    [scene addObserver:geometryObserver forKeyPath:@"effectiveGeometry" options:0 context:NULL];
-  }
-  NSLog(@"[CanariOrientation] listening for the page's orientation (geometry observed: %@)",
-        scene != nil ? @"yes" : @"NO - the sides' safe area follows the next activation only");
+  CanariInstallOrientationHook(@"activation");
+  NSLog(@"[CanariOrientation] listening for the page's orientation (safe-area hook: %@)",
+        CanariOrigSafeAreaDidChange != NULL ? @"yes" : @"NO - the sides follow the next activation only");
 }
 
 /// THE SCREEN GOES DARK AGAINST THE CHEEK DURING A CALL ON THE RECEIVER. iOS turns the screen off
@@ -725,8 +729,9 @@ static void CanariRegisterCallPageHandlers(NSString *where) {
 /// so a WebView shrunk above the keyboard publishes 0 - the same outcome `.keyboard-open` has on
 /// Android, and what the old comment on CanariApplyKeyboardLayout relied on UIKit to do through env().
 /// Re-read at every activation (a reload of the page loses the property), after every keyboard
-/// resize, and after every turn of the scene (`CanariGeometryObserver`: the video and camera screens
-/// rotate since 2026-11-09, and then the notch's side is published as `--safe-area-inset-left/right`).
+/// resize, and at every change of the root controller's safe area (`CanariSafeAreaDidChange`: the video
+/// and camera screens rotate since 2026-11-09, and then the notch's side is published as
+/// `--safe-area-inset-left/right`).
 /// Republishes the inset when a page finishes loading: a document that loads after the publish
 /// starts without the property (seen on a cold start, where the first `didBecomeActive` precedes the
 /// end of the initial load - syslog showed 34 pt published and the page still read 0).
