@@ -19,9 +19,11 @@ Two scripts and one job, `upstream` of `scheduled.yml` (no fifth workflow; by ha
    | `tunnel-down` | 530 whose body names Cloudflare's 1033 |
    | `unclassified-530` | 530 without a 1033: read the body |
    | `origin-failing` | other 52x, 502, 503, 504 |
+   | `edge-refused` | a 4xx the EDGE wrote (`cf-mitigated`, a Cloudflare block or challenge page): the monitor is refused, not the name |
    | `unexpected` | any other status |
    | `unreachable` | no HTTP answer at all: a transport failure, never read as health |
 
+   Every reading carries its evidence (the `server` and `cf-mitigated` headers, the first words of the body).
    It exits 0 whatever it finds (a finding is data) and 2 only when it cannot run.
 2. **The decision**, `.github/scripts/upstream-issues.sh`. The report is an issue, not a red run: a red
    scheduled run reaches only whoever last edited the cron line, once per slot, where an issue reaches everyone
@@ -34,13 +36,57 @@ Two scripts and one job, `upstream` of `scheduled.yml` (no fifth workflow; by ha
    - while that issue is open the run stays **green**: one outage is one issue, not twenty emails;
    - the first success comments the downtime and closes it; a success between two failures clears the suspect;
    - the run goes red only when the reporter cannot report: a refused `gh` call or a missing reading.
-3. GitHub delays and drops cron slots, so the `*/15` slot is a request, not a promise: a late report, never a
-   wrong one. A monitor is the deliberate exception in `scheduled.yml` (see its header): it has no other host,
+3. GitHub delays and drops cron slots, so the slot is a request, not a promise: a late report, never a
+   wrong one. **Measured as `*/15` (2026-11-06 19:19 -> 11-09 06:57 UTC): 13 runs of ~240 slots, 3.4 to 7.2 h
+   apart.** The cron is now `4,19,34,49` - off the hour, which is when GitHub says slots are dropped - and the
+   delivery is to be re-measured; what reports it if it stays thin is the witness below. A monitor is the deliberate exception in `scheduled.yml` (see its header): it has no other host,
    and a late report beats none. The job has its own concurrency group so a slow run never stacks.
 
-Tests: `.github/scripts/tests/upstream-reachability-report.test.sh` (classes, parallelism, User-Agent) and
+Tests: `.github/scripts/tests/upstream-reachability-report.test.sh` (classes, edge evidence, parallelism, User-Agent) and
 `upstream-issues.test.sh` (first failure opens nothing, second opens one, third changes nothing, success closes
-with the downtime, non-consecutive failures never alarm, a refusal is red, a dry run writes nothing).
+with the downtime, non-consecutive failures never alarm, a refused reading is blindness, a refusal is red, a
+dry run writes nothing), `upstream-monitor-freshness.test.sh` (the witness below).
+
+## When the monitor is refused
+
+**The defect it closes (2026-11-09).** From the first scheduled run of the default targets (2026-11-06 19:20
+UTC) every reading of the gallery, dev and the legacy name was a `403`, while each answered `200` to a phone.
+Classed `unexpected`, two readings opened "is down" issues (#3097, #3098, #3099) that no later reading could
+close: the issue closes on the first `up`, and from a GitHub-hosted runner there never was one. A dry run
+with the evidence column showed the cause: `server: cloudflare`, `cf-mitigated: challenge`, "Just a
+moment..." - the zones' bot challenge refusing the runner's network. Production, not behind Cloudflare,
+answered `200` throughout.
+
+**What it does now.** Such a reading is `edge-refused`, and `upstream-issues.sh` reports it as what it is:
+the monitor is BLIND to that name.
+
+- two consecutive refused readings open **"Upstream monitor cannot read NAME"**, with the evidence; never
+  "is down", and never silence - while it is open, an outage of that name is reported by nobody, and the
+  issue says so;
+- a refused reading neither closes nor confirms an open "is down" issue: it saw nothing;
+- any answer the name itself wrote (any class but `edge-refused` and `unreachable`) closes the "cannot read"
+  issue with how long the monitor was blind.
+
+**What lifts it is a zone setting, out of the project token's reach**:
+[the backlog entry](../backlog.d/p2-the-edge-challenges-the-upstream-monitor.md) carries the options. Working
+around the challenge from the probe (a browser User-Agent, a solver) is not an option: it would be a monitor
+that lies about how it reads.
+
+## Who watches the monitor
+
+A monitor cannot report its own absence, and neither can anything on the same scheduler. The witness is
+`.github/scripts/upstream-monitor-freshness.sh`, run by the `upstream-monitor-freshness` job of `ci.yml` on
+every push to `main` (a merge, raised by people and agents, owing nothing to the scheduler). It reads the
+monitor's own liveness clock - the completion time of the last SUCCESSFUL `Public names answer` job - and:
+
+- none within **12 hours** opens ONE "Upstream monitor has stopped reading" issue naming the last reading;
+- the first push that finds one inside the window closes it;
+- a refused `gh` call is red, never "fresh".
+
+12 hours is a report threshold, not a correctness one: above the worst measured gap (7.2 h), so the
+scheduler's ordinary drops never alarm, and a monitor gone for half a day always does at the next merge. The
+walk over runs stops at the first one older than the window, so its calls are bounded by the window. The
+test holds the job name it reads equal to the `upstream` job's.
 
 **A drill** without a real outage: dispatch job `upstream` with `upstream_targets` set to a `name|url` line that
 fails (twice, to pass the suspect step) and then to a healthy one. With `dry_run` ticked the decisions are

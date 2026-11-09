@@ -92,7 +92,7 @@ evidence() {
   local server mitigated words
   server="$(grep -iE '^server:' "$1" 2>/dev/null | tail -1 | cut -d: -f2- | tr -d '\r\t' | sed 's/^ *//')"
   mitigated="$(grep -iE '^cf-mitigated:' "$1" 2>/dev/null | tail -1 | cut -d: -f2- | tr -d '\r\t' | sed 's/^ *//')"
-  words="$(head -c 4096 "$2" 2>/dev/null | tr -s '\r\n\t ' ' ' | sed 's/<[^>]*>/ /g' | tr -s ' ' | sed 's/^ //' | cut -c1-120)"
+  words="$(head -c 4096 "$2" 2>/dev/null | tr -s '\r\n\t ' ' ' | sed 's/<style[^>]*>[^<]*<\/style>/ /g; s/<[^>]*>/ /g' | tr -s ' ' | sed 's/^ //' | cut -c1-120)"
   printf 'server=%s cf-mitigated=%s body=%s' "${server:--}" "${mitigated:--}" "${words:--}"
 }
 
