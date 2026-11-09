@@ -132,6 +132,10 @@
     <string name="notif_social_booking_withdrawn_body">Votre réservation est maintenue</string>
     <string name="notif_social_booking_added_title">%1$s vous a inscrit à une réservation</string>
     <string name="notif_social_booking_added_body">Retrouvez-la dans Réservations</string>
+    <string name="notif_social_booking_open_title">%1$s ouvre les réservations</string>
+    <string name="notif_social_booking_open_body">Retrouvez-les dans Réservations</string>
+    <string name="notif_social_event_open_title">%1$s publie un événement</string>
+    <string name="notif_social_event_open_body">Retrouvez-le dans l\'agenda</string>
     <string name="notif_social_booking_reminder_title">Rappel de réservation</string>
     <string name="notif_social_booking_reminder_body">Votre réservation commence bientôt</string>
     <string name="notif_social_booking_changed_title">%1$s a modifié votre réservation</string>

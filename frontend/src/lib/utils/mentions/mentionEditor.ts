@@ -1,5 +1,5 @@
 import { formatMentionToken, MENTION_UUID_TOKEN_RE } from '$lib/utils/mentions';
-import { splitEmojiText } from '$lib/utils/emojiSvg';
+import { emojiDisplayParts } from '$lib/utils/emojiStyle';
 import { splitTextWithMentions } from '$lib/utils/mentions.parse';
 import {
   classifyComposerLines,
@@ -156,9 +156,12 @@ export function serializeMentionEditor(
   return stripComposerDomFillers(out);
 }
 
-/** Appends `text` as text nodes and emoji pictures (see `EMOJI_IMAGE_SELECTOR`). */
+/**
+ * Appends `text` as text nodes and emoji pictures (see `EMOJI_IMAGE_SELECTOR`) - pictures only under
+ * the "Canari" emoji setting; under "system" the text stays text and the font draws its emoji.
+ */
 function appendTextWithEmoji(parent: Node, text: string): void {
-  for (const part of splitEmojiText(text)) {
+  for (const part of emojiDisplayParts(text)) {
     if (part.kind === 'text') {
       parent.appendChild(document.createTextNode(part.value));
       continue;
@@ -403,7 +406,8 @@ export function shouldRerenderComposerDom(
 }
 
 /**
- * True when a text node of the editor still holds an emoji the composer draws as a picture - one
+ * True when a text node of the editor still holds an emoji the composer draws as a picture (never
+ * under the "system" emoji setting, which draws none) - one
  * typed from the keyboard, pasted, or committed by an IME arrives as TEXT, and the DOM has to be
  * rebuilt to show it. Code spans are skipped: their emoji stay characters by design, and counting
  * them would rebuild the DOM on every keystroke inside them.
@@ -412,7 +416,8 @@ export function needsEmojiRender(root: HTMLElement): boolean {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     if (node.parentElement?.closest(CODE_SELECTOR)) continue;
-    if (splitEmojiText(node.textContent ?? '').some((part) => part.kind === 'emoji')) return true;
+    if (emojiDisplayParts(node.textContent ?? '').some((part) => part.kind === 'emoji'))
+      return true;
   }
   return false;
 }

@@ -99,6 +99,10 @@
     <string name="notif_social_booking_withdrawn_body">Your booking still stands</string>
     <string name="notif_social_booking_added_title">%1$s added you to a booking</string>
     <string name="notif_social_booking_added_body">Find it in Bookings</string>
+    <string name="notif_social_booking_open_title">%1$s opened bookings</string>
+    <string name="notif_social_booking_open_body">Find them in Bookings</string>
+    <string name="notif_social_event_open_title">%1$s published an event</string>
+    <string name="notif_social_event_open_body">Find it in the calendar</string>
     <string name="notif_social_booking_reminder_title">Booking reminder</string>
     <string name="notif_social_booking_reminder_body">Your booking starts soon</string>
     <string name="notif_social_booking_changed_title">%1$s changed your booking</string>

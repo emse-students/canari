@@ -194,7 +194,7 @@
     <div class="grid grid-cols-7 bg-(--cn-surface)">
       {#each weekdayLabels as w, wi (w)}
         <div
-          class="border-cn-border/60 text-2xs border-b py-2.5 text-center font-bold tracking-widest uppercase
+          class="border-cn-border/60 text-2xs border-b py-2.5 text-center font-bold
  {wi >= 5 ? 'text-text-muted/60' : 'text-text-muted'}"
         >
           {w}

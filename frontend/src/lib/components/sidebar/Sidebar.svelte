@@ -720,7 +720,7 @@
       <div
         class="glass-chrome sticky top-0 z-10 flex items-center justify-between rounded-none border-x-0 border-t-0 border-white/50 px-4 py-3 shadow-none dark:border-white/10"
       >
-        <h2 class="text-text-main truncate text-lg font-bold tracking-tight">
+        <h2 class="font-display text-text-main truncate text-lg font-bold">
           <EmojiText text={selectedCommunityWorkspace?.name || m.sidebar_communities_fallback()} />
         </h2>
 
@@ -787,6 +787,7 @@
               isSelected={selectedContact === name}
               unreadCount={convo.unreadCount ?? 0}
               imageMediaId={convo.imageMediaId}
+              lastActivityAt={conversationRecency(convo)}
               onClick={() => onSelectConversation(name)}
             />
           </div>
@@ -907,7 +908,7 @@
                   {#if unjoined}
                     <span
                       aria-hidden="true"
-                      class="border-text-muted/30 text-2xs rounded-full border px-2 py-0.5 font-semibold tracking-wide uppercase"
+                      class="border-text-muted/30 text-2xs rounded-full border px-2 py-0.5 font-semibold"
                     >
                       {m.chat_channel_join_as_admin_label()}
                     </span>

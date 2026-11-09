@@ -25,6 +25,12 @@
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 @theme {
+  /* TWO FAMILIES, AND THE DISPLAY ONE IS THE EXCEPTION (owner, 2026-11-09). `--font-body` (Nunito) is
+     every heading, label and sentence; `--font-display` (Fredoka) is the PAGE title (`h1`), a NAME
+     (association, community, profile - `font-display`) and the wordmark (`font-brand`). Both are
+     utilities (`font-body`, `font-display`). Measured reference: design-reference.md, Typography. */
+  --font-body: 'Nunito Variable', 'Nunito', 'Segoe UI', 'Inter', 'Avenir Next', sans-serif;
+  --font-display: 'Fredoka Variable', 'Fredoka', 'Segoe UI', 'Inter', 'Avenir Next', sans-serif;
   --color-cn-dark: var(--cn-dark);
   /* Fixed brand ink: stays navy in BOTH themes. Use for text/icons sitting on the
      (always-light) amber brand surface, where `cn-dark` would wrongly flip to near-white
@@ -44,6 +50,8 @@
   /* Panel/card background. Exposed as a utility (`bg-cn-surface`) so components stop
      hardcoding `bg-white`, which never flips and turns text-on-surface unreadable in dark. */
   --color-cn-surface: var(--cn-surface);
+  /* The FEED POST CARD's fill: `--cn-surface` in light, one step lighter in dark (see `--cn-surface-card`). */
+  --color-cn-card: var(--cn-surface-card);
   --color-surface-elevated: var(--surface-elevated);
   /* Recessed surface, one step AWAY from the reader (inactive badges, muted chips) - the mirror
      of `surface-elevated`. Six components already used `bg-cn-surface-alt` before this entry
@@ -72,6 +80,9 @@
      next one somebody writes. `banner` is the neutral strip (connectivity, synchronisation),
      `banner-warn` the one carrying a caution. Both are `color-mix` of two OPAQUE colours, which is
      what keeps them opaque - do not reintroduce an alpha modifier on top of them. */
+  /* ONE HEIGHT FOR EVERY BANNER STRIP (owner, 2026-11-09): one line, 32px, 24px for the deployment marker. */
+  --banner-height: 2rem;
+  --banner-height-thin: 1.5rem;
   --color-banner: var(--banner-bg);
   --color-banner-warn: var(--banner-warn-bg);
   /* The three STRONG variants, fixed in both themes for the same reason as `cn-scrim`: they carry
@@ -393,6 +404,7 @@
   --chart-series-8: #e34948;
   --cn-bg: #f0f2f5;
   --cn-surface: #ffffff; /* measured, 68% of the handset thread in light mode */
+  --cn-surface-card: var(--cn-surface);
   /* A HAIRLINE, NOT A LINE. The reference draws six visible borders on an entire page, all
      1px at 5% white; every other "border" it sets is the same colour as the surface behind it and
      therefore invisible. Separation there comes from a step in LIGHTNESS between surfaces, never
@@ -563,6 +575,11 @@
      from each other as they are there. */
   --cn-bg: #000000;
   --cn-surface: #121212;
+  /* THE FEED CARD STANDS OFF THE OLED PAGE BY TONE, NOT BY AN OUTLINE (design audit S4, 2026-11-09;
+     the owner's 2026-10-01 "stand off more" kept, the hairline dropped). Facebook's dark feed puts the
+     card one step above the page (#18191a page, #242526 card); on true black that step is #1c1c1c,
+     10 points over the #121212 every other panel keeps. Only the post card takes it. */
+  --cn-surface-card: #1c1c1c;
   /* Same reasoning as the light hairline above - see there. */
   --cn-border: rgba(255, 255, 255, 0.1);
   /* Same reasoning as the light pair above - see there. */
@@ -652,7 +669,7 @@ body {
 }
 
 body {
-  font-family: 'Nunito Variable', 'Nunito', 'Segoe UI', 'Inter', 'Avenir Next', sans-serif;
+  font-family: var(--font-body);
   /* TEXT WITH NO `text-*` CLASS INHERITS THIS, so it follows iOS Dynamic Type too. It was the
      engine's 16px, outside the scale: at 2x the community rail's salon name stayed put while
      "Ajouter un canal" (`text-sm`) doubled beside it (iPhone 12, 2026-10-15). Still 16px wherever
@@ -660,14 +677,18 @@ body {
   font-size: calc(1rem * var(--type-scale, 1));
 }
 
-h1,
-h2,
-h3,
-h4,
-h5,
-h6,
-.font-brand {
-  font-family: 'Fredoka Variable', 'Fredoka', 'Segoe UI', 'Inter', 'Avenir Next', sans-serif;
+/* ONLY `h1` (the page title) AND THE TWO CLASSES CARRY THE DISPLAY FACE. `h2..h6` are section, list
+   and sheet headings and inherit the body family at their own bold weight; a heading that is a NAME
+   (`AssociationTile`, the community title in `Sidebar`) opts in with `font-display`. A sheet or tab
+   title that happens to be an `h1` for the outline opts OUT with `font-body`. */
+/* IN `@layer base`: unlayered, this rule outranked every utility, so the `font-body` opt-out on an
+   `h1` (18 places and PostMarkdown's `[&_h1]:font-body`) computed to Fredoka and did nothing. */
+@layer base {
+  h1,
+  .font-brand,
+  .font-display {
+    font-family: var(--font-display);
+  }
 }
 
 /*
@@ -1224,6 +1245,30 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
  * its own and no call site has to shout.
  */
 @layer components {
+  /* A control inside a banner strip: drawn 24px so the strip stays 32px, but its hit area is padded
+     out to 44px tall by a pseudo-element, so the touch target does not shrink with the strip. The
+     horizontal pad grows an icon-only button (24px wide) to 44px too, and leaves a wider one 4px
+     past each edge. */
+  .banner-action {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    height: 1.5rem;
+    min-width: 1.5rem;
+    border-radius: var(--radius-lg);
+    padding-inline: 0.5rem;
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .banner-action::before {
+    content: '';
+    position: absolute;
+    inset: -0.625rem min(-0.25rem, calc((100% - 2.75rem) / 2));
+  }
+
   .ui-icon-button {
     display: inline-flex;
     flex-shrink: 0;
@@ -2707,7 +2752,6 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   line-height: var(--text-2xs--line-height);
   font-weight: 700;
   letter-spacing: normal;
-  text-transform: uppercase;
   color: var(--text-main);
   /* THE PILL IS GLASS (`.glass-chrome`'s recipe), NOT AN OPAQUE CHIP WITH A HALO. It floats over the
      thread while content moves under it - the chrome the glass exists for - so a sender name or a

@@ -117,7 +117,7 @@ export function getPreviewText(env: MessageEnvelope): string {
         ? `${m.chat_preview_media()} ${formatMentionsForPreview(env.caption)}`
         : m.chat_preview_media();
     case 'system':
-      return `${m.chat_preview_info()} ${formatMentionsForPreview(env.text)}`;
+      return formatMentionsForPreview(env.text);
     case 'poll':
       return `${m.chat_preview_poll()} ${env.question}`;
   }

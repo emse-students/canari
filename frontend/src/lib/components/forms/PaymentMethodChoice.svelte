@@ -14,7 +14,7 @@
 </script>
 
 <div class="border-cn-border mt-4 rounded-2xl border bg-(--cn-surface) p-5">
-  <p class="text-text-muted mb-3 text-xs font-bold tracking-wide uppercase">
+  <p class="text-text-muted mb-3 text-xs font-bold">
     {m.form_view_payment_mode_heading()}
   </p>
   <div class="grid grid-cols-2 gap-2">

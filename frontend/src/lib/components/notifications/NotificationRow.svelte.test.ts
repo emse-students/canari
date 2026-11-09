@@ -327,6 +327,21 @@ describe('NotificationRow sentence', () => {
   });
 
   // WP-F4: a PERSON asks to follow, or said yes; no text, never the comment sentence, no logo.
+  // Engagement WP-4: the ASSOCIATION opened a booking space or published an event - its logo, its
+  // own verb, the place or the title in italics, and never the comment sentence.
+  it('says an association opened bookings or published an event, with its logo', () => {
+    const opened = renderRow({ ...postRow('booking_open'), associationId: 'asso-1' });
+    expect(opened.textContent).toContain(m.notif_booking_open_text());
+    expect(opened.textContent).toContain('Scene ouverte lundi');
+    expect(opened.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
+    const event = renderRow({ ...postRow('event_open'), associationId: 'asso-1' });
+    expect(event.textContent).toContain(m.notif_event_open_text());
+    expect(event.textContent).not.toContain('a commenté');
+    // A link-only space: no place, the sentence alone.
+    const hidden = renderRow({ ...postRow('booking_open'), associationId: 'asso-1', text: '' });
+    expect(hidden.textContent).toContain(m.notif_booking_open_text());
+  });
+
   it('says a person asks to follow you, and that a person accepted your request', () => {
     const follow = (type: string) => ({ ...postRow(type), postId: 'member-1', text: '' });
     const asked = renderRow(follow('follow_request'));

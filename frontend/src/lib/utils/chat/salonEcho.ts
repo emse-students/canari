@@ -180,3 +180,21 @@ export function mergeAnnouncedMessage(
   if (messages.some((m) => m.id === message.id)) return null;
   return { messages: insertMessageOrdered(messages, message), settledEcho: false };
 }
+
+/**
+ * Whether the author's own salon echo offers its Retry and Discard: when its send was refused
+ * (`error`) or its outcome is unknown (`unconfirmed`) - and while it is HELD FOR THE SERVER, pending
+ * after a "not now" (R05, review of #3189, D2): the member keeps a hand on a message the server will
+ * not take yet, to send it now or give it up, not only once the bound on such answers is reached.
+ * Never on a send in flight or one waiting for its salon or for the link, which nothing is wrong with.
+ *
+ * @param waitOf what a pending text says it waits for (`textWaitOf`), read by id.
+ */
+export function salonEchoSettleable(
+  msg: Pick<ChatMessage, 'id' | 'status' | 'awaitingServerId'>,
+  waitOf: (messageId: string) => 'network' | 'server' | undefined
+): boolean {
+  if (!msg.awaitingServerId) return false;
+  if (msg.status === 'error' || msg.status === 'unconfirmed') return true;
+  return msg.status === 'pending' && waitOf(msg.id) === 'server';
+}
