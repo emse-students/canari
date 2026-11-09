@@ -1,6 +1,7 @@
 import {
   anchorShift,
   chatViewCountLine,
+  chatViewEntryLine,
   firstRowBelow,
   isPinnedToBottom,
   keyboardChangeResponse,
@@ -99,8 +100,27 @@ describe('threadGrowthResponse', () => {
     expect(threadGrowthResponse({ ...grew(4000), isLoadingOlder: true })).toBe('keep-row');
   });
 
-  it('refuses while the conversation is still being entered', () => {
-    expect(threadGrowthResponse({ ...grew(4000), isEntering: true })).toBe('keep-row');
+  /**
+   * AN ENTRY IS AT THE BOTTOM (owner's Android 1.6.8, 2026-11-09): the upgrades and the withdrawal
+   * of a notification-tap open land while the entry runs, and were dropped when this said `keep-row`.
+   */
+  it('follows any change while the conversation is being entered, whatever the flag says', () => {
+    expect(threadGrowthResponse({ ...grew(4000), isEntering: true })).toBe('follow-bottom');
+    expect(threadGrowthResponse({ ...grew(90), isEntering: true, wasNearBottom: false })).toBe(
+      'follow-bottom'
+    );
+    expect(threadGrowthResponse({ ...settled, currentReach: 820, isEntering: true })).toBe(
+      'follow-bottom'
+    );
+    expect(threadGrowthResponse({ ...settled, isEntering: true, wasNearBottom: false })).toBe(
+      'hold-bottom'
+    );
+  });
+
+  it('still leaves a prepend during the entry to its own restore', () => {
+    expect(threadGrowthResponse({ ...grew(4000), isEntering: true, isLoadingOlder: true })).toBe(
+      'keep-row'
+    );
   });
 
   it('is decided by the reach moving, never by how much', () => {
@@ -322,5 +342,21 @@ describe('keyboardChangeResponse', () => {
         })
       ).toBe('stay');
     }
+  });
+});
+
+describe('chatViewEntryLine', () => {
+  it('names the conversation, the pin, the flag, the newest row and the count', () => {
+    expect(
+      chatViewEntryLine('0123456789abcdef', {
+        pinned: false,
+        isNearBottom: true,
+        newestVisible: false,
+        rows: 60,
+        fromBottom: 180,
+      })
+    ).toBe(
+      '01234567 entry settled: pinned=false isNearBottom=true newestVisible=false rows=60 fromBottom=180'
+    );
   });
 });

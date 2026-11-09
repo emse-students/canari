@@ -29,7 +29,7 @@ export interface ThreadGrowth {
   wasNearBottom: boolean;
   /** Older messages are being prepended - `loadOlderGroups` restores the position itself. */
   isLoadingOlder: boolean;
-  /** The conversation is still being entered - `fillViewportThenPin` owns the position until it is not. */
+  /** The conversation is still being entered - its position is the bottom, whatever moves under it. */
   isEntering: boolean;
 }
 
@@ -73,14 +73,22 @@ export type ThreadGrowthResponse = 'follow-bottom' | 'hold-bottom' | 'keep-row';
  * scroll-down arrow appeared. A text-only thread has no viewport-relative row and never showed it.
  *
  * For a reader at the bottom the bottom IS the anchor: any change of reach is followed.
+ *
+ * **AN ENTRY IS AT THE BOTTOM BY DEFINITION** (owner's Android 1.6.8, 2026-11-09: messages received
+ * as notifications appeared only at the SECOND open of the conversation). Entering answered
+ * `keep-row`, and {@link anchorShift} compensates nothing while entering - so every change during
+ * the entry was dropped: at a notification-tap open the push previews are upgraded in place (same
+ * count, taller reply bubbles) and the early-drawn rows above the fresh page withdrawn while the
+ * entry is still running, and the newest rows ended below the fold. An entry lands on the bottom
+ * (`fillViewportThenPin`), so whatever moves the reach during it is followed - whatever
+ * `wasNearBottom` says, since a scroll measured while the list is hidden is not the reader's.
  */
 export function threadGrowthResponse(growth: ThreadGrowth): ThreadGrowthResponse {
   // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader and
   // restores `scrollTop` by exactly that much; following the bottom here would throw away the
   // history it had just fetched and land them where they already were.
   if (growth.isLoadingOlder) return 'keep-row';
-  if (growth.isEntering) return 'keep-row';
-  if (!growth.wasNearBottom) return 'keep-row';
+  if (!growth.wasNearBottom && !growth.isEntering) return 'keep-row';
   return growth.currentReach === growth.previousReach ? 'hold-bottom' : 'follow-bottom';
 }
 
@@ -267,4 +275,29 @@ export function chatViewCountLine(
 ): string | null {
   if (count === previousCount) return null;
   return `${conversationId.slice(0, 8)} messages ${count} (hasNewMessage=${count > previousCount}, response=${response ?? 'n/a'})`;
+}
+
+/** Where an entry left the pane, measured once its conversation has settled. */
+export interface EntryPinOutcome {
+  /** {@link isPinnedToBottom} of the pane, measured now. */
+  pinned: boolean;
+  /** The stick-to-bottom flag as `measureScroll` last wrote it - the one the observers read. */
+  isNearBottom: boolean;
+  /** The conversation's newest row is the last row in view (`measureLastVisibleAnchor`). */
+  newestVisible: boolean;
+  /** The conversation's rows, to pair the line with `[HISTORY]` and `[ADD_MSG]`. */
+  rows: number;
+  /** How far the pane is from its bottom, in px, rounded. */
+  fromBottom: number;
+}
+
+/**
+ * The `[CHAT_VIEW]` line for ONE conversation entry: where the pane stands once the entry is
+ * revealed and its catch-up has ended. INFO, so it reaches the exported log (`appLog.ts` records no
+ * debug) - the count line above is debug and never did, which is why the owner's 1.6.8 log could
+ * show the rows arriving and nothing of where the pane put them (2026-11-09). One line per entry,
+ * never per frame.
+ */
+export function chatViewEntryLine(conversationId: string, outcome: EntryPinOutcome): string {
+  return `${conversationId.slice(0, 8)} entry settled: pinned=${outcome.pinned} isNearBottom=${outcome.isNearBottom} newestVisible=${outcome.newestVisible} rows=${outcome.rows} fromBottom=${outcome.fromBottom}`;
 }

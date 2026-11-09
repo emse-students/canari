@@ -328,4 +328,27 @@ describe('ChatArea entry window (F6)', () => {
     // The rows under the eye are the same: the reader is still at the bottom of the taller list.
     expect(el!.scrollTop).toBe(el!.scrollHeight);
   });
+
+  it('writes ONE info-level [CHAT_VIEW] line per entry, with where the pane stands', async () => {
+    // The exported log records no debug: this line is what a device reading has of the pane.
+    rowPx = 48;
+    modelGeometry();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { props } = mountSwitchable(THREAD);
+    await settleEntry();
+    await settleEntry();
+    const entryLines = () =>
+      info.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('entry settled'));
+    expect(entryLines()).toHaveLength(1);
+    expect(entryLines()[0]).toMatch(
+      /^\[CHAT_VIEW\] g1 entry settled: pinned=true isNearBottom=true /
+    );
+    expect(entryLines()[0]).toContain(`rows=${THREAD}`);
+
+    props.conversation = conversationOf(THREAD, 'g2');
+    flushSync();
+    await settleEntry();
+    expect(entryLines()).toHaveLength(2);
+    expect(entryLines()[1]).toMatch(/^\[CHAT_VIEW\] g2 entry settled: pinned=true /);
+  });
 });

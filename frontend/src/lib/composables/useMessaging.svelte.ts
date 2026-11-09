@@ -1144,15 +1144,25 @@ export function useMessaging() {
           mergeMessageUpgrade(existing, newMsg)
         );
         const upgraded = settled.message;
-        const nextMessages = insertMessageOrdered(
-          convo.messages.filter((m) => m.id !== newMsg.id),
-          upgraded
-        );
-        ctx.conversations.set(normalized, {
-          ...convo,
-          messages: nextMessages,
-          lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [upgraded]),
-        });
+        // THE CONVERSATION IS READ AGAIN AFTER THE AWAIT. `convo` is the map's value from before
+        // `settleWithPending`'s store read, and a notification-tap open draws the stored page in
+        // that gap (`renderStoredPage`): writing the old snapshot back put the thread back to the
+        // preview rows alone (useMessaging.upgradeSnapshot.svelte.test.ts).
+        const current = ctx.conversations.get(normalized);
+        if (current) {
+          ctx.conversations.set(normalized, {
+            ...current,
+            messages: insertMessageOrdered(
+              current.messages.filter((m) => m.id !== newMsg.id),
+              upgraded
+            ),
+            lastMessageAt: advanceLastMessageAt(current.lastMessageAt, [upgraded]),
+          });
+        } else {
+          console.warn(
+            `[ADD_MSG] conversation "${normalized}" left the map during the upgrade of id=${newMsg.id} - only the stored row is rewritten`
+          );
+        }
         if (ctx.storage && !(options.skipDbSave ?? isChannelConversationId(normalized))) {
           try {
             // Folded onto the stored row by compare-and-set (`writeShownUpgrades`): a reaction that
@@ -1195,7 +1205,10 @@ export function useMessaging() {
             ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
           });
         }
-        console.log(`[ADD_MSG] ✓ Message upgraded: id=${newMsg.id}`);
+        // `selected=` pairs it with the pane's `[CHAT_VIEW]` lines, like the batch line's.
+        console.log(
+          `[ADD_MSG] ✓ Message upgraded: id=${newMsg.id} selected=${ctx.selectedContact === normalized}`
+        );
         return;
       }
       console.log(`[ADD_MSG] Duplicate ignored id=${newMsg.id}`);

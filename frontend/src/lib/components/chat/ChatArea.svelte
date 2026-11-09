@@ -40,8 +40,10 @@
   import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
   import {
     chatViewCountLine,
+    chatViewEntryLine,
     isPinnedToBottom,
     respondToNewMessage,
+    threadReach,
     keyboardChangeResponse,
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
@@ -419,6 +421,8 @@
   let lastConversationKey = $state('');
   /** Counts entries (fill passes): only the latest entry's fill and widen may go on. */
   let entryEpoch = 0;
+  /** The entry's `[CHAT_VIEW] ... entry settled` line is still to be written (one per entry). */
+  let entryReportOwed = false;
   let lastMessageCount = $state(0);
   /** First index (inclusive) of the sliding render window inside messageGroups. */
   let windowStart = $state(0);
@@ -479,21 +483,21 @@
   /** The touches on the thread, read by the widen so no step writes `scrollTop` under a finger. */
   let threadTouch: TouchHold | null = null;
 
-  function scrollToBottom(smooth = true) {
+  /**
+   * Puts the pane on its last row.
+   *
+   * **INSTANT, NEVER SMOOTH** (2026-11-09). A smooth scroll is a span of frames in which the pane
+   * is between two places: every `scroll` event of the glide is measured (`measureScroll`), so the
+   * stick-to-bottom flag reads `false` mid-way, and a row growing then - a preview upgraded into its
+   * reply bubble - was answered as growth under a reader in history: the glide ended at the OLD
+   * bottom and the new rows stayed below the fold. Any plain `scrollTop` write also aborts a glide
+   * (the jump-to-message defect of 2026-10-12, chat.md). An instant scroll has nothing in flight.
+   */
+  function scrollToBottom() {
     if (!chatContainer) return;
-    chatContainer.scrollTo({
-      top: chatContainer.scrollHeight,
-      behavior: smooth ? 'smooth' : 'auto',
-    });
+    chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'auto' });
   }
 
-  /**
-   * Robustly pins the view to the latest message when entering a conversation.
-   * A single rAF scroll often fires before late-settling content (images, fonts,
-   * the freshly rendered group window) has finished growing the list, leaving the
-   * view above the bottom. Re-pinning across a few frames and two short delays
-   * guarantees we actually land on the last message.
-   */
   /**
    * Entering a conversation : the initial render window is kept small (one screenful) so the
    * first paint is instant. If that screenful happens to be shorter than the viewport while
@@ -601,29 +605,26 @@
   }
 
   /**
-   * Pins the view to the bottom, then keeps re-pinning across a few frames and two short
-   * delays so late-settling content (images, fonts) can't leave us above the bottom.
-   * `onPinned` fires on the first frame we are actually at the bottom - used to reveal the
-   * list only once it is correctly scrolled, so the entry never flashes the top.
+   * Pins the view to the bottom now and again on the next frame, where `onPinned` reveals the list -
+   * so the entry never flashes the top.
+   *
+   * **WHAT SETTLES LATER IS FOLLOWED, NOT WAITED FOR** (2026-11-09). This used to re-pin for four
+   * more frames and at 250 and 600 ms, guessing when late content (a medium, a font, a preview
+   * upgraded into its reply) would have landed. Content that landed after the guess was not
+   * followed, and a reader who scrolled up inside it was pulled back down. `observeThreadGrowth`
+   * follows every change of the thread's extent while the entry runs and while the reader is at the
+   * bottom after it (`threadGrowthResponse`), so the guess is gone.
    */
   function scrollToBottomSettled(onPinned?: () => void) {
     if (!chatContainer) {
       onPinned?.();
       return;
     }
-    scrollToBottom(false);
+    scrollToBottom();
     requestAnimationFrame(() => {
-      scrollToBottom(false);
+      scrollToBottom();
       onPinned?.();
-      let frames = 0;
-      const repin = () => {
-        scrollToBottom(false);
-        if (++frames < 4) requestAnimationFrame(repin);
-      };
-      requestAnimationFrame(repin);
     });
-    setTimeout(() => scrollToBottom(false), 250);
-    setTimeout(() => scrollToBottom(false), 600);
   }
 
   /**
@@ -981,7 +982,7 @@
 
   function jumpToLatest() {
     windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
-    tick().then(() => requestAnimationFrame(() => scrollToBottom(true)));
+    tick().then(() => requestAnimationFrame(() => scrollToBottom()));
     isNearBottom = true;
   }
 
@@ -1190,6 +1191,7 @@
         entryWidening = false;
         // A new entry retires the previous one's fill and widen at once, not a tick later.
         entryEpoch++;
+        entryReportOwed = true;
         tick().then(() => fillViewportThenPin());
         isNearBottom = true;
       } else if (hasNewMessage) {
@@ -1225,7 +1227,7 @@
           windowStart =
             response === 'repin-entry' ? Math.min(renderWindow.start, entryStart) : entryStart;
           if (response === 'repin-entry') tick().then(() => fillViewportThenPin());
-          else tick().then(() => scrollToBottom(true));
+          else tick().then(() => scrollToBottom());
         }
       }
 
@@ -1238,6 +1240,42 @@
 
       lastConversationKey = convoKey;
       lastMessageCount = messageCount;
+    });
+  });
+
+  /**
+   * THE ENTRY'S OUTCOME, ONCE, IN THE EXPORTED LOG (owner's Android 1.6.8, 2026-11-09).
+   *
+   * The owner's log showed every row of a notification-tap open reaching the conversation map, and
+   * nothing of where the pane then stood - the count line above is debug, which the in-app log does
+   * not record. So one INFO line per entry, written when the entry is revealed AND its catch-up has
+   * ended (the history replay's upgrades and withdrawal have landed by then), measured on the next
+   * frame so the layout of those last changes is the one read. One line per entry, never per frame:
+   * `entryReportOwed` is set by the switch and spent here.
+   */
+  $effect(() => {
+    const settled = !entering && !(isLoadingHistory || isCatchingUpMessages);
+    const c = conversation;
+    if (!settled || !c) return;
+    untrack(() => {
+      if (!entryReportOwed) return;
+      entryReportOwed = false;
+      const epoch = entryEpoch;
+      requestAnimationFrame(() => {
+        // A switch inside this frame owes its own line; this one would measure the other list.
+        if (epoch !== entryEpoch || !chatContainer) return;
+        const newest = messageRows.at(-1);
+        Log.i(
+          'CHAT_VIEW',
+          chatViewEntryLine(c.id, {
+            pinned: isPinnedToBottom(chatContainer),
+            isNearBottom,
+            newestVisible: newest !== undefined && measureLastVisibleAnchor()?.id === newest.id,
+            rows: c.messages.length,
+            fromBottom: Math.round(threadReach(chatContainer) - chatContainer.scrollTop),
+          })
+        );
+      });
     });
   });
 
@@ -1323,7 +1361,7 @@
   $effect(() => {
     if (!_composerFocused || !chatContainer) return;
     untrack(() => {
-      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+      tick().then(() => requestAnimationFrame(() => scrollToBottom()));
     });
   });
 
@@ -1344,7 +1382,7 @@
       Log.d('ChatArea', `keyboard ${kbOpen ? 'opened' : 'closed'}: ${response}`);
     }
     if (response === 'follow-bottom') {
-      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+      tick().then(() => requestAnimationFrame(() => scrollToBottom()));
     }
     keyboardWasOpen = kbOpen;
   });
