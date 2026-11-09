@@ -1728,6 +1728,67 @@ request to prove the server reachable: 2.4-2.9 s down to 5-13 ms on a good link,
 on a weak one. Refusals keep their clock. The reasoning, the bounds and the numbers are in
 [offline-and-weak-network](../offline-and-weak-network.md#12-wp-off-6-shipped-a-prompt-bounded-resume-exactly-once-in-effect).
 
+### A deploy's "not now" is not a send failure (R05, 2026-11-09)
+
+**The defect** ([backlog](../../backlog.md#p1---a-tab-or-app-open-across-a-production-deploy-sees-the-outage-as-chec-de-lenvoi)).
+A production deploy answers `502`, `503` and `504` for its few seconds - the estate's nginx writes
+its own in JSON (`@api_error_502/503/504` in `infrastructure/local/Dockerfile.frontend`), so they
+read as `gateway` answers - and a reset connection is a transport failure. Two paths turned that
+into a failure the member saw:
+
+- **A DM or group text**: `postApplicationMessage` typed every 5xx as `SendServerError`, and the
+  outbox COUNTED it toward `MAX_CONSECUTIVE_SERVER_ERRORS` (the user's decision of 2026-10-18, for
+  a server that keeps failing): five "not now" in a row parked the text as `error` ("Echec" +
+  "Reessayer"), each one held a one-minute floor (`SERVER_ERROR_HOLD_MS`) whatever the server did
+  next, and no reconnect resumed it.
+- **A salon text** (`deliverSalonSend`, `utils/chat/messaging.ts`): any 5xx with the link up was
+  `unconfirmed` - "Pas de reponse du serveur : ce message n'est peut-etre pas parti" - and waited
+  for the author's Retry, for good.
+
+**Classified at the throw, by the status the answer carried** (`utils/unavailableAnswer.ts`, the
+one predicate): `502`, `503` and `504` say "not now" - a proxy about the service behind it, or a
+service that could not ask a peer (chat-delivery's `entitlement_unavailable` while social-service
+restarts). None refuses the MESSAGE. Every other 5xx is the service answering that IT failed, and
+keeps the 2026-10-18 policy. The delivery API raises `SendUnavailableError` (a `SendServerError`
+still, so every reader of a 5xx reads it as one); the salon reads `isUnavailableAnswer` on the
+`ChannelApiError` the channel service threw.
+
+**Held, deterministically, and ended only by an answer:**
+
+| | DM / group (`outbox.ts`) | Salon (`messaging.ts`) |
+| --- | --- | --- |
+| "not now" | held on the PLAIN ladder (`retryLadder.ts`: 2, 5, 15, 30, 60 s, or the server's `Retry-After`), never counted, never resetting a run of real 5xx; in `transportHeld`, so a reconnect sends it at once | `pending`, held for the server (`holdForServer`): owed to the reconnect AND one ladder step of the same ladder, whichever comes first - a deploy that rotates one service drops no connection, so no reconnect would ever come |
+| a reset / no answer | unchanged: `transportHeld`, the reconnect | unchanged: owed to the reconnect when the link is known down |
+| what ends it | the send (2xx), or a REFUSAL (410, a 403, the 5th real 5xx) | the row, or a refusal (`error`, its Retry) |
+| what the bubble says meanwhile | "En attente du serveur..." / "En attente du reseau..." | the same |
+
+**Exactly once.** Every repeat carries the first attempt's client id: the DM receivers drop a
+second frame with a `messageId` they hold (`addMessageToChat`), and social-service answers a salon
+repeat with the row it stored (migration 090, `findByClientMessageId`). A salon repeat is held for
+the server only once a repeat is PROVEN safe (`salonRepeatProof.ts`); before, it is `unconfirmed`
+and now also waits for that proof. One lane per conversation keeps a DM entry off the wire twice,
+and a salon redelivery is serialised by `retrying` and cancels its own ladder step when it starts
+(`takeServerHoldStep`). A text answered "not now" and then deleted lets the delete travel as an
+event (`answeredUnavailable`): a `502` after an upstream reset, or a `504`, may come after the frame
+was stored. MLS state and crypto are untouched: each attempt is sealed exactly as before.
+
+**The label** is the hold's typed reason, written where the hold is decided: the outbox writes a
+`waiting` or `unavailable` view for a TEXT (it wrote one only for attachments), the salon writes
+`unavailable` for its text, and `MessageBubble` hands `waitingOn` to `MessageMetadata`; a device
+known offline says the network first. An attachment held on "not now" shows `upload_unavailable`.
+
+**The ladder is not a clock that decides anything.** A step only ASKS again; its cost when wrong is
+one request answered "not now", bounded by the 60 s top step; a reconnect skips it. What ends the
+wait is always an answer. Tests: `outbox.test.ts` ("a deploy outage is not a send failure (R05)":
+503 then 200, twelve "not now" never failing, the plain ladder, the reconnect, a reset then the
+reconnect, a reconnect racing two flushes sending once, a 410 still failing, a "not now" neither
+counting nor resetting a run of 500s, the delete travelling), `useMessaging.salonQueue.svelte.test.ts`
+(the salon twins: reconnect, ladder step with no reconnect, both at once sending once, a long
+deploy, a 403 after a 503, a 400 at once, the author's Retry ending the hold, the proof),
+`mlsDeliveryApi.forbidden.test.ts` (the type at the throw, both origins), `unavailableAnswer.test.ts`,
+`MessageMetadata.waitingOn.svelte.test.ts`. **Owed:** a deploy drill on dev with the two bench
+phones sending throughout (no "Echec", no "Non confirme", each message once on the peer).
+
 ### Everything the outbox swallows, it logs
 
 The queue is deliberately best-effort at every step - a storage write that fails must not take the

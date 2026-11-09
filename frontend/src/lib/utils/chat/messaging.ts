@@ -26,7 +26,15 @@ import { extractMentionUserIds } from '$lib/utils/mentions';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { m } from '$lib/paraglide/messages';
 import { cutReplyPreview, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
-import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
+import {
+  ApiRefusalError,
+  describeApiRefusal,
+  refusalCode,
+  refusalStatus,
+} from '$lib/utils/apiRefusal';
+import { isUnavailableAnswer } from '$lib/utils/unavailableAnswer';
+import { unavailableHoldMs } from './retryLadder';
+import { clearUpload, patchUpload } from './uploadProgress.svelte';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
 import {
   salonGateRefusalMessage,
@@ -117,28 +125,91 @@ const salonSends = new Map<string, SalonSend>();
 const sendKey = (messageId: string) => `send:${messageId}`;
 
 /**
+ * Sends a held salon message again under its client id, unless it was settled or given up meanwhile,
+ * or a retry of it is already on the wire. `why` names the event that asked, for the log.
+ */
+async function redeliverSalonSend(messageId: string, why: string): Promise<void> {
+  const send = salonSends.get(messageId);
+  if (!send) {
+    // Settled meanwhile by the frame or a history page, or given up by its author.
+    console.debug(`[SEND] ${why}: salon send ${messageId.slice(0, 8)}... no longer registered`);
+    return;
+  }
+  if (retrying.has(messageId)) {
+    send.deps.log(`[SEND] ${why}: salon send ${messageId.slice(0, 8)}... already being retried`);
+    return;
+  }
+  retrying.add(messageId);
+  try {
+    await deliverSalonSend(messageId, send);
+  } finally {
+    retrying.delete(messageId);
+  }
+}
+
+/**
  * Owes a send that met NO ANSWER while this device was offline, or was held because it was, to the
  * next reconnect (`salonOwed.ts`), where it goes again under the same client id.
  */
 function oweOnReconnect(messageId: string): void {
-  oweSalonWrite(sendKey(messageId), async () => {
-    const send = salonSends.get(messageId);
-    if (!send) {
-      // Settled meanwhile by the frame or a history page, or given up by its author.
-      console.debug(`[SEND] owed salon send ${messageId.slice(0, 8)}... no longer registered`);
-      return;
-    }
-    if (retrying.has(messageId)) {
-      send.deps.log(`[SEND] owed salon send ${messageId.slice(0, 8)}... already being retried`);
-      return;
-    }
-    retrying.add(messageId);
-    try {
-      await deliverSalonSend(messageId, send);
-    } finally {
-      retrying.delete(messageId);
-    }
-  });
+  oweSalonWrite(sendKey(messageId), () => redeliverSalonSend(messageId, 'owed to the reconnect'));
+}
+
+/**
+ * Salon sends the server answered "NOT NOW" (502, 503, 504 - `unavailableAnswer.ts`; a deploy
+ * rotating a container), each with its run of such answers and the ladder step that asks again.
+ * Memory only: the durable half is the unsent ledger, which the next page life resumes.
+ */
+const serverHolds = new Map<
+  string,
+  { attempts: number; text: boolean; step: ReturnType<typeof setTimeout> | null }
+>();
+
+/**
+ * HOLDS A SEND THE SERVER ANSWERED "NOT NOW" FOR THE SERVER, instead of drawing it `unconfirmed`
+ * (R05, 2026-11-09). Only once a repeat is PROVEN safe (`salonRepeatProof.ts`): the server then
+ * answers it with the row it holds, so a 502 or 504 that came after the row was written costs no
+ * second row. The row stays `pending` and says it waits for the server; the send goes again at the
+ * next reconnect, or at its ladder step (`retryLadder.ts`, the outbox's own) when no event comes -
+ * a deploy that rotates one service drops no connection, so no reconnect would ever come. What ends
+ * it is an ANSWER: the row, or a refusal, which turns it `error` as any refusal does.
+ */
+function holdForServer(messageId: string, send: SalonSend, error: unknown): void {
+  const previous = serverHolds.get(messageId);
+  if (previous?.step) clearTimeout(previous.step);
+  const attempts = (previous?.attempts ?? 0) + 1;
+  const retryAfterMs = error instanceof ApiRefusalError ? error.retryAfterMs : null;
+  const delayMs = unavailableHoldMs(attempts, retryAfterMs);
+  const step = setTimeout(() => {
+    const hold = serverHolds.get(messageId);
+    if (hold) hold.step = null;
+    void redeliverSalonSend(messageId, 'held for the server, its ladder step');
+  }, delayMs);
+  serverHolds.set(messageId, { attempts, text: !send.attachment, step });
+  // A salon ATTACHMENT's view is its upload's, owned by `salonAttachmentSend.ts`: only a text's
+  // view is written here, and it is the one sign the bubble reads to say "waiting for the server".
+  if (!send.attachment) patchUpload(messageId, { phase: 'unavailable', attempt: attempts });
+  oweOnReconnect(messageId);
+  send.deps.log(
+    `[SEND] channel send ${messageId.slice(0, 8)}... HELD: the server is not serving (status=${refusalStatus(error)}) - not a refusal, sent again under its client id at the reconnect or in ${delayMs} ms (attempt ${attempts})`
+  );
+}
+
+/** The next attempt of a held send is starting: its ladder step must not ask a second time. */
+function takeServerHoldStep(messageId: string): void {
+  const hold = serverHolds.get(messageId);
+  if (!hold?.step) return;
+  clearTimeout(hold.step);
+  hold.step = null;
+}
+
+/** Ends a send's hold for the server: answered otherwise, settled, retried by hand or given up. */
+function endServerHold(messageId: string): void {
+  const hold = serverHolds.get(messageId);
+  if (!hold) return;
+  if (hold.step) clearTimeout(hold.step);
+  if (hold.text) clearUpload(messageId);
+  serverHolds.delete(messageId);
 }
 
 /**
@@ -175,10 +246,14 @@ function awaitRepeatProof(messageId: string): void {
   awaitingRepeatProof.set(messageId, stop);
 }
 
-/** Stops a send's wait for the repeat proof: it was settled, retried by hand or given up. */
+/**
+ * Stops everything a send waits on - the repeat proof, and the server's return
+ * ({@link endServerHold}): it was settled, retried by hand or given up.
+ */
 function stopAwaitingRepeatProof(messageId: string): void {
   awaitingRepeatProof.get(messageId)?.();
   awaitingRepeatProof.delete(messageId);
+  endServerHold(messageId);
 }
 
 /** Ledger entries this page life took back and is waiting to send again (`resumeUnsentSalonSends`). */
@@ -216,10 +291,14 @@ export function liveSalonSendIds(): ReadonlySet<string> {
  *   its row (`salonRepeatProof.ts`); before that it is `unconfirmed` and waits for that proof;
  * - a repeat of a message deleted since it landed is refused (410 `CHANNEL_MESSAGE_DELETED`): the
  *   send is forgotten and its row removed;
- * - anything else (a 5xx, no answer while the link still works, a throw with no status) is
+ * - a "not now" (502, 503, 504: a deploy, `unavailableAnswer.ts`) is HELD FOR THE SERVER once a
+ *   repeat is proven safe (`pending`, "waiting for the server"), and sent again at the reconnect or
+ *   its ladder step ({@link holdForServer}); before the proof it is `unconfirmed` and waits for it;
+ * - anything else (another 5xx, no answer while the link still works, a throw with no status) is
  *   `unconfirmed`: nothing known will change the answer, so it waits for the author's Retry.
  * The broadcast frame or the next history page still settle the row first whenever the first POST
- * did land. No clock decides any of it.
+ * did land. No clock decides any of it: the one ladder step a hold for the server arms only ASKS
+ * again, and the answer decides.
  *
  * @returns `null` when nothing needs saying (sent, or held for the reconnect), else the
  *   member-facing sentence.
@@ -236,6 +315,7 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
   const gate = reading.kind === 'wait' ? await whenSalonSendable(send.channelId) : reading;
   if (gate.kind === 'refused') {
     // NOTHING WAS SEALED: an answer, so the row is `error` and its Retry is safe.
+    endServerHold(messageId);
     deps.log(
       `[SEND] channel send ${messageId.slice(0, 8)}... NOT sent: salon ${send.channelId.slice(0, 8)} cannot be loaded (reason=${gate.reason})`
     );
@@ -253,6 +333,7 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
     oweOnReconnect(messageId);
     return null;
   }
+  takeServerHoldStep(messageId);
   deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'sending' });
   try {
     const row = await sendEncryptedChannelMessage(
@@ -293,6 +374,7 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
     // A SEAL THIS DEVICE COULD NOT MAKE IS NAMED BY ITS TYPED REASON: nothing left the device,
     // there is no status, and the generic line below hid which of six facts was missing.
     if (error instanceof GraineSealUnavailableError) {
+      endServerHold(messageId);
       deps.log(
         `[SEND] channel send ${messageId.slice(0, 8)}… not sealed (reason=${error.reason}): ${String(error)}`
       );
@@ -300,6 +382,28 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
       return sealUnavailableMessage(error.reason);
     }
     const status = refusalStatus(error);
+    // "NOT NOW" (502, 503, 504, read from the status the throw carried): the service is not serving -
+    // a deploy - and nothing about the message is refused. Held for the server once a repeat is
+    // proven safe; before that, `unconfirmed` and waiting for the proof, like any unknown outcome.
+    if (isUnavailableAnswer(error)) {
+      if (salonRepeatIsSafe()) {
+        deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'pending' });
+        holdForServer(messageId, send, error);
+        return null;
+      }
+      endServerHold(messageId);
+      deps.log(
+        `[SEND] channel send ${messageId.slice(0, 8)}... the server is not serving (status=${status}) and a repeat is NOT proven safe yet: unconfirmed until an answer proves it`
+      );
+      deps.patchSalonEcho(send.conversationKey, messageId, {
+        kind: 'state',
+        status: 'unconfirmed',
+      });
+      awaitRepeatProof(messageId);
+      return m.chat_send_unconfirmed();
+    }
+    // Any other outcome ends a hold for the server: an answer, or a link that went down.
+    endServerHold(messageId);
     // NO ANSWER, AND THE LINK IS DOWN: the reconnect is the event that changes the answer, so the
     // send is owed to it. `isOffline` was set by this very failure (`trackedFetch` reports every
     // transport failure to the store before it rethrows), so it is a fact, not a guess.
@@ -473,6 +577,7 @@ export function forgetSalonSendsOfEndedSession(): void {
   salonSends.clear();
   for (const stop of awaitingRepeatProof.values()) stop();
   awaitingRepeatProof.clear();
+  for (const id of serverHolds.keys()) endServerHold(id);
   // A resume still waiting on its salon's gate re-checks the session itself (`resumeOrphans`); its
   // entries stay in the ledger, so the next session of THAT account takes them.
   resumingSalonSends.clear();

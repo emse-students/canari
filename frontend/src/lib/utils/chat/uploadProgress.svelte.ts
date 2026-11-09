@@ -47,6 +47,11 @@ import type { UnsentReason } from '$lib/db/types';
  *   down, and the next one is queued. The bytes already sent are gone: the media route has no offset,
  *   so an attempt always restarts at zero - EXCEPT a chat reel, whose resumable session (RC-5) sends
  *   only the parts the server does not hold.
+ * - `unavailable`: the server - or the proxy in front of it - answered "not now" (502, 503, 504: a
+ *   deploy rotating a container), and the next attempt is queued for when it serves again (a
+ *   reconnect, or the ladder). Neither the file nor the link is at fault. On a TEXT it is, with
+ *   `waiting`, what the bubble's pending label says it waits for (R05, 2026-11-09); a salon text
+ *   writes it too (`messaging.ts`).
  * - `repairing`: the entry is held until the conversation's group is sendable again (roster repair,
  *   re-add requested); the connection is fine.
  * - `retrying`: the last attempt failed for another reason (a server error, a local one) and the
@@ -58,6 +63,7 @@ export type UploadPhase =
   | 'stalled'
   | 'queued'
   | 'waiting'
+  | 'unavailable'
   | 'repairing'
   | 'retrying'
   | 'blocked'
@@ -187,6 +193,7 @@ export function uploadPercent(view: UploadView): number | null {
     view.phase === 'preparing' ||
     view.phase === 'queued' ||
     view.phase === 'waiting' ||
+    view.phase === 'unavailable' ||
     view.phase === 'repairing' ||
     view.phase === 'retrying' ||
     view.phase === 'blocked' ||

@@ -22,6 +22,13 @@
     isReadReceiptAnchor: boolean;
     /** Current send status of the message. */
     status?: MessageSendStatus;
+    /**
+     * What a `pending` message WAITS FOR, when that is known (R05, 2026-11-09): the link (`network`:
+     * the last attempt got no answer, or the device is offline) or the server (`server`: it answered
+     * "not now", 502/503/504 - a deploy). The label says so instead of a bare "en attente"; `null`
+     * keeps it. Never a failure: the send goes on its own.
+     */
+    waitingOn?: 'network' | 'server' | null;
     /** User IDs who have read the message, derived from the conversation's read watermarks. */
     readBy: string[];
     /** When true, renders outside the bubble (delivery/read indicators). */
@@ -47,6 +54,7 @@
     isLastOwn,
     isReadReceiptAnchor = false,
     status,
+    waitingOn = null,
     readBy,
     outsideBubble = false,
     onRetry,
@@ -113,9 +121,16 @@
     {/if}
     {#if showSendStatus}
       {#if status === 'pending'}
-        <span class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50">
+        <span
+          class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50"
+          data-testid="message-pending"
+        >
           <Clock size={12} />
-          {m.msg_en_attente()}
+          {waitingOn === 'server'
+            ? m.msg_waiting_for_server()
+            : waitingOn === 'network'
+              ? m.msg_waiting_for_network()
+              : m.msg_en_attente()}
         </span>
       {:else if status === 'sending'}
         <span class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50">

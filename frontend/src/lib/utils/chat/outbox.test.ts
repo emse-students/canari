@@ -65,7 +65,9 @@ import {
   SendForbiddenError,
   SendEdgeRefusedError,
   SendServerError,
+  SendUnavailableError,
 } from '$lib/mls-client/mlsDeliveryApi';
+import { unavailableHoldMs } from './retryLadder';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { MessageWrittenError } from './messageWrittenError';
 import { toMirrorEntry } from './outboxMirror';
@@ -1531,7 +1533,7 @@ describe('outbox flusher', () => {
       makeDeps({
         mlsService: makeMls({
           send: async () => {
-            throw new SendServerError('g1', 503, 'gateway');
+            throw new SendServerError('g1', 500, 'gateway');
           },
         }),
         storage,
@@ -4751,7 +4753,7 @@ describe('a text the server keeps failing (5xx) - terminal after N in a row (use
     return makeMls({
       send: async () => {
         const next = outcomes[i++] ?? 'ok';
-        if (next === '5xx') throw new SendServerError('g1', 503, 'gateway');
+        if (next === '5xx') throw new SendServerError('g1', 500, 'gateway');
         if (next === '4xx') throw new ApiRefusalError(400, null, 'Message send HTTP error: 400');
         if (next === 'transport')
           throw new DeliveryUnreachableError(new TypeError('Failed to fetch'));
@@ -5061,7 +5063,7 @@ describe('a text the server keeps failing (5xx) - terminal after N in a row (use
     };
     const mls = makeMls({
       send: async (groupId: unknown) => {
-        throw new SendServerError(String(groupId), 502, 'edge');
+        throw new SendServerError(String(groupId), 500, 'edge');
       },
     });
     const conversations = new SvelteMap<string, Conversation>([
@@ -5090,7 +5092,7 @@ describe('5xx terminal state - review of #2076 (follower Retry, the hold, the de
   function always5xx(retryAfterMs: number | null = null) {
     return makeMls({
       send: async () => {
-        throw new SendServerError('g1', 502, 'edge', retryAfterMs);
+        throw new SendServerError('g1', 500, 'edge', retryAfterMs);
       },
     });
   }
@@ -5145,7 +5147,7 @@ describe('5xx terminal state - review of #2076 (follower Retry, the hold, the de
       send: (() => {
         let i = 0;
         return async () => {
-          if (i++ < MAX_CONSECUTIVE_SERVER_ERRORS) throw new SendServerError('g1', 503, 'gateway');
+          if (i++ < MAX_CONSECUTIVE_SERVER_ERRORS) throw new SendServerError('g1', 500, 'gateway');
         };
       })(),
     });
@@ -5237,6 +5239,184 @@ describe('5xx terminal state - review of #2076 (follower Retry, the hold, the de
     expect(sent).toEqual(['t2']);
     expect(storage._map.has('r1')).toBe(true);
     outbox.dispose();
+  });
+});
+
+/**
+ * R05 (2026-11-09): A TAB OR APP OPEN ACROSS A DEPLOY. The deploy answers `502`/`503`/`504` for its
+ * few seconds - and resets connections - and none of them refuses the message. Before the fix the
+ * 5th "not now" in a row parked a text as `error` ("Echec"), each one was held a one-minute floor
+ * whatever the server did next, and the bubble said a bare "en attente".
+ */
+describe('a deploy outage is not a send failure (R05)', () => {
+  /** One outcome per attempt: 'ok', a "not now" status, '500', '410', or 'reset' (no answer). */
+  type Outcome = 'ok' | 502 | 503 | 504 | '500' | '410' | 'reset';
+  function scripted(outcomes: Outcome[]) {
+    let i = 0;
+    return makeMls({
+      send: async () => {
+        const next = outcomes[i++] ?? 'ok';
+        if (next === 'ok') return;
+        if (next === '500') throw new SendServerError('g1', 500, 'gateway');
+        if (next === '410') throw new GroupDeletedError('g1');
+        if (next === 'reset') throw new DeliveryUnreachableError(new TypeError('Failed to fetch'));
+        // The estate's nginx answers its own 502/503/504 in JSON: the gateway origin.
+        throw new SendUnavailableError('g1', next, 'gateway');
+      },
+    });
+  }
+
+  function setup(seed: OutboxEntry[], mlsService: any) {
+    const conversations = new SvelteMap<string, Conversation>([
+      [
+        'g1',
+        convoWith(
+          'g1',
+          seed.map((e) => e.id)
+        ),
+      ],
+    ]);
+    const storage = makeStorage(seed);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+    const status = (id: string) =>
+      conversations.get('g1')!.messages.find((m) => m.id === id)!.status;
+    return { storage, outbox, status };
+  }
+
+  /** Makes the entry due by hand - the test is the clock - then flushes. */
+  async function attempt(outbox: { flush: () => Promise<void> }, storage: any, id: string, n = 1) {
+    for (let k = 0; k < n; k++) {
+      const e = storage._map.get(id);
+      if (e) storage._map.set(id, { ...e, nextAttemptAt: 0 });
+      await outbox.flush();
+    }
+  }
+
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    connectivity.reset();
+    clearAllUploads();
+    isTabLeaderMock.mockReturnValue(true);
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => errorSpy.mockRestore());
+
+  it('503 then 200: pending and "waiting for the server" meanwhile, then sent once', async () => {
+    const mls = scripted([503, 'ok']);
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+
+    await attempt(outbox, storage, 't1');
+    expect(status('t1')).toBe('pending');
+    expect(uploadViewOf('t1')?.phase).toBe('unavailable');
+    expect(storage._map.get('t1').serverErrors ?? 0).toBe(0);
+
+    await attempt(outbox, storage, 't1');
+    expect(status('t1')).toBe('sent');
+    expect(uploadViewOf('t1')).toBeUndefined();
+    expect(storage._map.has('t1')).toBe(false);
+    expect(mls.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('never fails a text on "not now", however long the deploy: 12 x 502/503/504, then sent', async () => {
+    const outcomes: Outcome[] = [502, 503, 504, 502, 503, 504, 502, 503, 504, 502, 503, 504, 'ok'];
+    const mls = scripted(outcomes);
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+
+    await attempt(outbox, storage, 't1', 12);
+    expect(status('t1')).toBe('pending');
+    expect(storage._map.get('t1').serverErrors ?? 0).toBe(0);
+    expect(errorSpy).not.toHaveBeenCalled();
+
+    await attempt(outbox, storage, 't1');
+    expect(status('t1')).toBe('sent');
+    expect(mls.sendMessage).toHaveBeenCalledTimes(13);
+  });
+
+  it('holds "not now" on the plain ladder, never the one-minute floor of a counted 5xx', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const { storage, outbox } = setup([textEntry('t1', 'g1', 100)], scripted([503]));
+    await outbox.flush();
+    expect(storage._map.get('t1').nextAttemptAt).toBe(1_000_000 + 2_000);
+    now.mockRestore();
+  });
+
+  it('honours the Retry-After of a "not now", capped like any', () => {
+    expect(unavailableHoldMs(1, null)).toBe(2_000);
+    expect(unavailableHoldMs(5, null)).toBe(60_000);
+    expect(unavailableHoldMs(1, 30_000)).toBe(30_000);
+    expect(unavailableHoldMs(1, 3_600_000)).toBe(MAX_RETRY_AFTER_MS);
+  });
+
+  it('a reconnect resumes it at once, its ladder step skipped', async () => {
+    const mls = scripted([503, 'ok']);
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await outbox.flush();
+    // Due in the future: only the reconnect can make it go now.
+    expect(storage._map.get('t1').nextAttemptAt).toBeGreaterThan(Date.now());
+
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+
+    expect(status('t1')).toBe('sent');
+    expect(mls.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('a reset (no answer) then the reconnect: "waiting for the network", then sent once', async () => {
+    const mls = scripted(['reset', 'ok']);
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await outbox.flush();
+    expect(status('t1')).toBe('pending');
+    expect(uploadViewOf('t1')?.phase).toBe('waiting');
+
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+
+    expect(status('t1')).toBe('sent');
+    expect(storage._map.has('t1')).toBe(false);
+    expect(mls.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('a reconnect and two flushes landing together send it ONCE more (no double send)', async () => {
+    const mls = scripted([503, 'ok']);
+    const { storage, outbox } = setup([textEntry('t1', 'g1', 100)], mls);
+    await outbox.flush();
+
+    connectivity.notifyServerUnreachable();
+    const e = storage._map.get('t1');
+    storage._map.set('t1', { ...e, nextAttemptAt: 0 });
+    connectivity.notifyServerReachable();
+    await Promise.all([outbox.flush(), outbox.flush()]);
+    await outboxIdle();
+
+    expect(mls.sendMessage).toHaveBeenCalledTimes(2);
+    expect(storage._map.has('t1')).toBe(false);
+  });
+
+  it('a REAL refusal still ends it: a 410 after a 503 fails the text for good', async () => {
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], scripted([503, '410']));
+    await attempt(outbox, storage, 't1', 2);
+    expect(status('t1')).toBe('error');
+    expect(storage._map.has('t1')).toBe(false);
+  });
+
+  it('a "not now" neither counts nor resets a run of real 5xx: 4 x 500, a 503, a 500 is terminal', async () => {
+    const mls = scripted(['500', '500', '500', '500', 503, '500']);
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(outbox, storage, 't1', 5);
+    expect(storage._map.get('t1').serverErrors).toBe(4);
+    expect(status('t1')).toBe('pending');
+    await attempt(outbox, storage, 't1');
+    expect(status('t1')).toBe('error');
+    expect(uploadViewOf('t1')?.phase).toBe('failed');
+  });
+
+  it('deleting a text answered "not now" lets the delete travel: a 504 may come after it was stored', async () => {
+    const { storage, outbox } = setup([textEntry('t1', 'g1', 100)], scripted([504]));
+    await outbox.flush();
+    expect(await outbox.cancelPending('t1')).toBe(false);
+    expect(storage._map.has('t1')).toBe(false);
   });
 });
 

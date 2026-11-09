@@ -63,8 +63,10 @@ import {
   SendEdgeRefusedError,
   SenderNotActiveError,
   SendServerError,
+  SendUnavailableError,
   type SentFrame,
 } from '$lib/mls-client/mlsDeliveryApi';
+import { backoffFor, MAX_RETRY_AFTER_MS, unavailableHoldMs } from './retryLadder';
 import {
   UPLOAD_NO_ANSWER_ATTEMPTS,
   UPLOAD_PROGRESS_MARGIN_BYTES,
@@ -107,12 +109,6 @@ import { noteServerTime } from './serverClock';
 export type OutboxSettlement = 'sent' | 'failed' | 'pending';
 
 /**
- * Backoff schedule (ms) between flush attempts for an entry that keeps failing.
- * Indexed by attempt count, clamped to the last value.
- */
-const BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
-
-/**
  * Consecutive LOCAL failures of ONE attachment - this device could not read, decode or hold the file
  * (see {@link isLocalAttachmentFailure}) - after which it is parked as `error`. About five minutes of
  * the ladder, short enough that a Pixel 6a is not made to decode a 13 MB file every minute for ever
@@ -129,6 +125,13 @@ export const MAX_UNEXPECTED_ATTEMPTS = 8;
  * reload keeps the run; any other ANSWER, a success or the member's retry resets it, and a transport
  * failure - nobody answered - neither counts nor resets. Attachments and controls (reactions, edits,
  * deletes, pins, read marks) are not bounded by it.
+ *
+ * **A "NOT NOW" ANSWER IS NOT COUNTED (2026-11-09, roadmap R05).** `502`, `503` and `504`
+ * (`SendUnavailableError`, `unavailableAnswer.ts`) say the service is not serving right now - a
+ * deploy rotating a container answers them for its few seconds - and none of them refuses the
+ * message. They are held on the plain ladder like a transport failure, resumed by a reconnect,
+ * shown as waiting for the server, and neither count nor reset this run: only a 5xx that says the
+ * service itself failed (`500`, `501`...) does.
  */
 export const MAX_CONSECUTIVE_SERVER_ERRORS = 5;
 
@@ -139,8 +142,8 @@ export const MAX_CONSECUTIVE_SERVER_ERRORS = 5;
  */
 export const SERVER_ERROR_HOLD_MS = 60_000;
 
-/** The longest a server's `Retry-After` may hold a text: a header is not a reason to wait for ever. */
-export const MAX_RETRY_AFTER_MS = 10 * 60_000;
+/** The longest a server's `Retry-After` may hold a text - one value for both send paths (`retryLadder.ts`). */
+export { MAX_RETRY_AFTER_MS };
 
 /**
  * The hold after the `attempts`-th attempt failed with a COUNTED 5xx: the ladder's own step, raised
@@ -155,9 +158,14 @@ export function serverErrorHoldMs(attempts: number, retryAfterMs: number | null)
   );
 }
 
+/** A message the member TYPED (a text or a reply): its own row, with no file to upload. */
+function isTypedEntry(entry: OutboxEntry): boolean {
+  return entry.kind === 'text' || entry.kind === 'reply';
+}
+
 /** The kinds {@link MAX_CONSECUTIVE_SERVER_ERRORS} applies to: a message the member typed. */
 function boundedOnServerErrors(entry: OutboxEntry): boolean {
-  return entry.kind === 'text' || entry.kind === 'reply';
+  return isTypedEntry(entry);
 }
 
 /**
@@ -326,11 +334,6 @@ function dependsOnAny(entry: OutboxEntry, ids: Set<string>): boolean {
     }
   }
   return false;
-}
-
-/** Returns the backoff delay for the given (post-increment) attempt count. */
-function backoffFor(attempts: number): number {
-  return BACKOFF_MS[Math.min(Math.max(attempts - 1, 0), BACKOFF_MS.length - 1)];
 }
 
 /**
@@ -801,9 +804,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * just proven itself alive is no longer that. A refusal (`sender-not-active`, a group not yet
    * sendable) is a fact about the GROUP and no reconnect changes it, so those keep their clock.
    * In memory only, on purpose: after a reload the ladder is at most 60 s and the boot flush is
-   * the trigger.
+   * the trigger. An entry answered "not now" (502/503/504, `SendUnavailableError`) is held here too:
+   * the server was not serving, and a reconnect is the best event there is that it serves again.
    */
   const transportHeld = new Set<string>();
+  /**
+   * Ids answered "not now" (`SendUnavailableError`) at least once since they were queued: a 502 after
+   * an upstream reset, or a 504, may come after the frame was stored, so a withdrawal of one must let
+   * the delete travel as an event ({@link withdrawRow}). In memory, like `transportHeld`.
+   */
+  const answeredUnavailable = new Set<string>();
   /**
    * Ids whose last attempt was HELD FOR THEIR GROUP (not sendable yet, or awaiting the Welcome of a
    * re-admission), with their conversation: the entries {@link OutboxController.resumeGroup} resumes
@@ -1095,9 +1105,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // for any retry. Nothing here waits for a timer to expire.
     for (const id of transportHeld) {
       resuming.add(id);
-      // The link is back: the stale "waiting for the connection" is false from now on, the entry is
-      // simply next in line until its attempt starts and says `preparing`.
-      if (viewOfUpload(id)?.phase === 'waiting') patchUpload(id, { phase: 'queued' });
+      // The link is back: the stale "waiting for the connection" (or "for the server", an entry
+      // answered "not now", held here too) is false from now on, the entry is simply next in line
+      // until its attempt starts and says `preparing`.
+      const phase = viewOfUpload(id)?.phase;
+      if (phase === 'waiting' || phase === 'unavailable') patchUpload(id, { phase: 'queued' });
     }
     transportHeld.clear();
     runFlush();
@@ -2157,6 +2169,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     describe: (attempts: number) => string,
     opts: {
       transport?: boolean;
+      /**
+       * Answered "not now" (`SendUnavailableError`): held like a transport failure (`transport` is
+       * passed with it, so a reconnect resumes it), and the bubble says it waits for the SERVER.
+       */
+      unavailable?: boolean;
       repair?: boolean;
       local?: boolean;
       quiet?: boolean;
@@ -2176,14 +2193,27 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // An attachment still to upload shows that its next attempt is queued (and starts from zero -
     // except a chat reel's resumable session, which resumes at the parts the server lacks).
     // `quiet` when the payload was not read, so whether the upload already happened is not known.
+    // THE LABEL IS THE HOLD'S TYPED REASON, never a guess: only a transport failure accuses the
+    // network, only a "not now" answer the server; a group repair and any other failure each say
+    // what they are.
+    const phase = opts.unavailable
+      ? 'unavailable'
+      : opts.transport
+        ? 'waiting'
+        : opts.repair
+          ? 'repairing'
+          : 'retrying';
     if (!opts.quiet && outboxKindHoldsBlob(entry.kind) && !entry.media?.uploadedRef) {
-      // THE LABEL IS THE HOLD'S TYPED REASON, never a guess: only a transport failure accuses the
-      // network; a group repair and any other failure each say what they are.
-      patchUpload(entry.id, {
-        phase: opts.transport ? 'waiting' : opts.repair ? 'repairing' : 'retrying',
-        loaded: 0,
-        attempt: entry.attempts + 1,
-      });
+      patchUpload(entry.id, { phase, loaded: 0, attempt: entry.attempts + 1 });
+    } else if (isTypedEntry(entry)) {
+      // A TYPED MESSAGE has no upload, so its view says only what it waits for, and only when that
+      // is the link or the server (R05, 2026-11-09): "en attente" alone read the same during a
+      // deploy as during a group repair. Any other hold takes a stale one away.
+      if (phase === 'waiting' || phase === 'unavailable') {
+        patchUpload(entry.id, { phase, attempt: entry.attempts + 1 });
+      } else if (viewOfUpload(entry.id)) {
+        clearUpload(entry.id);
+      }
     }
     const attempts = entry.attempts + 1;
     await storage
@@ -2714,6 +2744,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         });
         patchStatus(entry.id, 'sent');
         clearUpload(entry.id);
+        answeredUnavailable.delete(entry.id);
         transportHeld.delete(entry.id);
         repairHeld.delete(entry.id);
         unexpected.delete(entry.id);
@@ -2963,6 +2994,22 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED as evicted, after isGroupActive answered that this device is still a member of ${terminalId.slice(0, 8)}… - the two disagree, and OpenMLS is the one that is right`
       );
       return failPermanently(entry, terminalId, 'evicted-late');
+    }
+    // "NOT NOW" IS NOT A REFUSAL (R05, 2026-11-09): a 502, 503 or 504, typed at the throw
+    // (`SendUnavailableError`), is a service that is not serving - a deploy rotating a container
+    // answers them for its few seconds. Every kind is held on the PLAIN ladder (no one-minute
+    // floor), resumed by a reconnect, shown as waiting for the server, and the 5xx run below is
+    // neither counted nor reset: it was what failed every text sent during a long deploy. What
+    // ends the wait is an answer - the send, or a refusal - never a count of these.
+    if (e instanceof SendUnavailableError) {
+      answeredUnavailable.add(entry.id);
+      const delayMs = unavailableHoldMs(entry.attempts + 1, e.retryAfterMs);
+      return holdForRetry(
+        entry,
+        (attempts) =>
+          `[OUTBOX] ${entry.id.slice(0, 8)}… held: the server is not serving (${e.status}, ${e.origin}) in ${terminalId.slice(0, 8)}… - not a refusal, not counted (attempt ${attempts}), next in ${delayMs} ms or at the reconnect${e.retryAfterMs !== null ? ` (Retry-After ${e.retryAfterMs} ms)` : ''}`,
+        { transport: true, unavailable: true, delayMs }
+      );
     }
     // A 5xx ON A TEXT IS COUNTED, read from the TYPE (`SendServerError`, typed at the throw): the
     // Nth in a row parks it as failed (user, 2026-10-18). The count is written BEFORE the park, so a
@@ -4291,7 +4338,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // A 5xx IS NOT PROOF THAT NOTHING WAS STORED: a gateway may answer 502 after the delivery service
     // queued the frame. So a text that was ever answered 5xx in this run is withdrawn here AND
     // answered "maybe sent", and the delete also goes out as an event (peers that have it drop it).
-    const maybeStored = (queued.serverErrors ?? 0) > 0;
+    // AND SO IS A "NOT NOW": a 502 after an upstream reset, or a 504, may come after the frame was
+    // queued. Kept in memory (`answeredUnavailable`), like every transport outcome: a reload, or a
+    // follower tab that never sent it, does not know - the residual the transport failures share.
+    const maybeStored = (queued.serverErrors ?? 0) > 0 || answeredUnavailable.has(messageId);
+    answeredUnavailable.delete(messageId);
     // READ BEFORE THE ROW GOES: the reel's open upload session, which nothing could name afterwards.
     // An entry waiting in backoff, parked as failed, or not restarted since a relaunch has no
     // transfer running to abort - the row is the only thing that knows its session.
@@ -4349,10 +4400,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return { withdrawn: false, rowDeleted };
     }
     if (maybeStored) {
+      const unavailableNote =
+        (queued.serverErrors ?? 0) > 0 ? '' : ' and a "not now" (502/503/504)';
       log(
         reason === 'exit'
-          ? `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn by the group exit after ${queued.serverErrors} 5xx answer(s) - a gateway may have stored it, so the members may have it`
-          : `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn after ${queued.serverErrors} 5xx answer(s) - a gateway may have stored it, so the delete travels as an event too`
+          ? `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn by the group exit after ${queued.serverErrors ?? 0} counted 5xx answer(s)${unavailableNote} - a gateway may have stored it, so the members may have it`
+          : `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn after ${queued.serverErrors ?? 0} counted 5xx answer(s)${unavailableNote} - a gateway may have stored it, so the delete travels as an event too`
       );
       return { withdrawn: false, rowDeleted };
     }
