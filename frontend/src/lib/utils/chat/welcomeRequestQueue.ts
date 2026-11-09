@@ -1,4 +1,3 @@
-import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { handleWelcomeRequest } from '$lib/utils/chat/actions';
@@ -34,7 +33,6 @@ export interface DeferredWelcomeRequest {
 /** Everything serving a `welcome_request` needs, and nothing a session composable holds besides. */
 export interface WelcomeRequestContext {
   mlsService: IMlsService;
-  storage: IStorage | null;
   userId: string;
   deviceKeyB64: string;
   conversations: Map<string, Conversation>;
@@ -69,7 +67,6 @@ export async function serveWelcomeRequest(
   try {
     await handleWelcomeRequest({
       mlsService: ctx.mlsService,
-      storage: ctx.storage,
       userId: ctx.userId,
       deviceKeyB64: ctx.deviceKeyB64,
       conversations: ctx.conversations,

@@ -922,8 +922,8 @@ Out of scope: communities, which keep their own recorded decision (a returner MA
 
 **Why the history exchange was the hole.** Live delivery already honoured a removal: the member is
 out of the MLS tree. But every answer of this protocol re-sends a store as `history_bundle` frames
-under the CURRENT epoch - the full bundle on an invitation (`sendFullHistoryBundle`, from
-`processPendingInvitations` and `handleWelcomeRequest`), the diff (`sendHistoryBundleForIds`), the
+under the CURRENT epoch - the full bundle on an invitation (`sendFullHistoryBundle`, since #3185 the
+join push that follows every delivered Welcome, `joinPush.ts`), the diff (`sendHistoryBundleForIds`), the
 scrollback (`sendHistoryRangeBundle`) - and none of them asked whether anybody had been out.
 
 **The record - the server, migration `030`.** `dm_group_membership_intervals` keeps one row per

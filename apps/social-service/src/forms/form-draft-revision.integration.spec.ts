@@ -269,6 +269,51 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
     expect(await ds.transaction((m) => formChangedSinceRevision(m, RETAGGED))).toBe(false);
   });
 
+  it("a revision moving its draft to another association follows THAT association's retag", async () => {
+    // A draft may change association in its revision (owner, 2026-11-09): the tier its revision
+    // names is the NEW association's, so only the new association's retag may rewrite it.
+    const FROM = '00000000-0000-4000-8000-0000000a0147';
+    const TO = '00000000-0000-4000-8000-0000000b0147';
+    const MOVED = '00000000-0000-4000-8000-0000000c0147';
+    const TO_NONE = '00000000-0000-4000-8000-0000000d0147';
+    const GARBAGE = '00000000-0000-4000-8000-0000000e0147';
+    await q(
+      `INSERT INTO forms (id, title, "associationId") VALUES ($1, 'Moved', $4), ($2, 'None', $4), ($3, 'Junk', $4)`,
+      [MOVED, TO_NONE, GARBAGE, FROM]
+    );
+    const granting = { grantsCotisation: true, cotisationVariantKey: 'k' };
+    await writeFormDraft(
+      ds.manager,
+      MOVED,
+      0,
+      { title: 'M', associationId: TO, ...granting },
+      null
+    );
+    await writeFormDraft(
+      ds.manager,
+      TO_NONE,
+      0,
+      { title: 'N', associationId: '', ...granting },
+      null
+    );
+    // Stored as typed: a value that is no uuid must not fail the statement for everyone else.
+    await writeFormDraft(
+      ds.manager,
+      GARBAGE,
+      0,
+      { title: 'J', associationId: 'x', ...granting },
+      null
+    );
+    const key = async (id: string) =>
+      (await readFormDraft(ds.manager, id)).document?.cotisationVariantKey;
+
+    await ds.transaction((m) => followRetagInRevisions(m, FROM, [], [], 'k', 'from-new'));
+    expect([await key(MOVED), await key(TO_NONE), await key(GARBAGE)]).toEqual(['k', 'k', 'k']);
+    await ds.transaction((m) => followRetagInRevisions(m, TO, [], [], 'k', 'to-new'));
+    expect(await key(MOVED)).toBe('to-new');
+    expect(await key(TO_NONE)).toBe('k');
+  });
+
   it('goes with its form', async () => {
     await q(`DELETE FROM forms WHERE id = $1`, [FORM]);
     expect(await readFormDraft(ds.manager, FORM)).toMatchObject({ revision: 0 });

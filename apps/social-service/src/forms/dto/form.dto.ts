@@ -260,9 +260,13 @@ export class CreateFormDto {
   @IsOptional()
   ownerId?: string;
 
+  /**
+   * The association the form belongs to. On an edit: absent leaves it; `''` or `null` names none.
+   * Only a DRAFT may change it (`FormsService.associationAfterEdit`).
+   */
   @IsString()
   @IsOptional()
-  associationId?: string;
+  associationId?: string | null;
 
   /**
    * The pricing grid: `{ dimensions, cells }`. Absent or null leaves `basePrice` the only price.

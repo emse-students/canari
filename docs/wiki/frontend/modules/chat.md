@@ -5081,7 +5081,63 @@ its setter leaves.
 **The late joiner.** A member added after a `nickname` frame went out never receives it. The
 inviter's JOIN PUSH to the new device restates the register (`nicknames`, beside `pins`), even when
 every message is withheld, so a new member gets the names in the first bundle. That join push is the
-ONLY bundle a register is taken from (review of #3177). A broadcast or replayed bundle carries none,
+ONLY bundle a register is taken from (review of #3177). **It hangs on the delivery of a Welcome, not
+on a caller** (#3185). `BaseMlsService.sendWelcomeConsuming` is the one place a Welcome is known
+stored by the server, whoever sent it - the member's "Ajouter" (`inviteMembersToGroup`, which a
+join-request approval also is), a pending invitation, a welcome_request answer, a group's creation, or
+the owed-Welcome drain (`deliverOwedWelcomes`) that delivers a Welcome whose first send failed or whose
+Add's commit was only settled later. It announces each delivery once (`onWelcomeDelivered`; a
+concurrent send of the same bytes awaits the first), and `joinPush.ts`, installed with the service in
+`useChatSession`, answers it:
+
+- **once per Welcome, from durable state**: a per-account ledger (`mls_join_pushes_sent:v1:<account>`,
+  a 512-entry FIFO) names each pushed Welcome by group, device and a fingerprint of its bytes, written
+  before the push starts. The drain consumes what it delivers, so a re-run sends nothing; a reload that
+  lost the clear re-sends the same bytes, and the ledger stops the second push (the joiner, already
+  holding the group, would refuse it as answering no ask). A re-add is a new Welcome and is pushed for;
+- **off the gesture**: queued synchronously at the delivery and run one at a time, never awaited by the
+  Add, so "added" shows at once; each push caught and logged on its own (`[JOIN_PUSH]`);
+- **never into a key group** (`isDistributionGroup`);
+- **for the session that delivered it**: the account, the store and the device key are read when the
+  delivery is announced, and a job whose client the session holder let go of (a sign-out, an account
+  switch) is dropped at its turn (`isCurrent`, `MlsHolder.current`), so a queued push never runs with
+  the next account's data through the previous account's MLS client.
+
+**The limit it keeps: online only.** The push is an ADDRESSED frame, and an addressed frame is
+transport-only - the server publishes it to a device all of whose live sessions declared the capability
+and refuses it otherwise (`addressed_unsupported`); it is never queued. A newcomer whose device is not
+connected when its Welcome is delivered gets no push, and nothing retries it. That outcome is returned
+(`sendFullHistoryBundle` -> `unaddressable`) and said at warn (`[JOIN_PUSH] NOT DELIVERED`), never
+swallowed. **The fix is the newcomer asking, not the inviter retrying**, and the reasoning is the
+choice: an inviter retry "when the device becomes present" rests on two things nobody holds durably -
+the newcomer's `join` ask lives in memory (`noteJoinSolicited`), so a reload between the Welcome and the
+retried push refuses it, and the inviter's own device has to come back while the newcomer is online.
+The newcomer, by contrast, is online by construction when it asks, already runs a reconciliation on
+every connection whose deferral waits for a member to return, and can keep a durable "register owed"
+marker until an answer clears it. So the register will ride the existing digest ask (`register: true`)
+and its elected answer, under the same four limits below - designed in
+[its entry](../../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md), not built in #3185 because
+it changes the reconciliation's wire and deserves its own review.
+
+Before #3185 only the pending invitation and the welcome_request answer pushed, each by an explicit
+call: a newcomer added by "Ajouter", or whose Welcome came from the drain, saw no nickname at all
+(reading 2 of `1.6.9-alpha.1`, [defect](../../backlog.d/p2-a-member-added-after-a-nickname-does-not-receive-it.md)).
+
+**What a push costs.** `sendFullHistoryBundle` decrypts the inviter's whole store for the group and,
+in `sendBundleChunks`, re-reads the reader's windows for EVERY 200-message chunk - deliberately: a
+chunk is filtered on the windows in force when it leaves, so a member removed or re-added meanwhile
+is held to the current answer. For a newcomer every chunk is withheld, so a store of N messages costs
+one full decrypt and N/200 window reads to send a state-only frame. It is not reduced here (the
+per-chunk read is the correctness property); it no longer delays the member's gesture.
+
+**Why it does not breach step A** ([the decision](../../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not)).
+Step A forbids a newcomer the MESSAGES sent before their arrival; the push is addressed to the new
+device and filtered on its owner's server windows, so for a newcomer it carries no message from
+before - a state-only frame, or only what was sent since the Add. A nickname is not a past message:
+it is the name the conversation shows TODAY for a current member, which the newcomer reads on every
+later frame anyway, and which the screen marks "Défini avant votre arrivée" rather than attributing.
+Its only trace of the past is the entry's date and the setter the relayer states, and the screen
+names neither as a fact: the entry is unverified, the relayer's word. A broadcast or replayed bundle carries none,
 and an answer to a later ask carries none either. A bundle's entries are the relayer's word about what
 others did, so a relayer could forge a setter and pass the target's block check. So
 `mergeBundleNicknames` applies four limits:
