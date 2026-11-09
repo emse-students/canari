@@ -25,9 +25,15 @@
   interface Props {
     kind: BellTargetKind;
     targetId: string;
+    /**
+     * Only the glyph of the level (Bell, BellRing, BellOff) in a square target: for a header whose
+     * row of actions has no room for a wide select. The accessible name stays the label plus the
+     * level, so the choice is still read out.
+     */
+    iconOnly?: boolean;
   }
 
-  let { kind, targetId }: Props = $props();
+  let { kind, targetId, iconOnly = false }: Props = $props();
 
   let level = $state<BellLevel>('all');
   let loaded = $state(false);
@@ -78,13 +84,17 @@
   onValueChange={(v) => void choose(v)}
   label={m.bell_label()}
   disabled={!loaded || saving}
-  triggerClass="ui-control bg-cn-surface text-text-main inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 py-1.5 text-base font-semibold transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10"
+  triggerClass={iconOnly
+    ? 'ui-control ui-control--icon bg-cn-surface text-text-main inline-flex min-h-11 w-11 shrink-0 cursor-pointer items-center justify-center transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10'
+    : 'ui-control bg-cn-surface text-text-main inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 py-1.5 text-base font-semibold transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/10'}
 >
   {#snippet trigger(selected)}
     <span class="inline-flex items-center gap-2" data-testid="account-bell" data-level={level}>
-      <Icon size={16} aria-hidden="true" />
-      <span>{selected?.label ?? m.bell_label()}</span>
-      <ChevronDown size={14} aria-hidden="true" class="text-text-muted" />
+      <Icon size={iconOnly ? 18 : 16} strokeWidth={iconOnly ? 2.5 : undefined} aria-hidden="true" />
+      {#if !iconOnly}
+        <span>{selected?.label ?? m.bell_label()}</span>
+        <ChevronDown size={14} aria-hidden="true" class="text-text-muted" />
+      {/if}
     </span>
   {/snippet}
 </Picker>
