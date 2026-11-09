@@ -350,6 +350,30 @@ export const FORM_CREATE_KEY_REUSED = 'FORM_CREATE_KEY_REUSED';
 /** The 410 refusing a create key whose form was deleted (archived) since. */
 export const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
 
+/**
+ * The 400 refusing to move a PUBLISHED form to another association (or to none): its answers,
+ * payments, refunds, reminders and attachments are the association's it was published under.
+ */
+export const FORM_ASSOCIATION_FIXED = 'FORM_ASSOCIATION_FIXED';
+
+/**
+ * The 403 refusing to move a DRAFT between associations when the actor is not a member of BOTH the
+ * association it leaves and the one it joins - the creation rule, applied to each side.
+ */
+export const FORM_ASSOCIATION_NOT_YOURS = 'FORM_ASSOCIATION_NOT_YOURS';
+
+/**
+ * The 400 refusing to move a draft to an association that is not one: an id that is no UUID, or
+ * names no association (`forms."associationId"` carries no foreign key, so nothing else would).
+ */
+export const FORM_ASSOCIATION_UNKNOWN = 'FORM_ASSOCIATION_UNKNOWN';
+
+/** A UUID in its canonical textual form - what `associations.id` holds. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** An association id as a log names it: its first 8 characters, or `none` for a personal form. */
+const assocLabel = (id: string | null) => id?.slice(0, 8) ?? 'none';
+
 /** The unique index of a create key per owner (migration 146). */
 const FORMS_OWNER_CLIENT_CREATE_ID = 'forms_owner_client_create_id';
 
@@ -1149,6 +1173,76 @@ export class FormsService {
   }
 
   /**
+   * The association `form` belongs to once an edit naming `requested` is saved (owner, 2026-11-09:
+   * the autosave must not lock it).
+   *
+   * - ABSENT (`undefined`) means "leave it": the stored link.
+   * - The stored value again (`''` and `null` both mean personal) is no change.
+   * - A DRAFT may move - to another association, to none, or from none - when the actor may act for
+   *   BOTH sides by the creation rule: a member of the association it leaves AND of the one it joins
+   *   (a global admin always). The form taking an association no member of it chose, or leaving one
+   *   that keeps no say, is the walk-off the 2026-08-23 decision guarded against; a draft has no
+   *   answer, payment, reminder or attachment yet, so nothing else is tied to the link.
+   * - A PUBLISHED form may not move (`FORM_ASSOCIATION_FIXED`): its answers, payments and refunds,
+   *   cotisations granted, reminders, and the posts and events naming it belong to the association it
+   *   was published under. A new form is the way to offer it under another.
+   *
+   * A refusal is typed and logged, never a silently dropped field.
+   */
+  private async associationAfterEdit(
+    form: Form,
+    requested: string | null | undefined,
+    userId: string,
+    isGlobalAdmin: boolean
+  ): Promise<string | null> {
+    const stored = form.associationId ?? null;
+    if (requested === undefined) return stored;
+    const next = requested?.trim() || null;
+    if (next === stored) return stored;
+    const formLabel = form.id.slice(0, 8);
+    const move = `${assocLabel(stored)} -> ${assocLabel(next)}`;
+    if (form.status !== FORM_DRAFT) {
+      this.logger.log(`[FORMS] edit of ${formLabel} refused: a published form stays put (${move})`);
+      throw new BadRequestException({
+        code: FORM_ASSOCIATION_FIXED,
+        message:
+          'A published form stays with the association it was published under: its answers, ' +
+          'payments and reminders belong to it. Create a new form to offer it under another.',
+      });
+    }
+    // The id must name an association, for a global admin too: an id that is no UUID would reach
+    // the membership query as a 500, and a well-formed one naming nothing would be stored as is.
+    if (
+      next &&
+      (!UUID_RE.test(next) || !(await this.associationsService.namesByIds([next])).has(next))
+    ) {
+      this.logger.log(`[FORMS] draft ${formLabel} not moved (${move}): no such association`);
+      throw new BadRequestException({
+        code: FORM_ASSOCIATION_UNKNOWN,
+        message: 'The association this draft is moved to does not exist.',
+      });
+    }
+    if (!isGlobalAdmin) {
+      for (const side of [stored, next]) {
+        if (side && !(await this.associationsService.isMember(userId, side))) {
+          this.logger.log(
+            `[FORMS] draft ${formLabel} not moved (${move}): user=${userId.slice(0, 8)} is no member of ${assocLabel(side)}`
+          );
+          throw new ForbiddenException({
+            code: FORM_ASSOCIATION_NOT_YOURS,
+            message:
+              'Moving a draft between associations needs membership of the one it leaves and of the one it joins.',
+          });
+        }
+      }
+    }
+    this.logger.log(
+      `[FORMS] draft ${formLabel} moved: association ${move} by user=${userId.slice(0, 8)}${isGlobalAdmin ? ' (global admin)' : ''}`
+    );
+    return next;
+  }
+
+  /**
    * Updates a form's metadata and items. Gated by `assertFormManager`.
    *
    * `inTransaction`: the caller's transaction, which this edit's write joins - publishing an
@@ -1183,23 +1277,14 @@ export class FormsService {
       });
     }
 
-    // THE ASSOCIATION LINK IS FIXED AT CREATION (user decision, 2026-08-23). A form is either
-    // personal or an association's, and which one it is decides who owns it: MANAGE_FORMS on the
-    // association is a right over the association's forms, so letting a manager cut the link would
-    // let them walk off with a form, and re-pointing it would hand someone else's form to a third
-    // association. Neither has an answer to "who owns it now", so neither is offered.
-    //
-    // An attempt is refused rather than ignored: a silently dropped field is a save that reports
-    // success and did something else. An ABSENT field is not an attempt - it means "leave it" - so
-    // only a value that is present and different is a refusal.
-    if (input.associationId !== undefined) {
-      const requested = input.associationId.trim() || null;
-      if (requested !== (form.associationId ?? null)) {
-        throw new BadRequestException(
-          'A form stays with the association it was created for. Create a new form to move it.'
-        );
-      }
-    }
+    // The association the form WILL belong to: a DRAFT may move, a published form may not
+    // (`associationAfterEdit`). Every rule below reads this one, never the stored link.
+    const associationId = await this.associationAfterEdit(
+      form,
+      input.associationId,
+      userId,
+      isGlobalAdmin
+    );
 
     // ANONYMITY IS FIXED AT PUBLICATION for the same reason the association link is: turning it on
     // would promise anonymity to answers already stored with a name, and turning it off would
@@ -1264,18 +1349,38 @@ export class FormsService {
     const gridItems = await this.normalisedProductGrids(items, {
       isPublic: input.isPublic ?? form.isPublic,
       requiresPayment: input.requiresPayment ?? form.requiresPayment,
-      associationId: form.associationId ?? null,
+      associationId,
     });
     if (input.items !== undefined) input = { ...input, items: gridItems };
 
     // A draft is judged on collecting at its publication; a published form at every edit, on the
     // form as the edit WILL save it (its payment switches included).
     if (form.status !== FORM_DRAFT) {
-      await this.assertKindMayPrice(input, form.associationId, form);
-      await this.assertRespondentsCanPay(effective, form.associationId, 'edit');
+      await this.assertKindMayPrice(input, associationId, form);
+      await this.assertRespondentsCanPay(effective, associationId, 'edit');
     }
+    // A MOVED draft is judged on the cotisation settings it carries INTO the new association, the
+    // stored ones included: a revision that leaves `grantsCotisation` out keeps the stored grant, and
+    // that grant must be re-judged against the new association's tiers and its MANAGE_MEMBERS - or
+    // a move would grant the new association's cotisation without its right (review of #3198).
+    const moved = associationId !== (form.associationId ?? null);
+    const cotisationInput = moved
+      ? ({
+          ...input,
+          items,
+          grantsCotisation: input.grantsCotisation ?? form.grantsCotisation,
+          cotisationVariantKey:
+            input.cotisationVariantKey !== undefined
+              ? input.cotisationVariantKey
+              : form.cotisationVariantKey,
+          priceMatrix: input.priceMatrix !== undefined ? input.priceMatrix : form.priceMatrix,
+          submitCondition:
+            input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
+          requiresPayment: input.requiresPayment ?? form.requiresPayment,
+        } as CreateFormDto)
+      : input;
     await this.assertCotisationConfigValid(
-      { ...input, associationId: form.associationId },
+      { ...cotisationInput, associationId: associationId ?? undefined },
       { userId, isGlobalAdmin }
     );
     const {
@@ -1290,6 +1395,7 @@ export class FormsService {
     const opensBefore = form.opensAt ? new Date(form.opensAt).getTime() : null;
     Object.assign(form, {
       ...rest,
+      associationId,
       anonymous,
       // Absent keeps the stored list; a sent one (null and [] included) is stored canonical.
       ...(input.guestFields !== undefined
@@ -1313,6 +1419,34 @@ export class FormsService {
     // Publishing is its own conditional write; the edit leaves the column alone.
     const { status, ...written } = form;
     const withStatus = <T extends object>(saved: T) => ({ ...saved, status });
+    // A MOVE was judged on the status read before the checks: a publication committing since would
+    // otherwise see its form moved after it went live. Outside a publication (which holds the row
+    // already), the write re-reads the status under the row's lock and refuses a form published
+    // meanwhile.
+    if (moved && !inTransaction) {
+      const saved = await this.formRepo.manager.transaction(async (m) => {
+        const locked = await m.findOne(Form, {
+          where: { id: formId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (locked?.status !== FORM_DRAFT) {
+          this.logger.log(
+            `[FORMS] draft ${formId.slice(0, 8)} not moved: it was published during the edit`
+          );
+          throw new BadRequestException({
+            code: FORM_ASSOCIATION_FIXED,
+            message: 'This form was published during the edit: it stays with its association.',
+          });
+        }
+        if (citedAfter.length > 0) {
+          await this.formItemImages.claimForSave(m, form.items, formId, userId);
+        }
+        return m.save(Form, written as Form);
+      });
+      const dropped = citedBefore.filter((id) => !citedAfter.includes(id));
+      if (dropped.length > 0) await this.formItemImages.releaseUncited(dropped, 'question edited');
+      return withStatus(saved);
+    }
     // THE OPENING MOVED on a PUBLISHED form (engagement WP-4): its reminders follow it in the
     // transaction that saves it. A draft has no reminder yet - its publication writes them.
     const opensAfter = form.opensAt ? new Date(form.opensAt).getTime() : null;

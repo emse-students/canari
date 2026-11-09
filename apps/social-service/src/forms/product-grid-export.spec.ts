@@ -36,7 +36,7 @@ const GRID_WORDS: ProductGridExportLabels = {
   total: 'Total',
   amount: 'Montant',
   received: 'Paye ou gratuit',
-  awaitingCash: 'Especes non recues',
+  awaitingCash: 'Paiement sur place non recu',
 };
 const LABELS: ExportLabels = {
   date: 'Date',
@@ -44,7 +44,7 @@ const LABELS: ExportLabels = {
   lastName: 'Nom',
   amount: 'Montant paye',
   status: 'Statut',
-  statuses: { paid: 'Paye', pending_cash: 'Especes', free: 'Gratuit' },
+  statuses: { paid: 'Paye', pending_cash: 'Sur place', free: 'Gratuit' },
   // The guest marker column of the main sheet: these answers include a guest's.
   guest: 'Invite',
   productGrid: GRID_WORDS,
@@ -205,7 +205,7 @@ describe('the priced grid in the XLSX export', () => {
       ['Ada Lovelace', 'Sweat', 'Vert', 'M', 'Autres', 2, 28, 56, 'Paye'],
       ['Ada Lovelace', 'Sweat', 'Noir', 'L', 'Autres', 1, 28, 28, 'Paye'],
       [`Invite ${guestReference('s-guest')}`, 'Sweat', 'Rose', 'M', 'Autres', 1, 30, 30, 'Paye'],
-      ['Alan Turing', 'Sweat', 'Vert', 'L', 'Autres', 1, 28, 28, 'Especes'],
+      ['Alan Turing', 'Sweat', 'Vert', 'L', 'Autres', 1, 28, 28, 'Sur place'],
       ['Grace Hopper', 'Sweat', 'Vert', 'M', 'Autres', 1, 28, 28, 'cancelled'],
     ]);
   });
@@ -222,7 +222,7 @@ describe('the priced grid in the XLSX export', () => {
       ['Rose', 1, 0, 1, 30],
       ['Total', 3, 1, 4, 114],
       ['Montant (EUR)', 86, 28],
-      ['Especes non recues'],
+      ['Paiement sur place non recu'],
       ['', 'M', 'L', 'Total', 'Montant (EUR)'],
       ['Vert', 0, 1, 1, 28],
       ['Noir', 0, 0, 0, 0],
