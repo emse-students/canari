@@ -27,4 +27,16 @@ ignore = [
   # P-256/P-384/secp256k1 secret is ever generated or used. Lifted by an openmls_rust_crypto on
   # elliptic-curve 0.14; the retirement step of code-analysis.yml fails when it is not reported.
   "RUSTSEC-2026-0387",
+  # libsqlite3-sys 0.30.1 (RUSTSEC-2026-0459, CVE-2026-119375, 2026-10-30), wants >=0.39.0 (bundled
+  # SQLite 3.54): a database opened with a crafted sibling -wal of a different page size returns
+  # uninitialised page-cache memory. No fix can be taken: sqlx-sqlite 0.8.6 requires ^0.30.1, 0.9.0
+  # (the newest) <0.38, and tauri-plugin-sql 2.6.0 / 3.0.0-alpha.3 both require sqlx ^0.8.
+  # NOT REACHABLE: the only files opened are canari_<userId>.db (app_config_dir, via the plugin) and
+  # mls_pending.db (app_data_dir), fixed names in the app's private sandbox (Android internal storage,
+  # allowBackup=false; the iOS container); nothing imports, restores or opens a database from outside
+  # it, so planting the crafted pair already requires the access the leak would grant. Lifted by an
+  # sqlx release accepting libsqlite3-sys >=0.39 and a tauri-plugin-sql on it; then delete this entry.
+  # RE-EXAMINE BY 2027-01-31: no such release by then means the vendored fork in
+  # docs/wiki/backlog.d/p2-sqlite-bundled-needs-sqlx-release.md.
+  "RUSTSEC-2026-0459",
 ]

@@ -165,8 +165,26 @@ A non-recipient never sees an addressed frame, so the sender's generation moves 
 member last decrypted. OpenMLS derives forward on the next frame it does see, up to
 `maximum_forward_distance` (2 000, `sender_ratchet_config` (2000, 2000)). Only CONSECUTIVE addressed
 frames from one sender in one epoch count, because any frame the member does receive resets the
-distance. A chunk is 200 messages, so 2 000 consecutive frames would be one answer of 400 000
-messages. Graine accepted the same bound
+distance.
+
+**One answer is not the unit; one Add is** (since #3185). The inviter's join push follows EVERY Welcome
+the server stored (`joinPush.ts`), and the pushes run one after another, so one bulk Add of D devices
+sends D pushes back to back, all in the epoch that Add opened, each addressed to one newcomer - and
+every member, the other newcomers included, skips all of them. The distance a member must cross to
+read the inviter's next frame in that epoch is the SUM, over the devices of that Add, of the frames
+each push took:
+
+- a first-time newcomer: **1** frame (everything before the arrival is withheld, so the push is the
+  state-only frame, or one chunk of what was sent since the Add);
+- a returning member: up to `ceil(entitled messages / 200)` frames (a chunk is 200 messages).
+
+**Nothing caps the devices of one Add** (`addMembersBulk` takes the whole list), so the bound is stated
+here rather than enforced: the 2 000 is crossed by one Add of more than **2 000 first-time devices**
+(about 1 000 people at two devices each), or by fewer returning members whose entitled stores add up
+to more than **400 000 messages**. Past it, the members who skipped the run do not decrypt the
+inviter's next frame of that epoch. A group conversation approaching either number is the moment to bound the Add in code (a cap on `inviteMembersToGroup`'s list, with
+a test), not to raise `maximum_forward_distance`, whose 2 000 caps the keys a receiver derives.
+Graine accepted the same bound
 ([channel-encryption §23](channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)).
 The durable rule that forbade addressing an application message is narrowed accordingly
 ([durable-rules](../durable-rules.md)).

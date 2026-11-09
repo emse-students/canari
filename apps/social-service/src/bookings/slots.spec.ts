@@ -408,6 +408,14 @@ describe('a window crosses AT MOST ONE midnight (review of #1993)', () => {
       expect(Date.now() - started).toBeLessThan(1_000);
     });
 
+    it('a step space with NO maximum accepts a long booking, and still has a safety cap', () => {
+      const unbounded: SlotConfig = { ...step(30), maxSteps: null };
+      const tenHours = { startMs: ms('2026-11-02T08:00:00Z'), endMs: ms('2026-11-02T18:00:00Z') };
+      expect(rangeLengthRefusal(unbounded, tenHours)).toBeNull();
+      const months = { startMs: ms('2026-11-02T08:00:00Z'), endMs: ms('2027-02-02T08:00:00Z') };
+      expect(rangeLengthRefusal(unbounded, months)).toBe('too-many-steps');
+    });
+
     it('keeps a range exactly maxSteps long, and an empty one is misaligned', () => {
       const twoHours = { startMs: ms('2026-11-02T22:00:00Z'), endMs: ms('2026-11-03T00:00:00Z') };
       expect(rangeLengthRefusal(step(60, 2), twoHours)).toBeNull();
