@@ -148,6 +148,8 @@
      * instead of floating over them, which is what it did (user's screenshot, 2026-10-13).
      */
     notice?: Snippet;
+    /** The conversation's nickname scope ("Modifier les pseudos"): the reply bar names its sender in it. */
+    nicknameScope?: string | null;
   }
 
   let {
@@ -171,6 +173,7 @@
     videoPreparation,
     mentionRoster,
     notice,
+    nicknameScope = null,
   }: Props = $props();
 
   /**
@@ -625,10 +628,12 @@
     }
 
     const senderId = replyingTo.senderId;
-    replySenderDisplayName = getUserDisplayNameSync(senderId, senderId);
+    const scope = nicknameScope ?? undefined;
+    replySenderDisplayName = getUserDisplayNameSync(senderId, senderId, scope);
     resolveUserDisplayName(senderId).then((resolved) => {
       if (resolved && replyingTo?.senderId === senderId) {
-        replySenderDisplayName = resolved;
+        // Through the scope again: the resolved profile name must not cover a nickname.
+        replySenderDisplayName = getUserDisplayNameSync(senderId, resolved, scope);
       }
     });
   });

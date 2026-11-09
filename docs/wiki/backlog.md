@@ -2063,21 +2063,6 @@ Another tab's "Take over" makes the changing leader `releaseLeadership`, and the
 
 From [offline-and-weak-network section 15](frontend/offline-and-weak-network.md#15-an-offline-cold-start-sends-nothing-it-knows-will-fail-2026-10-15). (a) An answerer holding nothing answers a HISTORY ask by silence, so the requester cannot record an answer and re-asks its named online device once per launch: SHIPPED in `v1.3.0` as WP-HOLD-NOTHING (#2027, [channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)); owed one bench reading. (b) The push context written after the MLS init is not re-attempted after an offline start: the native side keeps the previous launch's context until the next start; a retry on reconnect must check the device key has not changed meanwhile. (c) When only OUR OWN other devices could answer a history ask and none is online, nothing re-asks when one comes online in the same session: `parkHistoryUntilOnline` rides `whenAnyComesOnline`, which watches USERS, and our own user is online by definition, so it would fire at once. The fix is a per-device presence waiter (the roster already carries `onlineDevices`); until then the next start re-reads presence. (d) A no-network spell (`auth.refresh`) is ended by the reconnect or the foreground: a STALE `navigator.onLine === false` whose one spell refresh failed while the server was down, followed by the server coming back with no `online` event and no foreground, keeps refusing until one of the two.
 
-## P3 - Asked by the USER on 2026-10-14 - "Modifier les pseudos" for a group and a community: built, readings owed
-
-> *"Une fonctionnalite comme sur Messenger : 'Modifier les pseudos', un ecran qui liste les membres du groupe ou de la communaute, avec 'Definir un pseudo' et un crayon a cote de chaque membre."* (not urgent)
-
-**BUILT (2026-11-08), as the user decided it** (2026-10-14: two mechanisms; 2026-10-18: "set by X", a nickname stays when its setter leaves). A DM or group carries a silent `nickname` MLS frame any member may send, restated by every `history_bundle` so a late joiner gets it; a community uses three columns on `channel_members` (migration 149) that only a moderator writes - the target may clear their own - re-checked by the server, announced on `workspace.updated`. One resolver override (`displayName.ts` with a scope), never a push, blocks refused or hidden, community nicknames reportable per version. The mechanism, the choices and their limits: [chat](frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08).
-
-**Owed, on a pre-release (delete this entry when all pass):**
-
-1. Two devices in a group: set, then reset, a nickname - both show it, with who set it, and a third device that was offline converges from the log.
-2. A member added to that group AFTER the nickname shows it on first open (the join push restates the register).
-3. A community moderator sets a nickname; another member with the salon open sees it live, and a plain member is offered no pencil.
-4. The target who blocked the setter does not see their own nickname (group); the server answers `USER_BLOCKED` (community).
-5. A build older than this one in the same group and community logs nothing new for the frame and the event.
-6. A reported community nickname appears in `/admin/moderation` with its text, and with none once changed.
-
 ## Android back-gesture zone on the right edge (own bubbles) - DECIDED by the user 2026-10-14, MERGED as #1883, owed a reading
 
 Decided: declare system gesture exclusion rects for the right edge band while a conversation is open (a reply swipe started in an own bubble's last 17.5 px is a system Back: 11 of 11 on the Mi 9T). **Owed: a Mi 9T reading on the next pre-release.**

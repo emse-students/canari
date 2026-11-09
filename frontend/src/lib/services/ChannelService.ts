@@ -1102,8 +1102,8 @@ export class ChannelService {
   }
 
   /**
-   * Every nickname state of a community, set and cleared alike ("Modifier les pseudos"). The answer is
-   * MERGED by date into the community's register (`mergeNicknameEntries`), never replacing it.
+   * Every nickname state of a community, set and cleared alike ("Modifier les pseudos"): the server's
+   * whole register, read into the client's by `loadCommunityNicknames` (which drops who it omits).
    */
   async listCommunityNicknames(workspaceId: string): Promise<CommunityNicknameDto[]> {
     const res = await this.fetchWithAuth(

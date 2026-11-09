@@ -853,9 +853,10 @@ function bundleFrame(
         // would make it depend on which chunk survived. Merged per entry on `at`, so repeating it
         // is free in exactly the way a `max` is.
         ...(state?.pins?.length ? { pins: state.pins } : {}),
-        // The nickname register, restated by every chunk exactly like the pins and merged the same
-        // way. An older reader ignores the field.
-        ...(state?.nicknames?.length ? { nicknames: state.nicknames } : {}),
+        // The nickname register rides the JOIN PUSH only - the one bundle a reader takes it from
+        // (`mergeBundleNicknames`): in a broadcast it would be a relayer's word nobody believes.
+        // An older reader ignores the field.
+        ...(answer?.join && state?.nicknames?.length ? { nicknames: state.nicknames } : {}),
       })
     )
   );

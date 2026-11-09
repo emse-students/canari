@@ -27,7 +27,12 @@ describe('applyNicknameFrame', () => {
       log
     );
     expect(outcome).toBe('applied');
-    expect(nicknameEntry('g1', 'bob')).toEqual({ nickname: 'Capitaine', setBy: 'ann', at: 10 });
+    expect(nicknameEntry('g1', 'bob')).toEqual({
+      nickname: 'Capitaine',
+      setBy: 'ann',
+      at: 10,
+      verified: true,
+    });
   });
 
   it('applies a reset (null or empty once normalized)', () => {

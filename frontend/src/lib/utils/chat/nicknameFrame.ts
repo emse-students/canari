@@ -1,4 +1,4 @@
-import { applyNickname } from '$lib/utils/users/conversationNicknames.svelte';
+import { applyNickname, boundedNicknameAt } from '$lib/utils/users/conversationNicknames.svelte';
 import { normalizeNickname } from '$lib/utils/users/nicknameRules';
 
 /** What one `nickname` frame did to the register. */
@@ -16,14 +16,18 @@ export type NicknameFrameOutcome = 'applied' | 'stale' | 'refused';
  *   (`normalizeNickname`), since no server refuses a malformed one for us. A refusal ACCUSES: a build
  *   of this app never sends one, so reaching it means a peer that is not one.
  * - `at` is the sender's clock; a frame without one is dated `fallbackAt` (the log entry's time on a
- *   replay, the receipt on a live frame).
+ *   replay, the receipt on a live frame). It is BOUNDED by `serverAt` - the server's time for the
+ *   frame (its queue time live, its log row's time on a replay) - plus a small skew
+ *   (`boundedNicknameAt`): an unbounded date would let one frame dated next year freeze a nickname
+ *   against every later change.
  */
 export function applyNicknameFrame(
   scope: string,
   data: { userId?: unknown; nickname?: unknown; at?: unknown } | null | undefined,
   senderNorm: string,
   fallbackAt: number,
-  log: (msg: string) => void
+  log: (msg: string) => void,
+  serverAt?: number
 ): NicknameFrameOutcome {
   const userId = typeof data?.userId === 'string' ? data.userId.trim().toLowerCase() : '';
   const normalized = normalizeNickname(typeof data?.nickname === 'string' ? data.nickname : null);
@@ -33,7 +37,7 @@ export function applyNicknameFrame(
     );
     return 'refused';
   }
-  const at = Number(data?.at) || fallbackAt;
+  const at = boundedNicknameAt(Number(data?.at) || fallbackAt, serverAt);
   const applied = applyNickname(scope, userId, {
     nickname: normalized.value,
     setBy: senderNorm,

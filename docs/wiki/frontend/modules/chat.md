@@ -5044,8 +5044,10 @@ member list (`ChannelMembersList`, the COMMUNITY's members). What the screen off
 what it comes to is `nicknameActions.ts` (`saveNickname`, one typed outcome per sentence).
 
 **Two mechanisms, one register shape** (`conversationNicknames.svelte.ts`): per scope, per member,
-`{ nickname | null, setBy, at }` merged by date - the later wins; on a tie a reset wins, then the larger
-`setBy + nickname`, so every device settles the same pair the same way. A reset is DATED like a set, so
+`{ nickname | null, setBy, at, verified }` merged by date - the later wins; on a tie a reset wins, then
+the larger `setBy + nickname`, so every device settles the same pair the same way. **An authenticated
+entry (`verified`: an MLS frame, the viewer's own change, the server's answer) always beats an
+unverified one, whatever the dates, and is never evicted by the 500-entry cap.** A reset is DATED like a set, so
 a late statement cannot resurrect a cleared name. Nothing is keyed by the setter: a nickname stays when
 its setter leaves.
 
@@ -5055,14 +5057,33 @@ its setter leaves.
 | Carried by | a silent `nickname` system frame, `{ userId, nickname, at }`, `DELIVERY.mutation` (`setConversationNickname`) | `channel_members.nickname`, `nicknameSetBy`, `nicknameSetAt` (migration 149), written by `PUT /api/channels/workspaces/:id/nicknames/:userId` |
 | Checked by | every reader: the setter is the MLS-authenticated sender, never a payload field; the value is held to the contract (`applyNicknameFrame`) | the server, on every write (`CommunityNicknamesService.set`, `memberCanModerate` read from the role rows) |
 | Reaches others | the group's shared log (live and replay) | `workspace.updated { workspaceId, nickname }` to every member, plus `GET .../nicknames` read once per session at the first salon opened and at each opening of the screen |
-| Kept | per device, `localStorage` `canari_nicknames_<groupId>` (500 entries, oldest evicted) | in memory; the server holds it |
+| Kept | per device AND per account, `localStorage` `canari_nicknames:v1:<account>:<groupId>` (`ACCOUNT_KEY`; 500 entries, oldest UNVERIFIED evicted), wiped at sign-out (`clearUserLocally`) and by the account deletion's sweep (`eraseAccountRecordsLocally`) | in memory; the server holds it |
 
-**The late joiner.** A member added after a `nickname` frame went out never receives it. Every
-`history_bundle` restates the register (`nicknames`, beside `pins`), and the inviter's join push sends
-its state even when every message is withheld - so the first bundle a new member gets carries the
-names. A diff that converges, no timer, no re-announcement. **The limit, named:** a bundle's entries
-are taken on the relayer's word about who set them, the same trust model as the pin register; the live
-frame and the replay are authenticated, the restatement is not.
+**The late joiner.** A member added after a `nickname` frame went out never receives it. The
+inviter's JOIN PUSH to the new device restates the register (`nicknames`, beside `pins`), even when
+every message is withheld, so a new member gets the names in the first bundle. That join push is the
+ONLY bundle a register is taken from (review of #3177). A broadcast or replayed bundle carries none,
+and an answer to a later ask carries none either. A bundle's entries are the relayer's word about what
+others did, so a relayer could forge a setter and pass the target's block check. So
+`mergeBundleNicknames` applies four limits:
+
+- it takes every entry UNVERIFIED;
+- it requires the target AND the setter to be current members of the MLS tree
+  (`getGroupMemberIdentities`);
+- it takes at most as many entries as the group has members;
+- it bounds each entry's date by the bundle's server time.
+
+An unverified entry naming the viewer never takes the "I set it myself" shortcut, and any frame
+supersedes it.
+
+**The sender's clock is bounded by the server's.** A frame's `at` is the sender's claim. Left
+unbounded, a date far in the future would freeze a nickname against every later change. Every path
+clamps it to the server time it already has plus 5 minutes (`boundedNicknameAt`,
+`NICKNAME_CLOCK_SKEW_MS`):
+
+- the live frame uses `deliveryMeta.queuedCreatedAt`;
+- the replay uses its log entry's timestamp;
+- a bundle uses its own `queuedCreatedAt`.
 
 **Old clients.** An unknown system event is ACKed silently, so an older build ignores the frame. The
 community change rides `workspace.updated`, whose absent fields every build reads as "unchanged"; a new
@@ -5070,10 +5091,18 @@ event type would have been logged as an error by every older one.
 
 **The name is resolved in ONE place.** `getUserDisplayNameSync` / `getUserFirstNameSync`
 (`displayName.ts`) and `userDisplayName` / `userDisplayNames` (`displayNames.svelte.ts`) take an
-optional `scope`; with it, `visibleNickname` overrides the profile name, without it nothing does. The
-thread (sender labels, typing line), the DM header and the member lists pass the open conversation's
-scope (`MainChatPage`'s `nicknameScope`: a salon reads its COMMUNITY's register, `community:<id>`);
-nothing else does. The register's reactivity is ONE module-level revision every reader reads and every
+optional `scope`; with it, `visibleNickname` overrides the profile name, without it nothing does. Every name drawn INSIDE a conversation passes the open conversation's scope (`MainChatPage`'s
+`nicknameScope`; a salon reads its COMMUNITY's register, `community:<id>`):
+
+- the thread: sender labels, the typing line, the reply caption and quote (`MessageBubble`), the reel
+  viewer's author (`MessageMediaRenderer`) and the "seen by" list (`MessageInfoTooltip`);
+- the composer's reply bar;
+- the DM header and the DM's sidebar tile (`ConversationTile`, scoped by its own id);
+- the member lists (`ChatGroupPanel`, `ChannelMembersList`);
+- the shared-media panel;
+- the call overlay's title (the call's group).
+
+Nothing else passes it. An admin access list and the OS's media session stay unscoped. The register's reactivity is ONE module-level revision every reader reads and every
 write bumps: a register first created inside a `$derived` would be a source of that derived, which
 Svelte does not track, and the screen kept the old name until that was found.
 
@@ -5087,12 +5116,30 @@ nicknames anyway - one rule for both kinds.
 (`403 USER_BLOCKED`, `isBlockedBetween`, either direction). In a group no server reads the frame and
 a block is private, so no third member can know of one: the SETTER's screen asks `block-status` before
 sending (and sends nothing when it cannot ask), and the TARGET's own devices show a nickname of
-themselves set by someone else only once `block-status` for that setter answered "clear" - keyed by
-viewer and setter, asked once, asked again after a failure.
+themselves set by someone else only once `block-status` for that setter answered "clear". The answer
+is keyed by viewer and setter, and asked once. A failed ask is a state, `unknown`, which the read
+depends on. `connectivity.onReconnect` clears it, and the next read asks again: no timer, and no
+dependence on an unrelated re-render. **The remedy survives the hiding.** The screen reads the RAW
+entry, so a target who cannot see a nickname of themselves still sees "a nickname you cannot see is
+set" (`chat_nicknames_hidden_for_you`), with its reset.
 
 **Limits** are the profile's, in `libs/contracts/conversation-nickname.json`, walked by both
-`nicknameRules.contract.test.ts` and social-service's `community-nicknames.spec.ts`: NFKC, control and
-format characters dropped, trimmed, empty means reset, at most 100 code points (`nickname_too_long`).
+`nicknameRules.contract.test.ts` and social-service's `community-nicknames.spec.ts`:
+
+- NFKC normalization;
+- control, format and line/paragraph separator characters dropped (`stripInvisible`), with two
+  exceptions that are writing, not hiding:
+  - an emoji's glue, judged per grapheme as #3175's role labels are: U+200D and the tag characters
+    stay inside a grapheme holding a pictographic, or one starting with U+1F3F4 (families, the rainbow
+    and England flags);
+  - U+200C/U+200D between two letters or marks (Persian, the Indic scripts);
+- trimmed; empty means reset;
+- at most 100 code points (`nickname_too_long`).
+
+**The community list is a snapshot, and is read again.** `loadCommunityNicknames` runs once per
+connection: the read is cleared when the socket drops and re-runs on the reconnect. It drops any held
+entry the list no longer names (a member who left, a membership made afresh, whose `nicknameSetAt` is
+NULL), except an entry a live event changed while the list was in flight.
 
 **Reports and reversal.** A community nickname is reportable (`contentType: 'nickname'`) by a member
 of that community; the subject is one VERSION, `<member row id>@<set-at ms>`, so a nickname changed

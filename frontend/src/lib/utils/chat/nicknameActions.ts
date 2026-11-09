@@ -4,7 +4,8 @@ import { isBlockedWith, USER_BLOCKED_CODE } from '$lib/users/blocks';
 import {
   applyNickname,
   communityNicknameScope,
-  mergeNicknameEntries,
+  dropNickname,
+  nicknameEntries,
 } from '$lib/utils/users/conversationNicknames.svelte';
 import { NICKNAME_TOO_LONG, normalizeNickname } from '$lib/utils/users/nicknameRules';
 import { mayNameMember } from './nicknamePermission';
@@ -95,6 +96,7 @@ export async function saveNickname(
 
   try {
     const entry = await channelService.setCommunityNickname(place.workspaceId, target, nickname);
+    eventMarks.set(markKey(place.workspaceId, entry.userId), ++eventCounter);
     applyNickname(communityNicknameScope(place.workspaceId), entry.userId, entry);
     console.info(
       `[NICKNAME] ${target.slice(0, 8)} ${nickname === null ? 'cleared' : 'set'} in community ${place.workspaceId.slice(0, 8)}`
@@ -111,21 +113,50 @@ export async function saveNickname(
   }
 }
 
+// A COMMUNITY'S LIST IS THE SERVER'S WHOLE REGISTER, and it must be able to CLEAR: a member who left,
+// or whose membership was created afresh (its `nicknameSetAt` NULL), is absent from it, and the entry
+// this device held for them goes. But an event that arrived WHILE the list was in flight is newer
+// than the list, so what it touched is kept: each event bumps the member's mark, and a drop needs a
+// mark not newer than the list's start. Ordering by a counter, never by a clock.
+const eventMarks = new Map<string, number>();
+let eventCounter = 0;
+const markKey = (workspaceId: string, userId: string) =>
+  `${workspaceId}|${userId.trim().toLowerCase()}`;
+
 /**
- * Merges the server's list into a community's register (by date - see `conversationNicknames`).
- * Returns false when it could not be read; the register keeps what it held, and that is said here.
+ * Reads a community's list into its register: each entry applied by date, and every member the list
+ * does not name dropped unless a live event touched them since the read began (see above). Returns
+ * false when it could not be read; the register keeps what it held, and that is said here.
  */
 export async function loadCommunityNicknames(workspaceId: string): Promise<boolean> {
+  const startedAt = eventCounter;
+  let entries: Awaited<ReturnType<typeof channelService.listCommunityNicknames>>;
   try {
-    const entries = await channelService.listCommunityNicknames(workspaceId);
-    mergeNicknameEntries(communityNicknameScope(workspaceId), entries);
-    return true;
+    entries = await channelService.listCommunityNicknames(workspaceId);
   } catch (e) {
     console.warn(
       `[NICKNAME] nicknames of community ${workspaceId.slice(0, 8)} unreadable - names show as profiles until the next read: ${String(e)}`
     );
     return false;
   }
+  const scope = communityNicknameScope(workspaceId);
+  const named = new Set<string>();
+  for (const entry of entries) {
+    named.add(entry.userId.trim().toLowerCase());
+    applyNickname(scope, entry.userId, entry);
+  }
+  let dropped = 0;
+  for (const held of nicknameEntries(scope)) {
+    if (named.has(held.userId)) continue;
+    if ((eventMarks.get(markKey(workspaceId, held.userId)) ?? 0) > startedAt) continue;
+    if (dropNickname(scope, held.userId)) dropped++;
+  }
+  if (dropped > 0) {
+    console.info(
+      `[NICKNAME] ${dropped} nickname(s) of community ${workspaceId.slice(0, 8)} no longer on the server - dropped`
+    );
+  }
+  return true;
 }
 
 /** Applies the `nickname` a `workspace.updated` event carries, to the community's register. */
@@ -137,6 +168,7 @@ export function applyCommunityNicknameEvent(workspaceId: string, raw: unknown): 
     );
     return;
   }
+  eventMarks.set(markKey(workspaceId, entry.userId), ++eventCounter);
   applyNickname(
     communityNicknameScope(workspaceId),
     entry.userId,

@@ -143,15 +143,20 @@
       : null
   );
 
-  // A COMMUNITY'S NICKNAMES ARE READ ONCE PER SESSION, at the first salon of it opened; the live
-  // `workspace.updated` event keeps them current after that. A failed read is forgotten so the next
-  // opening asks again - an opening is the trigger, never a timer. A plain Set: the effect must not
+  // A COMMUNITY'S NICKNAMES ARE READ ONCE PER SOCKET, at the first salon of it opened; the live
+  // `workspace.updated` event keeps them current while the socket is up. When it drops, every read is
+  // forgotten - the events missed meanwhile are only in the list - so the open salon's community is
+  // read again as soon as it reconnects, and any other at its next opening. A failed read is forgotten
+  // too. The triggers are a connection and an opening, never a timer. A plain Set: the effect must not
   // re-run on its own bookkeeping.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentional: see comment above
   const nicknamesRead = new Set<string>();
   $effect(() => {
+    if (!session.isWsConnected) nicknamesRead.clear();
+  });
+  $effect(() => {
     const workspaceId = selectedChannelWorkspaceId;
-    if (!workspaceId || nicknamesRead.has(workspaceId)) return;
+    if (!session.isWsConnected || !workspaceId || nicknamesRead.has(workspaceId)) return;
     nicknamesRead.add(workspaceId);
     void loadCommunityNicknames(workspaceId).then((ok) => {
       if (!ok) nicknamesRead.delete(workspaceId);
@@ -1814,6 +1819,7 @@
             conversationId={selectedConversationId}
             authToken={session.authToken}
             {loadSharedContent}
+            {nicknameScope}
           />
         {:else if sidePanelKind === 'conversation'}
           <ChatGroupPanel

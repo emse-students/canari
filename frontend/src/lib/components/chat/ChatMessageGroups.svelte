@@ -263,6 +263,7 @@
         <div class="my-3 flex justify-center">
           <MessageBubble
             messageId={msg.id}
+            {nicknameScope}
             senderId={msg.senderId}
             content={msg.content}
             timestamp={messageDate(msg)}
@@ -339,6 +340,7 @@
 
             <MessageBubble
               messageId={msg.id}
+              {nicknameScope}
               senderId={msg.senderId}
               content={msg.content}
               timestamp={messageDate(msg)}

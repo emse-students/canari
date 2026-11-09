@@ -52,7 +52,12 @@ describe('saveNickname in an MLS room', () => {
     expect(await saveNickname(group(send), 'Me', 'Bob', '  Capitaine ')).toBe('saved');
     const [userId, nickname, at] = send.mock.calls[0] as unknown as [string, string, number];
     expect([userId, nickname]).toEqual(['bob', 'Capitaine']);
-    expect(nicknameEntry('g1', 'bob')).toEqual({ nickname: 'Capitaine', setBy: 'me', at });
+    expect(nicknameEntry('g1', 'bob')).toEqual({
+      nickname: 'Capitaine',
+      setBy: 'me',
+      at,
+      verified: true,
+    });
   });
 
   it('leaves the register untouched when the queue refuses the frame', async () => {
@@ -150,6 +155,23 @@ describe('the community register is fed by the list and the event, merged by dat
     listCommunityNicknames.mockRejectedValue(new Error('offline'));
     expect(await loadCommunityNicknames('w1')).toBe(false);
     expect(nicknameEntry(scope, 'bob')?.nickname).toBe('Kept');
+  });
+
+  it('drops a held entry the list no longer names - a member who left, a membership made afresh', async () => {
+    applyCommunityNicknameEvent('w1', { userId: 'bob', nickname: 'Gone', setBy: 'mod', at: 5 });
+    listCommunityNicknames.mockResolvedValue([]);
+    expect(await loadCommunityNicknames('w1')).toBe(true);
+    expect(nicknameEntry(scope, 'bob')).toBeNull();
+  });
+
+  it('keeps an entry an event brought while the list was in flight', async () => {
+    let answer: (v: unknown[]) => void = () => {};
+    listCommunityNicknames.mockReturnValue(new Promise((r) => (answer = r)));
+    const loading = loadCommunityNicknames('w1');
+    applyCommunityNicknameEvent('w1', { userId: 'bob', nickname: 'Fresh', setBy: 'mod', at: 30 });
+    answer([]);
+    expect(await loading).toBe(true);
+    expect(nicknameEntry(scope, 'bob')?.nickname).toBe('Fresh');
   });
 
   it('an event naming nobody is accused, not applied', () => {

@@ -37,6 +37,8 @@
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   interface Props {
+    /** The conversation's nickname scope ("Modifier les pseudos"): names drawn here are read in it. */
+    nicknameScope?: string | null;
     /** Parsed media descriptor from the message envelope, or null for text-only messages. */
     mediaRef: MediaRef | null;
     /** Decrypted object URL for the media blob, or null while loading. */
@@ -141,6 +143,7 @@
     uploadFailedLabel = m.upload_failed_label(),
     onCancelUpload,
     onRetryUpload,
+    nicknameScope = null,
   }: Props = $props();
 
   /**
@@ -171,7 +174,9 @@
     console.debug(`[chat-reel] ${messageId.slice(0, 8)} answered 410 in the viewer - recorded`);
     onReelPurged?.(at);
   }
-  const reelSenderName = $derived(senderId ? getUserDisplayNameSync(senderId, senderId) : '');
+  const reelSenderName = $derived(
+    senderId ? getUserDisplayNameSync(senderId, senderId, nicknameScope ?? undefined) : ''
+  );
   const reelPost = $derived(
     showReelViewer && mediaRef && isReel
       ? reelMessageAsPost({

@@ -61,16 +61,21 @@
     members.map((id) => {
       const userId = id.trim().toLowerCase();
       const shown = visibleNickname(scope, userId);
-      const entry = shown === null ? null : nicknameEntry(scope, userId);
+      // The RAW entry decides the reset: a nickname the viewer is not shown (set by someone they
+      // stand in a block with, or not checked yet) is still there for everyone else, and the reset
+      // is the remedy - hiding it with the name would take the remedy away (review of #3177).
+      const raw = nicknameEntry(scope, userId);
       const isSelf = userId === viewer;
+      const held = raw?.nickname != null;
       return {
         userId,
         isSelf,
         nickname: shown,
-        setBy: entry?.setBy ?? null,
-        reportSubject: entry?.reportSubject ?? null,
+        hiddenFromViewer: held && shown === null,
+        setBy: shown === null ? null : (raw?.setBy ?? null),
+        reportSubject: shown === null ? null : (raw?.reportSubject ?? null),
         canEdit: mayNameMember(standing, { isSelf, isReset: false }),
-        canReset: shown !== null && mayNameMember(standing, { isSelf, isReset: true }),
+        canReset: held && mayNameMember(standing, { isSelf, isReset: true }),
       };
     })
   );
@@ -224,7 +229,11 @@
                   link={false}
                   class="text-text-main truncate text-sm font-semibold"
                 />
-                {#if row.canEdit}
+                {#if row.hiddenFromViewer}
+                  <div data-nickname-hidden class="text-text-muted text-xs">
+                    {m.chat_nicknames_hidden_for_you()}
+                  </div>
+                {:else if row.canEdit}
                   <div class="text-text-muted text-xs">{m.chat_nicknames_set_placeholder()}</div>
                 {/if}
               {/if}

@@ -121,7 +121,10 @@
   // Optimistic rows: invitees still in flight and not yet in the authoritative member list.
   // THE NAMES THE REMOVE CONTROL ANNOUNCES. Every other cell of a member row renders a resolved
   // name; the control announced the raw id, which is the one surface that exists to be read out.
-  const memberNames = userDisplayNames(() => groupMembers);
+  const memberNames = userDisplayNames(
+    () => groupMembers,
+    () => groupId || null
+  );
   // Read by family name (user, 2026-10-05), each row frozen in place once its profile settles.
   const memberOrder = membersByFamilyName(() => groupMembers);
   const orderedMembers = $derived(memberOrder.current);
@@ -539,7 +542,11 @@
               >
                 <div class="flex min-w-0 items-center gap-3">
                   <ProfileLink userId={member}><Avatar userId={member} size="sm" /></ProfileLink>
-                  <UserName userId={member} class="text-text-main truncate text-sm font-semibold" />
+                  <UserName
+                    userId={member}
+                    scope={groupId || null}
+                    class="text-text-main truncate text-sm font-semibold"
+                  />
                   {#if currentUserId && member.toLowerCase() === currentUserId.toLowerCase()}
                     <span
                       class="text-2xs shrink-0 rounded-md bg-amber-500/10 px-1.5 py-0.5 font-bold text-amber-500"
@@ -586,6 +593,7 @@
                   <Avatar userId={pending} size="sm" />
                   <UserName
                     userId={pending}
+                    scope={groupId || null}
                     class="text-text-main truncate text-sm font-semibold"
                   />
                 </div>

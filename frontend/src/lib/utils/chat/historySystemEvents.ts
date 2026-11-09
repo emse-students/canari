@@ -10,7 +10,6 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { receivedNoticeTime, renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
 import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
-import { mergeNicknameEntries } from '$lib/utils/users/conversationNicknames.svelte';
 import { applyNicknameFrame } from './nicknameFrame';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
@@ -473,7 +472,9 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         data,
         senderNorm,
         parseServerTimestampMs(msg.timestamp) || 0,
-        (line) => console.debug(line)
+        (line) => console.debug(line),
+        // Bounded by the log row's own server time, as the live frame is by its queue time.
+        parseServerTimestampMs(msg.timestamp) || undefined
       );
     } else if (parsed.system.event === 'remove_reaction' && data.messageId && data.emoji) {
       // LEGACY FRAME, replay side. Taking a reaction back now travels as a `ReactionMsg` with
@@ -529,12 +530,9 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           `[HISTORY_REPLAY] ${pinsMerged} pin state(s) converged for ${conversationId.slice(0, 8)}…`
         );
       }
-      const nicknamesMerged = mergeNicknameEntries(conversationId, data.nicknames);
-      if (nicknamesMerged > 0) {
-        console.debug(
-          `[HISTORY_REPLAY] ${nicknamesMerged} nickname(s) converged for ${conversationId.slice(0, 8)}…`
-        );
-      }
+      // No nickname is taken from a REPLAYED bundle: a register restated in the log is a relayer's
+      // word broadcast to everyone, and only the join push addressed to this device may carry one
+      // (`mergeBundleNicknames`, review of #3177). The frames themselves replay above.
       if (Array.isArray(bundleData) && bundleData.length > 0) {
         // THE ONE RULE EVERY BUNDLE GOES THROUGH (`bundleVetting.ts`), the one the live handler
         // applies: a durable bundle an older build wrote keeps restoring history - MARKED when

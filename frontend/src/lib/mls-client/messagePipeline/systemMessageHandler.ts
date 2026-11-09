@@ -63,7 +63,7 @@ import {
 } from '$lib/utils/chat/readState';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
-import { mergeNicknameEntries } from '$lib/utils/users/conversationNicknames.svelte';
+import { mergeBundleNicknames } from '$lib/utils/users/conversationNicknames.svelte';
 import { applyNicknameFrame } from '$lib/utils/chat/nicknameFrame';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
@@ -1285,6 +1285,9 @@ export async function handleSystemEvent(
     };
     let incoming: BundleMsg[] = Array.isArray(data?.messages) ? data.messages : [];
     let addOnly = false;
+    // The inviter's join push to THIS device, accepted below: the one bundle a nickname register is
+    // taken from (see the nickname merge).
+    let joinPush = false;
     if (deliveryMeta?.addressed === true) {
       const requestId = parseHistoryRequestId(data?.requestId);
       const claimsJoin = data?.join === true && requestId === undefined;
@@ -1321,6 +1324,7 @@ export async function handleSystemEvent(
       }
       incoming = bounded.kept;
       addOnly = ask.kind !== 'join';
+      joinPush = ask.kind === 'join';
     } else if (addressee && addressee.toLowerCase() !== me) {
       log(
         `[HISTORY_BUNDLE] ${convoKey.slice(0, 8)}… - broadcast answer for ${addressee.slice(0, 8)}…, ingesting it anyway`
@@ -1414,14 +1418,37 @@ export async function handleSystemEvent(
           `[HISTORY_BUNDLE] ${pinsMerged} pin state(s) converged for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
         );
       }
-      // And the nickname register, for the same reason and with the same kind of merge: a member
-      // admitted after a `nickname` frame went out learns the names from here (the inviter's join
-      // push carries it even when every message is withheld).
-      const nicknamesMerged = addOnly ? 0 : mergeNicknameEntries(convoKey, data.nicknames);
-      if (nicknamesMerged > 0) {
-        log(
-          `[HISTORY_BUNDLE] ${nicknamesMerged} nickname(s) converged for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
-        );
+      // And the nickname register - from the inviter's JOIN PUSH to this device ONLY (review of
+      // #3177): a member admitted after a `nickname` frame went out learns the names from it (it
+      // carries them even when every message is withheld). Its entries are the relayer's word about
+      // what others did, so they are taken UNVERIFIED, only about current members of the tree, dated
+      // within the bundle's server time - and a broadcast or a replayed bundle carries none at all.
+      if (joinPush && Array.isArray(data?.nicknames) && data.nicknames.length > 0) {
+        let members: Set<string> | null = null;
+        try {
+          const identities = await mlsService.getGroupMemberIdentities(convoKey);
+          members = new Set(
+            identities.flatMap((identity) => {
+              const user = canonicalUserOf(identity);
+              return user ? [user.toLowerCase()] : [];
+            })
+          );
+        } catch (e) {
+          console.warn(
+            `[HISTORY_BUNDLE] nicknames of ${convoKey.slice(0, 8)}… not taken - the tree is unreadable: ${String(e)}`
+          );
+        }
+        const nicknamesMerged = members
+          ? mergeBundleNicknames(convoKey, data.nicknames, {
+              members,
+              serverAt: deliveryMeta?.queuedCreatedAt,
+            })
+          : 0;
+        if (nicknamesMerged > 0) {
+          log(
+            `[HISTORY_BUNDLE] ${nicknamesMerged} nickname(s) taken (unverified) for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}'s join push`
+          );
+        }
       }
 
       if (msgs.length > 0) {
@@ -1694,7 +1721,14 @@ export async function handleSystemEvent(
 
   if (event === 'nickname') {
     // Dated on receipt when the frame carries no `at`, as a pin is - see `applyNicknameFrame`.
-    applyNicknameFrame(convoKey, data, senderNorm, Date.now(), log);
+    applyNicknameFrame(
+      convoKey,
+      data,
+      senderNorm,
+      Date.now(),
+      log,
+      deliveryMeta?.queuedCreatedAt ?? Date.now()
+    );
     return true;
   }
 

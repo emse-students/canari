@@ -721,7 +721,12 @@ describe('replaying a nickname', () => {
       [],
       g
     );
-    expect(nicknameEntry(g, 'bob')).toEqual({ nickname: 'Capitaine', setBy: OTHER, at: 200 });
+    expect(nicknameEntry(g, 'bob')).toEqual({
+      nickname: 'Capitaine',
+      setBy: OTHER,
+      at: 200,
+      verified: true,
+    });
     warn.mockRestore();
   });
 });

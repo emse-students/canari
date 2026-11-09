@@ -1947,6 +1947,7 @@
           {onSend}
           {replyingTo}
           {onCancelReply}
+          {nicknameScope}
           editingText={editSession.original}
           onCancelEdit={editSession.cancel}
           onConfirmEdit={editSession.confirm}

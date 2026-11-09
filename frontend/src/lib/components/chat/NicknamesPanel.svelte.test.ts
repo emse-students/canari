@@ -117,18 +117,36 @@ describe('NicknamesPanel in a group', () => {
     await render({ place: { kind: 'group', scope: 'g1', send: async () => true } });
     expect(document.querySelector('[data-nickname-report]')).toBeNull();
   });
+
+  it('tells the target a nickname they cannot see is set, and still offers its reset', async () => {
+    isBlockedWith.mockResolvedValue(true);
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    applyNickname('g1', 'me', { nickname: 'Insult', setBy: 'bob', at: 1 });
+    await render({ place: { kind: 'group', scope: 'g1', send: async () => true } });
+    await settle();
+    const text = row('me').textContent ?? '';
+    expect(text).not.toContain('Insult');
+    expect(row('me').querySelector('[data-nickname-hidden]')?.textContent).toContain(
+      m.chat_nicknames_hidden_for_you()
+    );
+    expect(row('me').querySelector('[data-nickname-reset]')).not.toBeNull();
+    isBlockedWith.mockResolvedValue(false);
+  });
 });
 
 describe('NicknamesPanel in a community', () => {
   const scope = communityNicknameScope('w1');
 
   it('offers a member no pencil, but the reset of their own nickname and the report of it', async () => {
-    applyNickname(scope, 'me', {
+    const held = {
       nickname: 'Chef',
       setBy: 'ann',
       at: 1,
       reportSubject: '00000000-0000-0000-0000-000000000001@1',
-    });
+    };
+    applyNickname(scope, 'me', held);
+    // The server's list names it too: a held entry the list does not name is dropped.
+    listCommunityNicknames.mockResolvedValueOnce([{ userId: 'me', ...held }]);
     await render({ place: { kind: 'community', workspaceId: 'w1', canModerate: false } });
     await settle();
     expect(document.querySelector('[data-nickname-edit]')).toBeNull();

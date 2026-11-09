@@ -127,6 +127,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
     action: 'code',
     by: 'ChannelService.removeAccountFromWorkspaces (governance repair before each removal)',
   },
+  // Who set a member's community nickname (migration 149). The nickname is ABOUT its target and stays
+  // theirs; the setter's id is replaced, so "set by" names nobody. The TARGET's erasure removes the
+  // membership row above, nickname included.
+  'channel_members.nicknameSetBy': { action: 'anonymise' },
 
   // -- Rows that belong to other people too, or are accounting records: anonymised -------------
   'purchase_records.userId': { action: 'anonymise' },
@@ -698,6 +702,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'channel_workspaces',
     sql: `UPDATE channel_workspaces SET "createdBy" = $2 WHERE "createdBy" = $1`,
+  },
+  {
+    label: 'channel_member_nickname_setters',
+    sql: `UPDATE channel_members SET "nicknameSetBy" = $2 WHERE "nicknameSetBy" = $1`,
   },
   { label: 'tags_granted', sql: `UPDATE user_tags SET "grantedBy" = $2 WHERE "grantedBy" = $1` },
   {
