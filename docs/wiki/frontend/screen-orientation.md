@@ -58,8 +58,22 @@ is `matchMedia('(orientation: landscape)')`, reactive; layouts use Tailwind's `l
 `portrait:` variants. **The safe area of the SIDES**: Android's WebView answers
 `env(safe-area-inset-left/right)`; on iOS WebKit answers 0 for every `env()` in this WebView
 ([mobile](mobile.md)), so `canari_ios.mm` publishes `--safe-area-inset-left/right` beside the top and
-bottom ones, again after every turn of the scene. A turned screen therefore pads with
-`var(--safe-area-inset-left, env(safe-area-inset-left, 0px))` - the notch's side in landscape.
+bottom ones, again at every change of the root controller's safe area. A turned screen therefore pads
+with `var(--safe-area-inset-left, env(safe-area-inset-left, 0px))` - the notch's side in landscape.
+
+### Who pads a full-screen place
+
+**One rule: on a full-screen place (`isFullScreenPlace`, today `/camera`), the shell pads NO side and
+the page pads its own controls; everywhere else the shell pads and the page does not.** The camera's
+preview is the page and runs under the status bar and, turned, under the notch; its controls carry
+the inset themselves (`CameraScreen`, `ReelReview`, `ReelPublishSheet`). The overlays (the composers'
+camera, the live broadcaster) are portalled and `fixed`, outside the shell, so they are the same case.
+In `app.css`, `.fullscreen-place-open .app-shell` gives back the top AND the two sides (the sides added
+2026-11-09: the shell's `env()` side padding was a strip beside the turned preview and doubled the
+controls' `sideSafePadding` on Android). The one exception is a minimised call: the bar must clear the
+notch, so the shell pads the top again (`--app-status-top`, resolved on the root) and zeroes
+`--safe-area-inset-top` for its subtree, so the controls below the bar do not add the status bar a
+second time. Pinned by `callBarLayer.test.ts`.
 
 ## Android
 
