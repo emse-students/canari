@@ -354,6 +354,19 @@ export function visibleNickname(scope: string | null | undefined, userId: string
   return null;
 }
 
+/**
+ * Whether a nickname naming `userId` in `scope` is HIDDEN FROM THEM because its setter stands in a
+ * block with them - known, not pending. While the block question is open (asked, or unanswerable
+ * until the link comes back) this is false and the screen shows the plain name: never a notice
+ * that might turn out wrong a moment later (review of #3177). Reactive.
+ */
+export function nicknameHiddenByBlock(scope: string | null | undefined, userId: string): boolean {
+  const entry = nicknameEntry(scope, userId);
+  const me = currentUserId();
+  if (!entry?.nickname || !me || norm(me) !== norm(userId)) return false;
+  return setterVerdicts.get(pairKey(norm(me), entry.setBy)) === 'blocked';
+}
+
 /** Test seam: forgets every register and verdict, as a fresh page would. */
 export function resetConversationNicknamesForTests(): void {
   registers.clear();

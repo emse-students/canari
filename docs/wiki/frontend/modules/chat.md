@@ -5121,7 +5121,9 @@ is keyed by viewer and setter, and asked once. A failed ask is a state, `unknown
 depends on. `connectivity.onReconnect` clears it, and the next read asks again: no timer, and no
 dependence on an unrelated re-render. **The remedy survives the hiding.** The screen reads the RAW
 entry, so a target who cannot see a nickname of themselves still sees "a nickname you cannot see is
-set" (`chat_nicknames_hidden_for_you`), with its reset.
+set" (`chat_nicknames_hidden_for_you`), with its reset. That notice appears only once the block is
+KNOWN (`nicknameHiddenByBlock`). While the question is pending or unanswerable, the row shows the
+plain name and nothing else, so no text appears that the answer could prove wrong.
 
 **Limits** are the profile's, in `libs/contracts/conversation-nickname.json`, walked by both
 `nicknameRules.contract.test.ts` and social-service's `community-nicknames.spec.ts`:

@@ -14,6 +14,7 @@
   import {
     communityNicknameScope,
     nicknameEntry,
+    nicknameHiddenByBlock,
     visibleNickname,
   } from '$lib/utils/users/conversationNicknames.svelte';
   import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
@@ -71,7 +72,8 @@
         userId,
         isSelf,
         nickname: shown,
-        hiddenFromViewer: held && shown === null,
+        // Only once the block answer is KNOWN: while it is pending the row shows the plain name.
+        hiddenFromViewer: held && shown === null && nicknameHiddenByBlock(scope, userId),
         setBy: shown === null ? null : (raw?.setBy ?? null),
         reportSubject: shown === null ? null : (raw?.reportSubject ?? null),
         canEdit: mayNameMember(standing, { isSelf, isReset: false }),

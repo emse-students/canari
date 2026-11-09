@@ -118,19 +118,38 @@ describe('NicknamesPanel in a group', () => {
     expect(document.querySelector('[data-nickname-report]')).toBeNull();
   });
 
-  it('tells the target a nickname they cannot see is set, and still offers its reset', async () => {
-    isBlockedWith.mockResolvedValue(true);
+  it('tells the target a nickname they cannot see is set once the block is KNOWN, and offers its reset', async () => {
+    let answer: (blocked: boolean) => void = () => {};
+    isBlockedWith.mockImplementation(() => new Promise<boolean>((r) => (answer = r)));
     vi.spyOn(console, 'info').mockImplementation(() => {});
     applyNickname('g1', 'me', { nickname: 'Insult', setBy: 'bob', at: 1 });
     await render({ place: { kind: 'group', scope: 'g1', send: async () => true } });
     await settle();
-    const text = row('me').textContent ?? '';
-    expect(text).not.toContain('Insult');
+    // Pending: the plain name, neither the nickname nor a notice that may turn out wrong.
+    expect(row('me').textContent).not.toContain('Insult');
+    expect(row('me').querySelector('[data-nickname-hidden]')).toBeNull();
+    answer(true);
+    await settle();
+    expect(row('me').textContent).not.toContain('Insult');
     expect(row('me').querySelector('[data-nickname-hidden]')?.textContent).toContain(
       m.chat_nicknames_hidden_for_you()
     );
     expect(row('me').querySelector('[data-nickname-reset]')).not.toBeNull();
-    isBlockedWith.mockResolvedValue(false);
+    isBlockedWith.mockImplementation(async () => false);
+  });
+
+  it('shows the nickname, and never the notice, once the answer is clear', async () => {
+    let answer: (blocked: boolean) => void = () => {};
+    isBlockedWith.mockImplementation(() => new Promise<boolean>((r) => (answer = r)));
+    applyNickname('g1', 'me', { nickname: 'Chef', setBy: 'bob', at: 1 });
+    await render({ place: { kind: 'group', scope: 'g1', send: async () => true } });
+    await settle();
+    expect(row('me').querySelector('[data-nickname-hidden]')).toBeNull();
+    answer(false);
+    await settle();
+    expect(row('me').textContent).toContain('Chef');
+    expect(row('me').querySelector('[data-nickname-hidden]')).toBeNull();
+    isBlockedWith.mockImplementation(async () => false);
   });
 });
 
