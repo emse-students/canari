@@ -119,6 +119,10 @@ posts nothing and logs nothing.
 
 ## What a turn does to each screen
 
+The rotate button is the kit's `ui/player/RotateButton.svelte` (a `VideoChipButton`, 44 px target,
+its label from Paraglide `screen_rotate_landscape` / `screen_rotate_portrait`), and a row of controls
+pads its sides with `utils/sideSafeArea.ts`.
+
 - **The camera** (`CameraScreen`, the reel tab and both composers' overlays): the frame follows the
   screen - 9:16 upright, 16:9 turned (`ReelFrame`'s `ratio`) - so a capture is cropped to what the
   preview showed in either orientation (`framedCapture.ts` already sizes the output from the box). The
@@ -128,7 +132,10 @@ posts nothing and logs nothing.
 - **The live broadcaster**: the recorder records the camera track as it comes (no 9:16 canvas, no
   rotation metadata), so a live filmed in landscape IS a 16:9 stream; the viewer's player already
   takes a new initialization segment whose resolution differs ([live](modules/live.md)). The
-  orientation is chosen in the preview and frozen from `starting` to the end.
+  orientation is chosen in the preview and frozen from `starting` to the end. The pre-live sheet takes
+  the left side when turned (`landscape:max-w-md`), the on-air chat a column (`landscape:max-w-sm`).
+  A double tap on the preview switches the lens (owner, 2026-11-09), exactly where the lens button is
+  offered - the sheet and the chat are out of it (`data-no-double-tap`).
 - **The full-screen viewer and the live viewer**: owed, written in the backlog entry (their files are
   being rewritten by the video-player stack).
 

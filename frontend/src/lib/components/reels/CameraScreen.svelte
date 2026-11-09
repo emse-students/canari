@@ -36,6 +36,10 @@
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
   import { previewDoubleTap } from '$lib/reels/previewDoubleTap';
+  import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
+  import { useScreenOrientation, viewportOrientation } from '$lib/mobile/screenOrientation.svelte';
+  import { sideSafePadding } from '$lib/utils/sideSafeArea';
+  import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
   import ReelFrame from './ReelFrame.svelte';
 
   interface Props {
@@ -117,6 +121,24 @@
   }: Props = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
+
+  /**
+   * THE CAMERA TURNS WITH THE PHONE (owner, 2026-11-09; screen-orientation.md): auto under the
+   * rotation lock while mounted, the rotate button for landscape with the lock on, and portrait again
+   * at unmount. A take FREEZES the orientation it started in: `FramedStream` records through a canvas
+   * of one size, and a turn mid-take would draw a landscape crop into a portrait canvas.
+   */
+  const orientation = useScreenOrientation('camera');
+  $effect(() => orientation.hold(recording));
+
+  /**
+   * The frame follows the screen: the reel's 9:16 upright, its 16:9 turned. Every capture is the
+   * preview's crop (`previewBox`), so a photo or a take made turned is a 16:9 file, and the review,
+   * the editor and the reel slide take the MEDIA's own ratio (a landscape reel is letterboxed).
+   */
+  const frameRatio = $derived(
+    viewportOrientation.landscape ? 1 / REEL_FRAME_RATIO : REEL_FRAME_RATIO
+  );
 
   /**
    * The element holds a decoded frame of the CURRENT stream. `live` only says a track is in hand: from
@@ -359,7 +381,7 @@
        `object-fit: cover` - any style change healed it, a fresh element never had it (iPhone 12,
        2026-10-02, reproduced 5 of 5 on a home-and-return, 0 of 40 without). One element per stream
        is the state the engine gets right. -->
-  <ReelFrame>
+  <ReelFrame ratio={frameRatio}>
     {#key session.stream}
       <video
         bind:this={video}
@@ -453,6 +475,7 @@
        not leave the tab - the shutter and Back are what end it. -->
   <div
     class="absolute inset-x-0 top-0 flex items-start justify-between p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
+    style={sideSafePadding('0.75rem')}
   >
     {#if recording}
       <span></span>
@@ -498,6 +521,10 @@
             {/if}
           </button>
         {/if}
+        {#if orientation.canRotate}
+          <!-- Stands down during a take: the take holds the orientation it started in. -->
+          <RotateButton onrotate={orientation.rotate} disabled={recording} />
+        {/if}
       </div>
     {/if}
   </div>
@@ -507,6 +534,7 @@
          down here for the whole take. -->
     <div
       class="absolute inset-x-0 bottom-0 pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]"
+      style={sideSafePadding()}
       data-no-double-tap
     >
       {@render controls()}

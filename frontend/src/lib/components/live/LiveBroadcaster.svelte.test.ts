@@ -581,3 +581,57 @@ describe('LiveBroadcaster - the source choice (owner, 2026-10-31)', () => {
     expect(q('[data-live-source-hint]')!.textContent).toContain(m.live_source_screen_hint());
   });
 });
+
+describe('LiveBroadcaster - a double tap on the preview flips the lens (owner, 2026-11-09)', () => {
+  /** Two quick taps on `el`, as CameraScreen's tests make them. */
+  function doubleTap(el: Element, pointerId = 2) {
+    for (const t of [0, 100]) {
+      for (const [type, at] of [
+        ['pointerdown', t],
+        ['pointerup', t + 40],
+      ] as const) {
+        const event = new PointerEvent(type, {
+          pointerId,
+          bubbles: true,
+          clientX: 50,
+          clientY: 50,
+        });
+        Object.defineProperty(event, 'timeStamp', { value: 10_000 + at });
+        el.dispatchEvent(event);
+      }
+    }
+  }
+
+  it('flips the lens in the preview, as the lens button does', async () => {
+    const { cam } = screen();
+    await settle();
+    expect(cam.control.opened).toHaveLength(1);
+    expect(q('[data-live-switch]')).not.toBeNull();
+    doubleTap(q('video')!);
+    await settle();
+    expect(cam.control.opened).toHaveLength(2);
+    expect(cam.session.facing).toBe('environment');
+  });
+
+  it('a double tap on the pre-live sheet is not the preview', async () => {
+    const { cam } = screen();
+    await settle();
+    doubleTap(q('[data-live-prelive-sheet] h2')!);
+    await settle();
+    expect(cam.control.opened).toHaveLength(1);
+  });
+
+  it('on air the double tap does nothing - no flip, and the chat stays as it was', async () => {
+    const { cam } = screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    expect(q('[data-live-phase]')!.dataset.livePhase).toBe('live');
+    const toggle = q<HTMLButtonElement>('[data-live-chat-toggle]')!;
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    doubleTap(q('video')!);
+    await settle();
+    expect(cam.control.opened).toHaveLength(1);
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+  });
+});
