@@ -42,12 +42,10 @@ describe('store/listings', () => {
     for (const w of ['paiement', 'billetterie', 'boutique', 'tickets', 'shop']) expect(errors).toContain(w);
   });
 
-  test('rejects the old tagline and the old spelling', () => {
+  test('rejects the old spelling', () => {
     const bad = structuredClone(listings.fr);
-    bad.play.shortDescription = 'Le réseau des Marteaux';
     bad.appStore.promotionalText = 'Canareels';
     const errors = validateListing('fr', bad).join('\n');
-    expect(errors).toContain('marteaux');
     expect(errors).toContain('Canareels');
   });
 });

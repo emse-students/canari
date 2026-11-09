@@ -167,10 +167,19 @@ Each step idempotent and logged:
 ### 8.1 Texts - redrafted 2026-11-09 against production `v1.6.8`, still not uploaded
 
 Owner decisions (2026-11-09), binding: the audience is all students, in a neutral tone ("tous les
-etudiants", never "eleves"); end-to-end encryption is named in the subtitle; **nothing about
-payment, shop, ticketing or Stripe**; nothing that is not in production. The insider tagline "Le
-reseau des Marteaux" (live today on both stores) is dropped because it only means something to
-insiders; the owner may overrule that one line.
+etudiants", never "eleves"); Canari is presented as the student-life app, messaging being one part
+of it, with end-to-end encryption named in the short description, the promotional text and the
+description; nothing that is not in production. **"Le reseau des Marteaux" is KEPT** (owner, same
+day: he likes it) as the fr Apple subtitle and the opening of the Play fr short description; the
+English side says "The Marteaux network".
+
+**Shop and ticketing are NOT in the texts, and this is what blocks them (checked 2026-11-09).** Lydia
+is the live provider since 2026-11-06, but an association takes a payment only with its own validated
+Lydia Business; the backlog row 5 of WP-LYDIA-1 expects none validated unless the owner enrolled one,
+three Businesses wait for Lydia's validation, the guest payment on a paid public form is still an owed
+reading, and the only payment seen end to end in production is the Cercle's top-up (2026-10-26). There
+is no "billetterie" product in the app or its messages at all. The texts therefore stay silent on
+money; they may name a shop the day an association other than the Cercle is observed selling.
 
 Advertised, all in production: encrypted chats and communities, feed, polls and reposts, CanaReels
 and sharing a post or reel into a chat, audio and video calls, lives, bookings, forms, follow
@@ -181,7 +190,7 @@ The product writes "CanaReels", and the English says "association", never "club"
 
 Guard: `FORBIDDEN` in `tools/store-listings/listings.mjs` no longer refuses calls (they are true); it
 still refuses Stripe, Lydia, superlatives, the old domain, payment, purchase, shop, ticket and
-ticketing words, "Marteaux" and the spelling "Canareels". Limits as the stores state them: Play
+ticketing words and the spelling "Canareels". Limits as the stores state them: Play
 short description 80, Apple subtitle 30, promotional text 170, keywords 100.
 
 The disclaimer "not published by the school administration" stays. The Apple name field is

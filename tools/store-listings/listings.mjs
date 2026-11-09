@@ -45,8 +45,7 @@ export const FORBIDDEN = [
   /billetterie/i,
   /ticketing/i,
   /\btickets?\b/i,
-  // The insider tagline and the old spelling: the product writes "CanaReels".
-  /marteaux/i,
+  // The old spelling: the product writes "CanaReels".
   /Canareels/,
 ];
 
