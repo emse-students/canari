@@ -94,6 +94,33 @@ describe('where no double tap means anything', () => {
     expect(onTap, 'the click a mouse makes after a hold').not.toHaveBeenCalled();
   });
 
+  it('a hold captures its pointer, so a release outside the picture still resumes', () => {
+    const capture = vi.fn();
+    const release = vi.fn();
+    node.setPointerCapture = capture;
+    node.hasPointerCapture = () => true;
+    node.releasePointerCapture = release;
+    pointer('pointerdown');
+    vi.advanceTimersByTime(HOLD_TO_PAUSE_MS);
+    expect(capture).toHaveBeenCalledWith(1);
+    pointer('pointerup');
+    expect(onHoldEnd).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledWith(1);
+  });
+
+  it("an Enter activation is never eaten by a hold's pending swallow", () => {
+    pointer('pointerdown');
+    vi.advanceTimersByTime(HOLD_TO_PAUSE_MS);
+    pointer('pointerup');
+    // A keyboard activation (`detail` 0) comes before the hold's click: it leaves the swallow
+    // pending, and the click after it is still the hold's, never a tap.
+    node.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+    click();
+    expect(onTap).not.toHaveBeenCalled();
+    tap();
+    expect(onTap, 'the next real tap acts').toHaveBeenCalledTimes(1);
+  });
+
   it('a hold whose click never comes (an Android long press) does not eat the next tap', () => {
     pointer('pointerdown');
     vi.advanceTimersByTime(HOLD_TO_PAUSE_MS);
