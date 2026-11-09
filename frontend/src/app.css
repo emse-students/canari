@@ -465,6 +465,22 @@
   --glass-chrome-shadow: color-mix(in srgb, var(--cn-dark) 14%, transparent);
   /* ONE blur for every floating surface; the fallback block at the end of this file turns it off. */
   --glass-chrome-blur: blur(18px) saturate(180%);
+  /* GLASS OVER A PLAYING VIDEO - see `.glass-video`. One set for both themes: a video is dark
+     whatever the app's theme, so the tint is black, never the surface colour (a white frame under a
+     light-surface tint would leave a white glyph unreadable). The FLAT pair is what every fallback
+     below switches to: an opaque-ish dark chip, no blur, no sheen - still legible, still the shape. */
+  --glass-video-bg: color-mix(in srgb, #000000 28%, transparent);
+  --glass-video-edge: color-mix(in srgb, #ffffff 22%, transparent);
+  --glass-video-rim: inset 0 1px 0 color-mix(in srgb, #ffffff 45%, transparent);
+  --glass-video-sheen: linear-gradient(
+    180deg,
+    color-mix(in srgb, #ffffff 16%, transparent),
+    transparent 55%
+  );
+  --glass-video-shadow: 0 4px 18px color-mix(in srgb, #000000 35%, transparent);
+  /* 12px, not the chrome's 18px: the cost scales with the radius, and this one sits over a decoder. */
+  --glass-video-blur: blur(12px) saturate(160%);
+  --glass-video-flat-bg: color-mix(in srgb, #000000 62%, transparent);
   --app-viewport-height: 100dvh;
   /* Ceiling for any media box that reserves an aspect ratio in a scrolling surface - the feed, a
      comment, a chat bubble. Without it a tall picture is as tall as it likes: the ratio clamp alone
@@ -1788,6 +1804,30 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   backdrop-filter: var(--glass-chrome-blur);
   border: 1px solid var(--glass-chrome-edge);
   box-shadow: 0 4px 20px var(--glass-chrome-shadow);
+}
+
+/* LIQUID GLASS OVER A PLAYING VIDEO (owner, 2026-11-09: *"du liquid glass, de belles choses"*) - the
+   video player's controls (`components/ui/player/`), and nothing else. `.glass-chrome`'s recipe with
+   the three things that make it read as Liquid Glass rather than frosted grey: a specular rim (the
+   inset top line), a sheen (the top-down gradient) and a dark tint that keeps a white glyph legible
+   on a white frame. The glyph is white and its state is its SHAPE; the brand yellow is only the
+   played part of a scrubber and the sound-on glyph, so the frame's colour never tints a state.
+   COST: one of these per visible player at most, and a hidden one is UNMOUNTED - a transparent layer
+   with a backdrop filter still pays. No SVG lensing: WebKit does not apply it to a live video.
+   `[data-glass='flat']` is the decided cheap form (Android until its measurement, a low-end device:
+   `utils/videoGlass.ts`); the fallback block at the end of this file flattens every one. */
+.glass-video {
+  background: var(--glass-video-sheen), var(--glass-video-bg);
+  -webkit-backdrop-filter: var(--glass-video-blur);
+  backdrop-filter: var(--glass-video-blur);
+  border: 1px solid var(--glass-video-edge);
+  box-shadow: var(--glass-video-rim), var(--glass-video-shadow);
+  color: #ffffff;
+}
+.glass-video[data-glass='flat'] {
+  --glass-video-bg: var(--glass-video-flat-bg);
+  --glass-video-sheen: none;
+  --glass-video-blur: none;
 }
 
 /* THE CONVERSATION'S CHROME FLOATS OVER THE THREAD IN THE PHONE APPS (`ChatArea` puts
@@ -3165,6 +3205,9 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     --glass-chrome-bg: var(--cn-surface);
     --glass-chrome-edge: var(--cn-border);
     --glass-chrome-blur: none;
+    --glass-video-bg: var(--glass-video-flat-bg);
+    --glass-video-sheen: none;
+    --glass-video-blur: none;
   }
 }
 @media (prefers-reduced-transparency: reduce) {
@@ -3172,6 +3215,20 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     --glass-chrome-bg: var(--cn-surface);
     --glass-chrome-edge: var(--cn-border);
     --glass-chrome-blur: none;
+    --glass-video-bg: var(--glass-video-flat-bg);
+    --glass-video-sheen: none;
+    --glass-video-blur: none;
+  }
+}
+/* `prefers-contrast: more` too, for the VIDEO glass: WebKit does not expose
+   `prefers-reduced-transparency` (caniuse, 2026-11), so on an iPhone this is the one query that reaches
+   a reader who asked for legibility. The chrome glass keeps its two queries; widening them is a
+   separate decision. */
+@media (prefers-contrast: more) {
+  :root:root {
+    --glass-video-bg: var(--glass-video-flat-bg);
+    --glass-video-sheen: none;
+    --glass-video-blur: none;
   }
 }
 

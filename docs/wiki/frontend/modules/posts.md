@@ -1295,6 +1295,11 @@ client wrote: those are `other`, and their cached bytes are kept, since an updat
 
 ## A video is Canari's to play: `VideoPlayer`, never `controls` (2026-10-01)
 
+> **Being replaced (owner, 2026-11-09): ONE shared player, one glass controls kit, one gesture map
+> (tap = sound, hold = pause) for every surface, and the sound REMEMBERED per device** - the decisions,
+> the kit and where the migration stands are in [video-player](video-player.md). What follows is the
+> history each step of it keeps or retires; a surface already migrated is described there.
+
 The viewers handed a clip to `<video controls>`, which is the ENGINE's bar: Android's grey strip
 with its own "plein ecran" pill and download button on the Mi 9T, another one on iOS, neither themed
 nor sized to a 44 px target. Two components now carry every video the app shows.
