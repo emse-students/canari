@@ -10,9 +10,6 @@
   import {
     getAssociationBySlug,
     listMembers,
-    followAssociation,
-    unfollowAssociation,
-    getAssociationFollowStatus,
     hasPermissionFlag,
     getMyBdeReach,
     leaveAssociation,
@@ -28,6 +25,12 @@
   } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import AccountBell from '$lib/components/follows/AccountBell.svelte';
+  import {
+    followAssociationLedgered,
+    readAssociationFollowed,
+    recordAssociationFollowed,
+    unfollowAssociationLedgered,
+  } from '$lib/follows/followState.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS, type PageWidth } from '$lib/components/layout/pageWidth';
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
@@ -293,7 +296,7 @@
         listAssociationProducts(asso.id).catch(() => []),
         listAssociationPartnerships(asso.id).catch(() => []),
         uid
-          ? getAssociationFollowStatus(asso.id).catch(() => ({ following: false }))
+          ? readAssociationFollowed(asso.id).then((following) => ({ following }))
           : Promise.resolve({ following: false }),
       ]);
       following = followStatus.following;
@@ -336,8 +339,8 @@
     following = !wasFollowing;
     followLoading = true;
     try {
-      if (wasFollowing) await unfollowAssociation(asso.id);
-      else await followAssociation(asso.id);
+      if (wasFollowing) await unfollowAssociationLedgered(asso.id);
+      else await followAssociationLedgered(asso.id);
     } catch (err) {
       Log.d('AssociationDetailView.toggleFollow failed', err);
       following = wasFollowing;

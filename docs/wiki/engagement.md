@@ -6,7 +6,7 @@ design that answers each one, what each surface reveals and to whom, and the wor
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
-(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); everything else DESIGNED, not built.**
+(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); everything else DESIGNED, not built.**
 
 Context it must respect, and which nothing here changes:
 
@@ -729,7 +729,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | --- | --- | --- | --- |
 | **WP-1** (BUILT, #3119) | An association's live reaches everyone who can see it | `lives/live-announcer.ts` | `lives.integration.spec.ts` on PostgreSQL ([above](#wp-1---an-associations-live-reaches-everyone-who-can-see-it-built)) |
 | **WP-1b** (BUILT, #3119) | One announced live per association per 6 hours (L16) | `lives/lives.service.ts` (the claim) | [above](#wp-1b---one-announced-live-per-association-per-6-hours-built-in-the-same-pull-request) |
-| **WP-2** | Suivre everywhere a person or entity is named: post headers of an account the viewer does not follow, search results, association cards (today only the profile and the association page carry it) | `frontend/src/lib/follows/api.ts` | component tests per surface; a phone reading of a follow request from a post header |
+| **WP-2** (BUILT, [below](#wp-2---suivre-everywhere-built)) | Suivre everywhere a person or entity is named: post headers of an account the viewer does not follow, search results, association cards (today only the profile and the association page carry it) | `frontend/src/lib/follows/api.ts` | component tests per surface; a phone reading of a follow request from a post header |
 | **WP-3** (BUILT, [below](#wp-3---the-bell-built)) | The bell (decisions 3d, 5a, 10): `account_bells` (`lives` and `none` only, L3), the HELD copy of `association_push_mutes`, the old mute endpoints writing `account_bells` (L8), a follow deleting the row in the creating statement, the seam in `fanOutPush`, the profile control, the association mute UI moved onto it | `follows/association-push-mutes.service.ts` | integration spec of the level table above; a new follow resets a reduced bell and a RETRIED follow does not; following a muted association again unmutes it; a mute set through the old endpoint after the copy is honoured; the existing mute specs still green against the new store |
 | **WP-4** | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; never capped | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
 | **WP-5** | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
@@ -738,6 +738,79 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-8** | The daily cap (decisions 6 and 11): `engagement_push_days`, `ENGAGEMENT_PUSH_TYPES` holding ONLY the new kinds, the statement in `fanOutPush` | `posts/post-notifications.service.ts` | [R2](#r2---the-cap-check) read and written back; integration spec: the 6th capped push of a day is a bell row with no push, two concurrent fan-outs never exceed 5, and an association post, a live, an opening and a mention on the same day are never counted |
 | **WP-9** | Friends' activity (5b) with the ledger `post_engagement_notices` and the activity setting (decision 9: `user_activity_settings`, no row = ON, the Settings switch) | `posts/comment-write.ts`, the reaction write | integration spec, one case per rule of the disclosure list, rule 0 included, and for rule 8 one case EACH: an `anonymous` comment, a comment written as an association, and a `removedByModeration` comment, none of which notifies |
 | **WP-10** | Campus trends (5c) | the reaction write | [R1](#r1---the-trend-threshold) read FIRST and written back; integration spec: exactly one stamp at the crossing write, none after 24 hours, the space-only audience |
+
+### WP-2 - Suivre everywhere (BUILT)
+
+One component, `components/follows/FollowChip.svelte` (on `ui/Button`, compact, with a 44 px hit area),
+drawn in three places: the post header (`PostHeader`: the association of an association post, the
+author of a personal post, nothing on an anonymous one - a revealed author included - and nothing in
+the moderation preview, `showFollow={false}`; icon-only below `sm` so the name keeps its row), the
+directory rows, and `AssociationTile` (the chip is a sibling of the link, in its own row under the
+card, never over its text). It is NEVER drawn for yourself, a blocked account, a person already
+followed or requested-and-accepted, an association already followed, an ARCHIVED association, or one
+the reader is a MEMBER of (lead decision), and it draws nothing while its answer is unknown.
+A post header does not know whether its association is archived (the feed payloads do not carry it), so an archived association's post still shows the chip - accepted for now.
+
+**The server half, two small routes (both under `/api/posts`, `FollowRequestsController`).**
+
+- `POST me/follow-statuses` takes `{ userIds }`, at most 100 (400 `FOLLOW_STATUS_BATCH_TOO_LARGE`; a
+  body that is not a list of non-empty strings, 400 `FOLLOW_STATUS_BATCH_INVALID`), runs ONE
+  `= ANY($2)` query on the CALLER's own `user_follows` rows and answers `{ statuses: { id: 'pending' |
+  'accepted' } }`, an absent id meaning none. It says what `follow-status` says per id and no more: the
+  review cohort's boundary reads as none, a block already reads as none (it severs both follows), and
+  nothing about the OTHER side is visible. Blocks are NOT in the answer on purpose ("they blocked
+  you" is knowledge no single route gives); the chip reads the caller's own blocks once.
+- `DELETE users/:userId/follow-request` WITHDRAWS: `DELETE ... WHERE status = 'pending'`. An
+  accepted row is never touched - 409 `FOLLOW_REQUEST_ANSWERED` - and no row (the person refused,
+  or already withdrawn) is 404 `FOLLOW_REQUEST_NOT_FOUND`. The old `DELETE users/:userId/follow`
+  stays for unfollowing and for old clients; every WP-2 surface withdraws through the new route, so a
+  tap on "Demande envoyee" that raced an acceptance is never a silent unfollow.
+
+**The ledger** (`follows/followState.svelte.ts`) is the ONE source of truth in the session, and every
+writer goes through it: the chips, the profile page (`askPerson`, `withdrawPerson`, `leavePerson`,
+and what its status read found), the association page (`followAssociationLedgered`,
+`unfollowAssociationLedgered`, and what its status read found) and the sent-requests list
+(`withdrawPerson`). The `ProfileFollowersSection` followers list removes a FOLLOWER, which is not a
+follow of the reader's, so it writes nothing.
+
+- **Reads are batched, not per author**: the ids asked in the same tick leave in ONE call through a
+  microtask (no timer), chunked at the cap, deduplicated, cached per session. Followed associations
+  and memberships are one read each, shared by every card.
+- **A failed read is asked ONCE per epoch.** The ids it failed for are recorded and never asked again
+  until a real event: the connection coming back (`connectivity.onReconnect`) or the next navigation
+  (`beforeNavigate` in the chip - an online 5xx is what no reconnect heals), each of which retries
+  exactly the failures once; a block or unblock on this device (`onBlocksChanged` - a block severs follows,
+  so everything read is void), or another account. (The first version kept the asked ids in a
+  reactive set read by the chip's effect: a failure re-ran every effect, a new request each
+  microtask, forever.) The ledger's sets are plain on purpose, and a failed read is a `console.warn`
+  carrying the status, not a debug line.
+- **An epoch ends every read of a previous reader.** The ledger is a per-reader cache
+  (`registerPerReaderCache(resetFollowState)`, run on sign-out and account switch); a read, an
+  association read or a blocks read that left for account A compares the epoch when it lands and is
+  dropped after the switch to B. A chip still on screen reads the reactive epoch and asks again.
+- **Writes are epoch-guarded and win over older reads.** Every writer (the chip taps, `askPerson`,
+  `withdrawPerson`, `leavePerson`, the association pair, and the pages' own status reads) captures
+  the epoch before its await and writes - or rolls back - nothing if it moved, so a tap on account
+  A answered after the switch to B leaves B's ledger alone. A read that left before an association
+  write never overwrites it (a per-id write marker in the epoch, as for persons). A page's status
+  read teaches the ledger ONLY from a real answer (`readAssociationFollowed`): a failed read is a
+  warning, never "not followed".
+- **Membership unknown is hidden.** `ensureMyAssociations` turns a failure into `[]` (and caches it
+  for the session: fail-closed for the BDE flags, which is right for them); the ledger asks
+  `didMyAssociationsProbeFail()` and offers nothing on any association when membership is unknown.
+- **A tap** flips the state at once, is guarded by a per-id in-flight set (a second tap does nothing),
+  and puts the state back with a toast on a refusal (the profile's sentences). A withdraw that
+  raced the other side ends in what the server says now - a follow (409) or none (404) - with no
+  toast and no stuck state. An association follows at once and the chip goes away.
+
+Proof: `follow-requests.integration.spec.ts` on PostgreSQL (statuses; one statement; caller side
+only; a stranger's private account; blocks both ways; agreement with `follow-status`; the withdraw
+route: pending removed with its bell row, accepted refused and kept, refused/absent is a 404, another
+asker untouched), `follow-requests.controller.spec.ts` (cap, typed 400s), and the chip specs (N chips
+= 1 request, chunking, session cache, block refetch, a rejected read asked once and again on a
+reconnect, an account switch mid-flight, the withdraw races, double taps, member and archived
+hidden, the aria-label of a pending request naming the person and containing the visible text, with
+a nameless fallback).
 
 ### Which migrations are held
 
