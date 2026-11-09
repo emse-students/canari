@@ -355,6 +355,15 @@ export const FORM_ASSOCIATION_FIXED = 'FORM_ASSOCIATION_FIXED';
  */
 export const FORM_ASSOCIATION_NOT_YOURS = 'FORM_ASSOCIATION_NOT_YOURS';
 
+/**
+ * The 400 refusing to move a draft to an association that is not one: an id that is no UUID, or
+ * names no association (`forms."associationId"` carries no foreign key, so nothing else would).
+ */
+export const FORM_ASSOCIATION_UNKNOWN = 'FORM_ASSOCIATION_UNKNOWN';
+
+/** A UUID in its canonical textual form - what `associations.id` holds. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** An association id as a log names it: its first 8 characters, or `none` for a personal form. */
 const assocLabel = (id: string | null) => id?.slice(0, 8) ?? 'none';
 
@@ -1157,6 +1166,18 @@ export class FormsService {
           'payments and reminders belong to it. Create a new form to offer it under another.',
       });
     }
+    // The id must name an association, for a global admin too: an id that is no UUID would reach
+    // the membership query as a 500, and a well-formed one naming nothing would be stored as is.
+    if (
+      next &&
+      (!UUID_RE.test(next) || !(await this.associationsService.namesByIds([next])).has(next))
+    ) {
+      this.logger.log(`[FORMS] draft ${formLabel} not moved (${move}): no such association`);
+      throw new BadRequestException({
+        code: FORM_ASSOCIATION_UNKNOWN,
+        message: 'The association this draft is moved to does not exist.',
+      });
+    }
     if (!isGlobalAdmin) {
       for (const side of [stored, next]) {
         if (side && !(await this.associationsService.isMember(userId, side))) {
@@ -1294,8 +1315,28 @@ export class FormsService {
       await this.assertKindMayPrice(input, associationId, form);
       await this.assertRespondentsCanPay(effective, associationId, 'edit');
     }
+    // A MOVED draft is judged on the cotisation settings it carries INTO the new association, the
+    // stored ones included: a revision that leaves `grantsCotisation` out keeps the stored grant, and
+    // that grant must be re-judged against the new association's tiers and its MANAGE_MEMBERS - or
+    // a move would grant the new association's cotisation without its right (review of #3198).
+    const moved = associationId !== (form.associationId ?? null);
+    const cotisationInput = moved
+      ? ({
+          ...input,
+          items,
+          grantsCotisation: input.grantsCotisation ?? form.grantsCotisation,
+          cotisationVariantKey:
+            input.cotisationVariantKey !== undefined
+              ? input.cotisationVariantKey
+              : form.cotisationVariantKey,
+          priceMatrix: input.priceMatrix !== undefined ? input.priceMatrix : form.priceMatrix,
+          submitCondition:
+            input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
+          requiresPayment: input.requiresPayment ?? form.requiresPayment,
+        } as CreateFormDto)
+      : input;
     await this.assertCotisationConfigValid(
-      { ...input, associationId: associationId ?? undefined },
+      { ...cotisationInput, associationId: associationId ?? undefined },
       { userId, isGlobalAdmin }
     );
     const {
@@ -1333,6 +1374,34 @@ export class FormsService {
     // Publishing is its own conditional write; the edit leaves the column alone.
     const { status, ...written } = form;
     const withStatus = <T extends object>(saved: T) => ({ ...saved, status });
+    // A MOVE was judged on the status read before the checks: a publication committing since would
+    // otherwise see its form moved after it went live. Outside a publication (which holds the row
+    // already), the write re-reads the status under the row's lock and refuses a form published
+    // meanwhile.
+    if (moved && !inTransaction) {
+      const saved = await this.formRepo.manager.transaction(async (m) => {
+        const locked = await m.findOne(Form, {
+          where: { id: formId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (locked?.status !== FORM_DRAFT) {
+          this.logger.log(
+            `[FORMS] draft ${formId.slice(0, 8)} not moved: it was published during the edit`
+          );
+          throw new BadRequestException({
+            code: FORM_ASSOCIATION_FIXED,
+            message: 'This form was published during the edit: it stays with its association.',
+          });
+        }
+        if (citedAfter.length > 0) {
+          await this.formItemImages.claimForSave(m, form.items, formId, userId);
+        }
+        return m.save(Form, written as Form);
+      });
+      const dropped = citedBefore.filter((id) => !citedAfter.includes(id));
+      if (dropped.length > 0) await this.formItemImages.releaseUncited(dropped, 'question edited');
+      return withStatus(saved);
+    }
     if (inTransaction) {
       if (citedAfter.length > 0) {
         await this.formItemImages.claimForSave(inTransaction, form.items, formId, userId);

@@ -1312,6 +1312,18 @@ draft) and no post or event naming it (`FORM_IS_DRAFT`): nothing is tied to its 
 | the stored value (`''` and `null` both mean personal) | no change, no check | no change |
 | another association, or none | moved, when the actor is a MEMBER of the association it leaves AND of the one it joins (the creation rule, `isMember`, applied to both sides; a global admin always) - else `403 FORM_ASSOCIATION_NOT_YOURS` | `400 FORM_ASSOCIATION_FIXED`, global admin included |
 
+The id must name an association, for a global admin too: one that is no UUID, or names none
+(`forms."associationId"` has no foreign key), is `400 FORM_ASSOCIATION_UNKNOWN` before any
+membership is asked. A MOVED draft's cotisation settings are judged on what it carries INTO the new
+association - the stored `grantsCotisation`, `cotisationVariantKey`, grid, condition and payment
+switch whenever the revision leaves them out - so a granting draft cannot reach another association
+without that association's MANAGE_MEMBERS and tier (review of #3198: a revision omitting
+`grantsCotisation` carried the stored grant past the check). And a move outside a publication
+re-reads the status under the form's row lock in its write: a publication committing between the
+edit's checks and its write is refused `FORM_ASSOCIATION_FIXED`, never a published form moved (the
+publication itself holds that lock already). The editor of a PUBLISHED form reads its association
+from the form, never from a revision naming another.
+
 Both refusals are typed and logged (`[FORMS] draft <id> not moved` / `edit of <id> refused: a
 published form stays put`), and a move is logged with both sides and the actor. Membership of the
 OLD side is what keeps the walk-off closed: a co-manager through MANAGE_FORMS who is no member may

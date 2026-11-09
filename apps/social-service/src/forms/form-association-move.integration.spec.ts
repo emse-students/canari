@@ -23,7 +23,12 @@ import { FormReminder } from './entities/form-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
-import { FORM_ASSOCIATION_FIXED, FORM_ASSOCIATION_NOT_YOURS, FormsService } from './forms.service';
+import {
+  FORM_ASSOCIATION_FIXED,
+  FORM_ASSOCIATION_NOT_YOURS,
+  FORM_ASSOCIATION_UNKNOWN,
+  FormsService,
+} from './forms.service';
 import { FORM_DRAFT, FORM_PUBLISHED, type FormStatus } from './form-status';
 import { readFormDraft } from './form-draft-revision';
 import type { CreateFormDto } from './dto/form.dto';
@@ -71,6 +76,9 @@ maybe('the association of a form, against PostgreSQL', () => {
           userId === CO_MANAGER && associationId === ASSO_A,
         canTakePaymentsNow: async () => true,
         collectionSubjectOf: async () => null,
+        // A and B exist; nothing else does (`forms."associationId"` has no foreign key here either).
+        namesByIds: async (ids: string[]) =>
+          new Map(ids.filter((id) => id === ASSO_A || id === ASSO_B).map((id) => [id, 'Asso'])),
       } as any,
       { listCotisationTiers: async () => [] } as any,
       new PurchaseRecordService(ds.getRepository(PurchaseRecord)),
@@ -101,7 +109,11 @@ maybe('the association of a form, against PostgreSQL', () => {
   });
 
   /** A free form of OWNER under `associationId`, in `status`. */
-  async function form(status: FormStatus, associationId: string | null = ASSO_A): Promise<string> {
+  async function form(
+    status: FormStatus,
+    associationId: string | null = ASSO_A,
+    over: Partial<Form> = {}
+  ): Promise<string> {
     const repo = ds.getRepository(Form);
     const saved = await repo.save(
       repo.create({
@@ -112,6 +124,7 @@ maybe('the association of a form, against PostgreSQL', () => {
         associationId,
         status,
         items: [],
+        ...over,
       })
     );
     return saved.id;
@@ -189,5 +202,41 @@ maybe('the association of a form, against PostgreSQL', () => {
     // Rolled back: still a draft under A, and the revision still there to be published by the owner.
     expect(await stored(id)).toEqual({ associationId: ASSO_A, status: FORM_DRAFT });
     expect((await readFormDraft(ds.manager, id)).document).toMatchObject({ associationId: ASSO_B });
+  });
+
+  it('refuses publishing a GRANTING draft moved to an association whose members its actor may not manage, though the revision leaves the grant out', async () => {
+    // Review of #3198: the grant is the STORED one, so a revision that omits `grantsCotisation`
+    // still carries it into B - and B's MANAGE_MEMBERS is what granting B's cotisation needs.
+    const id = await form(FORM_DRAFT, ASSO_A, {
+      grantsCotisation: true,
+      requiresPayment: true,
+      basePrice: 1500,
+      allowCashPayment: true,
+    });
+    await service.saveDraft(
+      id,
+      0,
+      { title: 'Gala', basePrice: 1500, currency: 'eur', items: [], associationId: ASSO_B },
+      null,
+      OWNER,
+      false
+    );
+    await expect(service.publishChanges(id, 1, OWNER, false)).rejects.toThrow(
+      /manage this association members/i
+    );
+    expect(await stored(id)).toEqual({ associationId: ASSO_A, status: FORM_DRAFT });
+  });
+
+  it('refuses, typed, a move to an id that is no UUID or names no association, and writes nothing', async () => {
+    const id = await form(FORM_DRAFT);
+    for (const [target, admin] of [
+      ['x', false],
+      ['00000000-0000-4000-8000-00000000dead', true],
+    ] as const) {
+      await expect(service.update(id, edit(target), OWNER, admin)).rejects.toMatchObject({
+        response: { code: FORM_ASSOCIATION_UNKNOWN },
+      });
+    }
+    expect((await stored(id)).associationId).toBe(ASSO_A);
   });
 });

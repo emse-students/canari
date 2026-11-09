@@ -602,6 +602,31 @@ describe('the editor', () => {
     );
 
     it(
+      "of a published form holding a revision that names another: the stored one, never the revision's",
+      async () => {
+        api.status = 'published';
+        api.associationId = 'a1';
+        api.revision = {
+          revision: 4,
+          document: {
+            title: 'Gala',
+            basePrice: 0,
+            currency: 'eur',
+            items: [],
+            associationId: 'a2',
+          },
+          savedAt: null,
+          saveId: null,
+        };
+        await open();
+        expect(document.querySelector('#association-select')).toBeNull();
+        expect(document.body.textContent).toContain('BDE');
+        expect(document.body.textContent).not.toContain('BDS');
+      },
+      MOUNT_BUDGET_MS
+    );
+
+    it(
       'of a published form: read-only, said why, and never sent with an edit',
       async () => {
         api.status = 'published';

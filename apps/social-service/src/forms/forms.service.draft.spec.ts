@@ -8,6 +8,7 @@ import {
   FormsService,
   FORM_ASSOCIATION_FIXED,
   FORM_ASSOCIATION_NOT_YOURS,
+  FORM_ASSOCIATION_UNKNOWN,
   FORM_DRAFT_FLAG_ON_EDIT,
 } from './forms.service';
 import {
@@ -37,6 +38,9 @@ jest.mock('./form-draft-revision', () => ({
  * hides a draft from a respondent is exactly that clause (`respondentFormWhere`): a fake that
  * returned the row whatever was asked would pass with the clause deleted.
  */
+/** A well-formed association id that names no association. */
+const NOWHERE = '00000000-0000-4000-8000-00000000dead';
+
 describe('FormsService - drafts', () => {
   const OWNER = 'u-owner';
   const STRANGER = 'u-stranger';
@@ -117,6 +121,8 @@ describe('FormsService - drafts', () => {
           // The publication's locked read of the form: the same row.
           findOne: (_entity: unknown, opts: { where: Record<string, unknown> }) =>
             formRepo.findOne(opts),
+          // A move's write, under the row lock it re-reads the status with.
+          save: (_entity: unknown, x: Record<string, unknown>) => formRepo.save(x),
         })
       ),
       query: jest.fn(),
@@ -131,6 +137,10 @@ describe('FormsService - drafts', () => {
       mayAct: jest.fn(() => Promise.resolve(opts.mayAct ?? false)),
       collectsNow: jest.fn(() => Promise.resolve(true)),
       collectionSubjectOf: jest.fn(() => Promise.resolve(null)),
+      // Every well-formed id but NOWHERE names an association.
+      namesByIds: jest.fn((ids: string[]) =>
+        Promise.resolve(new Map(ids.filter((id) => id !== NOWHERE).map((id) => [id, 'Asso'])))
+      ),
       assertPaymentsReady: jest.fn(() =>
         opts.canTakePayments === false
           ? Promise.reject(new ConflictException({ code: 'PAYMENTS_NOT_ACTIVATED' }))
@@ -251,6 +261,7 @@ describe('FormsService - drafts', () => {
   // and the association it was created under used to be fixed from then on. A draft has no answer,
   // payment, reminder or attachment, so it may move - by someone who is a member of both sides.
   describe('the association of a draft', () => {
+    const A2 = '00000000-0000-4000-8000-0000000000a2';
     /** `isMember` true only for the associations listed. */
     const memberOf = (associations: any, ...ids: string[]) =>
       associations.isMember.mockImplementation((_u: string, id: string) =>
@@ -260,11 +271,11 @@ describe('FormsService - drafts', () => {
 
     it('moves a draft to another association its actor belongs to, and logs it', async () => {
       const { service, formRepo, associations } = makeService();
-      memberOf(associations, 'a1', 'a2');
-      await service.update('f1', moveTo('a2'), OWNER, false);
-      expect(formRepo.save.mock.calls.at(-1)[0].associationId).toBe('a2');
+      memberOf(associations, 'a1', A2);
+      await service.update('f1', moveTo(A2), OWNER, false);
+      expect(formRepo.save.mock.calls.at(-1)[0].associationId).toBe(A2);
       expect(associations.isMember).toHaveBeenCalledWith(OWNER, 'a1');
-      expect(associations.isMember).toHaveBeenCalledWith(OWNER, 'a2');
+      expect(associations.isMember).toHaveBeenCalledWith(OWNER, A2);
     });
 
     it('makes a draft personal ("" or null) and a personal draft an association\'s', async () => {
@@ -277,15 +288,15 @@ describe('FormsService - drafts', () => {
       await toNull.service.update('f1', moveTo(null), OWNER, false);
       expect(toNull.formRepo.save.mock.calls.at(-1)[0].associationId).toBeNull();
       const fromNone = makeService({ form: { associationId: null } });
-      memberOf(fromNone.associations, 'a2');
-      await fromNone.service.update('f1', moveTo('a2'), OWNER, false);
-      expect(fromNone.formRepo.save.mock.calls.at(-1)[0].associationId).toBe('a2');
+      memberOf(fromNone.associations, A2);
+      await fromNone.service.update('f1', moveTo(A2), OWNER, false);
+      expect(fromNone.formRepo.save.mock.calls.at(-1)[0].associationId).toBe(A2);
     });
 
     it('refuses, typed, an association the actor is no member of - and leaves the draft where it was', async () => {
       const { service, formRepo, associations } = makeService();
       memberOf(associations, 'a1');
-      await expect(service.update('f1', moveTo('a2'), OWNER, false)).rejects.toMatchObject({
+      await expect(service.update('f1', moveTo(A2), OWNER, false)).rejects.toMatchObject({
         status: 403,
         response: { code: FORM_ASSOCIATION_NOT_YOURS },
       });
@@ -295,8 +306,8 @@ describe('FormsService - drafts', () => {
     it('refuses taking a draft out of an association the actor no longer belongs to', async () => {
       // A co-manager through MANAGE_FORMS who is not a member: may edit, may not walk off with it.
       const { service, formRepo, associations } = makeService({ mayAct: true });
-      memberOf(associations, 'a2');
-      await expect(service.update('f1', moveTo('a2'), STRANGER, false)).rejects.toMatchObject({
+      memberOf(associations, A2);
+      await expect(service.update('f1', moveTo(A2), STRANGER, false)).rejects.toMatchObject({
         response: { code: FORM_ASSOCIATION_NOT_YOURS },
       });
       await expect(service.update('f1', moveTo(''), STRANGER, false)).rejects.toMatchObject({
@@ -308,8 +319,8 @@ describe('FormsService - drafts', () => {
     it('lets a global admin move a draft without membership', async () => {
       const { service, formRepo, associations } = makeService();
       memberOf(associations);
-      await service.update('f1', moveTo('a2'), STRANGER, true);
-      expect(formRepo.save.mock.calls.at(-1)[0].associationId).toBe('a2');
+      await service.update('f1', moveTo(A2), STRANGER, true);
+      expect(formRepo.save.mock.calls.at(-1)[0].associationId).toBe(A2);
       expect(associations.isMember).not.toHaveBeenCalled();
     });
 
@@ -320,10 +331,55 @@ describe('FormsService - drafts', () => {
       expect(associations.isMember).not.toHaveBeenCalled();
     });
 
+    it('refuses, typed, an id that is no UUID or names no association - a global admin too', async () => {
+      for (const target of ['x', NOWHERE]) {
+        for (const admin of [false, true]) {
+          const { service, formRepo, associations } = makeService();
+          memberOf(associations, 'a1', A2, NOWHERE);
+          await expect(service.update('f1', moveTo(target), OWNER, admin)).rejects.toMatchObject({
+            status: 400,
+            response: { code: FORM_ASSOCIATION_UNKNOWN },
+          });
+          expect(formRepo.save).not.toHaveBeenCalled();
+        }
+      }
+    });
+
+    it('refuses a move whose draft was published during the edit, read under the row lock', async () => {
+      const { service, row, formRepo, associations } = makeService();
+      // The publication commits between the edit's checks and its write.
+      associations.isMember.mockImplementation(async () => {
+        row.status = FORM_PUBLISHED;
+        return true;
+      });
+      await expect(service.update('f1', moveTo(A2), OWNER, false)).rejects.toMatchObject({
+        response: { code: FORM_ASSOCIATION_FIXED },
+      });
+      expect(formRepo.save).not.toHaveBeenCalled();
+      expect(row.associationId).toBe('a1');
+    });
+
+    it('judges a MOVED grant on the stored settings: a revision that leaves them out is refused without the right', async () => {
+      // A draft granting A's cotisation, moved to B by a member of B without MANAGE_MEMBERS.
+      const { service, formRepo, associations } = makeService({
+        form: { grantsCotisation: true, requiresPayment: true, basePrice: 1500, isPublic: false },
+      });
+      memberOf(associations, 'a1', A2);
+      await expect(
+        service.update(
+          'f1',
+          createInput({ associationId: A2, requiresPayment: undefined, basePrice: undefined }),
+          OWNER,
+          false
+        )
+      ).rejects.toThrow(/manage this association members/i);
+      expect(formRepo.save).not.toHaveBeenCalled();
+    });
+
     it('refuses moving a PUBLISHED form, typed, whoever asks', async () => {
       const { service, formRepo } = makeService({ form: { status: FORM_PUBLISHED } });
       for (const admin of [false, true]) {
-        await expect(service.update('f1', moveTo('a2'), OWNER, admin)).rejects.toMatchObject({
+        await expect(service.update('f1', moveTo(A2), OWNER, admin)).rejects.toMatchObject({
           status: 400,
           response: { code: FORM_ASSOCIATION_FIXED },
         });
@@ -335,13 +391,13 @@ describe('FormsService - drafts', () => {
       const revision = jest.requireMock('./form-draft-revision') as { readFormDraft: jest.Mock };
       revision.readFormDraft.mockResolvedValueOnce({
         revision: 3,
-        document: { title: 'Gala', basePrice: 0, currency: 'eur', items: [], associationId: 'a2' },
+        document: { title: 'Gala', basePrice: 0, currency: 'eur', items: [], associationId: A2 },
         savedAt: null,
         saveId: null,
       });
       const { service, row, formRepo, associations } = makeService();
       formRepo.manager.query.mockResolvedValue([]);
-      memberOf(associations, 'a1', 'a2');
+      memberOf(associations, 'a1', A2);
       const transactionQuery = jest.fn(async (sql: string) =>
         /form_drafts/.test(sql) && /RETURNING/.test(sql) ? [{ revision: 4 }] : [{ changed: false }]
       );
@@ -358,7 +414,7 @@ describe('FormsService - drafts', () => {
         })
       );
       await service.publishChanges('f1', 3, OWNER, false);
-      expect(row).toMatchObject({ associationId: 'a2', status: FORM_PUBLISHED });
+      expect(row).toMatchObject({ associationId: A2, status: FORM_PUBLISHED });
     });
   });
 

@@ -260,11 +260,15 @@
       // The form's own association, fetched by id rather than found in a list: the list of
       // associations the user belongs to would miss the one they have since left, and this form
       // stays that association's either way.
-      associationId = f.associationId ?? '';
-      if (f.associationId) {
+      // A DRAFT's association is its builder's latest choice, the revision's; a PUBLISHED form's
+      // is the stored one, always - a revision naming another (one an older server let through)
+      // must neither show that name nor judge payment readiness on it (review of #3198).
+      const ownAssociation = isDraftForm(stored) ? f.associationId : stored.associationId;
+      associationId = ownAssociation ?? '';
+      if (ownAssociation) {
         const [asso, options] = await Promise.all([
-          getAssociation(f.associationId).catch(() => null),
-          cotisationOptionsFor(f.associationId),
+          getAssociation(ownAssociation).catch(() => null),
+          cotisationOptionsFor(ownAssociation),
         ]);
         association = asso;
         tiers = options.tiers;
