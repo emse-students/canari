@@ -735,6 +735,7 @@
   "post_anonymous_removed": "Anonymat retiré, l'auteur est de nouveau visible.",
   "post_unable_to_unmask": "Impossible de retirer l'anonymat",
   "post_reacter": "Ajouter une réaction",
+  "post_react_hold_hint": "Appui court : J'aime. Appui long : choisir une réaction",
   "post_already_reported": "Vous avez déjà signalé ce post.",
   "post_unable_to_vote": "Impossible de voter",
   "post_action_not_allowed": "Action non autorisée",

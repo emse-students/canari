@@ -703,6 +703,7 @@
   "post_anonymous_removed": "Anonymity removed, the author is visible again.",
   "post_unable_to_unmask": "Could not remove anonymity",
   "post_reacter": "Add reaction",
+  "post_react_hold_hint": "Tap to like, hold to choose a reaction",
   "post_already_reported": "You already reported this post.",
   "post_unable_to_vote": "Could not vote",
   "post_action_not_allowed": "Action not allowed",

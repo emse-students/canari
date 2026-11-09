@@ -167,7 +167,7 @@ function tallied(target: HTMLElement): boolean {
 /** Opens the reaction picker and returns its buttons. */
 function picker(target: HTMLElement): HTMLButtonElement[] {
   if (!target.querySelector('[role="group"]')) {
-    (target.querySelector(`button[aria-label="${m.post_reacter()}"]`) as HTMLButtonElement).click();
+    (target.querySelector(`button[data-post-react-picker-open]`) as HTMLButtonElement).click();
     flushSync();
   }
   return [...target.querySelectorAll<HTMLButtonElement>('[role="group"] button')];
@@ -177,7 +177,9 @@ function picker(target: HTMLElement): HTMLButtonElement[] {
 function aliceReacted(target: HTMLElement): boolean {
   const pressed = picker(target).some((b) => b.getAttribute('aria-pressed') === 'true');
   // Close it again so the next read starts from the same place.
-  (target.querySelector(`button[aria-label="${m.post_reacter()}"]`) as HTMLButtonElement).click();
+  target
+    .querySelector('[role="group"]')!
+    .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   flushSync();
   return pressed;
 }
