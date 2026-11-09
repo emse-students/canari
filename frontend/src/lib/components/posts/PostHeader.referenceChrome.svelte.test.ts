@@ -36,7 +36,7 @@ afterEach(() => {
 function header(pinned: boolean) {
   const post: PostEntity = {
     id: 'p1',
-    markdown: 'la soirÃ©e',
+    markdown: 'la soirée',
     mentions: [],
     links: [],
     media: [],
