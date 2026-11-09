@@ -3518,7 +3518,6 @@
   "profile_bio_save_error_fallback": "Save failed",
   "settings_page_title": "Settings",
   "settings_page_subtitle": "Preferences, security and account management",
-  "settings_device_id_label": "device: {id}",
   "settings_storage_heading": "Storage",
   "settings_storage_desc": "Space used by Canari on this device: messages, media cache and encryption state.",
   "settings_storage_measuring": "Measuring...",
@@ -4305,7 +4304,6 @@
     }
   ],
   "chat_preview_media": "[Media]",
-  "chat_preview_info": "[Info]",
   "chat_preview_poll": "[Poll]",
   "chat_preview_gif": "[GIF]",
   "chat_preview_link": "[Link]",

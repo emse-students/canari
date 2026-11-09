@@ -208,13 +208,10 @@
   {#each visibleMessageGroups as group, index (group?.type === 'message' ? group.message?.id : `${group?.type ?? ''}-${index}`)}
     <!-- Svelte 5 teardown race: group can be null when the {#key} parent destroys this component
          while the {#each} key expression is still being evaluated. All accesses use ?. -->
-    <!-- Date separator. -->
+    <!-- Date and hour separators: ONE plain muted style, as Messenger draws them (design audit Q6). -->
     {#if group?.type === 'date_separator'}
-      <div class="my-5 flex justify-center">
-        <div
-          data-chat-date-separator={group.date}
-          class="text-text-main bg-cn-surface text-2xs rounded-full border border-black/5 px-4 py-1.5 font-bold shadow-sm dark:border-white/10"
-        >
+      <div class="my-4 flex justify-center">
+        <div data-chat-date-separator={group.date} class="text-text-muted text-2xs font-medium">
           {group.date}
         </div>
       </div>
@@ -222,7 +219,7 @@
       <!-- Time separator (hour). -->
     {:else if group?.type === 'time_separator'}
       <div class="my-3 flex justify-center">
-        <div class="text-text-muted/70 text-2xs px-2 py-0.5 font-semibold">
+        <div class="text-text-muted text-2xs font-medium">
           {group.time}
         </div>
       </div>
