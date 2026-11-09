@@ -306,7 +306,7 @@
     {#if loading}
       <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-32" in:fade>
         <LoaderCircle size={32} class="text-cn-yellow animate-spin" strokeWidth={2.5} />
-        <span class="text-sm font-bold tracking-wider uppercase">{m.profile_public_loading()}</span>
+        <span class="text-sm font-bold">{m.profile_public_loading()}</span>
       </div>
     {:else if error}
       <div
@@ -479,7 +479,7 @@
               <GraduationCap size={20} strokeWidth={2.5} />
             </div>
             <div class="min-w-0">
-              <p class="text-text-muted text-2xs mb-0.5 font-bold tracking-wider uppercase">
+              <p class="text-text-muted text-2xs mb-0.5 font-bold">
                 {m.profile_promo_label()}
               </p>
               <p class="text-text-main truncate text-sm font-bold">
@@ -497,7 +497,7 @@
               <CalendarDays size={20} strokeWidth={2.5} />
             </div>
             <div class="min-w-0">
-              <p class="text-text-muted text-2xs mb-0.5 font-bold tracking-wider uppercase">
+              <p class="text-text-muted text-2xs mb-0.5 font-bold">
                 {m.profile_member_since_label()}
               </p>
               <p class="text-text-main text-sm font-bold capitalize">

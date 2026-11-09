@@ -35,7 +35,7 @@
     {#if model.loading}
       <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-32" in:fade>
         <LoaderCircle size={32} class="text-cn-yellow animate-spin" strokeWidth={2.5} />
-        <span class="text-sm font-bold tracking-wider uppercase">{m.profile_loading()}</span>
+        <span class="text-sm font-bold">{m.profile_loading()}</span>
       </div>
     {:else if model.error}
       <div

@@ -435,7 +435,7 @@
   {:else}
     <div class="border-cn-border/70 overflow-x-auto rounded-xl border">
       <table class="w-full text-sm">
-        <thead class="bg-cn-bg text-text-muted text-left text-xs font-bold tracking-wide uppercase">
+        <thead class="bg-cn-bg text-text-muted text-left text-xs font-bold">
           <tr>
             <th class="px-4 py-3">{m.asso_achats_col_date()}</th>
             <th class="px-4 py-3">{m.asso_achats_col_buyer()}</th>

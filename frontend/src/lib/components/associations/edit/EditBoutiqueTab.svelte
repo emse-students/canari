@@ -426,7 +426,7 @@
       />
 
       <div class="border-cn-border/60 bg-cn-bg/30 space-y-3 rounded-xl border p-4">
-        <p class="text-text-main text-xs font-bold tracking-wide uppercase">
+        <p class="text-text-main text-xs font-bold">
           {m.asso_boutique_cotisant_pricing_title()}
         </p>
         <label class="flex cursor-pointer items-center gap-2 text-sm">
@@ -451,7 +451,7 @@
       </div>
 
       <div class="border-cn-border/60 bg-cn-bg/30 space-y-3 rounded-xl border p-4">
-        <p class="text-text-main text-xs font-bold tracking-wide uppercase">
+        <p class="text-text-main text-xs font-bold">
           {m.asso_boutique_limits_title()}
         </p>
         <label class="flex cursor-pointer items-center gap-2 text-sm">

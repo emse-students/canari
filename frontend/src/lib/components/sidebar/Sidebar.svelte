@@ -907,7 +907,7 @@
                   {#if unjoined}
                     <span
                       aria-hidden="true"
-                      class="border-text-muted/30 text-2xs rounded-full border px-2 py-0.5 font-semibold tracking-wide uppercase"
+                      class="border-text-muted/30 text-2xs rounded-full border px-2 py-0.5 font-semibold"
                     >
                       {m.chat_channel_join_as_admin_label()}
                     </span>

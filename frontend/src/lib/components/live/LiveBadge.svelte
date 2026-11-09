@@ -7,7 +7,7 @@
 </script>
 
 <span
-  class="bg-red-err text-2xs inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-bold tracking-wide text-white"
+  class="bg-red-err text-2xs inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-bold text-white"
   data-live-badge
 >
   <span class="size-1.5 rounded-full bg-white motion-safe:animate-pulse" aria-hidden="true"></span>

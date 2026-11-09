@@ -211,7 +211,7 @@
       <div class="my-5 flex justify-center">
         <div
           data-chat-date-separator={group.date}
-          class="text-text-main bg-cn-surface text-2xs rounded-full border border-black/5 px-4 py-1.5 font-bold tracking-widest uppercase shadow-sm dark:border-white/10"
+          class="text-text-main bg-cn-surface text-2xs rounded-full border border-black/5 px-4 py-1.5 font-bold shadow-sm dark:border-white/10"
         >
           {group.date}
         </div>
@@ -220,7 +220,7 @@
       <!-- Time separator (hour). -->
     {:else if group?.type === 'time_separator'}
       <div class="my-3 flex justify-center">
-        <div class="text-text-muted/70 text-2xs px-2 py-0.5 font-semibold tracking-wider">
+        <div class="text-text-muted/70 text-2xs px-2 py-0.5 font-semibold">
           {group.time}
         </div>
       </div>
@@ -313,7 +313,7 @@
           >
             <!-- Sender name. -->
             {#if showSender && !msg.isSystem}
-              <div class="text-text-muted text-2xs mb-1 px-1 font-bold tracking-wide">
+              <div class="text-text-muted text-2xs mb-1 px-1 font-bold">
                 {#snippet senderName()}
                   <EmojiText
                     text={getUserFirstNameSync(

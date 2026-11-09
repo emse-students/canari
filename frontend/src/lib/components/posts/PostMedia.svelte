@@ -735,8 +735,8 @@
       <p class="mb-0.5 truncate text-xs leading-tight font-bold">
         {media.fileName ?? m.post_media_file_label()}
       </p>
-      <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
-      <p class="text-text-muted text-2xs font-semibold tracking-wider">
+      <!-- No `` here: it would render the "Ko" unit as "KO". -->
+      <p class="text-text-muted text-2xs font-semibold">
         {formatFileSize(media.size)}
       </p>
       {#if saveReady}

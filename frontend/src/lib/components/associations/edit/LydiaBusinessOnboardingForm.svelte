@@ -358,9 +358,7 @@
   {:else if view.active}
     <p class="text-text-main flex flex-wrap items-center gap-2 text-sm font-semibold">
       {m.asso_lydia_active_title()}
-      <span
-        class="text-green-ok bg-green-ok/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
-      >
+      <span class="text-green-ok bg-green-ok/20 text-2xs rounded-full px-2 py-0.5 font-bold">
         {m.asso_lydia_status_active()}
       </span>
     </p>
