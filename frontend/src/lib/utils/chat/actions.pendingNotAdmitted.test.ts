@@ -84,7 +84,6 @@ describe('a pending device the gate did not admit', () => {
     const log = vi.fn();
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map(GROUPS.map((g) => [g, conversation(g)])),

@@ -456,9 +456,15 @@ export function gridUnitLimit(
   return blockMode ? BLOCK_LENGTH_CHOICES : bookingUnitLimit(space);
 }
 
-/** How many units one booking may cover in this space: a whole slot, or 1..`maxSteps` steps. */
+/** How many units one booking may cover in this space: a whole slot, or 1..`maxSteps` steps (unbounded when none is set). */
 export function bookingUnitLimit(space: Pick<BookerSpace, 'slotMode' | 'maxSteps'>): number {
-  return space.slotMode === 'slots' ? 1 : Math.max(1, space.maxSteps ?? 1);
+  // A step space with no maximum (maxSteps null) is limited by its openings alone: the run of
+  // free touching units stops where the opening does.
+  return space.slotMode === 'slots'
+    ? 1
+    : space.maxSteps === null
+      ? Infinity
+      : Math.max(1, space.maxSteps);
 }
 
 /**

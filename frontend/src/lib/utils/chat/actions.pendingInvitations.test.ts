@@ -87,7 +87,6 @@ describe('processPendingInvitations - leaf already in tree', () => {
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations,
@@ -128,7 +127,6 @@ describe('processPendingInvitations - leaf already in tree', () => {
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map([['g1', readyConversation('g1')]]),
@@ -162,7 +160,6 @@ describe('processPendingInvitations - leaf already in tree', () => {
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map([['g1', readyConversation('g1')]]),
@@ -197,7 +194,6 @@ describe('processPendingInvitations - leaf already in tree', () => {
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map([['g1', readyConversation('g1')]]),
@@ -232,7 +228,6 @@ describe('processPendingInvitations - leaf already in tree', () => {
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map([['g1', readyConversation('g1')]]),
@@ -266,7 +261,6 @@ describe('processPendingInvitations - leaf already in tree', () => {
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations,
@@ -304,7 +298,6 @@ describe('processPendingInvitations - leaf already in tree', () => {
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
@@ -342,7 +335,6 @@ describe('processPendingInvitations - leaf already in tree', () => {
     await expect(
       processPendingInvitations({
         mlsService,
-        storage: null,
         userId: 'self',
         deviceKeyB64: 'pin',
         conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
@@ -381,7 +373,6 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations,
@@ -416,7 +407,6 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations,
@@ -464,7 +454,6 @@ describe('processPendingInvitations - the group is absent from THIS device', () 
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map<string, Conversation>(),
@@ -484,7 +473,6 @@ describe('processPendingInvitations - the group is absent from THIS device', () 
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map<string, Conversation>(),
@@ -506,7 +494,6 @@ describe('processPendingInvitations - the group is absent from THIS device', () 
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map<string, Conversation>(),
@@ -544,7 +531,6 @@ describe('processPendingInvitations - a device key this member refuses', () => {
 
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
@@ -590,7 +576,6 @@ describe('processPendingInvitations - a device key this member refuses', () => {
     const sweep = () =>
       processPendingInvitations({
         mlsService,
-        storage: null,
         userId: 'self',
         deviceKeyB64: 'pin',
         conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
@@ -630,7 +615,6 @@ describe('processPendingInvitations - a device key this member refuses', () => {
     const sweep = () =>
       processPendingInvitations({
         mlsService,
-        storage: null,
         userId: 'self',
         deviceKeyB64: 'pin',
         conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
@@ -653,7 +637,6 @@ describe('processPendingInvitations - a duplicate signature key', () => {
   const sweep = (mlsService: IMlsService) =>
     processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),

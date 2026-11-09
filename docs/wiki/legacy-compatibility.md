@@ -27,6 +27,21 @@ the shims below, and that pull request was armed only after `GET /api/version` r
 intention. Before it, both estates read `1.6.2` (2026-11-04; read again unchanged on 2026-11-08
 before the raise). An older figure on this page is the floor at the date its entry names.
 
+### A tolerated degradation: an unbounded booking space on a build older than migration 153 (owner, 2026-11-09)
+
+- **What.** A booking space may have NO longest booking (`maxSteps` NULL, migration 153, #3196), and a
+  new one starts so. A build that predates it reads `maxSteps ?? 1` (`bookingUnitLimit`): a booker
+  can pick ONE step only on such a space; and its organiser editor treats an empty `maxSteps` as
+  required, so it cannot save that space's settings.
+- **Who.** Native apps at or above the floor `1.6.6` but older than the release carrying #3196 (they
+  embed their own frontend); the web app is always current.
+- **Why tolerated.** The wrong reading is a smaller choice, never a wrong booking: the server judges
+  every range (`rangeLengthRefusal`), and the organiser can still edit on the web or an updated app.
+  Gating the server on a client version would defeat the owner's rule that nothing limits unless the
+  organiser typed it.
+- **Removal.** Nothing to remove (no shim in the code): the degradation ends when `minClientVersion`
+  passes the first stable carrying #3196, and this entry is then deleted.
+
 ### Entries `1.6.6` retires or unblocks (the owner's raise of 2026-11-08)
 
 "Carried by" is the first stable whose history holds the pull request (`git tag --contains` on its
@@ -529,6 +544,23 @@ weigh closing them by hand against the rollback.
 **Removal condition:** once the floor passes the first stable carrying this change, `draft` may become
 the default of a create (a create without it a draft too). Measure before: the `[FORMS] create without draft` lines
 in social-service count the older builds still creating forms.
+
+### No date yet - a draft's association, between builds (2026-11-09)
+
+**Site:** `FormsService.associationAfterEdit` (server), `createAssociationOf` (`frontend/src/lib/forms/draftResend.ts`).
+**A current editor against an older social-service.** The editor now sends a draft's association in
+every revision (`''` for none, never `null`, so an older server's `trim()` reads it). An older server
+still refuses a DIFFERENT value at the publication, with an untyped `400`: the builder reads the
+generic refusal and the draft stays as it was, revision included - nothing is lost, and the move
+works once the server carries this change. The same value is no change on either side.
+**An older build against the current server** never sends a draft's association on an edit (its
+editor leaves the field out, its create page shut the picker): it moves nothing.
+**A device copy kept before `createAssociationId` was recorded** (a create page of the 2026-11-08
+build closed with its create unanswered) names its create's association from its document, which
+WAS the create's then - that build shut the picker once a create was sent; read with a `Log.d` line.
+**Removal condition:** device copies die at sign-out and land within a session, so the copy branch
+may go one stable after this change; nothing to remove server side
+([forms](frontend/modules/forms.md#a-drafts-association-may-change-a-published-forms-may-not-owner-2026-11-09)).
 
 ### No date yet - an association mute set by a build older than the bell (designed 2026-11-07)
 

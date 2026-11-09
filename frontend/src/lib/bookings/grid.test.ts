@@ -174,7 +174,8 @@ describe('freeRunFrom', () => {
   it('books a slot whole and steps up to maxSteps (D3)', () => {
     expect(bookingUnitLimit({ slotMode: 'slots', maxSteps: 4 })).toBe(1);
     expect(bookingUnitLimit({ slotMode: 'step', maxSteps: 4 })).toBe(4);
-    expect(bookingUnitLimit({ slotMode: 'step', maxSteps: null })).toBe(1);
+    // No maximum set: the openings alone end a run, never a hidden number.
+    expect(bookingUnitLimit({ slotMode: 'step', maxSteps: null })).toBe(Infinity);
   });
 });
 
