@@ -1212,7 +1212,9 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
  */
 @layer components {
   /* A control inside a banner strip: drawn 24px so the strip stays 32px, but its hit area is padded
-     out to 44px tall by a pseudo-element, so the touch target does not shrink with the strip. */
+     out to 44px tall by a pseudo-element, so the touch target does not shrink with the strip. The
+     horizontal pad grows an icon-only button (24px wide) to 44px too, and leaves a wider one 4px
+     past each edge. */
   .banner-action {
     position: relative;
     display: inline-flex;
@@ -1230,7 +1232,7 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   .banner-action::before {
     content: '';
     position: absolute;
-    inset: -0.625rem -0.25rem;
+    inset: -0.625rem min(-0.25rem, calc((100% - 2.75rem) / 2));
   }
 
   .ui-icon-button {
