@@ -1,12 +1,18 @@
+import type { DeliveryRefusalReason } from './mlsDeliveryHttp';
 import type { GraineSignatureEngine } from '$lib/crypto/graineV2';
 import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from './deviceTrust';
-import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
+import type {
+  DeviceKeyPackageAnswer,
+  DeviceSignatureKeys,
+  UserDeviceEntry,
+} from './deviceKeyPackage';
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
+import type { ServerInstant } from './serverInstant';
 import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
@@ -33,6 +39,15 @@ import type {
  * a key group refused the person. `welcome` is then ABSENT: the commit merged, the Welcome
  * the merge owed is already discharged, and nothing is to be sent to that device (DEV-3, 2026-10-25).
  */
+/** One Welcome the server stored for one device ({@link IMlsService.onWelcomeDelivered}). */
+export type DeliveredWelcome = {
+  groupId: string;
+  userId: string;
+  deviceId: string;
+  /** The Welcome's bytes - what tells this delivery from a later Welcome to the same device. */
+  welcome: Uint8Array;
+};
+
 export interface OneDeviceAddResult {
   welcome?: Uint8Array;
   ratchetTree?: Uint8Array;
@@ -62,8 +77,38 @@ export type { IncomingDeliveryMeta };
  */
 export type WelcomeRequestAnswer =
   | { status: 'forwarded'; target: string }
-  | { status: 'stored' }
+  | {
+      status: 'stored';
+      facts?: NoHolderFacts;
+      /**
+       * Whether the server lets a further device join by itself (D1) - `true` only when it says so.
+       * Absent (an older server) or `false` (the door is held shut until every member client reads
+       * such an entry as D2/D3 say): the device waits for a member's Add and tries no join.
+       */
+      selfJoin?: boolean;
+    }
+  /** The server REFUSED the ask on membership (`DeliveryRefusal`): no seat, so nothing was put. */
+  | { status: 'refused'; reason: DeliveryRefusalReason }
   | null;
+
+/**
+ * What a `no_peer_online` answer says about the requester's group, read by the server IN THAT SAME
+ * ANSWER (`noHolderFacts`): the stored base's two epochs - `null` when no base was ever published -
+ * the requester's own seat, read after the base, and whether a member could still answer
+ * (`holders`). Absent when the server could not read them, or told a caller with no admitted seat
+ * nothing. The one input of the no-holder banner (`readNoHolder`, D5 of
+ * `docs/wiki/protocols/mls-availability-no-holder.md`).
+ */
+export type NoHolderFacts = {
+  base: { baseEpoch: number; activeEpoch: number } | null;
+  seat: DistributionSeat;
+  /**
+   * `liveHolderDevices`: every device but the asking one - the user's own other devices included -
+   * with an active row in the group and a KeyPackage published within the server's retention
+   * window: a holder who merely did not open the app tonight. `wakeSent`: this very answer woke member phones in the background.
+   */
+  holders: { liveHolderDevices: number; wakeSent: boolean };
+};
 
 /**
  * One device's seat in a key group, served by chat-delivery WITH the group's base and read AFTER it
@@ -646,6 +691,14 @@ export type UserGroupRow = {
     /** The seat waits for a member's admission (see {@link DeviceMembershipRow}); absent from an older server. */
     awaitingAdmission?: boolean;
   } | null;
+  /**
+   * The ACCOUNT's seat awaits a member's admission (an invitation link's ask no member has answered),
+   * said whether or not this device holds a device row in the group, and never while any device of
+   * the person is `active` there (the commit gate's predicate). The ask is the person's, not the device's: a joiner's second device,
+   * which holds no row yet, waits for the same member's Add as the first. Absent from an older
+   * server, which reads as "the server did not say".
+   */
+  awaitingAdmission?: boolean;
 };
 
 /** Metadata from `GET /api/mls/groups/:id` for recovery checks (`deletedAt` = tombstone). */
@@ -714,6 +767,11 @@ export type HistoryRequestOutcome = {
    * facts, separated by evidence rather than by prose. Zero when the server said nothing.
    */
   excludedOnline: number;
+  /**
+   * Set when the server REFUSED the request on membership - an answer, and NOT an election: nobody
+   * was elected and nobody was found absent, so neither `noPeerOnline` nor `target` says anything.
+   */
+  refused?: DeliveryRefusalReason;
 };
 
 /**
@@ -737,6 +795,13 @@ export type BaseRefreshOutcome = {
   noPeerOnline: boolean;
   /** The member key (`userId:deviceId`) the server elected, when it elected one. */
   target?: string;
+  /** With `noPeerOnline` only: the facts read in the same answer ({@link NoHolderFacts}). */
+  facts?: NoHolderFacts;
+  /**
+   * Set when the server REFUSED the request on membership: nobody was elected, so a caller must
+   * never read it as "a member is reachable" - see {@link HistoryRequestOutcome.refused}.
+   */
+  refused?: DeliveryRefusalReason;
 };
 
 /**
@@ -862,8 +927,13 @@ export interface IMlsService {
    * an entry was written, `false` when there is no keystore (nothing moved).
    */
   pointUnattendedUnlockAt(newDeviceKeyB64: string): Promise<boolean>;
-  /** Generates a fresh MLS KeyPackage for this device, signed with the device-key-encrypted identity key. */
-  generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage>;
+  /**
+   * Generates a fresh MLS KeyPackage for this device, signed with the device-key-encrypted identity
+   * key, and publishes it. A call made while a round is in flight JOINS that round (one round at a
+   * time); `fresh` queues a new round behind it instead, for a caller that needs a round starting
+   * after something it already did.
+   */
+  generateKeyPackage(deviceKeyB64: string, opts?: { fresh?: boolean }): Promise<DatedKeyPackage>;
   /**
    * Purges the published KeyPackages (static fallback + one-time pool) and republishes
    * fresh ones from the current local keystore.
@@ -1091,11 +1161,44 @@ export interface IMlsService {
    * Welcome and the Commit behind it may only be processed in the order they arrived.
    *
    * Idempotent, and silent when nothing was held.
+   *
+   * While {@link holdInboundUntilRowsSeeded} is armed it only records that the client is ready: the
+   * held frames are replayed when the restore seeds the conversation rows, not here.
    */
   markInboundReady(): Promise<void>;
+  /**
+   * Arms the cold start's third precondition: no inbound frame is handled, and no pull is issued,
+   * before the restore has seeded the conversation rows ({@link notifyConversationRowsSeeded}).
+   * Every {@link fetchPendingMessages} asked meanwhile, by any caller, joins the ONE boot pull the
+   * seeding issues - so none of them may be awaited ahead of the restore.
+   *
+   * A frame of a group this device holds, handled while its row does not exist yet, is refused
+   * `absent-conversation` and fetched again once the row exists - a race that heals at every cold
+   * start, which is still a defect. The login arms this before the gateway handshake starts and
+   * ends it with {@link endRowSeedingHold} once its restore has returned.
+   */
+  holdInboundUntilRowsSeeded(): void;
+  /**
+   * The login's own end of {@link holdInboundUntilRowsSeeded}, called once its restore returned or
+   * threw. Silent when the seeding already released the hold - every ordinary boot. Otherwise the
+   * restore ended without seeding a row (it threw before, or ran against another client) and this
+   * releases what was held, at a level that accuses: the rows the frames wait for are not coming.
+   */
+  endRowSeedingHold(): void;
   /** True when the live gateway WebSocket is open (used for reconnect watchdog). */
   isWsOpen(): boolean;
-  /** Fetches all registered devices (with KeyPackages) for the given user. Throws on transport/HTTP failure; `[]` only when the user genuinely has no active device. */
+  /**
+   * The roster of the given user's active devices, CLAIMING NOTHING: for a caller that needs the
+   * ids, a count or the names. Throws on transport/HTTP failure; `[]` only when the user genuinely
+   * has no active device. Simultaneous askers share one request.
+   */
+  listUserDevices(userId: string): Promise<UserDeviceEntry[]>;
+  /**
+   * CLAIMS one KeyPackage from every active device of the given user, for an adder about to add
+   * every one of them - a caller that only reads the roster asks {@link listUserDevices}. Never
+   * shared between callers: two adders on one package would build two Welcomes on it. Throws on
+   * transport/HTTP failure; `[]` only when the user genuinely has no active device.
+   */
   fetchUserDevices(userId: string): Promise<
     Array<{
       keyPackage: Uint8Array;
@@ -1121,12 +1224,12 @@ export interface IMlsService {
   publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
   /** Bulk-upload multiple one-time prekeys to the server pool. */
   publishKeyPackages(packages: DatedKeyPackage[]): Promise<void>;
-  /** Delivers a Welcome message to the target user/device via the delivery service. */
+  /** Delivers a Welcome message to ONE device of the target user via the delivery service. */
   sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
     groupId: string,
-    targetDeviceId?: string,
+    targetDeviceId: string,
     ratchetTreeBytes?: Uint8Array
   ): Promise<void>;
   /** Returns the current MLS epoch number for a group (needed for epoch-gating). */
@@ -1167,6 +1270,21 @@ export interface IMlsService {
   fetchHistoryBatch?(
     groups: Array<{ groupId: string; afterStreamId?: string }>
   ): Promise<Map<string, import('./historyTypes').HistoryPage>>;
+  /**
+   * When the server ACCEPTED the commit of `groupId` built on `baseEpoch` - the commit log row's
+   * `createdAt`, the one durable and shared statement of when a commit happened - as a
+   * {@link ServerInstant}. A line derived from a merged commit (a device notice) is dated by it, never
+   * by when this device merged the commit. Cached for the session: a log row never changes once
+   * written, and a route this server does not serve is not asked again. Throws when the server gave
+   * no answer (transport, 5xx).
+   */
+  commitAcceptedAt(groupId: string, baseEpoch: number): Promise<ServerInstant>;
+  /**
+   * When THIS device's own seat in `groupId` was removed, as a {@link ServerInstant} - the date of
+   * the "you were removed" line when the evidence of the removal carries none. Throws when the
+   * server gave no answer.
+   */
+  ownRemovalAt(groupId: string): Promise<ServerInstant>;
   /**
    * Rung-1 replay: fetches the ordered, CONTIGUOUS commits this device missed
    * (`baseEpoch >= sinceEpoch`) so a gap can be healed by re-applying them instead of dropping local
@@ -1370,13 +1488,16 @@ export interface IMlsService {
   ): Promise<ExternalJoinOutcome>;
   /**
    * Decrypts a frame that arrived on a key-distribution group and hands it to the Graine handler.
-   * Returns whether the frame may be acknowledged.
+   * Returns whether the frame may be acknowledged. `aheadOfMailbox` is the arrival stamp
+   * (`IncomingDeliveryMeta.aheadOfMailbox`): such a frame, ahead of the group's epoch, steps no
+   * commit - it is left queued and pulled again behind the commits and seeds queued before it.
    */
   routeDistributionFrame(
     groupId: string,
     sender: string,
     ciphertext: Uint8Array,
-    senderDeviceId?: string
+    senderDeviceId?: string,
+    aheadOfMailbox?: boolean
   ): Promise<boolean>;
   /** Returns the unique device ID assigned to this MLS instance. */
   getDeviceId(): string;
@@ -1387,8 +1508,13 @@ export interface IMlsService {
    */
   resolveDeviceId(userId: string): Promise<string>;
   /** Fetches messages queued on the delivery service that were not yet delivered
-   * (e.g. during a disconnect). Should be called after every connect/reconnect. */
-  fetchPendingMessages(): Promise<void>;
+   * (e.g. during a disconnect). Should be called after every connect/reconnect. Single-flight: an
+   * ask made while a pull is fetching, the queue is draining or a pulled row is still queued is
+   * owed and run once all have ended, and resolves then. While {@link holdInboundUntilRowsSeeded}
+   * is armed, every ask joins the whole-mailbox boot pull the restore's seeding issues.
+   * @param forGroups the groups the ask is for, if any - a group barrier on one of them waits for
+   *   the owed pull's listing; none means the whole mailbox, and every group's barrier waits. */
+  fetchPendingMessages(forGroups?: readonly string[]): Promise<void>;
   /**
    * Resolves when this device's mailbox is empty - nothing left to fetch, nothing left to apply.
    *
@@ -1465,6 +1591,10 @@ export interface IMlsService {
    * is the order the second phase keeps with a live delivery: the pull is announced in the same
    * tick, so each archive replay waits for it at its barrier and skips what it decrypted, and every
    * later write of a row MERGES into it rather than replacing it.
+   *
+   * AND IT RELEASES THE COLD START'S HOLD ({@link holdInboundUntilRowsSeeded}): the held socket
+   * frames are replayed and the boot pull is issued here, so at a cold start nothing was refused
+   * for lack of a row in the first place.
    */
   notifyConversationRowsSeeded(): void;
 
@@ -1739,6 +1869,14 @@ export interface IMlsService {
   onWelcomeProcessed(callback: (groupId?: string) => void): void;
 
   /**
+   * Installs THE listener of every Welcome this device delivers: called once per send the server
+   * stored, whichever path sent it (an Add, a pending invitation, a welcome_request answer, the
+   * owed-Welcome drain). Called synchronously and never awaited; one listener, installed by the
+   * session when it builds this service, so no delivery can precede it.
+   */
+  onWelcomeDelivered(listener: (delivered: DeliveredWelcome) => void): void;
+
+  /**
    * Registers an observer of the bulk-ingest window lifecycle. Observers are notified in
    * registration order on both open ({@link beginBulkIngest}) and close ({@link endBulkIngest}).
    * Each subscriber reacts in its own way (deferred MLS state persistence, UI render buffering);
@@ -1769,8 +1907,15 @@ export interface IMlsService {
   /**
    * Asks a member of `groupId` to Welcome this device, and says what the server did with the ask
    * ({@link WelcomeRequestAnswer}), which the requester logs - no answer makes the ask durable.
+   *
+   * `selfJoinIfNobody`: the ask of a FURTHER device that joins by itself when no member device is
+   * online (D1) - the server then stores, queues and wakes nothing, so a member's background Add
+   * never races the device's own commit. One door per answer.
    */
-  sendWelcomeRequest(groupId: string): Promise<WelcomeRequestAnswer>;
+  sendWelcomeRequest(
+    groupId: string,
+    opts?: { selfJoinIfNobody?: boolean }
+  ): Promise<WelcomeRequestAnswer>;
 
   /**
    * Ask one online member to republish `groupId`'s external-join base.
@@ -1903,4 +2048,9 @@ export interface IMlsService {
    * reference to this object and blocking GC.
    */
   destroy(): void;
+  /**
+   * Whether {@link destroy} ran: set once, never cleared. What a continuation that outlived its
+   * client (a catch-up released by the destroy) reads before it reports anything for the session.
+   */
+  isDestroyed(): boolean;
 }

@@ -75,14 +75,25 @@ function makeContext() {
     deviceKeyB64: 'device-key',
     authToken: 'token',
     selectedContact: CONVO,
-    storage: { saveMessage } as never,
+    // An arriving row is written only where none stands (`saveMessagesIfAbsent`); it lands in
+    // `saveMessage` here, the one sink these assertions read.
+    storage: {
+      saveMessage,
+      saveMessagesIfAbsent: vi.fn(async (rows: { id: string }[], key: string) => {
+        for (const row of rows) await saveMessage(row, key);
+        return new Set(rows.map((row) => row.id));
+      }),
+      getMessagesByIds: vi.fn(async () => ({ rows: new Map(), unreadable: new Set() })),
+      // No row stands in this store: a compare-and-set finds nothing, and the insert writes.
+      mergeMessages: vi.fn(async () => new Set()),
+      getPendingMutations: vi.fn(async () => ({ entries: [], unreadable: 0 })),
+    } as never,
     setAuthToken: vi.fn(),
     getSendError: () => '',
     setSendError: vi.fn(),
     ensureMls: vi.fn(),
     log: vi.fn(),
     saveConversation: vi.fn().mockResolvedValue(undefined),
-    verifyCurrentUserMembership: vi.fn().mockResolvedValue(true),
     playNotificationTone: vi.fn(),
     playReceiveTone: vi.fn(),
     sendSystemNotification: vi.fn().mockResolvedValue(undefined),
@@ -300,6 +311,42 @@ describe('an FCM preview upgraded during a bulk-ingest window', () => {
       content: ENVELOPE,
       isFcmPreview: false,
     });
+  });
+
+  it("keeps THIS device's record of a reel's 410 across the upgrade (RC-6)", async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = withPreview();
+    const row = conversations.get(CONVO)!;
+    conversations.set(CONVO, {
+      ...row,
+      messages: [{ ...row.messages[0], mediaPurgedAt: 4242 }],
+    });
+
+    await messaging.addMessageToChat(PEER, ENVELOPE, CONVO, ctx, { messageId: 'photo-1' });
+
+    expect(conversations.get(CONVO)!.messages[0].mediaPurgedAt).toBe(4242);
+    expect(saveMessage.mock.calls[0][0]).toMatchObject({ id: 'photo-1', mediaPurgedAt: 4242 });
+  });
+
+  it("keeps it through batchAddMessages' upgrade too, the other seam that rewrites the row", async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = withPreview();
+    const row = conversations.get(CONVO)!;
+    conversations.set(CONVO, {
+      ...row,
+      messages: [{ ...row.messages[0], mediaPurgedAt: 4242 }],
+    });
+
+    await messaging.batchAddMessages(
+      [{ senderId: PEER, content: ENVELOPE, messageId: 'photo-1' }],
+      CONVO,
+      ctx,
+      'restore'
+    );
+
+    expect(conversations.get(CONVO)!.messages[0].mediaPurgedAt).toBe(4242);
+    const written = saveMessage.mock.calls.map((c) => c[0] as { id: string });
+    expect(written.find((r) => r.id === 'photo-1')).toMatchObject({ mediaPurgedAt: 4242 });
   });
 
   it('does not add a second bubble, and the flush adds nothing either', async () => {

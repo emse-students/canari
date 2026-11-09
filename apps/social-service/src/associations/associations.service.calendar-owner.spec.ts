@@ -13,6 +13,8 @@ import { AssociationCalendarEventStatus } from './entities/association-calendar-
  */
 const PAGE_ASSO = '11111111-1111-4111-8111-111111111111';
 const OTHER_ASSO = '22222222-2222-4222-8222-222222222222';
+/** A signed-in reader: an anonymous read of one association's agenda answers nothing. */
+const READER = { viewer: { userId: 'reader' } };
 
 function makeQueryBuilder(rows: unknown[]) {
   const qb: Record<string, jest.Mock> = {};
@@ -50,7 +52,11 @@ function makeService(rows: unknown[]) {
   const service = new AssociationsService(
     assoRepo as never, // assoRepo
     { count: jest.fn(() => Promise.resolve(0)) } as never, // memberRepo
-    { createQueryBuilder: jest.fn(() => qb) } as never, // calendarRepo
+    // `manager.query` answers the promo cutoff a signed-in read asks: no promo, no cutoff.
+    {
+      createQueryBuilder: jest.fn(() => qb),
+      manager: { query: jest.fn(() => Promise.resolve([])) },
+    } as never, // calendarRepo
     coOwnerRepo as never, // coOwnerRepo
     undefined as never, // docRepo
     undefined as never, // reviewerGrantRepo
@@ -63,7 +69,7 @@ function makeService(rows: unknown[]) {
     undefined as never, // userTagService
     { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
-  return { service, assoRepo };
+  return { service, assoRepo, qb };
 }
 
 function eventRow(id: string, associationId: string) {
@@ -84,7 +90,12 @@ describe('AssociationsService.listCalendarEvents owner identity', () => {
   it('reports the REAL owner of an event the association only co-owns', async () => {
     const { service } = makeService([eventRow('ev-co-owned', OTHER_ASSO)]);
 
-    const [ev] = (await service.listCalendarEvents(PAGE_ASSO)) as unknown as {
+    const [ev] = (await service.listCalendarEvents(
+      PAGE_ASSO,
+      undefined,
+      undefined,
+      READER
+    )) as unknown as {
       associationId: string;
       associationName: string;
       associationSlug: string;
@@ -107,7 +118,12 @@ describe('AssociationsService.listCalendarEvents owner identity', () => {
   it('carries the association own identity for an event it owns', async () => {
     const { service } = makeService([eventRow('ev-own', PAGE_ASSO)]);
 
-    const [ev] = (await service.listCalendarEvents(PAGE_ASSO)) as unknown as {
+    const [ev] = (await service.listCalendarEvents(
+      PAGE_ASSO,
+      undefined,
+      undefined,
+      READER
+    )) as unknown as {
       associationName: string;
       associationSlug: string;
       associationLogoUrl: string | null;
@@ -121,8 +137,34 @@ describe('AssociationsService.listCalendarEvents owner identity', () => {
   it('asks for no owner at all when the window holds no event', async () => {
     const { service, assoRepo } = makeService([]);
 
-    expect(await service.listCalendarEvents(PAGE_ASSO)).toEqual([]);
+    expect(await service.listCalendarEvents(PAGE_ASSO, undefined, undefined, READER)).toEqual([]);
     // `findById` is the only lookup an empty window may cost.
     expect(assoRepo.find).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * WITHOUT A SESSION, ONE ASSOCIATION'S AGENDA IS EMPTY (owner, 2026-11-02): no event is published
+ * to an anonymous reader, whatever the association's audience - an institution addressing everyone
+ * included. The read answers before any query; a signed-in reader and a global admin are unchanged.
+ */
+describe('AssociationsService.listCalendarEvents - the anonymous agenda', () => {
+  it('answers an empty list to an anonymous read, and runs no query', async () => {
+    const { service, qb } = makeService([{ id: 'ev-own', associationId: PAGE_ASSO }]);
+
+    await expect(
+      service.listCalendarEvents(PAGE_ASSO, undefined, undefined, { viewer: {} })
+    ).resolves.toEqual([]);
+    await expect(service.listCalendarEvents(PAGE_ASSO)).resolves.toEqual([]);
+
+    expect(qb.getMany).not.toHaveBeenCalled();
+  });
+
+  it('reads the agenda for a signed-in reader and for a global admin', async () => {
+    for (const viewer of [{ userId: 'reader' }, { isGlobalAdmin: true }]) {
+      const { service, qb } = makeService([]);
+      await service.listCalendarEvents(PAGE_ASSO, undefined, undefined, { viewer });
+      expect(qb.getMany).toHaveBeenCalled();
+    }
   });
 });

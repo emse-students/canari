@@ -27,6 +27,7 @@
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
+  import { markViewerLayer } from '$lib/utils/viewerLayer';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -51,6 +52,12 @@
     label = 'comments',
     children,
   }: Props = $props();
+
+  // Over the page the drawer sits on `--z-modal`: the dialogs its thread opens (the comment box's
+  // GIF picker, on `--z-sheet`) would open UNDER it, dimmed and unreachable (iPhone, 2026-11-03).
+  // Inline, the reel viewer has already marked its subtree.
+  // svelte-ignore state_referenced_locally -- read once, as the drawer is mounted over the page or not
+  if (scrim) markViewerLayer();
 
   let sheet = $state<HTMLDivElement | null>(null);
   /** How far the sheet is dragged down, px. */

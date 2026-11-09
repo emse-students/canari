@@ -1,5 +1,6 @@
 /// <reference types="jest" />
 
+import { PIN_SPACES_FOR_VIEWER_SQL } from './space-pins';
 import { Repository } from 'typeorm';
 import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
@@ -41,7 +42,22 @@ describe('the post a publisher gets back carries the rights they actually hold',
     const postRepo = {
       create: jest.fn((data: Partial<Post>) => ({ ...data })),
       save: jest.fn((post: Partial<Post>) => Promise.resolve({ id: 'p1', ...post })),
-      manager: { query: jest.fn(() => Promise.resolve([])) },
+      // WP-PIN: a platform admin governs every space, and the new post is visible in one of them.
+      manager: {
+        query: jest.fn((sql: string, params: unknown[] = []) =>
+          Promise.resolve(
+            sql === PIN_SPACES_FOR_VIEWER_SQL && params[2] === true
+              ? (params[0] as string[]).map((postId) => ({
+                  postId,
+                  spaceId: 'space-1',
+                  formation: 'ICM',
+                  campus: 'saint-etienne',
+                  rank: null,
+                }))
+              : []
+          )
+        ),
+      },
     };
 
     const associations = {
@@ -49,6 +65,8 @@ describe('the post a publisher gets back carries the rights they actually hold',
         Promise.resolve(new Set(ids.filter((id) => holds(userId, id))))
       ),
       isContentModerator: jest.fn(() => Promise.resolve(false)),
+      moderatedPostIds: () => Promise.resolve(new Set<string>()),
+      mayModeratePost: () => Promise.resolve(false),
       resolvePostCalendarEventLink: jest.fn(() => Promise.resolve(null)),
       findValidatedCalendarEventSummary: jest.fn(() => Promise.resolve(null)),
     };
@@ -62,6 +80,9 @@ describe('the post a publisher gets back carries the rights they actually hold',
         // `invalidateListCache` sweeps the whole feed prefix through this one - absent, every
         // create logs a swept-cache warning, and a spec that prints a real warning teaches its
         // reader to skip the line that will matter next time.
+        // The feed's generation moves first (`invalidatePostListCache`); absent, every create
+        // logged a warning nobody should learn to skip.
+        incr: jest.fn(() => Promise.resolve(1)),
         deleteByPattern: jest.fn(() => Promise.resolve(0)),
       } as unknown as RedisService,
       {} as FollowsService,

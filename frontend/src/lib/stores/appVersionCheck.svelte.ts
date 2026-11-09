@@ -6,6 +6,7 @@ import {
   serverVersionInfoToWire,
   type AppVersionCheckResult,
   type CallsMode,
+  type CheckpointSkipMode,
   type LivesMode,
 } from '$lib/utils/appVersion';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -14,6 +15,8 @@ const CACHED_SERVER_VERSION_KEY = 'canari:last_server_version_info';
 
 let lastCheck = $state<AppVersionCheckResult | null>(null);
 let inflight: Promise<AppVersionCheckResult> | null = null;
+/** The checkpoint-skip mode of the last LIVE answer this process obtained; see {@link serverCheckpointSkipMode}. */
+let liveCheckpointSkipMode: CheckpointSkipMode = 'off';
 
 function loadCachedServerInfo(): ReturnType<typeof parseServerVersionInfo> {
   if (typeof sessionStorage === 'undefined') return null;
@@ -85,6 +88,21 @@ export function serverLivesMode(): LivesMode {
 }
 
 /**
+ * The server's checkpoint-skip switch (WP-CHECKPOINT-SKIP) as the last LIVE `/api/version` answer of
+ * THIS PROCESS gave it, `off` before one - `off` is the durability every client has always had. Read
+ * through `receiveSkipBudgetFromServer` (`mls-client/receiveCheckpointSkip.ts`), which
+ * `setupMessageHandler.ts` hands the state persister, at EVERY drain end. A switch moved at
+ * `/admin/platform` reaches a running session at its next version check, which only focus, coming
+ * back online and visibility trigger - there is no periodic refresh.
+ *
+ * NEVER THE CACHED ANSWER, unlike {@link serverPresencePost}: a cached `on` would outlive an emergency
+ * `off` for as long as the session cache does, and only a weakened durability depends on it.
+ */
+export function serverCheckpointSkipMode(): CheckpointSkipMode {
+  return liveCheckpointSkipMode;
+}
+
+/**
  * Whether this estate's gateway takes presence ids in a POST body, as the last `/api/version` answer
  * said - or `null` when no server has ever answered this session, which is "not known", never "no".
  * Read by `presenceStore.ts`, which asks nothing until it is known rather than guessing a route.
@@ -97,6 +115,28 @@ export function serverLivesMode(): LivesMode {
 export function serverPresencePost(): boolean | null {
   if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.presencePost;
   return loadCachedServerInfo()?.presencePost ?? null;
+}
+
+/**
+ * Whether this estate serves the background publish queue, as the last `/api/version` answer said -
+ * or `null` when no server has ever answered, which is "not known", never "no". Read by
+ * `publishQueue.svelte.ts`, which sends nothing until it is `true`. The cached answer counts, for
+ * the reason {@link serverPresencePost} gives.
+ */
+export function serverPublishQueue(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.publishQueue;
+  return loadCachedServerInfo()?.publishQueue ?? null;
+}
+
+/**
+ * Whether this estate builds forms as drafts (`formDrafts`), as the last `/api/version` answer said -
+ * or `null` when no server has ever answered. The form editors use drafts only when it is `true`,
+ * and save as before otherwise (docs/wiki/legacy-compatibility.md, "a form editor newer than its
+ * server"). The cached answer counts, for the reason {@link serverPresencePost} gives.
+ */
+export function serverFormDrafts(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.formDrafts;
+  return loadCachedServerInfo()?.formDrafts ?? null;
 }
 
 /** True when the client is below the server-enforced minimum version. */
@@ -141,6 +181,7 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
 
       if (live) {
         saveCachedServerInfo(live);
+        liveCheckpointSkipMode = live.checkpointSkipMode;
       }
 
       lastCheck = buildAppVersionCheckResult(serverInfo);

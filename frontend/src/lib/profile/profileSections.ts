@@ -15,6 +15,7 @@
 import type { Component } from 'svelte';
 import {
   Building2,
+  Cake,
   Info,
   NotebookPen,
   RotateCcwClock,
@@ -35,6 +36,8 @@ export const PROFILE_SELF_SEGMENT = 'me';
 /** The section keys, in hub order. */
 export const PROFILE_SECTIONS = [
   'bio',
+  // The member's birthday and who sees it (owner, 2026-11-08, docs/wiki/birthdays.md).
+  'birthday',
   'associations',
   // "Mes abonnes" (WP-F4): the reader's followers and the requests they sent.
   'followers',
@@ -55,6 +58,7 @@ interface ProfileEntry {
 /** Each label is the heading the section's own card already carries, so a name exists once. */
 const ENTRIES: Record<ProfileSection, ProfileEntry> = {
   bio: { label: () => m.profile_bio_heading(), icon: UserRound },
+  birthday: { label: () => m.profile_birthday_heading(), icon: Cake },
   associations: { label: () => m.profile_assoc_heading(), icon: Building2 },
   followers: { label: () => m.profile_followers_heading(), icon: UserCheck },
   subscriptions: { label: () => m.profile_subs_heading(), icon: Tag },

@@ -1,8 +1,7 @@
 <script lang="ts" module>
-  /** Where the bar's state stands - `failed` is what hands the bottom back to the web bar. */
-  export const nativeTabBar = $state<{ status: 'pending' | 'native' | 'failed' }>({
-    status: 'pending',
-  });
+  // The state lives in its own module so a reader of the fact never imports this component's graph.
+  import { nativeTabBar } from '$lib/navigation/nativeTabBarState.svelte';
+  export { nativeTabBar };
 </script>
 
 <script lang="ts">
@@ -14,12 +13,10 @@
   import {
     configureTabBar,
     getTabBarInsets,
-    hideTabBar,
     onTabSelected,
     removeTabBar,
     selectTab,
     setBadge,
-    showTabBar,
     type TabSelectedListener,
   } from '@sosweetham/tauri-plugin-system-components-api';
   import { MOBILE_NAV_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
@@ -28,6 +25,11 @@
   import { classColorHex, lucideIconPng, TAB_ICON_CLASSES } from '$lib/mobile/nativeTabIcons';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { Log } from '$lib/utils/Log';
+  import { registerGuideRegion } from '$lib/guidance/guideAnchors.svelte';
+  import { modalWebLayer } from '$lib/navigation/nativeTabBarState.svelte';
+  import { invokeSequenced } from '$lib/services/systemComponentsCommands';
+  import { handlePlaceTap, scrollPageToTop } from '$lib/navigation/scrollToTop';
+  import { onStatusBarTap } from '$lib/mobile/nativeStatusBarTap';
 
   /**
    * THE BOTTOM BAR AS A NATIVE UITabBar, ON iOS ONLY - Liquid Glass on iOS 26 (user, 2026-09-29).
@@ -46,7 +48,7 @@
    *
    * The space the bar covers is the PLUGIN's answer (`getTabBarInsets`), written to
    * `--bottom-nav-reserve`, which is what `.page-scroll-wrap` and `.mobile-nav-inset` reserve: the
-   * floating iOS 26 pill and the classic bar are not the web bar's `4rem`.
+   * floating iOS 26 pill and the classic bar are not the web bar's `--bottom-nav-height`.
    */
   interface Props {
     /**
@@ -61,6 +63,7 @@
   const WIDE_QUERY = '(min-width: 48rem)';
   let wide = $state(false);
   let listener: TabSelectedListener | null = null;
+  let statusBarListener: { unregister: () => Promise<void> } | null = null;
   let destroyed = false;
   /** The last badge value sent per place, so a re-render that changes nothing sends nothing. */
   let sentBadges: Record<string, string | undefined> = {};
@@ -128,8 +131,12 @@
   const activePlaceId = $derived(resolveActivePlaceId(page.url.pathname));
   const shown = $derived(visible && !wide);
 
+  /** The band the bar covers at the bottom of the viewport, as the plugin last measured it. */
+  let insetPx = $state(0);
+
   async function publishInsets() {
     const { bottom } = await getTabBarInsets();
+    insetPx = bottom;
     document.documentElement.style.setProperty('--bottom-nav-reserve', `${bottom}px`);
     Log.d('NativeTabBar', `bottom inset ${bottom}px`);
   }
@@ -150,9 +157,28 @@
         listener = await onTabSelected(({ id }) => {
           const place = MOBILE_NAV_PLACES.find((p) => p.id === id);
           Log.d('NativeTabBar', `tab selected: ${id}`);
-          if (place) void goto(resolve(internalPath(place.href)));
+          // A RE-TAP of the tab the reader is on is delivered like any tap (UITabBarDelegate
+          // `didSelect` fires for the selected item too) and scrolls to the top instead.
+          if (place && !handlePlaceTap(place.href, page.url.pathname)) {
+            void goto(resolve(internalPath(place.href)));
+          }
         });
-        if (destroyed) return;
+        // Destroyed while the plugin answered: onDestroy found no listener to drop, so drop it here.
+        if (destroyed) {
+          void listener.unregister();
+          return;
+        }
+        // The status bar tap, bridged by the patched plugin: the SAME action as the re-tap. A failure
+        // here costs only that gesture, so it is logged and the bar stays native.
+        statusBarListener = await onStatusBarTap(() => scrollPageToTop('status-bar')).catch((e) => {
+          logFailure('status bar tap')(e);
+          return null;
+        });
+        if (destroyed) {
+          void statusBarListener?.unregister();
+          void listener.unregister();
+          return;
+        }
         nativeTabBar.status = 'native';
         await publishInsets();
       } catch (e) {
@@ -175,7 +201,17 @@
   onDestroy(() => {
     destroyed = true;
     void listener?.unregister();
-    if (nativeTabBar.status === 'native') void removeTabBar().catch(logFailure('remove'));
+    void statusBarListener?.unregister();
+    if (nativeTabBar.status === 'native') {
+      // THE BAR IS GONE, SO THE FACT SAYS SO. `nativeTabBar` is module state and outlives this
+      // instance: left at `native`, the NEXT mount (sign-out to /login, then the sign-in's
+      // callback page) ran its show / hide, interaction and badge effects before its own
+      // `configure()` had answered, and the plugin refused each with "tab bar is not configured"
+      // (iPhone 12, 2026-11-08: six WARN lines at the auth callback, and a Swift NOTICE with them).
+      // Every effect already waits for `native`; it now waits for THIS mount's configuration.
+      nativeTabBar.status = 'pending';
+      void removeTabBar().catch(logFailure('remove'));
+    }
     document.documentElement.style.removeProperty('--bottom-nav-reserve');
   });
 
@@ -184,11 +220,13 @@
   }
 
   // Shown / hidden with the layout's rule, and the reserve re-read: a hidden bar covers nothing.
+  // Sequenced like the interaction switch (`invokeSequenced`): a hide quickly followed by a show
+  // (the keyboard closing as a conversation opens) may otherwise reach UIKit in the reverse order.
   $effect(() => {
     if (nativeTabBar.status !== 'native') return;
     const show = shown;
-    void (show ? showTabBar() : hideTabBar())
-      .then(() => publishInsets())
+    void invokeSequenced(show ? 'showTabBar' : 'hideTabBar')
+      .answered.then(() => publishInsets())
       .catch(logFailure(show ? 'show' : 'hide'));
   });
 
@@ -214,6 +252,66 @@
     if (tintedForDark === dark) return;
     tintedForDark = dark;
     void configure().catch(logFailure('re-colour'));
+  });
+
+  /**
+   * THE TABS A GUIDED TOUR POINTS AT (docs/wiki/frontend/guided-help.md). They are drawn above the
+   * WebView, so no page element is a tab: each place registers the BAND the bar covers, under the id
+   * the web bar's tab carries (`nav.<place>`), and the bubble's icon names which tab it means. The
+   * plugin gives the band's height, not where each item sits - a slice per item would be a guess
+   * about the iOS 26 floating pill. Registered only while the bar is on screen.
+   */
+  $effect(() => {
+    if (nativeTabBar.status !== 'native' || !shown || insetPx <= 0) return;
+    const band = insetPx;
+    const rect = () => ({
+      left: 0,
+      top: window.innerHeight - band,
+      width: window.innerWidth,
+      height: band,
+    });
+    const releases = MOBILE_NAV_PLACES.map((p) => registerGuideRegion(`nav.${p.id}`, rect));
+    return () => releases.forEach((release) => release());
+  });
+
+  /**
+   * NO TOUCH UNDER A MODAL WEB LAYER (iPhone 12, `1.6.3-alpha.7`). The bar is drawn above the WebView,
+   * so the guided tour's backdrop cannot cover it, and a tap on a tab left the tour and navigated.
+   * While the backdrop is on screen the plugin is told to take no touch (the Canari patch
+   * `set_tab_bar_interactive`); the bar stays drawn, because the tour's steps point at its band.
+   *
+   * SENT AFTER EVERY CONFIGURATION, whatever it was before: the plugin resets the bar to interactive
+   * when configured, and its overlay OUTLIVES a WebView reload - a page reloaded under the backdrop
+   * would otherwise leave a bar that takes no touch, with this side believing it never blocked it.
+   * Recorded as sent only once the plugin ANSWERED, so a failed call is retried on the next change;
+   * every call carries a rising `seq` (`invokeSequenced`), because the command is async and two
+   * quick toggles may reach the main queue out of order - Swift drops an older one arriving last.
+   */
+  /** The `seq` of the newest interaction call, so only ITS answer records the state as sent. */
+  let interactiveSeq = 0;
+  let sentInteractive: { configuration: number; interactive: boolean } | null = null;
+  $effect(() => {
+    const configuration = configurations;
+    if (nativeTabBar.status !== 'native') return;
+    const interactive = !modalWebLayer.covering;
+    if (
+      sentInteractive?.configuration === configuration &&
+      sentInteractive.interactive === interactive
+    ) {
+      return;
+    }
+    Log.d(
+      'NativeTabBar',
+      `interactive=${interactive} (modal web layer ${interactive ? 'gone' : 'up'})`
+    );
+    const { seq, answered } = invokeSequenced('setTabBarInteractive', { interactive });
+    interactiveSeq = seq;
+    answered.then(
+      () => {
+        if (seq === interactiveSeq) sentInteractive = { configuration, interactive };
+      },
+      logFailure(interactive ? 'interaction restore' : 'interaction block')
+    );
   });
 
   // The unread dot: an EMPTY badge value is UIKit's dot, the web bar's dot - never a count.

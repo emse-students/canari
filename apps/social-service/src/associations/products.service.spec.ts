@@ -337,6 +337,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       allowCustomAmount: false,
       customAmountMinCents: null,
       customAmountMaxCents: null,
+      // A membership product always stores the tag it grants (a legacy row without one is refused).
+      grantedTagName: overrides.type === 'membership' ? 'cotisant:bde' : null,
       ...overrides,
     }) as AssociationProduct;
 
@@ -387,10 +389,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     expect(result.amountCents).toBe(1000);
   });
 
-  describe('a list or an institution sells nothing (owner, 2026-10-31)', () => {
-    it.each(['list', 'institution'] as const)(
-      'refuses to create a product on a %s, typed 403',
-      async (type) => {
+  describe('an entity that may not collect now (owner, 2026-11-02)', () => {
+    it.each([
+      ['list', 'LIST_DELEGATE_REQUIRED'],
+      ['institution', 'ASSOCIATION_KIND_DOES_NOT_SELL'],
+    ] as const)(
+      'refuses to create a product on a %s with no approved delegate, typed %s',
+      async (type, code) => {
         const { service, assoRepo, productRepo } = makeService();
         assoRepo.findOne.mockResolvedValue(asso({ type }));
 
@@ -400,17 +405,63 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           false
         );
         await expect(attempt).rejects.toBeInstanceOf(ForbiddenException);
-        await expect(attempt).rejects.toMatchObject({
-          response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
-        });
+        await expect(attempt).rejects.toMatchObject({ response: { code } });
         expect(productRepo.save).not.toHaveBeenCalled();
       }
     );
 
+    it('lets a list with an APPROVED delegate create a priced product', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(
+        asso({
+          type: 'list',
+          paymentParentAssociationId: 'receiver',
+          paymentDelegationStatus: 'approved',
+        })
+      );
+      jest.spyOn(service as any, 'resolvePaymentTargetFor').mockResolvedValue({
+        targetAssociationId: 'receiver',
+        provider: 'lydia',
+        connectAccountId: 'vendor_r',
+        ready: true,
+        delegated: true,
+        readinessCause: null,
+      });
+      await service.create(
+        'asso1',
+        { name: 'Sweat', type: 'other', amountCents: 2500 } as any,
+        false
+      );
+      expect(productRepo.save).toHaveBeenCalled();
+    });
+
+    // Owner review of #2967: a paused list is refused only what COLLECTS - going on sale, a price
+    // change. Its description, name and limits stay editable, and re-sending the SAME price is not
+    // a change.
+    it('lets a paused list edit a description and resend its price, never put it on sale or reprice it', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ type: 'list' }));
+      productRepo.findOne.mockResolvedValue(product({ isActive: false }));
+      await expect(
+        service.update(
+          'asso1',
+          'prod1',
+          { description: 'Nouveau texte', name: 'Sweat 2027', amountCents: 1000 } as any,
+          false
+        )
+      ).resolves.toBeDefined();
+      await expect(
+        service.update('asso1', 'prod1', { amountCents: 1200 } as any, false)
+      ).rejects.toMatchObject({ response: { code: 'LIST_DELEGATE_REQUIRED' } });
+      await expect(
+        service.update('asso1', 'prod1', { isActive: true } as any, false)
+      ).rejects.toMatchObject({ response: { code: 'LIST_DELEGATE_REQUIRED' } });
+    });
+
     it('lets an existing product of a list be taken OFF sale, never put back on or repriced', async () => {
       const { service, assoRepo, productRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso({ type: 'list' }));
-      productRepo.findOne.mockResolvedValue(product());
+      productRepo.findOne.mockResolvedValue(product({ isActive: false }));
       await expect(
         service.update('asso1', 'prod1', { isActive: true } as any, false)
       ).rejects.toBeInstanceOf(ForbiddenException);
@@ -422,11 +473,11 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       ).resolves.toBeDefined();
     });
 
-    it('refuses to provision a cotisation product for a list', async () => {
+    it('refuses to provision a cotisation product for a list with no approved delegate', async () => {
       const { service } = makeService();
       await expect(
         service.provisionCotisationProduct(asso({ type: 'list', cotisationMode: 'lifetime' }))
-      ).rejects.toMatchObject({ response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' } });
+      ).rejects.toMatchObject({ response: { code: 'LIST_DELEGATE_REQUIRED' } });
     });
 
     it('refuses to update a product of a list, and writes nothing', async () => {
@@ -3100,6 +3151,32 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         }
       });
 
+      // Owner, 2026-11-01: the forms granting the old key follow the retag IN ITS TRANSACTION, or they
+      // would rank the tier `unranked` and refuse every new answer. Fails without the UPDATE.
+      it('carries the new key to the forms that grant the old one, in the retag transaction', async () => {
+        const { service, manager } = retagging(sansAlcool());
+        manager.query.mockImplementation((sql: string) =>
+          Promise.resolve(String(sql).includes('UPDATE forms') ? [{ id: 'f1' }] : [])
+        );
+
+        await service.update('asso1', 'prod-sans', { variantKey: 'soft' }, false);
+
+        const call = manager.query.mock.calls.find(([sql]: [string]) =>
+          sql.includes('UPDATE forms')
+        );
+        expect(call).toBeDefined();
+        expect(call[1]).toEqual(['asso1', 'sans-alcool', 'soft']);
+        expect(call[0]).toContain('"grantsCotisation"');
+      });
+
+      it('CONTROL: a save that does not retag touches no form', async () => {
+        const { service, manager } = retagging(sansAlcool());
+        await service.update('asso1', 'prod-sans', { name: 'Renamed' } as any, false);
+        expect(
+          manager.query.mock.calls.some(([sql]: [string]) => String(sql).includes('UPDATE forms'))
+        ).toBe(false);
+      });
+
       // A tier keyed like a year before the rule is not stuck with it: renaming it away is the fix.
       it('accepts a retag FROM a year-shaped key to a plain key, and to the base tier', async () => {
         for (const variantKey of ['soft', null]) {
@@ -3268,6 +3345,17 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         }
       });
 
+      // The listing asks the SAME `cotisationGrantRefusal` as the checkout: a legacy tagless
+      // membership of an association WITH a mode must not show a buy button the checkout refuses.
+      it('a membership product storing no tag: not offered, no price, though the mode is set', async () => {
+        const { service, productRepo, assoRepo } = makeService();
+        productRepo.find.mockResolvedValue([sansAlcool({ grantedTagName: null })]);
+        assoRepo.find.mockResolvedValue([cercle()]);
+
+        const [sans] = await service.listByAssoc('asso1');
+        expect(sans).toMatchObject({ cotisationDisabled: true, viewerDueCents: null });
+      });
+
       it('CONTROL: an association with a cotisation mode sells its memberships', async () => {
         const { service, productRepo, assoRepo } = makeService();
         productRepo.find.mockResolvedValue([sansAlcool()]);
@@ -3333,6 +3421,58 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           warn.mock.calls.filter(([line]) => String(line).includes('memberPriceTag names no'))
         ).toHaveLength(1);
       });
+    });
+  });
+
+  describe('assertMembershipGrantable - the shared cotisationGrantRefusal', () => {
+    const run = (service: unknown, a: unknown, p: unknown) =>
+      (service as any).assertMembershipGrantable(a, p);
+    const disabledBody = expect.objectContaining({
+      response: expect.objectContaining({ code: 'COTISATION_DISABLED' }),
+    });
+
+    it('refuses a membership product of an association with no cotisation mode', () => {
+      const { service } = makeService();
+      expect(() =>
+        run(
+          service,
+          { id: 'asso1', cotisationMode: null },
+          { id: 'p1', type: 'membership', grantedTagName: 'cotisant:bde' }
+        )
+      ).toThrow(disabledBody);
+    });
+
+    it('refuses a legacy membership product that stores no tag, typed, before any money moves', () => {
+      const { service } = makeService();
+      expect(() =>
+        run(
+          service,
+          { id: 'asso1', cotisationMode: 'dated' },
+          { id: 'p1', type: 'membership', grantedTagName: null }
+        )
+      ).toThrow(
+        expect.objectContaining({
+          response: expect.objectContaining({ code: 'MEMBERSHIP_PRODUCT_UNGRANTABLE' }),
+        })
+      );
+    });
+
+    it('CONTROL: a membership with a mode and a tag, and a non-membership product, pass', () => {
+      const { service } = makeService();
+      expect(() =>
+        run(
+          service,
+          { id: 'asso1', cotisationMode: 'dated' },
+          { id: 'p1', type: 'membership', grantedTagName: 'cotisant:bde' }
+        )
+      ).not.toThrow();
+      expect(() =>
+        run(
+          service,
+          { id: 'asso1', cotisationMode: null },
+          { id: 'p2', type: 'standard', grantedTagName: null }
+        )
+      ).not.toThrow();
     });
   });
 
@@ -3785,31 +3925,6 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
       expect(await service.releaseWithheldProducts('asso1')).toBe(0);
       expect(productRepo.update).not.toHaveBeenCalled();
-    });
-
-    it("releases a delegating club's products when its PARENT completes onboarding", async () => {
-      const { service, assoRepo, productRepo } = makeService();
-      const parent = asso({ id: 'parent1' });
-      const club = asso({
-        id: 'club1',
-        lydiaOnboardingComplete: false,
-        lydiaAccountId: null,
-        paymentParentAssociationId: 'parent1',
-        paymentDelegationStatus: 'approved',
-      });
-      assoRepo.findOne.mockImplementation(({ where: { id } }: { where: { id: string } }) =>
-        Promise.resolve(id === 'parent1' ? parent : club)
-      );
-      // The delegating children of parent1 - the association whose row just changed is not the
-      // only one whose payments just became possible.
-      assoRepo.find.mockResolvedValue([{ id: 'club1' }]);
-      productRepo.update.mockResolvedValue({ affected: 1 });
-
-      expect(await service.releaseWithheldForAssociationAndDelegates('parent1')).toBe(2);
-      expect(productRepo.update).toHaveBeenCalledWith(
-        { associationId: 'club1', activationWithheld: true },
-        { isActive: true, activationWithheld: false }
-      );
     });
 
     describe('provider activation sweep (payments switched on platform-wide)', () => {

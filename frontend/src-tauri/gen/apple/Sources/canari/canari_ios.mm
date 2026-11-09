@@ -135,6 +135,7 @@ static void CanariSetupFirebaseIfAvailable(void) {
 
 static void CanariPublishSafeAreaInsets(void);
 static void CanariPublishDynamicType(void);
+static void CanariPublishForeground(NSString *_Nullable opening);
 
 /// Puts the WebView's own scroll view back inside its content whenever it has left it.
 ///
@@ -468,6 +469,87 @@ static void CanariObserveCallProximity(void) {
   NSLog(@"[CanariIOS] listening for the call proximity");
 }
 
+/// THE SCREEN STAYS ON DURING A VIDEO CALL AND A LIVE. WKWebView refuses the Screen Wake Lock API
+/// (`NotAllowedError`), so the page posts through `webkit.messageHandlers.canariIdleTimer`
+/// (`screenAwake.ts`) `{owner, hold}` - `owner` is `call` or `live` - when a holder takes or lets go
+/// of the screen, and `{reset: true}` once at every page boot, so a reload or a WebContent kill
+/// mid-call never leaves the screen on.
+///
+/// A SET OF OWNERS, NOT A BOOLEAN: a call and a live can overlap, and the release of one must not
+/// drop the other's hold. `idleTimerDisabled` is YES exactly while the set is not empty. Adding an
+/// owner already held, or removing one not held, changes nothing (idempotent). The property belongs
+/// to the running app: a kill or a crash returns it to the system, and iOS ignores it while the app
+/// is not in the foreground. A malformed message is logged and ignored.
+@interface CanariIdleTimerHandler : NSObject <WKScriptMessageHandler>
+@property(nonatomic, strong) NSMutableSet<NSString *> *owners;
+@end
+@implementation CanariIdleTimerHandler
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+  if (self.owners == nil) {
+    self.owners = [NSMutableSet set];
+  }
+  NSDictionary *body = [message.body isKindOfClass:[NSDictionary class]] ? message.body : nil;
+  NSString *change = nil;
+  if ([body[@"reset"] isKindOfClass:[NSNumber class]] && [body[@"reset"] boolValue]) {
+    [self.owners removeAllObjects];
+    change = @"reset";
+  } else if ([body[@"owner"] isKindOfClass:[NSString class]] &&
+             [body[@"hold"] isKindOfClass:[NSNumber class]]) {
+    NSString *owner = body[@"owner"];
+    if ([body[@"hold"] boolValue]) {
+      [self.owners addObject:owner];
+      change = [@"hold " stringByAppendingString:owner];
+    } else {
+      [self.owners removeObject:owner];
+      change = [@"release " stringByAppendingString:owner];
+    }
+  } else {
+    NSLog(@"[CanariIOS] idle timer ignored, the page posted neither {owner, hold} nor {reset}");
+    return;
+  }
+  UIApplication *app = UIApplication.sharedApplication;
+  BOOL was = app.idleTimerDisabled;
+  app.idleTimerDisabled = self.owners.count > 0;
+  NSLog(@"[CanariIOS] idle timer (%@): owners=[%@] disabled=%d (was %d)", change,
+        [self.owners.allObjects componentsJoinedByString:@","], app.idleTimerDisabled, was);
+}
+@end
+
+static void CanariObserveCallIdleTimer(void) {
+  static CanariIdleTimerHandler *handler = nil;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil || handler != nil) {
+    return;
+  }
+  handler = [CanariIdleTimerHandler new];
+  [webView.configuration.userContentController addScriptMessageHandler:handler name:@"canariIdleTimer"];
+  NSLog(@"[CanariIOS] listening for the screen idle timer");
+}
+
+/// THE ONE REGISTRATION POINT of the call's page handlers (`canariProximity`, `canariIdleTimer`),
+/// called wherever the WebView may have just come to exist: at the scene's connection (a PushKit
+/// launch of a killed app connects the scene and loads the page IN THE BACKGROUND, with no
+/// `didBecomeActive` before the call is answered on CallKit - a handler registered only at the
+/// activation was absent when the call screen posted its hold), at the end of a page load, and at
+/// every activation. Each handler keeps its own `static handler != nil` guard, so a second call
+/// registers nothing twice. The first point that found the WebView is logged once.
+static void CanariRegisterCallPageHandlers(NSString *where) {
+  static BOOL registered = NO;
+  if (CanariFindWebView() == nil) {
+    if (!registered) {
+      NSLog(@"[CanariIOS] call page handlers: no WebView yet at %@", where);
+    }
+    return;
+  }
+  CanariObserveCallProximity();
+  CanariObserveCallIdleTimer();
+  if (!registered) {
+    registered = YES;
+    NSLog(@"[CanariIOS] call page handlers registered at %@", where);
+  }
+}
+
 /// Publishes the home indicator's inset to the page as `--safe-area-inset-bottom` - the iOS peer of
 /// what Android's window insets give the same 35 consumers (`app.html` names that variable "the one
 /// place this is decided").
@@ -500,9 +582,11 @@ static void CanariPushActiveToPage(BOOL active);
                         change:(NSDictionary *)change
                        context:(void *)context {
   if ([keyPath isEqualToString:@"loading"] && ![(WKWebView *)object isLoading]) {
+    CanariRegisterCallPageHandlers(@"page load");
     CanariPublishSafeAreaInsets();
     CanariPublishDynamicType();
     CanariPushActiveToPage(g_isInForeground ? YES : NO);
+    CanariPublishForeground(nil);
   }
 }
 @end
@@ -543,6 +627,88 @@ static void CanariPublishSafeAreaInsets(void) {
     published = inset;
     NSLog(@"[CanariIOS] safe area published to the page: bottom %.0f pt, top %.0f pt", inset, top);
   }
+}
+
+/// Whether the app is ON SCREEN: false from `didEnterBackground` until the resume completes. Not
+/// `g_isInForeground`, which is ACTIVE only and turns false for the Face ID sheet, Control Center or a
+/// permission alert - none of which takes the conversation off the screen, and every one of which
+/// would have re-run the page's "back in the foreground" work in the middle of an unlock.
+static volatile bool g_isOnScreen = true;
+
+/// True from `willEnterForeground` until the resume is PUBLISHED to the page - which is not at
+/// `didBecomeActive` itself but one round trip to the notification center later (see the observer).
+/// A tapped notification noted while this is true belongs to this resume: its link rides the edge,
+/// and the page does not read the conversation left on screen (owner, 2026-11-02;
+/// `resumeOpening.svelte.ts`). Main thread only.
+static bool g_resumePending = false;
+
+/// The link the resume in progress opens (a tapped notification), or nil. Main thread only.
+static NSString *_Nullable g_resumeOpening = nil;
+
+void CanariNoteResumeOpening(NSString *deepLink) {
+  void (^note)(void) = ^{
+    UIApplicationState state = [UIApplication sharedApplication].applicationState;
+    // A tap on an app that is active with NO resume in progress (a banner over the open app) is not
+    // a resume. Active WITH one in progress is: the delegate may run after `didBecomeActive`, and
+    // the edge is not published until the round trip below says it has had its chance.
+    if (state == UIApplicationStateActive && !g_resumePending) {
+      NSLog(@"[CanariIOS] notification tap on an active app - not a resume, nothing held");
+      return;
+    }
+    g_resumeOpening = [deepLink copy];
+    NSLog(@"[CanariIOS] notification tap during a resume (state=%ld, resumePending=%d): its link rides the foreground edge",
+          (long)state, g_resumePending ? 1 : 0);
+  };
+  // Synchronously on the main thread: the order against `didBecomeActive` is the whole point.
+  if ([NSThread isMainThread]) {
+    note();
+  } else {
+    dispatch_sync(dispatch_get_main_queue(), note);
+  }
+}
+
+/// Hands the page whether the app is on screen, in the contract the Android shell already speaks
+/// (`MainActivity.pushForeground`): `window.__canariForeground` for whoever asks later, and a
+/// `canari:foreground` event for whoever reacts at the edge. ONE implementation in the page
+/// (`appForeground.ts`, `appForegroundState.svelte.ts`) then serves both phones.
+///
+/// WHY: the page asked `isAppInForeground()`, which answers `true` where the global is absent - so on
+/// iOS it was always `true`, and a frame the page processed in the seconds before suspension, in the
+/// conversation left open, counted as read on arrival (owner, 2026-11-02;
+/// docs/wiki/frontend/modules/chat.md, "Read state between devices").
+///
+/// Sent on both edges and after every page load (a page that loads while backgrounded - a launch by
+/// a push - must not start believing it is on screen).
+static void CanariPublishForeground(NSString *_Nullable opening) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    NSLog(@"[CanariIOS] foreground=%d not published: no WebView yet (the page load publishes it)",
+          g_isOnScreen ? 1 : 0);
+    return;
+  }
+  NSString *value = g_isOnScreen ? @"true" : @"false";
+  // The link as a JSON string literal: page data, never code.
+  NSString *openingJs = @"null";
+  if (opening.length > 0) {
+    NSData *json = [NSJSONSerialization dataWithJSONObject:opening
+                                                   options:NSJSONWritingFragmentsAllowed
+                                                     error:nil];
+    if (json != nil) openingJs = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
+  }
+  NSString *js = [NSString
+      stringWithFormat:@"window.__canariForeground=%@;"
+                        "window.dispatchEvent(new CustomEvent('canari:foreground',{detail:{foreground:%@,opening:%@}}));",
+                       value, value, openingJs];
+  [webView evaluateJavaScript:js
+            completionHandler:^(__unused id result, NSError *error) {
+              if (error != nil) {
+                // A page that cannot be told keeps its last value; said, because a silent failure
+                // here reads exactly like the defect this exists to fix.
+                NSLog(@"[CanariIOS] ERROR foreground=%@ not published to the page: %@", value, error);
+              }
+            }];
+  NSLog(@"[CanariIOS] foreground=%@ published to the page (opens a link=%d)", value,
+        opening.length > 0 ? 1 : 0);
 }
 
 /// Hands the page the user's Dynamic Type body size, as `canari:dynamic-type` (detail `bodyPx`) and
@@ -878,7 +1044,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariApplyEdgeToEdge();
   CanariObserveDocumentScrollRange();
   CanariObserveTheme();
-  CanariObserveCallProximity();
+  CanariRegisterCallPageHandlers(@"activation");
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();
   CanariPublishDynamicType();
@@ -896,8 +1062,10 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariDrainAppGroupFcmCache();
   // A share the Share Extension made while Canari was away - the banner's tap lands here.
   CanariImportAppGroupShareIfUnlocked(@"activation");
-  // Refresh the App Group mirror so the NSE decrypts against the state as of the app's last
-  // active moment (the foreground advances mls.bin; there is no Rust write hook to mirror on).
+  // Refresh the App Group mirror: the push context, the seeds and the secret. Its mls.bin half is
+  // no longer what keeps the extension current - every write of the state carries the copy along
+  // (`write_slot_mls_bin`, concurrency.rs), since a process killed in the foreground never reaches
+  // willResignActive; here it only re-copies the slot as it stands.
   CanariMirrorPushStateToAppGroup();
   // The FCM token, asked for HERE and not at bootstrap. By the time the app is active,
   // registerForRemoteNotifications has run and APNs has usually answered - which is the
@@ -913,8 +1081,8 @@ static void CanariOnWillResignActive(__unused NSNotification *note) {
   CanariSetAppGroupForegroundFlag(NO);
   CanariPushActiveToPage(NO);
   canari_ios_on_pause();
-  // Snapshot the latest decrypt state into the App Group container before suspending, so a push
-  // arriving while backgrounded is decrypted by the NSE against fresh state.
+  // Snapshot the push context, seeds and secret into the App Group container before suspending
+  // (mls.bin already follows each of its writes - see didBecomeActive).
   CanariMirrorPushStateToAppGroup();
   // The quick-action titles are the one native string iOS lets us re-register, and this is the last
   // moment before a notification can be seen - so a language changed in the foreground reaches the
@@ -953,6 +1121,9 @@ static CanariSceneWillConnectIMP CanariOrigSceneWillConnect = NULL;
 static void CanariSceneWillConnect(id self, SEL _cmd, UIScene *scene, UISceneSession *session,
                                    UISceneConnectionOptions *options) {
   CanariOrigSceneWillConnect(self, _cmd, scene, session, options);
+  // The scene now holds its window, on a background launch too; whether the WebView is in it yet
+  // is logged (`registered at scene connection`, or `no WebView yet` and a later point).
+  CanariRegisterCallPageHandlers(@"scene connection");
   NSSet<UIOpenURLContext *> *urls = options.URLContexts;
   NSUInteger webActivities = 0;
   for (NSUserActivity *activity in options.userActivities) {
@@ -1024,6 +1195,71 @@ void canari_ios_bootstrap(void) {
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(NSNotification *note) {
                 CanariOnWillResignActive(note);
+              }];
+  // ON SCREEN OR NOT - the background/foreground pair, never the active pair (see g_isOnScreen).
+  [nc addObserverForName:UIApplicationDidFinishLaunchingNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                // A launch by a push or a background task starts off screen.
+                g_isOnScreen = [UIApplication sharedApplication].applicationState != UIApplicationStateBackground;
+              }];
+  [nc addObserverForName:UIApplicationDidEnterBackgroundNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                g_isOnScreen = false;
+                g_resumePending = false;
+                g_resumeOpening = nil;
+                CanariPublishForeground(nil);
+              }];
+  // The resume BEGINS here and is announced when it completes (`g_resumePending`): a tapped
+  // notification reaches the delegate in between, and its link rides the edge.
+  [nc addObserverForName:UIApplicationWillEnterForegroundNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                g_resumePending = true;
+              }];
+  // THE RESUME IS PUBLISHED WHEN A TAP THAT CAUSED IT HAS HAD ITS CHANCE TO BE NOTED, IN EITHER
+  // ORDER. UIKit does not promise whether `didReceiveNotificationResponse` runs before or after
+  // `didBecomeActive` (with scenes it can come after). So `didBecomeActive` does not publish: it asks
+  // the notification center a question and publishes from the ANSWER, on the main queue. A response
+  // that caused this activation either came with the activation itself (FrontBoard's scene action,
+  // handled before the activation completes) or on the notification center's own connection. That
+  // the connection delivers the response before the answer to a question asked AFTER it was sent is
+  // LIKELY BUT UNPROVEN: Apple documents no such ordering, so it is an ordering argument, not a
+  // delay, and it is what device-verification LA steps 5 and 8 measure (the two NSLogs below, read
+  // against `[RESUME-OPEN]`, show whether the tap was noted before the edge was published).
+  //
+  // Only the didBecomeActive that completes a resume publishes; one after Control Center or a Face
+  // ID sheet finds no resume pending, says nothing, and drops any link a cold launch left behind.
+  [nc addObserverForName:UIApplicationDidBecomeActiveNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                if (!g_resumePending) {
+                  g_resumeOpening = nil;
+                  return;
+                }
+                NSLog(@"[CanariIOS] didBecomeActive: awaiting the notification-center round trip "
+                      @"before publishing the edge (opening noted so far: %@)",
+                      g_resumeOpening ? @"yes" : @"no");
+                [[UNUserNotificationCenter currentNotificationCenter]
+                    getNotificationSettingsWithCompletionHandler:^(__unused UNNotificationSettings *s) {
+                      dispatch_async(dispatch_get_main_queue(), ^{
+                        // Left again meanwhile (didEnterBackground cleared it): nothing to publish.
+                        if (!g_resumePending) return;
+                        g_resumePending = false;
+                        g_isOnScreen = true;
+                        NSString *opening = g_resumeOpening;
+                        g_resumeOpening = nil;
+                        NSLog(@"[CanariIOS] round trip answered: publishing the foreground edge "
+                              @"(opening: %@)",
+                              opening ? @"yes" : @"no");
+                        CanariPublishForeground(opening);
+                      });
+                    }];
               }];
   [nc addObserverForName:UIKeyboardWillChangeFrameNotification
                   object:nil

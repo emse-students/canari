@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { FormsService } from './forms.service';
+import { FORM_ASSOCIATION_FIXED, FormsService } from './forms.service';
 import type { CreateFormDto } from './dto/form.dto';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 
@@ -25,6 +25,8 @@ describe('FormsService - cotisation configuration and granting', () => {
       heldTiers?: (string | null)[];
       /** Fulfilment flags an earlier run already claimed: a replay finds them taken. */
       claimed?: string[];
+      /** The association's cotisation mode; null = cotisations disabled. */
+      mode?: string | null;
     } = {}
   ) {
     const formRepo: any = {
@@ -69,6 +71,9 @@ describe('FormsService - cotisation configuration and granting', () => {
     };
     const userTagService: any = {
       listCotisationTiers: jest.fn(() => Promise.resolve(opts.tiers ?? [])),
+      cotisationModeOf: jest.fn(() =>
+        Promise.resolve(opts.mode === undefined ? 'dated' : opts.mode)
+      ),
       holdsAnyCotisation: jest.fn(() => Promise.resolve(false)),
       holdsCotisationTier: jest.fn(() => Promise.resolve(false)),
       holdsTierDeliveredBy: jest.fn(() => Promise.resolve(false)),
@@ -80,7 +85,16 @@ describe('FormsService - cotisation configuration and granting', () => {
     const associationsService: any = {
       isMember: jest.fn(() => Promise.resolve(true)),
       assertPaymentsReady: jest.fn(() => Promise.resolve()),
-      kindOf: jest.fn(() => Promise.resolve('association')),
+      canTakePaymentsNow: jest.fn(() => Promise.resolve(true)),
+      collectionSubjectOf: jest.fn(() =>
+        Promise.resolve({
+          id: 'a1',
+          type: 'association',
+          paymentDelegationStatus: null,
+          paymentParentAssociationId: null,
+        })
+      ),
+      collectsNow: jest.fn(() => Promise.resolve(true)),
       // MANAGE_MEMBERS by default, so the tests below are about the cotisation config itself;
       // the permission gate has its own block. `mayAct` is the one predicate every check asks -
       // it folds in the platform admin and the cross-association super-admin.
@@ -114,7 +128,8 @@ describe('FormsService - cotisation configuration and granting', () => {
       {} as any,
       {} as any,
       // FormOrganiserAlertService: switched off, as it ships.
-      { enabled: () => false } as any
+      { enabled: () => false } as any,
+      {} as any
     );
     return {
       service,
@@ -358,29 +373,34 @@ describe('FormsService - cotisation configuration and granting', () => {
     });
   });
 
-  // A form is personal or an association's, decided once at creation (user decision, 2026-08-23):
-  // MANAGE_FORMS is a right over the association's forms, so cutting the link would let a manager
-  // walk off with one, and re-pointing it would hand someone else's form to a third association.
-  describe('the association link is fixed at creation', () => {
+  // A PUBLISHED form stays with the association it was published under (user decision 2026-08-23,
+  // narrowed to published forms by the owner on 2026-11-09): its answers, payments and reminders are
+  // that association's. A DRAFT may move (`forms.service.draft.spec.ts`). These rows carry no
+  // status, which is a published form (migration 145's default).
+  describe('the association link of a published form is fixed', () => {
     const linked = () => ({
       id: 'f1',
       ownerId: 'user1',
       items: [],
       associationId: 'asso1',
     });
+    const fixed = { response: { code: FORM_ASSOCIATION_FIXED } };
 
     it('refuses moving a form to another association', async () => {
       const { service } = makeService({ tiers: CERCLE, form: linked() });
       await expect(
         service.update('f1', dto({ associationId: 'asso2' }), 'user1', false)
-      ).rejects.toThrow(/stays with the association/i);
+      ).rejects.toMatchObject(fixed);
     });
 
-    it('refuses unlinking a form by sending an empty association', async () => {
+    it('refuses unlinking a form by sending an empty association, or null', async () => {
       const { service } = makeService({ tiers: CERCLE, form: linked() });
       await expect(
         service.update('f1', dto({ associationId: '' }), 'user1', false)
-      ).rejects.toThrow(/stays with the association/i);
+      ).rejects.toMatchObject(fixed);
+      await expect(
+        service.update('f1', dto({ associationId: null }), 'user1', false)
+      ).rejects.toMatchObject(fixed);
     });
 
     it('refuses attaching an association to a personal form', async () => {
@@ -391,6 +411,13 @@ describe('FormsService - cotisation configuration and granting', () => {
       await expect(
         service.update('f1', dto({ associationId: 'asso1' }), 'user1', false)
       ).rejects.toThrow(/stays with the association/i);
+    });
+
+    it('refuses a global admin too: what is tied to the link does not depend on who asks', async () => {
+      const { service } = makeService({ tiers: CERCLE, form: linked() });
+      await expect(
+        service.update('f1', dto({ associationId: 'asso2' }), 'user1', true)
+      ).rejects.toMatchObject(fixed);
     });
 
     it('accepts a save that repeats the same association', async () => {
@@ -471,6 +498,33 @@ describe('FormsService - cotisation configuration and granting', () => {
 
     // Ranked like a boutique settlement: a paid form never swaps out a dearer tier by the XOR. The
     // payment is real, so it is recorded - marked paid and NOT granted, for a refund or a grant.
+    // The mode flips INSIDE the grant, under the buyer's tier lock: the grant answers a typed refusal
+    // (no unlocked pre-read to race), which is FINAL - never `failed`, whose claim release would make
+    // every replay hit the same refusal.
+    it('treats "cotisations disabled" read under the grant lock as FINAL: paid_not_granted, claim kept', async () => {
+      const { service, userTagService, purchaseRecordService, submissionRepo } = makeService({
+        submission: { ...paid },
+        form: {
+          id: 'f1',
+          title: 'Inscription',
+          associationId: 'asso1',
+          grantsCotisation: true,
+          cotisationVariantKey: 'sans-alcool',
+        },
+      });
+      userTagService.grantCotisantIfARise.mockResolvedValue({ refused: 'COTISATION_NOT_ENABLED' });
+
+      await service.markPaid('s1', 'cs_test_1');
+
+      expect(userTagService.cotisationModeOf).not.toHaveBeenCalled();
+      expect(userTagService.grantCotisantIfARise).toHaveBeenCalledTimes(1);
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'paid_not_granted' })
+      );
+      // The claim is never released: a released claim is a retry.
+      expect(submissionRepo.update).not.toHaveBeenCalled();
+    });
+
     it('records a tier refused as not a rise as paid_not_granted, and does not retry it', async () => {
       const { service, userTagService, purchaseRecordService } = makeService({
         submission: { ...paid },
@@ -845,6 +899,31 @@ describe('FormsService - cotisation configuration and granting', () => {
       userTagService.rankCotisationTier.mockResolvedValue('higher');
 
       await expect(submitCash(service)).resolves.toMatchObject({ cashPayment: true });
+    });
+
+    it('refuses with COTISATION_DISABLED, before ranking, when the association has no cotisation mode', async () => {
+      const { service, userTagService, submissionRepo } = makeService({
+        form: grantingForm,
+        mode: null,
+      });
+
+      await expect(submitCash(service)).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: 'COTISATION_DISABLED' }),
+      });
+      expect(userTagService.rankCotisationTier).not.toHaveBeenCalled();
+      expect(submissionRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    // The read of a form flags a granting form whose association cannot grant, the same decision as
+    // the submit's refusal (`cotisationGrantRefusal`) - not buyable, rather than a button that 409s.
+    it('get() marks a granting form of an association with no mode cotisationDisabled', async () => {
+      const off = makeService({ form: { ...grantingForm }, mode: null });
+      expect(await off.service.get('f1')).toMatchObject({ cotisationDisabled: true });
+      const on = makeService({ form: { ...grantingForm } });
+      expect(await on.service.get('f1')).toMatchObject({ cotisationDisabled: false });
+      const free = makeService({ form: { ...grantingForm, grantsCotisation: false }, mode: null });
+      expect(await free.service.get('f1')).toMatchObject({ cotisationDisabled: false });
     });
 
     it('does not rank a form that grants no cotisation', async () => {

@@ -37,6 +37,9 @@
   --color-cn-tooltip: #242424;
   --color-cn-yellow: var(--cn-yellow);
   --color-cn-yellow-hover: var(--cn-yellow-hover);
+  /* The guided help's accent ink - its step icon and swipe mime, on the popover. The brand's dark
+     ink in light, its yellow in dark: one token, so no component spells a dark variant. */
+  --color-guide-ink: var(--guide-ink);
   --color-cn-bg: var(--cn-bg);
   /* Panel/card background. Exposed as a utility (`bg-cn-surface`) so components stop
      hardcoding `bg-white`, which never flips and turns text-on-surface unreadable in dark. */
@@ -55,6 +58,7 @@
   --color-text-muted: var(--text-muted);
   --color-green-ok: var(--green-ok);
   --color-red-err: var(--red-err);
+  --color-red-solid: var(--red-solid);
   /* Third member of the status triad, next to `green-ok` and `red-err`. Warning banners used to
      hardcode `text-amber-700` / `bg-amber-50` / `border-amber-200`, none of which flip, so the
      banner stayed light while the text on it went near-white. Tint it with an opacity modifier
@@ -227,12 +231,16 @@
    entirely has to be PORTALLED to the body, and `$lib/actions/portal` is how.
    ========================================================================================== */
 :root {
-  /* WHAT THE BOTTOM BAR COVERS, AND THE ONE PLACE IT IS SPELT. The web bar (`BottomNav`) is 4rem
-     plus the home-indicator strip. The iOS app's native bar (`NativeTabBar`) is not - the iOS 26
-     floating pill and the classic bar each have their own height - so that component overwrites
-     this on the document with the plugin's measured inset. `.page-scroll-wrap`, `.mobile-nav-inset`
-     and the keyboard's scroll padding all reserve THIS, so no reservation can keep the old number. */
-  --bottom-nav-reserve: calc(4rem + var(--safe-area-inset-bottom, 0px));
+  /* WHAT THE BOTTOM BAR COVERS, AND THE ONE PLACE IT IS SPELT. The web bar (`BottomNav`) draws
+     its row at `--bottom-nav-height` (Instagram's 48px, #648) under a 1px top border, plus the
+     home-indicator strip. The iOS app's native bar (`NativeTabBar`) is not - the iOS 26 floating
+     pill and the classic bar each have their own height - so that component overwrites the reserve
+     on the document with the plugin's measured inset. `.page-scroll-wrap`, `.mobile-nav-inset` and
+     the keyboard's scroll padding all reserve THIS, so no reservation can keep the old number.
+     Until 2026-11-07 the reserve still said 4rem after #648 cut the row to 3rem, so every page -
+     a form's sticky order bar most visibly - kept a 1rem strip of nothing above the bar. */
+  --bottom-nav-height: 3rem;
+  --bottom-nav-reserve: calc(var(--bottom-nav-height) + 1px + var(--safe-area-inset-bottom, 0px));
 
   /* The navigation frame. Each scrim is one rung UNDER the thing it dims: a scrim exists to catch
      the click that closes it, so putting it OVER that thing makes the thing stop answering. */
@@ -267,6 +275,12 @@
   --z-side-panel: 260;
 
   --z-modal: 280;
+  /* The guided help (`GuideOverlay`): coach marks over the real interface. A rung of its own, one
+     over the modal it must never be confused with - it only starts on a QUIET app (no modal, sheet,
+     call, viewer or PIN lock open), and when one opens over it the help is suspended, not drawn
+     under it, so the rung decides nothing against them; above the drawer, the rail and the banner
+     column it points at. Under `--z-modal-popover` and everything above. */
+  --z-guide: 285;
   /* A dropdown opened from INSIDE a modal, portalled out of it so nothing can clip it. It has to
      clear the modal it belongs to, which is the whole reason it is a rung of its own. */
   --z-modal-popover: 290;
@@ -277,6 +291,10 @@
      `Modal` take this one when `utils/viewerLayer.ts` says they are inside a viewer. Under the
      toast, which answers whatever was done in it. */
   --z-viewer-dialog: 305;
+  /* A dropdown portalled out of a dialog that sits on `--z-viewer-dialog` (inside a viewer, a nested
+     `Modal` or a comments drawer): `--z-modal-popover` (290) would paint under its own dialog.
+     `FloatingSurface` and `UserAutocomplete` take it through `popoverLayerClass`. Under the toast. */
+  --z-viewer-dialog-popover: 307;
 
   /* The answer to something the reader just did, readable over WHATEVER they did it in - including a
      full-screen viewer. It sat at 60 and "CanaReel enregistre dans votre galerie" was painted
@@ -323,6 +341,7 @@
   /* THE TWO LINES THAT DO NOT MOVE, IN EITHER THEME. */
   --cn-yellow: #f6c232;
   --cn-yellow-hover: #e4af1b;
+  --guide-ink: var(--cn-dark);
   /* AVATAR PLACEHOLDER PALETTE (user, 2026-10-30, Telegram-style): eight hues, a diagonal pair of
      stops each, picked by `avatarHueIndex(id)`. THEME-INDEPENDENT ON PURPOSE: the initials are
      white on every hue in both themes, so the stops are the same in light and dark. Every stop keeps
@@ -344,6 +363,34 @@
   --avatar-hue-6-to: #b91c1c;
   --avatar-hue-7-from: #d08200;
   --avatar-hue-7-to: #b45309;
+  /* THE BIRTHDAY RING (docs/wiki/birthdays.md): drawn by `.birthday-ring` around the avatar of a
+     member whose birthday it is today, in every theme - built from the avatar hues and the brand
+     yellow, so it adds no colour of its own. */
+  --birthday-ring: conic-gradient(
+    from 0deg,
+    var(--cn-yellow),
+    var(--avatar-hue-0-from),
+    var(--avatar-hue-1-from),
+    var(--avatar-hue-2-from),
+    var(--avatar-hue-3-from),
+    var(--cn-yellow)
+  );
+
+  /* CATEGORICAL CHART SERIES (admin status curves): the eight validated slots of the dataviz
+     default palette, in fixed order, never cycled. Dark has its own steps, not a flipped copy.
+     CONTRAST of every slot against its surface (WCAG ratio, computed; a 2 px line needs 3:1):
+     light on #ffffff  1 4.42  2 3.20  3 3.59  4 3.34  5 3.58  6 4.95  7 5.77  8 3.95
+     dark  on #121212  1 5.15  2 4.82  3 5.50  4 6.10  5 4.75  6 6.06  7 5.99  8 5.80
+     Slots 3, 4 and 5 of the light set were darkened from the palette's #1baf7a / #eda100 / #e87ba4
+     (2.82 / 2.17 / 2.69) and dark slot 6 lightened from #008300 (3.79), to clear 3:1. */
+  --chart-series-1: #2a78d6;
+  --chart-series-2: #eb6834;
+  --chart-series-3: #0f9a6b;
+  --chart-series-4: #c27e00;
+  --chart-series-5: #d4608f;
+  --chart-series-6: #008300;
+  --chart-series-7: #6250d6;
+  --chart-series-8: #e34948;
   --cn-bg: #f0f2f5;
   --cn-surface: #ffffff; /* measured, 68% of the handset thread in light mode */
   /* A HAIRLINE, NOT A LINE. The reference draws six visible borders on an entire page, all
@@ -354,6 +401,22 @@
      and most of them have not been re-examined yet, so an input that has no fill of its own must
      not vanish outright. Take it down as surfaces get their fills. */
   --cn-border: rgba(0, 0, 0, 0.1);
+  /* ============================== THE CONTROLS ==============================
+     ONE HEIGHT FOR EVERY CONTROL IN A ROW (owner, 2026-11-07: *"les boutons ne sont pas alignes, ont
+     des hauteurs differentes et des styles differents"*): a button, a select and a text field are
+     all 2.5rem, on a desktop and on a phone. `compact` (2rem) exists for a dense toolbar only.
+     Read by `.ui-control` at the end of this file, which `Button`, `Input` and `Picker` all wear -
+     a call site never spells these numbers. The corner is the existing card/button step, not a new
+     one. The border is the thin grey every field already had, and it is also the SECONDARY
+     button's: a button and a select side by side differ by what they do, never by how they are
+     drawn. See docs/wiki/frontend/controls.md. */
+  --control-height: 2.5rem;
+  --control-height-compact: 2rem;
+  --control-padding-x: 1rem;
+  --control-padding-x-compact: 0.75rem;
+  --control-border-width: 1px;
+  --control-border-color: var(--cn-border);
+  --control-radius: var(--radius-lg);
   /* The scrollbar thumb is drawn from the TEXT side of the palette, never the surface side. It used
      to be `color-mix(in srgb, var(--cn-surface) 20%, transparent)`, copied into seven files - which
      in light mode is white at 20% over a white surface, i.e. no scrollbar at all. Nothing reported
@@ -364,6 +427,9 @@
   --text-muted: #65686c; /* measured */
   --green-ok: #19b56a;
   --red-err: #e04d4d;
+  /* A FILL for white text: `red-err` is a text/edge red and reads 3.9:1 under white (2.8:1 in dark), under
+     AA. One value in both themes, 6:1 with white. */
+  --red-solid: #c42b2b;
   --amber-warn: #b45309;
   /* FLAT. The reference has no background gradient at all - it is one solid colour behind
      everything. The three stacked gradients that were here (amber and blue radials over a vertical
@@ -455,6 +521,14 @@
 }
 
 :root[data-theme='dark'] {
+  --chart-series-1: #3987e5;
+  --chart-series-2: #d95926;
+  --chart-series-3: #199e70;
+  --chart-series-4: #c98500;
+  --chart-series-5: #d55181;
+  --chart-series-6: #34a834;
+  --chart-series-7: #9085e9;
+  --chart-series-8: #e66767;
   /* THE MEASURED THEME. Every value marked "measured" was read off a live Messenger thread with
      `getComputedStyle`; the Facebook group page independently uses the same ramp one step lighter
      (#242526 / #252728 / #3b3c3e), which is what makes it a system rather than one page's choice.
@@ -464,6 +538,7 @@
   --cn-dark: #e4e6eb;
   --cn-yellow: #ffd45d;
   --cn-yellow-hover: #ffe082;
+  --guide-ink: var(--cn-yellow);
   /* DARKER THAN THE REFERENCE, ON PURPOSE (user, 2026-09-08: OLED). Messenger measures #1f1f1f /
      #2e2e2e / #3e4042, and on an OLED panel every one of those keeps the whole screen lit. True
      black switches the pixels OFF, which is both the power saving and the reason blacks look
@@ -699,6 +774,88 @@ img[src^='/emoji/'] {
 /* One new item arriving in a list that is already on screen. */
 .motion-pop-in {
   animation: motionPopIn var(--motion-base) var(--motion-ease-out);
+}
+
+/* THE GUIDED HELP (`components/guidance/GuideOverlay.svelte`, docs/wiki/frontend/guided-help.md).
+   The spotlight is a box over the target: on a tour its giant spread shadow is the scrim, so the
+   target is the one undimmed hole in it; on a hint it carries the ring alone. It GLIDES from one
+   control to the next (a transform, on the motion scale), its ring breathes, and the
+   gesture mime slides - every one of them stopped by the global reduced-motion rule, and the two
+   infinite ones are not even started there (`data-pulse` / `data-play` are left off). */
+/* Placed by a TRANSFORM, never by left/top/width/height: the move between steps glides on the
+   compositor, and while the page scrolls (`data-tracking`, set by the overlay) there is no
+   transition at all - the spotlight follows the target frame by frame instead of lagging it. */
+.guide-spotlight {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: var(--radius-lg);
+  pointer-events: none;
+  transition:
+    transform var(--motion-slow) var(--motion-ease-out),
+    width var(--motion-slow) var(--motion-ease-out),
+    height var(--motion-slow) var(--motion-ease-out);
+}
+
+.guide-spotlight[data-tracking],
+.guide-bubble[data-tracking] {
+  transition: none;
+}
+
+.guide-spotlight[data-dim] {
+  box-shadow: 0 0 0 200vmax color-mix(in srgb, var(--color-cn-scrim) 55%, transparent);
+}
+
+.guide-spotlight-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 0.125rem var(--cn-yellow);
+}
+
+.guide-spotlight-ring[data-pulse] {
+  animation: guideHalo 1.8s var(--motion-ease-out) infinite;
+}
+
+@keyframes guideHalo {
+  0% {
+    box-shadow:
+      0 0 0 0.125rem var(--cn-yellow),
+      0 0 0 0 color-mix(in srgb, var(--cn-yellow) 60%, transparent);
+  }
+  100% {
+    box-shadow:
+      0 0 0 0.125rem var(--cn-yellow),
+      0 0 0 0.875rem transparent;
+  }
+}
+
+.guide-bubble {
+  left: 0;
+  top: 0;
+  transition: transform var(--motion-slow) var(--motion-ease-out);
+}
+
+.guide-swipe-mime {
+  display: inline-flex;
+}
+
+.guide-swipe-mime[data-play] {
+  animation: guideSwipe 1.6s var(--motion-ease-out) infinite;
+}
+
+@keyframes guideSwipe {
+  0% {
+    transform: translateX(-1rem);
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(1rem);
+    opacity: 0;
+  }
 }
 
 /* Press feedback on a control: a shrink on touch, back on release. It restates the colour
@@ -982,8 +1139,8 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   width: 100%;
   max-width: 100%;
   padding: 0.75rem 1rem;
-  border: 2px solid var(--cn-border);
-  border-radius: var(--radius-lg);
+  border: var(--control-border-width) solid var(--control-border-color);
+  border-radius: var(--control-radius);
   font-size: var(--text-sm);
   line-height: var(--text-sm--line-height);
   color: var(--text-main);
@@ -1139,23 +1296,24 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   }
 }
 
-/**
- * The pricing grid's geometry: every price column the same size, and never below a readable one.
+/*
+ * THE PRICE TABLE - one row per group of the first criterion, one column per group of the second
+ * (`PriceCellsEditor`). The grid supplies only `--price-cols`, the count it alone knows.
  *
- * The sizes are declared here, and the grid supplies only `--group-cols` and `--price-cols` - the
- * two counts it alone knows. Naming the total width is the whole point: `table-layout: fixed` on a
- * table of width `auto` treats column widths as PROPORTIONS rather than sizes, and nine columns
- * declared at 8rem inside a 1020px box were measured in Chrome at 83-91px, unequal - which is the
- * illegibility this replaces, not a fix for it. With the total named, each column is exactly its
+ * Naming the total width is the point: `table-layout: fixed` on a table of width `auto` treats
+ * column widths as PROPORTIONS rather than sizes, and nine columns declared at 8rem inside a 1020px
+ * box were measured in Chrome at 83-91px, unequal. With the total named, each column is exactly its
  * declared width and the wrapper scrolls once they no longer fit; below that total, `min-width`
  * stretches every column by the same factor, so they stay equal and the box is never half empty.
  */
 .price-grid {
-  --group-col: 10rem;
+  --group-col: 9rem;
   --price-col: 8rem;
+  --price-row: 2.5rem;
   min-width: 100%;
   table-layout: fixed;
-  width: calc(var(--group-cols) * var(--group-col) + var(--price-cols) * var(--price-col));
+  border-collapse: collapse;
+  width: calc(var(--group-col) + var(--price-cols) * var(--price-col));
 }
 
 .price-grid col.group-col {
@@ -1167,38 +1325,242 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 }
 
 /*
- * Room for the overlaid action. It belongs here and not on the input's class list because a
- * `pr-8` appended after the shared control string would be settled by the order Tailwind emits
- * `padding-right` and `padding-inline` in - a cascade race for something that is simply true of
- * every cell in this grid.
+ * ONE RULED TABLE: every header and every cell is a real table cell of the same fixed height, the
+ * rules are the cells' own borders, and the header row and column are tinted so they read as
+ * attached to the cells they name. The box carrying the table rounds and clips the outer corners.
  */
-.price-grid input {
-  padding-right: 2rem;
+.price-grid th,
+.price-grid td {
+  height: var(--price-row);
+  padding: 0;
+  border: 1px solid var(--cn-border);
 }
 
-/**
- * A number input without its native steppers.
- *
- * The steppers cost about a fifth of a narrow cell and step by 0.01, which is not a gesture anybody
- * wants for a price: the amount is typed. Removing them is what gives a grid cell its width back.
- */
-.no-spinner {
-  appearance: textfield;
+.price-grid thead th {
+  height: 2rem;
 }
 
-.no-spinner::-webkit-outer-spin-button,
-.no-spinner::-webkit-inner-spin-button {
-  appearance: none;
-  margin: 0;
+/* The box around the table draws the outer edge, so the outer cell borders are dropped. */
+.price-grid tr > :first-child {
+  border-left: 0;
+}
+
+.price-grid tr > :last-child {
+  border-right: 0;
+}
+
+.price-grid thead tr > * {
+  border-top: 0;
+}
+
+.price-grid tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.price-grid thead th,
+.price-grid tbody th {
+  background: var(--cn-bg);
+}
+
+/* A row or column header is a button: it selects the line for the bulk edits. */
+.price-header {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 2rem;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 0.5rem;
+  color: var(--text-main);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+/* In the table a cell fills its table cell edge to edge: the table draws the rules. */
+.price-grid .price-cell {
+  height: var(--price-row);
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 0.25rem;
+  padding: 0 1.75rem 0 0.5rem;
+  border: 0;
+  border-radius: 0;
+}
+
+.price-grid .price-cell-picked {
+  box-shadow: inset 0 0 0 2px var(--text-main);
+}
+
+.price-grid .price-cell-guest {
+  box-shadow: inset 0 0 0 2px var(--amber-warn);
+}
+
+.price-grid .price-cell-closed {
+  justify-content: center;
+  padding: 0 1.75rem 0 0.25rem;
+}
+
+.price-grid .price-corner {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.price-header:hover {
+  background: color-mix(in srgb, var(--cn-yellow) 18%, var(--cn-bg));
+}
+
+.price-header-picked,
+.price-header-picked:hover {
+  background: var(--text-main);
+  color: var(--cn-surface);
+}
+
+.price-header-sub {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.price-header-picked .price-header-sub {
+  color: inherit;
+  opacity: 0.8;
+}
+
+/*
+ * ONE PRICE CELL, shared by every grid that prices something - this editor's table and phone pills,
+ * and the priced-grid question (WP-G3) - so an open, a free and a closed cell read the same
+ * wherever a manager or a respondent meets them.
+ */
+.price-cell {
+  display: flex;
+  height: 4.75rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0 0.375rem;
+  border: 1px solid var(--cn-border);
+  border-radius: var(--radius-lg);
+  background: var(--cn-surface);
+  text-align: center;
+}
+
+.price-cell-picked {
+  border: 2px solid var(--text-main);
+  background: color-mix(in srgb, var(--cn-yellow) 15%, var(--cn-surface));
+}
+
+/* The one cell a public form's guest would get free - refused by the server, so said here. */
+.price-cell-guest {
+  border: 2px solid var(--amber-warn);
+  background: color-mix(in srgb, var(--amber-warn) 12%, var(--cn-surface));
+}
+
+/*
+ * A combination that DOES NOT EXIST: hatched and struck through, so it can never be read as free
+ * (which is "Gratuit") or as unfilled.
+ */
+.price-cell-closed {
+  border: 1px dashed var(--text-muted);
+  background-color: var(--cn-bg);
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 0.375rem,
+    color-mix(in srgb, var(--text-main) 6%, transparent) 0.375rem 0.4375rem
+  );
+  color: var(--text-main);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-decoration: line-through;
+}
+
+/* "Gratuit": what an empty price has always meant, now shown. */
+.price-free-chip {
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  background: var(--cn-bg);
+  color: var(--text-main);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.price-input {
+  width: 2.75rem;
+  min-height: 1.75rem;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--text-main);
+  font-size: var(--text-base);
+  font-weight: 700;
+  text-align: right;
+}
+
+.price-input:focus {
+  outline: none;
+  border-bottom-color: var(--text-main);
+}
+
+/* The corner of a cell: makes it unavailable, or brings it back. */
+.price-corner {
+  position: absolute;
+  top: 0.125rem;
+  right: 0.125rem;
+  display: flex;
+  width: 1.625rem;
+  height: 1.625rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--text-main);
+}
+
+.price-corner:hover {
+  background: var(--cn-bg);
+}
+
+/* A phone's price pill: the column it is for, and its price. */
+.price-pill {
+  display: inline-flex;
+  min-height: 2.75rem;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--cn-border);
+  border-radius: var(--radius-lg);
+  background: var(--cn-surface);
+  color: var(--text-main);
+  font-size: var(--text-xs);
+  text-align: left;
+}
+
+.price-pill-free {
+  background: var(--cn-bg);
+}
+
+/* A pill takes the cell states too, drawn after its own base so they win. */
+.price-pill.price-cell-guest {
+  border: 2px solid var(--amber-warn);
+  background: color-mix(in srgb, var(--amber-warn) 12%, var(--cn-surface));
+}
+
+.price-pill.price-cell-picked {
+  border: 2px solid var(--text-main);
+  background: color-mix(in srgb, var(--cn-yellow) 15%, var(--cn-surface));
+}
+
+.price-pill.price-cell-closed {
+  border: 1px dashed var(--text-muted);
+  background-color: var(--cn-bg);
 }
 
 /**
  * An action that lives INSIDE a table cell instead of beside it.
  *
- * A permanent button per cell cost as much width as the price it sat next to, which is what made
- * the pricing grid unreadable past a few columns. This one overlays the cell and takes no width at
- * all: invisible at rest, shown on hover or when the cell it belongs to holds the focus - the only
- * affordance a touch screen has, hence the coarse-pointer rule that keeps it always visible there.
+ * A permanent button per cell cost as much width as the price it sat next to. This one overlays the
+ * cell and takes no width at all: invisible at rest, shown on hover or when the cell it belongs to
+ * holds the focus - the only affordance a touch screen has, hence the coarse-pointer rule that
+ * keeps it always visible there.
  */
 .cell-action {
   opacity: 0;
@@ -1768,7 +2130,9 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   bottom: 0;
   z-index: var(--z-side-panel);
   width: 100%;
-  max-width: 28rem;
+  /* A PHONE GETS THE WHOLE SCREEN (owner, 2026-11-04): no cap below 768px, where the drawer used to
+     stop at 28rem and leave a strip of the page beside it on a wide phone or in landscape. */
+  max-width: none;
 
   /* THE ONE HORIZONTAL INSET IN THIS PANEL, AND EVERY BODY IN IT READS IT FROM HERE.
      The header has been `px-4` in both of the panel's forms since the shell existed, and the four
@@ -2650,6 +3014,7 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     top: calc(var(--app-content-top) + 0.75rem);
     bottom: 0.75rem;
     right: 0.75rem;
+    max-width: 28rem;
     border-radius: 0.75rem;
   }
 }
@@ -2765,6 +3130,31 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   --avatar-hue-to: var(--avatar-hue-7-to);
 }
 
+/* THE BIRTHDAY RING, on the avatar's OWN box (`Avatar.svelte`, the one component every person's
+   face goes through): a gradient band drawn INSIDE the edge by a masked pseudo-element, so it needs
+   no wrapper, moves no layout and is never clipped by a caller's `overflow-hidden rounded-full`. Its
+   width is a share of the avatar, so a 16 px face and a 112 px one carry the same ring. */
+.birthday-ring {
+  position: relative;
+}
+.birthday-ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  padding: 9%;
+  background: var(--birthday-ring);
+  -webkit-mask:
+    linear-gradient(black 0 0) content-box,
+    linear-gradient(black 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(black 0 0) content-box exclude,
+    linear-gradient(black 0 0);
+  pointer-events: none;
+}
+
 /* GLASS FALLBACK - THE ONE PLACE `.glass-chrome` GIVES UP BLUR. Where `backdrop-filter` is missing, or
    the user asked for less transparency (`prefers-reduced-transparency`), every glass surface -
    `.glass-chrome`, the conversation chrome, the sticky-date pill - turns OPAQUE (the surface token)
@@ -2782,5 +3172,35 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     --glass-chrome-bg: var(--cn-surface);
     --glass-chrome-edge: var(--cn-border);
     --glass-chrome-blur: none;
+  }
+}
+
+/* THE CONTROL BOX. Geometry only - height, side padding, edge, corner - because it is the part that
+   must be IDENTICAL across a button, a select and a text field; colour and type belong to each
+   component. In the components layer, so a call-site utility (`w-full`, `px-8`) still wins. */
+@layer components {
+  .ui-control {
+    box-sizing: border-box;
+    /* MIN-height, not height: Android's text zoom scales fonts and not lengths (textZoom.ts), so a
+       fixed box would clip a label at 200 % and a wrapped label must be able to grow it. */
+    min-height: var(--control-height);
+    padding-inline: var(--control-padding-x);
+    border: var(--control-border-width) solid var(--control-border-color);
+    border-radius: var(--control-radius);
+  }
+
+  .ui-control--compact {
+    min-height: var(--control-height-compact);
+    padding-inline: var(--control-padding-x-compact);
+  }
+
+  /* The icon-only form: a square the height of the row, no side padding. */
+  .ui-control--icon {
+    width: var(--control-height);
+    padding-inline: 0;
+  }
+
+  .ui-control--icon.ui-control--compact {
+    width: var(--control-height-compact);
   }
 }

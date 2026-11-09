@@ -22,6 +22,7 @@ import {
   republishedFeedAtSql,
   republishedForViewerSql,
 } from './republished-feed-sql';
+import { republishersOf } from './republication-sql';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -70,8 +71,8 @@ maybe('the republished-feed clauses against PostgreSQL', () => {
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
-        "isBDE" boolean NOT NULL DEFAULT false);
-      CREATE TABLE posts (id uuid PRIMARY KEY, "associationId" uuid NULL,
+        "isBDE" boolean NOT NULL DEFAULT false, "logoUrl" varchar);
+      CREATE TABLE posts (id uuid PRIMARY KEY, "associationId" uuid NULL, "studentsOnly" boolean NOT NULL DEFAULT false,
         "publishedAt" timestamptz NOT NULL);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions int NOT NULL DEFAULT 0);
@@ -150,5 +151,37 @@ maybe('the republished-feed clauses against PostgreSQL', () => {
     expect(await feed(where, at, ['reader', [BDS]])).toEqual([
       { name: 'member-twice', at: '2026-10-02T09:00:00.000Z' },
     ]);
+  });
+
+  it('an ARCHIVED carrier neither admits nor dates a post, and no card names it (review of #2965)', async () => {
+    const names = async (postId: string) =>
+      (
+        (
+          await republishersOf(
+            { query: async (sql, params) => (await client.query(sql, params)).rows },
+            [postId]
+          )
+        ).get(postId) ?? []
+      ).map((r) => r.name);
+    expect(await names(P(2))).toEqual(['BDE']);
+    await client.query(`UPDATE associations SET archived = true WHERE id = $1`, [BDE]);
+    try {
+      expect(
+        await feed(inAssociationsFeedSql('$1'), republishedFeedAtSql('$1'), ['reader'])
+      ).toEqual([
+        // The BDE's own posts are still its own (archiving an association does not hide its
+        // posts here); its republications are gone: member-reposted is out, the others fall back.
+        { name: 'bde-own', at: '2026-10-02T12:00:00.000Z' },
+        { name: 'member-twice', at: '2026-10-02T09:00:00.000Z' }, // the BDS's day 2 only
+        { name: 'bde-hidden-repost', at: '2026-10-01T11:00:00.000Z' },
+        { name: 'bds-reposted', at: '2026-10-01T08:00:00.000Z' },
+      ]);
+      // "Republie par BDE" is gone from the card; the BDS still names itself.
+      expect(await names(P(2))).toEqual([]);
+      expect(await names(P(5))).toEqual(['BDS']);
+    } finally {
+      await client.query(`UPDATE associations SET archived = false WHERE id = $1`, [BDE]);
+    }
+    expect(await names(P(2))).toEqual(['BDE']);
   });
 });

@@ -34,12 +34,12 @@ describe('DevicesController.registerDevice - revoked device', () => {
   };
   let keyPackageRepo: {
     findOne: jest.Mock;
-    count: jest.Mock;
-    save: jest.Mock;
-    update: jest.Mock;
-    create: jest.Mock;
     createQueryBuilder: jest.Mock;
   };
+  /** The one statement that writes the key package row (`upsertDeviceKeyPackage`). */
+  let query: jest.Mock;
+  const upserted = () =>
+    query.mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO key_package'));
   /** The number `countLiveDevices` reads back, set per test. */
   let liveDevices: number;
   let recordKeys: jest.Mock;
@@ -69,12 +69,9 @@ describe('DevicesController.registerDevice - revoked device', () => {
     };
     keyPackageRepo = {
       findOne: jest.fn().mockResolvedValue(null),
-      count: jest.fn().mockResolvedValue(0),
-      save: jest.fn().mockResolvedValue({}),
-      update: jest.fn().mockResolvedValue({ affected: 1 }),
-      create: jest.fn((v) => v),
       createQueryBuilder: jest.fn(() => qb),
     };
+    query = jest.fn().mockResolvedValue([{ inserted: true }]);
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [DevicesController],
@@ -87,7 +84,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
         { provide: getRepositoryToken(PushToken), useValue: {} },
         { provide: getRepositoryToken(RevokedDevice), useValue: revokedDeviceRepo },
         { provide: 'REDIS_CLIENT', useValue: {} },
-        { provide: DataSource, useValue: {} },
+        { provide: DataSource, useValue: { query } },
         { provide: MessagingService, useValue: {} },
         { provide: DeviceSignatureKeysService, useValue: { record: recordKeys } },
       ],
@@ -107,22 +104,52 @@ describe('DevicesController.registerDevice - revoked device', () => {
       reason: 'retired',
     });
 
-    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toBeInstanceOf(
-      ForbiddenException
-    );
+    await expect(controller.registerDevice(BODY, 'u1')).rejects.toBeInstanceOf(ForbiddenException);
     // The client branches on this code, never on the message.
-    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toMatchObject({
+    await expect(controller.registerDevice(BODY, 'u1')).rejects.toMatchObject({
       response: { code: 'DEVICE_REVOKED', reason: 'retired' },
     });
-    expect(keyPackageRepo.save).not.toHaveBeenCalled();
+    expect(upserted()).toHaveLength(0);
   });
 
   it('lets an ordinary device through', async () => {
     revokedDeviceRepo.findOne.mockResolvedValue(null);
 
-    await controller.registerDevice(BODY, 'u1', undefined);
+    await controller.registerDevice(BODY, 'u1');
 
-    expect(keyPackageRepo.save).toHaveBeenCalled();
+    expect(upserted()).toHaveLength(1);
+  });
+
+  /**
+   * Production 2026-11-07 (`1.6.6`): two registrations of one device in the same millisecond both
+   * read "no row" and the second INSERT answered 500 on `UNIQUE ("userId", "deviceId")`. The row is
+   * now written by ONE `INSERT ... ON CONFLICT DO UPDATE`, with no read of the pair before it; the
+   * overlap itself is proven against PostgreSQL in device-key-package.integration.spec.ts.
+   */
+  it('writes the key package row in ONE statement, never a read of the pair then a write', async () => {
+    revokedDeviceRepo.findOne.mockResolvedValue(null);
+
+    await controller.registerDevice(
+      { ...BODY, notAfter: '2027-01-01T00:00:00.000Z', deviceOs: 'android' },
+      'u1'
+    );
+
+    expect(upserted()).toHaveLength(1);
+    const [sql, params] = upserted()[0] as [string, unknown[]];
+    expect(sql).toContain('ON CONFLICT ("userId", "deviceId") DO UPDATE');
+    expect(params.slice(1, 8)).toEqual([
+      'u1',
+      'd1',
+      'a2V5',
+      new Date('2027-01-01T00:00:00.000Z'),
+      null,
+      'android',
+      null,
+    ]);
+    // The only read of `key_package` left is the cross-account one, which excludes the caller.
+    for (const [arg] of keyPackageRepo.findOne.mock.calls) {
+      expect((arg as { where: { userId: unknown } }).where.userId).toEqual(Not('u1'));
+    }
   });
 
   it('refuses a device id another account holds, and writes nothing', async () => {
@@ -140,7 +167,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
         ) ?? null
     );
 
-    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toMatchObject({
+    await expect(controller.registerDevice(BODY, 'u1')).rejects.toMatchObject({
       status: 409,
       response: { error: 'device_id_taken' },
     });
@@ -149,10 +176,10 @@ describe('DevicesController.registerDevice - revoked device', () => {
       select: { id: true },
     });
     expect(recordKeys).not.toHaveBeenCalled();
-    expect(keyPackageRepo.save).not.toHaveBeenCalled();
+    expect(upserted()).toHaveLength(0);
 
     // The owner itself re-registers the same id as before.
-    await controller.registerDevice({ ...BODY, userId: 'u2' }, 'u2', undefined);
+    await controller.registerDevice({ ...BODY, userId: 'u2' }, 'u2');
     expect(recordKeys).toHaveBeenCalledWith('u2', 'd1', ['a2V5'], 'register-device');
   });
 
@@ -160,10 +187,10 @@ describe('DevicesController.registerDevice - revoked device', () => {
     revokedDeviceRepo.findOne.mockResolvedValue(null);
     recordKeys.mockRejectedValue(new Error('db down'));
 
-    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toThrow('db down');
+    await expect(controller.registerDevice(BODY, 'u1')).rejects.toThrow('db down');
 
     expect(recordKeys).toHaveBeenCalledWith('u1', 'd1', ['a2V5'], 'register-device');
-    expect(keyPackageRepo.save).not.toHaveBeenCalled();
+    expect(upserted()).toHaveLength(0);
   });
 
   /**
@@ -180,13 +207,11 @@ describe('DevicesController.registerDevice - revoked device', () => {
       .spyOn((controller as unknown as { logger: { warn: (m: string) => void } }).logger, 'warn')
       .mockImplementation(() => undefined);
 
-    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toBeInstanceOf(
-      BadRequestException
-    );
-    await expect(controller.registerDevice(BODY, 'u1', undefined)).rejects.toMatchObject({
+    await expect(controller.registerDevice(BODY, 'u1')).rejects.toBeInstanceOf(BadRequestException);
+    await expect(controller.registerDevice(BODY, 'u1')).rejects.toMatchObject({
       response: { code: 'DEVICE_LIMIT_REACHED', max: MAX_DEVICES_PER_USER },
     });
-    expect(keyPackageRepo.save).not.toHaveBeenCalled();
+    expect(upserted()).toHaveLength(0);
     // A refusal with no trace is found by hand, a day late: the line must carry the count it read.
     expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
       `live=${MAX_DEVICES_PER_USER}/${MAX_DEVICES_PER_USER}`

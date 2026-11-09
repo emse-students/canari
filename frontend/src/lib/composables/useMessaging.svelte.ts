@@ -10,7 +10,7 @@ import { isAppInForeground } from '$lib/utils/appForeground';
 import { isIosAppInactive } from '$lib/utils/appActive';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
-import { SvelteMap, SvelteDate } from 'svelte/reactivity';
+import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
@@ -21,14 +21,23 @@ import {
   takeBackSalonSend,
   resumeUnsentSalonSends,
   forgetSalonSendsOfEndedSession,
+  deliverSalonAttachment,
   type SendMessageDeps,
   addReaction,
   removeReaction,
   editMessage,
   deleteMessage,
   setMessagePinned,
+  setConversationNickname,
 } from '$lib/utils/chat/messaging';
 import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
+import {
+  forgetSalonAttachments,
+  SalonEchoNotDrawnError,
+  startSalonAttachment,
+  type SalonAttachmentDeps,
+} from '$lib/utils/chat/salonAttachmentSend';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import type { UnsentSalonText } from '$lib/utils/chat/salonUnsent';
 import { resetOwedSalonWrites } from '$lib/utils/chat/salonOwed';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
@@ -37,6 +46,7 @@ import {
   indexMessagesById,
   isStaleInboundMessage,
   isSystemSender,
+  mapStoredMessagesToChatMessages,
   normalizeMessageId,
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
@@ -73,18 +83,16 @@ import {
   getUserDisplayNameSync,
   resolveNotificationSenderName,
 } from '$lib/utils/users/displayName';
+import { flushNameMirror } from '$lib/utils/users/nameMirror';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
-import {
-  readSalonSendGate,
-  SalonNotLoadableError,
-  whenSalonSendable,
-} from '$lib/utils/graine/salonSendGate';
+import { readSalonSendGate, whenSalonSendable } from '$lib/utils/graine/salonSendGate';
 import { salonGateRefusalMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import { MediaService, refusedBeforePreparation } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
-import { chatReelPendingDeclaration, isChatReelTake } from '$lib/reels/chatReelWriter';
+import { isChatReelTake } from '$lib/reels/chatReelWriter';
 import { capturePosterOf } from '$lib/reels/capturePoster';
+import { buildChatReelTake, type ChatReelTarget } from '$lib/reels/chatReelTake';
 import {
   applyEditToBody,
   envelopeBodyText,
@@ -111,12 +119,17 @@ import type { IMlsService } from '$lib/mlsService';
 import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import {
+  applyOutboxPendingStatuses,
   awaitOutboxSettled,
+  cancelOutboxMessage,
   enqueueOutboxMessage,
+  enqueueOutboxTake,
   isEnqueueQuotaFailure,
+  outboxReelSendDeleted,
+  outboxReelTakeReachOf,
   type OutboxSettlement,
 } from '$lib/utils/chat/outbox';
-import { MessagePairWriteError } from '$lib/utils/chat/messageWrittenError';
+import { MessagePairWriteError, MessageWrittenError } from '$lib/utils/chat/messageWrittenError';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
@@ -129,14 +142,33 @@ import {
   type ControlAct,
   type ControlRefusal,
 } from '$lib/utils/chat/controlRefusals.svelte';
-import { ChannelService } from '$lib/services/ChannelService';
 import {
   isChannelConversationId,
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
+import { findDirectConversationByPeer } from '$lib/utils/chat/conversations';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { beginBulkUiFlushBench, finishBulkUiFlushBench } from '$lib/mls-client/catchupBenchmark';
-import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
+import {
+  shouldUpgradeMessage,
+  mergeMessageUpgrade,
+  previewUpgradeOnto,
+} from '$lib/utils/chat/messageMerge';
+import type { PendingMutation, StoredRowsById } from '$lib/db/types';
+import {
+  settleAgainstPending,
+  type SettledFields,
+  type Settlement,
+} from '$lib/utils/chat/pendingMutations';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
+import {
+  logDiscarded,
+  pendingFor,
+  settledChatMessage,
+  settledStoredPatch,
+  settlePendingFor,
+  type PendingMutationDeps,
+} from '$lib/utils/chat/pendingMutationStore';
 import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
 import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
@@ -173,7 +205,6 @@ export interface MessagingContext {
   storage: IStorage | null;
   log: (msg: string) => void;
   saveConversation: (contactName: string) => Promise<void>;
-  verifyCurrentUserMembership: (contactName: string) => Promise<boolean>;
   playNotificationTone: () => void;
   playSendTone?: () => void;
   /** `mentionsMe` selects the mention trill over the message one. */
@@ -211,6 +242,13 @@ function mediaKindFromEnvelope(type: string): number {
       return MediaKind.MEDIA_KIND_UNSPECIFIED;
   }
 }
+
+/** What an arriving body does against the store - see `storedBodyVerdict` inside {@link useMessaging}. */
+type StoredBodyVerdict =
+  | { kind: 'new' }
+  | { kind: 'unreadable'; id: string }
+  | { kind: 'held'; id: string }
+  | { kind: 'upgrade'; row: StoredMessage; content: string };
 
 /** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 export function useMessaging() {
@@ -300,6 +338,8 @@ export function useMessaging() {
     // Salon writes owed to a reconnect were the leaving account's: none may go out under the next.
     resetOwedSalonWrites();
     forgetSalonSendsOfEndedSession();
+    // And its salon attachments still uploading: aborted, their rows withdrawn, nothing sent.
+    forgetSalonAttachments();
     // The refused control actions shown are the leaving account's; its persisted list stays its own.
     forgetControlRefusals();
     // So are the new-device alerts on screen; its unseen ones stay persisted for its next session.
@@ -308,6 +348,12 @@ export function useMessaging() {
     resetJoinRequests();
     // And what this device said about the history it withheld: the next account's asks are new.
     resetAnswerDecisionsSaid();
+    // And the messages held for a conversation not loaded yet: replayed under the next account,
+    // they would be written into ITS store (review of #2874).
+    const orphans = orphanBuffer.size;
+    orphanBuffer.clear();
+    if (orphans > 0)
+      log(`[COMPOSER] signed out: orphan messages of ${orphans} conversation(s) forgotten`);
   }
 
   /**
@@ -352,7 +398,6 @@ export function useMessaging() {
   const videoPreparation = new VideoPreparationState();
   /** The video preparations queued behind each other - see `prepareChatVideo`. */
   let videoPreparationChain: Promise<unknown> = Promise.resolve();
-  let isUploadingMedia = $state(false);
 
   /** Depth of nested MLS queue catch-up sessions (overlay stays until zero). */
   let messageCatchupDepth = 0;
@@ -402,6 +447,8 @@ export function useMessaging() {
       content: string;
       contactName: string;
       options: AddMessageToChatOptions & { skipDbSave?: boolean };
+      /** An own send, buffered without its entry: its status is the queue's to say at the replay. */
+      ownSend?: boolean;
     }>
   >();
 
@@ -601,6 +648,8 @@ export function useMessaging() {
      * (`notifiedMessages.ts`). One for a live frame, every inbound one for a catch-up flush.
      */
     messageIds: readonly string[],
+    /** Whether the open proved the banner's author - see `NativeMessageNotification.authorProven`. */
+    authorProven: boolean,
     /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
     salonLevelRead = false
   ): void {
@@ -686,6 +735,7 @@ export function useMessaging() {
             serverAt,
             covers,
             messageIds,
+            authorProven,
             true
           );
         });
@@ -801,6 +851,10 @@ export function useMessaging() {
         const announced = messageIds.length > 0 ? owed.length : covers;
         // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
         const senderName = await resolveNotificationSenderName(senderId, convo);
+        // THE NAME IS ON DISK BEFORE THE NATIVE BUILDER READS IT: the Android builder reads
+        // `display_names.json` to name a salon speaker, whose write follows the resolution above
+        // (`flushNameMirror` resolves once that write, or the one in flight, is done).
+        await flushNameMirror();
         raised = await ctx.sendSystemNotification(
           senderName,
           notificationBody,
@@ -819,6 +873,7 @@ export function useMessaging() {
             sentAt,
             serverAt: serverAt ?? 0,
             covers: announced,
+            authorProven,
           }
         );
       } finally {
@@ -842,6 +897,69 @@ export function useMessaging() {
         addMessageToChat(sid, content, contactName, ctx, options),
       patchSalonEcho: (key, id, change) =>
         void applySalonEchoChange(ctx.conversations, key, id, change, ctx.log),
+      log: ctx.log,
+    };
+  }
+
+  /**
+   * What a salon attachment's upload needs from this composable (`salonAttachmentSend.ts`): the
+   * gate, the token-bearing upload, the echo writers and the banner of the conversation the send was
+   * made in. One place, built at the tap.
+   */
+  function salonAttachmentDeps(
+    ctx: MessagingContext,
+    conversationKey: string,
+    convo: Conversation,
+    messageId: string,
+    dimensions: { width?: number; height?: number }
+  ): SalonAttachmentDeps {
+    const channelId = conversationKey.replace(/^channel_/, '');
+    return {
+      gate: async () => {
+        const reading = readSalonSendGate(channelId);
+        if (reading.kind !== 'wait') return reading;
+        ctx.log(
+          `[MEDIA] ${messageId.slice(0, 8)}… HELD: salon ${channelId.slice(0, 8)}… is not loaded on this device yet`
+        );
+        return whenSalonSendable(channelId);
+      },
+      upload: async (file, transport) => {
+        // `ctx.authToken` is a COPY taken at sign-in, often expired: `getToken` knows the real
+        // expiry and renews it, as the DM outbox does.
+        const authToken = await getToken();
+        ctx.setAuthToken(authToken);
+        return mediaService.encryptAndUpload(file, authToken, dimensions, 'ephemeral', transport);
+      },
+      showContent: (content) =>
+        void applySalonEchoChange(
+          ctx.conversations,
+          conversationKey,
+          messageId,
+          { kind: 'content', content },
+          ctx.log
+        ),
+      deliver: (payload) =>
+        deliverSalonAttachment(messageId, conversationKey, payload, makeSendDeps(ctx, convo)),
+      withdraw: () => {
+        const current = ctx.conversations.get(conversationKey);
+        if (!current) return;
+        ctx.conversations.set(conversationKey, {
+          ...current,
+          messages: current.messages.filter((m) => !(m.id === messageId && m.awaitingServerId)),
+        });
+      },
+      refused: (sentence) => {
+        // A held upload may be refused long after the tap: the banner is the conversation's own.
+        if (ctx.selectedNow() === conversationKey) ctx.setSendError(sentence);
+        else
+          ctx.log(`[MEDIA] ${messageId.slice(0, 8)}… refusal not shown: the conversation changed`);
+      },
+      isOffline: () => connectivity.isOffline,
+      describe: (failure) =>
+        failure.kind === 'gate'
+          ? salonGateRefusalMessage(failure.reason)
+          : (describeApiRefusal(failure.status, m.chat_media_action_send()) ??
+            m.chat_media_send_error_generic()),
       log: ctx.log,
     };
   }
@@ -918,6 +1036,47 @@ export function useMessaging() {
     return text;
   }
 
+  /**
+   * Keeps a message whose conversation is not in the map yet, for `drainOrphanMessages` to replay.
+   *
+   * NEVER WITH ITS OUTBOX ENTRY (review of #2874). The replay goes back through `addMessageToChat`,
+   * and an entry carried along would be written - and so SENT - a second time by
+   * `saveMessageWithOutboxEntry`, long after the queue had already sent it from its own row. The
+   * buffer keeps the message; the queue alone owns the send. `onPairWritten` goes with the entry:
+   * the pair it reports was not written here, and a late call would tell the caller it had been.
+   */
+  function bufferOrphan(
+    normalized: string,
+    senderId: string,
+    content: string,
+    contactName: string,
+    options: AddMessageToChatOptions & { skipDbSave?: boolean }
+  ): void {
+    // THE STATUS GOES WITH THE ENTRY: `pending` was true at the tap and says nothing at the replay,
+    // which may come after the queue sent it. The replay asks the queue instead (`drainOrphanMessages`).
+    const { outboxEntry, onPairWritten: _reportOnlyAPairWritten, ...kept } = options;
+    if (outboxEntry) {
+      console.error(
+        `[ADD_MSG] ${outboxEntry.id.slice(0, 8)}… own send into "${normalized}", absent from the map: buffered WITHOUT its outbox entry - the queue sends it from its own row`
+      );
+    }
+    const buffer = orphanBuffer.get(normalized) ?? [];
+    if (buffer.length >= MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
+      console.warn(
+        `[ADD_MSG] orphan buffer of "${normalized}" full (${MAX_ORPHAN_MESSAGES_PER_CONVERSATION}) - message not kept`
+      );
+      return;
+    }
+    buffer.push({
+      senderId,
+      content,
+      contactName,
+      options: outboxEntry ? { ...kept, status: undefined } : kept,
+      ...(outboxEntry ? { ownSend: true } : {}),
+    });
+    orphanBuffer.set(normalized, buffer);
+  }
+
   async function addMessageToChat(
     senderId: string,
     content: string,
@@ -945,11 +1104,7 @@ export function useMessaging() {
         console.warn(
           `[ADD_MSG] conversation "${normalized}" introuvable (bulk) — bufferisation orpheline`
         );
-        const buffer = orphanBuffer.get(normalized) ?? [];
-        if (buffer.length < MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
-          buffer.push({ senderId, content, contactName, options });
-          orphanBuffer.set(normalized, buffer);
-        }
+        bufferOrphan(normalized, senderId, content, contactName, options);
         return;
       }
       const id = normalizeMessageId(options.messageId) ?? crypto.randomUUID();
@@ -1003,11 +1158,7 @@ export function useMessaging() {
     const convo = ctx.conversations.get(normalized);
     if (!convo) {
       console.warn(`[ADD_MSG] conversation "${normalized}" introuvable — bufferisation orpheline`);
-      const buffer = orphanBuffer.get(normalized) ?? [];
-      if (buffer.length < MAX_ORPHAN_MESSAGES_PER_CONVERSATION) {
-        buffer.push({ senderId, content, contactName, options });
-        orphanBuffer.set(normalized, buffer);
-      }
+      bufferOrphan(normalized, senderId, content, contactName, options);
       return;
     }
 
@@ -1057,7 +1208,13 @@ export function useMessaging() {
     if (dupIdx !== -1) {
       const existing = convo.messages[dupIdx];
       if (shouldUpgradeMessage(existing, content)) {
-        const upgraded = mergeMessageUpgrade(existing, newMsg);
+        // A shown PREVIEW may have met a mutation before it: what is pending lands with the body.
+        const settled = await settleWithPending(
+          ctx,
+          normalized,
+          mergeMessageUpgrade(existing, newMsg)
+        );
+        const upgraded = settled.message;
         const nextMessages = insertMessageOrdered(
           convo.messages.filter((m) => m.id !== newMsg.id),
           upgraded
@@ -1069,10 +1226,9 @@ export function useMessaging() {
         });
         if (ctx.storage && !(options.skipDbSave ?? isChannelConversationId(normalized))) {
           try {
-            // The row is replaced wholesale, so everything the merged message still carries has to
-            // be written back: a reaction that landed on the FCM preview before the real body
-            // arrived would otherwise be erased by the upgrade.
-            await ctx.storage.saveMessage(
+            // Folded onto the stored row by compare-and-set (`writeShownUpgrades`): a reaction that
+            // landed on the stored preview meanwhile is kept, and a row no longer a preview is left.
+            const written = await writeShownUpgrades(ctx, normalized, [
               {
                 id: upgraded.id,
                 conversationId: normalized,
@@ -1084,14 +1240,18 @@ export function useMessaging() {
                 isDeleted: upgraded.isDeleted,
                 isEdited: upgraded.isEdited,
                 ...(upgraded.editedAt ? { editedAt: upgraded.editedAt.getTime() } : {}),
+                // A reel's recorded 410 is this device's own fact (RC-6): kept across the rewrite.
+                ...(upgraded.mediaPurgedAt ? { mediaPurgedAt: upgraded.mediaPurgedAt } : {}),
                 isFcmPreview: false,
                 ...proofFields,
+                ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
               },
-              ctx.deviceKeyB64
-            );
+            ]);
+            if (written.has(upgraded.id)) await removeSettled(ctx, settled.consumed);
           } catch (e) {
             console.error('[DB] Failed to upgrade message:', e);
           }
+          await settlePendingFor(pendingDeps(ctx), normalized, [upgraded.id]);
         }
         const updatedConvo = ctx.conversations.get(normalized);
         if (updatedConvo) {
@@ -1111,6 +1271,27 @@ export function useMessaging() {
       }
       console.log(`[ADD_MSG] Duplicate ignored id=${newMsg.id}`);
       return;
+    }
+
+    // NOT SHOWN IS NOT NEW. Memory is a window, so a body it does not show may be a row the store
+    // holds - a re-delivery, a bundle restating old history - and writing it would replace that row
+    // whole: its tombstone, its edit, its reactions. The store is asked, by the one id. An own
+    // message composed here names a fresh id, so nothing can stand or wait under it.
+    const persisted =
+      ctx.storage !== null && !(options.skipDbSave ?? isChannelConversationId(normalized));
+    const arriving = persisted && !options.outboxEntry;
+    let settled: Settled = { message: newMsg, fields: null, consumed: [] };
+    if (arriving) {
+      const stored = await storedRowsFor(ctx, normalized, [newMsg.id]);
+      const verdict = storedBodyVerdict(stored, newMsg.id, content);
+      if (verdict.kind !== 'new') {
+        await settleStoredBodies([verdict], normalized, ctx);
+        return;
+      }
+      // What reached this device before the body - its author's deletion or edit, everyone's
+      // reactions - lands WITH it, so the screen and the store never hold the body without it.
+      settled = await settleWithPending(ctx, normalized, newMsg);
+      Object.assign(newMsg, settled.message);
     }
 
     // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
@@ -1186,6 +1367,8 @@ export function useMessaging() {
     if (
       !isOwn &&
       !isSystem &&
+      // A message deleted before it arrived says nothing: no tone, no notification.
+      !newMsg.isDeleted &&
       // Stale by the SERVER's clock when the row has it: a message delivered late arrives now.
       !isStaleInboundMessage(messageDate(newMsg)) &&
       canSeeArrival(ctx, normalized)
@@ -1198,20 +1381,23 @@ export function useMessaging() {
     }
 
     // ONE DECISION, ASKED BY BOTH INBOUND PATHS - see `notifyInbound`.
-    notifyInbound(
-      ctx,
-      normalized,
-      convo,
-      senderId,
-      content,
-      mentionsUser(content, ctx.userId),
-      isSystem,
-      isOwn,
-      resolvedTimestamp.getTime(),
-      newMsg.serverTimestamp,
-      1,
-      [newMsg.id]
-    );
+    if (!newMsg.isDeleted) {
+      notifyInbound(
+        ctx,
+        normalized,
+        convo,
+        senderId,
+        content,
+        mentionsUser(content, ctx.userId),
+        isSystem,
+        isOwn,
+        resolvedTimestamp.getTime(),
+        newMsg.serverTimestamp,
+        1,
+        [newMsg.id],
+        options.authorProven === true
+      );
+    }
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
     let pairWriteFailure: MessagePairWriteError | null = null;
@@ -1226,6 +1412,7 @@ export function useMessaging() {
           serverTimestamp: options.serverTimestamp,
           ...(options.isFcmPreview ? { isFcmPreview: true } : {}),
           ...proofFields,
+          ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
         };
         // AN OWN MESSAGE AND THE ENTRY THAT SENDS IT ARE ONE FACT, so they are one write. Persisting
         // the echo and then queuing it was two awaits, and a document torn down between them left a
@@ -1242,16 +1429,29 @@ export function useMessaging() {
           } catch (e) {
             // REPORTED, NEVER SWALLOWED (review of #2843, M1): the caller would otherwise tell the
             // outbox the row is on disk when nothing is. Thrown once the conversation is saved.
-            console.error('[DB] the message and its outbox entry were NOT written:', e);
             pairWriteFailure = new MessagePairWriteError(newMsg.id, e);
+            console.error(
+              pairWriteFailure.entryWritten
+                ? '[DB] the outbox entry was written WITHOUT its message:'
+                : '[DB] the message and its outbox entry were NOT written:',
+              e
+            );
           }
         } else {
-          await ctx.storage.saveMessage(row, ctx.deviceKeyB64);
+          // NEVER OVER A ROW: the store was read above, and another writer (the archive replay runs
+          // outside the inbound drain) may have written the id since. Its row stands, and memory
+          // takes it.
+          const written = await ctx.storage.saveMessagesIfAbsent([row], ctx.deviceKeyB64);
+          if (written.has(row.id)) await removeSettled(ctx, settled.consumed);
+          else await showStoredInstead(ctx, normalized, [row.id]);
         }
         await ctx.saveConversation(normalized);
       } catch (e) {
         console.error('[DB] Failed to persist message:', e);
       }
+      // Kept between the read above and the write - or while the message was shown and not stored
+      // yet, whoever wrote it: settled now, against the row that stands.
+      await settlePendingFor(pendingDeps(ctx), normalized, [newMsg.id]);
     }
     if (pairWriteFailure) throw pairWriteFailure;
 
@@ -1260,6 +1460,236 @@ export function useMessaging() {
     // reader had scrolled up to read, and not even whether this message belongs to the thread they
     // have open, since `getChatContainer()` is whichever one that is. `ChatArea` owns the position
     // and decides it with `respondToNewMessage`, from the one stick-to-bottom flag.
+  }
+
+  /** What keeping and settling a pending mutation reads and writes, from a messaging context. */
+  function pendingDeps(ctx: MessagingContext): PendingMutationDeps {
+    return {
+      storage: ctx.storage,
+      deviceKey: () => ctx.deviceKeyB64,
+      conversations: ctx.conversations,
+      messageReactions,
+      log: ctx.log,
+    };
+  }
+
+  /**
+   * The rows the store holds under `ids` IN `conversationId` - `null` when it could not be asked,
+   * which is said. A row of another conversation reads as absent: a body never lands on, nor is
+   * judged against, a row of a conversation it was not sent in.
+   */
+  async function storedRowsFor(
+    ctx: MessagingContext,
+    conversationId: string,
+    ids: readonly string[]
+  ): Promise<StoredRowsById | null> {
+    if (!ctx.storage || ids.length === 0) return null;
+    try {
+      return await ctx.storage.getMessagesByIds(conversationId, ids, ctx.deviceKeyB64);
+    } catch (e) {
+      console.error(
+        `[ADD_MSG] the store could not say whether it holds ${ids.length} arriving message(s) - they are written only where no row stands:`,
+        e
+      );
+      return null;
+    }
+  }
+
+  /**
+   * What an arriving body does, given what the store holds under its id while memory shows nothing:
+   * `new` (nothing stands there - the body is written), `unreadable` (a row this device cannot open,
+   * never written over), `held` (the same message, left as the store holds it - its tombstone, edit
+   * and reactions included) or `upgrade` (a stored notification preview the body replaces, exactly
+   * as a shown one is).
+   */
+  function storedBodyVerdict(
+    stored: StoredRowsById | null,
+    id: string,
+    content: string
+  ): StoredBodyVerdict {
+    if (!stored) return { kind: 'new' };
+    if (stored.unreadable.has(id)) return { kind: 'unreadable', id };
+    const row = stored.rows.get(id);
+    if (!row) return { kind: 'new' };
+    if (shouldUpgradeMessage(row, content)) return { kind: 'upgrade', row, content };
+    return { kind: 'held', id };
+  }
+
+  /** A body with what was pending for it settled in, and the entries that settlement consumed. */
+  type Settled = {
+    message: ChatMessage;
+    fields: SettledFields | null;
+    consumed: PendingMutation[];
+  };
+
+  /**
+   * Folds the mutations kept for `msg` (`pendingMutations.ts`) into it BEFORE it is shown or written:
+   * its author's deletion or edit, everyone's reactions. Anybody else's deletion or edit is
+   * discarded, logged. The consumed entries are removed by the caller once the body is written.
+   */
+  async function settleWithPending(
+    ctx: MessagingContext,
+    normalized: string,
+    msg: ChatMessage
+  ): Promise<Settled> {
+    const waiting = (await pendingFor(pendingDeps(ctx), normalized, [msg.id])).get(msg.id) ?? [];
+    return settledWith(msg, waiting);
+  }
+
+  /** {@link settleWithPending} on entries already read. */
+  function settledWith(msg: ChatMessage, waiting: readonly PendingMutation[]): Settled {
+    if (waiting.length === 0) return { message: msg, fields: null, consumed: [] };
+    const settlement = settleAgainstPending(msg, waiting);
+    logDiscarded(settlement, msg.senderId);
+    if (settlement.fields?.reactions) messageReactions.set(msg.id, settlement.fields.reactions);
+    console.log(
+      `[ADD_MSG] ${msg.id.slice(0, 8)} met ${waiting.length} mutation(s) that arrived before it`
+    );
+    return {
+      message: settlement.fields ? settledChatMessage(msg, settlement.fields) : msg,
+      fields: settlement.fields,
+      // Not every entry: one retained for a proven copy of an unproven body stays kept.
+      consumed: settlement.consumed,
+    };
+  }
+
+  /**
+   * Writes the upgrades of SHOWN previews: a compare-and-set onto each stored row
+   * (`previewUpgradeOnto`, which re-asks `shouldUpgradeMessage` of the row as it stands at the
+   * write), and an insert only where no row stands. Never a whole-row write: the stored preview may
+   * have taken a reaction, a deletion or another writer's upgrade since memory was read. Resolves
+   * with the ids written either way; a row left as it was is said.
+   */
+  async function writeShownUpgrades(
+    ctx: MessagingContext,
+    conversationId: string,
+    upgrades: readonly StoredMessage[]
+  ): Promise<ReadonlySet<string>> {
+    if (!ctx.storage || upgrades.length === 0) return new SvelteSet<string>();
+    const byId = new SvelteMap(upgrades.map((row) => [row.id, row]));
+    const merged = await ctx.storage.mergeMessages(
+      conversationId,
+      [...byId.keys()],
+      (current) => {
+        const upgrade = byId.get(current.id);
+        return upgrade ? previewUpgradeOnto(current, upgrade) : null;
+      },
+      ctx.deviceKeyB64
+    );
+    const inserted = await ctx.storage.saveMessagesIfAbsent(
+      upgrades.filter((row) => !merged.has(row.id)),
+      ctx.deviceKeyB64
+    );
+    const written = new SvelteSet([...merged, ...inserted]);
+    const left = upgrades.length - written.size;
+    if (left > 0) {
+      console.log(
+        `[ADD_MSG] ${left} shown preview(s) of "${conversationId}" are no longer previews in the store - the arriving body leaves them as they are`
+      );
+    }
+    return written;
+  }
+
+  /** Removes the pending entries a written body consumed; a failure costs a re-settle, which is a no-op. */
+  async function removeSettled(ctx: MessagingContext, consumed: readonly PendingMutation[]) {
+    if (!ctx.storage || consumed.length === 0) return;
+    try {
+      await ctx.storage.deletePendingMutations(consumed, ctx.deviceKeyB64);
+    } catch (e) {
+      console.error(
+        `[ADD_MSG] ${consumed.length} settled pending mutation(s) were not removed:`,
+        e
+      );
+    }
+  }
+
+  /**
+   * RE-READ ON CONFLICT. A body this device was about to write found a row already standing under
+   * its id - written by another writer between this one's read and its write. The stored row is the
+   * truth, so memory shows it instead of the copy built here.
+   */
+  async function showStoredInstead(ctx: MessagingContext, normalized: string, ids: string[]) {
+    console.log(
+      `[ADD_MSG] ${ids.length} arriving message(s) of "${normalized}" found a row written meanwhile - the stored row stands`
+    );
+    const stored = await storedRowsFor(ctx, normalized, ids);
+    const c = ctx.conversations.get(normalized);
+    if (!stored || !c) return;
+    const rows = new SvelteMap(
+      mapStoredMessagesToChatMessages([...stored.rows.values()], ctx.userId).map((m) => [m.id, m])
+    );
+    ctx.conversations.set(normalized, {
+      ...c,
+      messages: c.messages.map((m) => rows.get(m.id) ?? m),
+    });
+  }
+
+  /**
+   * Carries out the {@link storedBodyVerdict}s other than `new`. The rows are not shown, and they
+   * stay that way: the page that reaches them reads them from the store. What was pending for them is
+   * settled too - an upgrade folds it in before its write, and a held row takes it after
+   * (`settlePendingFor`).
+   */
+  async function settleStoredBodies(
+    verdicts: ReadonlyArray<Exclude<StoredBodyVerdict, { kind: 'new' }>>,
+    normalized: string,
+    ctx: MessagingContext
+  ) {
+    const touched: string[] = [];
+    for (const verdict of verdicts) {
+      if (verdict.kind === 'unreadable') {
+        console.warn(
+          `[ADD_MSG] ${verdict.id.slice(0, 8)} is stored under a key this device cannot open - the arriving copy does not overwrite it`
+        );
+        continue;
+      }
+      if (verdict.kind === 'held') {
+        console.log(`[ADD_MSG] Duplicate ignored id=${verdict.id} - stored, not shown`);
+        touched.push(verdict.id);
+        continue;
+      }
+      touched.push(verdict.row.id);
+      if (!ctx.storage) continue;
+      const waiting =
+        (await pendingFor(pendingDeps(ctx), normalized, [verdict.row.id])).get(verdict.row.id) ??
+        [];
+      const { content } = verdict;
+      let settlement: Settlement | null = null;
+      try {
+        // A compare-and-set on the row as it stands AT THE WRITE: a row deleted, edited or upgraded
+        // since the read above is no longer a preview, and is left as it is.
+        const written = await ctx.storage.mergeMessages(
+          normalized,
+          [verdict.row.id],
+          (current) => {
+            if (!shouldUpgradeMessage(current, content)) return null;
+            const next =
+              waiting.length > 0 ? settleAgainstPending({ ...current, content }, waiting) : null;
+            settlement = next;
+            return mergeStoredMessage(current, {
+              content,
+              isFcmPreview: false,
+              ...(next?.fields ? settledStoredPatch(next.fields) : {}),
+            });
+          },
+          ctx.deviceKeyB64
+        );
+        const done = settlement as Settlement | null;
+        if (done) logDiscarded(done, verdict.row.senderId);
+        if (written.size > 0) {
+          console.log(`[ADD_MSG] ✓ Stored preview upgraded: id=${verdict.row.id}`);
+          if (done) await removeSettled(ctx, done.consumed);
+        } else {
+          console.log(
+            `[ADD_MSG] ${verdict.row.id.slice(0, 8)} is no longer a stored preview - the arriving body leaves it as it is`
+          );
+        }
+      } catch (e) {
+        console.error(`[DB] the stored row ${verdict.row.id.slice(0, 8)} was not updated:`, e);
+      }
+    }
+    // A held row takes what waited for it; an upgrade, what was kept after its read.
+    if (touched.length > 0) await settlePendingFor(pendingDeps(ctx), normalized, touched);
   }
 
   /**
@@ -1295,9 +1725,34 @@ export function useMessaging() {
     // conversation rather than with the batch. It has to work at any size, so it is an index.
     // Ids seen during THIS batch are added to it too, which is what the separate dedup set did.
     const byId = indexMessagesById(convo.messages);
-    const toStore: StoredMessage[] = [];
+    // NOT SHOWN IS NOT NEW (see `addMessageToChat`): the ids memory does not show are asked of the
+    // store, and the mutations kept for any of them (`pendingMutations.ts`), in ONE read each, whose
+    // cost is the batch's and never the conversation's.
+    const persisted = ctx.storage !== null && !isChannelConversationId(normalized);
+    const batchIds = [
+      ...new SvelteSet(
+        messages
+          .map((pm) => normalizeMessageId(pm.messageId))
+          .filter((id): id is string => id !== undefined)
+      ),
+    ];
+    const notShown = batchIds.filter((id) => !byId.has(id));
+    const stored =
+      persisted && notShown.length > 0 ? await storedRowsFor(ctx, normalized, notShown) : null;
+    const waiting = persisted
+      ? await pendingFor(pendingDeps(ctx), normalized, batchIds)
+      : new SvelteMap<string, PendingMutation[]>();
+    const storedVerdicts: Array<Exclude<StoredBodyVerdict, { kind: 'new' }>> = [];
+    const settledIds = new SvelteSet<string>();
+    // The pending entries each written row consumed, removed once the row is on disk.
+    const consumedById = new SvelteMap<string, PendingMutation[]>();
+    const upgradeRows: StoredMessage[] = [];
+    const newRows: StoredMessage[] = [];
     const upgradedById = new SvelteMap<string, ChatMessage>();
     const brandNew: ChatMessage[] = [];
+    // The rows whose open proved their author (a salon's v2 session), for the banner - see
+    // `AddMessageToChatOptions.authorProven`. A buffered live frame keeps its options here.
+    const authorProvenIds = new SvelteSet<string>();
 
     let processedCount = 0;
     for (const pm of messages) {
@@ -1310,16 +1765,32 @@ export function useMessaging() {
       // seam that materialises a row, and the `history_bundle` reaches BOTH of them.
       const isSystem = pm.isSystem === true || isSystemSender(pm.senderId);
       const existingMsg = byId.get(id);
+      if (settledIds.has(id)) continue;
+      if (!existingMsg) {
+        const verdict = storedBodyVerdict(stored, id, pm.content);
+        if (verdict.kind !== 'new') {
+          storedVerdicts.push(verdict);
+          // Settled once in this batch: a second copy of the id meets the same verdict.
+          settledIds.add(id);
+          continue;
+        }
+      }
       if (existingMsg && shouldUpgradeMessage(existingMsg, pm.content)) {
-        const upgraded = mergeMessageUpgrade(existingMsg, {
-          content: pm.content,
-          replyTo: pm.replyTo,
-          isSystem,
-          serverTimestamp: pm.serverTimestamp,
-        });
+        const settled = settledWith(
+          mergeMessageUpgrade(existingMsg, {
+            content: pm.content,
+            senderId: pm.senderId,
+            replyTo: pm.replyTo,
+            isSystem,
+            serverTimestamp: pm.serverTimestamp,
+          }),
+          waiting.get(id) ?? []
+        );
+        const upgraded = settled.message;
         upgradedById.set(id, upgraded);
+        consumedById.set(id, settled.consumed);
         if (ctx.storage) {
-          toStore.push({
+          upgradeRows.push({
             id,
             conversationId: normalized,
             senderId: upgraded.senderId,
@@ -1329,6 +1800,9 @@ export function useMessaging() {
             isFcmPreview: false,
             ...(pm.authorship ? { authorship: pm.authorship } : {}),
             ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+            // This device's record of a reel's 410 (RC-6), carried over the wholesale rewrite.
+            ...(upgraded.mediaPurgedAt ? { mediaPurgedAt: upgraded.mediaPurgedAt } : {}),
+            ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
           });
         }
         continue;
@@ -1337,23 +1811,36 @@ export function useMessaging() {
 
       const isOwn = isOwnMessage(pm.senderId, ctx.userId);
       const resolvedTimestamp = resolveMessageTimestamp(pm, (mid) => byId.get(mid), isOwn);
-      const newMsg: ChatMessage = {
-        id,
-        senderId: pm.senderId.toLowerCase(),
-        content: pm.content,
-        timestamp: new SvelteDate(resolvedTimestamp),
-        isOwn,
-        replyTo: pm.replyTo,
-        isSystem,
-        ingestSequence: pm.ingestSequence,
-        ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
-      };
+      // What reached this device before the body lands WITH it (`settleAgainstPending`).
+      const settled = settledWith(
+        {
+          id,
+          senderId: pm.senderId.toLowerCase(),
+          content: pm.content,
+          timestamp: new SvelteDate(resolvedTimestamp),
+          // THE SERVER'S TIME GOES ON THE ROW SHOWN, NOT ONLY ON THE ROW STORED. It is the key the
+          // row is ordered and READ at (`messageTime`): without it every message that arrived through
+          // a drain was keyed by its author's `sentAt` until the next reload, so this reader's mark
+          // was taken on the author's clock and fell short of the very message it had read on the
+          // author's screen - the receipt one or two messages late (owner, 2026-11-05).
+          serverTimestamp: pm.serverTimestamp,
+          isOwn,
+          replyTo: pm.replyTo,
+          isSystem,
+          ingestSequence: pm.ingestSequence,
+          ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+        },
+        waiting.get(id) ?? []
+      );
+      const newMsg = settled.message;
+      consumedById.set(id, settled.consumed);
       brandNew.push(newMsg);
+      if (pm.authorProven === true) authorProvenIds.add(id);
       // The index is also the dedup set: a batch carrying the same id twice must add it once.
       byId.set(id, newMsg);
 
       if (ctx.storage) {
-        toStore.push({
+        newRows.push({
           id,
           conversationId: normalized,
           senderId: newMsg.senderId,
@@ -1366,9 +1853,11 @@ export function useMessaging() {
           ...(isSystem ? { readBy: [] } : {}),
           ...(pm.authorship ? { authorship: pm.authorship } : {}),
           ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+          ...(settled.fields ? settledStoredPatch(settled.fields) : {}),
         });
       }
     }
+    await settleStoredBodies(storedVerdicts, normalized, ctx);
 
     if (upgradedById.size === 0 && brandNew.length === 0) {
       // Ordinary - a re-drain of frames this device already holds - and still not silent: it is the
@@ -1443,9 +1932,10 @@ export function useMessaging() {
     // nothing at all (TAB-1). ONE notification per flush, for the LAST inbound message: the
     // 800 ms throttle in `sendSystemNotification` would collapse a per-message loop to one anyway,
     // and the one a reader wants is the most recent, not the oldest.
+    // A message deleted before it arrived says nothing, so it is never the one announced.
     const lastInbound = [...brandNew]
       .reverse()
-      .find((msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId));
+      .find((msg) => !msg.isSystem && !msg.isDeleted && !isOwnMessage(msg.senderId, ctx.userId));
     // AND IT ASKS THE APP, NOT THE DOCUMENT - THIS GUARD WAS THE ONE SITE IN THIS FILE THAT STILL
     // DID NOT (2026-09-24). `document.visibilityState` is permanently `'visible'` in a backgrounded
     // Android Tauri WebView - `hidden: false` and `hasFocus: true` too, byte for byte its
@@ -1483,7 +1973,7 @@ export function useMessaging() {
       );
     } else if (lastInbound) {
       const inbound = brandNew.filter(
-        (msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId)
+        (msg) => !msg.isSystem && !msg.isDeleted && !isOwnMessage(msg.senderId, ctx.userId)
       );
       notifyInbound(
         ctx,
@@ -1500,7 +1990,9 @@ export function useMessaging() {
         lastInbound.serverTimestamp,
         // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
         inbound.length,
-        inbound.map((msg) => msg.id)
+        inbound.map((msg) => msg.id),
+        // The banner's message is the LAST one, so its proof is the one that names the speaker.
+        authorProvenIds.has(lastInbound.id)
       );
     }
 
@@ -1512,14 +2004,28 @@ export function useMessaging() {
       unreadCount: nextUnreadCount,
     });
 
-    // Single batch DB write (community channels are server-authoritative)
-    if (ctx.storage && toStore.length > 0 && !isChannelConversationId(normalized)) {
+    // Single batch DB write (community channels are server-authoritative). An upgrade rewrites the
+    // preview it replaces; a NEW row is written only where no row stands - another writer (the
+    // archive replay runs outside the inbound drain) may have written the id since the read above,
+    // and its row then stands and memory takes it (`showStoredInstead`).
+    if (ctx.storage && persisted && (upgradeRows.length > 0 || newRows.length > 0)) {
       try {
-        await ctx.storage.saveMessages(toStore, ctx.deviceKeyB64);
+        // An upgrade row carries no reactions, edit or deletion of its own: written by
+        // compare-and-set onto the stored row, it adds to them and never erases them.
+        const upgraded = await writeShownUpgrades(ctx, normalized, upgradeRows);
+        const written = await ctx.storage.saveMessagesIfAbsent(newRows, ctx.deviceKeyB64);
+        const standing = newRows.filter((row) => !written.has(row.id)).map((row) => row.id);
+        if (standing.length > 0) await showStoredInstead(ctx, normalized, standing);
+        await removeSettled(
+          ctx,
+          [...upgraded, ...written].flatMap((id) => consumedById.get(id) ?? [])
+        );
         await ctx.saveConversation(normalized);
       } catch (e) {
         console.error('[DB] batchAddMessages failed:', e);
       }
+      // Kept between the read above and the writes: settled now, against the rows that stand.
+      await settlePendingFor(pendingDeps(ctx), normalized, batchIds);
     }
 
     // NOTHING HERE MOVES THE PANE. Persisting a message used to end with a bare
@@ -1550,6 +2056,10 @@ export function useMessaging() {
     let sentMediaMessageCount = 0;
     /** A held salon upload was refused because the account signed out - see the media catch. */
     let sessionEndedDuringSend = false;
+    /** A file of this send was refused and given back to the staging (the catch below). */
+    let mediaRestaged = false;
+    /** The conversation left the map between the tap and a file's write - see the media loop. */
+    let conversationGoneDuringSend = false;
 
     // JSON-quoted: a `"` in a member's text closes a hand-written quote, and the in-app log's
     // redaction then keeps the words after it as ordinary log words (appLogRedact, 2026-10-14).
@@ -1577,13 +2087,15 @@ export function useMessaging() {
       `[SEND] convo: groupId="${convo.id}" lifecycle=${convo.lifecycle} isChannel=${isChannel}`
     );
 
-    // THE STAGED FILES ARE CLAIMED IN THE TICK THEY ARE READ, BEFORE THE FIRST AWAIT. The barrier
-    // below can hold a send for many seconds on a stalled link (18 s measured, 2026-10-31), and the
-    // staging used to be cleared only after it: every Send tap meanwhile read the same files again
-    // and queued another copy under a new id - 13 taps, 13 copies of one video. Now a second Send
-    // finds nothing staged and aborts as an empty send. ONLY WHAT THIS SEND TOOK leaves: a file
-    // staged in the same conversation during the barrier belongs to the NEXT send. A voice note
-    // (`opts.files`) never entered the staging.
+    // THE STAGED FILES ARE CLAIMED IN THE TICK THEY ARE READ, BEFORE THE FIRST AWAIT. A send still
+    // awaits before its entry is durable - the file read, the pair write, a held salon - and the
+    // staging used to be cleared only after a pre-send barrier that lasted 18 s on a stalled link
+    // (2026-10-31): every Send tap meanwhile read the same files again and queued another copy under
+    // a new id - 13 taps, 13 copies of one video. Now a second Send finds nothing staged and aborts
+    // as an empty send. ONLY WHAT THIS SEND TOOK leaves: a file staged in the same conversation
+    // meanwhile belongs to the NEXT send. A voice note (`opts.files`) never entered the staging.
+    /** The account that tapped: a failure after a sign-out gives nothing back to the next one. */
+    const tapGeneration = signOutGeneration();
     if (sendsQueue && fileEntries.length > 0) {
       setPendingMediaFiles(
         sentFrom,
@@ -1591,113 +2103,37 @@ export function useMessaging() {
       );
     }
 
-    // A DM/GROUP FILE IS QUEUED IN THE OUTBOX like a text, but only once the group is usable: the
-    // barrier and the membership check below run BEFORE its placeholder and its entry are written,
-    // and a refusal gives the claimed files back to the staging. Text/reply are captured into the
-    // outbox and never blocked here - they flush automatically once the group becomes sendable.
-    // Queuing the file at the tap and dropping this barrier, which the outbox flush already takes,
-    // is `docs/wiki/backlog.d/media-send-queued-at-the-tap.md`.
-    if (filesToSend.length > 0 && !isChannel) {
-      const generation = signOutGeneration();
-      const barrierStartedAt = performance.now();
-      ctx.log(
-        `[SEND] media barrier: waiting for the inbound queue and the membership check before ${fileEntries.length} file(s) are queued`
-      );
-      // WAIT FOR THE DRAIN, DO NOT REFUSE BECAUSE OF IT.
-      //
-      // This used to bail out on `isMessageCatchupActive` and tell the user "Synchronisation en
-      // cours - reessayez dans un instant". That flag is raised from `pendingCount > 1`, a count of
-      // CIPHERTEXTS taken before anything is decrypted, so it cannot tell an arriving message from
-      // the reconciliation's own probe: two probe frames on a server carrying no other traffic were
-      // enough to refuse a photo. The requirement was never "no drain is running" - it is "encrypt
-      // at the current epoch", and `waitForMessageQueueIdle` states exactly that, as a fact rather
-      // than a guess. It is the same barrier the outbox flusher takes before every send, and it
-      // costs nothing when there is no drain to wait for.
-      /**
-       * Gives the claimed files back to the staging, and says so - or says why not: a voice note or
-       * a chat-reel take (`opts.files`) never came from the staging, and a sign-out since the tap
-       * has handed the staging to the next account. Answers whether the files are back.
-       */
-      const restage = (why: string): boolean => {
-        if (!sendsQueue) {
-          ctx.log(
-            `[SEND] ${fileEntries.length} file(s) NOT re-staged after ${why}: a voice note or a chat-reel take, sent without passing through the staging`
-          );
-          return false;
-        }
-        if (signOutGeneration() !== generation) {
-          ctx.log(
-            `[SEND] ${fileEntries.length} file(s) NOT re-staged after ${why}: signed out since the send`
-          );
-          return false;
-        }
+    // A DM/GROUP FILE IS QUEUED AT THE TAP, LIKE A TEXT. Its placeholder and its outbox entry are
+    // written below with no wait before them; whether the group can take it NOW is the outbox's
+    // question, asked at the flush exactly as it is for a text: `waitForMessageQueueIdle('outbox
+    // flush')` before any lane runs (so the file is sealed at the current epoch), then per entry the
+    // `isGroupHealthy` gate (a row awaiting re-admission is HELD there and resumed by its Welcome),
+    // `isGroupActive` (an evicted group retires the entry) and the deleted-group read - all three
+    // BEFORE the upload is paid. A composer-side barrier answered the same questions a second time,
+    // earlier and slower (18 s on a stalled link, 2026-10-31, with nothing on screen meanwhile), and
+    // its answer could go stale before the flush ran anyway. The one refusal left is the text path's
+    // own (`sendChatMessage`): a conversation deleted server-side takes nothing new.
+    if (filesToSend.length > 0 && !isChannel && convo.lifecycle === 'removed') {
+      if (sendsQueue) {
         restageInOrder(sentFrom, fileEntries);
         ctx.log(
-          `[SEND] ${fileEntries.length} file(s) back in the staging of ${sentFrom.slice(0, 8)}… after ${why}`
+          `[SEND] media refused: ${sentFrom.slice(0, 8)}… is deleted, ${fileEntries.length} file(s) back in its staging`
         );
-        return true;
-      };
-      let stillMember: boolean;
-      // ONE GUARD OVER EVERYTHING THAT CAN THROW WHILE THE FILES ARE CLAIMED - `ensureMls()` too,
-      // which throws synchronously when there is no MLS service, before any promise exists.
-      try {
-        await ctx
-          .ensureMls()
-          // `null`: a click on the send button, never a stack inside a decrypt session.
-          .waitForMessageQueueIdle('media send', null)
-          .catch((e) => ctx.log(`[SEND] queue-idle barrier failed, sending anyway: ${String(e)}`));
-        stillMember = await ctx.verifyCurrentUserMembership(sentFrom);
-      } catch (error) {
-        ctx.log(`[SEND] media barrier threw: ${String(error)}`);
-        restage('a barrier that threw');
-        throw error;
-      }
-      // THE ROW AS IT IS NOW, not the snapshot taken before the two awaits above: a Remove merged
-      // during the barrier - the first half of a re-admission writes the row `pending` - is exactly
-      // what this refusal is for. A file is not queued until the group is usable.
-      const lifecycle = ctx.conversations.get(sentFrom)?.lifecycle;
-      ctx.log(
-        `[SEND] media barrier: done after ${Math.round(performance.now() - barrierStartedAt)} ms (member=${stillMember}, lifecycle=${lifecycle ?? 'gone'})`
-      );
-      // THE ACCOUNT THAT TAPPED SEND LEFT DURING THE BARRIER: `forgetAccount` has cleared the
-      // staging, and neither a queue entry nor a re-staged file of the leaving account may reach
-      // the next one.
-      if (signOutGeneration() !== generation) {
+      } else {
+        // A voice note or a chat-reel take never came from the staging: it is lost, and said so.
         ctx.log(
-          `[SEND] media dropped: signed out during the barrier, ${fileEntries.length} file(s) neither queued nor re-staged`
+          `[SEND] media refused: ${sentFrom.slice(0, 8)}… is deleted, ${fileEntries.length} file(s) NOT re-staged (a voice note or a chat-reel take)`
         );
-        return;
       }
-      if (!stillMember || lifecycle !== 'active') {
-        ctx.log(
-          `[SEND] media refused: ${sentFrom.slice(0, 8)}… is not usable yet (member=${stillMember}, lifecycle=${lifecycle ?? 'gone'})`
-        );
-        const restaged = restage('the refusal');
-        // THE BANNER IS THE CONVERSATION ON SCREEN NOW, and the barrier may have lasted long enough
-        // for the member to leave `sentFrom`: a refusal is said there only, so it is never read as a
-        // fact about another conversation. A re-staged file waits, visible, in `sentFrom`'s composer;
-        // one that was NOT re-staged (a voice note, a chat-reel take) is lost, so it is said
-        // wherever the member now is - never dropped in silence.
-        const sessionNotReady = m.chat_send_session_establishing();
-        if (ctx.selectedNow() === sentFrom) {
-          ctx.setSendError(sessionNotReady);
-        } else if (!restaged) {
-          ctx.setSendError(m.chat_media_dropped_other_conversation({ cause: sessionNotReady }));
-        } else {
-          ctx.log(
-            '[SEND] refusal banner not shown: the conversation changed since the send, the file(s) wait in its composer'
-          );
-        }
-        // FALSE, not undefined: nothing was queued, so the composer gives the caption it cleared at
-        // the tap back to `sentFrom`'s draft (`MainChatPage` `handleSendChat`).
-        return false;
-      }
+      // No await since the tap: the conversation on screen is still `sentFrom`.
+      ctx.setSendError(m.chat_conversation_deleted_message());
+      // FALSE: nothing was queued, so the composer gives back the caption it cleared at the tap.
+      return false;
     }
 
     const currentReplyingTo = replyByConversation.get(sentFrom) ?? null;
     replyByConversation.delete(sentFrom);
     ctx.setSendError('');
-    const channelSvc = isChannel ? new ChannelService() : null;
 
     const mediaTypeFromMime = (mime: string): 'image' | 'video' | 'audio' | 'file' =>
       mime.startsWith('image/')
@@ -1709,93 +2145,90 @@ export function useMessaging() {
             : 'file';
 
     if (fileEntries.length > 0) {
-      // The staging was claimed before the barrier, above; a failure below re-stages what is unsent.
+      // The staging was claimed at the tap, above; a failure below re-stages what is unsent.
+      // EVERY FILE OF ONE TAP IS DATED BY THE TAP, one millisecond apart in staging order: the queue
+      // orders by `sentAt`, and dating each file once the previous one's write had ended let a text
+      // typed during a long write fall BETWEEN two files the member sent before it.
+      const tappedAt = Date.now();
+      // WHERE THE FILES GO: the conversation the send was made in, or - when a duplicate-group merge
+      // re-keyed that DM while the send was reading a file - the row it was moved to.
+      let sendKey = sentFrom;
+      let sendGroupId = convo.id;
       try {
         for (let index = 0; index < fileEntries.length; index++) {
           const entry = fileEntries[index];
           const captionForFile = index === 0 ? mediaCaption : undefined;
           const messageId = crypto.randomUUID();
-          const sentAt = Date.now();
+          const sentAt = tappedAt + index;
 
-          if (isChannel && channelSvc) {
-            // Channels are server-authoritative + always available: encrypt + upload + send inline.
-            isUploadingMedia = true;
-            // THE SALON MUST BE LOADED BEFORE ANYTHING IS UPLOADED OR SEALED, and one that is not
-            // yet is WAITED FOR, as a text is (`salonSendGate.ts`): the upload indicator stays up
-            // meanwhile, and a refusal re-stages the file below. Before the upload, so a salon that
-            // never loads leaves no orphan blob behind.
-            const gateReading = readSalonSendGate(sentFrom);
-            if (gateReading.kind === 'wait') {
-              ctx.log(
-                `[MEDIA] ${messageId.slice(0, 8)}... HELD: salon ${sentFrom.slice(0, 16)} is not loaded on this device yet`
-              );
-            }
-            const gate =
-              gateReading.kind === 'wait' ? await whenSalonSendable(sentFrom) : gateReading;
-            if (gate.kind === 'refused') throw new SalonNotLoadableError(gate.reason);
-            // `ctx.authToken` is a COPY taken at sign-in: it is empty or EXPIRED far more often than it
-            // is live, and a 15-minute-old copy sent the upload out as `401 JWT expired` ("your session
-            // expired") on a tab that was perfectly signed in. `getToken` is the one place that knows
-            // the real expiry and renews it, exactly as the DM outbox path already does.
-            const authToken = await getToken();
-            ctx.setAuthToken(authToken);
-            const mediaRef = await mediaService.encryptAndUpload(
-              entry.file,
-              authToken,
-              { width: entry.width, height: entry.height },
-              'ephemeral'
-            );
-            const protoBytes = encodeAppMessage({
-              ...mkMedia({
-                kind: mediaKindFromEnvelope(mediaRef.type),
-                mediaId: mediaRef.mediaId,
-                key: fromHex(mediaRef.key),
-                iv: fromHex(mediaRef.iv),
-                mimeType: mediaRef.mimeType,
-                size: mediaRef.size,
-                fileName: mediaRef.fileName ?? '',
-                caption: captionForFile,
-                voiceNote: entry.voiceNote ?? false,
-                ...(mediaRef.width && mediaRef.height
-                  ? { width: mediaRef.width, height: mediaRef.height }
-                  : {}),
-                ...mediaPlaceholderProtoField(entry.placeholder),
-                ...mediaEncodingProtoField(mediaRef.encoding),
-              }),
+          // WHAT THE FILE IS, said once for both paths: the queue entry's description and the
+          // placeholder envelope the row is drawn with until its upload names the blob.
+          const type = mediaTypeFromMime(entry.file.type);
+          const described: Omit<NonNullable<OutboxEntry['media']>, 'fileBytes'> = {
+            kind: mediaKindFromEnvelope(type),
+            mimeType: entry.file.type,
+            size: entry.file.size,
+            fileName: entry.file.name,
+            width: entry.width,
+            height: entry.height,
+            ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
+            caption: captionForFile,
+            ...(entry.voiceNote ? { voiceNote: true } : {}),
+          };
+          const placeholder = serializeEnvelope(
+            mkMediaEnvelope(
+              {
+                type,
+                mediaId: '',
+                key: '',
+                iv: '',
+                mimeType: entry.file.type,
+                size: entry.file.size,
+                fileName: entry.file.name,
+                width: entry.width,
+                height: entry.height,
+                ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
+                ...(entry.voiceNote ? { voiceNote: true } : {}),
+              },
+              captionForFile
+            )
+          );
+
+          if (isChannel) {
+            // A SALON ATTACHMENT IS DRAWN AT THE TAP, AND ITS ROW CARRIES ITS UPLOAD (2026-11-02).
+            // It used to be uploaded INLINE with no row at all: the file left the composer and the
+            // message appeared only when the server's frame came back - for a heavy file, a long
+            // silence the member read as a lost message. The echo is drawn now (memory only, like a
+            // salon text's), and `salonAttachmentSend.ts` waits for the salon's gate, uploads with
+            // real progress into the row's upload view, then hands the message to the salon send.
+            await addMessageToChat(ctx.userId, placeholder, sentFrom, ctx, {
               messageId,
-              sentAt,
+              status: 'pending',
+              timestamp: new SvelteDate(sentAt),
+              skipDbSave: true,
+              salonEcho: true,
             });
-            // The salon the send was MADE in: the selection may have moved during the wait above.
-            const actualChannelId = sentFrom.replace('channel_', '');
-            await sendEncryptedChannelMessage(actualChannelId, protoBytes, messageId);
+            // The salon left the map since the tap (`addMessageToChat` buffers instead of drawing):
+            // no row means no upload, and the catch gives the file back to the staging.
+            if (!ctx.conversations.get(sentFrom)?.messages.some((row) => row.id === messageId)) {
+              throw new SalonEchoNotDrawnError(messageId);
+            }
+            startSalonAttachment({
+              // The account that TAPPED: a sign-out during the echo write above starts nothing.
+              generation: tapGeneration,
+              messageId,
+              conversationKey: sentFrom,
+              sentAt,
+              file: entry.file,
+              media: described,
+              deps: salonAttachmentDeps(ctx, sentFrom, convo, messageId, {
+                width: entry.width,
+                height: entry.height,
+              }),
+            });
           } else {
             // MLS: queue the media. The flusher uploads then sends once the group is ready
             // (the optimistic message shows a skeleton + pending clock until then).
-            const type = mediaTypeFromMime(entry.file.type);
-            // A chat reel's declaration, made at the send so its 30 days count from it. Empty for
-            // anything else: an ordinary attachment is encoded exactly as before. The take is RAW
-            // (RC-5): its intent and expiry are declared now, its LENGTH once the outbox has
-            // prepared it - the encoder is what measures it.
-            const reelDeclaration = entry.prepareRaw ? chatReelPendingDeclaration(sentAt) : {};
-            const placeholder = serializeEnvelope(
-              mkMediaEnvelope(
-                {
-                  type,
-                  mediaId: '',
-                  key: '',
-                  iv: '',
-                  mimeType: entry.file.type,
-                  size: entry.file.size,
-                  fileName: entry.file.name,
-                  width: entry.width,
-                  height: entry.height,
-                  ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
-                  ...(entry.voiceNote ? { voiceNote: true } : {}),
-                  ...reelDeclaration,
-                },
-                captionForFile
-              )
-            );
             // READ BEFORE THE PLACEHOLDER IS WRITTEN: a read that throws (revoked file, no memory)
             // after it left a `mediaId: ''` row with no outbox entry - an orphan the bubble could only
             // draw as a spinner for ever. The catch below re-stages the file when this throws.
@@ -1804,50 +2237,128 @@ export function useMessaging() {
             const endInflight = beginOutboxEnqueue(messageId);
             try {
               const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
-              await addMessageToChat(ctx.userId, placeholder, sentFrom, ctx, {
-                messageId,
-                status: 'pending',
-                timestamp: new SvelteDate(sentAt),
-              });
               const outboxEntry: OutboxEntry = {
                 id: messageId,
                 conversationId: convo.id,
                 sentAt,
                 kind: 'media',
-                media: {
-                  kind: mediaKindFromEnvelope(type),
-                  mimeType: entry.file.type,
-                  size: entry.file.size,
-                  fileName: entry.file.name,
-                  width: entry.width,
-                  height: entry.height,
-                  ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
-                  caption: captionForFile,
-                  ...(entry.voiceNote ? { voiceNote: true } : {}),
-                  ...reelDeclaration,
-                  ...(entry.prepareRaw ? { prepare: entry.prepareRaw } : {}),
-                  fileBytes,
-                },
+                media: { ...described, fileBytes },
                 status: 'pending',
                 attempts: 0,
                 createdAt: sentAt,
               };
+              // THE PLACEHOLDER AND ITS ENTRY ARE ONE WRITE, as a text's echo and entry are
+              // (`sendChatMessage`): a kill between two writes left a `mediaId: ''` row no queue
+              // knew about. `pairWritten` is what `addMessageToChat` REPORTS it wrote, never
+              // inferred; a pair write that failed is thrown typed, and the outbox then writes its
+              // own row. Either way the entry is durable before the upload starts, so the file
+              // survives a kill between the tap and its transfer.
+              let pairWritten = false;
+              // THE ACCOUNT IS ASKED BEFORE EACH WRITE, not once at the tap: the read above and the
+              // pair write below are awaits, and a sign-out inside one hands `enqueueOutboxMessage`
+              // (the module's ACTIVE controller) to the next account, which would send this file
+              // as itself (review of #2874, M1). Dropped, never re-staged, and said in the log.
+              if (signOutGeneration() !== tapGeneration) {
+                ctx.log(
+                  `[MEDIA] ${messageId.slice(0, 8)}… dropped before its write: signed out since the tap`
+                );
+                sessionEndedDuringSend = true;
+                break;
+              }
+              // AND THE CONVERSATION, with no await from here to the write: one that left the map
+              // since the tap would send this placeholder into the orphan buffer, which is not where
+              // a send belongs (review of #2874). Two ways out of the map, two answers:
+              //  - RE-KEYED: a duplicate-group merge moved the DM's row to the group just joined
+              //    (`setupMessageHandler`, the Welcome path). The file follows it, found by the same
+              //    predicate the merge used, so the two cannot disagree about which row the DM is;
+              //  - GONE (deleted, left): the file is dropped and the MEMBER IS TOLD, never only the
+              //    log - a file and its caption vanishing behind a log line is a silent loss.
+              if (!ctx.conversations.get(sendKey)) {
+                const followed =
+                  (convo.conversationType ?? 'group') === 'direct'
+                    ? findDirectConversationByPeer(
+                        ctx.conversations,
+                        convo.directPeerId ?? convo.contactName
+                      )
+                    : undefined;
+                if (followed) {
+                  ctx.log(
+                    `[MEDIA] ${messageId.slice(0, 8)}… ${sendKey.slice(0, 8)}… was re-keyed to ${followed[0].slice(0, 8)}… since the tap (a duplicate group merged) - the file follows it`
+                  );
+                  [sendKey, sendGroupId] = [followed[0], followed[1].id];
+                  outboxEntry.conversationId = sendGroupId;
+                } else {
+                  ctx.log(
+                    `[MEDIA] ${messageId.slice(0, 8)}… dropped before its write: ${sendKey.slice(0, 8)}… left the conversation list since the tap - ${fileEntries.length - index} file(s) not sent`
+                  );
+                  ctx.setSendError(m.chat_media_conversation_gone());
+                  conversationGoneDuringSend = true;
+                  break;
+                }
+              }
               try {
-                await enqueueOutboxMessage(outboxEntry);
+                await addMessageToChat(ctx.userId, placeholder, sendKey, ctx, {
+                  messageId,
+                  status: 'pending',
+                  timestamp: new SvelteDate(sentAt),
+                  outboxEntry,
+                  onPairWritten: () => {
+                    pairWritten = true;
+                  },
+                });
+              } catch (pairError) {
+                if (!(pairError instanceof MessagePairWriteError)) throw pairError;
+                // THE ENTRY REACHED DISK ALONE (SQLite writes it first): the queue owns it, so it
+                // is not written a second time and the file is not given back (M2).
+                pairWritten = pairError.entryWritten;
+                ctx.log(
+                  pairError.entryWritten
+                    ? `[MEDIA] ${messageId.slice(0, 8)}… its entry was written WITHOUT its placeholder row - the queue owns it: ${String(pairError.cause)}`
+                    : `[MEDIA] ${messageId.slice(0, 8)}… its placeholder and entry were NOT written together - the outbox writes its own row: ${String(pairError.cause)}`
+                );
+              }
+              if (signOutGeneration() !== tapGeneration) {
+                // Whatever was written stays in the LEAVING account's store, whose own queue sends
+                // it at its next sign-in; it is never handed to the next account's.
+                ctx.log(
+                  `[MEDIA] ${messageId.slice(0, 8)}… not handed to the queue: signed out during its write (written=${pairWritten})`
+                );
+                sessionEndedDuringSend = true;
+                break;
+              }
+              try {
+                await enqueueOutboxMessage(
+                  outboxEntry,
+                  pairWritten ? { alreadyDurable: true } : undefined
+                );
               } catch (enqueueError) {
+                // THE ROW IS ON DISK BESIDE ITS PLACEHOLDER: the queue owns it - this session's, or
+                // the next one's - so the file is neither withdrawn nor re-staged (a second Send
+                // would then post it twice). Counted as queued.
+                if (enqueueError instanceof MessageWrittenError) {
+                  console.error(
+                    `[MEDIA] ${messageId.slice(0, 8)}… written with its entry, but the live queue refused it - the next flush sends it:`,
+                    enqueueError
+                  );
+                  ctx.log(
+                    `[MEDIA] ${messageId.slice(0, 8)}… durable, the live queue refused it - left to the next flush: ${String(enqueueError.cause)}`
+                  );
+                  sentMediaMessageCount++;
+                  continue;
+                }
                 // The placeholder is on screen and in the store, and the catch below re-stages the
                 // file: leaving the row would be an orphan that a second Send then duplicates.
                 ctx.log(
                   `[MEDIA] ${messageId.slice(0, 8)}… not queued, withdrawing its placeholder: ${String(enqueueError)}`
                 );
-                const current = ctx.conversations.get(sentFrom);
+                const current = ctx.conversations.get(sendKey);
                 if (current) {
-                  ctx.conversations.set(sentFrom, {
+                  ctx.conversations.set(sendKey, {
                     ...current,
                     messages: current.messages.filter((m) => m.id !== messageId),
                   });
                 }
-                await forgetLocalMessage(messageId, convo.id, ctx);
+                await forgetLocalMessage(messageId, sendGroupId, ctx);
                 throw enqueueError;
               }
             } finally {
@@ -1860,36 +2371,33 @@ export function useMessaging() {
           ctx.playSendTone?.();
         }
       } catch (error) {
-        // BOTH BRANCHES OF THE LOOP ABOVE LAND HERE AND ONLY ONE OF THEM ASKS A SERVER ANYTHING.
-        // The MLS branch writes bytes to IndexedDB and returns; the channel branch uploads and
-        // sends inline, and both of those now throw a typed refusal. So the status is READ rather
-        // than assumed: `refusalStatus` answers null for the queue's own failures, which is
-        // correct - nothing refused anything - and the generic line stands. The 413 the upload
-        // route answers for an oversized file is the one a member can act on, and it is the
-        // reason this catch gained a status instead of a second sentence.
+        // ONLY WHAT HAPPENS BEFORE A ROW EXISTS LANDS HERE: the file read, the pair write, the
+        // queue's refusal, an echo that could not be drawn. A salon upload no longer does - its row
+        // carries its failure, with its Retry (`salonAttachmentSend.ts`). The status is READ rather
+        // than assumed: `refusalStatus` answers null for the queue's own failures, and the generic
+        // line stands.
         const status = refusalStatus(error);
         const mediaRefusal =
-          error instanceof SalonNotLoadableError
-            ? salonGateRefusalMessage(error.reason)
-            : (describeApiRefusal(status, m.chat_media_action_send()) ??
-              (isEnqueueQuotaFailure(error)
-                ? m.chat_media_send_error_storage_full()
-                : m.chat_media_send_error_generic()));
+          describeApiRefusal(status, m.chat_media_action_send()) ??
+          (isEnqueueQuotaFailure(error)
+            ? m.chat_media_send_error_storage_full()
+            : m.chat_media_send_error_generic());
         const unsent = fileEntries.length - sentMediaMessageCount;
         // The staging is per conversation, but the refusal is said on the banner of the conversation
-        // ON SCREEN, and a held salon upload may be refused long after the click: an unsent file goes
-        // back only where the member still is, so the banner and the file are seen together.
-        if (error instanceof SalonNotLoadableError && error.reason === 'session-ended') {
+        // ON SCREEN: an unsent file goes back only where the member still is, so the banner and the
+        // file are seen together.
+        if (signOutGeneration() !== tapGeneration) {
           // THE ACCOUNT THAT MADE THIS SEND HAS LEFT. Nothing of it may reach the next account: this
           // composable outlives a sign-out, so a re-staged file would sit in the NEXT account's
           // composer, and the caption below would be held for the next session's gate and sealed
           // by whoever signs in. No banner either - it would be the next account's.
           sessionEndedDuringSend = true;
           ctx.log(
-            `[MEDIA] ${unsent} file(s) dropped, not re-staged: the session ended while the salon was loading`
+            `[MEDIA] ${unsent} file(s) dropped, not re-staged: signed out since the tap (${String(error)})`
           );
         } else if (ctx.selectedNow() === sentFrom) {
           if (unsent > 0) restageInOrder(sentFrom, fileEntries.slice(sentMediaMessageCount));
+          mediaRestaged = unsent > 0;
           ctx.setSendError(mediaRefusal);
           ctx.log(
             `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) re-staged: ${String(error)}`
@@ -1903,14 +2411,26 @@ export function useMessaging() {
             `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) DROPPED, not re-staged: the conversation changed since the send: ${String(error)}`
           );
         }
-      } finally {
-        isUploadingMedia = false;
       }
     }
 
     if (sessionEndedDuringSend) {
-      ctx.log('[SEND] caption not sent: the session ended while its upload was held');
+      ctx.log('[SEND] caption not sent: the session ended during the media send');
       return;
+    }
+    if (conversationGoneDuringSend) {
+      // The banner above already said it. FALSE when nothing of this send went out, so the composer
+      // gives the caption back to the draft it was written in rather than losing it as well.
+      ctx.log('[SEND] caption not sent: the conversation left the list during the media send');
+      return sentMediaMessageCount === 0 && text ? false : undefined;
+    }
+    // THE CAPTION BELONGS TO THE FIRST FILE, and a refused first file given back to the staging
+    // takes it back with it: sent alone it would arrive as a text that captions nothing (review of
+    // #2874, L3). FALSE, so the composer gives it back to the draft beside the file. A file DROPPED
+    // because the member moved on (L4) leaves its caption to be sent, so the words are not lost too.
+    if (mediaRestaged && sentMediaMessageCount === 0 && text) {
+      ctx.log('[SEND] caption not sent alone: its file was refused - given back with it');
+      return false;
     }
     if (sentMediaMessageCount > 0 || !text) return;
 
@@ -2143,12 +2663,53 @@ export function useMessaging() {
   }
 
   /**
-   * Queues the chat camera's RAW take as its own message, at once (reels-in-chat RC-5). Nothing is
-   * prepared here: the outbox prepares it inside the upload task, where a kill, a cancel and a weak
-   * link are already handled, and the bubble shows the preparation's progress. Only the ThumbHash
-   * of the camera's first picture is computed now, so the tile has its picture from the first frame.
+   * Queues the chat camera's RAW take, at once, as a TAKE with ONE SEND (reels-in-chat RC-5, RC-13):
+   * the single conversation is the one-target case of "Envoyer a...", through the same rows and the
+   * same transaction ({@link sendChatReelTakeTo}).
    */
   async function sendChatReelTake(file: File, ctx: MessagingContext) {
+    const sendKey = ctx.selectedContact;
+    if (!sendKey) {
+      ctx.log(`[MEDIA] a chat reel take was NOT sent: no conversation is open`);
+      return;
+    }
+    await sendChatReelTakeTo(file, [sendKey], ctx);
+  }
+
+  /**
+   * Queues a RAW take as ONE take and one send per conversation in `targetKeys` (reels-in-chat RC-12,
+   * 15.1): written in ONE outbox transaction, every target drawing its own bubble from the press.
+   * Nothing is prepared here: the outbox prepares the take inside its upload task, where a kill, a
+   * cancel and a weak link are already handled. Only the ThumbHash of the camera's first picture is
+   * computed now, so every tile has its picture from the first frame.
+   *
+   * `opts.takeId` and `opts.awaitsPublish` are for a take ALSO published on CanaReels (15.5): the
+   * outbox then waits for the publish step's upload instead of making its own.
+   *
+   * @returns what was queued (`takeId`, the conversations written), or `null` when nothing was -
+   *   no target is held, a sign-out came in between, or the write was refused (the member is told
+   *   through `setSendError`).
+   */
+  async function sendChatReelTakeTo(
+    file: File,
+    targetKeys: readonly string[],
+    ctx: MessagingContext,
+    opts: { takeId?: string; awaitsPublish?: boolean } = {}
+  ): Promise<{ takeId: string; queued: number } | null> {
+    const targets: ChatReelTarget[] = [];
+    for (const key of targetKeys.filter((k, i) => targetKeys.indexOf(k) === i)) {
+      const convo = ctx.conversations.get(key);
+      if (!convo) {
+        ctx.log(`[MEDIA] chat reel target ${key.slice(0, 8)}… skipped: no such conversation here`);
+        continue;
+      }
+      targets.push({ messageId: crypto.randomUUID(), groupId: convo.id, conversationKey: key });
+    }
+    if (targets.length === 0) {
+      ctx.log(`[MEDIA] a chat reel take was NOT sent: no target conversation is held`);
+      return null;
+    }
+    const tapGeneration = signOutGeneration();
     let placeholder: string | undefined;
     const poster = capturePosterOf(file);
     if (poster) {
@@ -2157,12 +2718,83 @@ export function useMessaging() {
         (await placeholderForImageFile(new File([poster], 'poster.jpg', { type: poster.type }))) ??
         undefined;
     }
-    ctx.log(
-      `[MEDIA] a chat reel take of ${file.size} bytes sent raw - the outbox prepares it${placeholder ? '' : ' (no poster)'}`
-    );
-    await handleSendChat(ctx, '', {
-      files: [{ file, prepareRaw: 'chat-reel', ...(placeholder ? { placeholder } : {}) }],
-    });
+    const sentAt = Date.now();
+    const takeId = opts.takeId ?? crypto.randomUUID();
+    // IN FLIGHT FROM BEFORE THE ROWS: a bubble must not read the outbox's "absent" during the
+    // durable write as an orphan (outboxActivity).
+    const endInflights = targets.map((t) => beginOutboxEnqueue(t.messageId));
+    let queued = false;
+    try {
+      const rows = buildChatReelTake({
+        takeId,
+        sentAt,
+        senderId: ctx.userId,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+        mimeType: file.type,
+        fileName: file.name,
+        placeholder,
+        targets,
+      });
+      // THE ACCOUNT IS ASKED BEFORE THE WRITE: a sign-out during the reads above would hand this take
+      // to the next account's queue (review of #2874, M1).
+      if (signOutGeneration() !== tapGeneration) {
+        ctx.log(`[MEDIA] chat reel ${takeId.slice(0, 8)}… dropped: signed out since the tap`);
+        return null;
+      }
+      try {
+        await enqueueOutboxTake(
+          rows.take,
+          rows.sends,
+          opts.awaitsPublish ? { awaitsPublish: true } : undefined
+        );
+      } catch (e) {
+        // THE ROWS ARE ON DISK (their echo may not be): the queue owns the take and sends it, so the
+        // bubbles are drawn below. Anything else wrote nothing, and the member is told.
+        if (!(e instanceof MessageWrittenError)) {
+          ctx.log(`[MEDIA] chat reel ${takeId.slice(0, 8)}… NOT queued: ${String(e)}`);
+          ctx.setSendError(
+            isEnqueueQuotaFailure(e)
+              ? m.chat_media_send_error_storage_full()
+              : m.chat_media_send_error_generic()
+          );
+          return null;
+        }
+        console.error(`[MEDIA] chat reel ${takeId.slice(0, 8)}… queued, with a fault:`, e);
+      }
+      queued = true;
+      ctx.log(
+        `[MEDIA] chat reel ${takeId.slice(0, 8)}… of ${file.size} bytes queued raw to ${targets.length} conversation(s) - the outbox prepares it${placeholder ? '' : ' (no poster)'}`
+      );
+      // The echoes' rows are already on disk (written with the take): drawn only, never written
+      // again. A failure drawing one is the bubble's, never the take's: the queue owns the sends.
+      for (const [i, send] of rows.sends.entries()) {
+        const key = targets[i].conversationKey;
+        try {
+          await addMessageToChat(ctx.userId, send.message.content, key, ctx, {
+            messageId: send.message.id,
+            status: 'pending',
+            timestamp: new SvelteDate(sentAt),
+            skipDbSave: true,
+          });
+          await ctx.saveConversation(key);
+        } catch (e) {
+          console.error(
+            `[MEDIA] chat reel ${takeId.slice(0, 8)}… queued, but its bubble in ${key.slice(0, 8)}… could not be drawn:`,
+            e
+          );
+        }
+      }
+      ctx.playSendTone?.();
+      return { takeId, queued: targets.length };
+    } catch (e) {
+      if (queued) throw e;
+      // BEFORE the write: the bytes could not be read or the rows not built - nothing is queued.
+      console.error(`[MEDIA] chat reel ${takeId.slice(0, 8)}… NOT queued:`, e);
+      ctx.setSendError(m.chat_media_send_error_generic());
+      return null;
+    } finally {
+      for (const end of endInflights) end();
+    }
   }
 
   /** Removes a staged (not yet sent) file from the pending media queue by its index. */
@@ -2187,12 +2819,17 @@ export function useMessaging() {
    * Best-effort by design: the control event is already durable in the outbox, so a failed write
    * costs a stale local row, never a lost mutation for the group.
    */
-  async function persistLocalMutation(msg: ChatMessage, ctx: MessagingContext): Promise<void> {
+  async function persistLocalMutation(
+    conversationId: string,
+    msg: ChatMessage,
+    ctx: MessagingContext
+  ): Promise<void> {
     if (!ctx.storage) return;
     try {
       // A patch, not a rewrite: `serverTimestamp` is known to the delivery path and not to this
       // one, and a full-row write erased it every time the user reacted.
       await ctx.storage.updateMessage(
+        conversationId,
         msg.id,
         {
           content: msg.content,
@@ -2243,7 +2880,7 @@ export function useMessaging() {
       const nextMsgs = [...convo.messages];
       nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: updated };
       ctx.conversations.set(conversationKey, { ...convo, messages: nextMsgs });
-      await persistLocalMutation(nextMsgs[msgIdx], ctx);
+      await persistLocalMutation(conversationKey, nextMsgs[msgIdx], ctx);
     }
 
     const act: ControlAct = { kind: 'reaction', emoji, remove: alreadyReacted, at };
@@ -2425,6 +3062,123 @@ export function useMessaging() {
   }
 
   /**
+   * The takes an "everywhere" run is ending right now: a second press (a double tap during the
+   * confirmation's outro, another bubble of the same take) while one runs ends nothing - it would
+   * send a delete for sends the first run withdrew, which no peer ever received.
+   */
+  const everywhereRunning = new SvelteSet<string>();
+
+  /**
+   * "Annuler partout" / "Supprimer partout" (reels-in-chat 15.2, 15.7): ends every message the take
+   * of `messageId` was queued as, in each conversation. A send that WENT is deleted for everyone
+   * through the one delete path ({@link deleteMessage}); a send still QUEUED is withdrawn - and when
+   * the queue no longer holds it (the reach is a snapshot), it is deleted for everyone only if the
+   * take now counts it as gone out, skipped otherwise (it failed or was withdrawn: no peer has it).
+   * The take settles from its rows as they go (the last withdrawal releases its session, the last
+   * deletion gives the file's hold back, D-delete-one). One run per take at a time
+   * (`everywhereRunning`). A conversation no longer on this device is skipped and counted.
+   */
+  async function handleDeleteReelEverywhere(
+    messageId: string,
+    ctx: MessagingContext
+  ): Promise<{ ended: number; skipped: number; running: boolean }> {
+    const reach = await outboxReelTakeReachOf(messageId);
+    if (!reach) {
+      ctx.log(`[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: no take names it - nothing`);
+      return { ended: 0, skipped: 0, running: false };
+    }
+    if (everywhereRunning.has(reach.takeId)) {
+      ctx.log(
+        `[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: take ${reach.takeId.slice(0, 8)}… is already being ended - this press ends nothing`
+      );
+      return { ended: 0, skipped: 0, running: true };
+    }
+    everywhereRunning.add(reach.takeId);
+    try {
+      ctx.log(
+        `[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: ${reach.queued.length} queued and ${reach.standing.length} sent message(s) of take ${reach.takeId.slice(0, 8)}…`
+      );
+      let ended = 0;
+      let skipped = 0;
+      for (const [send, wasQueued] of [
+        ...reach.queued.map((s) => [s, true] as const),
+        ...reach.standing.map((s) => [s, false] as const),
+      ]) {
+        const found = [...ctx.conversations.entries()].find(
+          ([, c]) => c.id === send.conversationId
+        );
+        if (!found) {
+          ctx.log(
+            `[MEDIA] ${send.id.slice(0, 8)}…: its conversation is not on this device - skipped`
+          );
+          skipped++;
+          continue;
+        }
+        const [convoKey, convo] = found;
+        if (wasQueued && !(await endQueuedSend(send.id, messageId, convoKey, convo.id, ctx)))
+          continue;
+        if (wasQueued) {
+          ended++;
+          continue;
+        }
+        if (await deleteForEveryone(send.id, convoKey, convo, ctx)) ended++;
+      }
+      return { ended, skipped, running: false };
+    } finally {
+      everywhereRunning.delete(reach.takeId);
+    }
+  }
+
+  /**
+   * Ends a send the reach saw QUEUED: withdrawn while the queue holds it; once it left the queue,
+   * deleted for everyone only if its take now counts it as gone out (`standing`), skipped otherwise -
+   * it failed or was withdrawn, and a delete would name a message no peer has. Whether it was ended.
+   */
+  async function endQueuedSend(
+    sendId: string,
+    takeMessageId: string,
+    convoKey: string,
+    conversationId: string,
+    ctx: MessagingContext
+  ): Promise<boolean> {
+    if (await cancelOutboxMessage(sendId)) {
+      settleControl(ctx, conversationId, sendId, { kind: 'delete' }, true);
+      await applyDeleteLocally('withdrawn', sendId, convoKey, ctx);
+      return true;
+    }
+    // NOT WITHDRAWN: it is on the wire, or it left the queue since the snapshot. Its settlement says
+    // which, then the take's record decides - never a delete for an id that never went.
+    await awaitOutboxSettled(sendId);
+    const now = await outboxReelTakeReachOf(sendId);
+    const convo = ctx.conversations.get(convoKey);
+    if (now?.standing.some((s) => s.id === sendId) && convo) {
+      return deleteForEveryone(sendId, convoKey, convo, ctx);
+    }
+    if (now?.queued.some((s) => s.id === sendId) && (await cancelOutboxMessage(sendId))) {
+      await applyDeleteLocally('withdrawn', sendId, convoKey, ctx);
+      return true;
+    }
+    ctx.log(
+      `[MEDIA] ${sendId.slice(0, 8)}… (take of ${takeMessageId.slice(0, 8)}…): left the queue without going out - skipped, no peer has it`
+    );
+    return false;
+  }
+
+  /** Deletes a sent message of a take for everyone through the one delete path. Whether it was taken. */
+  async function deleteForEveryone(
+    sendId: string,
+    convoKey: string,
+    convo: Conversation,
+    ctx: MessagingContext
+  ): Promise<boolean> {
+    const outcome = await deleteMessage(sendId, controlDeps(ctx, convo));
+    settleControl(ctx, convo.id, sendId, { kind: 'delete' }, outcome !== 'refused');
+    if (outcome === 'refused') return false;
+    await applyDeleteLocally(outcome, sendId, convoKey, ctx);
+    return true;
+  }
+
+  /**
    * The local half of a delete the queue took (or that never needed it): a withdrawal drops the row,
    * a broadcast tombstones it. Reads the conversation from the map at THIS moment, by key.
    */
@@ -2434,6 +3188,10 @@ export function useMessaging() {
     convoKey: string,
     ctx: MessagingContext
   ): Promise<void> {
+    // A CHAT REEL DELETED FOR EVERYONE (D-delete-one, RC-13): its take's record marks it, and the
+    // file's hold is given back once no message citing it stands. A withdrawal settles the take
+    // inside the outbox already; anything but a reel's send is ignored there.
+    if (outcome === 'broadcast') await outboxReelSendDeleted(messageId);
     // A withdrawal is not a deletion the peers have to be told about - it is a message that never
     // existed anywhere but here, so the row goes, rather than becoming a tombstone standing for
     // nothing. Measured before the fix: every withdrawal left a row no other device held, which
@@ -2476,7 +3234,97 @@ export function useMessaging() {
     if (idx !== -1) {
       msgs[idx] = { ...msgs[idx], isDeleted: true, content: chat_system_message_deleted() };
       ctx.conversations.set(key, { ...convo, messages: msgs });
-      await persistLocalMutation(msgs[idx], ctx);
+      await persistLocalMutation(key, msgs[idx], ctx);
+    }
+  }
+
+  /**
+   * RECORDS THE `410` A CONVERSATION REEL'S VIEWER MET (RC-6, [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md)
+   * 15.4): on the message in memory, so every later render of the row draws the tombstone, and on
+   * its local row, so a reload does too - one `410` per message per device, never one per scroll.
+   *
+   * A local fact, the first one kept: a row already carrying it is left alone. The conversation is
+   * read from the map NOW (the one on screen first, the viewer was opened from it), and a write that
+   * fails is said with its cost - the next tap on that tile asks the server again.
+   */
+  async function recordReelPurged(
+    messageId: string,
+    atMs: number,
+    ctx: MessagingContext
+  ): Promise<void> {
+    const selected = ctx.selectedNow();
+    const keys = [
+      ...(selected ? [selected] : []),
+      ...[...ctx.conversations.keys()].filter((k) => k !== selected),
+    ];
+    const key = keys.find((k) =>
+      ctx.conversations.get(k)?.messages.some((msg) => msg.id === messageId)
+    );
+    const convo = key ? ctx.conversations.get(key) : undefined;
+    if (!key || !convo) {
+      ctx.log(
+        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: no loaded conversation holds it`
+      );
+    } else {
+      const idx = convo.messages.findIndex((msg) => msg.id === messageId);
+      if (convo.messages[idx].mediaPurgedAt) return;
+      const msgs = [...convo.messages];
+      msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
+      ctx.conversations.set(key, { ...convo, messages: msgs });
+    }
+    if (!ctx.storage) {
+      ctx.log(
+        `[REEL] 410 on ${messageId.slice(0, 8)} not persisted: no storage - a reload asks again`
+      );
+      return;
+    }
+    try {
+      // THE FIRST INSTANT IS THE STORED ONE when there is one: memory may not hold the message (or
+      // hold it from before a reload of another tab), so "already recorded" is asked of the row
+      // itself, and an existing record is never overwritten - memory is aligned to it instead.
+      const stored = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      if (!stored) {
+        ctx.log(
+          `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (its row is absent or unreadable) - a reload asks again`
+        );
+        return;
+      }
+      if (stored.mediaPurgedAt) {
+        alignMemoryPurge(messageId, stored.mediaPurgedAt, ctx);
+        ctx.log(`[REEL] 410 on ${messageId.slice(0, 8)} already on its row - the first kept`);
+        return;
+      }
+      await ctx.storage.updateMessage(
+        stored.conversationId,
+        messageId,
+        { mediaPurgedAt: atMs },
+        ctx.deviceKeyB64
+      );
+      // `updateMessage` writes nothing on a row it cannot read, and says nothing: the read back is
+      // what tells "on disk" from "asked".
+      const back = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      ctx.log(
+        back?.mediaPurgedAt
+          ? `[REEL] 410 on ${messageId.slice(0, 8)} recorded on its row`
+          : `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (its row is absent or unreadable) - a reload asks again`
+      );
+    } catch (e) {
+      ctx.log(
+        `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (${String(e).slice(0, 120)}) - a reload asks again`
+      );
+    }
+  }
+
+  /** Sets memory's copy of a message's recorded 410 to the stored instant, read from the map NOW. */
+  function alignMemoryPurge(messageId: string, atMs: number, ctx: MessagingContext): void {
+    for (const [key, convo] of ctx.conversations) {
+      const idx = convo.messages.findIndex((msg) => msg.id === messageId);
+      if (idx === -1) continue;
+      if (convo.messages[idx].mediaPurgedAt === atMs) return;
+      const msgs = [...convo.messages];
+      msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
+      ctx.conversations.set(key, { ...convo, messages: msgs });
+      return;
     }
   }
 
@@ -2514,7 +3362,7 @@ export function useMessaging() {
         content: applyEditToBody(msgs[idx].content, text),
       };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
-      await persistLocalMutation(msgs[idx], ctx);
+      await persistLocalMutation(ctx.selectedContact, msgs[idx], ctx);
     }
   }
 
@@ -2534,6 +3382,30 @@ export function useMessaging() {
     const act: ControlAct = { kind: 'pin', pinned: next, at };
     const queued = await sendControlAct(messageId, act, controlDeps(ctx, convo));
     settleControl(ctx, convo.id, messageId, act, queued);
+  }
+
+  /**
+   * Queues the silent `nickname` frame of an MLS conversation ("Modifier les pseudos") - the `send`
+   * of a group `NicknamePlace`. The register is moved by the caller once this answers true
+   * (`saveNickname`), so a refused frame leaves no name only this device shows.
+   *
+   * @returns whether the durable queue took it; false too when the conversation is not open here.
+   */
+  async function sendNickname(
+    conversationKey: string,
+    userId: string,
+    nickname: string | null,
+    at: number,
+    ctx: MessagingContext
+  ): Promise<boolean> {
+    const convo = ctx.conversations.get(conversationKey);
+    if (!convo) {
+      console.warn(
+        `[NICKNAME] not sent: conversation ${conversationKey.slice(0, 8)} is not loaded`
+      );
+      return false;
+    }
+    return setConversationNickname(userId, nickname, at, controlDeps(ctx, convo));
   }
 
   // ── Reply ─────────────────────────────────────────────────────────────────
@@ -2744,10 +3616,6 @@ export function useMessaging() {
     /** Forgets every staged file and armed reply of the account that signed out. */
     forgetAccount,
     videoPreparation,
-    /** True while a media file is being encrypted and uploaded. */
-    get isUploadingMedia() {
-      return isUploadingMedia;
-    },
     /** True while the MLS queue is draining after reconnect (catch-up in progress). */
     get isCatchupOverlayVisible() {
       return isCatchupOverlayVisible;
@@ -2775,8 +3643,18 @@ export function useMessaging() {
       if (!messages || messages.length === 0) return;
       orphanBuffer.delete(normalized);
       console.log(`[ORPHAN] Draining ${messages.length} buffered message(s) for "${normalized}"`);
-      for (const msg of messages) {
-        addMessageToChat(msg.senderId, msg.content, msg.contactName, ctx, msg.options);
+      const replays = messages.map((msg) =>
+        addMessageToChat(msg.senderId, msg.content, msg.contactName, ctx, msg.options)
+      );
+      // AN OWN SEND'S STATUS IS READ FROM THE DURABLE QUEUE ONCE ITS ROW IS BACK, as at a reload: a
+      // row still queued is `pending`, one the queue is done with is not. Its tap-time `pending` was
+      // dropped at the buffering, so it can no longer outlive the send (re-review of #2874).
+      if (messages.some((msg) => msg.ownSend)) {
+        void Promise.allSettled(replays)
+          .then(() => applyOutboxPendingStatuses())
+          .catch((e: unknown) =>
+            console.error(`[ORPHAN] queued statuses not re-applied for "${normalized}":`, e)
+          );
       }
     },
     /** Appends multiple messages in one reactive update and one batch DB write. */
@@ -2792,6 +3670,8 @@ export function useMessaging() {
     sendTextTo,
     /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,
+    /** Queues a raw reel take to several conversations at once (RC-12's send-to sheet). */
+    sendChatReelTakeTo,
     /** Sends a finished recording straight out, alone - the microphone gesture already said send. */
     sendVoiceNote,
     /** Removes a staged file from the pending media queue by index. */
@@ -2800,10 +3680,14 @@ export function useMessaging() {
     handleAddReaction,
     /** Sends a delete_message MLS event and marks the message as deleted locally. */
     handleDeleteMessage,
+    handleDeleteReelEverywhere,
+    recordReelPurged,
     /** Sends an edit_message MLS event and updates the message content locally. */
     handleEditMessage,
     /** Toggles a message's pinned state (optimistic local + pin/unpin MLS system event). */
     handleTogglePin,
+    /** Queues a conversation's `nickname` frame (`saveNickname`'s group send). */
+    sendNickname,
     /** Runs a refused reaction/edit/pin/delete again (the notice's Retry), with a fresh context. */
     retryRefusedControl,
     /** Sets the message to reply to (shown as a quote in the next send). */

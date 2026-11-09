@@ -13,6 +13,7 @@ import {
   cachedGraineSession,
   awaitSalonListing,
   isCommunityListed,
+  assertGraineRuntimeUnchanged,
   knownHistoryVisibility,
   rawChannelId,
   requireGraineRuntime,
@@ -115,7 +116,8 @@ export async function storeIncomingSeed(
   keyGroupId: string,
   scope: DistributionScope
 ): Promise<SeedStoreResult> {
-  const { storage, deviceKey } = requireGraineRuntime('cannot store an incoming seed');
+  const storingFor = requireGraineRuntime('cannot store an incoming seed');
+  const { storage, deviceKey } = storingFor;
   if (!seed.sessionId || seed.seed.length === 0 || !seed.channelId) {
     console.warn(
       `[GRAINE] ignoring a malformed seed frame from ${senderId} in community ${workspaceId.slice(0, 8)}`
@@ -186,12 +188,20 @@ export async function storeIncomingSeed(
   if (admitted === 'v1-refused') return { outcome: 'v1-refused' };
   const { session } = admitted;
   const endorsedBy = 'endorsedBy' in admitted ? admitted.endorsedBy : undefined;
+  // THE SESSION THIS SEED BEGAN FOR MUST STILL BE THE ONE WIRED. `storage` was taken at entry, but
+  // `deviceKey` is a live getter (an in-session PIN change moves the key, so it is read at each
+  // access): across a switch during the awaits above, this seed would be sealed under the NEXT
+  // account's key into the previous account's store. Checked with nothing awaited between it and
+  // the key read below, so no switch can land in between; and again after the write, since the
+  // seed cache and the native mirror belong to whichever session is wired.
+  assertGraineRuntimeUnchanged(storingFor, `cannot store seed ${seed.sessionId}`);
   await storage.saveGraineSession(session, deviceKey());
+  assertGraineRuntimeUnchanged(storingFor, `cannot cache seed ${seed.sessionId} once stored`);
   cacheGraineSession(session);
   // Mirrored so a push arriving with the app killed can still be opened. Not awaited for
   // correctness - the seed is already durable - but awaited for ORDER: a notification racing the
   // mirror would degrade for no reason.
-  await mirrorGraineSeed(session);
+  await mirrorGraineSeed(session, storingFor.userId);
   return { outcome: nowHeld(seed.sessionId, 'stored'), endorsedBy };
 }
 
@@ -1121,6 +1131,10 @@ async function absorbSeedBundle(
     }
     return;
   }
+  // THE SESSION THIS BUNDLE IS ABSORBED FOR, taken once. Each seed below reads the runtime when it
+  // starts, so a sign-out (or an account switch) between two seeds would otherwise store the rest
+  // of one account's bundle in the NEXT account's store, under its key. Checked before every seed.
+  const absorbingFor = requireGraineRuntime('cannot absorb a seed bundle');
   // After the wait, never before it: a held bundle re-enters here, and its numbering is said once.
   const page = pageNote(frame, bundle);
   const repaired = new Set<string>();
@@ -1138,7 +1152,14 @@ async function absorbSeedBundle(
   let absorbed = 0;
   let alreadyHeld = 0;
   let endorsedByServer = 0;
-  for (const seed of toStore) {
+  for (const [i, seed] of toStore.entries()) {
+    // THROWN, not returned: the frame must stay unacknowledged (`routeDistributionFrame` accuses
+    // the throw and leaves it), so it is redelivered to the session wired then.
+    assertGraineRuntimeUnchanged(
+      absorbingFor,
+      `cannot absorb the rest of a bundle from ${frame.sender} in community ` +
+        `${frame.workspaceId.slice(0, 8)} (${toStore.length - i} of its ${toStore.length} seed(s) left unstored)`
+    );
     const { outcome, endorsedBy } = await storeIncomingSeed(
       frame.workspaceId,
       frame.sender,
@@ -1186,7 +1207,7 @@ async function absorbSeedBundle(
   // here, which is what an incomplete history answer is judged on at the next start (section 4.4).
   // A bundle answering anything but this device's history ask is ignored there.
   noteHistoryPage(
-    requireGraineRuntime('cannot record a history page').userId,
+    absorbingFor.userId,
     frame.workspaceId,
     String(bundle.requestId ?? ''),
     frame.sender,

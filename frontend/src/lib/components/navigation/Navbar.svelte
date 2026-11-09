@@ -1,5 +1,7 @@
 <script lang="ts">
   import StatusPill from '../shared/StatusPill.svelte';
+  import { isHeaderConnected } from '$lib/utils/chat/headerConnection';
+  import { leaderSocketConnected } from '$lib/mls-client/tabLeaderLink.svelte';
   import CanariBrand from './CanariBrand.svelte';
   import EcosystemLauncher from './EcosystemLauncher.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
@@ -9,6 +11,7 @@
   import { signOutByChoice } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
 
   /** A sign-out is under way: it can wait up to the logout deadline, and a second tap is ignored. */
   let signingOut = $state(false);
@@ -56,7 +59,14 @@
       app puts it (user, 2026-09-29: the launcher used to sit between the two account controls).
     -->
     <div class="ml-auto flex shrink-0 items-center gap-2">
-      <StatusPill isConnected={globalSession.isWsConnected} />
+      <StatusPill
+        isConnected={isHeaderConnected({
+          isWsConnected: globalSession.isWsConnected,
+          isLoggedIn: globalSession.isLoggedIn,
+          isTabLeader: globalSession.isTabLeader,
+          leaderConnected: leaderSocketConnected(),
+        })}
+      />
       {#if globalSession.isLoggedIn}
         <EcosystemLauncher />
       {/if}
@@ -65,6 +75,7 @@
         <button
           type="button"
           onclick={() => goto('/profile')}
+          use:guideAnchor={'nav.profile'}
           title={slowLink.active ? m.slow_indicator_label() : m.nav_my_profile_title()}
           data-slow-link={slowLink.active || undefined}
           class="tap-target rounded-2xl ring-3 transition-all duration-200 {slowLink.active

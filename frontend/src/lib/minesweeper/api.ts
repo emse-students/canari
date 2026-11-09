@@ -47,6 +47,38 @@ export interface LeaderboardEntry {
   verifiedAt: string;
 }
 
+/** One page of the leaderboard: its entries and how many ranked players there are in all. */
+export interface LeaderboardPage {
+  entries: LeaderboardEntry[];
+  total: number;
+}
+
+/** One of the caller's own wins, as the stats tab lists it. */
+export interface MinesweeperRecentWin {
+  scoreId: string;
+  durationMs: number;
+  moveCount: number;
+  verifiedAt: string;
+}
+
+/**
+ * The caller's own RANKED record. Casual games never reach the server, so `played` counts the
+ * challenges opened and `lost` is every one that did not become a score.
+ */
+export interface MinesweeperStats {
+  played: number;
+  won: number;
+  lost: number;
+  /** 0..1, null before the first ranked game. */
+  winRate: number | null;
+  bestMs: number | null;
+  averageMs: number | null;
+  medianMs: number | null;
+  rank: number | null;
+  /** Latest wins, newest first. */
+  recent: MinesweeperRecentWin[];
+}
+
 /** A user banned from the ranked game, as a global admin sees them. */
 export interface MinesweeperBan {
   userId: string;
@@ -105,14 +137,27 @@ export async function submitMinesweeperChallenge(
   return res.json();
 }
 
-/** Fetches the verified leaderboard (best time per user). */
-export async function fetchMinesweeperLeaderboard(limit = 25): Promise<LeaderboardEntry[]> {
-  const res = await apiFetch(`${minesweeperBase()}/leaderboard?limit=${limit}`);
+/** Fetches one page of the verified leaderboard (best time per user), `offset` places down. */
+export async function fetchMinesweeperLeaderboard(
+  limit = 25,
+  offset = 0
+): Promise<LeaderboardPage> {
+  const res = await apiFetch(`${minesweeperBase()}/leaderboard?limit=${limit}&offset=${offset}`);
   if (!res.ok) {
     throw await refusalFromResponse(res, 'Failed to load leaderboard');
   }
-  const data = (await res.json()) as { entries: LeaderboardEntry[] };
-  return data.entries ?? [];
+  const data = (await res.json()) as Partial<LeaderboardPage>;
+  const entries = data.entries ?? [];
+  return { entries, total: data.total ?? entries.length };
+}
+
+/** The caller's own ranked record: played, won, best / average / median, latest wins, rank. */
+export async function fetchMinesweeperStats(): Promise<MinesweeperStats> {
+  const res = await apiFetch(`${minesweeperBase()}/stats`);
+  if (!res.ok) {
+    throw await refusalFromResponse(res, 'Failed to load minesweeper stats');
+  }
+  return res.json();
 }
 
 /** Caller's personal best + rank (nulls when never scored). */

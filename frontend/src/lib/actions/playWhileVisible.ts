@@ -2,7 +2,9 @@ import {
   arbitratePlayback,
   claimPlayback,
   isForegroundPlaying,
+  isVideoPlaying,
   onPlaybackIdle,
+  pausePlayback,
 } from '$lib/actions/playbackArbiter';
 import { videoSound } from '$lib/stores/videoSound.svelte';
 import { isAppOnScreen } from '$lib/utils/appForeground';
@@ -35,6 +37,48 @@ export interface PlayWhileVisibleOptions {
 const visibleInline = new Set<HTMLVideoElement>();
 /** Viewers open: while one is, no inline video starts. */
 let openViewers = 0;
+
+/** Holds taken ({@link holdPlayback}) and not yet released. */
+let holds = 0;
+/** Whether a video was playing when the first of the current holds was taken. */
+let videoWasPlaying = false;
+
+/**
+ * A FULL-SCREEN VIEWER IS OPEN, WHETHER OR NOT IT HAS A PLAYER YET (owner, 2026-11-06: opening a
+ * CanaReel left the feed's video playing behind it).
+ *
+ * `followVideoSound` counts a viewer only once its `<video>` is MOUNTED, and a reel mounts its player
+ * after the download or the stream's first segment - seconds on a weak link - while a photo page or a
+ * reel that fails never mounts one. In that gap nothing said "a viewer is open": the feed's ambient
+ * video behind kept decoding, talking if unmuted, and a card scrolling into view started too. A viewer
+ * that is a page of its own (`ReelViewer`) holds playback from its first line instead, so the answer
+ * does not depend on what it later mounts.
+ *
+ * Holding PAUSES EVERY registered VIDEO at once (the feed, a post page's, a lightbox's) and never an
+ * audio-only media: a voice note playing in a chat plays on when a photo opens. The viewer's own
+ * players register later and claim playback themselves. No inline video starts until the LAST hold is
+ * released; then the video last come into view plays again only if a video was playing when the FIRST
+ * hold was taken - a viewer never starts a video the reader had not playing. Returns the release,
+ * idempotent.
+ */
+export function holdPlayback(reason: string): () => void {
+  Log.d('VIDEO', `playback held: ${reason}`);
+  if (holds === 0) videoWasPlaying = isVideoPlaying();
+  holds += 1;
+  openViewers += 1;
+  pausePlayback(undefined, false, reason, true);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    openViewers -= 1;
+    holds -= 1;
+    Log.d('VIDEO', `playback released: ${reason}`);
+    if (holds === 0 && videoWasPlaying && !isForegroundPlaying() && isAppOnScreen()) {
+      resumeVisible();
+    }
+  };
+}
 
 function tryPlay(video: HTMLVideoElement) {
   video.play().catch((err: unknown) => {

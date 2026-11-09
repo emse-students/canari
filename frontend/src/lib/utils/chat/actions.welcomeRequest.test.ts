@@ -8,6 +8,7 @@ import {
   DeviceTrustRefusedError,
   resetReportedDeviceTrustRefusals,
 } from '$lib/mls-client/deviceTrust';
+import { devicePackages } from '$lib/mls-client/test/fixtures/devicePackages';
 
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
@@ -41,7 +42,6 @@ describe('handleWelcomeRequest - membership guard', () => {
 
     await handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId),
@@ -66,7 +66,6 @@ describe('handleWelcomeRequest - membership guard', () => {
 
     await handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId),
@@ -86,9 +85,9 @@ describe('handleWelcomeRequest - membership guard', () => {
       getGroupMeta: vi.fn().mockResolvedValue({ name: 'Test', isGroup: true }),
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'legit-user' }]),
       // Requester device must resolve to a KeyPackage so the add can proceed.
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'dev-1', keyPackage: new Uint8Array([7]) },
+      ]),
       // This device's leaf is not in the tree, its user's is (another device) -> a member's device,
       // no kick, straight to addMember.
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:laptop']),
@@ -100,7 +99,6 @@ describe('handleWelcomeRequest - membership guard', () => {
 
     await handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId),
@@ -124,9 +122,9 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
     createMlsServiceStub({
       getGroupMeta: vi.fn().mockResolvedValue({ name: 'Test', isGroup: true }),
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'legit-user' }]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'dev-1', keyPackage: new Uint8Array([7]) },
+      ]),
       addMember: vi
         .fn()
         .mockResolvedValue({ welcome: new Uint8Array([1]), ratchetTree: new Uint8Array([2]) }),
@@ -147,7 +145,6 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
   ) =>
     handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId),
@@ -302,9 +299,9 @@ describe('handleWelcomeRequest - a re-add the device key cannot justify', () => 
     createMlsServiceStub({
       getGroupMeta: vi.fn().mockResolvedValue({ name: 'Test', isGroup: true }),
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'legit-user' }]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'dev-1', keyPackage: new Uint8Array([7]) },
+      ]),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['me:self', 'legit-user:dev-1']),
       ...overrides,
     });
@@ -315,7 +312,6 @@ describe('handleWelcomeRequest - a re-add the device key cannot justify', () => 
   ) =>
     handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId),
@@ -408,8 +404,8 @@ describe('handleWelcomeRequest - a re-add the device key cannot justify', () => 
     await run('g-trust-remembered', mlsService);
     await run('g-trust-remembered', mlsService);
 
-    expect(mlsService.fetchUserDevices).toHaveBeenCalledTimes(1);
-    expect(mlsService.fetchDeviceKeyPackage).not.toHaveBeenCalled();
+    expect(mlsService.fetchDeviceKeyPackage).toHaveBeenCalledTimes(1);
+    expect(mlsService.fetchUserDevices).not.toHaveBeenCalled();
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
     expect(mlsService.addMember).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('re-enrols under a new id'));
@@ -431,15 +427,14 @@ describe('handleWelcomeRequest - a duplicate signature key', () => {
     createMlsServiceStub({
       getGroupMeta: vi.fn().mockResolvedValue({ name: 'Test', isGroup: true }),
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'legit-user' }]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'dev-1', keyPackage: new Uint8Array([7]) },
+      ]),
       ...overrides,
     });
   const run = (groupId: string, mlsService: ReturnType<typeof createMlsServiceStub>) =>
     handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId),

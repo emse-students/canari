@@ -10,6 +10,7 @@
     CalendarX,
     UserCheck,
     UserPlus,
+    Cake,
     UserX,
     CalendarCog,
     Newspaper,
@@ -151,6 +152,7 @@
     'event_updated',
     'event_deleted',
     'event_pending',
+    'event_pending_coorganiser',
   ] as const;
   const isEventNotif = $derived((EVENT_TYPES as readonly string[]).includes(notif.type));
 
@@ -211,6 +213,8 @@
       // An organiser of an association space cancelled or booked: the association acted (WP-N).
       notif.type === 'booking_cancelled' ||
       notif.type === 'booking_added' ||
+      notif.type === 'booking_changed' ||
+      notif.type === 'booking_removed' ||
       // The reminder carries the booked space's owning association (owner, 2026-10-30). A reminder
       // written before that, or for a link-only / personal space, has none: it keeps the neutral
       // avatar - a data gap in old rows, not a fallback path (logged below).
@@ -248,7 +252,16 @@
     booking_cancelled: m.notif_booking_cancelled_text,
     booking_withdrawn: m.notif_booking_withdrawn_text,
     booking_added: m.notif_booking_added_text,
+    // An edit (owner, 2026-11-02): the booking moved, or the reader was taken off it.
+    booking_changed: m.notif_booking_changed_text,
+    booking_removed: m.notif_booking_removed_text,
   };
+  /** A delegate (a list) paused or resumed by its receiver: the same whole-sentence row. */
+  const isDelegationNotif = $derived(
+    notif.type === 'delegation_revoked' ||
+      notif.type === 'delegation_receiver_not_ready' ||
+      notif.type === 'delegation_resumed'
+  );
   /**
    * An association's Lydia payments became active or were paused (system actor): a whole sentence
    * naming the association, so the row carries no actor name before it.
@@ -256,15 +269,22 @@
   const isLydiaPaymentsNotif = $derived(
     notif.type === 'lydia_payments_active' ||
       notif.type === 'lydia_payments_paused' ||
-      notif.type === 'lydia_cashier_added'
+      notif.type === 'lydia_cashier_added' ||
+      isDelegationNotif
   );
-  /** The whole sentence of a Lydia notice, naming the association the row stores. */
+  /** The whole sentence of a Lydia or delegation notice, naming the entity the row stores. */
   const lydiaNoticeText = $derived(
     notif.type === 'lydia_payments_active'
       ? m.notif_lydia_payments_active_text({ name: notif.text })
       : notif.type === 'lydia_payments_paused'
         ? m.notif_lydia_payments_paused_text({ name: notif.text })
-        : m.notif_lydia_cashier_added_text({ name: notif.text })
+        : notif.type === 'delegation_revoked'
+          ? m.notif_delegation_revoked_text({ name: notif.text })
+          : notif.type === 'delegation_receiver_not_ready'
+            ? m.notif_delegation_receiver_not_ready_text({ name: notif.text })
+            : notif.type === 'delegation_resumed'
+              ? m.notif_delegation_resumed_text({ name: notif.text })
+              : m.notif_lydia_cashier_added_text({ name: notif.text })
   );
   /** An association refunded the reader (system actor): a whole sentence naming the association. */
   const isLydiaRefundNotif = $derived(notif.type === 'lydia_refund_issued');
@@ -302,17 +322,20 @@
           ? 'bg-blue-500 text-white'
           : notif.type === 'form_reminder'
             ? 'bg-purple-500 text-white'
-            : notif.type === 'form_paid_over_capacity' || notif.type === 'lydia_payments_paused'
+            : notif.type === 'form_paid_over_capacity' ||
+                notif.type === 'lydia_payments_paused' ||
+                notif.type === 'delegation_revoked' ||
+                notif.type === 'delegation_receiver_not_ready'
               ? 'bg-amber-500 text-cn-ink'
               : notif.type === 'event_rejected'
                 ? 'bg-red-500 text-white'
-                : notif.type === 'event_pending'
+                : notif.type === 'event_pending' || notif.type === 'event_pending_coorganiser'
                   ? 'bg-amber-500 text-cn-ink'
                   : isEventNotif || isCoorganiseNotif
                     ? 'bg-sky-600 text-white'
                     : isPostNotif || isRepostNotif || isPersonalRepostNotif
                       ? 'bg-indigo-500 text-white'
-                      : isFollowNotif
+                      : isFollowNotif || notif.type === 'birthday'
                         ? 'bg-amber-500 text-cn-ink'
                         : notif.type === 'profile_correction_refused'
                           ? 'bg-red-500 text-white'
@@ -380,9 +403,9 @@
         <Clock size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'form_paid_over_capacity'}
         <TriangleAlert size={glyph} strokeWidth={2.75} />
-      {:else if notif.type === 'lydia_payments_active'}
+      {:else if notif.type === 'lydia_payments_active' || notif.type === 'delegation_resumed'}
         <CircleCheck size={glyph} strokeWidth={2.75} />
-      {:else if notif.type === 'lydia_payments_paused'}
+      {:else if notif.type === 'lydia_payments_paused' || notif.type === 'delegation_revoked' || notif.type === 'delegation_receiver_not_ready'}
         <CirclePause size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'lydia_cashier_added'}
         <Store size={glyph} strokeWidth={2.75} />
@@ -396,7 +419,7 @@
         <CalendarX size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_updated'}
         <CalendarCog size={glyph} strokeWidth={2.75} />
-      {:else if notif.type === 'event_pending'}
+      {:else if notif.type === 'event_pending' || notif.type === 'event_pending_coorganiser'}
         <CalendarClock size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'profile_correction_applied'}
         <UserCheck size={glyph} strokeWidth={2.75} />
@@ -406,12 +429,18 @@
         <UserPlus size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'follow_accepted'}
         <UserCheck size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'birthday'}
+        <Cake size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'booking_cancelled'}
         <CalendarX size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'booking_withdrawn'}
         <CalendarMinus size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'booking_added'}
         <CalendarPlus size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'booking_changed'}
+        <CalendarClock size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'booking_removed'}
+        <CalendarMinus size={glyph} strokeWidth={2.75} />
       {:else if isBookingReminder}
         <Clock size={glyph} strokeWidth={2.75} />
       {:else if isPostNotif}
@@ -492,7 +521,11 @@
                 ? m.notif_event_updated_text()
                 : notif.type === 'event_pending'
                   ? m.notif_event_pending_text()
-                  : m.notif_event_deleted_text()}
+                  : notif.type === 'event_pending_coorganiser'
+                    ? notif.meta?.audience === 'validators'
+                      ? m.notif_event_pending_coorganiser_validators_text()
+                      : m.notif_event_pending_coorganiser_text()
+                    : m.notif_event_deleted_text()}
         <span class="italic"><EmojiText text={eventTitle} /></span>{#if eventReason}&#32;&#8212; <EmojiText
             text={eventReason}
           />{/if}
@@ -535,6 +568,9 @@
         {notif.type === 'follow_request'
           ? m.notif_follow_request_text()
           : m.notif_follow_accepted_text()}
+      {:else if notif.type === 'birthday'}
+        <!-- A followed person's birthday (docs/wiki/birthdays.md): the sentence is the whole notice. -->
+        {m.notif_birthday_text()}
       {:else if isCoorganiseNotif}
         {m.notif_coorganise_proposed_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>

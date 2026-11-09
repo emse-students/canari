@@ -32,10 +32,13 @@
   import { uploadCaption } from '$lib/utils/chat/uploadLabel';
   import type { UploadView } from '$lib/utils/chat/uploadProgress.svelte';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
-  import { isReelMessage, isReelMessageExpired, reelMessageAsPost } from '$lib/reels/chatReel';
+  import { isReelMessage, reelMessageAsPost, reelTombstoneOf } from '$lib/reels/chatReel';
+  import { dropGoneReelCopy } from '$lib/reels/chatReelCache';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   interface Props {
+    /** The conversation's nickname scope ("Modifier les pseudos"): names drawn here are read in it. */
+    nicknameScope?: string | null;
     /** Parsed media descriptor from the message envelope, or null for text-only messages. */
     mediaRef: MediaRef | null;
     /** Decrypted object URL for the media blob, or null while loading. */
@@ -92,12 +95,24 @@
     /** Bearer token the reel viewer's own download resolves; a tile fetches nothing without a tap. */
     authToken?: string;
     /**
+     * When THIS device met the reel's `410`, as its stored row records it (`mediaPurgedAt`): the
+     * tile is then a tombstone across reloads without a request (RC-6).
+     */
+    reelPurgedAt?: number;
+    /**
+     * The reel viewer met the `410`, at `atMs`: the caller records it on the message's local row,
+     * once. The tile draws the tombstone at once either way.
+     */
+    onReelPurged?: (atMs: number) => void;
+    /**
      * The upload this bubble stands for, while the sender's outbox still holds the bytes. Draws the
      * real progress, a cancel and a retry where the plain skeleton had an endless spinner.
      */
     upload?: UploadView | null;
     /** The upload was refused for good: says so and offers the delete (`onCancelUpload`). */
     uploadFailed?: boolean;
+    /** What a failed upload says: the group's reason, or the server's refusal (the default). */
+    uploadFailedLabel?: string;
     /** Withdraws the message and stops its transfer (the sender's delete of an unsent message). */
     onCancelUpload?: () => void;
     /** Tries the upload again now, skipping the backoff. */
@@ -121,10 +136,14 @@
     sentAt,
     messageId = '',
     authToken = '',
+    reelPurgedAt,
+    onReelPurged,
     upload = null,
     uploadFailed = false,
+    uploadFailedLabel = m.upload_failed_label(),
     onCancelUpload,
     onRetryUpload,
+    nicknameScope = null,
   }: Props = $props();
 
   /**
@@ -133,15 +152,38 @@
    */
   const isReel = $derived(isReelMessage(mediaRef));
   let showReelViewer = $state(false);
-  /** The hint, read when the row is drawn: a tombstone needs no request to be told it is one. */
-  const reelExpired = $derived(!!mediaRef && isReel && isReelMessageExpired(mediaRef, Date.now()));
-  const reelSenderName = $derived(senderId ? getUserDisplayNameSync(senderId, senderId) : '');
+  /** The `410` the viewer met in THIS mount, before the caller's record comes back down. */
+  let purgedHere = $state<number | null>(null);
+  /**
+   * Which tombstone, if any: the recorded `410` first, then the hint read when the row is drawn - a
+   * tombstone needs no request to be told it is one (`reelTombstoneOf`).
+   */
+  const reelTombstone = $derived(
+    mediaRef && isReel ? reelTombstoneOf(mediaRef, reelPurgedAt ?? purgedHere, Date.now()) : null
+  );
+  // A tombstone's local copy goes with it (3.3): the cache would otherwise replay a reel the server
+  // forgot. Once per media id per page life (`dropGoneReelCopy`).
+  $effect(() => {
+    if (reelTombstone && mediaRef?.mediaId) dropGoneReelCopy(mediaRef.mediaId);
+  });
+
+  function reelGone() {
+    if (reelPurgedAt !== undefined || purgedHere !== null) return;
+    const at = Date.now();
+    purgedHere = at;
+    console.debug(`[chat-reel] ${messageId.slice(0, 8)} answered 410 in the viewer - recorded`);
+    onReelPurged?.(at);
+  }
+  const reelSenderName = $derived(
+    senderId ? getUserDisplayNameSync(senderId, senderId, nicknameScope ?? undefined) : ''
+  );
   const reelPost = $derived(
     showReelViewer && mediaRef && isReel
       ? reelMessageAsPost({
           messageId: messageId || mediaRef.mediaId,
           media: mediaRef,
           caption: textContent,
+          senderId: senderId ?? '',
           senderName: reelSenderName,
           sentAt: sentAt ?? new Date(),
         })
@@ -246,13 +288,14 @@
     {#if isReel}
       <ChatReelTile
         {mediaRef}
-        expired={reelExpired}
+        tombstone={reelTombstone}
         senderName={reelSenderName}
         sentAt={sentAt ?? new Date()}
         {bleed}
         onOpen={() => (showReelViewer = true)}
         {upload}
         {uploadFailed}
+        {uploadFailedLabel}
         {orphan}
         {onCancelUpload}
         {onRetryUpload}
@@ -335,7 +378,7 @@
               role="alert"
             >
               <CircleAlert size={22} class="text-red-500" />
-              <p class="text-2xs leading-tight font-semibold">{m.upload_failed_label()}</p>
+              <p class="text-2xs leading-tight font-semibold">{uploadFailedLabel}</p>
               {#if onCancelUpload}
                 <button
                   type="button"
@@ -485,7 +528,7 @@
               </p>
             {:else if !failure && uploadFailed}
               <p class="text-2xs leading-tight font-semibold text-red-500" role="alert">
-                {m.upload_failed_label()}
+                {uploadFailedLabel}
               </p>
             {:else if !failure && orphan}
               <p class="text-2xs leading-tight font-semibold text-red-500" role="alert">
@@ -589,7 +632,7 @@
          PERCENT would resolve against a bubble that is itself sized by its content and balloon it
          over the whole row, so the caption wraps at that width less the bubble's side padding. -->
     <p
-      class="text-sm leading-relaxed wrap-break-word whitespace-pre-wrap select-text {bleed
+      class="text-sm leading-relaxed wrap-break-word whitespace-pre-wrap select-text pointer-coarse:select-none pointer-coarse:[-webkit-touch-callout:none] {bleed
         ? 'mt-1.5 w-[calc(17rem-1.5rem)] max-w-full'
         : 'mt-2'}"
     >
@@ -613,6 +656,7 @@
     {authToken}
     onClose={() => (showReelViewer = false)}
     loadPage={async () => []}
+    onMediaGone={reelGone}
   />
 {/if}
 

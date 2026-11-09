@@ -10,6 +10,7 @@
   import { slowLink } from '$lib/stores/slowLink.svelte';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
 
   // While mounted, `app.css` paints the status strip above the header with its surface (U8).
   $effect(() => {
@@ -83,6 +84,7 @@
       {#if onPosts}
         <a
           href={resolve('/posts?compose=1')}
+          use:guideAnchor={'posts.compose'}
           title={m.posts_publish_button()}
           aria-label={m.posts_publish_button()}
           class="ui-icon-button text-text-muted hover:text-text-main hover:bg-text-main/10 rounded-full"
@@ -104,6 +106,7 @@
         <button
           type="button"
           onclick={() => goto('/profile')}
+          use:guideAnchor={'nav.profile'}
           title={slowLink.active ? m.slow_indicator_label() : m.nav_my_profile_title()}
           aria-label={m.nav_my_profile_label()}
           data-slow-link={slowLink.active || undefined}

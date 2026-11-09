@@ -34,6 +34,13 @@
 	<dict>
 		<key>NSExtensionAttributes</key>
 		<dict>
+			<!-- The conversation suggestions (sharing lot S5): without INSendMessageIntent here the
+			     sheet never offers the conversations the app donates (ShareSuggestions.swift), and
+			     the extension receives the picked one as extensionContext.intent. -->
+			<key>IntentsSupported</key>
+			<array>
+				<string>INSendMessageIntent</string>
+			</array>
 			<key>NSExtensionActivationRule</key>
 			<dict>
 				<key>NSExtensionActivationSupportsText</key>

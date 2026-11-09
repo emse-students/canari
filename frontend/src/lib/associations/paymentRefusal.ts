@@ -2,8 +2,26 @@ import { m } from '$lib/paraglide/messages';
 import { SocialApiError } from '$lib/associations/api';
 import { formatAmount } from '$lib/forms/fillAnswers';
 
-/** The body `code` of a write that sells or collects money on a list or an institution. */
+/** The body `code` of a write that sells or collects money on an institution. */
 export const ASSOCIATION_KIND_DOES_NOT_SELL = 'ASSOCIATION_KIND_DOES_NOT_SELL';
+
+/** The body `code` of a paid write on a list with no APPROVED payment delegation (owner, 2026-11-02). */
+export const LIST_DELEGATE_REQUIRED = 'LIST_DELEGATE_REQUIRED';
+
+/** The body `code` refusing a Lydia account of a list's own: it collects through a delegate. */
+export const LIST_NO_OWN_LYDIA_ACCOUNT = 'LIST_NO_OWN_LYDIA_ACCOUNT';
+
+/** The body `code` refusing an acceptance by anyone but the receiver's own managers or the admin. */
+export const DELEGATION_ACCEPT_RECEIVER_ONLY = 'DELEGATION_ACCEPT_RECEIVER_ONLY';
+
+/** The body `code` refusing a reject or revoke by anyone but the receiver's own managers or the admin. */
+export const DELEGATION_REVOKE_RECEIVER_ONLY = 'DELEGATION_REVOKE_RECEIVER_ONLY';
+
+/**
+ * The body `code` of the 409 refusing an acceptance that would chain delegations: the receiver
+ * itself delegates, or the requester already receives one (review of #2967).
+ */
+export const DELEGATION_CHAIN_REFUSED = 'DELEGATION_CHAIN_REFUSED';
 
 /** The body `code` social-service sets when the payment provider itself declined a payment. */
 export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
@@ -23,6 +41,21 @@ export function providerRefusalMessage(err: unknown): string | null {
   }
   if (err instanceof SocialApiError && err.code === ASSOCIATION_KIND_DOES_NOT_SELL) {
     return m.asso_kind_does_not_sell();
+  }
+  if (err instanceof SocialApiError && err.code === LIST_DELEGATE_REQUIRED) {
+    return m.list_delegate_required_error();
+  }
+  if (err instanceof SocialApiError && err.code === LIST_NO_OWN_LYDIA_ACCOUNT) {
+    return m.list_no_own_lydia_account();
+  }
+  if (err instanceof SocialApiError && err.code === DELEGATION_ACCEPT_RECEIVER_ONLY) {
+    return m.delegation_accept_receiver_only();
+  }
+  if (err instanceof SocialApiError && err.code === DELEGATION_REVOKE_RECEIVER_ONLY) {
+    return m.delegation_revoke_receiver_only();
+  }
+  if (err instanceof SocialApiError && err.code === DELEGATION_CHAIN_REFUSED) {
+    return m.delegation_chain_refused();
   }
   if (err instanceof SocialApiError && err.code === PREVIOUS_PAYMENT_OPEN) {
     return m.form_previous_payment_open();
@@ -56,7 +89,10 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === TIER_NOT_RANKABLE) {
     return m.shop_tier_not_rankable();
   }
-  if (err instanceof SocialApiError && err.code === COTISATION_DISABLED) {
+  if (
+    err instanceof SocialApiError &&
+    (err.code === COTISATION_DISABLED || err.code === MEMBERSHIP_PRODUCT_UNGRANTABLE)
+  ) {
     return m.shop_cotisation_disabled();
   }
   if (err instanceof SocialApiError && err.code === ASSOCIATION_ARCHIVED) {
@@ -156,6 +192,12 @@ export const TIER_NOT_RANKABLE = 'TIER_NOT_RANKABLE';
  * while its association's cotisations are disabled: nothing could be granted, so nothing is taken.
  */
 export const COTISATION_DISABLED = 'COTISATION_DISABLED';
+
+/**
+ * The body `code` of social-service's 409 for a membership product that stores no tag (a legacy
+ * row): it could grant nothing. Worded like `COTISATION_DISABLED`: the buyer can do nothing else.
+ */
+export const MEMBERSHIP_PRODUCT_UNGRANTABLE = 'MEMBERSHIP_PRODUCT_UNGRANTABLE';
 
 /**
  * The body `code` of social-service's 409 when the product's association is ARCHIVED: its page and

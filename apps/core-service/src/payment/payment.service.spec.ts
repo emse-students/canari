@@ -11,6 +11,8 @@ function makeService(paymentProvider: 'lydia' | 'disabled') {
     paymentProvider,
     callsMode: 'off',
     livesMode: 'off',
+    pushMode: 'full',
+    checkpointSkipMode: 'off',
   };
   const platformService = {
     getConfig: jest.fn().mockResolvedValue(config),
@@ -50,6 +52,8 @@ describe('PaymentService provider selection', () => {
       paymentProvider: 'disabled',
       callsMode: 'off',
       livesMode: 'off',
+      pushMode: 'full',
+      checkpointSkipMode: 'off',
     };
     const platformService = {
       getConfig: jest.fn().mockResolvedValue(config),

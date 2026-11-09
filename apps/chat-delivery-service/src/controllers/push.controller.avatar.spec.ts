@@ -99,6 +99,33 @@ describe('PushController - GET mls/push/avatar/:targetUserId', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it("asks core's avatar route with the service credential, so core exempts it from the viewer token", async () => {
+    const saved = process.env.INTERNAL_SECRET;
+    process.env.INTERNAL_SECRET = 'the-internal-secret';
+    try {
+      fetchSpy.mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }));
+      await call().p;
+      const [url, init] = fetchSpy.mock.calls[0];
+      expect(String(url)).toMatch(/\/api\/users\/0123456789abcdef-full-user-id\/avatar$/);
+      expect((init as RequestInit).headers).toEqual({ 'x-internal-secret': 'the-internal-secret' });
+    } finally {
+      if (saved === undefined) delete process.env.INTERNAL_SECRET;
+      else process.env.INTERNAL_SECRET = saved;
+    }
+  });
+
+  it('with no INTERNAL_SECRET it sends no empty credential (core would refuse it as wrong)', async () => {
+    const saved = process.env.INTERNAL_SECRET;
+    delete process.env.INTERNAL_SECRET;
+    try {
+      fetchSpy.mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }));
+      await call().p;
+      expect((fetchSpy.mock.calls[0][1] as RequestInit).headers).toEqual({});
+    } finally {
+      if (saved !== undefined) process.env.INTERNAL_SECRET = saved;
+    }
+  });
+
   it('absent: core 404 is forwarded and logged at info', async () => {
     fetchSpy.mockResolvedValue(new Response(null, { status: 404 }));
     const { p, res } = call();

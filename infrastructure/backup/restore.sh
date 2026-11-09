@@ -85,7 +85,7 @@ if [ "$FROM_MITV" = "yes" ]; then
   [ -n "$BACKUP_SSH_HOST" ] || fail "--latest-from-mitv needs BACKUP_SSH_HOST (<user>@<offsite-host>) exported"
   log "Recuperation de la derniere archive depuis ${BACKUP_SSH_HOST}…"
   LATEST="$(ssh -o BatchMode=yes "$BACKUP_SSH_HOST" \
-    "ls -1t '$BACKUP_SSH_PATH'/canari-backup-*.tar.gz 2>/dev/null | head -1")"
+    "ls -1t '$BACKUP_SSH_PATH'/canari-backup-*.tar.gz 2>/dev/null | sed -n 1p")"
   [ -n "$LATEST" ] || fail "aucune archive sur mitv"
   ARCHIVE="/tmp/$(basename "$LATEST")"
   rsync -az -e "ssh -o BatchMode=yes" "${BACKUP_SSH_HOST}:${LATEST}" "$ARCHIVE"

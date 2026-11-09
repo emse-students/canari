@@ -102,8 +102,27 @@ export interface RepublicationRequest {
   /** The member who asked; null once their account is erased. */
   proposedBy: ProposalPerson | null;
   /** Null when the post is gone. */
-  details: (PersonalRepostSubject & { newlyReached: number }) | null;
+  details:
+    | (PersonalRepostSubject & {
+        newlyReached: number;
+        /** Set when the asker is an INSTITUTION: its potential audience, the request's warning. */
+        institutionAudience?: (InstitutionAudience & { fingerprint: string }) | null;
+      })
+    | null;
   createdAt: string;
+}
+
+/**
+ * An institution's potential audience, read by the server from its CURRENT rules and members
+ * (owner, 2026-11-02: an institution is not necessarily the School, so it is never named as such).
+ */
+export interface InstitutionAudience {
+  /** One of its rules addresses every campus and every formation. */
+  everyone: boolean;
+  /** Its rules; a null side means "every campus" or "every formation". */
+  spaces: { campus: string | null; formation: string | null }[];
+  /** At least one of its members is on the staff side (a campus, no cursus). */
+  staffMembers: boolean;
 }
 
 /**
@@ -145,9 +164,26 @@ export async function listPendingProposals(associationId: string): Promise<Propo
   );
 }
 
-/** Accepts a proposal: the kind's effect (a republication, for `repost`) is applied with it. */
-export async function acceptProposal(proposalId: string): Promise<unknown> {
-  return socialRequest(`/api/associations/proposals/${proposalId}/accept`, { method: 'POST' });
+/**
+ * The refusal code of a person's acceptance whose institution audience changed since they read it
+ * (review of #2965, 2026-11-02): nothing was decided, and the inbox re-reads the warning and asks
+ * again.
+ */
+export const REPOST_PERSONAL_AUDIENCE_CHANGED = 'REPOST_PERSONAL_AUDIENCE_CHANGED';
+
+/**
+ * Accepts a proposal: the kind's effect (a republication, for `repost`) is applied with it. A
+ * person accepting an institution's request passes the `audienceFingerprint` of the warning they
+ * read, so the server can refuse a consent given on an audience that has since changed.
+ */
+export async function acceptProposal(
+  proposalId: string,
+  consent: { audienceFingerprint?: string } = {}
+): Promise<unknown> {
+  return socialRequest(`/api/associations/proposals/${proposalId}/accept`, {
+    method: 'POST',
+    body: JSON.stringify(consent),
+  });
 }
 
 /**

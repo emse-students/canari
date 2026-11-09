@@ -29,6 +29,7 @@ import type { IStorage, StoredMessage } from '$lib/db';
 import type { ConversationIdentity } from '$lib/utils/chat/conversations';
 import { appendLog } from '$lib/utils/sessionLog';
 import { isEnvelopeContent } from '$lib/utils/chat/messageMerge';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isIosTauriRuntime } from '$lib/utils/appVersion';
 import { recordNotified } from '$lib/utils/chat/notifiedMessages';
@@ -261,6 +262,15 @@ const NOTHING: FcmCacheInjection = { messages: [], placeholders: new Map() };
 let inFlight: Promise<unknown> = Promise.resolve();
 
 /**
+ * Whether a push preview may replace the stored row `row`: only another preview. A full envelope
+ * is richer than any caption, and a deletion is ABSORBING - its tombstone's content is plain text,
+ * which the envelope test alone reads as a preview, so it is refused by its flag.
+ */
+function previewMayReplace(row: StoredMessage): boolean {
+  return !row.isDeleted && !isEnvelopeContent(row.content);
+}
+
+/**
  * Reads the native FCM cache (Tauri only) and injects the messages into local storage.
  * Returns what was written - see {@link FcmCacheInjection} for why the placeholders travel too.
  * No-op on web/desktop (no native cache available).
@@ -374,15 +384,25 @@ async function consumeFcmCacheOnce(
       isFcmPreview: true,
     };
     try {
-      // A PUSH PREVIEW MAY CREATE A ROW AND MAY REPLACE ANOTHER PREVIEW - NEVER AN ENVELOPE.
+      // A PUSH PREVIEW MAY CREATE A ROW AND MAY REPLACE ANOTHER PREVIEW - NEVER AN ENVELOPE, AND
+      // NEVER A TOMBSTONE: a deleted row's content is plain text, so the envelope test alone would
+      // take it for a preview and write the deleted caption back over it (`previewMayReplace`).
       // `isEnvelopeContent` is the same predicate `shouldUpgradeMessage` uses to decide an upgrade
       // is worth making; asked here it decides the write is not. The row is left exactly as it is,
       // and it is NOT reported as injected: the in-memory merge that follows would otherwise be
       // handed a caption to draw over a message already on screen.
-      const existing = await storage.getMessage(entry.messageId, deviceKeyB64);
-      if (existing && isEnvelopeContent(existing.content)) {
+      // Read in the push's conversation, like every lookup by id: a row of another one is absent.
+      const found = await storage.getMessagesByIds(entry.groupId, [entry.messageId], deviceKeyB64);
+      if (found.unreadable.has(entry.messageId)) {
         appendLog(
-          `[FCM_CACHE] = id=${entry.messageId.slice(0, 8)} already a full envelope, preview dropped`
+          `[FCM_CACHE] = id=${entry.messageId.slice(0, 8)} stands as a row this device cannot open, preview dropped`
+        );
+        continue;
+      }
+      const existing = found.rows.get(entry.messageId);
+      if (existing && !previewMayReplace(existing)) {
+        appendLog(
+          `[FCM_CACHE] = id=${entry.messageId.slice(0, 8)} already ${existing.isDeleted ? 'deleted' : 'a full envelope'}, preview dropped`
         );
         continue;
       }
@@ -412,8 +432,23 @@ async function consumeFcmCacheOnce(
       // RECORDED ONLY ON THE PATH THAT WROTE IT, so the caller cannot be handed a label for a row
       // that does not exist: a throw below leaves neither store carrying this group.
       placeholders.set(entry.groupId, placeholder);
-      // .saveMessage() uses .put() - the MLS pipeline can overwrite with the full data
-      await storage.saveMessage(msg, deviceKeyB64);
+      // A preview replaces a preview by COMPARE-AND-SET, re-asking at the write whether the row is
+      // still one - a body the drain stored meanwhile is never written over, and a reaction merged
+      // onto the old preview stays. A new row is written only where none stands.
+      const written = existing
+        ? await storage.mergeMessages(
+            entry.groupId,
+            [msg.id],
+            (current) => (previewMayReplace(current) ? mergeStoredMessage(current, msg) : null),
+            deviceKeyB64
+          )
+        : await storage.saveMessagesIfAbsent([msg], deviceKeyB64);
+      if (!written.has(msg.id)) {
+        appendLog(
+          `[FCM_CACHE] = id=${entry.messageId.slice(0, 8)} was written by another writer meanwhile, preview dropped`
+        );
+        continue;
+      }
       injected.push(msg);
       appendLog(
         `[FCM_CACHE] ✓ id=${entry.messageId.slice(0, 8)} group=${entry.groupId.slice(0, 8)} type=${entry.type}`

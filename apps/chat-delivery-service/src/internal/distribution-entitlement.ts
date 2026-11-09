@@ -49,6 +49,50 @@ export async function isEntitledToDistributionGroup(
   return entitled;
 }
 
+/** The prefix a salon's conversation id carries on the client (`channel_<channelId>`). */
+const SALON_CONVERSATION_PREFIX = 'channel_';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The salon a client's conversation id names - `channel_<uuid>`, the key a salon's reaction push
+ * carries as its `groupId` - or `null` for any other id. A prefix followed by anything but a uuid
+ * names no salon, and is `null` too: the caller then reads it as the group id it is not.
+ */
+export function salonIdOf(conversationId: string): string | null {
+  if (!conversationId.startsWith(SALON_CONVERSATION_PREFIX)) return null;
+  const id = conversationId.slice(SALON_CONVERSATION_PREFIX.length);
+  return UUID_RE.test(id) ? id : null;
+}
+
+/**
+ * Whether `userId` may READ the salon `channelId` - a public salon's community member, a private
+ * salon's reader - asked of social-service, which owns that roster. The salon half of the gate on
+ * `mls/notify-reaction`: a salon is no group of this service, so no seat here can answer for it.
+ *
+ * An ANSWER is `true` or `false`; anything else throws the retryable 503 `salon_reader_unavailable`.
+ * The push it gates is then not sent: a salon reaction's notification is best effort and is lost
+ * while social-service is down, said on both sides (`[SALON_READER]` here, a warn in the client).
+ */
+export async function isSalonReader(
+  channelId: string,
+  userId: string,
+  traceId: string
+): Promise<boolean> {
+  const what = `[SALON_READER][${traceId}] UNANSWERED channel=${channelId} user=${userId.slice(0, 8)}`;
+  const reader = await askSocial(
+    `internal/channels/${encodeURIComponent(channelId)}/reader`,
+    { userId },
+    'reader',
+    what,
+    'salon_reader_unavailable'
+  );
+  if (typeof reader !== 'boolean') {
+    return unanswered(what, 'no boolean in the answer', 'salon_reader_unavailable');
+  }
+  return reader;
+}
+
 /** How a key group's departure ended, as social-service decided it once and for all. */
 export type DepartureOutcome = 'departed' | 'cancelled';
 
@@ -83,11 +127,22 @@ export async function askDepartureOutcome(
   return outcome;
 }
 
-/** Logs `what` with `why` and throws the retryable 503 every unanswered question here is. */
-function unanswered(what: string, why: string): never {
+/** The `error` of the 503 an unanswered question throws - one per question, so a reader can tell them apart. */
+export type UnansweredCode = 'entitlement_unavailable' | 'salon_reader_unavailable';
+
+/**
+ * Logs `what` with `why` and throws the retryable 503 every unanswered question here is, named by
+ * `code`: the key-group entitlement and the salon reader are two questions, and a client or a log
+ * reader told `entitlement_unavailable` for a reaction would look in the wrong place.
+ */
+function unanswered(
+  what: string,
+  why: string,
+  code: UnansweredCode = 'entitlement_unavailable'
+): never {
   logger.warn(`${what}: ${why}`);
   throw new ServiceUnavailableException({
-    error: 'entitlement_unavailable',
+    error: code,
     message: 'membership could not be checked, retry',
   });
 }
@@ -101,10 +156,11 @@ async function askSocial(
   path: string,
   body: Record<string, unknown>,
   field: string,
-  what: string
+  what: string,
+  code: UnansweredCode = 'entitlement_unavailable'
 ): Promise<unknown> {
   const secret = process.env.INTERNAL_SECRET ?? '';
-  if (!secret) return unanswered(what, 'INTERNAL_SECRET unset');
+  if (!secret) return unanswered(what, 'INTERNAL_SECRET unset', code);
   let res: globalThis.Response;
   try {
     res = await fetch(socialUrl(path), {
@@ -116,13 +172,14 @@ async function askSocial(
   } catch (e) {
     return unanswered(
       what,
-      `unreachable ${e instanceof Error ? `${e.name} ${e.message}` : String(e)}`
+      `unreachable ${e instanceof Error ? `${e.name} ${e.message}` : String(e)}`,
+      code
     );
   }
-  if (!res.ok) return unanswered(what, `status=${res.status}`);
+  if (!res.ok) return unanswered(what, `status=${res.status}`, code);
   try {
     return ((await res.json()) as Record<string, unknown>)[field];
   } catch (e) {
-    return unanswered(what, `unreadable body ${e instanceof Error ? e.message : String(e)}`);
+    return unanswered(what, `unreadable body ${e instanceof Error ? e.message : String(e)}`, code);
   }
 }

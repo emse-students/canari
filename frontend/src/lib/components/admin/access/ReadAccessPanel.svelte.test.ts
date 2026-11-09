@@ -12,6 +12,7 @@ import { flushSync, mount, unmount } from 'svelte';
 const api = vi.hoisted(() => ({
   listReadGrants: vi.fn(),
   setReadGrant: vi.fn(),
+  setReadGrantComments: vi.fn(),
 }));
 vi.mock('$lib/associations/api', () => api);
 vi.mock('$lib/utils/users/displayName', () => ({
@@ -64,6 +65,7 @@ const JOURNAL = [
 beforeEach(() => {
   api.listReadGrants.mockResolvedValue({ grants: [GRANT], journal: JOURNAL });
   api.setReadGrant.mockResolvedValue(undefined);
+  api.setReadGrantComments.mockResolvedValue(undefined);
 });
 
 async function render() {
@@ -281,4 +283,67 @@ it("a write landing after its sheet closed never puts its undo row in another pe
   // The toast still offers the undo; u2's sheet shows nothing of u1's change.
   expect(toastStore.toasts[0].message).toContain('Name u1');
   expect(document.querySelector('[data-testid="read-grant-last-change"]')).toBeNull();
+});
+
+/** The switch "voit les commentaires" in the open sheet. */
+const commentsSwitch = () =>
+  document.querySelector<HTMLInputElement>('[data-testid="read-grant-comments"] input')!;
+
+it('the comments switch is OFF by default, says what the person will not see, and saves at once', async () => {
+  const target = await render();
+  target.querySelector<HTMLButtonElement>('[data-testid="read-grant-card"] button')!.click();
+  flushSync();
+  const box = commentsSwitch();
+  expect(box.checked).toBe(false);
+  const row = document.querySelector('[data-testid="read-grant-comments"]')!;
+  expect(row.textContent).toContain(m.readaccess_comments_label());
+  expect(row.textContent).toContain(m.readaccess_comments_hint_off());
+
+  api.listReadGrants.mockResolvedValue({
+    grants: [GRANT],
+    readers: [{ userId: 'u1', seesComments: true, updatedBy: 'admin', updatedAt: 'x' }],
+    journal: JOURNAL,
+  });
+  box.click();
+  await vi.waitFor(() => expect(api.setReadGrantComments).toHaveBeenCalledWith('u1', true));
+  await vi.waitFor(() => expect(toastStore.toasts).toHaveLength(1));
+  expect(toastStore.toasts[0].message).toBe(m.readaccess_comments_shown_toast({ name: 'Name u1' }));
+  await vi.waitFor(() => expect(commentsSwitch().checked).toBe(true));
+  expect(document.querySelector('[data-testid="read-grant-comments"]')!.textContent).toContain(
+    m.readaccess_comments_hint_on()
+  );
+
+  // Undo is the inverse write, as for a cell.
+  toastStore.toasts[0].action!.run();
+  await vi.waitFor(() => expect(api.setReadGrantComments).toHaveBeenLastCalledWith('u1', false));
+});
+
+it('a click on the comments switch while it saves is put back, and nothing is sent twice', async () => {
+  const target = await render();
+  target.querySelector<HTMLButtonElement>('[data-testid="read-grant-card"] button')!.click();
+  flushSync();
+  let release!: () => void;
+  api.setReadGrantComments.mockReturnValueOnce(new Promise<void>((r) => (release = r)));
+  commentsSwitch().click();
+  await vi.waitFor(() => expect(commentsSwitch().getAttribute('aria-busy')).toBe('true'));
+  commentsSwitch().click();
+  flushSync();
+  expect(commentsSwitch().checked).toBe(true);
+  expect(api.setReadGrantComments).toHaveBeenCalledTimes(1);
+  release();
+});
+
+it('the journal says a switch change in words, with no campus', async () => {
+  api.listReadGrants.mockResolvedValue({
+    grants: [GRANT],
+    journal: [
+      { userId: 'u1', campus: null, formation: null, action: 'cmt_hide', actor: 'admin', at: 'b' },
+      ...JOURNAL,
+    ],
+  });
+  const target = await render();
+  const journal = target.querySelector('[data-testid="access-journal"]')!;
+  expect(journal.textContent).toContain(
+    m.readaccess_journal_comments_hide({ actor: 'Name admin', name: 'Name u1' })
+  );
 });

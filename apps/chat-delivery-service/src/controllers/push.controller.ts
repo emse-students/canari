@@ -9,6 +9,7 @@ import {
   BadRequestException,
   ConflictException,
   UseGuards,
+  Header,
   Headers,
   Res,
   Logger,
@@ -40,6 +41,14 @@ import { PAYLOAD_RELATION, materializeDeliveries } from '../utils/queued-payload
 import { parseSessionId } from '../utils/session-id';
 import { isPublicMlsFrame } from '../utils/mls-frame-epoch';
 import { MessagingService, activationRefusalException } from '../services/messaging.service';
+import {
+  buildEnvelopeAnswer,
+  buildWakeFrameAnswer,
+  type WakeAnswer,
+} from '../services/push-payload';
+import { MLS_WAKE_VERSION, parseWakeVersion } from '../utils/push-mode';
+import { serveEnvelope, sweepDeviceEnvelopes } from '../utils/push-envelope';
+import { cutDeviceId } from '../utils/log-repeat';
 import { coreUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
 /**
@@ -76,9 +85,36 @@ function backgroundWelcomeRefusal(
 
 /**
  * What a blind salon banner may say it lacked - the four terms of the phone's own test
- * (`postChannelNotification` on Android, `handleChannelMessage` in the iOS extension).
+ * (`postChannelNotification` on Android, `handleChannelMessage` in the iOS extension). Pinned by
+ * `libs/contracts/blind-banner-terms.json` (`missing`), which the spec asserts.
  */
-const BLIND_BANNER_TERMS = new Set(['seed', 'ciphertext', 'nonce', 'messageIndex']);
+export const BLIND_BANNER_TERMS: ReadonlySet<string> = new Set([
+  'seed',
+  'ciphertext',
+  'nonce',
+  'messageIndex',
+]);
+
+/**
+ * Why an open that DID run did not show the message - the `refused=` term (2026-11-04). The tokens
+ * `open_graine_push` answers (`background.rs`), plus the three the Android service names itself:
+ * `empty-text` (opened, nothing to draw), `exception`, and `unstated` (a refusal with no token).
+ * Pinned by `libs/contracts/blind-banner-terms.json` (`refused`), which the spec asserts.
+ */
+export const BLIND_BANNER_REFUSALS: ReadonlySet<string> = new Set([
+  'seed-not-mirrored',
+  'mirror-unreadable',
+  'below-floor',
+  'push-field-malformed',
+  'author-mismatch',
+  'signature-missing',
+  'signature-refused',
+  'graine-open-failed',
+  'plaintext-not-renderable',
+  'empty-text',
+  'exception',
+  'unstated',
+]);
 
 /**
  * Key-group requests one user may make per minute on EACH of `mls/push/key-group-base` and
@@ -92,6 +128,24 @@ const BLIND_BANNER_TERMS = new Set(['seed', 'ciphertext', 'nonce', 'messageIndex
  * phone settles it `deferred` on that base, never `lost`.
  */
 export const KEY_GROUP_PUSH_LIMIT_PER_MINUTE = 64;
+
+/**
+ * Wake-up fetches one USER may make per minute on `mls/push/wake`, PER REPLICA (one per wake push a
+ * device received; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+ *
+ * What the number is, and is not: the throttler keys on the user (`PushSecretThrottlerGuard`), so
+ * every device of that user shares it, and its storage is the replica's own memory, so N replicas
+ * admit up to N times it. It is therefore a bound on abuse, not a per-phone budget. Sized from one
+ * phone upward: Android posts at most 5 notifications a second per app
+ * (`NotificationManagerService.MAX_PACKAGE_ENQUEUE_RATE`), so 300 a minute is every VISIBLE frame
+ * one phone can show; 600 leaves the same again for silent frames or a second device. A user whose
+ * devices together exceed it on one replica gets a `429`, which each device treats as a failed
+ * fetch (logged, accused) - the frame stays queued for the next open.
+ */
+export const WAKE_FETCH_LIMIT_PER_MINUTE = 600;
+
+/** A queued row's id (`QueuedMessage.id`) and an envelope's (`PushEnvelope.id`) are uuids: anything else is refused before Postgres sees it. */
+const QUEUED_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Outcome vocabulary of the `[PUSH_AVATAR]` line. */
 type AvatarPushOutcome = 'served' | 'absent' | 'unavailable' | 'unreachable' | 'rejected';
@@ -191,6 +245,13 @@ export class PushController {
    *
    * PushSecret, like every route a killed app calls: there is no session to send. `missing` is an
    * ALLOWLIST - an unknown term prints as `invalid`, so a client cannot write the line it likes.
+   *
+   * `refused` (2026-11-04) is the other half: the phone HELD the seed and its open did not show the
+   * message (a v2 refusal, a floor, an unreadable mirror, a row with nothing to draw). Until then
+   * those banners were never reported at all, so the count could not see a whole class of blind
+   * banner. Same allowlist rule; absent - every build before it, and every banner whose open never
+   * ran - prints `none`. A report naming a refusal and no missing term prints `missing=none`,
+   * because nothing was missing: the open ran.
    */
   @UseGuards(ThrottlerGuard)
   @Post('mls/push/blind-banner')
@@ -204,21 +265,31 @@ export class PushController {
       platform?: unknown;
       missing?: unknown;
       held?: unknown;
+      refused?: unknown;
     }
   ): Promise<{ recorded: true }> {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
     const terms = Array.isArray(body.missing) ? body.missing : [];
+    const refused =
+      body.refused === undefined || body.refused === null
+        ? 'none'
+        : BLIND_BANNER_REFUSALS.has(body.refused as string)
+          ? (body.refused as string)
+          : 'invalid';
     const missing = terms.length
       ? terms
           .map((t) => (BLIND_BANNER_TERMS.has(t as string) ? (t as string) : 'invalid'))
           .join(',')
-      : 'unstated';
+      : refused === 'none'
+        ? 'unstated'
+        : 'none';
     const platform = body.platform === 'ios' ? 'ios' : 'android';
     this.logger.warn(
       `[PUSH_BLIND] user=${userId} device=${deviceId} platform=${platform} ` +
-        `channel=${sanitizeLogValue(body.channelId)} missing=${missing} held=${body.held === true}`
+        `channel=${sanitizeLogValue(body.channelId)} missing=${missing} held=${body.held === true} ` +
+        `refused=${refused}`
     );
     return { recorded: true };
   }
@@ -302,6 +373,8 @@ export class PushController {
       platform?: string;
       voipToken?: string | null;
       locale?: string;
+      wake?: boolean;
+      wakeVersion?: number;
     },
     @Headers('x-user-id') userIdRaw: string,
     @Headers('x-session-id') sessionIdRaw?: string
@@ -331,6 +404,21 @@ export class PushController {
         ? body.locale.trim().slice(0, 5)
         : undefined;
 
+    // WHICH WAKE THIS BINARY UNDERSTANDS, written on every registration and 0 unless said: unlike
+    // the locale, an absent field is a statement - the build predates the wake handler (or is a
+    // downgrade), and a wake sent to it would be dropped. See `PushToken.wakeVersion`. `wakeCapable`
+    // is still written beside it, for a rollback to a server that reads it.
+    const declared = parseWakeVersion(body);
+    if (declared.malformed) {
+      this.logger.warn(
+        `[PUSH_REGISTER] user=${userId} device=${deviceId} declared an unreadable wakeVersion=` +
+          `${sanitizeLogValue(typeof body.wakeVersion === 'number' ? String(body.wakeVersion) : body.wakeVersion)} ` +
+          `- stored 0, the device gets the full push`
+      );
+    }
+    const wakeVersion = declared.version;
+    const wakeCapable = wakeVersion >= MLS_WAKE_VERSION;
+
     // Generate a per-device push secret, hash it for storage so a plaintext DB
     // leak doesn't expose usable push secrets directly.
     const rawSecret = crypto.randomUUID().replace(/-/g, '');
@@ -347,6 +435,8 @@ export class PushController {
         platform,
         pushSecret,
         sessionId,
+        wakeCapable,
+        wakeVersion,
         ...(voipToken !== undefined ? { voipToken } : {}),
         ...(locale ? { locale } : {}),
       },
@@ -355,8 +445,24 @@ export class PushController {
     this.logger.log(
       `[PUSH_REGISTER] user=${userId} device=${deviceId} platform=${platform} ` +
         `locale=${locale ?? 'unstated'} voip=${voipToken === undefined ? 'unstated' : voipToken === null ? 'none' : 'set'} ` +
-        `session=${sessionId ? sessionId.slice(0, 8) : 'none'}`
+        `session=${sessionId ? sessionId.slice(0, 8) : 'none'} wake=${wakeVersion}`
     );
+    // THE APP IS OPEN, so the envelopes this device was woken for are on screen over HTTP - the second
+    // of an envelope's three deaths (`utils/push-envelope.ts`). A failure here costs storage, never
+    // the registration: the device must still receive its secret.
+    try {
+      const swept = await sweepDeviceEnvelopes(this.pushTokenRepo.manager, userId, deviceId);
+      if (swept > 0) {
+        this.logger.log(
+          `[PUSH_ENVELOPE] register swept=${swept} user=${userId} device=${cutDeviceId(deviceId)}`
+        );
+      }
+    } catch (e) {
+      this.logger.error(
+        `[PUSH_ENVELOPE] register sweep FAILED user=${userId} device=${cutDeviceId(deviceId)} - ` +
+          `its envelopes wait for the next registration or the cap: ${String(e)}`
+      );
+    }
     // rawSecret returned ONCE - the client must persist it.
     return { status: 'registered', pushSecret: rawSecret };
   }
@@ -411,6 +517,158 @@ export class PushController {
   }
 
   /**
+   * What a CONTENT-FREE WAKE-UP push left on this server: the data map the full push would have
+   * carried, for the device that was woken (owner, 2026-11-02;
+   * docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+   *
+   * Auth: `Authorization: PushSecret {secret}` with the device's own `userId` and `deviceId` in the
+   * QUERY - the Android service and the iOS extension and app already hold that secret and have no
+   * JWT. Proven ONCE by `PushSecretGuard` (which reads a GET's ids from its query), then counted per
+   * user by `PushSecretThrottlerGuard` ({@link WAKE_FETCH_LIMIT_PER_MINUTE}). The row is found by
+   * (id, recipient, device), so a secret opens only its own queue; a `messageId` that is not a uuid
+   * is a `400`, never a query Postgres refuses with a `500`.
+   *
+   * `silent` is the bit the wake push carried (`buildWakeDataFields`): the sender's "draw nothing"
+   * is decided at send time and is not on the row, so it travels with the device. Everything else is
+   * decided HERE by `describeQueuedFrame`, the same function the full push calls.
+   *
+   * Answers `{status: 'frame', fields, presentation}` or `{status: 'gone'}` (`WakeAnswer`); one line
+   * per fetch, so `[PUSH_SEND] mode=wake` minus `[PUSH_WAKE] served|gone` is the wakes no device
+   * acted on.
+   *
+   * AN ENVELOPE WAKE (`envelopeId` instead of `messageId` and `silent`; content-free push WP-W3) is
+   * answered by {@link fetchEnvelope}: `{status: 'push', fields, presentation}` or `gone`. Exactly one
+   * of the two keys, or a `400`.
+   *
+   * `Cache-Control: no-store`: a per-device answer about a queue that changes under it, so no
+   * client, proxy or OS cache may replay it - a stale `frame` would draw a message already read.
+   */
+  @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
+  @Throttle({ default: { limit: WAKE_FETCH_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  @Header('Cache-Control', 'no-store')
+  @Get('mls/push/wake')
+  async fetchWakeFrame(
+    @Query('messageId') messageIdRaw: string | undefined,
+    @Query('userId') userIdRaw: string,
+    @Query('deviceId') deviceIdRaw: string,
+    @Query('silent') silentRaw?: string,
+    @Query('envelopeId') envelopeIdRaw?: string
+  ): Promise<WakeAnswer> {
+    const userId = sanitizeQueryValue(userIdRaw ?? '', 'userId');
+    const deviceId = sanitizeQueryValue(deviceIdRaw ?? '', 'deviceId');
+    if (envelopeIdRaw !== undefined) {
+      if (messageIdRaw !== undefined) {
+        throw new BadRequestException('name messageId or envelopeId, not both');
+      }
+      return this.fetchEnvelope(envelopeIdRaw, userId, deviceId);
+    }
+    const messageId = sanitizeQueryValue(messageIdRaw ?? '', 'messageId');
+    if (silentRaw !== 'true' && silentRaw !== 'false') {
+      throw new BadRequestException('silent must be "true" or "false"');
+    }
+    const silent = silentRaw === 'true';
+    if (!QUEUED_ID_RE.test(messageId)) {
+      throw new BadRequestException('messageId must be a queued message id');
+    }
+    // The PushSecret of `userId:deviceId` is proven by `PushSecretGuard`, first on this route.
+
+    const found = await this.queuedMessageRepo.findOne({
+      where: { id: messageId, recipientId: userId, deviceId },
+      relations: PAYLOAD_RELATION,
+    });
+    const [queued] = found ? materializeDeliveries([found], this.logger, 'wake') : [];
+    if (!queued) {
+      this.logger.log(
+        `[PUSH_WAKE] gone queued=${messageId} device=${cutDeviceId(deviceId)} - drained or acknowledged since the push`
+      );
+      return { status: 'gone' };
+    }
+    const groupId = queued.groupId ?? '';
+    const senderId = queued.senderId ?? '';
+    if (!groupId || !senderId) {
+      // Every row the MLS send path writes names both; one that does not was written by something
+      // else, and the description below would name nobody. Served anyway - the device then draws
+      // what it can - and accused, because the writer is the defect.
+      this.logger.warn(
+        `[PUSH_WAKE] queued=${messageId} carries groupId=${groupId ? 'set' : 'absent'} senderId=${senderId ? 'set' : 'absent'} - served as it is`
+      );
+    }
+    // Its decisions were logged when the push left; the fetch repeats none of them.
+    const input = await this.messagingService.describeQueuedFrame(
+      queued,
+      groupId,
+      senderId,
+      silent,
+      `wake-${messageId.slice(0, 8)}`,
+      'fetch'
+    );
+    // The ciphertext exactly as the full push and `fetch-proto` read it, legacy row accused alike.
+    if (!queued.proto && queued.content) {
+      this.logger.warn(
+        `[PUSH] LEGACY_CONTENT_ROW queuedId=${queued.id} recipient=${userId}:${deviceId} - ` +
+          `row carries no proto; served from the retired content column (wake)`
+      );
+    }
+    // The device's language decides the presentation's fallback body and nothing else.
+    const token = await this.pushTokenRepo.findOne({
+      where: { userId, deviceId },
+      select: { locale: true },
+    });
+    const answer = buildWakeFrameAnswer(input, queued.proto ?? queued.content ?? '', token?.locale);
+    this.logger.log(
+      `[PUSH_WAKE] served queued=${messageId} device=${cutDeviceId(deviceId)} silent=${input.silent} welcome=${input.isWelcome}`
+    );
+    return answer;
+  }
+
+  /**
+   * The envelope half of `GET /mls/push/wake`: what a `sendPushToUser` push would have handed this
+   * device, kept in its envelope (`utils/push-envelope.ts`). The PushSecret of `userId:deviceId` was
+   * proven by the route's guard; the envelope is found by `(id, userId, deviceId)`, so a secret opens
+   * only its own.
+   *
+   * Serving does not delete: a repeat fetch is served the same map again (`served again`, with the
+   * count), and the device deduplicates by the envelope id - a response lost on the way is never
+   * turned into a `gone` counted as a success. An id that exists under another device or account is
+   * logged `foreign` and answered `gone`, so the device learns nothing about it.
+   *
+   * @param envelopeIdRaw - The wake's `envelopeId`; anything but a uuid is a `400`.
+   * @param userId - The fetching account, already sanitized.
+   * @param deviceId - The fetching device, already sanitized.
+   */
+  private async fetchEnvelope(
+    envelopeIdRaw: string,
+    userId: string,
+    deviceId: string
+  ): Promise<WakeAnswer> {
+    const envelopeId = sanitizeQueryValue(envelopeIdRaw, 'envelopeId');
+    if (!QUEUED_ID_RE.test(envelopeId)) {
+      throw new BadRequestException('envelopeId must be an envelope id');
+    }
+    const found = await serveEnvelope(this.pushTokenRepo.manager, envelopeId, userId, deviceId);
+    const short = envelopeId.slice(0, 8);
+    if (found.kind === 'foreign') {
+      this.logger.log(
+        `[PUSH_WAKE] foreign envelope=${short} device=${cutDeviceId(deviceId)} - it belongs to another ` +
+          `registration (a wake for an account this device no longer runs); answered gone`
+      );
+      return { status: 'gone' };
+    }
+    if (found.kind === 'gone') {
+      this.logger.log(
+        `[PUSH_WAKE] gone envelope=${short} device=${cutDeviceId(deviceId)} - the app opened, the ` +
+          `registration went or the cap evicted it since the push`
+      );
+      return { status: 'gone' };
+    }
+    this.logger.log(
+      `[PUSH_WAKE] ${found.times > 1 ? `served again times=${found.times}` : 'served'} envelope=${short} ` +
+        `device=${cutDeviceId(deviceId)} platform=${found.platform} kind=${found.content.data?.type ?? 'none'}`
+    );
+    return buildEnvelopeAnswer(found.content, found.platform, found.locale);
+  }
+
+  /**
    * Avatar proxy for the Android background service (PushSecret auth, no JWT).
    * Called by CanariFirebaseMessagingService.fetchAvatar() to display the sender's
    * photo in the notification large icon.
@@ -443,7 +701,13 @@ export class PushController {
     }
 
     try {
+      // THE SERVICE CREDENTIAL, because no viewer session exists here to sign an avatar token for:
+      // core exempts a caller proving `INTERNAL_SECRET` from the token (`avatar-access.ts` in
+      // core-service). Unset, the request goes unsigned and core counts it as
+      // `[AVATAR] ... access=unsigned via=direct` - the line that names this estate's missing secret.
+      const internalSecret = process.env.INTERNAL_SECRET ?? '';
       const upstream = await fetch(coreUrl(`users/${encodeURIComponent(targetUserId)}/avatar`), {
+        headers: internalSecret ? { 'x-internal-secret': internalSecret } : {},
         signal: AbortSignal.timeout(4_000),
       });
       if (!upstream.ok) {

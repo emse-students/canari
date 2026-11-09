@@ -15,6 +15,8 @@
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { CreditCard } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { conflictsIfEnabled, type FormOptionState } from '$lib/forms/formOptionRules';
+  import { conflictHint } from '$lib/forms/formOptionConflict';
   import { activePaymentProvider } from '$lib/associations/activePaymentProvider.svelte';
   import { onlinePaymentCopy } from '$lib/associations/paymentProviderCopy';
 
@@ -37,17 +39,25 @@
   interface Props {
     /** Whether the form charges anything. */
     requiresPayment: boolean;
-    /** An anonymous form cannot charge: a payment names its payer. */
-    anonymous: boolean;
     /**
-     * A public form CAN charge (WP-P1): a guest pays on Lydia's page with an e-mail it types. Only
-     * its grid is narrowed - to answers, the one criterion a guest has.
+     * The form's options as the shared rule reads them (`editorOptionState`): what shuts the payment
+     * switch - an anonymous form, whose payer a payment would name.
+     */
+    optionState: FormOptionState;
+    /**
+     * A public form CAN charge (WP-P1): a guest pays on Lydia's page with an e-mail it types, and on
+     * a grid by who the person is pays the "everyone else" tier.
      */
     isPublic: boolean;
     /** The single price, in euros. Still the only price for a form with no grid. */
     basePrice: number;
     /** Whether cash is accepted alongside online payment. */
     allowCashPayment: boolean;
+    /**
+     * Whether online payment is accepted (owner, 2026-11-08): off with cash on is a cash-only form.
+     * Offered to respondents only while the association can collect online (`payment-offer.ts`).
+     */
+    allowOnlinePayment: boolean;
     /** Days before an unvalidated cash submission expires. */
     cashPaymentExpiryDays: number | undefined;
     /** The pricing grid; null when the form has one price for everybody. */
@@ -72,10 +82,11 @@
 
   let {
     requiresPayment = $bindable(),
-    anonymous,
+    optionState,
     isPublic,
     basePrice = $bindable(),
     allowCashPayment = $bindable(),
+    allowOnlinePayment = $bindable(true),
     cashPaymentExpiryDays = $bindable(),
     priceMatrix = $bindable(),
     tiers,
@@ -94,9 +105,21 @@
   const paymentBlocker = $derived.by(() => {
     if (!requiresPayment) return null;
     if (!associationName) return 'no-association';
-    if (!associationCanBePaid) return 'not-ready';
+    // With cash accepted the form is publishable whatever online's readiness: no warning, a note.
+    if (!associationCanBePaid && !allowCashPayment) return 'not-ready';
     return null;
   });
+  /** Online is wanted but not ready, and cash answers meanwhile: said as a note, not a warning. */
+  const cashCoversOnline = $derived(
+    requiresPayment &&
+      !!associationName &&
+      !associationCanBePaid &&
+      allowCashPayment &&
+      allowOnlinePayment
+  );
+
+  /** Why the payment switch is shut, by the shared rule - null while it may be switched on. */
+  const paymentConflict = $derived(conflictHint(conflictsIfEnabled(optionState, 'takesPayment')));
 
   /** Drops every price of the form at once: the switch, the base price, the grid and cash payment. */
   function makeFree(): void {
@@ -141,9 +164,9 @@
       {/if}
       <Toggle
         bind:checked={requiresPayment}
-        disabled={anonymous}
+        disabled={paymentConflict != null}
         label={m.form_requires_payment_label()}
-        hint={anonymous ? m.form_payment_disabled_anonymous() : undefined}
+        hint={paymentConflict ?? undefined}
       />
 
       {#if requiresPayment}
@@ -169,6 +192,15 @@
               {m.form_no_payments_create_free_button()}
             </button>
           </div>
+        {:else if cashCoversOnline}
+          <!-- Cash is accepted: online not being ready is information, not an obstacle (owner,
+               2026-11-08). The form publishes and is answered in cash until online is ready. -->
+          <p
+            class="border-cn-border text-text-muted rounded-2xl border-2 px-4 py-3 text-sm"
+            data-testid="online-pending-cash-note"
+          >
+            {m.form_payment_online_pending_cash_note()}
+          </p>
         {/if}
 
         <div class="border-cn-border space-y-4 border-t-2 pt-4">
@@ -205,7 +237,8 @@
             {formations}
             {items}
             hasCotisation={tiers.length > 0}
-            answersOnly={isPublic}
+            title={m.form_grid_registration_title()}
+            {isPublic}
           />
         {/if}
 
@@ -239,6 +272,12 @@
               {/if}
             </div>
           </div>
+          <!-- The editor's choice (owner, 2026-11-08): off with cash on is a cash-only form. -->
+          <Toggle
+            bind:checked={allowOnlinePayment}
+            label={m.form_online_payment_label()}
+            hint={m.form_online_payment_toggle_hint()}
+          />
 
           <Toggle bind:checked={allowCashPayment} label={m.form_cash_label()} />
           {#if allowCashPayment}

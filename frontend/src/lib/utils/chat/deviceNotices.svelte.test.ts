@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DeviceEvent } from '$lib/mls-client/deviceTrust';
+import type { ServerInstant } from '$lib/mls-client/serverInstant';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import {
   resetReportedUninvitedEntries,
@@ -76,6 +77,8 @@ const storedNotices = () =>
 
 const DAY = 24 * 3600_000;
 const NOW = 100 * DAY;
+/** When the server accepted the commit that admitted the device (the commit log's `createdAt`). */
+const COMMIT_AT = NOW - 6 * 60_000;
 /** This device enrolled ten days ago. */
 const ENROLLED = 90 * DAY;
 
@@ -111,6 +114,8 @@ function makeCtx(over: Partial<DeviceNoticeContext> = {}) {
     }),
     // By default this device saw nobody leave any tree.
     removalEpochs: vi.fn(async (): Promise<number[]> => []),
+    // The commit log's instant for every commit: the admitting commit was accepted six minutes ago.
+    commitAcceptedAt: vi.fn(async (): Promise<ServerInstant> => ({ kind: 'at', at: COMMIT_AT })),
     addMessageToChat,
     resolveDisplayNames: async () => (id: string) => (id === 'bob' ? 'Bob' : id),
     deviceLabel: async () => undefined,
@@ -632,7 +637,9 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
       addedBy: 'bob:new-tablet',
       memberAlreadyPresent: true,
       firstInGroup: true,
-      trust: 'first-sight',
+      // THE ONE CLASS D3 KEEPS WITHHELD (owner, 2026-10-31): a known id under a new key. A further
+      // device under a first-sight or pinned key is an ordinary added device (the test below).
+      trust: 'key-changed',
       keyFingerprint: 'beef',
       ...over,
     });
@@ -661,8 +668,44 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
       epoch: 5,
       keyFingerprint: 'beef',
     });
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('never-seen device of a member'));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('known device of a member'));
     error.mockRestore();
+  });
+
+  it('drops an entry an earlier build left owed that is no longer one no member made - no line, no report', async () => {
+    // Under 1.6.6 a further device's own-commit entry under a first-sight key was `unvouched-device`
+    // and could be stored owed (its row not loaded yet). After the upgrade it is an added device
+    // (D2/D3): retried, it must never fall through to a `new-person` accusation of a member.
+    const owed = selfEntry({ trust: 'first-sight', keyFingerprint: '00ff' });
+    const stored = JSON.parse(localStorage.getItem(ACCOUNT_KEY.deviceNotices('alice')) ?? '{}');
+    localStorage.setItem(
+      ACCOUNT_KEY.deviceNotices('alice'),
+      JSON.stringify({ ...stored, owedUninvited: [owed] })
+    );
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { ctx, addMessageToChat } = makeCtx();
+
+    await deliverDeviceEvents([], ctx);
+
+    const lines = addMessageToChat.mock.calls.filter(([, , , o]) =>
+      String((o as { messageId?: string } | undefined)?.messageId).startsWith('uninvited-entry:')
+    );
+    expect(lines).toEqual([]);
+    expect(reporter).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('no longer an entry no member made'));
+    expect(
+      (
+        JSON.parse(localStorage.getItem(ACCOUNT_KEY.deviceNotices('alice')) ?? '{}') as {
+          owedUninvited?: unknown[];
+        }
+      ).owedUninvited ?? []
+    ).toEqual([]);
+    error.mockRestore();
+    info.mockRestore();
   });
 
   it("withholds history from it until a member's Add of it vouches for it", async () => {
@@ -971,13 +1014,21 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     error.mockRestore();
   });
 
-  it('reports a device pinned by ANOTHER group entering this one by itself - the pin vouches for nothing here', async () => {
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents([selfEntry({ trust: 'pinned' })], ctx);
-
-    expect(reporter).toHaveBeenCalledWith(
-      expect.objectContaining({ groupId: 'group-1', kind: 'unvouched-device' })
+  it('a further device entering by itself under its known or a first-seen key is an ordinary added device (D2, D3)', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents(
+      [
+        selfEntry({ trust: 'pinned' }),
+        selfEntry({ trust: 'first-sight', identity: 'bob:new-phone', addedBy: 'bob:new-phone' }),
+      ],
+      ctx
     );
+
+    expect(reporter).not.toHaveBeenCalled();
+    const accusing = addMessageToChat.mock.calls.filter(([, , , o]) =>
+      String((o as { messageId?: string } | undefined)?.messageId).startsWith('uninvited-entry:')
+    );
+    expect(accusing).toEqual([]);
   });
 
   it('says nothing for a device back in this group, a member-signed Add, or this device itself', async () => {
@@ -999,5 +1050,158 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     await deliverDeviceEvents([selfEntry({ groupId: 'community-key' })], ctx);
 
     expect(reporter).not.toHaveBeenCalled();
+  });
+});
+
+describe('deliverDeviceEvents - a line is dated by the commit that admitted the device', () => {
+  const at = (ms: number): ServerInstant => ({ kind: 'at', at: ms });
+  const answering = (answer: ServerInstant) => vi.fn(async (): Promise<ServerInstant> => answer);
+
+  it('a contact line carries the commit log instant of the commit at epoch - 1, not the merge', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents([event({ epoch: 5 })], ctx);
+
+    expect(ctx.commitAcceptedAt).toHaveBeenCalledWith('dm-1', 4);
+    expect(addMessageToChat).toHaveBeenCalledTimes(2);
+    for (const call of addMessageToChat.mock.calls) {
+      const options = call[3] as { timestamp?: Date; serverTimestamp?: number };
+      expect(options.timestamp?.getTime()).toBe(COMMIT_AT);
+      expect(options.serverTimestamp).toBe(COMMIT_AT);
+    }
+  });
+
+  it.each([
+    ['hole', 'error'],
+    [undefined, 'error'],
+    ['not-yet', 'warn'],
+    ['pruned', 'log'],
+  ] as const)(
+    'no commit log row (%s): settled undated at %s, written nowhere and not owed',
+    async (reason, level) => {
+      const spies = {
+        error: vi.spyOn(console, 'error').mockImplementation(() => {}),
+        warn: vi.spyOn(console, 'warn').mockImplementation(() => {}),
+        log: vi.spyOn(console, 'log').mockImplementation(() => {}),
+      };
+      const { ctx, addMessageToChat } = makeCtx({
+        commitAcceptedAt: answering(reason ? { kind: 'none', reason } : { kind: 'none' }),
+      });
+      await deliverDeviceEvents([event()], ctx);
+
+      expect(addMessageToChat).not.toHaveBeenCalled();
+      expect(spies[level]).toHaveBeenCalledWith(expect.stringContaining('line settled UNDATED'));
+      for (const [name, spy] of Object.entries(spies)) {
+        if (name !== level) {
+          expect(spy).not.toHaveBeenCalledWith(expect.stringContaining('line settled UNDATED'));
+        }
+      }
+      expect(storedNotices().owedLines ?? []).toEqual([]);
+      for (const spy of Object.values(spies)) spy.mockRestore();
+    }
+  );
+
+  it('a 403 is an ANSWER: the line is settled - not owed, not asked again, no warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const commitAcceptedAt = answering({ kind: 'refused' });
+    const { ctx, addMessageToChat } = makeCtx({ commitAcceptedAt });
+    await deliverDeviceEvents([event()], ctx);
+    await deliverDeviceEvents([], ctx);
+
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(storedNotices().owedLines ?? []).toEqual([]);
+    expect(commitAcceptedAt).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('a route this server does not serve (404) PARKS the line: owed, with no warning per drain', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { ctx, addMessageToChat } = makeCtx({
+      commitAcceptedAt: answering({ kind: 'unserved' }),
+    });
+    await deliverDeviceEvents([event()], ctx);
+    await deliverDeviceEvents([], ctx);
+
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(storedNotices().owedLines).toHaveLength(1);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('no answer at all: the line stays owed and is written, dated, on the next delivery', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let down = true;
+    const commitAcceptedAt = vi.fn(async (): Promise<ServerInstant> => {
+      if (down) throw new Error('network');
+      return at(COMMIT_AT);
+    });
+    const { ctx, addMessageToChat } = makeCtx({ commitAcceptedAt });
+    await deliverDeviceEvents([event()], ctx);
+    expect(addMessageToChat).not.toHaveBeenCalled();
+    expect(storedNotices().owedLines).toHaveLength(1);
+
+    down = false;
+    await deliverDeviceEvents([], ctx);
+    expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['dm-1', 'group-1']);
+    expect(
+      (addMessageToChat.mock.calls[0][3] as { serverTimestamp?: number }).serverTimestamp
+    ).toBe(COMMIT_AT);
+    warn.mockRestore();
+  });
+
+  describe('an uninvited-entry line', () => {
+    const intruder = event({
+      groupId: 'group-1',
+      identity: 'mallory:dev1',
+      addedBy: 'mallory:dev1',
+      memberAlreadyPresent: false,
+    });
+    beforeEach(() => resetReportedUninvitedEntries());
+
+    it('carries the commit instant too, and is refused without one', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const dated = makeCtx();
+      await deliverDeviceEvents([intruder], dated.ctx);
+      const options = dated.addMessageToChat.mock.calls[0][3] as {
+        timestamp?: Date;
+        serverTimestamp?: number;
+      };
+      expect(options.timestamp?.getTime()).toBe(COMMIT_AT);
+      expect(options.serverTimestamp).toBe(COMMIT_AT);
+
+      forgetDeviceNotices();
+      localStorage.clear();
+      loadDeviceNotices('alice');
+      resetReportedUninvitedEntries();
+      const refused = makeCtx({ commitAcceptedAt: answering({ kind: 'none' }) });
+      await deliverDeviceEvents([intruder], refused.ctx);
+      expect(refused.addMessageToChat).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('line settled UNDATED'));
+      error.mockRestore();
+    });
+
+    it('is accused ONCE: a time not asked yet keeps it owed without the accusation', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      let down = true;
+      const commitAcceptedAt = vi.fn(async (): Promise<ServerInstant> => {
+        if (down) throw new Error('network');
+        return at(COMMIT_AT);
+      });
+      const { ctx, addMessageToChat } = makeCtx({ commitAcceptedAt });
+      await deliverDeviceEvents([intruder], ctx);
+      await deliverDeviceEvents([], ctx);
+      const accusations = () =>
+        error.mock.calls.filter((c) => String(c[0]).includes('UNINVITED ENTRY')).length;
+      expect(accusations()).toBe(0);
+
+      down = false;
+      await deliverDeviceEvents([], ctx);
+      await deliverDeviceEvents([], ctx);
+      expect(accusations()).toBe(1);
+      expect(linesWrittenIn(addMessageToChat.mock.calls)).toEqual(['group-1']);
+      error.mockRestore();
+      warn.mockRestore();
+    });
   });
 });

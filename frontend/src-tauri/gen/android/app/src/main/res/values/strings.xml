@@ -59,6 +59,7 @@
          placeholder: a token is replaced by its label, whole. -->
     <string name="notif_mention_you">vous</string>
     <string name="notif_mention_someone">quelqu\'un</string>
+    <string name="notif_wake_unavailable">Un message n\'a pas pu être chargé. Ouvrez Canari pour le lire.</string>
 
     <!-- Rendered under the reactor's name in the conversation's notification, so it reads
          "Claire: a réagi 😂 à votre message". %1$s is the emoji. -->
@@ -117,6 +118,8 @@
     <string name="notif_chat_join_ask_anon_title">Quelqu\'un veut rejoindre</string>
     <string name="notif_social_follow_accepted_title">%1$s a accepté votre demande</string>
     <string name="notif_social_follow_accepted_body">Votre demande a été acceptée</string>
+    <string name="notif_social_birthday_title">C\'est l\'anniversaire de %1$s</string>
+    <string name="notif_social_birthday_body">Souhaitez-lui un bon anniversaire</string>
     <string name="notif_social_live_cut_title">Votre live a été interrompu</string>
     <string name="notif_social_live_cut_body">La modération a coupé votre live. Ceci est un avertissement.</string>
     <string name="notif_social_live_suspended_title">Lives suspendus</string>
@@ -131,6 +134,10 @@
     <string name="notif_social_booking_added_body">Retrouvez-la dans Réservations</string>
     <string name="notif_social_booking_reminder_title">Rappel de réservation</string>
     <string name="notif_social_booking_reminder_body">Votre réservation commence bientôt</string>
+    <string name="notif_social_booking_changed_title">%1$s a modifié votre réservation</string>
+    <string name="notif_social_booking_changed_body">Retrouvez le nouvel horaire dans Réservations</string>
+    <string name="notif_social_booking_removed_title">%1$s vous a retiré d\'une réservation</string>
+    <string name="notif_social_booking_removed_body">Vous n\'en faites plus partie</string>
     <string name="notif_form_opening_soon_title">Formulaire bientôt ouvert</string>
     <string name="notif_form_opening_soon_body">Un formulaire que vous suivez ouvre dans 5 minutes !</string>
     <string name="notif_form_open_title">Formulaire ouvert !</string>
@@ -143,6 +150,12 @@
     <string name="notif_lydia_payments_paused_body">Les paiements Lydia de %1$s sont suspendus : Lydia a refusé une demande de paiement.</string>
     <string name="notif_lydia_refund_issued_title">Remboursement</string>
     <string name="notif_lydia_refund_issued_body">%1$s vous a remboursé un paiement.</string>
+    <string name="notif_delegation_revoked_title">Paiements en pause</string>
+    <string name="notif_delegation_revoked_body">L\'association qui recevait les paiements de %1$s a mis fin à la délégation : ses paiements sont en pause.</string>
+    <string name="notif_delegation_receiver_not_ready_title">Paiements en pause</string>
+    <string name="notif_delegation_receiver_not_ready_body">L\'association qui reçoit les paiements de %1$s ne peut plus les encaisser : ses paiements sont en pause.</string>
+    <string name="notif_delegation_resumed_title">Paiements rétablis</string>
+    <string name="notif_delegation_resumed_body">Les paiements de %1$s reprennent.</string>
     <!-- The agenda's five pairs, added 2026-09-09 with the notifications themselves. `proposed`
          is the only one naming an actor, because it is the only one where WHO acted is the useful
          half: the other four are always "the BDE".
@@ -162,4 +175,6 @@
     <string name="notif_event_deleted_body">« %1$s » a été supprimé par le BDE</string>
     <string name="notif_event_pending_title">Événement à revalider</string>
     <string name="notif_event_pending_body">« %1$s » doit être revalidé : ses dates ont changé</string>
+    <string name="notif_event_pending_coorganiser_title">Événement à revalider</string>
+    <string name="notif_event_pending_coorganiser_body">« %1$s » doit être revalidé : une association a accepté de co-organiser</string>
 </resources>

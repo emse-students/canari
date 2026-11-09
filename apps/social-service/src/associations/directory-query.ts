@@ -74,26 +74,22 @@ export function parseSpaceSelection(raw: { campus?: string; formation?: string }
 export const AGENDA_SELECTION_REQUIRED = 'AGENDA_SELECTION_REQUIRED';
 
 /**
- * THE PUBLIC AGENDA IS ONE SIGNED FEED PER SELECTION (D40, amended 2026-10-06). An ANONYMOUS read
- * must name a campus / formation / association (`campus`, `formation`, `associationId`) AND carry
- * the `sig` the server signed for that selection, or name one event (`eventId`, the single-evening
- * link, readable unsigned like an SEO page). No selection and no event is a 400
- * `AGENDA_SELECTION_REQUIRED` - no fallback to "everything"; an unsigned or wrongly signed
- * selection is a 403 (`agenda-signature.ts`). A signed-in reader is already narrowed to their own
- * spaces, and `trusted` (a server-to-server call with the internal secret, the SEO page) is not
- * restricted: neither is checked.
+ * WITHOUT A SESSION, THE AGENDA IS READ ONLY THROUGH A SIGNED LINK (D40, amended 2026-10-06 and
+ * 2026-11-02). An ANONYMOUS read must name a campus / formation / association (`campus`,
+ * `formation`, `associationId`) AND carry the `sig` the server signed for that selection - a
+ * capability a member hands out. No selection is a 400 `AGENDA_SELECTION_REQUIRED` - no fallback to
+ * "everything"; an unsigned or wrongly signed selection is a 403 (`agenda-signature.ts`). One
+ * event's `.ics` has its own signed link, checked by its route (`eventIcsSignatureMatches`). A
+ * signed-in reader is already narrowed to their own spaces and is not checked here.
  */
 export function assertAgendaAccess(args: {
   selection: SpaceSelection;
   associationId?: string;
-  eventId?: string;
   sig?: string;
   signedIn: boolean;
-  trusted?: boolean;
 }): void {
-  if (args.signedIn || args.trusted) return;
+  if (args.signedIn) return;
   const associationId = args.associationId?.trim() || null;
-  if (args.eventId?.trim()) return;
   if (args.selection.campus === null && args.selection.formation === null && !associationId) {
     throw new BadRequestException({
       code: AGENDA_SELECTION_REQUIRED,

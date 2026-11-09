@@ -13,7 +13,8 @@ bun tools/call-audio-fidelity/rig.mjs              # the whole matrix, ~45 s a r
 bun tools/call-audio-fidelity/rig.mjs --only app,fault-no-decrypt --seconds 34 --out <dir> --keep
 ```
 
-`--chrome <path>` (default: the Windows install), `--seconds` (at least 34: the analysis skips 8 s
+`--chrome <path>` (default: this machine's Chrome, `tools/headless-chrome/chrome.mjs`, the driver
+shared with the SFU's end-to-end call), `--seconds` (at least 34: the analysis skips 8 s
 and needs two whole 12 s loops), `--out` (default: the OS temp dir), `--keep` (keep the profiles).
 Run nothing else heavy at the same time: two Chromes encoding and decoding in real time on a loaded
 host conceal and stretch for reasons that are the HOST's, and the rows read worse than the app is.
@@ -98,7 +99,9 @@ the same two keys for its whole-frame experiment.
 
 ## The video rows (2026-10-20)
 
-`video`, `video-camera-late`, `video-switch` and `video-off-on` are GATED: both pages send Chrome's
+`video`, `video-camera-late`, `video-switch`, `video-off-on` and `video-webkit-metadata` (the
+caller's frame metadata stripped of its codec, as WebKit's is - `impair.worker.ts`, 2026-11-07) are
+GATED: both pages send Chrome's
 fake camera (`--use-fake-device-for-media-stream=fps=30`) through the app's own worker, with the
 app's `callVideoConstraints`, `applyCallVideoRung` and `preferVp8` IMPORTED from
 `frontend/src/lib/utils/callVideo.ts`. Each adds these checks (`videoChecks`, self-tested by

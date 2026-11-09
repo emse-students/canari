@@ -7,6 +7,10 @@ import type { ReadWatermarks } from '$lib/types';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { pinEntries } from '$lib/stores/pinStore.svelte';
+import {
+  nicknameEntries,
+  type NicknameWireEntry,
+} from '$lib/utils/users/conversationNicknames.svelte';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 import { dropGroupState } from './dropGroupState';
 import { forgetGroupReconciliation } from './historyReconcile';
@@ -33,7 +37,7 @@ import {
 } from '$lib/mls-client/commitSubmission';
 import { readConfirmedTree } from './confirmedTree';
 import { anyHistoryWithheldIn, historyWithheldFrom } from './historyWithheld';
-import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
 
 /**
@@ -424,7 +428,7 @@ export async function removeMemberAndBroadcast(params: {
     );
 
   // 0. Known from leadership, a fact here - never learnt from a commit refused after the record.
-  if (getTabLeadership() === 'follower') {
+  if (refusesCommitsHere()) {
     console.warn(`[REMOVE_MEMBER] ${short}… removal asked of a follower tab - nothing recorded`);
     throw new FollowerTabCommitError(groupId);
   }
@@ -812,8 +816,11 @@ function serializeForBundle(m: StoredMessage) {
  * and the chunk that closes that ask.
  *
  * The ratchet cost of addressing - a non-recipient skips the sender's generations - is bounded by
- * `maximum_forward_distance` (2 000) over CONSECUTIVE addressed frames, i.e. one answer of 400 000
- * messages (docs/wiki/protocols/history-answer-addressing.md).
+ * `maximum_forward_distance` (2 000) over CONSECUTIVE addressed frames of one epoch. Since the join
+ * push follows every delivered Welcome, one bulk Add sends its pushes back to back, so the unit is the
+ * Add: at least one frame per added device, `ceil(entitled / 200)` for a returning member. Nothing caps
+ * the devices of one Add; the numbers that cross it are in
+ * docs/wiki/protocols/history-answer-addressing.md ("The ratchet cost of addressing").
  *
  * There is no `vouched` flag any more, and its absence is the point. It existed to tell a durable
  * marker whether it might be discharged - "I compared my whole store and you are complete" as
@@ -849,6 +856,10 @@ function bundleFrame(
         // would make it depend on which chunk survived. Merged per entry on `at`, so repeating it
         // is free in exactly the way a `max` is.
         ...(state?.pins?.length ? { pins: state.pins } : {}),
+        // The nickname register rides the JOIN PUSH only - the one bundle a reader takes it from
+        // (`mergeBundleNicknames`): in a broadcast it would be a relayer's word nobody believes.
+        // An older reader ignores the field.
+        ...(answer?.join && state?.nicknames?.length ? { nicknames: state.nicknames } : {}),
       })
     )
   );
@@ -878,6 +889,13 @@ type ConversationHistoryState = {
    * `unpin` is precisely the entry its snapshot omits, so there would be nothing to beat it with.
    */
   pins?: Array<{ id: string; pinned: boolean; at: number }>;
+  /**
+   * The nickname register ("Modifier les pseudos"), resets included, for the pin register's reason:
+   * the `nickname` frame that set a name ages out of the log, and a member admitted after it went out
+   * was never sent it. THIS is how a late joiner learns the names - the inviter's join push carries
+   * it even when every message is withheld - by a merge that converges, never by a re-announcement.
+   */
+  nicknames?: NicknameWireEntry[];
 };
 
 /**
@@ -898,11 +916,14 @@ async function storedConversationState(
     // The pin register is not on the row: it is device-local state keyed by the same group id,
     // which is precisely why it needed carrying at all.
     const pins = pinEntries(groupId);
+    // Device-local and keyed by the group id, like the pins - see `conversationNicknames.svelte.ts`.
+    const nicknames = nicknameEntries(groupId);
     return {
       readWatermarks: row?.readWatermarks,
       serverReadWatermarks: row?.serverReadWatermarks,
       historyFloor: row?.historyFloor,
       ...(pins.length > 0 ? { pins } : {}),
+      ...(nicknames.length > 0 ? { nicknames } : {}),
     };
   } catch (e) {
     // The empty state is deliberate (see the docstring) but it must not be SILENT: an unreadable row
@@ -969,6 +990,10 @@ export async function historyGroupStartFor(
  * The recipient deduplicates messages by `id` on receipt - multiple calls are idempotent.
  * Stops at the first chunk error to avoid spamming the network.
  *
+ * @returns {@link JoinPushOutcome} - whether anything reached the device, and when nothing did
+ *          because the server could not address it, that fact rather than a log line alone: an
+ *          addressed frame is transport-only, so a device offline at the push never receives it.
+ *
  * **An empty group is answered, not ignored**, and this is the one path where an empty bundle still
  * earns its frame: the receiver is a member being INVITED, so it has no conversation row yet, and
  * the bundle is what hands it the shared floor and the read watermarks. Everywhere else an empty
@@ -985,18 +1010,18 @@ export async function sendFullHistoryBundle(
     to: string;
   },
   chunkSize = 200
-): Promise<void> {
+): Promise<JoinPushOutcome> {
   const { storage, deviceKeyB64, mlsService, log, to } = deps;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
-    return;
+    return 'not-sent';
   }
   // Not even the state-only frame (its floor and watermarks) goes to a withheld device.
   if (await historyWithheldAfterSettling(groupId, to, mlsService, log)) {
     log(
       `[HISTORY_BUNDLE] ${to} entered ${groupId.slice(0, 8)}... unvouched - no history pushed to it until a member vouches for it`
     );
-    return;
+    return 'not-sent';
   }
 
   let messages: StoredMessage[];
@@ -1006,7 +1031,7 @@ export async function sendFullHistoryBundle(
     // A read that FAILED proves nothing about the group: stay silent so the requester retries
     // against another member rather than concluding the history is empty.
     log(`[HISTORY_BUNDLE] Read failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
-    return;
+    return 'not-sent';
   }
   const state = await storedConversationState(groupId, storage);
   // A group with no messages can still have read state, a floor and pins worth handing over - and
@@ -1015,7 +1040,7 @@ export async function sendFullHistoryBundle(
   // ADDRESSED like the rest of the push when the server routes it (step A), and closing the `join`
   // ask; broadcast when the windows could not be read, since nothing then says which - exactly the
   // frame this was before step A, and it carries no message.
-  const sendStateOnly = async (why: string, addressed: boolean): Promise<void> => {
+  const sendStateOnly = async (why: string, addressed: boolean): Promise<JoinPushOutcome> => {
     if (
       !addressed &&
       (await anyHistoryWithheldIn(groupId, () => mlsService.getGroupMemberIdentities(groupId)))
@@ -1023,7 +1048,7 @@ export async function sendFullHistoryBundle(
       log(
         `[HISTORY_BUNDLE] Not broadcasting the state-only frame in ${groupId.slice(0, 8)}... - a device there is withheld (${why})`
       );
-      return;
+      return 'not-sent';
     }
     const bytes = bundleFrame([], to, { state, answer: { join: true }, last: true });
     try {
@@ -1036,14 +1061,16 @@ export async function sendFullHistoryBundle(
       log(
         `[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (${why})${addressed ? `, addressed to ${to}` : ''}`
       );
+      return 'sent';
     } catch (e) {
       if (e instanceof AddressedUnsupportedError) {
         log(
           `[HISTORY_BUNDLE] ${to} cannot be addressed in ${groupId.slice(0, 8)}… (offline, or a session of it predates addressed answers) - pushing it nothing`
         );
-        return;
+        return 'unaddressable';
       }
       log(`[HISTORY_BUNDLE] Empty bundle send error: ${String(e).slice(0, 120)}`);
+      return 'not-sent';
     }
   };
   if (messages.length === 0) {
@@ -1055,8 +1082,7 @@ export async function sendFullHistoryBundle(
       userIdOfLeaf(to),
       true
     );
-    await sendStateOnly('group has no history', mode?.mode === 'addressed');
-    return;
+    return sendStateOnly('group has no history', mode?.mode === 'addressed');
   }
 
   // ADDRESSED TO THE INVITEE AND FILTERED ON THEIR OWN WINDOWS (step A; user, 2026-10-21: a new
@@ -1069,17 +1095,25 @@ export async function sendFullHistoryBundle(
     { mlsService, log },
     { chunkSize, to, state, answer: { join: true }, push: true }
   );
-  if (outcome.kind === 'refused') return;
+  if (outcome.kind === 'refused') return 'not-sent';
+  if (outcome.kind === 'unaddressable') return 'unaddressable';
   if (outcome.kind === 'unreadable') {
-    await sendStateOnly('exclusion windows unreadable - no message carried', false);
-    return;
+    return sendStateOnly('exclusion windows unreadable - no message carried', false);
   }
   if (outcome.kind === 'withheld-all') {
-    await sendStateOnly('every message withheld', outcome.addressed);
-    return;
+    return sendStateOnly('every message withheld', outcome.addressed);
   }
   log(`[HISTORY_BUNDLE] Full history sent: ${outcome.count} of ${messages.length} message(s)`);
+  return outcome.count > 0 ? 'sent' : 'not-sent';
 }
+
+/**
+ * What {@link sendFullHistoryBundle} did for the device it pushes to: something reached it, nothing
+ * did because the server could not address it (offline at the push, or a session of it predating
+ * addressed answers - `addressed_unsupported`), or nothing did for any other reason, each said in
+ * the log where it happened.
+ */
+export type JoinPushOutcome = 'sent' | 'unaddressable' | 'not-sent';
 
 /**
  * Whether `to` is withheld in `groupId`, read only AFTER every device event already merged has been
@@ -1222,7 +1256,7 @@ async function sendBundleChunks(
         log(
           `[HISTORY_BUNDLE] ${to} cannot be addressed in ${groupId.slice(0, 8)}… (offline, or a session of it predates addressed answers) - answering nothing rather than broadcasting`
         );
-        return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
+        return sent === 0 ? { kind: 'unaddressable' } : { kind: 'sent', count: sent };
       }
       log(`[HISTORY_BUNDLE] Chunk send error ${chunkNo}: ${String(e)}`);
       return { kind: 'sent', count: sent };
@@ -1240,13 +1274,16 @@ async function sendBundleChunks(
 /**
  * What {@link sendBundleChunks} did: no window could be read (nothing sent), every message was
  * withheld (nothing sent; `addressed` says how the last read said to route), the reader could not be answered at all (an addressed answer to no ask,
- * or a device the server cannot address - nothing sent, and nothing must be sent in its place), or
- * `count` messages went out before the end or the first failed chunk.
+ * or a withheld device - nothing sent, and nothing must be sent in its place), the server could not
+ * address the reader before a single chunk left (`unaddressable`: offline, or a session of it
+ * predating addressed answers - never turned into a broadcast either), or `count` messages went out
+ * before the end or the first failed chunk.
  */
 type BundleOutcome =
   | { kind: 'unreadable' }
   | { kind: 'withheld-all'; addressed: boolean }
   | { kind: 'refused' }
+  | { kind: 'unaddressable' }
   | { kind: 'sent'; count: number };
 
 /**
@@ -1254,6 +1291,10 @@ type BundleOutcome =
  *
  * Returns `null` when the store is unreadable, which is NOT the same as an empty conversation: an
  * empty store is a fact worth telling a peer, a failed read is a claim we are not entitled to make.
+ *
+ * The WHOLE store, deliberately: the digest diff is computed over all of it and clipped only on the
+ * way out (`answerHistoryDigest`), so a stored timestamp that differs by a hair between two devices
+ * cannot make a message near the boundary read as missing on one side for ever.
  */
 export async function readHistoryEntries(
   groupId: string,
@@ -1268,7 +1309,26 @@ export async function readHistoryEntries(
 }
 
 /**
- * Reads the whole local store for `groupId`, or `null` when it cannot be read.
+ * The most tombstones one digest answer carries beyond the ids the asker lacks
+ * (`sendHistoryBundleForIds`, `withTombstones`): the NEWEST ones in the window.
+ *
+ * A tombstone carries no body, but it does carry its id, its author and the author's signed
+ * deletion - a few hundred bytes - and a conversation's tombstones only ever grow, so an answer
+ * that sent them all grew with the conversation's whole deletion history on every exchange whose
+ * keys differed. 1000 is five bundle chunks (`chunkSize` 200): far above the deletions two devices
+ * diverge on between two connections, and a fixed ceiling on what one exchange may cost. What is
+ * past it is said at warn, with the count: the asker then converges on the newest 1000 and the
+ * older ones stay divergent until the window moves past them - the limit is stated, not hidden.
+ */
+export const HISTORY_TOMBSTONES_PER_ANSWER = 1000;
+
+/**
+ * Reads the local store for `groupId` from `since` on - the whole store when `since` is 0 - or
+ * `null` when it cannot be read.
+ *
+ * Bounded by the ASKED window wherever one is known, so an answer reads the rows it may send and
+ * nothing older (`getMessagesSince`, on the conversation-and-time index). The digest DIFF is the one
+ * reader that reads it all (`readHistoryEntries`), and says why.
  *
  * The distinction {@link readHistoryEntries} rests on, kept in one place: an empty store is a fact
  * worth telling a peer, a failed read is a claim we are not entitled to make. Exposed separately
@@ -1278,11 +1338,14 @@ export async function readHistoryEntries(
  */
 export async function readHistoryMessages(
   groupId: string,
-  { storage, deviceKeyB64, log }: HistoryStoreDeps
+  { storage, deviceKeyB64, log }: HistoryStoreDeps,
+  since = 0
 ): Promise<StoredMessage[] | null> {
   if (!storage) return null;
   try {
-    return await storage.getMessages(groupId, deviceKeyB64);
+    return since > 0
+      ? await storage.getMessagesSince(groupId, since, deviceKeyB64)
+      : await storage.getMessages(groupId, deviceKeyB64);
   } catch (e) {
     log(
       `[HISTORY_DIGEST] Store read failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`
@@ -1303,7 +1366,7 @@ export async function historyStateKeyFor(
   since: number,
   deps: HistoryStoreDeps
 ): Promise<string | null> {
-  return cachedHistoryStateKey(groupId, since, () => readHistoryMessages(groupId, deps));
+  return cachedHistoryStateKey(groupId, since, () => readHistoryMessages(groupId, deps, since));
 }
 
 /**
@@ -1648,26 +1711,36 @@ export async function sendHistoryBundleForIds(
     since: number;
     /** The `requestId` of the ask this answers - echoed so the asker can accept it addressed. */
     requestId?: string;
+    /**
+     * Also send every TOMBSTONE this device holds in the window, whether the asker lacks the id or
+     * not - the answer to a digest. The digest names ids only, while the state key that asked for
+     * it counts deletions too: two devices that differ only on a deletion compare equal ids, and the
+     * ids alone never told the asker what it missed - it asked again at every connection, for ever.
+     * A tombstone carries no body, and the asker applies it to the row it holds on its author's
+     * proof (`vetBundle`, `tombstoneHeld`).
+     */
+    withTombstones?: boolean;
   }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
-  const { to, chunkSize = 200, since, requestId } = opts;
+  const { to, chunkSize = 200, since, requestId, withTombstones = false } = opts;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
   }
 
   const wanted = new Set(ids);
-  if (wanted.size === 0) return;
+  if (wanted.size === 0 && !withTombstones) return;
 
-  const held = await readHistoryMessages(groupId, deps);
+  const held = await readHistoryMessages(groupId, deps, since);
   if (held === null) {
     // A read that FAILED proves nothing about the group: stay silent so the requester retries
     // against another member rather than concluding it is already complete.
     return;
   }
-  const matching = held.filter((m) => wanted.has(m.id));
-  const selected = matching.filter((m) => isWithinHistoryRange(Number(m.timestamp), since));
+  const matching = held.filter((m) => wanted.has(m.id) || (withTombstones && m.isDeleted === true));
+  const inWindow = matching.filter((m) => isWithinHistoryRange(Number(m.timestamp), since));
+  const selected = withinTombstoneCeiling(groupId, inWindow, wanted, log);
   const clipped = matching.length - selected.length;
   if (clipped > 0) {
     log(
@@ -1693,6 +1766,30 @@ export async function sendHistoryBundleForIds(
   log(
     `[HISTORY_BUNDLE] Diff sent for ${groupId.slice(0, 8)}…: ${outcome.count} of ${wanted.size} requested message(s)`
   );
+}
+
+/**
+ * `selected` with the tombstones nobody asked for by id cut to the newest
+ * {@link HISTORY_TOMBSTONES_PER_ANSWER}, in the order they came in; what is cut is said at warn.
+ */
+function withinTombstoneCeiling(
+  groupId: string,
+  selected: StoredMessage[],
+  wanted: ReadonlySet<string>,
+  log: (msg: string) => void
+): StoredMessage[] {
+  const extra = selected.filter((m) => !wanted.has(m.id));
+  if (extra.length <= HISTORY_TOMBSTONES_PER_ANSWER) return selected;
+  const kept = new Set(
+    [...extra]
+      .sort((a, b) => Number(b.timestamp) - Number(a.timestamp))
+      .slice(0, HISTORY_TOMBSTONES_PER_ANSWER)
+      .map((m) => m.id)
+  );
+  const line = `[HISTORY_BUNDLE] ${extra.length} tombstone(s) held in the window for ${groupId.slice(0, 8)}… - the newest ${HISTORY_TOMBSTONES_PER_ANSWER} sent, ${extra.length - HISTORY_TOMBSTONES_PER_ANSWER} older not`;
+  console.warn(line);
+  log(line);
+  return selected.filter((m) => wanted.has(m.id) || kept.has(m.id));
 }
 
 /**

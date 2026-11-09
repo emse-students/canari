@@ -65,7 +65,8 @@ function build(opts: { enabled?: boolean; dbAdmin?: boolean } = {}) {
       erasureState: jest.fn().mockResolvedValue('none'),
       confirmAfterSignIn: jest.fn().mockResolvedValue('none'),
     } as never,
-    {} as never // RestoreCredentialsService: no restore route here
+    {} as never, // RestoreCredentialsService: no restore route here
+    {} as never // HandoffService: no handoff route here
   );
   return { controller, adminer };
 }

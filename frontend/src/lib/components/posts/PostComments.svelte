@@ -4,7 +4,7 @@
   import type { PostComment, PostMediaRef } from '$lib/posts/api';
   import type { CommentIdentity } from '$lib/posts/postIdentity';
   import type { CommentOutcome } from '$lib/posts/postCommentThread.svelte';
-  import { commentAuthorKind, commentAuthorName } from '$lib/posts/commentAuthor';
+  import { commentAuthorName, replyMentionPrefill } from '$lib/posts/commentAuthor';
   import CommentItem, { commentAnchorId } from './CommentItem.svelte';
   import CommentComposer from './CommentComposer.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -153,6 +153,8 @@
 
   let replyingToId = $state<string | null>(null);
   let replyingToName = $state<string>('');
+  /** The mention token the reply box was pre-filled with, so a cancel can undo it untouched. */
+  let replyPrefill = '';
   let sortMode = $state<SortMode>('recent');
 
   /**
@@ -174,15 +176,14 @@
   /**
    * Enters reply mode targeting the given comment, and puts the caret in the box (it used to leave
    * the reader to find the box at the end of the thread and tap again). Replies to replies are
-   * threaded under the top-level comment (flat); a reply to a PERSONAL comment pre-fills the name,
+   * threaded under the top-level comment (flat); a reply to a PERSONAL reply pre-fills a mention token (`replyMentionPrefill`),
    * an anonymous or association comment has no name to type.
    */
   function initiateReply(comment: PostComment) {
     replyingToId = comment.parentId ?? comment.id;
     replyingToName = commentAuthorName(comment);
-    if (comment.parentId && commentAuthorKind(comment) === 'personal') {
-      void onCommentTextChange(`@${replyingToName} `);
-    }
+    replyPrefill = replyMentionPrefill(comment);
+    if (replyPrefill) void onCommentTextChange(replyPrefill);
     void tick().then(() => composer?.focus());
   }
 
@@ -201,9 +202,10 @@
 
   /** Exits reply mode and clears the reply target name. Undoes the name pre-fill if untouched. */
   function cancelReply() {
-    if (commentText === `@${replyingToName} `) {
+    if (replyPrefill && commentText === replyPrefill) {
       void onCommentTextChange('');
     }
+    replyPrefill = '';
     replyingToId = null;
     replyingToName = '';
   }

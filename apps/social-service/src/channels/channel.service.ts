@@ -24,6 +24,7 @@ import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 import { sanitizeLog } from '../common/log.utils';
 import { isBlockedBetween } from '../common/user-blocks';
+import { memberCanModerate } from './moderation-grant';
 import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
 import {
   communityCrossesReviewCohortFor,
@@ -63,12 +64,15 @@ import {
   PIN_REQUIRES_MODERATION,
   REMOVAL_EXCEEDS_ACTOR,
   ROLE_CHANGE_EXCEEDS_ACTOR,
+  ROLE_LABEL_INVALID,
+  ROLE_RENAME_REQUIRES_ADMIN,
   roleGrantsChannelManagement,
   roleGrantsModeration,
   roleGrantsRoleManagement,
   writePolicyAllows,
 } from './permissions';
 import { narrowAdmissionVoucher } from './admission-voucher';
+import { ChatReelMediaClient } from './chat-reel-media.client';
 
 import {
   CreateChannelDto,
@@ -85,6 +89,7 @@ import {
   type HistoryVisibility,
   type WorkspaceInviteDto,
 } from './dto/channel.dto';
+import { hasInvisibleCharacter } from './visible-text';
 
 /** One person to cut off one key-distribution group, in a departure. */
 interface DepartureCut {
@@ -284,6 +289,65 @@ export function validateChannelName(raw: unknown): string {
   if (/\p{Cc}/u.test(name))
     throw new BadRequestException('Channel name cannot contain control characters');
   return name;
+}
+
+/** Longest role display name, counted in characters a person sees (code points). Mirrored by the client's input. */
+export const MAX_ROLE_LABEL_LENGTH = 40;
+
+/**
+ * Whether a role name holds a character that must not be in one: anything the shared text rule
+ * drops (`hasInvisibleCharacter`, `visible-text.ts`, byte-identical to the client's copy, which
+ * `isAcceptableRoleLabel` reads) - a control, invisible-formatting, line or paragraph separator
+ * character, except the glue of an emoji and a joiner between two letters of a script that spells
+ * with one.
+ */
+export function roleLabelHasForbiddenCharacter(label: string): boolean {
+  return hasInvisibleCharacter(label);
+}
+
+/**
+ * A role's DISPLAY name, as the community typed it: trimmed and nothing else, stored as typed (case,
+ * accents, emoji). `null` for "no name of its own" - an absent or blank value resets the role to the
+ * localized default - and a typed 400 `ROLE_LABEL_INVALID` for a value that is not text, a name too
+ * long, or one holding a control, invisible-formatting (zero-width, bidi override, BOM, tag), line or
+ * paragraph separator character (which could make a name read as
+ * another). It is a LABEL: no decision reads it, so no spelling of it can grant or hide anything.
+ */
+export function validateRoleLabel(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') {
+    throw new BadRequestException({ code: ROLE_LABEL_INVALID, message: 'Role name must be text.' });
+  }
+  const label = raw.trim();
+  if (!label) return null;
+  if (Array.from(label).length > MAX_ROLE_LABEL_LENGTH) {
+    throw new BadRequestException({
+      code: ROLE_LABEL_INVALID,
+      message: `Role name too long (max ${MAX_ROLE_LABEL_LENGTH} characters).`,
+    });
+  }
+  if (roleLabelHasForbiddenCharacter(label)) {
+    throw new BadRequestException({
+      code: ROLE_LABEL_INVALID,
+      message: 'Role name cannot contain control or invisible formatting characters.',
+    });
+  }
+  return label;
+}
+
+/**
+ * The `label` of a rename request's body. The KEY is required: only an explicit null or a blank
+ * string resets a name, so a body that forgot the field (`{}`, a wrong key, no body) is a typed
+ * 400 `ROLE_LABEL_INVALID` instead of silently erasing the community's name.
+ */
+export function roleLabelOfBody(body: unknown): unknown {
+  if (typeof body !== 'object' || body === null || !('label' in body)) {
+    throw new BadRequestException({
+      code: ROLE_LABEL_INVALID,
+      message: 'The request must carry a "label" (null or blank resets it).',
+    });
+  }
+  return (body as { label: unknown }).label;
 }
 
 /** The community's own order: the arranged position, then age, then id so it is total. */
@@ -502,9 +566,7 @@ export class ChannelService implements OnApplicationBootstrap {
    * and the enforcement can never drift apart.
    */
   private async memberCanModerateMessages(member: ChannelMember): Promise<boolean> {
-    if (!member.roleIds?.length) return false;
-    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
-    return roles.some((r) => roleGrantsModeration(r.permissions));
+    return memberCanModerate(this.roleRepo, member);
   }
 
   // ================= THE GOVERNANCE POSTCONDITION =================
@@ -1654,7 +1716,13 @@ export class ChannelService implements OnApplicationBootstrap {
     @InjectRepository(ChannelMessage) private readonly messageRepo: Repository<ChannelMessage>,
     @InjectRepository(WorkspaceInvite)
     private readonly inviteRepo: Repository<WorkspaceInvite>,
-    private readonly redis: RedisService
+    private readonly redis: RedisService,
+    /**
+     * The media service's purge of a moderated salon reel (reels-in-chat 15.4). Injected by Nest in
+     * every running service; optional only so a spec that builds this class by hand and never
+     * deletes a reel need not pass one - and its absence at a purge is logged at ERROR.
+     */
+    private readonly chatReelMedia?: ChatReelMediaClient
   ) {}
 
   // ================= INVITES (shareable community links) =================
@@ -2249,6 +2317,17 @@ export class ChannelService implements OnApplicationBootstrap {
     });
     if (channel) return this.isDistributionGroupEntitled('channel', channel.id, normalised);
     return false;
+  }
+
+  /**
+   * Whether `userId` may read the salon `channelId` - {@link isChannelReader} for an id, with no
+   * such salon read as `false`. Asked by chat-delivery before it relays a salon reaction's push to
+   * the message's author (`mls/notify-reaction`): a salon's roster lives here, not there.
+   */
+  async isReaderOfChannel(channelId: string, userId: string): Promise<boolean> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) return false;
+    return this.isChannelReader(channel, userId.trim().toLowerCase());
   }
 
   async isDistributionGroupEntitled(
@@ -4880,6 +4959,7 @@ export class ChannelService implements OnApplicationBootstrap {
     // row, so the repeat writes nothing, publishes nothing and pushes nobody. A repeat of a DELETED
     // message is refused at the insert itself, under the client id's lock (`saveUnderUnusedKey`).
     const clientMessageId = this.readClientMessageId(channel.id, input);
+    const reelMediaId = this.readDeclaredReelMediaIdOf(channel.id, input);
     if (clientMessageId) {
       const stored = await this.findByClientMessageId(channelId, input.senderId, clientMessageId);
       if (stored) {
@@ -4917,6 +4997,7 @@ export class ChannelService implements OnApplicationBootstrap {
       messageIndex: input.messageIndex,
       signature: input.signature ?? null,
       clientMessageId,
+      reelMediaId,
       silent: input.silent === true,
       metadata: pollMeta ? { poll: pollMeta } : {},
       pinned: autoPin,
@@ -4964,7 +5045,8 @@ export class ChannelService implements OnApplicationBootstrap {
    * deploy is the commonest process death there is) and `drainFanout` (an entry whose fan-out is
    * running here is not drained a second time). It cannot see another replica's fan-outs: a claim
    * across replicas is out of scope, and a duplicate there is settled downstream (see
-   * {@link runFanout}).
+   * {@link runFanout}). A moderated message's reel purge rides here too, keyed `reel-purge:<id>` so
+   * it is never mistaken for that message's fan-out, only so that SIGTERM waits for it.
    */
   private readonly fanoutsInFlight = new Map<string, Promise<void>>();
 
@@ -5268,6 +5350,34 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
+   * The reel file a send DECLARES (`reelMediaId`, migration 122, reels-in-chat 15.4), lower-cased,
+   * or null when it declares none. Anything but a UUID is refused rather than stored: the only reader
+   * is a moderator's purge, which must never be handed a value the media service would read as
+   * anything but an id.
+   */
+  private readDeclaredReelMediaIdOf(
+    channelId: string,
+    input: SendChannelMessageDto
+  ): string | null {
+    const { reelMediaId } = input;
+    if (reelMediaId === undefined || reelMediaId === null) return null;
+    if (typeof reelMediaId !== 'string' || !CLIENT_MESSAGE_ID.test(reelMediaId)) {
+      this.logger.warn(
+        `[CHANNEL_SEND] refused channel=${channelId} sender=${input.senderId.slice(0, 8)}: ` +
+          `reelMediaId is not a UUID (${typeof reelMediaId === 'string' ? `${reelMediaId.length}ch` : typeof reelMediaId})`
+      );
+      throw new BadRequestException({
+        code: 'CHANNEL_REEL_MEDIA_ID_INVALID',
+        message: 'reelMediaId is the media id of the reel this message carries',
+      });
+    }
+    this.logger.debug(
+      `[CHANNEL_SEND] channel=${channelId} sender=${input.senderId.slice(0, 8)} declares reel ${reelMediaId.slice(0, 8)}`
+    );
+    return reelMediaId.toLowerCase();
+  }
+
+  /**
    * The row this author already wrote in this salon under `clientMessageId`, or null. A hit is a
    * repeated send (its first answer was lost), logged because it is the only trace the repeat leaves.
    */
@@ -5323,6 +5433,7 @@ export class ChannelService implements OnApplicationBootstrap {
         if (tombstones.length > 0)
           this.refuseDeletedRepeat(msg.channelId, msg.authorId, clientMessageId);
       }
+      // The declared reel (migration 122) is a column of this INSERT, so it commits with the row.
       const saved = await tx.getRepository(ChannelMessage).save(msg);
       // THE OUTBOX ENTRY COMMITS WITH THE ROW (migration 093): a process that dies after this
       // transaction leaves both, and the fan-out it never made is found and finished at boot.
@@ -6279,9 +6390,15 @@ export class ChannelService implements OnApplicationBootstrap {
     const msg = await this.messageRepo.findOne({ where: { id: messageId, channelId } });
     if (!msg) throw new NotFoundException('Message not found');
 
-    if (msg.authorId !== userId && !(await this.memberCanModerateMessages(member))) {
+    const moderation = msg.authorId !== userId;
+    if (moderation && !(await this.memberCanModerateMessages(member))) {
       throw new ForbiddenException('Missing channel.moderate permission to delete this message');
     }
+    // A MODERATOR'S delete of a message that declares a reel file also purges that file (reels-in-chat
+    // 15.4), which one take may share with other conversations and the feed. Taken from the row read
+    // above, BEFORE it goes: the declaration lives only in it. The author's own delete purges nothing
+    // here - the sender releases their hold themselves (`DELETE /media/chat-reel/:id`, 15.7).
+    const declaredReel = moderation ? (msg.reelMediaId ?? null) : null;
 
     // ITS CLIENT ID OUTLIVES IT (migration 090): the tombstone and the delete commit together, under
     // the client id's lock (`clientIdLockSql`) that a send takes around its tombstone check and its
@@ -6342,7 +6459,58 @@ export class ChannelService implements OnApplicationBootstrap {
         msg.authorId === userId ? '' : ' (moderation)'
       }`
     );
+    // THE FILE'S PURGE NEVER HOLDS THE ANSWER: the message is gone and the salon told, whatever the
+    // media service says or how long it takes. It runs as a tracked background job, so a SIGTERM
+    // (`settleFanouts`) still waits for it; `purgeModeratedReel` logs every outcome itself.
+    if (removed && declaredReel) {
+      void this.trackFanout(`reel-purge:${messageId}`, () =>
+        this.purgeModeratedReel(channelId, messageId, declaredReel, msg.authorId)
+      );
+    }
     return { success: true, channelId, messageId };
+  }
+
+  /**
+   * Purges the reel file a moderated message declared (reels-in-chat 15.4). The caller has proven
+   * the two facts this service owns - the moderator holds `channel.moderate` in THIS salon's
+   * community and may read the salon, and the row (looked up by id AND salon) declares `mediaId`.
+   * The media service proves the other two: the file's uploader is `authorId` - the row's author,
+   * authenticated at its send, never anything the moderator supplies - and a conversation holds it.
+   *
+   * After the delete has committed and never gating it: the message is gone either way. A refusal
+   * (a declaration of a file the author did not upload, or one no conversation holds) is logged and
+   * left - the file was never this salon's to erase. A failure or an unreachable media service is
+   * logged at ERROR: the file then lasts until its chat hold lapses, and the row that named it is gone.
+   */
+  private async purgeModeratedReel(
+    channelId: string,
+    messageId: string,
+    mediaId: string,
+    authorId: string
+  ): Promise<void> {
+    if (!this.chatReelMedia) {
+      this.logger.error(
+        `[CHANNEL_REEL_PURGE] no chat-reel purge client wired - reel ${mediaId.slice(0, 8)} of message ${messageId} NOT purged`
+      );
+      return;
+    }
+    try {
+      const results = await this.chatReelMedia.purge([{ mediaId, ownerId: authorId }]);
+      const outcome = results[mediaId] ?? 'failed';
+      const line =
+        `[CHANNEL_REEL_PURGE] channel=${channelId} message=${messageId} reel=${mediaId.slice(0, 8)} ` +
+        `author=${authorId.slice(0, 8)}: ${outcome}`;
+      if (outcome === 'deleted' || outcome === 'absent') this.logger.log(line);
+      else if (outcome === 'refused')
+        this.logger.warn(`${line} - not the author's held reel, left alone`);
+      else this.logger.error(`${line} - the file lasts until its chat hold lapses`);
+    } catch (err) {
+      this.logger.error(
+        `[CHANNEL_REEL_PURGE] channel=${channelId} message=${messageId} reel=${mediaId.slice(0, 8)}: ` +
+          `the media service was unreachable (${err instanceof Error ? err.message : String(err)}) - ` +
+          `the file lasts until its chat hold lapses`
+      );
+    }
   }
 
   /** Returns the IDs of the pinned messages in a channel. Access-controlled by canAccessChannel. */
@@ -6565,13 +6733,34 @@ export class ChannelService implements OnApplicationBootstrap {
    * administrators, and this discloses nothing a member could not already read.
    */
   private async announceRolePermissions(role: ChannelRole): Promise<void> {
+    const members = await this.announceRoleToCommunity(role);
+    await this.announceStandingToHolders(role, members);
+  }
+
+  /**
+   * The ONE `workspace.role.permissions` publish, to the whole membership. It carries what the
+   * role grants and, ONLY when `withLabel`, the community's own name for it (`label`, null for
+   * none). A publish names what ITS write changed and nothing else: a permission toggle omits
+   * `label` (absent = unchanged on every client), so a toggle whose publish lands after a
+   * concurrent rename cannot put the old name back. Returns the members it was sent to. A rename
+   * changes no one's standing, so it sends this and nothing more.
+   */
+  private async announceRoleToCommunity(
+    role: ChannelRole,
+    withLabel = false
+  ): Promise<ChannelMember[]> {
     const members = await this.memberRepo.find({ where: { workspaceId: role.workspaceId } });
     await this.redis.publishChannelEvent(
       'workspace.role.permissions',
-      { workspaceId: role.workspaceId, roleId: role.id, permissions: role.permissions },
+      {
+        workspaceId: role.workspaceId,
+        roleId: role.id,
+        permissions: role.permissions,
+        ...(withLabel ? { label: role.displayLabel ?? null } : {}),
+      },
       members.map((m) => m.userId)
     );
-    await this.announceStandingToHolders(role, members);
+    return members;
   }
 
   /**
@@ -6635,6 +6824,58 @@ export class ChannelService implements OnApplicationBootstrap {
         `[ROLE] permissions saved but holders not told role=${role.id} holders=${holders.length}: ${e instanceof Error ? e.message : String(e)}`
       );
     }
+  }
+
+  /**
+   * Gives a role the community's own display name, or resets it (`rawLabel` null / blank).
+   *
+   * LABEL ONLY (owner, 2026-11-08): `name` - the role's identity, which every permission decision
+   * and every role lookup reads - is untouched, so no spelling of a label can change what anyone may
+   * do. Only an administrator (`workspace.manage`) renames, decided under the community removal lock
+   * so a demotion committing meanwhile is honoured; a refusal is a typed 403
+   * `ROLE_RENAME_REQUIRES_ADMIN`. The new name is announced to the whole community.
+   */
+  async setRoleDisplayLabel(roleId: string, actorUserId: string, rawLabel: unknown) {
+    const label = validateRoleLabel(rawLabel);
+    const role = await this.roleRepo.findOne({ where: { id: roleId } });
+    if (!role) throw new NotFoundException('Role not found');
+    const workspaceId = role.workspaceId;
+
+    const saved = await this.withCommunityRemovalLock(workspaceId, async (em) => {
+      const actor = await em
+        .getRepository(ChannelMember)
+        .findOne({ where: { workspaceId, userId: actorUserId } });
+      const held = actor ? await this.permissionsOfMember(actor, em) : [];
+      if (!held.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)) {
+        this.logger.warn(
+          `[ROLE] REFUSED rename role=${roleId} - not an administrator workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+        );
+        throw new ForbiddenException({
+          code: ROLE_RENAME_REQUIRES_ADMIN,
+          message: 'Only an administrator may rename a role.',
+        });
+      }
+      const roles = em.getRepository(ChannelRole);
+      const locked = await roles.findOne({
+        where: { id: roleId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!locked) throw new NotFoundException('Role not found');
+      locked.displayLabel = label;
+      return roles.save(locked);
+    });
+
+    this.logger.log(
+      `[ROLE] renamed role=${roleId} workspace=${workspaceId} label=${label === null ? 'default' : `${Array.from(label).length} chars`} by=${actorUserId.slice(0, 8)}`
+    );
+    try {
+      await this.announceRoleToCommunity(saved, true);
+    } catch (e) {
+      this.logger.warn(
+        `[ROLE] renamed but the community was not told role=${roleId}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    return { roleId: saved.id, roleName: saved.name, label: saved.displayLabel ?? null };
   }
 
   /**

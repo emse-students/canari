@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { clearAuth, leaveSignedOut } from '$lib/stores/auth';
   import { getIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
@@ -37,14 +38,9 @@
     <p class="text-text-muted text-sm leading-relaxed">{m.identity_split_body()}</p>
 
     {#snippet footer()}
-      <button
-        type="button"
-        class="text-cn-ink bg-cn-yellow hover:bg-cn-yellow-hover w-full rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-60"
-        disabled={signingOut}
-        onclick={() => void handleSignOut()}
-      >
+      <Button class="w-full" disabled={signingOut} onclick={() => void handleSignOut()}>
         {m.identity_split_signout()}
-      </button>
+      </Button>
     {/snippet}
   </Modal>
 {/if}

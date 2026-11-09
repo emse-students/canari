@@ -3,11 +3,12 @@
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { Snippet } from 'svelte';
   import { X } from '@lucide/svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import { fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { swipeBack } from '$lib/actions/swipeBack';
-  import { insideViewerLayer } from '$lib/utils/viewerLayer';
+  import { insideViewerLayer, markViewerLayer } from '$lib/utils/viewerLayer';
   import {
     pushHistoryOverlay,
     closeHistoryOverlayFromUi,
@@ -113,6 +114,9 @@
 
   /** Opened from inside a full-screen viewer, the modal rung is under it (`utils/viewerLayer.ts`). */
   const inViewer = insideViewerLayer();
+  // Read BEFORE marking: this modal sits on its own rung, and only what it opens clears it (the
+  // GIF picker of a comment box in a post's comments dialog sat UNDER it, on `--z-sheet`).
+  markViewerLayer();
 
   const backdropAlignClass = $derived(
     fullViewport || topAnchored || phoneFullScreen
@@ -199,6 +203,19 @@
     }
   });
 
+  /**
+   * DESTROYED WITH `open` STILL TRUE. A sheet drawn as `{#if sheet}<Modal open .../>` is handed
+   * over by clearing `sheet`: `open` never turns false, so the effect above never releases the
+   * entry, and one Android Back later closed a layer nobody was looking at ("did nothing"). A
+   * teardown-only effect (no dependency) releases it when the component goes.
+   */
+  $effect(() => () => {
+    if (historyClose) {
+      releaseHistoryOverlay(historyClose);
+      historyClose = null;
+    }
+  });
+
   function dismiss() {
     if (historyClose) {
       closeHistoryOverlayFromUi(historyClose);
@@ -268,13 +285,15 @@
       }}
       in:fly={{ duration: 200, y: 0, opacity: 0 }}
     >
+      <!-- `overflow-hidden`: the panel owns its corners, so a child that paints its own background
+           at an edge (the composer's action bar) is clipped to them instead of squaring them. -->
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
         tabindex="-1"
         use:focusTrap
-        class="keyboard-aware-modal-panel border-cn-border w-full border bg-(--cn-surface) shadow-2xl {maxWidth} text-text-main flex flex-col sm:mx-4 {panelSizeClass} {panelClass}"
+        class="keyboard-aware-modal-panel border-cn-border w-full overflow-hidden border bg-(--cn-surface) shadow-2xl {maxWidth} text-text-main flex flex-col sm:mx-4 {panelSizeClass} {panelClass}"
         in:fly={{ duration: 220, y: 24 }}
         onclick={(e) => e.stopPropagation()}
         onkeydown={handlePanelKeydown}
@@ -285,13 +304,9 @@
           >
             <h2 class="text-cn-dark text-base font-semibold">{title}</h2>
             {#if dismissible}
-              <button
-                onclick={dismiss}
-                class="ui-icon-button hover:bg-cn-bg text-text-muted hover:text-cn-dark rounded-lg transition-colors"
-                aria-label={m.common_close_label()}
-              >
+              <Button variant="ghost" icon onclick={dismiss} aria-label={m.common_close_label()}>
                 <X size={16} />
-              </button>
+              </Button>
             {/if}
           </div>
         {/if}

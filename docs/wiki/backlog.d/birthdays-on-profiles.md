@@ -1,0 +1,23 @@
+## P2 - birthdays on profiles (owner, 2026-11-08, engagement) - built, readings owed
+
+The owner wants members to enter their birthday, the day visible on the profile, and on the day a festive ring around the profile photo everywhere in the app (also for others, so they can wish it) - part of the adoption/engagement strategy ([engagement](../engagement.md)).
+
+Decisions (owner, 2026-11-08): (1) day and month ONLY - the year is never asked, no age shown or computed; (2) visibility of the date outside the day is the member's choice - everyone at the school / their followers / nobody - default FOLLOWERS, same mechanism as the other profile fields ([profiles-and-access](../profiles-and-access.md)); (3) on the day the ring around the avatar is shown to EVERYONE, whatever (2) says (the owner accepted that the date becomes guessable on that day); (4) on the morning of the day a notification "C'est l'anniversaire de X" goes to the member's followers who may see the date, switchable off in the notification settings.
+
+Built 2026-11-09, everything owed at decision time included - the mechanism, each choice taken while building and why, and the proofs are on [birthdays](../birthdays.md): social-service migration 148 (additive, not held), the shared profile-field visibility rule, the ring on the one `Avatar.svelte`, Feb 29 on Feb 28 in a common year (integration-tested), the hourly notifier from 08:00 Paris claiming each notice through `lastAnnouncedOn`, the rules against moving the date (engagement L23), the `birthdays` notification category, the bell (engagement L22), erasure, the GDPR register row C26 and the privacy policy, Profile > Anniversaire, and ONE prompt card with no reminder.
+
+**Read on `v1.6.9-alpha.1` (2026-11-09, bench, dev):** 5 PARTIAL - before the first save the note "compte a partir de demain, ... 30 jours" is shown, the date saved (a test account, tomorrow's day, visibility followers) and no ring drawn on its photo on the day it was set; the LOCKED state with its opening date was NOT seen, because a correction the same Paris day is accepted by design ([birthdays](../birthdays.md#a-date-cannot-be-moved-to-buy-a-ring-or-a-notice-lead-decision-2026-11-09)), so it can only be read from tomorrow on (the Paris day after the save). 6 PASS - the prompt card came once on the iPhone (account A, no date) and once on the Mi 9T (account B, no date); "Ajouter mon anniversaire" opened Profile > Anniversaire on the iPhone; after "Passer" on the Mi 9T and a cold restart it did not return. The other-phone half (the same account on two phones) was not taken. 4: the `Anniversaires` category exists in the notification settings, its effect needs the morning notice. 1, 2, 3, 7 NOT TAKEN (they need the day itself).
+
+**Set up for tomorrow morning:** the iPhone account's birthday is tomorrow's day and month with visibility followers, and the Mi 9T account follows it (accepted) - so reading 3 (one bell row and one push, native texts in clear, the tap opening the profile, no second one after a restart) and reading 1 (the ring) can be taken from 08:00 Paris on 2026-11-10 with nothing else to prepare. Clean-up afterwards: remove the date (Profile > Anniversaire > Retirer) and let the Mi 9T account unfollow.
+
+**Readings owed** (on dev, after a pre-release; a test account whose birthday is set to the day of the reading):
+
+1. The ring on both phones (Mi 9T, iPhone 12): feed, chat list, a conversation, the profile - on the photo and on initials - and gone the next day.
+2. The profile line "C'est son anniversaire aujourd'hui" seen by a non-follower whose visibility hides the date, with no date shown to them.
+3. The morning notice: one bell row and one push per follower who may see the date, on Android AND iOS (the native `social_birthday` texts in clear, the tap opening the profile), and never a second one after a restart of social-service.
+4. The category `Anniversaires` switched off: no push, the bell row still there.
+5. The settings after a first save: the note that the date counts from tomorrow, then the date locked with the day it opens, and no ring on the day it was set (the review's rules, [birthdays](../birthdays.md#a-date-cannot-be-moved-to-buy-a-ring-or-a-notice-lead-decision-2026-11-09)).
+6. The prompt card on both phones for an account with no date: shown once, "Ajouter mon anniversaire" opens the section, never shown again on the other phone.
+7. One week after the stable: `SELECT visibility, count(*) FROM profile_birthdays GROUP BY 1` on production, to measure adoption and the default's share.
+
+29 February on the 28th is proven by the integration test only (no reading can wait for 2027-02-28).

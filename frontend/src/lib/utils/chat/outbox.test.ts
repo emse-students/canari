@@ -20,6 +20,7 @@ const tabOutboxMock = vi.hoisted(() => ({
   publishOutboxEntrySent: vi.fn(),
   publishOutboxEntryCancelled: vi.fn(),
   publishOutboxEntryFailed: vi.fn(),
+  publishOutboxEntryRetired: vi.fn(),
   // The handler is named in the signature rather than dropped: a flush trigger arrives through
   // this subscription, so the R-D8 trigger table has to read it back out of `mock.calls`.
   subscribeTabOutboxEvents: vi.fn((_handler: (event: TabOutboxEvent) => void) => () => {}),
@@ -96,7 +97,12 @@ import {
   UploadNetworkError,
   UploadStalledError,
 } from '$lib/utils/uploadXhr';
-import { clearAllUploads, uploadPercent, uploadViewOf } from './uploadProgress.svelte';
+import {
+  clearAllUploads,
+  unsentReasonOf,
+  uploadPercent,
+  uploadViewOf,
+} from './uploadProgress.svelte';
 import {
   encodeOutboxSensitive,
   decodeOutboxEntry,
@@ -151,14 +157,42 @@ function makeStorage(seed: OutboxEntry[] = []) {
   /** The owed group exits (`pendingGroupExits`); none by default. */
   const exits: Array<{ groupId: string; kind: 'leave' | 'delete'; requestedAt: number }> = [];
   const rows = new Map<string, StoredMessage>();
+  const storageSink = vi.fn().mockResolvedValue(undefined);
   return {
     _map: map,
     _exits: exits,
     getPendingGroupExits: vi.fn(async () => [...exits]),
-    saveMessage: vi.fn().mockResolvedValue(undefined),
+    saveMessage: storageSink,
     // The stored message rows - only what a test seeds; the flusher reads them to keep their proofs.
     _messages: rows,
     getMessage: vi.fn(async (id: string) => rows.get(id) ?? null),
+    // A compare-and-set over the seeded rows (a seed with no conversation stands in any): the
+    // merged row lands in `saveMessage`, the one sink the assertions read; an absent row is not
+    // written, as in the real stores.
+    mergeMessages: vi.fn(
+      async (
+        conversationId: string,
+        ids: string[],
+        merge: (current: StoredMessage) => StoredMessage | null
+      ) => {
+        const written = new Set<string>();
+        for (const id of ids) {
+          const row = rows.get(id);
+          if (!row || (row.conversationId && row.conversationId !== conversationId)) continue;
+          const next = merge(row);
+          if (!next) continue;
+          rows.set(id, next);
+          written.add(id);
+          await storageSink(next, 'device-key');
+        }
+        return written;
+      }
+    ),
+    // Like the real stores: a patch of a row that is absent writes nothing.
+    updateMessage: vi.fn(async (_c: string, id: string, patch: Partial<StoredMessage>) => {
+      const row = rows.get(id);
+      if (row) rows.set(id, { ...row, ...patch });
+    }),
     saveOutboxEntry: vi.fn(async (e: OutboxEntry) => {
       map.set(e.id, structuredClone(e));
     }),
@@ -508,6 +542,28 @@ describe('outbox flusher', () => {
     );
   });
 
+  it('folds the send onto the stored row - a reaction stored since the send began is kept', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const bob = { userId: 'bob', emoji: '👍', at: 5 };
+    storage._messages.set('m1', {
+      id: 'm1',
+      conversationId: 'g1',
+      senderId: 'me',
+      content: 'x',
+      timestamp: 100,
+      reactions: [bob],
+    } as StoredMessage);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, conversations }));
+
+    await outbox.flush();
+
+    expect(storage._messages.get('m1')).toMatchObject({
+      reactions: [bob],
+      serverTimestamp: 1_700_000_000_000,
+    });
+  });
+
   describe("keeps this device's own signature on what it sent (history-reconciliation, authorship)", () => {
     const PROOF = new Uint8Array([7, 7]);
     const ORIGINAL = { body: 'b3JpZ2luYWw=', proof: 'cHJvb2Y=', group: 'g1' };
@@ -575,7 +631,7 @@ describe('outbox flusher', () => {
       await outbox.flush();
 
       const row = storage.saveMessage.mock.calls.at(-1)[0];
-      expect(row.authorship).toBeUndefined();
+      expect(row.authorship).toBeNull();
       expect(row.deleteProof).toMatchObject({ proof: toBase64(PROOF), group: 'g1' });
     });
   });
@@ -2208,12 +2264,12 @@ describe('outbox - settling a group before its exit', () => {
 /**
  * R-D8 - THE TRIGGER TABLE, PINNED, BECAUSE THE COUNT THAT RAISED IT IS ACCURATE.
  *
- * Eight sites raise a flush and there is ONE flusher. That was flagged as a duplicate path and
- * refuted on every axis: all eight reach `runFlush`, which is where all the gates live, so "is
+ * Nine sites raise a flush and there is ONE flusher. That was flagged as a duplicate path and
+ * refuted on every axis: all nine reach `runFlush`, which is where all the gates live, so "is
  * there a second flusher" is a question this block answers instead of a claim in a comment. The
- * reasoning, and why folding the three external sites in would be a regression, is on
+ * reasoning, and why folding the four external sites in would be a regression, is on
  * `flushOutbox`'s docblock - whoever counts call sites next lands on one or the other before they
- * find eight things to fuse.
+ * find nine things to fuse.
  *
  * Each row raises its trigger THE WAY ITS SITE DOES and nothing else - no `outbox.flush()` standing
  * in for an event - because a table that pokes the shared function proves only that the shared
@@ -2401,7 +2457,7 @@ describe('outbox flush triggers - one flusher, and one gate for all of them (R-D
     }
   });
 
-  it('exactly three sites outside this module raise a flush, and they are the three named ones', async () => {
+  it('exactly four sites outside this module raise a flush, and they are the four named ones', async () => {
     const { relativeTo, sourceFiles } = await import('../../../test/sourceTree');
     const found: Record<string, number> = {};
     for (const { path, text } of sourceFiles({
@@ -2428,6 +2484,11 @@ describe('outbox flush triggers - one flusher, and one gate for all of them (R-D
     expect(found, 'a new site raises a flush from outside the outbox').toEqual({
       'lib/composables/session/promoteOfflineSession.ts': 1,
       'lib/composables/session/sessionAuth.ts': 2,
+      // The iOS leave-flush hold (2026-11-02): the enqueue of an owed read mark raises a flush but
+      // hands nobody its end, and the background task must last until the send SETTLES - a moment
+      // nothing inside the outbox can observe. `flush()` coalesces with the one the enqueue raised,
+      // so it adds no send; it only gives the hold a promise to await (`backgroundFlush.ts`).
+      'lib/components/MainChatPage.svelte': 1,
     });
   });
 });
@@ -5270,11 +5331,16 @@ describe('a 2xx a captive portal answered is no answer (cross-client rig, 1.4.1-
 });
 
 describe('an enqueue classifies its failure at the throw (review of #2843, M1)', () => {
-  it('a refusal BEFORE any write stays an OutboxEnqueueError, even for a caller that wrote the pair', async () => {
+  it('a refusal BEFORE any write of its own is an OutboxEnqueueError - unless the caller wrote the pair', async () => {
     const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage: null }));
-    const refused = outbox.enqueue(textEntry('m1', 'g1', 100), { alreadyDurable: true });
-    await expect(refused).rejects.toBeInstanceOf(OutboxEnqueueError);
-    await expect(refused).rejects.not.toBeInstanceOf(MessageWrittenError);
+    await expect(outbox.enqueue(textEntry('m1', 'g1', 100))).rejects.toBeInstanceOf(
+      OutboxEnqueueError
+    );
+    // The caller's row EXISTS whatever this controller holds: "nothing written" would have it
+    // withdrawn and sent a second time (review of #2874, L5).
+    const refused = outbox.enqueue(textEntry('m2', 'g1', 100), { alreadyDurable: true });
+    await expect(refused).rejects.toBeInstanceOf(MessageWrittenError);
+    await expect(refused).rejects.toMatchObject({ messageId: 'm2' });
   });
 
   it('a failure AFTER its own durable write is a MessageWrittenError - the row is on disk', async () => {
@@ -5411,5 +5477,399 @@ describe('awaitSettled answers how the queue LEFT a message, never merely that i
       messages: convo.messages.map((m) => ({ ...m, status: 'error' as const })),
     });
     await expect(outbox.awaitSettled('m1')).resolves.toBe('failed');
+  });
+});
+
+/**
+ * A FILE QUEUED AT THE TAP (2026-11-01; `docs/wiki/frontend/modules/chat.md`, "A file is queued at
+ * the tap, like a text"). The composer no longer waits for the inbound queue or the membership before
+ * it writes a media entry, so what that barrier guarded is this queue's to guard: the file is sealed
+ * at the current epoch (the queue is idle before the flush AND again before the seal), a group that
+ * cannot take it yet HOLDS it without paying the upload and says so, a group that never will retires
+ * it and says why, it keeps its place after the texts before it, and it survives a kill. The send side
+ * is
+ * `useMessaging.mediaEnqueue.svelte.test.ts`.
+ */
+describe('outbox - a file queued at the tap', () => {
+  const REF = {
+    type: 'file' as const,
+    mediaId: 'mid',
+    key: 'aa',
+    iv: 'bb',
+    mimeType: 'application/pdf',
+    size: 3,
+  };
+
+  function tapEntry(id: string, sentAt = 100): OutboxEntry {
+    return {
+      id,
+      conversationId: 'g1',
+      sentAt,
+      kind: 'media',
+      media: {
+        kind: MediaKind.MEDIA_KIND_UNSPECIFIED,
+        mimeType: 'application/pdf',
+        size: 3,
+        fileName: 'a.pdf',
+        fileBytes: new Uint8Array([1, 2, 3]),
+      },
+      status: 'pending',
+      attempts: 0,
+      createdAt: sentAt,
+    };
+  }
+
+  beforeEach(() => connectivity.reset());
+  afterEach(() => clearAllUploads());
+
+  it('TAP, KILL, RESUME: an entry written before the kill is uploaded and sent by the next launch', async () => {
+    const storage = makeStorage();
+    // The tap's session: the entry reaches disk, and the process dies before any flush runs.
+    const before = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage, canFlush: () => false, uploadMedia: vi.fn() })
+    );
+    await before.enqueue(tapEntry('k1'));
+    before.dispose();
+    expect(storage._map.get('k1')!.media!.fileBytes).toEqual(new Uint8Array([1, 2, 3]));
+
+    // The next launch: a new controller over the same storage.
+    const mlsService = makeMls();
+    const uploadMedia = vi.fn().mockResolvedValue(REF);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['k1'])]]);
+    const after = createOutbox(makeDeps({ mlsService, storage, conversations, uploadMedia }));
+    await after.flush();
+
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+    // The bytes the tap wrote are what the upload encrypts; the key travels only once uploaded.
+    expect([...uploadMedia.mock.calls[0][0].fileBytes]).toEqual([1, 2, 3]);
+    expect(storage._map.has('k1')).toBe(false);
+  });
+
+  it('the barrier it replaces: nothing is uploaded before the inbound queue is idle', async () => {
+    const storage = makeStorage([tapEntry('b1')]);
+    const mlsService = makeMls();
+    // One gate for every caller: the flush's barrier now, and the seal's after the upload.
+    let idle!: () => void;
+    const gate = new Promise<void>((r) => (idle = r));
+    mlsService.waitForMessageQueueIdle = vi.fn(() => gate);
+    const uploadMedia = vi.fn().mockResolvedValue(REF);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['b1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, uploadMedia }));
+
+    const flushing = outbox.flush();
+    await outboxIdle();
+    expect(mlsService.waitForMessageQueueIdle).toHaveBeenCalledWith('outbox flush', null);
+    expect(uploadMedia).not.toHaveBeenCalled();
+
+    idle();
+    await flushing;
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+    expect(uploadMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it('a group awaiting re-admission HOLDS the file without uploading it, then sends it on its Welcome', async () => {
+    const storage = makeStorage([tapEntry('h1')]);
+    const mlsService = makeMls();
+    const uploadMedia = vi.fn().mockResolvedValue(REF);
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
+    let healthy = false;
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['h1'], 'pending')],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        uploadMedia,
+        requestReAdd,
+        isGroupHealthy: () => healthy,
+      })
+    );
+
+    await outbox.flush();
+    expect(uploadMedia).not.toHaveBeenCalled();
+    expect(requestReAdd).toHaveBeenCalledWith('g1');
+    expect(storage._map.has('h1')).toBe(true);
+    // And the bubble says why it waits: the conversation is being synced, the link is fine.
+    expect(uploadViewOf('h1')?.phase).toBe('repairing');
+
+    healthy = true;
+    conversations.set('g1', { ...conversations.get('g1')!, lifecycle: 'active' });
+    await outbox.resumeGroup('g1');
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+    expect(uploadMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it('an evicted group retires the file before a byte of it is uploaded', async () => {
+    const storage = makeStorage([tapEntry('e1')]);
+    const mlsService = makeMls({ active: async () => false });
+    const uploadMedia = vi.fn().mockResolvedValue(REF);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['e1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, uploadMedia }));
+
+    await outbox.flush();
+
+    expect(uploadMedia).not.toHaveBeenCalled();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('e1')).toBe(false);
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+    // The bytes are gone with the row; the bubble says why, not "refused by the server".
+    expect(unsentReasonOf('e1')).toBe('not-a-member');
+  });
+
+  it('a deleted group retires the file and its bubble says the conversation was deleted', async () => {
+    const storage = makeStorage([tapEntry('d1')]);
+    const mlsService = makeMls({
+      meta: (id) => ({ groupId: id, name: '', isGroup: true, deletedAt: 1 }),
+    });
+    const uploadMedia = vi.fn().mockResolvedValue(REF);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['d1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, uploadMedia }));
+
+    await outbox.flush();
+
+    expect(uploadMedia).not.toHaveBeenCalled();
+    expect(storage._map.has('d1')).toBe(false);
+    expect(unsentReasonOf('d1')).toBe('group-deleted');
+  });
+
+  it('the reason is written on the STORED row before the entry goes, and told to the followers', async () => {
+    const storage = makeStorage([tapEntry('p1')]);
+    storage._messages.set('p1', {
+      id: 'p1',
+      conversationId: 'g1',
+      senderId: 'u',
+      content: 'x',
+      timestamp: 100,
+    });
+    const order: string[] = [];
+    storage.updateMessage.mockImplementation(
+      async (_c: string, id: string, patch: Partial<StoredMessage>) => {
+        order.push('row');
+        storage._messages.set(id, { ...storage._messages.get(id)!, ...patch });
+      }
+    );
+    storage.deleteOutboxEntry.mockImplementation(async (id: string) => {
+      order.push('entry');
+      storage._map.delete(id);
+    });
+    tabOutboxMock.publishOutboxEntryRetired.mockClear();
+    const mlsService = makeMls({ active: async () => false });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['p1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(storage._messages.get('p1')!.unsentReason).toBe('not-a-member');
+    expect(order).toEqual(['row', 'entry']);
+    expect(tabOutboxMock.publishOutboxEntryRetired).toHaveBeenCalledWith('p1', 'not-a-member');
+    // What the bubble reads after a reload: the in-memory reason is gone, the row still says it.
+    clearAllUploads();
+    expect(unsentReasonOf('p1')).toBeUndefined();
+    await expect(outbox.storedUnsentReason('p1')).resolves.toBe('not-a-member');
+  });
+
+  it('a follower tab is told the reason live, and draws the failed bubble with it', async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['f9'])]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
+    );
+    const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
+    handler({ type: 'outbox_entry_retired', messageId: 'f9', reason: 'group-deleted' });
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+    expect(unsentReasonOf('f9')).toBe('group-deleted');
+    // A message this tab does not hold leaves no reason behind: nothing here would ever draw it.
+    handler({ type: 'outbox_entry_retired', messageId: 'not-here', reason: 'not-a-member' });
+    expect(unsentReasonOf('not-here')).toBeUndefined();
+    outbox.dispose();
+    isTabLeaderMock.mockReturnValue(true);
+  });
+
+  it('a reason the store did not keep (absent row) is said, never assumed written', async () => {
+    // No stored row: `updateMessage` writes nothing and throws nothing, as the real stores do.
+    const storage = makeStorage([tapEntry('a1')]);
+    const log = vi.fn();
+    const mlsService = makeMls({ active: async () => false });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['a1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, log }));
+
+    await outbox.flush();
+
+    expect(storage.updateMessage).toHaveBeenCalledWith(
+      'g1',
+      'a1',
+      { unsentReason: 'not-a-member' },
+      'device-key'
+    );
+    expect(
+      log.mock.calls.some(([l]) =>
+        /a1.*unsent reason not-a-member NOT persisted \(its row is absent or undecryptable\)/.test(
+          String(l)
+        )
+      )
+    ).toBe(true);
+  });
+
+  it('a file retired AFTER its upload names the object it leaves on the server', async () => {
+    const uploaded = tapEntry('u1');
+    uploaded.media = {
+      ...uploaded.media!,
+      uploadedRef: { mediaId: 'mid-left', key: 'aa', iv: 'bb' },
+    };
+    const storage = makeStorage([uploaded]);
+    const mlsService = makeMls({ active: async () => false });
+    const log = vi.fn();
+    const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['u1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, log }));
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    const named = (l: unknown) =>
+      /u1.*retired UNSENT after its upload.*media mid-left/.test(String(l));
+    expect(warned.mock.calls.some(([l]) => named(l))).toBe(true);
+    expect(log.mock.calls.some(([l]) => named(l))).toBe(true);
+    warned.mockRestore();
+  });
+
+  it('an uploaded file is sealed only once the inbound queue is idle AGAIN', async () => {
+    const storage = makeStorage([tapEntry('s1')]);
+    const mlsService = makeMls();
+    let sealIdle!: () => void;
+    const order: string[] = [];
+    mlsService.waitForMessageQueueIdle = vi.fn((caller: string) => {
+      order.push(caller);
+      return caller === 'outbox media seal'
+        ? new Promise<void>((r) => (sealIdle = r))
+        : Promise.resolve();
+    });
+    mlsService.sendMessage.mockImplementation(async () => {
+      order.push('seal and send');
+      return accepted();
+    });
+    const uploadMedia = vi.fn().mockResolvedValue(REF);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['s1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, uploadMedia }));
+
+    // Not awaited: the flush's lane waits for the upload, then for the seal's barrier.
+    const flushing = outbox.flush();
+    // The upload ended (commits may have landed meanwhile): the seal waits for the queue.
+    await vi.waitFor(() => expect(order).toContain('outbox media seal'));
+    await outboxIdle();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+
+    sealIdle();
+    await flushing;
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+    expect(order.indexOf('outbox media seal')).toBeLessThan(order.indexOf('seal and send'));
+  });
+
+  /** An entry whose upload already ended: the next pass owes the seal barrier, then the gates. */
+  function uploadedEntry(id: string): OutboxEntry {
+    const e = tapEntry(id);
+    e.media = { ...e.media!, uploadedRef: { mediaId: `mid-${id}`, key: 'aa', iv: 'bb' } };
+    return e;
+  }
+
+  /** Whether any line logged says the eviction was learnt by failing (the send-path backstop). */
+  function learntByFailing(log: ReturnType<typeof vi.fn>): boolean {
+    return log.mock.calls.some(([l]) => /evicted-late|never reached it|by FAILING/.test(String(l)));
+  }
+
+  it('the seal barrier comes BEFORE the gates: a Remove it drains is read by the membership gate', async () => {
+    const storage = makeStorage([uploadedEntry('v1')]);
+    // The Remove naming this device is applied by the drain the barrier waits for.
+    let removed = false;
+    const mlsService = makeMls({ active: async () => !removed });
+    mlsService.waitForMessageQueueIdle = vi.fn(async (caller: string) => {
+      if (caller === 'outbox media seal') removed = true;
+    });
+    const log = vi.fn();
+    const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['v1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, log }));
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    // Retired by the gate, from a fact already applied - never learnt by a refused send.
+    expect(unsentReasonOf('v1')).toBe('not-a-member');
+    expect(learntByFailing(log)).toBe(false);
+    warned.mockRestore();
+  });
+
+  it('the seal barrier comes BEFORE the gates: the Remove half of a re-admission HOLDS the file', async () => {
+    const storage = makeStorage([uploadedEntry('w1')]);
+    // `retireIfEvicted` drops the group state for this device's own re-admission: unhealthy after.
+    let dropped = false;
+    const mlsService = makeMls({ active: async () => !dropped });
+    mlsService.waitForMessageQueueIdle = vi.fn(async (caller: string) => {
+      if (caller === 'outbox media seal') dropped = true;
+    });
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
+    const log = vi.fn();
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['w1'], 'pending')],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        log,
+        requestReAdd,
+        isGroupHealthy: () => !dropped,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(requestReAdd).toHaveBeenCalledWith('g1');
+    // Held, not retired: the file waits for the Welcome, its upload kept.
+    expect(storage._map.get('w1')!.media!.uploadedRef!.mediaId).toBe('mid-w1');
+    expect(unsentReasonOf('w1')).toBeUndefined();
+    expect(learntByFailing(log)).toBe(false);
+  });
+
+  it('a text written before the file goes out before it', async () => {
+    const storage = makeStorage([tapEntry('f1', 200), textEntry('t1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const uploadMedia = vi.fn().mockResolvedValue(REF);
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['t1', 'f1'])],
+    ]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, uploadMedia }));
+
+    await outbox.flush();
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(2));
+
+    expect(mlsService.sendMessage.mock.calls.map((c: unknown[]) => c[2])).toEqual(['t1', 'f1']);
+  });
+
+  it('a failed upload is shown, logged and kept; a retry sends it', async () => {
+    const storage = makeStorage([tapEntry('r1')]);
+    const mlsService = makeMls();
+    const uploadMedia = vi
+      .fn()
+      .mockRejectedValueOnce(new UploadNetworkError('/api/media/upload'))
+      .mockResolvedValue(REF);
+    const log = vi.fn();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['r1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations, uploadMedia, log }));
+
+    await outbox.flush();
+    await vi.waitFor(() => expect(uploadViewOf('r1')?.phase).toBe('waiting'));
+    expect(storage._map.has('r1')).toBe(true);
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(log.mock.calls.some(([l]) => /r1.*upload failed/.test(String(l)))).toBe(true);
+
+    outbox.retryUpload('r1');
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+    expect(uploadMedia).toHaveBeenCalledTimes(2);
+    expect(storage._map.has('r1')).toBe(false);
   });
 });

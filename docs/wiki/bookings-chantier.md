@@ -44,7 +44,7 @@ see who else booked.
 | D18 | Text answers | **Purged with the file, the same N days after the slot** (one rule to explain). |
 | D19 | Erasure | **A platform-wide maximum age, e.g. one year, purges EVERYTHING older, history included** (user). This resolves the clash between a frozen history and the right to erasure: frozen means nobody edits it, not that it lives for ever. The figure is to be fixed. |
 
-| D20 | Organiser powers | **Block a slot or a range** ("Indisponible", reason shown or not), **book on behalf of an account** (outside the quotas), **cancel a coming booking**. **No move** (without notifications the person would not learn it changed: cancel, and they book again, which leaves a clean trace). Nothing on the past. |
+| D20 | Organiser powers | **Block a slot or a range** ("Indisponible", reason shown or not), **book on behalf of an account** (outside the quotas), **cancel a coming booking**. **No move** (superseded 2026-11-02: the organiser edits as the holder does, [Editing a booking](#editing-a-booking-owner-2026-11-02)) (without notifications the person would not learn it changed: cancel, and they book again, which leaves a clean trace). Nothing on the past. |
 | D21 | Moderation | **A block is honoured for invitations**: nobody can add as participant an account that blocked them or that they blocked, and the screen says so without saying who blocked. **No report button in v1.** To re-read [moderation-and-blocking](moderation-and-blocking.md) before building. |
 | D22 | The FILE question type | **A clean work package, delivered FIRST, used by forms and then by bookings.** Server-side storage readable by the organiser (not MLS: the organiser must open the CV, as form answers are plain today), size and type limits, expiry, purge. |
 
@@ -67,12 +67,12 @@ see who else booked.
 | D34 | Adding a participant | **Direct, no acceptance**; the participant may withdraw alone (D4); a block is honoured (D21). With no notification (D13) they find out by opening the page, which the screen must say. |
 | D35 | Settings layout | **Five sections, the advanced ones collapsed by default**: 1 General (name, description, poster, zone); 2 Resources and availability (typical week, ranges, exceptions, step or slots); 3 Who and how (audience, name visibility, discoverability, questions); 4 Booking rules, collapsed (opening, notice, horizon, quotas, withdrawal delay, people ceiling); 5 Data, collapsed (purge delay N, export). A badge on a collapsed section says a setting is active, as forms' advanced settings do. |
 
-| D36 | Holder edits | **Nothing: a holder can only CANCEL** (user). Participants and answers (the CV included) are fixed at booking time; a participant may still withdraw alone (D4). Known cost, to be said on the booking screen: correcting a CV or adding a friend means cancelling and booking again, and the slot can be taken in between. |
+| D36 | Holder edits | **Superseded by the owner on 2026-11-02: the time (same day) and the other people are editable, see [Editing a booking](#editing-a-booking-owner-2026-11-02).** Earlier text: **Nothing: a holder can only CANCEL** (user). Participants and answers (the CV included) are fixed at booking time; a participant may still withdraw alone (D4). Known cost, to be said on the booking screen: correcting a CV or adding a friend means cancelling and booking again, and the slot can be taken in between. |
 
 | D37 | Mobile entry (E1) | **Desktop sidebar entry, and a "My bookings" card on the phone dashboard** (user). No bottom tab is displaced, the iOS native tab bar is unchanged. A space's link and QR code are the real way in. |
 | D38 | Tab on lists (E2) | **The bookings tab opens for all three kinds** (association, list, institution), for whoever holds `MANAGE_BOOKINGS` on the entity. The short roster of lists is extended and the list role editor must offer the right (since 2026-10-31 derived from `EDIT_SECTIONS_BY_KIND`, [associations](frontend/modules/associations.md#what-a-list-and-an-institution-manage-owner-2026-10-31)). |
 | D39 | Initial right (E6) | **Holders of `MANAGE_FORMS` receive `MANAGE_BOOKINGS` in the migration** (user, against my recommendation of nobody: it grants a right to people who did not ask for it, which cuts against keeping the two responsibilities apart). A BDE super-admin inherits it by default (the user did not answer; written as the existing behaviour for anything not excluded). New roles: the "administrator" preset includes it. |
-| D40 | File on a public form (E3) | **Refused in v1, to reopen later** (user): the upload needs a session token and an anonymous file write is the biggest abuse surface of the chantier. Refused at save time with a clear sentence, as `assertPublicConfigValid` does for price and audience. A "public form" is `forms.isPublic`, answered at `/f/:id` with no account; its payment half is PARKED, not forbidden in principle: it needs WP-LYDIA-1 (Lydia live in production) plus a guest payment route and a fulfilment with no `userId`. The user wants a PAID PUBLIC form (ticketing for an outside event): it is its OWN chantier, [public-paid-forms-chantier](public-paid-forms-chantier.md), planned in parallel. Bookings do not depend on it (D6 needs an account). |
+| D40 | File on a public form (E3) | **Refused in v1, to reopen later** (user): the upload needs a session token and an anonymous file write is the biggest abuse surface of the chantier. Refused at save time with a clear sentence, as `assertPublicConfigValid` does for price and audience. A "public form" is `forms.isPublic`, answered at `/f/:id` with no account; its payment half is PARKED, not forbidden in principle: it needs a guest payment route (Lydia is live in production since 2026-11-06, WP-LYDIA-1) and a fulfilment with no `userId`. The user wants a PAID PUBLIC form (ticketing for an outside event): it is its OWN chantier, [public-paid-forms-chantier](public-paid-forms-chantier.md), planned in parallel. Bookings do not depend on it (D6 needs an account). |
 
 | D42 | Deleting a RESOURCE (review of #2006, Master's decision, the user having delegated it) | **Refused while the resource has ANY booking - past, coming or cancelled** (`resource-has-bookings`). A booking is history, and D15 freezes history while its space exists; D27 lets only the deletion of the whole SPACE erase it. A resource that is no longer offered is CLOSED instead (its availability emptied, or a closure). A resource nobody ever booked may be deleted. (Numbered D42: D36 was already the holder-edits decision.) |
 | D43 | A PERSONAL space in the listing (review of #2029, Master's decision) | **A personal space is NEVER listed to anyone but its owner**, whatever its discoverability: it is reached by its link or QR code. No decision lets a member publish free text (a space's name and description) on a page the whole school reads, and v1 has no report button (D21). A space of an ARCHIVED association is not listed either. |
@@ -83,14 +83,17 @@ see who else booked.
 | D44 | One visible level (user, 2026-10-23) | A space has ONE hidden default column; an **"Ajouter une colonne"** action reveals the columns level. Supersedes the visible space/resource split of D10 **in the UI only**: the data model is unchanged. |
 | D45 | Poster (2026-10-23) | Shown as a **banner on the space page** and a **thumbnail in the spaces list**. |
 | D46 | Desktop main view (2026-10-23) | **Days as columns, like the agenda week**; a column selector when there are several columns; the duration is chosen by click-drag. |
-| D47 | "Prochains creneaux" (2026-10-23) | **Removed.** Supersedes D14's planning. |
-| D48 | Phone view (2026-10-23) | **One day at a time, with a week strip.** |
+| D47 | "Prochains creneaux" (2026-10-23) | **Removed.** Supersedes D14's planning. **Partly reversed on phones, 2026-11-01 (D55): a planning list is back there, as the week, not as "next free slots".** |
+| D48 | Phone view (2026-10-23) | **One day at a time, with a week strip.** **Superseded on phones, 2026-11-01 (D55): the strip stays, the one-day grid is replaced by a planning list.** |
 | D49 | Availability editing (2026-10-23) | A **visual week to paint**, with start templates: Toujours ouvert, Jours ouvres 8h-20h, Evenement ponctuel, Vide. |
 | D50 | Organiser dashboard (2026-10-23) | Upcoming bookings, who booked, quick cancel; **blocking a slot by dragging on the grid**. |
 | D51 | Settings (2026-10-23) | **Five collapsible sections in plain words.** D35 is kept, only its words are made clearer. |
 | D52 | Creation wizard (2026-10-23) | An optional **3-step wizard** as a variant. |
+| D55 | Phone planning (owner, 2026-11-01: "Oui, j'ai pu voir les maquettes, c'est très bien") | **Below `md`, the week is a planning list on the agenda's model - a day-by-day list of bookings, blocks and free stretches - with a "+" that opens a form (column, day, start, end) and a tap on a free stretch that opens it prefilled. The form's answer opens the SAME booking sheet (the organiser's: the block sheet). The grid with drag stays from `md` up.** Supersedes D48 on phones, partly reverses D47. |
 | D53 | Notifications (2026-10-23) | **YES now**: organiser cancellation, confirmation to an added participant, a reminder before the slot with an adjustable delay. Supersedes D13's "no notification in v1". |
 | D54 | Method (2026-10-23) | **Mockups first**, built in parallel with the stable (user: *"Tout de suite, en parallele de la stable"*). |
+
+**Owner picker, "Creer en tant que" (owner, 2026-11-02).** Step 1 of `SpaceWizard` carries the posts' `PostIdentityPicker` (anonymous off, "Moi" as the personal option), under a visible caption, fed by `listActableAssociations(MANAGE_BOOKINGS)` (`associations/actable.ts`, the ONE list the posts' `listPostAsAssociations` also reads: every entity for a global admin, the member's own flags, and for a flag a BDE super-admin inherits the associations under their BDE's `manageAsso` reach - never `POST_AS_ASSO`; the server still asks `mayManageSpace`, `not-manager`). The page's own entity is always offered (read by id), and a failed list is warned and said in the step. It opens on the page's owner (null on the Reservations page, the entity on an association or list edit page) and stays changeable, as the composer's identity does. Both creation paths use the chosen owner: the wizard's ONE create call and "Je regle tout moi-meme" (`onSkip(name, ownerId)`). The audience tiers reload per chosen owner, a late answer for a previous owner is dropped, and the audience's own cotisation criterion is forgotten on a change (`forgetAudienceTiers`: a tier key names ONE catalogue). Both paths end on the new space's editor; its list is read on mount. No transfer of an existing space (out of scope). **Read on `1.6.3-alpha.2`, 2026-11-02 (dev): PASS.** Mi 9T, a member who manages no association: the picker offers "Moi" alone; "Je regle tout moi-meme" created a space with an owner and no association, listed under "Mes espaces". iPhone 12, a BDE administrator: the picker offers "Moi", one institution and eight associations (the BDE and those under its reach); a space created as the BDE lands on its editor under the breadcrumb "BDE Fictif >" and is stored with that association (read on the dev database). Only the skip path was run, not the three steps. The two test spaces are left on dev.
 
 **Master's notes (2026-10-15):** no open pull request touches forms (open: #1896, #1897, #1898, #1884), so WP-F has no known conflict; rebase on `main` before each batch; **check the next free migration number on `main` when opening each pull request**, as other pull requests may take one.
 
@@ -529,7 +532,19 @@ wizard is ONE call and a space is never half made.
   "Occupe", listed or link only).
 - **Only what the steps asked is sent** (`wizardPayload`, `lib/bookings/wizard.ts`): everything
   else keeps the SERVER's default (no rule, answers kept 7 days). The defaults drawn are the
-  mockup's: a working week 8h-20h, up to 2 h by 30 min, everybody, names hidden, listed.
+  mockup's: a working week 8h-20h, bookings of any length by 30 min steps, everybody, names hidden, listed.
+- **A new space has NO longest booking** (owner, 2026-11-09, migration 153): `create` stores
+  `maxSteps` NULL, and `booking_spaces_step_shape` accepts NULL on a step space (a non-NULL value is
+  still >= 1). The organiser sets "Duree maximale d'une reservation" (minutes, a multiple of the step,
+  at most 96 steps) in "Regles de reservation"; empty = no limit, and the live line under it says
+  steps x length in words. The editor stores `maxSteps` = minutes / step (`maxStepsFromMinutes`).
+  With no maximum the booker's picker is bounded by the openings alone (`bookingUnitLimit` is
+  `Infinity`: a run of free touching units ends where the opening does), and the server keeps ONE
+  safety cap of 14 days (`UNBOUNDED_MAX_MS` in `slots.ts`) so a request cannot make it build windows
+  for years. Existing spaces are NOT touched (no backfill): an organiser empties the field to lift
+  theirs. The creation wizard's "longest booking" select opens on "Pas de limite" (`maxMinutes` null, sends
+  `maxSteps` null); picking a duration sends minutes / step. The editor's field also shows the
+  hint pointing at the per-person and per-period quotas just below.
 - **Fixed slots are cut on the client** (`fixedSlotLines`): in a `slots` space each line IS a slot
   (WP-B2), so the painted hours become one line per slot; a tail shorter than a slot is not
   offered and no slot crosses midnight. More than `MAX_AVAILABILITY_LINES` (200) is said on the
@@ -1396,3 +1411,89 @@ the cross-client rig (nothing there asserts the module yet).
 ## The space page and the booking sheet against the mockup (2026-10-30)
 
 The owner found the shipped space page and sheet much uglier than `space.html` (#2579). Closed: a picture banner (a tinted placeholder when the space has no poster) with labelled "Partager" (the system sheet on the phone apps, `copyText` of the link elsewhere), "QR code" and, for managers, "Gerer" buttons (`SpaceBanner`); the phone day strip is light dots under a circled number, not boxed chips (`DayStrip`); a unit already over on the device clock is dimmed and written nothing, only a unit still to come that the window refuses keeps "Non reservable", once per run (`isPastUnit`, `SpaceGrid`); "Vos reservations ici" beside the week on a desktop and under it on a phone, read from the `GET bookings/mine` answer the page already holds (`mineHere`, `MineHereCard`); the booking sheet is a summary card, a duration stepper, the reminder as a radio chip row and two small notes. The week axis already started at the first hour any day opens (`weekLayout`), now pinned by a test. Not drawn: the owner line under the title (`BookerSpace` carries no owner name).
+
+## The rolling week and the narrow block (2026-11-01, owner)
+
+Front only (`SpaceGrid`, `SpaceWeek`, `grid.ts`, `gridRuns.ts`). Nothing above is contradicted: D46 says
+"days as columns, like the agenda week", not "starting Monday"; the grid-hours lever named under the
+denser grid ("the hours shown") is taken the other way, below.
+
+- **Narrow blocks stack, they do not vanish.** A `@max-[6rem]:hidden` on the text hid the name and hours
+  of any booked block narrower than ~96 px whatever its height. Now width only picks the layout (a
+  row from 7rem, a stack under it, the hours split start / end under 5rem) and height alone decides
+  how many lines exist (`stackedLines`). Test: `SpaceGrid.narrow.svelte.test.ts`.
+- **The week rolls**: `weekDates(start)` is the seven days FROM `start` (today at first); prev / next
+  move by 7, "Aujourd'hui" restores `start = today`. The ISO week survives only in quotas.
+- **One hour height (`HOUR_REM` = 3 rem) and a whole-day axis (00:00-24:00)**, never derived from a
+  week's units: that stretched and shifted the grid week to week and on every booking. **Trimming the
+  unbookable hours was NOT built**: the booker is never sent the availability rules (only managers
+  read them), so "never bookable" cannot be computed exactly there. Re-open it only with a server field
+  carrying the space's bookable hours. The grid scrolls in its own capped box (sticky day header) and
+  opens once on the first hour a booker may take (`firstUsefulMin`).
+- The page uses the `grid` width shape (the grid is a fixed 7 columns, like the agenda month) and the
+  poster is capped on a desktop.
+- **Review of #2882**: the box is capped at `75dvh`; a drag near its top or bottom edge scrolls it
+  (`EDGE_PX`), so a range can reach units beyond the visible part; the grid's scroll lives in
+  `SpaceWeek` (`gridScroll`) so a week with nothing offered, which unmounts the grid, does not lose
+  it; the opening hour follows the organiser's rule in block mode; the dashboard counters say "Sur
+  les 7 jours affichés". Pinned by `SpaceWeek.rolling.svelte.test.ts`.
+
+## The phone's planning (D55, 2026-11-01, owner)
+
+Front only, no route and no migration: it reads the SAME week read as the grid (`SpaceWeek`), so there
+is still one request per week.
+
+- **`planning.ts` (pure)**: `planningDays` turns the week's layout into the grid's own runs per day
+  (`buildRuns`; the stretches already over are dropped), `planningKind` reads a unit (taken, blocked,
+  over, free, free-but-not-offered-now), `startChoices` / `endChoices` / `unitKey` draw the form's
+  choices FROM THE FREE RUNS: a day with nothing free is not offered, a start is a free unit the
+  booking window takes (`isOfferedStart`, the ONE rule shared by the grid, the rows and the form: in block mode a unit must START after now, because the server freezes history), an end is the end of
+  a contiguous free unit within what one booking may cover. **The form cannot name a range the grid
+  would refuse; the server stays the judge** (`slot-taken`, `notice`, `beyond-horizon`, ... are said in plain
+  words by the sheet that follows, `refusals.ts`).
+- **Components**: `PlanningList` (rows; a taken row opens the reading sheet, a free row opens the form
+  prefilled with its stretch, the sticky "+" opens it blank), `RangeForm` (the sheet; its answer is
+  `SpaceWeek.pick`, so the booking sheet keeps the answers, participants and reminder), `HolderAvatar`
+  (shared with the grid). The strip, its week arrows and "Aujourd'hui" stay and scroll the list to the day.
+- **Organiser's block mode** gets the same "+" (the form's limit is `BLOCK_LENGTH_CHOICES`; every free
+  unit that has not begun may start a block); it opens the block sheet.
+- **Kept**: the 7-column grid with drag from `md` up; D44's column selector (the form also picks the
+  column); the rolling week. **Removed**: the one-day grid on phones and `bookings_day_empty`.
+- **Keys and prefill**: a start is keyed by its WHOLE unit (`unitKey`: start and end), since two slots may start at the same instant, and is labelled with its full range; an end past midnight reads "(lendemain)"; after a column change the prefill follows the stretch where the new column has it free, else the first choice.
+- **Edge scroll** (grid, drag): the box edges are clamped to the viewport (`edgeScrollDirection`) and the scroll continues while the pointer is held at an edge (frame loop).
+- **Proof**: `planning.test.ts`, `SpaceWeek.planning.svelte.test.ts`, `grid.test.ts` (`isOfferedStart`), `gridRuns.test.ts` (edge), `SpaceGrid.narrow` (dvh box), `Modal.unmount`. **Not yet seen on a phone.**
+
+## Editing a booking (owner, 2026-11-02)
+
+**Supersedes D36 ("a holder can only cancel") and D20's "no move".** "Modifier la réservation" edits
+a COMING booking in place. The owner's decisions, and what was built for each:
+
+| # | Decision (owner) | As built |
+|---|---|---|
+| E1 | Editable: the start, the end and the other people. Not the resource, not the day, not the "Réserver pour quelqu'un" holder. | `PATCH /bookings/:bookingId` (`EditBookingDto`: `startsAt`, `endsAt`, `participantIds` - the WHOLE new set, not a delta). Another local day (space zone) is refused `BOOKING_EDIT_OUTSIDE_RULES` / `other-day`; the resource is not in the request. **The beneficiary is NOT editable - DECIDED (owner, 2026-11-02)**: the account a booking was made "pour quelqu'un" for stays its holder; to change it, cancel and book again. (Moving it would carry the quotas, the answers and the files, D7, to another account.) The edit sheet says so ("la personne pour qui elle est faite" in `bookings_edit_note` and `bookings_sheet_no_edit_note`) and offers no "Réserver pour" field. The answers and files stay as they were. |
+| E2 | All or nothing; the original never released; nobody can take the slot during the edit. | One transaction takes the SPACE, then the RESOURCE (`lockResource`, the order every colliding write takes), then the booking row `FOR UPDATE`, and UPDATEs the row IN PLACE. The exclusion constraint `bookings_live_no_overlap` judges the new range against every OTHER live booking at that UPDATE (the row does not conflict with itself); a `23P01` rolls everything back to the old range, which was never freed. A concurrent booking of the same units waits on the same resource lock: exactly one wins, and the loser gets a typed answer (`slot-taken` for a booking, `BOOKING_EDIT_CONFLICT` / `slot-taken` for an edit), never a deadlock - the WP-B1 measurement still holds because both writers lock the resource first. |
+| E2 | ONE validator for create and edit. | `bookingRuleVerdict` (`bookings.service.ts`), extracted from `book`: people ceiling, shape (`rangeLengthRefusal`, `checkRangeShape`), window (D26), blocks, accounts exist, D21 blocks between people, D17 quotas. It ANSWERS a typed refusal (`BookingRuleRefusal`: family, code, status) instead of throwing; `book` words it as it always did (`ruleRefusalException`), `edit` as `{ code: BOOKING_EDIT_*, reason: <the same code> }` (`editRefusalException`). Quotas take `replacing` = the edited booking, left out of `liveRangesOf`: the edit counts as REPLACED, never added. When only the people change, the range rules are not re-asked and only the NEWCOMERS are counted against their quotas. **The window (D26) reads the start alone**, so it is judged only when the START moves, and never when the new range sits inside the old one (review of #2945: an end-only lengthen or a shorten inside the notice period is not refused). **An edit that only gives back** - its range inside the old one and/or people removed, nobody added (`onlyReduces`) - skips the quotas, the people ceiling and the window: a setting tightened since never forbids asking for less. The shape and the blocks are still read for any changed range. A manager editing someone else's booking is exempt from the quotas, as when booking on their behalf (D17, D20). |
+| E2 | Typed refusal codes. | `BOOKING_EDIT_CONFLICT` (`slot-taken`, `blocked`, `stale`), `BOOKING_EDIT_QUOTA` (`active-bookings`, `minutes-per-period`, with `holder`), `BOOKING_EDIT_OUTSIDE_RULES` (`other-day`, `too-many-people`, a shape code, a window code), `BOOKING_EDIT_FORBIDDEN` (`not-yours`). The state refusals keep the cancel route's codes (`booking-not-found`, `already-cancelled`, `history-frozen`), and so do the refusals about the people named (`unknown-account`, `participant-blocked`, `holder-is-participant`). The client words the rule when it says more than the family, then "Votre réservation n'a pas changé" (`refusals.ts`, `editSentenceFor`). |
+| E2 | An edit is applied only to the state it was built on (review of #2945: a person who withdrew must never be put back by an edit from a stale view). | **No migration**: the revision is DERIVED, `bookingRevision` (`booking-views.ts`) - a sha256 of the range and the sorted ids of the people still in (an erased account's tombstone included). Every booking view sent where the names are carries it (`revision`, so always to whoever may edit), and `EditBookingDto.revision` echoes it. Under the locks, `edit` recomputes it from the locked rows; any other value answers `BOOKING_EDIT_CONFLICT` / `stale` and changes nothing - judged after "changes nothing", so a retry of an edit that landed stays a no-op. Exact for what an edit replaces: any withdrawal, removal, addition or move changes it; a state that went away and came back (A-B-A) is the state the sheet showed, so the edit is right for it. The client toasts `bookings_edit_refusal_stale`, reads the week again and reopens the sheet on the booking as it is (`SpaceWeek.reopenEdit`), or closes it when the new read no longer offers its edit. |
+| E3 | No approval mode. | **DECIDED (owner, 2026-11-02): no approval mode for now - an edit applies directly, like a booking.** The module has no pending state (D12, D33: a booking is live the moment it is written), and an edit follows E2 with nothing held for a manager. Approval spaces, if ever wanted, are a separate chantier. |
+| E4 | Notifications to the people added, removed, and - when the time changes - those who stay, with the new time; every calendar reminder follows the new time. | Two new notice types, `booking_changed` and `booking_removed` (bell row, push `social_booking_*`, category `bookings`, native tables and strings on Android and iOS); the people added get the existing `booking_added`. Every one carries the NEW start in `meta` (`BookingNotificationsService.edited`, after the commit, each group in its own `try`); the one who edited is never told. A person removed is marked `withdrawnAt` (the history row stays, D15; every reader already treats them as gone: their view reads "Quittée", their calendar link answers `calendar-revoked`, the reminder and the quotas skip them); a person added back gets their old row back (one row per booking and account is a unique index). **Reminders**: when the START moves, every person still on it is re-armed as if they had just chosen their delay (`reminderSentAt` cleared, `reminderSetAt` = now; Q-R6 then says a new start already inside the delay gets none); each keeps their own delay (`PATCH reminder` state), a newcomer starts at the space's default. An end-only edit re-arms nothing, so a reminder due and not yet claimed is still sent (review of #2945). **The `.ics`** is read live from the row, so "Ajouter à mon calendrier" gives the new time; an event a calendar already imported is replaced by adding it again (same `UID`, fresh `DTSTAMP`) - a downloaded file does not update itself. |
+| E5 | Who may edit is exactly who may cancel. | The holder, or `mayManage` on the space (a global admin included) - `cancel`'s rule, judged before any state and BEFORE any lock (as `book` does: `mayManage` may ask the associations); anyone else, a participant included, gets `BOOKING_EDIT_FORBIDDEN` / `not-yours`. A holder who does not manage the space WRITES to it, so the campus and the audience are asked again (`assertMayUse`, 'write'): one the space no longer admits may still cancel, never edit. An edit racing a `cancel` or a `withdraw` of the same booking serialises on the booking row: one order or the other, never a torn row; a withdrawal that lands first makes the edit `stale`, so the person stays off (integration spec). |
+
+**Throttle.** The route carries `UserResourceThrottlerGuard`, 10 edits a minute per account AND per
+booking (`BOOKING_EDITS_PER_MINUTE`; the guard reads `:bookingId` since the review of #2945 - before,
+every edit of one account shared one bucket). Chosen over a per-target bound on `booking_added` /
+`booking_removed`: a loop on one booking is what a stuck tab or a script drives, and an organiser
+editing a column of bookings must not be starved by their own earlier edits; a flood spread over
+many bookings reaches a person only through bookings the actor holds or manages, and D21's block
+stops it at the next edit.
+
+**Client.** "Modifier" sits beside "Annuler la réservation" in the taken unit's sheet
+(`UnitDetailSheet`), offered to exactly who may cancel. It reopens `BookingSheet` in edit mode:
+"À partir de" (a start of the booking's own day), the same "Jusqu'à" stepper and "Autres personnes",
+pre-filled; nothing else (no "on behalf", no reminder, no questions). The choices come from the week
+already read (`editRange.ts`: the booking's own units read as free, the grid's `freeRunFrom` and
+`isOfferedStart`; the booking's own start is always offered, and so is a later start inside its own range whatever the window says - running no further than its own end, as the server judges it); a week that does not hold the booking
+offers no "Modifier" and logs why. An organiser who is also a participant is kept in the set
+(`editPeople`), told from `booking.holderId`, never from the reader's capped own list (`MINE_LIMIT`). Proof: `bookings.service.integration.spec.ts` ("editing a booking"),
+`editRange.test.ts`, `BookingSheet.edit.svelte.test.ts`, `refusals.test.ts`. **Not yet seen on a
+phone.**

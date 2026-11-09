@@ -44,12 +44,15 @@
 		DA10CA11E0000000000005C1 /* canari_gazouillis_message.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F1 /* canari_gazouillis_message.wav */; };
 		DA10CA11E0000000000005C2 /* canari_gazouillis_mention.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F2 /* canari_gazouillis_mention.wav */; };
 		DA10CA11E0000000000005C3 /* canari_gazouillis_reaction.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F3 /* canari_gazouillis_reaction.wav */; };
+		DA10CA11E0000000000006B1 /* canari_ring_callkit.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000006F1 /* canari_ring_callkit.wav */; };
 		5AE1A2B3C4D5E6F700000002 /* CanariShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F700000001 /* CanariShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		5AE1A2B3C4D5E6F700000015 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F70000000D /* ShareViewController.swift */; };
 		5AE1A2B3C4D5E6F700000016 /* ShareCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F70000000E /* ShareCapture.swift */; };
 		5AE1A2B3C4D5E6F700000017 /* ShareRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F70000000F /* ShareRules.swift */; };
 		5AE1A2B3C4D5E6F700000018 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F700000012 /* Localizable.strings */; };
 		5AE1A2B3C4D5E6F700000019 /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D4E5F6012345678ABCDEF01 /* UserNotifications.framework */; };
+		5AE1A2B3C4D5E6F700000031 /* Intents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F700000030 /* Intents.framework */; };
+		5AE1A2B3C4D5E6F700000032 /* Intents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5AE1A2B3C4D5E6F700000030 /* Intents.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -117,6 +120,7 @@
 		D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = BackgroundTasks.framework; path = System/Library/Frameworks/BackgroundTasks.framework; sourceTree = SDKROOT; };
 		D4E5F6012345678ABCDEF03 /* CallKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CallKit.framework; path = System/Library/Frameworks/CallKit.framework; sourceTree = SDKROOT; };
 		D4E5F6012345678ABCDEF04 /* PushKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PushKit.framework; path = System/Library/Frameworks/PushKit.framework; sourceTree = SDKROOT; };
+		5AE1A2B3C4D5E6F700000030 /* Intents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Intents.framework; path = System/Library/Frameworks/Intents.framework; sourceTree = SDKROOT; };
 		DA10CA11E0000000000000F1 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		DA10CA11E0000000000000E1 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		DA10CA11E0000000000000F2 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/Localizable.strings; sourceTree = "<group>"; };
@@ -132,6 +136,7 @@
 		DA10CA11E0000000000005F1 /* canari_gazouillis_message.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_gazouillis_message.wav; sourceTree = "<group>"; };
 		DA10CA11E0000000000005F2 /* canari_gazouillis_mention.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_gazouillis_mention.wav; sourceTree = "<group>"; };
 		DA10CA11E0000000000005F3 /* canari_gazouillis_reaction.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_gazouillis_reaction.wav; sourceTree = "<group>"; };
+		DA10CA11E0000000000006F1 /* canari_ring_callkit.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_ring_callkit.wav; sourceTree = "<group>"; };
 		5AE1A2B3C4D5E6F700000001 /* CanariShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CanariShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		5AE1A2B3C4D5E6F70000000D /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		5AE1A2B3C4D5E6F70000000E /* ShareCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareCapture.swift; sourceTree = "<group>"; };
@@ -159,6 +164,7 @@
 				BD49C8A0300FAFC5000960D6 /* BackgroundTasks.framework in Frameworks */,
 				BD49C8A1300FAFC5000960D7 /* CallKit.framework in Frameworks */,
 				BD49C8A2300FAFC5000960D8 /* PushKit.framework in Frameworks */,
+				5AE1A2B3C4D5E6F700000031 /* Intents.framework in Frameworks */,
 				BD75AE05300EA4C0003EBA05 /* FirebaseMessaging in Frameworks */,
 				0F314E9163215F1665041E54 /* UIKit.framework in Frameworks */,
 			);
@@ -179,6 +185,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5AE1A2B3C4D5E6F700000019 /* UserNotifications.framework in Frameworks */,
+				5AE1A2B3C4D5E6F700000032 /* Intents.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -201,6 +208,7 @@
 				D4E5F6012345678ABCDEF02 /* BackgroundTasks.framework */,
 				D4E5F6012345678ABCDEF03 /* CallKit.framework */,
 				D4E5F6012345678ABCDEF04 /* PushKit.framework */,
+				5AE1A2B3C4D5E6F700000030 /* Intents.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -274,7 +282,16 @@
 				80EB529A999B6336917EDB30 /* Products */,
 				BD75ADFF300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist */,
 				DA10CA11E0000000000005A0 /* NotificationSounds */,
+				DA10CA11E0000000000006A0 /* CallSounds */,
 			);
+			sourceTree = "<group>";
+		};
+		DA10CA11E0000000000006A0 /* CallSounds */ = {
+			isa = PBXGroup;
+			children = (
+				DA10CA11E0000000000006F1 /* canari_ring_callkit.wav */,
+			);
+			path = CallSounds;
 			sourceTree = "<group>";
 		};
 		DA10CA11E0000000000005A0 /* NotificationSounds */ = {
@@ -495,6 +512,7 @@
 				DA10CA11E0000000000005B1 /* canari_gazouillis_message.wav in Resources */,
 				DA10CA11E0000000000005B2 /* canari_gazouillis_mention.wav in Resources */,
 				DA10CA11E0000000000005B3 /* canari_gazouillis_reaction.wav in Resources */,
+				DA10CA11E0000000000006B1 /* canari_ring_callkit.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -733,7 +751,7 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 100600002;
+				CURRENT_PROJECT_VERSION = 100600902;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
@@ -773,7 +791,7 @@
 					"$(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION)",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 1.6.0;
+				MARKETING_VERSION = 1.6.9;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -830,7 +848,7 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 100600002;
+				CURRENT_PROJECT_VERSION = 100600902;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
@@ -864,7 +882,7 @@
 					"$(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION)",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 1.6.0;
+				MARKETING_VERSION = 1.6.9;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = fr.emse.canari.notifications;
@@ -1034,7 +1052,7 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 100600002;
+				CURRENT_PROJECT_VERSION = 100600902;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
@@ -1066,7 +1084,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 1.6.0;
+				MARKETING_VERSION = 1.6.9;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1123,7 +1141,7 @@
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution: Les Rootz (4CLNB8SR6L)";
 				CODE_SIGN_STYLE = Manual;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 100600002;
+				CURRENT_PROJECT_VERSION = 100600902;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 4CLNB8SR6L;
@@ -1149,7 +1167,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 1.6.0;
+				MARKETING_VERSION = 1.6.9;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = fr.emse.canari.share;

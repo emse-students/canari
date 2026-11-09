@@ -31,7 +31,9 @@ describe('FormsService - public forms', () => {
     ...over,
   });
 
-  function makeService(opts: { form?: Record<string, unknown> | null } = {}) {
+  function makeService(
+    opts: { form?: Record<string, unknown> | null; collectsNow?: boolean } = {}
+  ) {
     const saved: Record<string, unknown>[] = [];
     const manager: any = {
       query: jest.fn(() => Promise.resolve([{ formId: 'f1' }])),
@@ -59,14 +61,23 @@ describe('FormsService - public forms', () => {
       submissionRepo,
       {} as any,
       { get: jest.fn() } as any,
-      { isMember: jest.fn(() => Promise.resolve(true)) } as any,
-      {} as any,
+      {
+        isMember: jest.fn(() => Promise.resolve(true)),
+        collectsNow: jest.fn(() => Promise.resolve(opts.collectsNow ?? true)),
+        // An edit that starts charging asks what kind the association is: one that sells.
+        collectionSubjectOf: jest.fn(() => Promise.resolve(null)),
+        assertPaymentsReady: jest.fn(() => Promise.resolve()),
+        canTakePaymentsNow: jest.fn(() => Promise.resolve(true)),
+      } as any,
+      // UserTagService: the association sells no cotisation, so a grid on promo needs no tier.
+      { listCotisationTiers: jest.fn(() => Promise.resolve([])) } as any,
       {} as any,
       pricingFacts,
       { count: jest.fn() } as any,
       {} as any,
       // FormOrganiserAlertService: switched off, as it ships.
-      { enabled: () => false } as any
+      { enabled: () => false } as any,
+      {} as any
     );
     return { service, manager, saved, formRepo, submissionRepo, pricingFacts };
   }
@@ -95,6 +106,29 @@ describe('FormsService - public forms', () => {
       expect(form.formFull).toBe(false);
     });
 
+    // A guest reads a question's image with no session: the item carries the PUBLIC route, which
+    // needs no token (unlike an avatar, signed since phase 1), and its alt text.
+    it("serves a question's image as its public media route, readable with no session", async () => {
+      const imageUrl = '/api/media/public/11111111-1111-4111-8111-111111111111';
+      const { service } = makeService({
+        form: baseForm({
+          items: [
+            {
+              id: 'q1',
+              label: 'Plat',
+              required: true,
+              type: 'short_text',
+              imageUrl,
+              imageAlt: 'Menu',
+            },
+          ],
+        }),
+      });
+      const [item] = (await service.getPublic('f1')).items;
+      expect(item).toMatchObject({ imageUrl, imageAlt: 'Menu' });
+      expect(item.imageUrl).toMatch(/^\/api\/media\/public\/[0-9a-f-]{36}$/);
+    });
+
     // An allowlist: a guest is served exactly these keys. Control: answer `{ ...form, formFull }`
     // and this fails on `ownerId`, `associationId` and every other stored column.
     it('serves exactly the allowlisted fields, the price included', async () => {
@@ -111,15 +145,51 @@ describe('FormsService - public forms', () => {
           'currency',
           'description',
           'formFull',
+          'guestFields',
           'id',
           'imageUrl',
           'items',
           'opensAt',
+          'paymentsPaused',
           'pricing',
+          'productGridPrices',
           'title',
         ].sort()
       );
       expect(form).toMatchObject({ basePrice: 1200, allowCashPayment: true, pricing: null });
+    });
+
+    // Owner, 2026-11-02: a paid form of an entity that cannot collect now (a list whose delegation
+    // was revoked) is served PAUSED; a free form never is, whatever its association.
+    it('serves a paid form paused while its association cannot collect, and a free one never', async () => {
+      const paid = makeService({ form: baseForm({ basePrice: 1200 }), collectsNow: false });
+      expect((await paid.service.getPublic('f1')).paymentsPaused).toBe(true);
+      const live = makeService({ form: baseForm({ basePrice: 1200 }), collectsNow: true });
+      expect((await live.service.getPublic('f1')).paymentsPaused).toBe(false);
+      const free = makeService({ form: baseForm({ basePrice: 0 }), collectsNow: false });
+      expect((await free.service.getPublic('f1')).paymentsPaused).toBe(false);
+    });
+
+    // Owner review of #2967: the pause reads the ONE charge predicate (`chargesMoney`), which counts
+    // a choice option's supplement - a form priced by a supplement alone pauses too.
+    it('pauses a form priced only by a choice supplement, and never by a text question', async () => {
+      const choice = {
+        id: 'q1',
+        label: 'Menu',
+        required: true,
+        type: 'single_choice',
+        options: [{ id: 'o1', label: 'Grand', priceModifier: 500 }],
+      };
+      const supplement = makeService({
+        form: baseForm({ basePrice: 0, items: [choice] }),
+        collectsNow: false,
+      });
+      expect((await supplement.service.getPublic('f1')).paymentsPaused).toBe(true);
+      const text = makeService({
+        form: baseForm({ basePrice: 0, items: [{ ...choice, type: 'short_text' }] }),
+        collectsNow: false,
+      });
+      expect((await text.service.getPublic('f1')).paymentsPaused).toBe(false);
     });
 
     it("serves a grid on answers as the guest's whole slice", async () => {
@@ -340,7 +410,13 @@ describe('FormsService - public forms', () => {
           id: 'd1',
           kind,
           ...extra,
-          buckets: [{ id: 'b1', label: 'Groupe', values: ['opt_a'] }],
+          buckets: [
+            {
+              id: 'b1',
+              label: 'Groupe',
+              values: kind === 'promo' ? [2026] : kind === 'formation' ? ['ICM'] : ['opt_a'],
+            },
+          ],
         },
       ],
       cells: { b1: 1000, [OTHERS_BUCKET_ID]: 1500 },
@@ -355,16 +431,13 @@ describe('FormsService - public forms', () => {
       ],
     };
 
-    // Each refusal below is a guard of `assertPublicConfigValid`. Controls (2026-10-22, WP-P1): with
-    // the grant check removed the "cotisation grant" case fails; with the `kind !== 'answer'` check
-    // removed the three profile-grid cases fail.
-    // Each case names the sentence of ITS refusal: a later check (the cotisation validation, which
-    // also refuses a grant with no association) must not be what makes the case pass.
+    // Each refusal below is a guard of `assertFormOptionsCoherent` (the shared pairs) or of
+    // `assertPublicConfigValid`. Each case names the sentence of ITS refusal: a later check (the
+    // cotisation validation, which also refuses a grant with no association) must not be what makes
+    // the case pass. Control (2026-11-06): `FORM_PUBLIC_COTISATION_GRANT` deleted from the shared
+    // table -> the grant case fails; `FORM_PUBLIC_AUDIENCE` deleted -> the two audience cases fail.
     it.each([
       ['a cotisation grant', { grantsCotisation: true }, /cannot grant a cotisation/],
-      ['a grid on promo', { priceMatrix: gridOn('promo') }, /price only on answers/],
-      ['a grid on formation', { priceMatrix: gridOn('formation') }, /price only on answers/],
-      ['a grid on cotisation', { priceMatrix: gridOn('cotisation') }, /price only on answers/],
       ['an audience condition', { submitCondition: { promo: [2026] } }, /depend on who answers/],
       [
         'a question shown by promo',
@@ -378,6 +451,78 @@ describe('FormsService - public forms', () => {
       await expect(refusal).rejects.toThrow(BadRequestException);
       await expect(refusal).rejects.toThrow(sentence);
       expect(formRepo.save).not.toHaveBeenCalled();
+    });
+
+    // The refusal carries the conflict's CODE, so the editor names the cause from it, never from
+    // the sentence.
+    it.each([
+      ['a cotisation grant', { grantsCotisation: true }, 'FORM_PUBLIC_COTISATION_GRANT'],
+      ['an audience condition', { submitCondition: { promo: [2026] } }, 'FORM_PUBLIC_AUDIENCE'],
+      ['a file question', { items: [{ id: 'q1', label: 'CV', type: 'file' }] }, 'FORM_PUBLIC_FILE'],
+    ])('refuses a public form with %s under its code', async (_name, over, code) => {
+      const { service } = makeService();
+      const refusal = await service.create(input(over)).catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(BadRequestException);
+      expect((refusal as BadRequestException).getResponse()).toMatchObject({ code });
+    });
+
+    // A guest has no promo, formation or cotisation, so it lands in the "everyone else" tier of each
+    // and pays that (owner, 2026-11-06). Control: the profile-kind refusal restored in
+    // `assertPublicConfigValid` -> both cases fail.
+    it.each([['promo'], ['formation']])(
+      'accepts a public form with a grid on %s: a guest pays its "everyone else" tier',
+      async (kind) => {
+        const { service, formRepo } = makeService();
+        await service.create(input({ requiresPayment: true, priceMatrix: gridOn(kind) }));
+        expect(formRepo.save).toHaveBeenCalled();
+      }
+    );
+
+    describe('the tier a guest pays on a grid by who the person is', () => {
+      const promoGrid = (cells: Record<string, number | null>) => ({
+        dimensions: [
+          { id: 'd1', kind: 'promo', buckets: [{ id: 'b1', label: '1A', values: [2026] }] },
+        ],
+        cells,
+      });
+
+      // Control: `guestTierUnavailable` answering false -> the refusal saves.
+      it('refuses it when the "everyone else" tier is unavailable: no guest could answer', async () => {
+        const { service, formRepo } = makeService();
+        const refusal = await service
+          .create(
+            input({
+              requiresPayment: true,
+              priceMatrix: promoGrid({ b1: 1000, [OTHERS_BUCKET_ID]: null }),
+            })
+          )
+          .catch((e: unknown) => e);
+        expect(refusal).toBeInstanceOf(BadRequestException);
+        expect((refusal as BadRequestException).getResponse()).toMatchObject({
+          code: 'FORM_PUBLIC_GUEST_TIER_UNAVAILABLE',
+        });
+        expect(formRepo.save).not.toHaveBeenCalled();
+      });
+
+      // Control: `isGuestCell` dropped from `freeFallbackCells` -> the member case is refused.
+      it('refuses it free, and leaves a member tier free if the manager wants', async () => {
+        const { service, formRepo } = makeService();
+        await expect(
+          service.create(
+            input({
+              requiresPayment: true,
+              priceMatrix: promoGrid({ b1: 1000, [OTHERS_BUCKET_ID]: 0 }),
+            })
+          )
+        ).rejects.toThrow(/"everyone else" price at 0/);
+        await service.create(
+          input({
+            requiresPayment: true,
+            priceMatrix: promoGrid({ b1: 0, [OTHERS_BUCKET_ID]: 1500 }),
+          })
+        );
+        expect(formRepo.save).toHaveBeenCalledTimes(1);
+      });
     });
 
     it('accepts a free public form whose questions depend only on answers', async () => {
@@ -478,6 +623,59 @@ describe('FormsService - public forms', () => {
         const { service, formRepo } = makeService();
         await service.create(input({ requiresPayment: true, items, priceMatrix }));
         expect(formRepo.save).toHaveBeenCalled();
+      });
+
+      // A grid by promo AND by menu: a guest is "everyone else" on the promo, and on the menu either
+      // names an option or is "everyone else" there too (the true fallback).
+      describe('on a grid by promo and by menu', () => {
+        const both = (cells: Record<string, number | null>) => ({
+          dimensions: [
+            {
+              id: 'dp',
+              kind: 'promo',
+              buckets: [{ id: 'p1', label: '1A', values: [2026] }],
+            },
+            {
+              id: 'd1',
+              kind: 'answer',
+              questionId: 'q_menu',
+              buckets: [{ id: 'b1', label: 'Menu', values: ['opt_a', 'opt_b'] }],
+            },
+          ],
+          cells: {
+            'p1|b1': 1000,
+            'p1|_others': 1000,
+            '_others|b1': 1200,
+            '_others|_others': 1200,
+            ...cells,
+          },
+        });
+
+        it('accepts a NAMED option priced 0: a free choice, not a default', async () => {
+          const { service, formRepo } = makeService();
+          await service.create(
+            input({
+              requiresPayment: true,
+              items: [menu({ required: false })],
+              priceMatrix: both({ '_others|b1': 0 }),
+            })
+          );
+          expect(formRepo.save).toHaveBeenCalled();
+        });
+
+        it('refuses the true fallback at 0: "everyone else" on every criterion', async () => {
+          const { service, formRepo } = makeService();
+          await expect(
+            service.create(
+              input({
+                requiresPayment: true,
+                items: [menu({ required: false })],
+                priceMatrix: both({ '_others|_others': 0 }),
+              })
+            )
+          ).rejects.toThrow(/"everyone else" price at 0/);
+          expect(formRepo.save).not.toHaveBeenCalled();
+        });
       });
 
       // Two questions with one id: one reader judged the first, another the last, so a required,
@@ -640,21 +838,62 @@ describe('FormsService - public forms', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    // An edit sending only `isPublic: true` must not publish what is STORED and refused.
-    // Control: pass `input.grantsCotisation` / `input.priceMatrix` alone to the check (as before
-    // WP-P1) and both cases save.
-    it.each([
-      ['a stored cotisation grant', { grantsCotisation: true }],
-      ['a stored grid on promo', { priceMatrix: gridOn('promo') }],
-    ])('refuses to publish a form holding %s that the edit leaves out', async (_name, stored) => {
-      const { service, formRepo } = makeService();
-      jest
-        .spyOn(service, 'assertFormManager')
-        .mockResolvedValue(baseForm({ isPublic: false, ...stored }) as any);
-      await expect(
-        service.update('f1', { isPublic: true, allowMultipleSubmissions: true } as any, 'u1', false)
-      ).rejects.toThrow(BadRequestException);
-      expect(formRepo.save).not.toHaveBeenCalled();
+    // THE ORDER OF THE CLICKS CANNOT MATTER (owner, 2026-11-06): each pair is judged on the form as
+    // it WILL be saved, the stored half merged with the edited half, so "public first, then X" and
+    // "X first, then public" get the same answer. Control: pass the edit alone to
+    // `assertFormOptionsCoherent` (as before WP-P1) and the refused "public last" cases save.
+    describe('either order of the two switches', () => {
+      const PUBLISH = { isPublic: true, allowMultipleSubmissions: true };
+      const cases: [string, Record<string, unknown>, string | null][] = [
+        ['a cotisation grant', { grantsCotisation: true }, 'FORM_PUBLIC_COTISATION_GRANT'],
+        ['an audience condition', { submitCondition: { promo: [2026] } }, 'FORM_PUBLIC_AUDIENCE'],
+        ['a grid on promo', { requiresPayment: true, priceMatrix: gridOn('promo') }, null],
+      ];
+
+      /** The code the edit is refused with, or null when it saved. */
+      async function refusalCode(stored: Record<string, unknown>, edit: Record<string, unknown>) {
+        const { service, formRepo } = makeService();
+        jest.spyOn(service, 'assertFormManager').mockResolvedValue(baseForm(stored) as any);
+        const code = await service
+          .update('f1', edit as any, 'u1', false)
+          .then(() => null)
+          .catch((e: unknown) => {
+            if (!(e instanceof BadRequestException)) throw e;
+            return (e.getResponse() as { code?: string }).code ?? null;
+          });
+        expect(formRepo.save).toHaveBeenCalledTimes(code === null ? 1 : 0);
+        return code;
+      }
+
+      it.each(cases)('public last, %s stored', async (_name, option, code) => {
+        expect(await refusalCode({ isPublic: false, ...option }, PUBLISH)).toBe(code);
+      });
+
+      it.each(cases)('public first, %s added', async (_name, option, code) => {
+        expect(await refusalCode(PUBLISH, option)).toBe(code);
+      });
+
+      // Stored before the supplement counted as a payment: `submit` refuses to charge it.
+      const supplemented = [
+        {
+          id: 'q_menu',
+          label: 'Menu',
+          type: 'single_choice',
+          options: [{ id: 'o1', label: 'Vin', priceModifier: 500 }],
+        },
+      ];
+      const legacy = { isPublic: false, anonymous: true, items: supplemented };
+
+      it('keeps a form stored with a conflict editable', async () => {
+        expect(await refusalCode(legacy, { title: 'Gala 2027' })).toBeNull();
+        expect(await refusalCode(legacy, { title: 'Gala', items: supplemented })).toBeNull();
+      });
+
+      it('still refuses an edit that introduces ANOTHER conflict on it', async () => {
+        expect(await refusalCode(legacy, { grantsCotisation: true })).toBe(
+          'FORM_ANONYMOUS_COTISATION_GRANT'
+        );
+      });
     });
   });
 });

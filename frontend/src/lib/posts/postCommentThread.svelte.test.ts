@@ -5,10 +5,13 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { PostComment, PostEntity } from '$lib/posts/api';
-import { addComment, fetchComments } from '$lib/posts/api';
+import { addComment, deleteComment, fetchComments, likeComment } from '$lib/posts/api';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { m } from '$lib/paraglide/messages';
 import { PostCommentThread } from './postCommentThread.svelte';
 
-vi.mock('$lib/moderation/muteCheck', () => ({
+vi.mock('$lib/moderation/muteCheck', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/moderation/muteCheck')>()),
   assertNotMuted: vi.fn().mockResolvedValue(undefined),
   cachedMuteStatus: () => null,
 }));
@@ -17,6 +20,8 @@ vi.mock('$lib/posts/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/posts/api')>()),
   fetchComments: vi.fn(),
   addComment: vi.fn(),
+  deleteComment: vi.fn(),
+  likeComment: vi.fn(),
 }));
 
 const c = (n: number): PostComment => ({
@@ -106,6 +111,108 @@ it('a personal comment (the default) is drawn under the reader and sends no iden
     text: 'hello',
     parentId: undefined,
     media: undefined,
+  });
+});
+
+it("a delete applies the server's answer: the rows it took go, a tombstone replaces its row", async () => {
+  // c1 answered by c2 (an institution's, kept) and c3 (taken), c3 answered by c4 (taken too): the
+  // server decided it level by level; the thread does not guess from the rows it holds.
+  const tombstone: PostComment = {
+    id: 'c1',
+    parentId: null,
+    text: '',
+    likes: [],
+    createdAt: '2026-10-19T00:00:00Z',
+    removedByModeration: true,
+    canEdit: false,
+    canDelete: false,
+  };
+  vi.mocked(deleteComment).mockResolvedValue({
+    ok: true,
+    removedIds: ['c3', 'c4'],
+    tombstones: [tombstone],
+    // c3 and c4 removed, c1 turned into a tombstone: three comments leave the count.
+    countedOut: 3,
+  });
+  const rows = [
+    c(1),
+    { ...c(2), parentId: 'c1' },
+    { ...c(3), parentId: 'c1' },
+    { ...c(4), parentId: 'c3' },
+  ];
+  const { thread, state } = threadOn({
+    id: 'p',
+    comments: rows,
+    commentCount: 4,
+  } as unknown as PostEntity);
+
+  await thread.remove('c1');
+
+  expect(state.held.comments?.map((x) => x.id)).toEqual(['c1', 'c2']);
+  expect(state.held.comments?.[0]).toEqual(tombstone);
+  // c2 alone is still a comment; the tombstone is a row, never a count.
+  expect(state.held.commentCount).toBe(1);
+  expect(state.failures).toEqual([]);
+});
+
+it('a server older than the tombstone ({ ok: true } alone): the subtree goes, and the skew is warned', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.mocked(deleteComment).mockResolvedValue({ ok: true });
+  const rows = [
+    c(1),
+    { ...c(2), parentId: 'c1' },
+    { ...c(3), parentId: 'c2' },
+    { ...c(4), parentId: null },
+  ];
+  const { thread, state } = threadOn({
+    id: 'p',
+    comments: rows,
+    commentCount: 4,
+  } as unknown as PostEntity);
+
+  await thread.remove('c1');
+
+  expect(state.held.comments?.map((x) => x.id)).toEqual(['c4']);
+  expect(state.held.commentCount).toBe(1);
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('[VERSION-SKEW]'));
+  warn.mockRestore();
+});
+
+describe('a comment moderation removed meanwhile (409 COMMENT_REMOVED_BY_MODERATION)', () => {
+  const refusal = () =>
+    new ApiRefusalError(
+      409,
+      'COMMENT_REMOVED_BY_MODERATION',
+      'This comment was removed by moderation'
+    );
+
+  it('a reply to it is rolled back and said in its own words', async () => {
+    vi.mocked(addComment).mockRejectedValueOnce(refusal());
+    const { thread, state } = threadOn({
+      id: 'p',
+      comments: [c(1)],
+      commentCount: 1,
+    } as PostEntity);
+    const outcome = await thread.add('hi', 'c1', undefined, () => {});
+    expect(outcome).toBe('failed');
+    expect(state.held.comments?.map((x) => x.id)).toEqual(['c1']);
+    expect(state.held.commentCount).toBe(1);
+    expect(state.failures).toEqual([m.post_comment_removed_by_moderation_refusal()]);
+  });
+
+  it('a heart on it is rolled back and said; any other failed heart stays silent', async () => {
+    const { thread, state } = threadOn({
+      id: 'p',
+      comments: [c(1)],
+      commentCount: 1,
+    } as PostEntity);
+    vi.mocked(likeComment).mockRejectedValueOnce(new Error('offline'));
+    await thread.like('c1');
+    expect(state.failures).toEqual([]);
+    vi.mocked(likeComment).mockRejectedValueOnce(refusal());
+    await thread.like('c1');
+    expect(state.held.comments?.[0].likes).toEqual([]);
+    expect(state.failures).toEqual([m.post_comment_removed_by_moderation_refusal()]);
   });
 });
 

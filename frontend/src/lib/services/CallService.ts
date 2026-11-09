@@ -1,4 +1,6 @@
 import { writable, get } from 'svelte/store';
+import type { EventTime } from '$lib/utils/chat/visibleNotices';
+import type { CallEndTime } from '$lib/utils/chat/callSystemMessages';
 import { resolveServiceUrl } from '$lib/utils/apiUrl';
 import type { IMlsService } from '$lib/mls-client';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
@@ -65,6 +67,7 @@ import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion'
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { nextPageRingHolder, reportPageRingingCall } from './pageGatewaySocket';
 import { reportCallSoundPhase, retireCallSoundHolder } from '$lib/utils/callSoundGate';
+import { captureUserMedia } from '$lib/utils/audioSession';
 import {
   callVideoConstraints,
   canHoldVideoToVp8,
@@ -72,6 +75,11 @@ import {
   type CameraFacing,
 } from '$lib/utils/callVideo';
 import { CallVideoQualityLoop } from '$lib/utils/callVideoQuality';
+import {
+  CALL_VIDEO_MIME_TYPE,
+  negotiatedCodecMismatch,
+  negotiatedMediaCodec,
+} from '$lib/utils/callVideoFrame';
 import {
   buildCallMicPipeline,
   CALL_NOISE_SUPPRESSION_DEFAULT,
@@ -117,7 +125,8 @@ interface FetchedIceServers {
 
 /** Optional hook to mirror call lifecycle events into the chat timeline. */
 export interface CallChatNotifier {
-  onCallStarted: (groupId: string, callId: string) => void | Promise<void>;
+  /** `at`: the invite this device sent - its `sentAt` and the server's acceptance of it. */
+  onCallStarted: (groupId: string, callId: string, at: EventTime) => void | Promise<void>;
   /**
    * A call this device ended (or lost) LOCALLY. `outcome` is the typed reason it ended unanswered,
    * absent for an answered call; `starterId` is the caller, absent when it is this account. The
@@ -126,8 +135,16 @@ export interface CallChatNotifier {
   onCallEnded: (
     groupId: string,
     callId: string,
+    /** The instant this device ended the call - the one its hangup frame carries as `sentAt`. */
+    at: CallEndTime,
     outcome?: CallEndReason,
     starterId?: string
+  ) => void | Promise<void>;
+  /** The server accepted this device's hangup at `serverTimestamp`: patched onto the record. */
+  onCallEndAnswered?: (
+    groupId: string,
+    callId: string,
+    serverTimestamp: number
   ) => void | Promise<void>;
 }
 
@@ -138,6 +155,15 @@ export interface CallChatNotifier {
  */
 export function canUseRtpScriptTransform(): boolean {
   return typeof RTCRtpScriptTransform !== 'undefined';
+}
+
+/**
+ * A transform's media as its attach line names it: the kind, and for video the codec the worker
+ * frames it on (`CallTransformOptions.videoCodec`) - or that none is held, so it fails closed.
+ */
+function describeTransformMedia(kind: string, videoCodec: string | undefined): string {
+  if (kind !== 'video') return kind;
+  return videoCodec ? `video, ${videoCodec}` : 'video, no codec held - framed whole';
 }
 
 /**
@@ -543,6 +569,10 @@ export class CallService {
   private cameraOpTarget: 'on' | 'off' = 'off';
   /** The worker's `videoCodecUnexpected` was logged in this call: one ERROR line, not one per post. */
   private videoCodecUnexpectedLogged = false;
+  /** The codec each VIDEO sender and receiver's transform was told (`undefined` = none held). */
+  private videoTransformCodecs = new WeakMap<RTCRtpSender | RTCRtpReceiver, string | undefined>();
+  /** A negotiated video codec that differs from its transform's was reported in this call. */
+  private negotiatedCodecMismatchLogged = false;
   /**
    * The camera sender's quality ladder (`utils/callVideoQuality.ts`), for the peer connection and
    * sender it was started on; `null` when no camera transceiver exists.
@@ -1118,11 +1148,16 @@ export class CallService {
         return;
       }
       const deviceId = this.mlsService.getDeviceId();
-      await this.sendMlsNotification(groupId, mkCallInvite(roomId, video, deviceId, ringTimeoutMs));
+      const invite = await this.sendMlsNotification(
+        groupId,
+        mkCallInvite(roomId, video, deviceId, ringTimeoutMs)
+      );
       if (!this.stillCalling(roomId, 'after the invite')) return;
       // The caller's timer starts after the window opened, so it never gives up before the server.
       this.armRingTimer(roomId, ringTimeoutMs, 'calling');
-      void this.chatNotifier?.onCallStarted(groupId, roomId);
+      // Dated by the invite just sent - the frame every member's record is dated by - and ordered by
+      // the server's acceptance of it, as an own text row is (`patchServerTimestamp`).
+      void this.chatNotifier?.onCallStarted(groupId, roomId, invite);
       this.syncCallPresence(true);
     } catch (e) {
       // The call already ended (and was cleaned up, or is showing its summary): nothing to undo,
@@ -1341,11 +1376,25 @@ export class CallService {
     // The ended summary is not a reconnection, and a resume must not be attempted behind it.
     this.clearResumeTimer();
     this.reconnecting.set(false);
+    // ONE ACT, ONE INSTANT: this device ending the call is the event, so its clock HERE is the
+    // event's time - taken once, and carried by both the hangup frame every member dates the record
+    // by and this device's own record, so the two cannot disagree.
+    const endedAt = Date.now();
+    // The record is written AT THE ACT, never held for the send (a catch-up gate or an epoch barrier
+    // can hold it for minutes, and a kill meanwhile would leave the row unfinalised); the server's
+    // acceptance is patched in once the send answers (`onCallEndAnswered`).
+    let hangup: Promise<EventTime | null> = Promise.resolve(null);
     if (notify && groupId && callId) {
-      this.sendMlsNotification(
+      hangup = this.sendMlsNotification(
         groupId,
-        mkCallHangup(callId, this.mlsService.getDeviceId(), outcome)
-      ).catch(console.error);
+        mkCallHangup(callId, this.mlsService.getDeviceId(), outcome),
+        endedAt
+      ).catch((e: unknown) => {
+        console.error(
+          `[Call] hangup of ${callId} not sent - its record carries no server time: ${String(e)}`
+        );
+        return null;
+      });
       // WP-XP-5: stop the system-surface rings on every device (cancelled before pickup,
       // or a late ring after the call ended).
       void this.endServerRing(
@@ -1357,12 +1406,23 @@ export class CallService {
     if (groupId && callId && !remoteOrigin) {
       // The one record writer, told WHY the call ended. A call that failed before its invite
       // (initiate refused, no ICE servers, no microphone) rang nobody: no outcome, no record.
-      void this.chatNotifier?.onCallEnded(
-        groupId,
-        callId,
-        outcome,
-        state === 'incoming' ? (this.incomingCallerId ?? undefined) : undefined
+      const starterId = state === 'incoming' ? (this.incomingCallerId ?? undefined) : undefined;
+      const notifier = this.chatNotifier;
+      const recorded = Promise.resolve(
+        notifier?.onCallEnded(
+          groupId,
+          callId,
+          { timestamp: new Date(endedAt), ownAct: true },
+          outcome,
+          starterId
+        )
       );
+      // After the row exists: a patch that ran first would find nothing to patch.
+      void Promise.all([recorded, hangup]).then(([, sent]) => {
+        if (sent?.serverTimestamp !== undefined) {
+          return notifier?.onCallEndAnswered?.(groupId, callId, sent.serverTimestamp);
+        }
+      });
     }
 
     // The call is over from here: a microphone the system gives back during the summary is no
@@ -1511,6 +1571,7 @@ export class CallService {
     this.cameraBusy = false;
     this.offPending = false;
     this.videoCodecUnexpectedLogged = false;
+    this.negotiatedCodecMismatchLogged = false;
     this.cameraFacing.set('user');
     this.canSwitchCamera.set(false);
     this.isVideoOff.set(true);
@@ -2537,13 +2598,24 @@ export class CallService {
     // transform is assigned in the same task as that `addTrack` - Chromium decided when the
     // transceiver was created. So the sender gets its transform now, before it carries anything.
     const newMline = !receiver.transform;
+    // The peer's camera m-line is held to VP8 on this side too, so whichever side answers, the
+    // negotiated codec is the one the transform frames (`utils/callVideoFrame.ts`) - and held
+    // BEFORE the transforms are made, so they are told that codec rather than reading the frame's
+    // metadata, which WebKit leaves empty. A transceiver this side made (the camera's) already holds
+    // it, and its transforms are already on: the attaches below return at once.
+    const videoCodec = transceiver ? this.holdVideoToVp8(transceiver, track.kind) : undefined;
     let side: 'receiver' | 'sender' = 'receiver';
     try {
-      this.attachReceiverTransform(receiver, track.kind);
+      this.attachReceiverTransform(receiver, track.kind, videoCodec);
       side = 'sender';
       // Armed with no track yet: it sends nothing until a later `addTrack` reuses it.
       if (transceiver)
-        this.attachSenderTransform(transceiver.sender, track.kind, 'armed, no track yet');
+        this.attachSenderTransform(
+          transceiver.sender,
+          track.kind,
+          videoCodec,
+          'armed, no track yet'
+        );
     } catch (e) {
       appendLog(`[Call] E2E ${side} transform failed in ontrack (${track.kind}): ${String(e)}`);
       this.failCall(
@@ -2554,9 +2626,6 @@ export class CallService {
       );
       return;
     }
-    // The peer's camera m-line is held to VP8 on this side too, so whichever side answers, the
-    // negotiated codec is the one the transform frames (`utils/callVideoFrame.ts`).
-    if (track.kind === 'video' && transceiver) preferVp8(transceiver, appendLog);
     // A new m-line is media the 5 s check of the first connect may not have seen: check it again.
     if (newMline && this.pc) this.scheduleE2ePathCheck(this.pc, `after a new ${track.kind} m-line`);
 
@@ -2764,6 +2833,7 @@ export class CallService {
       // check costs a look and never a verdict.
       if (pc.signalingState === 'stable' && this.pc === pc) {
         this.recheckE2eOnMediaStart('after signalling reached stable');
+        this.reportNegotiatedVideoCodecs(pc);
       }
     };
 
@@ -2867,16 +2937,18 @@ export class CallService {
         // to the SENDER, so a later `replaceTrack` between the two keeps it in the path.
         const micSwitch = track.kind === 'audio' ? this.micSwitch : null;
         const sender = pc.addTrack(micSwitch ? micSwitch.trackToSend() : track, this.localStream);
-        this.attachSenderTransform(sender);
-        // A track muted by the OS (or not producing yet) starts sending with no negotiation.
-        track.onunmute = () => this.recheckE2eOnMediaStart(`after the local ${track.kind} unmuted`);
         const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
         if (!transceiver) throw new Error(`no transceiver for the ${track.kind} sender just added`);
-        this.attachReceiverTransform(transceiver.receiver, track.kind);
+        // A camera's transceiver is held to VP8 BEFORE its transforms, which are told the codec.
+        const videoCodec = this.holdVideoToVp8(transceiver, track.kind);
+        this.attachSenderTransform(sender, track.kind, videoCodec);
+        // A track muted by the OS (or not producing yet) starts sending with no negotiation.
+        track.onunmute = () => this.recheckE2eOnMediaStart(`after the local ${track.kind} unmuted`);
+        this.attachReceiverTransform(transceiver.receiver, track.kind, videoCodec);
         // After both transforms, in this task: it only QUEUES a `replaceTrack` for later.
         micSwitch?.attachSender(sender);
         if (track.kind === 'video') {
-          if (!preferVp8(transceiver, appendLog)) {
+          if (!videoCodec) {
             this.refuseCameraSender(pc, sender, track);
             continue;
           }
@@ -3362,9 +3434,9 @@ export class CallService {
           // Once per call: the worker keeps counting, and the report line carries the count.
           if (!this.videoCodecUnexpectedLogged) {
             this.videoCodecUnexpectedLogged = true;
-            const mime = (event.data as unknown as { mimeType?: string }).mimeType ?? '?';
+            const d = event.data as unknown as { mimeType?: string; transformCodec?: string };
             appendLog(
-              `[Call] ERROR E2E: video frames of ${mime}, not VP8, crossed the transform - encrypted whole, they cannot decode (${count ?? '?'} so far)`
+              `[Call] ERROR E2E: video frames not framed as VP8 crossed the transform (frame codec ${d.mimeType ?? '?'}, transform codec ${d.transformCodec ?? '-'}) - encrypted whole, they cannot decode (${count ?? '?'} so far)`
             );
           }
         } else if (type === 'videoKeyframeIn') {
@@ -3388,7 +3460,7 @@ export class CallService {
           // engine actually feeds the transform.
           const d = event.data as unknown as Record<string, unknown>;
           appendLog(
-            `[Call] E2E ${String(d.side)} transformer #${String(d.id)} (${String(d.count)} ${String(d.side)} in this worker): first frame ${String(d.mediaKind)} mime=${String(d.mimeType)} pt=${String(d.payloadType)}`
+            `[Call] E2E ${String(d.side)} transformer #${String(d.id)} (${String(d.count)} ${String(d.side)} in this worker): first frame ${String(d.mediaKind)} mime=${String(d.mimeType)} pt=${String(d.payloadType)}${d.mediaKind === 'video' ? ` transform-codec=${String(d.transformCodec ?? '-')}` : ''}`
           );
         } else if (type === 'senderAudioShape') {
           // Posted once after 50 frames, and again only while an anomaly counter is non-zero:
@@ -3588,12 +3660,32 @@ export class CallService {
    * A transform's options: its side, its track's kind - authenticated in every frame, so the worker
    * is TOLD it rather than reading it off a frame - and the peer connection it belongs to
    * (`transformEpoch`). THROWS for a kind that is neither audio nor video: such a transform could
-   * not authenticate a frame, so it is never made.
+   * not authenticate a frame, so it is never made. A video transform also carries the codec its
+   * transceiver is HELD to (`videoCodec`, from `holdVideoToVp8`), which the worker frames on: the
+   * engine's frame metadata names no codec on WebKit (`utils/callVideoFrame.ts`, `framesAsVp8`).
    */
-  private transformOptions(side: 'sender' | 'receiver', trackKind: string): CallTransformOptions {
+  private transformOptions(
+    side: 'sender' | 'receiver',
+    trackKind: string,
+    videoCodec: string | undefined
+  ): CallTransformOptions {
     const kind = callMediaKind(trackKind);
     if (!kind) throw new CallE2eSetupError(`${side} (${trackKind}): not an audio or video track`);
-    return { side, kind, epoch: this.transformEpoch };
+    return kind === 'video' && videoCodec
+      ? { side, kind, epoch: this.transformEpoch, videoCodec }
+      : { side, kind, epoch: this.transformEpoch };
+  }
+
+  /**
+   * Holds a VIDEO transceiver to VP8 (`preferVp8`) BEFORE its transforms are made, and answers the
+   * codec it now carries - the fact the transforms are told (`transformOptions`). `undefined` for an
+   * audio transceiver, and for a video one the engine would not hold (`preferVp8` said why at
+   * ERROR): its transforms then fail closed and frame whole, and the caller refuses to send on it.
+   * SYNCHRONOUS, so it fits in the task that created the transceiver (`attachSenderTransform`).
+   */
+  private holdVideoToVp8(transceiver: RTCRtpTransceiver, trackKind: string): string | undefined {
+    if (trackKind !== 'video') return undefined;
+    return preferVp8(transceiver, appendLog) ? CALL_VIDEO_MIME_TYPE : undefined;
   }
 
   /**
@@ -3604,25 +3696,74 @@ export class CallService {
    */
   private attachSenderTransform(
     sender: RTCRtpSender,
-    mediaKind = sender.track?.kind ?? 'unknown',
+    mediaKind: string,
+    videoCodec: string | undefined,
     how = 'attached'
   ): void {
     if (sender.transform) return;
     sender.transform = new RTCRtpScriptTransform(
       this.keyedWorker('sender', mediaKind),
-      this.transformOptions('sender', mediaKind)
+      this.transformOptions('sender', mediaKind, videoCodec)
     );
-    appendLog(`[Call] E2E sender transform ${how} (${mediaKind})`);
+    if (mediaKind === 'video') this.videoTransformCodecs.set(sender, videoCodec);
+    appendLog(
+      `[Call] E2E sender transform ${how} (${describeTransformMedia(mediaKind, videoCodec)})`
+    );
   }
 
   /** Attaches the E2E decrypt transform to a receiver: synchronous and throwing, like the sender. */
-  private attachReceiverTransform(receiver: RTCRtpReceiver, mediaKind = 'unknown'): void {
+  private attachReceiverTransform(
+    receiver: RTCRtpReceiver,
+    mediaKind: string,
+    videoCodec: string | undefined
+  ): void {
     if (receiver.transform) return;
     receiver.transform = new RTCRtpScriptTransform(
       this.keyedWorker('receiver', mediaKind),
-      this.transformOptions('receiver', mediaKind)
+      this.transformOptions('receiver', mediaKind, videoCodec)
     );
-    appendLog(`[Call] E2E receiver transform attached (${mediaKind})`);
+    if (mediaKind === 'video') this.videoTransformCodecs.set(receiver, videoCodec);
+    appendLog(
+      `[Call] E2E receiver transform attached (${describeTransformMedia(mediaKind, videoCodec)})`
+    );
+  }
+
+  /**
+   * Once negotiation settles (`stable`), compares the codec each VIDEO sender and receiver of `pc`
+   * NEGOTIATED (`getParameters().codecs`) with the codec its transform was told
+   * (`videoTransformCodecs`), and reports the first mismatch of the call ONCE, at ERROR, in the E2E
+   * lines (`negotiatedCodecMismatch`). WHY: WebKit's frame metadata names no codec, so the worker's
+   * own "the frame names another codec" check can never fire there - an engine that ignored
+   * `setCodecPreferences` would carry H.264 framed as VP8 with nothing saying so. A REPORT only:
+   * nothing about the framing changes.
+   */
+  private reportNegotiatedVideoCodecs(pc: RTCPeerConnection): void {
+    if (this.negotiatedCodecMismatchLogged) return;
+    for (const t of pc.getTransceivers()) {
+      const sides: ['sender' | 'receiver', RTCRtpSender | RTCRtpReceiver][] = [
+        ['sender', t.sender],
+        ['receiver', t.receiver],
+      ];
+      for (const [side, end] of sides) {
+        if (!this.videoTransformCodecs.has(end)) continue;
+        let negotiated: string | undefined;
+        try {
+          negotiated = negotiatedMediaCodec(end.getParameters().codecs);
+        } catch (e) {
+          appendLog(
+            `[Call] WARN video ${side} parameters unreadable after negotiation: ${String(e)}`
+          );
+          continue;
+        }
+        const mismatch = negotiatedCodecMismatch(this.videoTransformCodecs.get(end), negotiated);
+        if (!mismatch) continue;
+        this.negotiatedCodecMismatchLogged = true;
+        appendLog(
+          `[Call] ERROR E2E report: the video ${side} (mid ${t.mid ?? '-'}) ${mismatch} - its frames cannot decode`
+        );
+        return;
+      }
+    }
   }
 
   /**
@@ -3690,10 +3831,13 @@ export class CallService {
    * the camera off, which the user can retry from the call screen.
    */
   private async setupMedia(video: boolean, seq: number) {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: buildCallAudioConstraints(),
-      video: false,
-    });
+    // The microphone is held from before the ask: an ANSWER opens it while the phase is still
+    // `incoming`, whose session type (`ambient`) WebKit would refuse a capture under.
+    const stream = await captureUserMedia(
+      navigator.mediaDevices,
+      { audio: buildCallAudioConstraints(), video: false },
+      'call'
+    );
     try {
       this.assertSetupLive(seq, 'after the microphone prompt');
     } catch (e) {
@@ -3791,10 +3935,19 @@ export class CallService {
     }
   }
 
-  private async sendMlsNotification(groupId: string, appMsgPartial: canari.IAppMessage) {
+  /**
+   * Sends one call signal and returns WHEN it happened: its `sentAt` (this device's act, `sentAt`
+   * when the caller took the instant itself) and the server's acceptance of it, absent when the
+   * server answered none - logged, since the record is then ordered by its `sentAt` alone.
+   */
+  private async sendMlsNotification(
+    groupId: string,
+    appMsgPartial: canari.IAppMessage,
+    sentAt: number = Date.now()
+  ): Promise<EventTime> {
     const appMsg = {
       messageId: crypto.randomUUID(),
-      sentAt: Date.now(),
+      sentAt,
       ...appMsgPartial,
     };
     const buffer = encodeAppMessage(appMsg);
@@ -3803,7 +3956,16 @@ export class CallService {
     // protos must never surface as "new message" pushes (they used to, as generic fallbacks).
     // Ephemeral too: signalling is only meaningful while the call is live, so replaying it out of
     // the shared log would ring a device about a call that ended.
-    await this.mlsService.sendMessage(groupId, buffer, undefined, DELIVERY.transport);
+    const sent = await this.mlsService.sendMessage(groupId, buffer, undefined, DELIVERY.transport);
+    if (sent.receivedAt === null) {
+      console.error(
+        `[Call] signal sent in ${groupId.slice(0, 8)}... but the server answered no receive time - its record is ordered by sentAt alone`
+      );
+    }
+    return {
+      timestamp: new Date(sentAt),
+      ...(sent.receivedAt !== null ? { serverTimestamp: sent.receivedAt } : {}),
+    };
   }
 
   /**
@@ -4106,9 +4268,11 @@ export class CallService {
       direction: 'sendrecv',
       streams: this.localStream ? [this.localStream] : [],
     });
+    // Held to VP8 BEFORE its transforms, which are told the codec (`holdVideoToVp8`).
+    const videoCodec = this.holdVideoToVp8(transceiver, 'video');
     try {
-      this.attachSenderTransform(transceiver.sender, 'video');
-      this.attachReceiverTransform(transceiver.receiver, 'video');
+      this.attachSenderTransform(transceiver.sender, 'video', videoCodec);
+      this.attachReceiverTransform(transceiver.receiver, 'video', videoCodec);
     } catch (e) {
       // Never a video sender without its transform: removed before any negotiation carries it.
       pc.removeTrack(transceiver.sender);
@@ -4121,7 +4285,7 @@ export class CallService {
       );
       return;
     }
-    if (!preferVp8(transceiver, appendLog)) {
+    if (!videoCodec) {
       this.refuseCameraSender(pc, transceiver.sender, track);
       return;
     }

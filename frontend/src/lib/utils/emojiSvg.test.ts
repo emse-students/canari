@@ -93,4 +93,22 @@ describe('emojiSvg', () => {
     expect(html).not.toContain('<b>');
     expect(emojiHtml('© 2026')).toBe('© 2026');
   });
+
+  it('asciiGraphemesHaveNoPicture: no ASCII grapheme names a picture, so ASCII text skips segmenting', () => {
+    for (let cp = 0; cp < 128; cp++) {
+      expect(emojiSvgSrc(String.fromCharCode(cp))).toBeNull();
+    }
+    expect(emojiSvgSrc('\r\n')).toBeNull();
+  });
+
+  it('answers the same with or without the ASCII shortcut', () => {
+    for (const text of ['hello', 'a #1 (c) 2026 *x*', 'line\r\nbreak']) {
+      // Appending a non-ASCII emoji forces the segmenting path; the prefix must come out as the
+      // one text run the shortcut returns.
+      const slow = splitEmojiText(text + '\u{1F600}');
+      expect(slow[0]).toEqual({ kind: 'text', value: text });
+      expect(splitEmojiText(text)).toEqual([{ kind: 'text', value: text }]);
+    }
+    expect(splitEmojiText('')).toEqual([]);
+  });
 });

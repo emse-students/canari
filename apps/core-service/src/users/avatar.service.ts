@@ -2,6 +2,7 @@ import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { AvatarCache, isCacheableAbsence } from './avatar.cache';
+import { UpstreamHealth, classifyUpstreamFailure, type UpstreamAdmission } from './upstream-health';
 
 /**
  * What the proxy managed to establish about one avatar. THREE OUTCOMES, NOT AN EXCEPTION PER CAUSE:
@@ -42,7 +43,14 @@ export type AvatarOutcome =
       readonly etag?: string;
     }
   | { readonly kind: 'absent' }
-  | { readonly kind: 'unavailable' }
+  | {
+      readonly kind: 'unavailable';
+      /**
+       * Answered from the known-down state, with no request made: the controller writes no line for
+       * it, the two transitions being logged by this service (`UpstreamHealth`).
+       */
+      readonly shortCircuited?: true;
+    }
   | { readonly kind: 'disabled' };
 
 /**
@@ -91,6 +99,13 @@ export class AvatarService {
     maxEntries: MAX_CACHED_AVATARS,
   });
 
+  /**
+   * Whether the gallery is known to be down: a probe, spaced by a count of skipped requests, asks it
+   * and every other request is answered from this. The axios `timeout` bounds a probe, and every path
+   * out of `admit()` below reaches `noteAnswered`, `noteUnanswered` or `health.release`.
+   */
+  private readonly health = new UpstreamHealth();
+
   constructor(private readonly configService: ConfigService) {
     this.avatarApiUrl = this.configService.get<string>(
       'MIGALLERY_API_URL',
@@ -103,6 +118,27 @@ export class AvatarService {
         'MIGALLERY_API_KEY is not set - this estate has no avatar provider, so every avatar ' +
           'answers as absent and clients draw initials. Announced ONCE here rather than per ' +
           'request: it cannot change while this process lives.'
+      );
+    }
+  }
+
+  /** The gallery ANSWERED (any status): clears a known outage and logs the one transition back. */
+  private noteAnswered(admission: UpstreamAdmission): void {
+    const back = this.health.recordSuccess(admission);
+    if (back) {
+      this.logger.warn(
+        `Avatar gallery ${this.avatarApiUrl} is back after ${Math.round(back.downForMs / 1000)}s - ` +
+          `${back.skipped} request(s) were answered without asking it`
+      );
+    }
+  }
+
+  /** The gallery did NOT answer: logs the one transition to down, then stays quiet until it is back. */
+  private noteUnanswered(admission: UpstreamAdmission, detail: string): void {
+    if (this.health.recordFailure(admission)) {
+      this.logger.warn(
+        `Avatar gallery ${this.avatarApiUrl} is DOWN (${detail}) - probes are spaced by skipped requests, ` +
+          'the others answer unavailable without asking; the next line is its return'
       );
     }
   }
@@ -125,6 +161,8 @@ export class AvatarService {
   async fetchAvatarPresence(userIds: readonly string[]): Promise<Set<string> | null> {
     if (!this.avatarApiKey) return new Set();
     if (userIds.length === 0) return new Set();
+    const admission = this.health.admit();
+    if (admission === 'skip') return null;
     try {
       const response = await axios.get<{ withPhoto?: unknown }>(
         `${this.avatarApiUrl}/api/users/avatar-presence`,
@@ -135,6 +173,7 @@ export class AvatarService {
           maxRedirects: 0,
         }
       );
+      this.noteAnswered(admission);
       const withPhoto = response.data?.withPhoto;
       if (!Array.isArray(withPhoto)) {
         this.logger.warn(
@@ -150,6 +189,16 @@ export class AvatarService {
         : error instanceof Error
           ? error.message
           : String(error);
+      // ONE classifier for both paths: only no-response or a gateway/edge status is an outage, and its
+      // line is the `DOWN` transition, never one per call. Any other status (a 404 from an older build
+      // without the route, a refused key) is an answer - the gallery is up - and the call keeps its warn.
+      const kind = classifyUpstreamFailure(axios.isAxiosError(error), status);
+      if (kind === 'outage') {
+        this.noteUnanswered(admission, detail);
+        return null;
+      }
+      if (kind === 'answer') this.noteAnswered(admission);
+      else this.health.release(admission);
       this.logger.warn(
         `Avatar presence unavailable from ${this.avatarApiUrl} for ${userIds.length} id(s): ${detail} - clients will ask each avatar`
       );
@@ -185,6 +234,12 @@ export class AvatarService {
     // about the PHOTO rather than about a clock. Null on a miss: there is nothing to confirm.
     const revalidating = cached.state === 'stale' ? cached.answer : null;
 
+    // A GALLERY KNOWN TO BE DOWN IS NOT ASKED BY EVERY FACE (2026-11-05, five hours of it): one probe
+    // goes out, the rest are answered from the state. A stale copy is not served either - the client
+    // draws initials exactly as it does for any 502.
+    const admission = this.health.admit();
+    if (admission === 'skip') return { kind: 'unavailable', shortCircuited: true };
+
     try {
       const url = `${this.avatarApiUrl}/api/users/${userId}/avatar`;
 
@@ -205,6 +260,7 @@ export class AvatarService {
           (status >= 200 && status < 300) || (revalidating !== null && status === 304),
       });
 
+      this.noteAnswered(admission);
       if (revalidating && response.status === 304) {
         const outcome = { kind: 'image', ...revalidating } as const;
         this.cache.set(userId, outcome);
@@ -225,6 +281,11 @@ export class AvatarService {
       return outcome;
     } catch (error) {
       const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+      const failure = classifyUpstreamFailure(axios.isAxiosError(error), status);
+      // A refusal of ANY other status is the gallery answering; a local fault (a cache or Buffer
+      // exception after an answer) is neither, and must not flip the outage state.
+      if (failure === 'answer') this.noteAnswered(admission);
+      else if (failure === 'local') this.health.release(admission);
 
       if (status !== undefined && isCacheableAbsence(status)) {
         const outcome = { kind: 'absent' } as const;
@@ -259,7 +320,14 @@ export class AvatarService {
         : error instanceof Error
           ? error.message
           : String(error);
-      this.logger.warn(`Avatar unavailable for ${userId} from ${this.avatarApiUrl}: ${detail}`);
+      //
+      // An OUTAGE is one `DOWN` line (`noteUnanswered`) and then silence: the requests it spares are
+      // counted in the return line and logged by the controller as `known-down`. Any other failure is
+      // about this id (or ours) and keeps its own line.
+      if (failure === 'outage') this.noteUnanswered(admission, detail);
+      else {
+        this.logger.warn(`Avatar unavailable for ${userId} from ${this.avatarApiUrl}: ${detail}`);
+      }
       return { kind: 'unavailable' };
     }
   }

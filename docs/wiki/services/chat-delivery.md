@@ -38,6 +38,7 @@ The chat-delivery-service is the MLS API layer. It:
 | 24h | Purge soft-deleted groups (> 90 days old), with everything they own |
 | 24h | Purge stale push tokens (> 90 days) |
 | 24h | Purge stale pending invitations (> 30 days) |
+| 24h | Report orphan devices (observation only, deletes nothing) |
 
 ### One way a frame is delivered
 
@@ -249,6 +250,37 @@ offline window - a device that is merely off for a fortnight must still get its 
 leak. Anything that needs a device to stop receiving *immediately* (a revocation) must act on the
 Redis set directly rather than wait for the reaper.
 
+### Orphan devices: the GC's blind spot, counted daily, cleaned by hand
+
+The 90-day GC above covers SILENT devices: one whose key package is older than
+`RETENTION_WINDOW_MS`. It does not cover an **orphan**: a device holding queued rows with no
+`auth_sessions` row, no `push_token`, no ban and no life in the last 7 days, which still connected
+(or kept its seats) inside those 90 days. Nothing can drain its queue, and while it holds active
+seats every fan-out adds to it - four hand passes found 43, 118, 109 and 285 of them
+([audit](../infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#fourth-pass---2026-11-01-and-the-procedure-to-run-it-again)).
+
+A scheduled reaper for them was built and closed unmerged (#2880, owner, 2026-11-01): at the GC's 90
+days it is pre-empted by the GC, and inside them no durable fact proves a device was replaced rather
+than closed. So:
+
+- **the GC keeps the silent devices**, unchanged;
+- **`reportOrphanDevices` counts the orphans daily** (`src/utils/orphan-devices.ts`, read-only), one
+  plain line `[ORPHAN_DEVICES] devices= rows= insideGcWindow=`; `insideGcWindow` is the part the GC
+  will never collect. **It has no threshold**: no regrowth rate has been measured, and these lines are
+  that measurement. Every replica runs it (and once at boot), so one line per replica a day is
+  expected - the same as the other reports here;
+- **the hand procedure revokes them** when the owner decides
+  ([the procedure](../infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#the-procedure-re-runnable)),
+  through the revoke route - the rule of [the answer was a revocation](#the-answer-was-a-revocation-not-a-sweep-2026-08-11).
+  Its allowlist and its re-check are built from the same predicate as the count, so the report counts
+  exactly what a pass would revoke.
+
+**The query shape.** `queued_message` is grouped first, in its own CTE, and each other table is tested
+against the grouped rows with `WHERE NOT EXISTS`, which PostgreSQL plans as hash anti-joins: one scan
+per table. `auth_sessions."deviceId"` has no index and `push_token`'s is `(userId, deviceId)`, so a
+correlated `NOT EXISTS` inside `HAVING` would scan both once per group. No index is added for a daily
+report.
+
 ### The device cap counts LIVE devices, because leaves are what it bounds
 
 `MAX_DEVICES_PER_USER = 15` refuses `POST /api/mls/register-device`. What it protects is the
@@ -284,6 +316,66 @@ id the account already holds can no longer refuse it.
 `updatedAt` on either table is **not** consulted: a liveness clock must be written by the thing whose
 liveness it measures, and both of those are written by whatever last touched the row, the server
 included.
+
+### A registration writes its row in one statement, and the client sends one (2026-11-07)
+
+**Measured on production, `1.6.6`:** a web device re-enrolling at sign-in (an older id of it retired
+just before, `[DELETE_DEVICE] ... reason=retired`, then `[PURGE_PREKEYS] deleted=0`) sent two
+`POST /api/mls/register-device` for the same user and device that started in the same millisecond.
+`registerDevice` read the `key_package` row, found none in both, inserted twice, and the second insert
+answered **500** on `UNIQUE ("userId", "deviceId")`. Two halves, both fixed.
+
+**Server: the read-then-insert is ONE statement.** `upsertDeviceKeyPackage`
+(`src/utils/device-key-package.ts`) is an `INSERT ... ON CONFLICT ("userId", "deviceId") DO UPDATE`,
+the shape `upsertRevocation` already had: the conflict arm takes the existing row under its lock, so
+two registrations of one device serialise in the database, both succeed, one row remains, and the
+later package is the one kept - what two sequential calls left. It keeps, column by column, what the
+two old branches wrote:
+
+| column | on a re-registration |
+| --- | --- |
+| `keyPackage`, `notAfter` | overwritten, `notAfter` even with `null` (the date belongs to the package) |
+| `deviceName`, `deviceOs`, `deviceAppVersion` | overwritten only when the call carries them (`COALESCE`) |
+| `createdAt` | reset to now - the enrolment's date the device list and `lastResortDeadline` read |
+| `id` | kept; a new id is used only when the row is created |
+
+`isNew` in the `DONE` line comes from `RETURNING (xmax = 0)`. The other writes of the request were
+already atomic: the signature-key history is `ON CONFLICT DO NOTHING` (`DeviceSignatureKeysService.record`)
+and the pending seats are `ON CONFLICT DO NOTHING` under the group's seat lock (`writePendingSeats`).
+**Two checks remain reads before the write, and are NOT this defect:** the cross-account
+`device_id_taken` read and the live-device cap. Both compare DIFFERENT rows (another account's id,
+the account's other devices), which no `ON CONFLICT` on the pair can see; they race only between two
+different devices or two accounts in the same instant, and the second is a forged registration
+(0 shared ids on production, 2026-10-22). Closing them needs a lock or a unique index on `deviceId`
+alone, not this change. Proven against PostgreSQL by `device-key-package.integration.spec.ts`: two
+registrations held behind a second session's uncommitted insert of the same pair both succeed and
+leave one row. Run against the code before the fix, the same spec fails with production's exact
+`duplicate key value violates unique constraint` - the control.
+
+**Client: one key package round at a time.** Two rounds had started side by side - two callers of
+`generateKeyPackage` each finding nothing to wait on: the login's connection sync
+(`sessionAuth` -> `syncConnectionAfterWsOpen`) and the reconnect's (`sessionConnection` -> the same),
+or two external joins each reading "absent, no round running" and starting one
+(`awaitOwnKeyPackagePublished`). Both minted, both awaited the ONE coalesced checkpoint
+(`persistMlsStructuralCheckpoint` -> `flushEncrypted`), and both resumed on the same tick to publish.
+`generateKeyPackage` now hands a caller the round in flight (`keyPackageRoundInFlight`) instead of
+starting a second; the field is cleared when the round settles, no timer involved.
+Two callers must not join, and ask for a `fresh` round, queued BEHIND the one in flight, never
+beside it: `republishKeyMaterial`, whose purge happened after a running round may have counted the
+pool, and the connection sync (`syncConnectionAfterWsOpen`, login, reconnect and offline promotion),
+whose round must run on the link its socket just proved - joining, a reconnect inherited the failure of
+the login round dying on the dead link and deferred its welcome_requests to a next connection that
+may never come. The external join's round (`awaitOwnKeyPackagePublished`) joins: any publication
+satisfies it. **A fresh round's deadline bounds its OWN work**: `KEY_PACKAGE_ROUND_DEADLINE_MS` starts
+when its predecessor settles, not when it was asked for (counted from the call, a predecessor taking
+178 s left it 2 s, it was abandoned while still minting, the slot emptied and a third round started
+beside it). The wait needs no clock of its own: the predecessor is itself bounded. Proven in order,
+never in wall time, by `BaseMlsService.keyPackageRoundOrder.test.ts`. The slot is per client instance;
+an account switch builds a new client (`mlsHolder.reset` / `retire`), so no round crosses accounts or
+device keys. **What is left of overlap is only the abandonment policy that predates this:** a round
+past its deadline is abandoned, not cancelled (a native `invoke` cannot be), and the round after it -
+the queued fresh one or the next caller's - starts while the abandoned work may still publish under
+the same id; the server half above makes even that harmless.
 
 ### The shared log keeps mutations, and records what may notify
 
@@ -401,6 +493,40 @@ ADDRESSED matched=N of M`, or warns `ADDRESSED_NOBODY` when nobody matches. **An
 never appended to the history stream**: that stream is replayed to every member, and the frame
 belongs to one device's queue only. Why and what it costs:
 [channel-encryption §23](../protocols/channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12).
+
+**An application frame sealed before a seat's admission is withheld from that seat (2026-11-04).**
+A device admitted by a commit built on base epoch B (an Add, or its own external join) holds the
+group from B + 1, and neither a Welcome nor an external join carries the secrets of an earlier
+epoch. A member that has not applied the join yet still seals at B after the join is accepted -
+a send crossing a join - and that frame was queued and pushed to the newcomer, which acknowledged
+it as `past-epoch-application`, counted it as a lost key-group frame and asked its peers for a seed
+it was never owed (rig log, 2026-10-25: `msg_epoch=5 group_epoch=6` in the same second as
+`externalJoin ... base epoch 5`, two per community joined, each followed by three seed requests).
+`sendMessage` now drops, for an application frame, every seat for which `sealedBeforeAdmission`
+(`utils/mls-frame-epoch.ts`) holds - `frameEpoch <= admittedByBaseEpoch` - and logs one line,
+`[SEND][trace] SEALED_BEFORE_ADMISSION group= frameEpoch= withheld=N devices=`. It is the rule a
+pending seat already had (`admittedAtEpoch`), read from the admission every seat records. Commits
+are never withheld. An inferred floor (`admissionInferred`) or a seat with no recorded admission is
+never withheld from, because only a recorded admission proves the device cannot hold the epoch. A
+key group's PUBLISHER is recorded at the base leading to the epoch E it publishes, `E - 1`
+(`publisherAdmissionBase`): the publish writes an admission on ANY active seat that has none - a
+member whose seat carries no admission, not only the creator - and recording E itself would
+withhold the frames peers seal at E, which that device reads. Past the creation's publish (E = 0,
+recorded as an admission) the value is written as an INFERRED floor (`admissionInferred`): such a
+member may have been in the tree long before it published, so the floor dates the commit times it
+is answered and never withholds a frame from it. A conversation's creator is recorded
+at 0, the epoch it holds: one epoch too strict, which withholds nothing, because no other device can
+seal at the epoch a group was created at. The history stream (`GET mls/history/:groupId`, the batch)
+is not a second road to the key-group loss: the client replays it only for conversations
+(`utils/chat/conversations.ts`, the conversation metas minus salons), never a key group, and a key
+group's peer reconcile is closed (`historyReconcile.ts`, `isDistributionGroup`), so no seed request
+comes from it. A CONVERSATION joiner can still be handed the crossing frame by its stream (rows are
+filtered by arrival time, not epoch): the replay marks the row seen (`utils/chat/history.ts`, no
+queue ack) and escalates a peer reconcile, whose answer is sealed at the current epoch - the one
+road by which a message sent after the arrival still reaches the newcomer, so the stream is
+deliberately NOT filtered by this rule. Asserted in
+`messaging.durability.spec.ts` (an active device admitted after the frame),
+`mls-frame-epoch.spec.ts` and `internal.distribution-group.spec.ts` (the publisher's record).
 
 ### The queue is bounded on ONE axis, and observed on the other
 
@@ -1248,8 +1374,56 @@ every client that reads it. Social-service keeps its own table ([social-service]
 `auth.controller.ts` earlier and are worded by the sign-in screen. **Not coded, on purpose:** header
 and shape validation (`Missing X-User-Id`, `ids must be ...`: a client bug, not a member's), shared-secret
 guards, push-token and link-preview failures (no screen words them), calls (held off, dev builds only),
-Lydia payment errors (the paid half waits for WP-LYDIA-1), and anything in social-service, account
+Lydia payment errors ([WP-LYDIA-1](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end)), and anything in social-service, account
 erasure, lives or reels.
+
+## No platform-admin bypass on conversation data (owner, 2026-11-02)
+
+**A platform global admin (`X-Global-Admin: true`) is a user like any other on a person's
+conversations.** It cannot list someone's groups, read a roster it is not on, add or remove roster
+rows, mint or settle invitations on a group it is not in, read a group's history, fetch or
+acknowledge someone's queued messages, register a device or publish KeyPackages under someone
+else's account, administer someone else's devices, or touch someone else's PIN. An admin who is not a member gets exactly the refusal any non-member gets.
+
+**Why.** Each bypass was a door around the membership checks that protect the MLS tree. The sharpest
+one: the roster-mutation check exempted an admin, so an admin could insert itself into a populated
+group's roster, then pass the GroupInfo read and external-join - the self-join the check exists to
+block. A device registered under another account is fanned out into every one of that person's
+groups, and a KeyPackage published under it is the key that person's next Add uses. None of this
+needs an admin to operate the platform.
+
+**Nor another person's devices or PIN** (owner, the same day): each person manages their own
+devices - metadata, the revoked flag, the one-time KeyPackage pool, the deletion - and their own
+PIN - check, salt, status, change, reset - and an admin who is not that person is refused like
+anyone else.
+
+**The one handler that still reads the header** is `GET mls/admin/storage`, which answers aggregates
+alone (disk, table sizes, row counts, Redis, the media bucket), never a person.
+`src/controllers/no-admin-bypass.spec.ts` asserts it twice, against one allowlist: from the route
+metadata of every controller `AppModule` registers (walked from the module, never a hand-kept list;
+header names compared in any letter case), and from the SOURCE - the header named anywhere under
+`src/` outside `admin-storage.controller.ts` and the specs fails the suite, which also catches a
+`@Req()` read, a guard or a whole `@Headers()` object. A new reader fails until someone decides its
+side.
+
+**A missing caller is refused, never a pass** (review of #2950). `assertCallerOwnsUserId` and the
+roster checks `assertCallerIsGroupMember` / `assertCallerMayMutateMembership` used to return when
+`x-user-id` was absent - a leftover from deployments without the internal token. They now answer
+401. Nothing relied on that path: every route that calls them is behind `HeaderAuthGuard`, which
+refuses a missing `x-user-id` first, and no service code calls the handlers directly.
+
+Everything else reads no admin header: the owner check `assertCallerOwnsUserId(headerUserId, target,
+message)` has no admin parameter at all, nor do the member checks of `members.controller.ts`,
+`invitations.controller.ts`, `authorizeHistoryGroups`, or the PIN routes' `assertSelf`. No frontend
+page used a removed path - every client call names its own account. The gateway's
+`GET /api/admin/presence` is outside this service and not covered here.
+
+Pinned by `no-admin-bypass.spec.ts` (the allowlist, both readings; an admin who is not the owner
+refused on the five device routes and the five PIN routes before any dependency is reached; a
+request naming no caller refused 401),
+`members.controller.group-rosters.spec.ts` and `invitations.controller.vouch.spec.ts` (an admin
+non-member refused like a stranger), and `messaging.history-requester.spec.ts` (history refused,
+single and batch, the stream never read).
 
 ## Routes
 
@@ -1262,7 +1436,7 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | POST | `/api/mls/register-device` | Register static key package for a device |
 | POST | `/api/mls/register-device/prekeys` | Bulk-upload one-time prekeys |
 | PATCH | `/api/mls/devices/:userId/:deviceId/metadata` | Update device name/OS/version |
-| GET | `/api/mls/devices/:userId/:deviceId/key-package` | Get a consumable key package |
+| GET | `/api/mls/devices/:userId/:deviceId/key-package` | Get a consumable key package; `?peek=1` reads whether the device is published and claims none ([key-package-pool](../protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06)) |
 | GET | `/api/mls/devices/:userId/:deviceId/signature-keys` | Every MLS signature key the device ever published (Graine v2 endorsements) |
 | GET | `/api/mls/devices/:userId` | List all registered devices for a user |
 | GET | `/api/mls/devices/:userId/:deviceId/revoked` | Is this device denylisted (gates the wipe) |
@@ -1366,7 +1540,7 @@ series, 5.0 s, on the 2026-10-12 production console
 groupId[] }`, from ONE `dm_group_members ... WHERE groupId IN (...)` query. **The authorization is
 the single read's, per group**: a group the caller holds no roster row in - or that does not exist -
 is listed in `refused` instead of failing the request, so a refusal and a nonexistent group read
-alike; a global admin is answered for every group. **An absent `x-user-id` is NOT a wildcard here**,
+alike; a global admin is answered like anyone ([no admin bypass](#no-platform-admin-bypass-on-conversation-data-owner-2026-11-02)). **An absent `x-user-id` is NOT a wildcard here**,
 unlike `assertCallerIsGroupMember`: `HeaderAuthGuard` refuses it first anyway, and a route reading
 many rosters at once does not carry a branch that would hand every one of them to a caller nobody
 identified. No display names: nobody reading rosters in bulk asks for them.
@@ -1411,16 +1585,72 @@ group names nobody. The client removes exactly those leaves
 | POST | `/api/mls/send` | Send MLS message/commit (publishes to Redis, queues for offline devices); answers `receivedAt`, the `Date` written into every queued copy's `createdAt` ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)) |
 | POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22). A RESUBMISSION of the exact bytes the log already holds at that base epoch from the same device is answered `{ accepted: true, duplicate: true }` with nothing advanced or fanned out again - how a committer whose first answer was lost learns the outcome ([mls-protocol](../protocols/mls-protocol.md#the-periodic-leaf-refresh)). A device under an active revocation is refused `403 DEVICE_REVOKED` before the lock and before that duplicate answer, read by the pair on the denylist's `(userId, deviceId)` unique index ([mls-protocol](../protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)). An ACCEPT names every declared admit it dropped in `refusedAdmits` (`{ userId, deviceId, reason }`, absent when none), so the committer sends no Welcome a refusal already decided ([mls-protocol](../protocols/mls-protocol.md#a-device-the-gate-did-not-admit-is-owed-no-welcome---the-commits-answer-says-so-2026-10-25)) |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits to catch up a lagging device |
+| GET | `/api/mls/commits/:groupId/accepted-at?baseEpoch=N` | Members only, 403 before the requesting device's admitting commit (`admittedByBaseEpoch`, recorded on its seat by the commit gate, or the group epoch inferred once where none was recorded; a 400 without `X-Canari-Device`): the log row `createdAt` of the commit built on epoch N, `null` without a row - dates a device notice |
+| GET | `/api/mls/groups/:groupId/own-removal` | The requester's own removal instant (`leftAt`, or the device's `kickedAt`), `null` without one - not membership-gated |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
 | POST | `/api/mls/welcome` | Deliver Welcome message to a device. A target device no key package names (revoked, or never registered) is `404 WELCOME_TARGET_UNKNOWN` (`error: 'welcome_target_unknown'`), one `warn` decision line; a target off the roster is `403 WELCOME_TARGET_NOT_MEMBER`. Until 2026-10-25 the first was a bare `Error`, a 500 with a stack (DEV-3) |
-| POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
+| POST | `/api/mls/welcome-request` | Broadcast welcome_request signal; any roster seat, a waiting one included, never a key-distribution group ([the relay gate](#the-relay-routes-ask-the-group-2026-11-01)) |
+| POST | `/api/mls/history-request` | Elect one online member to answer a history request; admitted member only ([the relay gate](#the-relay-routes-ask-the-group-2026-11-01)) |
+| POST | `/api/mls/base-refresh-request` | Elect one online member to republish the external-join base; admitted member only ([the relay gate](#the-relay-routes-ask-the-group-2026-11-01)) |
 | POST | `/api/mls/sender-mismatch` | A client reporting that a frame's envelope named another sender than the one MLS verified - logs `[SENDER_MISMATCH]`, stores nothing ([channel-encryption §21](../protocols/channel-encryption.md#21-graine-v2-an-author-that-is-proven-a-ciphertext-bound-to-its-place---decided-by-the-user-2026-09-28)) |
 | POST | `/api/mls/history/batch` | Get message history batch, **at most 50 groups** (response carries `heads`, one stream head per group) |
 | GET | `/api/mls/history/:groupId?after=&until=&limit=` | Incremental Redis Stream history; head in `X-History-Head`. Both history routes drop every row inside the READER's `withheld` windows - the gaps, and in a group conversation the span before their arrival ([history-reconciliation](../protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)) |
 | GET | `/api/mls/messages/:userId/:deviceId` | Fetch queued messages for device |
 | POST | `/api/mls/messages/ack` | Acknowledge received messages |
-| POST | `/api/mls/notify-reaction` | Fire-and-forget reaction push |
+| POST | `/api/mls/notify-reaction` | Fire-and-forget reaction push to the message's author; a member of the conversation only ([the relay gate](#the-relay-routes-ask-the-group-2026-11-01)) |
+
+#### The relay routes ask the group (2026-11-01)
+
+`history-request`, `base-refresh-request`, `welcome-request` and `notify-reaction` make another
+member's device act, or ring its owner, on their caller's word. Until 2026-11-01 they asked only who
+the caller was, never whether that person sat in the group named (re-review of #2358).
+
+**History and base refresh** go through the gate every route keyed by a group id shares,
+[`assertCallerActsOnGroup`](#group-management), before anything is read from the routing set: an
+admitted member passes; no seat (never a member, removed, an absent or tombstoned group, or an id that
+is not a uuid - refused before any query, never the 500 a uuid column answers) is the 403
+`NOT_A_MEMBER`; a seat awaiting a member's admission is the 409 `awaiting_admission`. Their callers
+are members by construction - a device asks for history or a base refresh only for a conversation it
+holds a seat in (`historyReconcile.ts`, `recovery.ts`, which skip key-distribution groups), and a
+waiting seat cannot read a base to find it stale.
+
+**The welcome request** is the one route a WAITING seat legitimately calls - it is how a link joiner
+asks a member to let it in - so it does not use that gate. `assertCallerHoldsSeat`
+(`utils/group-membership.ts`) passes ANY roster seat, admitted or awaiting (`callerSeatStanding !==
+null`), after the uuid check, and refuses with the same 403 a caller with no seat and a
+key-distribution group (`isKeyDistributionGroup`: its roster is social-service's, and it is never
+entered by a Welcome a member is asked for). The standing it returns is what the route logs the ask
+as. **The stored asks are re-asked at the drain**: when an online member is found, every entry of
+`pending_welcome:{groupId}` is checked again with `callerSeatStanding` before it is replayed, so an
+entry stored before the gate, or by someone whose seat has gone since, is dropped and counted in one
+`[WELCOME_REQ] DROPPED` warn. The gateway's own per-member list (`pending_welcome_notify:{userId}`,
+24 h) is replayed without a check; the member's client refuses any requester who is not on the
+roster before it acts (`handleWelcomeRequest`).
+
+**The client reads these refusals as answers.** `deliveryKeepalivePost` (`mlsDeliveryHttp.ts`) logs
+every non-2xx with its status and code, and returns a `DeliveryRefusal` (`not_a_member` /
+`awaiting_admission`), read from the status and the body's code and never from its message. Any other
+non-2xx is still "no answer". `sendBaseRefreshRequest`, `sendHistoryRequest` and `sendWelcomeRequest`
+carry it as `refused`, and no caller reads a refusal as an election: `recovery.ts` keeps its
+no-repairer record and logs `REFUSED` (it used to read a 403 as `noPeerOnline: false`, "the server
+elected one", and discharged the record), and a first refusal of a stale-base ask is RECORDED in that
+same map against the join's epoch pair, so the watchdog re-asks only the election rather than the
+whole four-call pass until a commit moves the pair; `historyReconcile.ts` sends no probe and defers
+nothing, and the scrollback (`requestOlderFromPeers`) answers `unavailable` without a range frame.
+
+**The gateway's WebSocket copies of these asks are gone or gated** - the retired `welcome_request`
+frame and the seat-checked `typing` frame are in [chat-gateway](chat-gateway.md#inbound-frames-typing-is-seat-checked-welcome_request-is-retired-2026-11-01).
+
+**A reaction has a second kind of conversation**: a SALON's push names `groupId = channel_<id>`,
+which is no group of this service. Its roster is social-service's, so `assertCallerReactsIn` asks
+`POST /api/internal/channels/:channelId/reader` (`isSalonReader`, `internal/distribution-entitlement.ts`)
+- a public salon's community member or a private salon's reader - and turns `false` into the same
+403. Any other id goes to `assertCallerActsOnGroup`. An unanswered question is the retryable 503
+`salon_reader_unavailable`, never a refusal - **so a salon reaction's push is lost while
+social-service is down**: it is best effort, the client does not retry it, and the loss is logged on
+both sides (`[SALON_READER] UNANSWERED` here, `[notifyReaction] HTTP error 503` in the client).
+Pinned per route by `messaging.controller.relay-membership.spec.ts`.
 
 **A history walk is bounded by the head it was given.** `until` is an INCLUSIVE upper bound used as
 the `XRANGE` end in place of `+`; the head is read (one `XREVRANGE ... COUNT 1`) only when the caller
@@ -1463,10 +1693,11 @@ those groups' first pages itself, which is the path every group took before the 
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ iOS `voipToken`: a token, or `null` from a build without the native ring, which clears it) |
+| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ iOS `voipToken`: a token, or `null` from a build without the native ring, which clears it; + the wake it understands: `wakeVersion` (0, 1 MLS frames, 2 envelopes; capped at 2) or the step-1 `wake: true` (= 1) - `push_token.wakeVersion`, written 0 when absent, `wakeCapable` beside it for a rollback). Then deletes every `push_envelope` of the device: the app is open ([content-free-push](../protocols/content-free-push.md#32-everything-sent-through-sendpushtouser---no-durable-row-exists-so-one-is-written)) |
 | DELETE | `/api/mls/push/unregister/:deviceId` | JWT | Unregister push token |
 | GET / PUT | `/api/mls/notification-preferences` | JWT | The account's switched-off notification categories (`{ disabled: string[] }`); PUT replaces the set and refuses an unknown id |
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background push service |
+| GET | `/api/mls/push/wake` | PushSecret (`PushSecretGuard` on the query, then `PushSecretThrottlerGuard`, 600/min) | What a content-free wake-up push left here. `?messageId=&silent=` (an MLS frame): `{status: 'frame', fields, presentation}` (the full push's data map, `describeQueuedFrame`, ciphertext inline) or `{status: 'gone'}`; `silent` is the bit the wake carried. `?envelopeId=` (a `sendPushToUser` push, migration 046): `{status: 'push', fields, presentation}` (exactly what the full push handed this platform, inline group always in) or `gone`; serving never deletes (`served again times=n`), another registration's id is `foreign` and answered `gone`. `presentation` is what iOS's `aps` would have said (title, body, thread, sound). One `[PUSH_WAKE] served|gone` line per fetch ([design](../protocols/content-free-push.md)) |
 | GET | `/api/mls/push/avatar/:targetUserId` | PushSecret | Get avatar URL for notification display |
 | GET | `/api/mls/push/media/:mediaId` | PushSecret | Proxy encrypted media ciphertext (2 MB cap) for a notification thumbnail |
 | POST | `/api/mls/push/channel-read` | PushSecret | A shut phone's "Mark as read" on a SALON notification: forwarded to social-service's internal read-mark route ([social-service](social-service.md)); 403 when the user cannot read the salon, 502/503 when social-service refuses or is down |
@@ -1863,7 +2094,7 @@ opened the app.
   (`CallRingAnswer`: the plain `fr.emse.canari://chat/<groupId>` link plus a per-ring nonce in the
   extras, [calls](../frontend/modules/calls.md#an-answer-from-the-ring-joins-on-the-rings-facts-2026-10-30));
   decline = the `ACTION_CALL_DECLINE` broadcast, which also tells the caller.
-  `activeCallRings` dedupes the explicit `call_ring` against the MLS invite push
+  `RingSequencer.claimNative` dedupes the explicit `call_ring` against the MLS invite push
   (`call_invite` typed extraction is the fallback ring for pre-WP-XP-5 callers).
 - **iOS** (`canari_push.mm`): PushKit `PKPushRegistry` delivers the VoIP push;
   `CanariReportIncomingCall` **must** report a CallKit call immediately (Apple contract -
@@ -2120,12 +2351,33 @@ means no future caller can bypass it by forgetting to call `confirmUnsafeLinkIfN
 - **Fails OPEN at every layer** - no `GOOGLE_SAFE_BROWSING_API_KEY` configured, a network error, a
   timeout, or a non-2xx response from Google all resolve to "not flagged". A safety check that
   cannot answer must never become an outage for every link in the app; the config-side warning
-  (`::warning::GOOGLE_SAFE_BROWSING_API_KEY is not set...` in `serve-prod.yml`) is the only trace of it.
+  (`::warning::GOOGLE_SAFE_BROWSING_API_KEY is not set...` in `serve-prod.yml`) is the only trace of a
+  missing key.
+- **A `401` or `403` is a refusal, not a transient failure** (2026-11-06). `checkSafeBrowsing`
+  returns a verdict with a `kind` (`answered`, `refused`, `unavailable`, `unconfigured`) decided at the
+  return, never read from a message. A refusal means Google answered and rejected OUR configuration
+  (API not enabled, key restricted), so the check is dead until someone fixes it: it is still
+  "not flagged" for the caller, but it logs at ERROR with Google's JSON `error.status` and
+  `error.message` (never the key or the request URL), is cached for an hour (`REFUSAL_TTL_MS`), and is
+  counted. The daily `reportSafeBrowsing` job (`app.controller.ts`, with the other daily reports)
+  prints `[SAFE_BROWSING] refusals=N` per replica, at ERROR when `N > 0`. The count is in-process, per
+  replica, since this process started or last reported, and the job is NOT in the boot sweep (it would
+  always read 0). A restart loses the count, so the per-refusal ERROR line is the real signal.
+  A network error or a `5xx` stays `unavailable`: warn, 5 minutes. A `429` (`RESOURCE_EXHAUSTED`) stays
+  `unavailable` too, so an exhausted quota does not show in the daily count. A `400`
+  (`INVALID_ARGUMENT`) is ambiguous - the backlog said "403 or 400", but measuring shows it can be a
+  malformed URL rather than a bad key - so it logs at ERROR with Google's status but is `unavailable`:
+  transient TTL, not counted. The one-hour refusal TTL means a fixed key takes up to an hour to take
+  effect, and the link-safety route sends `Cache-Control: public, max-age=3600` with that verdict.
+  Why it exists: production answered `403` to every lookup (6 of 6 over 72 hours to 2026-11-05) and it
+  read as a passing warning. The key was fixed on the Google side; on 2026-11-06 a lookup with
+  production's own key on Google's malware test URL answered `200` with 1 match, and no `403` was
+  logged after 2026-11-05 16:57 UTC.
 - **Cached in its own `TtlCache<boolean>`**, independent of `previewCache` for the reason above.
   Google gives no cache guidance for a clean verdict (only a flagged match carries its own
   `cacheDuration`, e.g. `"300s"` - the longest one wins when several matches disagree), so a clean
-  result gets a conservative 30-minute TTL chosen here; a failed lookup gets 5 minutes, short enough
-  that a transient outage or a bad key self-heals on the next request rather than silently
+  result gets a conservative 30-minute TTL chosen here; a transient failure gets 5 minutes, short enough
+  that an outage self-heals on the next request rather than silently
   disabling the check for as long as a real answer would be trusted.
 - **Client-side dedup, not a client-side TTL**: `checkLinkSafety` keeps a `Map<string, Promise<boolean>>`
   for the page's lifetime so `AppLink` and `LinkPreviewCard` asking about the same URL around the

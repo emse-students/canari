@@ -93,7 +93,7 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
     // link the refresh had just failed on, each with its own warn line - and no route the app calls
     // through here answers a signed-in user without a token, so the attempt could only fail again or
     // be answered 401. The refresh's failure IS the answer: a transport failure (typed, see
-    // `refresh`) or a refusal (`RefreshFailedError`), rethrown as it came. The refresh already said
+    // `refresh`) or a refusal (`RefreshFailedError`, or its no-verdict subclass `TransientAnswerError`), rethrown as it came. The refresh already said
     // why at its own throw; the caller says what it could not do.
     throw e;
   }

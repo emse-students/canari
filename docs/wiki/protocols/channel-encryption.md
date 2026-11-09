@@ -2285,10 +2285,13 @@ Pinned by `frameHandler.test.ts`, "the salon scope of an answer".
 **The native mirror cannot make that check** - it knows neither which salons are private nor which
 key group a frame came on. So a bundle's seeds are marked `relayed` by `proto_fields::graine_seeds`,
 and `store_graine_seeds_json` mirrors a relayed seed only for a salon the mirror already holds a
-session of; any other is left to the app, which reads the same answer from its durable queue. That
+session of LABELLED WITH THE SAME ACCOUNT (since 2026-11-07: another account's session of the salon,
+or one written before the label, is not this account's admission -
+[auth](../frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07));
+any other is left to the app, which reads the same answer from its durable queue. That
 check opens the SEALED mirror with the cache key, through the one reader `read_graine_mirror`: a
 plain-text read of it failed on every sealed file, so no relayed seed was mirrored at all
-(`a_relayed_seed_is_mirrored_only_for_a_salon_the_device_already_reads`). A sender's own distributed
+(`a_relayed_seed_is_mirrored_only_for_a_salon_the_account_already_reads`). A sender's own distributed
 seed is mirrored as before. Bundles reach the native path only on Android
 (`handleMlsFrame`, a key-group push with its ciphertext inline); the iOS extension opens only the
 `seedFrame` a salon push carries, which is a single seed.
@@ -3007,6 +3010,43 @@ redrawn); `missing=ciphertext` is the FCM budget, generic for ever; an iPhone is
 nothing redraws its banner. So the rate per platform and per cause is one `GROUP BY` over the
 chat-delivery log. The terms are the same four, from one helper (`blindBannerMissing`) on Android.
 
+**AND SINCE 2026-11-04 IT COUNTS THE BANNERS WHOSE OPEN RAN.** The report used to go out only when
+the seed was ABSENT, so every blind banner drawn with the seed in hand - a v2 refusal, a floor, an
+unreadable mirror, a row that opened with nothing to draw, an exception - reached a person's phone
+and no count (found reading a tester's `1.6.3` report of "Quelqu'un / Nouveau message dans #salon"
+across two communities). Android now reports from `postChannelNotification` itself, once per blind
+post whichever caller drew it (the first post, the redraw, the drain), through `BlindBannerReport`;
+the line gained a last term: `... held=<bool> refused=<reason|none>`. An open that ran prints
+`missing=none held=false refused=<token>`; an open that never ran prints `refused=none`, which is
+also what every older build's report prints. Both allowlists - `missing` and `refused` - are
+`libs/contracts/blind-banner-terms.json`, asserted by the controller spec, by the Rust open's source
+scan (`every_salon_open_refusal_is_in_the_blind_banner_contract`) and by `BlindBannerReportTest`. The
+iOS extension still sends `missing` alone. "The open ran" means the seed AND the inlined ciphertext,
+nonce and index were all there: a mirrored seed with a ciphertext the server did not inline still
+prints `missing=ciphertext refused=none`, never `refused=unstated` (review of #3027).
+
+**IT COUNTS BANNERS, NOT MESSAGES.** Reporting from `postChannelNotification` means one message can
+be counted twice on Android: a blind first post and a redraw or drain that finds it still blind each
+post a banner, and each reports. A rate read off `[PUSH_BLIND]` is blind banners per platform and
+cause; a per-message rate needs the lines de-duplicated on channel and time, or read as an upper
+bound.
+
+**A ROW THAT IS NEVER NEWS POSTS NOTHING (2026-11-04).** A withdrawn reaction and a system event
+silenced by name (`format_system_event_text`) decrypt to `ok: false` - and a salon push used to draw
+the generic "Nouveau message dans #salon" for them. `extract_full_message_info` now names them
+(`kind`: `reaction_withdrawn`, `silent_event`), `open_graine_push` answers `reaction-withdrawn` /
+`silent-event` (the contract's `silent` list), and the push posts no banner. A v1 row now tells a
+ciphertext its seed does not open (`graine-open-failed`) from a row that opened with nothing to draw
+- both read `graine-open-failed` before. The MLS path is unchanged: its `kind` is new, its token is
+still `plaintext-not-renderable`. One case stays visible: a REDRAW that finds a silent row leaves the
+generic line it would have replaced, said at INFO (`redraw=true`).
+
+**THE PHONE'S OWN LINES REACH THE EXPORTED LOG.** Every WARN and ERROR line of the push service is
+also written where the in-app log takes it - see
+[mobile](../frontend/mobile.md#the-push-services-lines-in-the-in-app-log-2026-11-04). A tester's log
+now carries `[NATIVE_PUSH] ... handleChannelMessage: seed absent -> generic banner ...` and its
+siblings, which before lived in logcat alone.
+
 **AND THE SECOND OF THOSE NAMES ITS OWN CAUSE SINCE 2026-09-24.** `no seed/ciphertext` is one `if`
 with four terms - `seedB64`, `ciphertext`, `nonce`, `messageIndex` - and the line named none of
 them, so two opposite problems printed one sentence: a seed that was never mirrored, which is a
@@ -3574,7 +3614,9 @@ nothing verifies anything. That is G2-4.
   restored session always rotates before it seals again, and the same index is never signed twice
   from two installs.
 - **In the native mirror.** A `graine_seeds.json` entry becomes
-  `{seed, createdAt, firstIndex[, version: 2, minterUserId, signingPk]}`.
+  `{seed, createdAt, firstIndex[, version: 2, minterUserId, signingPk]}` - and since 2026-11-07
+  `accounts[, unattributed]`, its writers' labels
+  ([auth](../frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)).
   - Both writers go through `MirrorSeed` in `commands/push.rs`: `store_graine_seed` from the
     webview, and `store_graine_seeds_json` from the push's attached frame, whose `proto_fields.rs`
     now reads `first_index` too.
@@ -3676,7 +3718,9 @@ ciphertext, a refused open - draws the salon's initials and nothing about an aut
 on each platform: Android `push/ChannelBannerAttribution` (tested in `android-tests`) and the NSE's
 `channelBannerAttribution`; `canari_push.mm` applies the same rule inline. A held v1 session still
 opens with no author check, as the app's v1 reader does
-([legacy-compatibility](../legacy-compatibility.md)).
+([legacy-compatibility](../legacy-compatibility.md)) - so since 2026-11-01 the open's answer says
+which it was: `authorProven` is `true` under v2 and `false` under v1, and a banner NAMES its speaker
+only on `true` ([mobile](../frontend/mobile.md#a-mention-names-its-author-from-the-phones-own-copy-wp-mention-name-2026-10-18)).
 
 **The verified sender of an MLS push (the native half of WP-G2-1b).** Both push decrypts
 (`decrypt_push_message_with_key` and the commit catch-up) now take the push's `senderId` in a
@@ -3992,6 +4036,81 @@ so the classification alone could not have healed it. Four things were missing, 
 What the verdicts are and who acts on them: `DistributionGapVerdict` (`IMlsService.ts`),
 `distributionGapListener` (`utils/graine/distributionGroup.ts`), wired in `sessionAuth` with the frame
 handler, before any drain.
+
+### 22.2 After a resume, no key-group commit is applied ahead of the frames queued before it (2026-11-04)
+
+**The report.** A tester's export: nine `past-epoch-application` losses ("unreadable for good"), all
+on ONE key group, in one second of a resume's bulk ingest, with no external join anywhere before them
+- so the server-side rule of `chat-delivery.md` (a frame sealed before a seat's admission) is not this.
+
+**What was ruled out.** The native push path (Android `CanariFCM`, the iOS extension) applies key-group
+commits IN MEMORY only, to open the one frame it was handed, and never persists the advanced state:
+the app's epoch cannot be moved by a background catch-up. The server's pull is ordered
+(`createdAt ASC, id ASC`) and the scheduler is a per-group FIFO, so the mailbox alone applies a key
+group's commits and seeds in the order they were queued.
+
+**What could still advance the epoch out of order - three roads, one shared defect.** Each trusted
+"the mailbox has been drained" from evidence that a resume leaves stale:
+
+- **The drain fact outlived the link.** `mailboxEmptiedByAPull` was cleared only at the start of a
+  pull, never when a socket opened, so between a reconnect and its pull the PREVIOUS link's pull -
+  minutes or hours old - still read as "listed". Each platform now calls `noteSocketOpened()` when its
+  gateway socket opens, and `mailboxListedOnThisLink()` (a pull emptied the mailbox since then, none
+  is running, the socket is open) is the one predicate the roads below and `isGroupDrained` read.
+  `noteSocketOpened()` also bumps a LINK GENERATION, which a pull captures when it starts: only a pull
+  started on the current link may set the flag, so a pull begun before a socket flap and finished
+  after it does not mark the new link listed - that link's own pull waits for the socket to settle
+  and the unresolved commits first, a long window to read "listed" in.
+- **A live frame stepped the log over its own mailbox.** After a reconnect, a seed pushed live at the
+  server's epoch reaches the scheduler before the pull has listed the commits and seeds queued ahead of
+  it. Section 22.1's step (one commit at a time from the log, until the frame opens) then moved the
+  group to the frame's epoch, and every queued seed more than two epochs behind it was lost when the
+  pull delivered it. **The fact is stamped at the ARRIVAL, never read when the frame is handled**:
+  the scheduler is an arrival-order FIFO, so the rows the reconnect's pull lists sit BEHIND the live
+  frame, and the pull's own copy of it is dropped as a repeat (`admitDelivery`). The pull may well
+  have ended - the mailbox reading "listed" - before the scheduler reaches the frame. So
+  `enqueueMessage` stamps a live copy with a queue id `aheadOfMailbox` when the mailbox was not yet
+  listed on this link, the stamp rides `IncomingDeliveryMeta` to `routeDistributionFrame`, and such a
+  frame with an epoch gap is left unacknowledged and steps nothing (`holdLiveKeyGroupFrame`).
+  `settleDelivery` forgets it, and the one pull asked for the burst - started after any pull in
+  flight - lists it again as `pull`, never stamped, behind the frames queued before it. A frame with
+  no stamp (pulled, or live after the listing) with a gap means the commits really are not queued,
+  and the step runs as before. A held frame is NOT noted in `unackedFrames`: that ledger waits for an
+  event to discharge a reason, and here the pull is asked for at once.
+- **The epoch check waited for the BOOT's drain.** `verifyDistributionEpoch` (the loader's held
+  branch, on every community open) waited for `initialDrain` - resolved once per session - and for
+  whatever pull happened to be in flight. After a resume it read "idle" over a mailbox nobody had
+  listed and replayed the log to the server's epoch. It now waits for `whenGroupDrained(groupId)`:
+  this link's full pull, and the group's share of it applied.
+- **A refused key-group commit replayed the log at once.** A commit this device makes on a key group
+  early in a resume (a roster pass, a departure) is refused at a base the queue is about to move;
+  `catchUpOnRefusedCommit` replayed the log to the server's epoch over the queued seeds. For a key
+  group, before the mailbox was listed on this link, it now replays nothing and hands the epoch to
+  `verifyDistributionEpoch` (never awaited - the caller holds the MLS lock and the drain needs it); the
+  refusal is still reported, and the next attempt is built on the epoch the queue reaches. The callers
+  that REBUILD on a moved epoch read it after that drain: an admission (`admitNewcomer.ts`) whose
+  refusal left the epoch unmoved awaits `whenGroupDrained` and `whenDistributionEpochSettled` -
+  outside the MLS lock, from an admin's gesture - before `rebuildableRefusal` decides, so NOTIF-21's
+  rebuild still runs during a resume. A leaf refresh needs nothing: a refused one is asked again at
+  the next send after the epoch moves, which the queue does. A key-group Remove that is refused is
+  released to the scope's election (`commitRemoval.ts`), unchanged.
+
+**Not a bigger window.** `max_past_epochs` stays 2: the fix is the order, so a frame is never more
+than the ratchet's own reordering behind when it is opened.
+
+**Which road the tester's nine took is not proven from the export** - the three share the stale
+fact, and the export does not carry the lines that would separate them. Two lines now name them when
+they fire: `[GRAINE] N live frame(s) on K key group(s) [... xN] arrived ahead of the local epoch ... left queued and pulled again in the server's order`
+and `[COMMIT] ... refused on key group ... before the mailbox was listed on this link`.
+
+Asserted in `BaseMlsService.liveAheadOfMailbox.test.ts` (through the REAL scheduler and dedupe: a
+live frame enqueued first, a pull listing `[C1, S, C2, F]` that ends before F is handled - its
+control, deciding at handling time, replays the log over the queued commits),
+`BaseMlsService.distributionGroup.test.ts` (the stamped route; the epoch check waits for
+`whenGroupDrained`), `BaseMlsService.refusedCommit.test.ts` (the key-group refusal),
+`BaseMlsService.groupDrained.test.ts` (a new link is not drained; a pull begun before a socket flap
+does not list the new link), `admitNewcomer.test.ts` (the rebuild after the drain) and
+`setupMessageHandler.test.ts` (the stamp is handed to the route).
 
 **Also measured that day, and not a defect of this device**: Rootz 2026-2027 -> `#general`, the
 rows of 2026-09-02 (two sessions, one the user's own) are unreadable on EVERY current device - all
@@ -4619,7 +4738,7 @@ A salon push whose seed frame is refused and whose key group is ABSENT from this
 
 | Step | Where | What it decides |
 | --- | --- | --- |
-| Claim | `mobile/key_group_join.rs` `claim` (`key_group_push_joins.json`, file-locked) | ONE attempt per group until the app starts. Written `attempting` before anything is fetched, so a crash mid-join is never retried from a push; capped at 64 entries. A `deferred` entry is claimed again with the base epoch its prepare failed on |
+| Claim | `mobile/key_group_join.rs` `claim` (`key_group_push_joins.json`, file-locked) | ONE attempt per group until the app starts. Written `attempting` before anything is fetched, so a crash mid-join is never retried from a push; capped at 64 entries. A `deferred` entry is claimed again with the base epoch its prepare failed on. Every ledger and stage write (claim, settle, stage, finish, abandon) is BOUND to the push's account: refused unless the slot's owner record names it (one MLS state per account, [auth](../frontend/modules/auth.md#one-mls-state-per-account-on-a-native-install-owner-decision-2026-11-02)) |
 | Base | `POST /api/mls/push/key-group-base` (PushSecret) -> `readKeyGroupBaseForPush` | Key group only (403 otherwise); the same entitlement ask as `assertCommitterMayCommit` (403 not entitled, 503 unanswered); `welcomeOwed` when a Welcome is queued or the add lock is held (one door at a time); the scope; the base |
 | Before the prepare | `KeyGroupPushJoin.beforePrepare` | A base at the epoch a previous prepare failed on is not prepared again (`deferred`, unchanged); a salon-scoped base must name the push's own salon (`scope-mismatch`) |
 | Prepare | `prepare_key_group_join` under `MlsStateLock` | Refused in a WARM process (below); the client checks below; builds the external commit and STAGES `digest(mls.bin) + sealed post-join state` - nothing is installed. A refusal reached after the load or the build is `deferred` on that base, so a stuck base does not cost every salon push seconds of work |

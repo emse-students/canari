@@ -6,7 +6,7 @@ import { Logger } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
-import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
+import { OneTimeKeyPackage, usableOneTimePackage } from './entities/one-time-key-package.entity';
 import { Group } from './entities/group.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
@@ -121,7 +121,8 @@ describe('AppController - reclaimExpiredKeyPackages', () => {
     await run();
 
     const where = otkpBuilder.calls.find((c) => c.method === 'where');
-    expect(String(where?.args[0])).toContain('<= now()');
+    // The negation of what a claim serves, from the one spelling the claim reads.
+    expect(String(where?.args[0])).toBe(`NOT (${usableOneTimePackage()})`);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('deleted 171 one-time package(s)'));
   });
 
@@ -135,7 +136,7 @@ describe('AppController - reclaimExpiredKeyPackages', () => {
     await run();
     const where = otkpBuilder.calls.find((c) => c.method === 'where');
     expect(String(where?.args[0])).not.toContain('IS NOT NULL');
-    expect(String(where?.args[0])).toContain('COALESCE("notAfter"');
+    expect(String(where?.args[0])).toContain('COALESCE("notAfter", ("createdAt"');
     expect(String(where?.args[0])).toContain("interval '84 days'");
   });
 

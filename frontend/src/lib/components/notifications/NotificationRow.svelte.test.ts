@@ -32,8 +32,8 @@ vi.mock('$lib/utils/users/displayName', () => ({
 // left to hit the network: happy-dom actually attempts the fetch, which then aborts noisily when
 // the test environment tears down mid-flight.
 vi.mock('$lib/utils/userAvatarCache', () => ({
-  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
-  releaseUserAvatarDisplayUrl: () => {},
+  resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplay: () => {},
 }));
 vi.mock('$lib/utils/associationLogoCache', () => ({
   resolveAssociationLogoDisplayUrl: async () => null,
@@ -235,6 +235,8 @@ describe('NotificationRow sentence', () => {
       ['booking_cancelled', m.notif_booking_cancelled_text()],
       ['booking_withdrawn', m.notif_booking_withdrawn_text()],
       ['booking_added', m.notif_booking_added_text()],
+      ['booking_changed', m.notif_booking_changed_text()],
+      ['booking_removed', m.notif_booking_removed_text()],
     ] as const) {
       const row = renderRow(booking(type, 'Salle de musique'));
       expect(row.textContent).toContain(sentence);
@@ -334,6 +336,13 @@ describe('NotificationRow sentence', () => {
     const accepted = renderRow(follow('follow_accepted'));
     expect(accepted.textContent).toContain(m.notif_follow_accepted_text());
     expect(accepted.textContent).not.toContain('a commenté');
+  });
+
+  // A followed person's birthday (docs/wiki/birthdays.md): the cake, the sentence, never a comment's.
+  it("says it is a followed person's birthday, with no text and never the comment sentence", () => {
+    const row = renderRow({ ...postRow('birthday'), postId: 'member-1', text: '' });
+    expect(row.textContent).toContain(m.notif_birthday_text());
+    expect(row.textContent).not.toContain('a commenté');
   });
 });
 
@@ -469,6 +478,7 @@ const EVERY_TYPE_THE_SERVER_EMITS = [
   'event_updated',
   'event_deleted',
   'event_pending',
+  'event_pending_coorganiser',
   'profile_correction_applied',
   'profile_correction_refused',
 ];
@@ -489,6 +499,32 @@ describe('NotificationRow with every known type', () => {
       expect(target.textContent, type).not.toContain(m.notif_unknown_type_text());
       expect(target.querySelector('button')!.disabled, type).toBe(false);
     }
+  });
+});
+
+describe('NotificationRow for an event returned to the queue by an acceptance', () => {
+  const base: PostNotification = {
+    id: 'n-co',
+    type: 'event_pending_coorganiser',
+    postId: 'asso-1',
+    actorId: 'u1',
+    actorName: 'Marie',
+    text: 'Gala',
+    read: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  it('tells the organiser it is THEIR event, and tells a validator it is an acceptance', () => {
+    const party = renderRow({ ...base, meta: { reason: 'coorganiser_joined' } });
+    expect(party.textContent).toContain(m.notif_event_pending_coorganiser_text());
+    expect(party.textContent).not.toContain(m.notif_event_pending_coorganiser_validators_text());
+
+    const validator = renderRow({
+      ...base,
+      meta: { reason: 'coorganiser_joined', audience: 'validators' },
+    });
+    expect(validator.textContent).toContain(m.notif_event_pending_coorganiser_validators_text());
+    expect(validator.textContent).not.toContain(m.notif_event_pending_coorganiser_text());
   });
 });
 

@@ -137,3 +137,37 @@ export async function removeFollower(userId: string): Promise<void> {
 export async function listSentFollowRequests(after?: string): Promise<FollowListEntry[]> {
   return socialRequest<FollowListEntry[]>(`/api/posts/me/follow-requests/sent${pageQuery(after)}`);
 }
+
+/** How many ids one {@link getFollowStatuses} call may carry - the server's `FOLLOW_STATUS_BATCH_MAX`. */
+export const FOLLOW_STATUS_BATCH_MAX = 100;
+
+/**
+ * Where the reader stands with EACH of `userIds`, in one call: an id the reader neither follows nor
+ * asked is absent from the answer (read: none). At most {@link FOLLOW_STATUS_BATCH_MAX} ids - the
+ * caller chunks. What a page of "Suivre" chips reads instead of one `follow-status` per person.
+ */
+export async function getFollowStatuses(
+  userIds: readonly string[]
+): Promise<Record<string, FollowStatus>> {
+  Log.d('follows', `statuses of ${userIds.length}`);
+  const { statuses } = await socialRequest<{ statuses: Record<string, FollowStatus> }>(
+    '/api/posts/me/follow-statuses',
+    { method: 'POST', body: JSON.stringify({ userIds }) }
+  );
+  return statuses;
+}
+
+/** The request was ACCEPTED while the withdraw was on its way (409): it is a follow now. */
+export const FOLLOW_REQUEST_ANSWERED = 'FOLLOW_REQUEST_ANSWERED';
+/** No request to withdraw (404): the person refused it, or it was withdrawn already. */
+export const FOLLOW_REQUEST_NOT_FOUND = 'FOLLOW_REQUEST_NOT_FOUND';
+
+/**
+ * Withdraws a request not answered yet - and ONLY that: unlike {@link leaveFollow} it never removes
+ * an accepted follow (409 `FOLLOW_REQUEST_ANSWERED` instead), so a tap on "Demande envoyee" that
+ * raced the person's acceptance is never a silent unfollow.
+ */
+export async function withdrawFollowRequest(userId: string): Promise<void> {
+  Log.d('follows', `withdraw ${userId.slice(0, 8)}`);
+  await socialRequest<{ ok: boolean }>(`${user(userId)}/follow-request`, { method: 'DELETE' });
+}

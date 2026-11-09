@@ -191,6 +191,15 @@ describe('providerRefusalMessage', () => {
     expect(
       providerRefusalMessage(
         new SocialApiError(
+          'This membership product grants no tag: it cannot be sold until it is repaired.',
+          'MEMBERSHIP_PRODUCT_UNGRANTABLE',
+          409
+        )
+      )
+    ).toBe(m.shop_cotisation_disabled());
+    expect(
+      providerRefusalMessage(
+        new SocialApiError(
           "This product is reserved to the association's cotisants",
           'PRODUCT_COTISANTS_ONLY',
           403
@@ -259,6 +268,16 @@ describe('providerRefusalMessage', () => {
     );
     expect(providerRefusalMessage(refusal)).toBe(m.asso_kind_does_not_sell());
     expect(providerRefusalMessage(refusal)).not.toContain('does not sell');
+  });
+
+  it('words an acceptance refused for chaining delegations by its typed code, never the server English', () => {
+    const refusal = new SocialApiError(
+      'The receiving association itself delegates its payments and cannot receive a delegation',
+      'DELEGATION_CHAIN_REFUSED',
+      409
+    );
+    expect(providerRefusalMessage(refusal)).toBe(m.delegation_chain_refused());
+    expect(providerRefusalMessage(refusal)).not.toContain('cannot receive');
   });
 
   it('is null for any other failure, so each surface keeps its own generic line', () => {

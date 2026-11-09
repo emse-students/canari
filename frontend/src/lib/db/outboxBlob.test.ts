@@ -430,8 +430,9 @@ describe("REPLACING an entry's bytes (RC-5: the raw take by the prepared file) n
     const raw = pattern(30_000);
     await storage.saveOutboxEntry(mediaEntry('m1', raw), KEY);
     const execute = sql.db.execute;
+    // The merge rewrites the row with ONE conditional `UPDATE` (`OUTBOX_UPDATE_ROW_SQL`).
     sql.db.execute = async (q: string, p?: any[]) => {
-      if (q.includes('INSERT OR REPLACE INTO outbox')) throw new Error('killed');
+      if (q.includes('UPDATE outbox SET conversation_id')) throw new Error('killed');
       return execute(q, p);
     };
     await expect(
@@ -520,6 +521,7 @@ describe('account reset: rows first, the blob store LAST, and a blob failure ski
     'DELETE FROM pending_group_exits',
     'DELETE FROM distribution_groups',
     'DELETE FROM feed_pages',
+    'DELETE FROM pending_mutations',
   ];
 
   it('SQLite: a blob store that will not open still lets every table be emptied, then rejects typed', async () => {

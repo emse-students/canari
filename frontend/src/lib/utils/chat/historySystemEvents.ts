@@ -7,8 +7,10 @@ import type {
   ReadWatermarks,
 } from '$lib/types';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
-import { renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
+import { receivedNoticeTime, renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
+import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
+import { applyNicknameFrame, nicknameMembersOf, type NicknameRosterSource } from './nicknameFrame';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
@@ -38,7 +40,7 @@ import {
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { noteIntegrityFinding } from '$lib/mls-client/integrityFindings';
 import type { AuthorKeySource } from '$lib/crypto/messageAuthorship';
-import type { StoredMessagePatch } from '$lib/db/types';
+import type { PendingMutation, StoredMessagePatch } from '$lib/db/types';
 import {
   mergeVettedRow,
   upgradedRow,
@@ -104,6 +106,8 @@ export interface ReplaySystemEventCtx {
   reactionUpdates: Map<string, MessageReaction[]>;
   /** The keys this device trusts for an author (the MLS service): what a bundle's proofs verify under. */
   authorKeys: AuthorKeySource;
+  /** The group's tree (the MLS service): a replayed `nickname` frame must name a current member. */
+  nicknameRoster: NicknameRosterSource;
   /**
    * msgId -> what a replayed `history_bundle` changed on a HELD row (an upgrade, a vetted tombstone
    * or edit), merged onto the stored row in the post-save pass.
@@ -116,9 +120,16 @@ export interface ReplaySystemEventCtx {
    */
   pendingById: Map<string, Omit<PendingHistoryMessage, 'ingestSequence'>>;
   /**
-   * Messages deleted via a `delete_message` event during this replay, each with the id of the
-   * member that sent the event. The author check cannot always happen here - the message may not be
-   * in memory yet - so the claim is carried to whoever can verify it against the stored row.
+   * Defers a deletion, an edit or a reaction whose message memory does not show, dated by this
+   * frame's server time. The replay holds it IN MEMORY until its bodies are written, then settles it
+   * against the stored row and its AUTHOR (`settleWalkedMutations`), exactly as the live path does;
+   * only one whose target the store still lacks reaches the bounded store of mutations that came
+   * before their message (`pendingMutations.ts`).
+   */
+  keepPending: (entry: Omit<PendingMutation, 'at'>) => void;
+  /**
+   * Messages deleted via a `delete_message` event during this replay whose message memory shows,
+   * each with the id of the member that sent the event (checked against the shown row first).
    */
   deletedMessages: Map<string, { by: string; proof?: RecordedAuthorship }>;
   /** Messages edited via an `edit_message` event, with their new content and who claims to edit. */
@@ -347,7 +358,20 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // fix; the replay path never did, because these frames could not reach the shared log and so
       // this branch was dead. The durability split made it live again, hole and all.
       if (known && !replayMutationIsAuthorised(known, senderNorm, 'delete')) return;
-      if (convo && known) {
+      if (!known) {
+        // Not shown: stored, buffered in this page, or not here yet - settled once the bodies land.
+        ctx.keepPending({
+          conversationId: ctx.conversationId,
+          messageId: data.messageId,
+          sender: senderNorm,
+          kind: 'delete',
+          slot: '',
+          rank: 0,
+          ...(ctx.authorship ? { proof: ctx.authorship } : {}),
+        });
+        return;
+      }
+      if (convo) {
         setConversation(contactName, {
           ...convo,
           messages: convo.messages.map((mm) =>
@@ -379,6 +403,19 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       const convo = getConversation(contactName);
       const known = convo?.messages.find((m) => m.id === data.messageId);
       if (known && !replayMutationIsAuthorised(known, senderNorm, 'edit')) return;
+      if (!known) {
+        ctx.keepPending({
+          conversationId: ctx.conversationId,
+          messageId: data.messageId,
+          sender: senderNorm,
+          kind: 'edit',
+          slot: '',
+          rank: editedAtMs,
+          text: data.newContent,
+          ...(ctx.authorship ? { proof: ctx.authorship } : {}),
+        });
+        return;
+      }
       // A DELETE IS ABSORBING - the tombstone wins whatever the order, exactly as the post-save
       // pass in `history.ts` has always had it. The tombstone is carried in `content`, so an edit
       // landing on a deleted row puts the deleted text back on screen. A delete seen earlier in
@@ -429,6 +466,24 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         parsed.system.event === 'pin',
         Number(data.at) || parseServerTimestampMs(msg.timestamp) || 0
       );
+    } else if (parsed.system.event === 'nickname') {
+      // The live reader, dated by the log entry when the frame carries no `at`: `applyNickname`
+      // keeps the newer statement, so re-reading a log already followed changes nothing.
+      // Bounded by the log row's own server time, as the live frame is by its queue time; a row
+      // without one is refused, never bounded by this device's clock.
+      const serverAt = parseServerTimestampMs(msg.timestamp);
+      if (!(typeof serverAt === 'number' && serverAt > 0)) {
+        console.error(
+          `[NICKNAME] REFUSED a replayed nickname frame from ${senderNorm.slice(0, 8)} in ${conversationId.slice(0, 8)}…: its log row carries no server time`
+        );
+      } else {
+        applyNicknameFrame(conversationId, data, senderNorm, {
+          fallbackAt: serverAt,
+          serverAt,
+          members: await nicknameMembersOf(ctx.nicknameRoster, conversationId, 'replay'),
+          log: (line) => console.debug(line),
+        });
+      }
     } else if (parsed.system.event === 'remove_reaction' && data.messageId && data.emoji) {
       // LEGACY FRAME, replay side. Taking a reaction back now travels as a `ReactionMsg` with
       // `removed` set; this only ever sees log entries written before that change. Dated with the
@@ -483,6 +538,9 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           `[HISTORY_REPLAY] ${pinsMerged} pin state(s) converged for ${conversationId.slice(0, 8)}…`
         );
       }
+      // No nickname is taken from a REPLAYED bundle: a register restated in the log is a relayer's
+      // word broadcast to everyone, and only the join push addressed to this device may carry one
+      // (`mergeBundleNicknames`, review of #3177). The frames themselves replay above.
       if (Array.isArray(bundleData) && bundleData.length > 0) {
         // THE ONE RULE EVERY BUNDLE GOES THROUGH (`bundleVetting.ts`), the one the live handler
         // applies: a durable bundle an older build wrote keeps restoring history - MARKED when
@@ -754,13 +812,26 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
   }
 
   if (systemContent) {
-    const systemServerMs = parseServerTimestampMs(msg.timestamp);
+    // DATED BY THE FRAME, AS THE LIVE PATH DATES IT (`receivedNoticeTime`): the frame's `sentAt`
+    // stamped, the archive row's server time as the order key. An undated row used to fall through
+    // `resolveMessageTimestamp` to THIS device's clock at replay time, and a replay can run days after
+    // the event - the notice then sank below everything that followed it.
+    const dated = receivedNoticeTime(
+      appMessageSentAtMs(parsed.sentAt),
+      parseServerTimestampMs(msg.timestamp)
+    );
+    if (!dated) {
+      console.error(
+        `[HISTORY_REPLAY] REFUSED to draw '${parsed.system.event}' in ${conversationId.slice(0, 8)}… (id ${systemMessageId?.slice(0, 8) ?? 'none'}): the frame carries no sentAt and the archive row no readable server time (${String(msg.timestamp).slice(0, 40)}) - no durable instant dates it, and this device's clock is not one`
+      );
+      return;
+    }
     pushPendingMessage({
       senderId: 'system',
       content: systemContent,
       isSystem: true,
       messageId: systemMessageId,
-      timestamp: systemServerMs !== undefined ? new Date(systemServerMs) : undefined,
+      ...dated,
     });
   }
 }

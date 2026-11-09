@@ -10,6 +10,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   UploadedFile,
@@ -24,10 +25,18 @@ import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throt
 
 /** `confirm-payment` calls allowed per user and submission per minute (the return poll is 10). */
 export const CONFIRM_PAYMENT_PER_MINUTE = 12;
-import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
+import {
+  CreateFormDto,
+  FormRevisionDto,
+  PublishFormRevisionDto,
+  SaveFormDraftDto,
+  SubmitFormDto,
+} from './dto/form.dto';
 import { FormsService } from './forms.service';
 import { parseExportLabels } from './export-labels';
+import { parseExportFormat } from './product-grid-export';
 import { AssociationsService } from '../associations/associations.service';
+import { withOneEventIcsSig } from '../associations/agenda-signature';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
@@ -73,23 +82,111 @@ export class FormsController {
   }
 
   /**
-   * Association agenda entry linked to this form, if configured.
+   * Association agenda entry linked to this form, if the reader may see it.
    *
-   * PUBLIC BY INTENT, and it says so here because nothing else would: it is read by the public
-   * association page, which renders for a signed-out visitor. It answers one agenda entry and
-   * never the form's contents - `GET :id` is the guarded route for those.
+   * SIGNED IN, LIKE THE FORM ITSELF (2026-11-02): the app renders no association page for a
+   * signed-out visitor and the public showcase shows no agenda
+   * ([anonymous-surface](../../../../docs/wiki/anonymous-surface.md)); the only caller is the form
+   * page, which reads the guarded `GET :id` first. The event is filtered by the reader's audience
+   * (`findCalendarEventByLinkedForm`), so a reader outside it gets `null`, and it carries `icsSig`
+   * like every event this service lists.
    */
+  @UseGuards(NginxAuthGuard)
   @Get(':id/calendar-link')
-  async getFormCalendarLink(@Param('id', ParseUUIDPipe) id: string) {
-    const linkedEvent = await this.associationsService.findCalendarEventByLinkedForm(id);
-    return { linkedEvent };
+  async getFormCalendarLink(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin?: string
+  ) {
+    const linkedEvent = await this.associationsService.findCalendarEventByLinkedForm(id, {
+      userId: xUserId,
+      isGlobalAdmin: xGlobalAdmin === 'true',
+    });
+    return { linkedEvent: withOneEventIcsSig(linkedEvent) };
   }
 
-  /** Returns a single form by its ID. */
+  /** Returns a single form by its ID; a DRAFT only to its managers (a 404 to anyone else). */
   @UseGuards(NginxAuthGuard)
   @Get(':id')
-  get(@Param('id', ParseUUIDPipe) id: string) {
-    return this.service.get(id);
+  get(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.get(id, { userId: xUserId, isGlobalAdmin: ga === 'true' });
+  }
+
+  /**
+   * The unpublished revision of a form (owner, 2026-11-08): `{ revision, document, savedAt }`,
+   * revision 0 and no document when none was ever saved. Managers only, like the edit route.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/draft')
+  getDraft(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.getDraft(id, xUserId, ga === 'true');
+  }
+
+  /**
+   * The editor's autosave: stores the payload as the revision after `baseRevision`, or answers
+   * 409 `FORM_DRAFT_CONFLICT` (with the current revision) when another save moved it first.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Put(':id/draft')
+  saveDraft(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Body() dto: SaveFormDraftDto,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.saveDraft(
+      id,
+      dto.baseRevision,
+      dto.document,
+      dto.saveId ?? null,
+      xUserId,
+      ga === 'true'
+    );
+  }
+
+  /**
+   * "Publier les modifications" (and "Publier" for a draft form): applies revision `revision` with
+   * the edit's rules, atomically. 409 `FORM_DRAFT_CONFLICT` when it moved, `FORM_DRAFT_EMPTY` when a
+   * published form holds no unpublished change, `FORM_CHANGED_SINCE_REVISION` when the form was
+   * written since the revision started and `overwrite` does not confirm publishing over it.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/draft/publish')
+  @HttpCode(200)
+  publishDraft(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Body() dto: PublishFormRevisionDto,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.publishChanges(
+      id,
+      dto.revision,
+      xUserId,
+      ga === 'true',
+      dto.overwrite === true
+    );
+  }
+
+  /** "Abandonner les modifications": empties revision `revision`; the form stays as published. */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/draft/discard')
+  @HttpCode(200)
+  discardDraft(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Body() dto: FormRevisionDto,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.discardDraft(id, dto.revision, xUserId, ga === 'true');
   }
 
   /** Updates a form's metadata and items. Requires owner, co-owner, or MANAGE_FORMS flag. */
@@ -115,6 +212,23 @@ export class FormsController {
     return this.service.delete(id, xUserId, ga === 'true');
   }
 
+  /**
+   * Uploads the image of a question of a form NOT YET CREATED (the create page): recorded unbound,
+   * citable only by the caller's next save, which binds it to the form it creates. Declared before
+   * `:id/image`, which would read `items` as an id. Returns `{ imageUrl }`.
+   */
+  @UseGuards(NginxAuthGuard)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
+  @Post('items/image')
+  async uploadUnboundItemImage(
+    @UploadedFile() file: Express.Multer.File,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('authorization') authorization?: string
+  ): Promise<{ imageUrl: string }> {
+    if (!file) throw new BadRequestException('No file provided');
+    return this.service.uploadItemImage(null, file, xUserId, false, authorization);
+  }
+
   /** Uploads a banner image for a form. Requires owner, co-owner, or MANAGE_FORMS flag. */
   @UseGuards(NginxAuthGuard)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
@@ -130,7 +244,7 @@ export class FormsController {
     return this.service.setImageFromUpload(id, file, xUserId, ga === 'true', authorization);
   }
 
-  /** Uploads a public image for use in a form question. Returns `{ imageUrl }`. */
+  /** Uploads the image of a question of form `id` (its managers only). Returns `{ imageUrl }`. */
   @UseGuards(NginxAuthGuard)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   @Post(':id/items/image')
@@ -413,7 +527,8 @@ export class FormsController {
   }
 
   /**
-   * Exports all submissions for a form as an XLSX file download. Requires form owner or MANAGE_FORMS flag.
+   * Exports all submissions for a form as an XLSX file download - or, with `format`, one of a priced
+   * grid's two sheets as CSV (`product-grid-export.ts`). Requires form owner or MANAGE_FORMS flag.
    *
    * `labels` carries every word the file is written with, because this service has none - see
    * `export-labels.ts`. It is REQUIRED: a client that does not send it is refused rather than served
@@ -426,17 +541,22 @@ export class FormsController {
     @Res() res: Response,
     @Headers('x-user-id') xUserId: string,
     @Query('labels') rawLabels?: string,
-    @Headers('x-global-admin') ga?: string
+    @Headers('x-global-admin') ga?: string,
+    @Query('format') rawFormat?: string
   ) {
     await this.service.assertFormManager(id, xUserId, ga === 'true');
-    const { buffer, title } = await this.service.exportSubmissions(
+    const { buffer, title, extension } = await this.service.exportSubmissions(
       id,
-      parseExportLabels(rawLabels)
+      parseExportLabels(rawLabels),
+      parseExportFormat(rawFormat)
     );
 
     res.set({
-      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': contentDisposition(`${title}.xlsx`, 'export'),
+      'Content-Type':
+        extension === 'csv'
+          ? 'text/csv; charset=utf-8'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': contentDisposition(`${title}.${extension}`, 'export'),
       'Content-Length': buffer.byteLength,
     });
 

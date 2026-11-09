@@ -135,7 +135,7 @@ aux membres.
 Une cotisation peut etre **a vie** (payee une seule fois) ou **annuelle** (a renouveler chaque
 annee scolaire ; elle expire le 31 aout). Le type est indique par l'association.
 
-**Si vous payez en especes :** un responsable de l'association peut enregistrer votre cotisation
+**Si vous payez sur place :** un responsable de l'association peut enregistrer votre cotisation
 manuellement apres avoir recu votre paiement. Vous n'avez alors rien a faire dans la Boutique.
 
 **Les avantages cotisant :**
@@ -155,7 +155,7 @@ Les associations proposent des formulaires en ligne pour les inscriptions, adhes
 2. Remplissez les champs.
 3. Si le formulaire necessite un paiement :
    - **Paiement en ligne** : vous serez redirige vers la page de paiement Lydia ("Paiement Canari").
-   - **Paiement en especes** : votre inscription est enregistree en attente. Un responsable
+   - **Paiement sur place** : votre inscription est enregistree en attente. Un responsable
      la validera apres avoir recu votre paiement.
 
 ---

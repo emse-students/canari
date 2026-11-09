@@ -1,11 +1,12 @@
 /**
- * The numbers decision C3 turns into: 720p on the short side, ~2.5 Mb/s, at most 30 fps, and a
+ * The numbers decision C3 turns into: 720p on the short side, ~2.5 Mb/s, a constant 30 fps, and a
  * byte budget that lowers the bitrate before it ever lets a file past the ceiling.
  */
 import {
   AUDIO_BITRATE,
   VIDEO_BUDGET_SHARE,
   VIDEO_MIN_BITRATE,
+  VIDEO_FRAME_RATE,
   VIDEO_PROFILES,
   VIDEO_TARGET_BITRATE,
   budgetedVideoBitrate,
@@ -72,20 +73,17 @@ describe('planVideoEncoding', () => {
     displayWidth: 1080,
     displayHeight: 1920,
     durationSeconds: 20,
-    frameRate: 60,
     audioBitrate: AUDIO_BITRATE,
   };
 
-  it('resamples 60 fps to 30 and leaves 30 alone', () => {
+  it('plans the constant 30 fps of the Canari camera, whatever the source runs at', () => {
     expect(planVideoEncoding(base, CEILING)).toEqual({
       width: 720,
       height: 1280,
       videoBitrate: VIDEO_TARGET_BITRATE,
-      frameRate: 30,
+      frameRate: VIDEO_FRAME_RATE,
     });
-    expect(planVideoEncoding({ ...base, frameRate: 30.02 }, CEILING)).toMatchObject({
-      frameRate: undefined,
-    });
+    expect(VIDEO_FRAME_RATE).toBe(30);
   });
 
   it('names why no plan exists', () => {
@@ -100,7 +98,6 @@ describe('the chat profile (D-size: about 540p at 1.2 Mb/s)', () => {
     displayWidth: 1080,
     displayHeight: 1920,
     durationSeconds: 60,
-    frameRate: 60,
     audioBitrate: chat.audioBitrate,
   };
 

@@ -48,7 +48,9 @@ describe('the iOS active signal', () => {
     const push = body(IOS_MM, 'static void CanariPushActiveToPage(BOOL active) {');
     expect(push).toContain('window.__canariActive=');
     expect(push).toContain("'canari:active'");
-    expect(IOS_MM).not.toMatch(/__canariForeground\s*=/);
+    // The on-screen contract (`CanariPublishForeground`) is the other signal's; this one never
+    // writes it.
+    expect(push).not.toMatch(/__canariForeground\s*=/);
   });
 
   it('the App Group foreground flag is cleared at every launch', () => {

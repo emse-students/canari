@@ -44,7 +44,7 @@ import { MessagingService } from '../services/messaging.service';
  */
 
 const SECRET = 'internal-secret-for-tests';
-const GROUP_ID = 'g-1';
+const GROUP_ID = '00000000-0000-4000-8000-00000000c0a2';
 
 /** The six tables a SOFT delete sweeps. `UserDismissedGroup` is deliberately not among them. */
 const SWEPT = [
@@ -183,6 +183,8 @@ describe('a group ends - one policy, three routes', () => {
               find: jest.fn().mockResolvedValue([]),
             };
           }),
+          // The account's push registrations, locked then deleted in their own transaction.
+          query: jest.fn().mockResolvedValue([{ n: 0 }]),
         };
         const out = await cb(transactional);
         if (tombstones) {

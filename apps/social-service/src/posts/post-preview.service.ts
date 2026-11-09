@@ -29,8 +29,8 @@ import { PostCardCache } from './post-card-cache';
  * both the JSON preview and the image bytes go through it.
  *
  * WHAT IT REFUSES, each of these being a row somebody could otherwise fish out with a guessed id:
- * a post whose association is archived, a moderation-hidden post and a scheduled post before its
- * publication instant. A per-post audience used to be a fourth refusal (D33, WP6b: an author who
+ * a post whose association is archived, a moderation-hidden post, a scheduled post before its
+ * publication instant, and a post marked "Entre étudiants" (owner, 2026-11-04). A per-post audience used to be a fourth refusal (D33, WP6b: an author who
  * chose who sees a post did not choose "anyone holding the link"), but the per-post audiences table
  * was dropped in migration 073 and nothing in {@link PostPreviewService.findShareable} reads one any
  * more. Whether a campus-restricted post should still preview is a question left open for the user,
@@ -185,6 +185,9 @@ export class PostPreviewService {
     if (!post) return null;
     if (!post.associationId) return null;
     if (post.hiddenByModeration) return null;
+    // "Entre étudiants" (owner, 2026-11-04): read by students and members only, so never by whoever
+    // holds the link - read from the row, so turning the switch off gives the preview back.
+    if (post.studentsOnly) return null;
     // A reel past its month is dead to everyone, an anonymous link preview included.
     if (isExpiredReel(post)) return null;
     if (post.scheduledAt && new Date(post.scheduledAt).getTime() > Date.now()) return null;
@@ -364,27 +367,5 @@ export class PostPreviewService {
     } finally {
       clearTimeout(timer);
     }
-  }
-
-  /**
-   * Recent shareable posts, newest first - the sitemap's half of this surface.
-   *
-   * It applies the SAME eligibility as a single preview, in SQL: an association post, not hidden,
-   * published. `/api/posts?feed=associations` used to serve this and has answered 401 to the
-   * sitemap builder since the feed gate shipped, which is why production advertised zero post URLs
-   * to every crawler for ten days.
-   */
-  async listShareable(limit: number): Promise<{ id: string; updatedAt: string }[]> {
-    const rows = await this.postRepo
-      .createQueryBuilder('p')
-      .select(['p.id', 'p.updatedAt'])
-      .where('p.associationId IS NOT NULL')
-      .andWhere('p.hiddenByModeration = false')
-      .andWhere('(p.scheduledAt IS NULL OR p.scheduledAt <= NOW())')
-      .orderBy('p.publishedAt', 'DESC')
-      .limit(limit)
-      .getMany();
-
-    return rows.map((row) => ({ id: row.id, updatedAt: new Date(row.updatedAt).toISOString() }));
   }
 }

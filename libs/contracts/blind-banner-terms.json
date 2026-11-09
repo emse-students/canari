@@ -1,0 +1,19 @@
+{
+  "description": "What a blind salon banner may say about itself on POST /api/mls/push/blind-banner (chat-delivery `[PUSH_BLIND]`, docs/wiki/protocols/channel-encryption.md). `missing` are the four things the phone needs before it opens a salon push at all; `refused` are the reasons an open that DID run did not show the message - the tokens `open_graine_push` answers (frontend/src-tauri/src/mobile/background.rs) plus the three the Android service names itself (`empty-text`, `exception`, `unstated`). `silent` are open answers that are not a banner at all, so they are never reported. Each side asserts its own constants against this file: the controller spec, the Rust background tests, the Kotlin BlindBannerReportTest.",
+  "missing": ["seed", "ciphertext", "nonce", "messageIndex"],
+  "refused": [
+    "seed-not-mirrored",
+    "mirror-unreadable",
+    "below-floor",
+    "push-field-malformed",
+    "author-mismatch",
+    "signature-missing",
+    "signature-refused",
+    "graine-open-failed",
+    "plaintext-not-renderable",
+    "empty-text",
+    "exception",
+    "unstated"
+  ],
+  "silent": ["reaction-withdrawn", "silent-event"]
+}

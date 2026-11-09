@@ -10,8 +10,8 @@
  *   Mi 9T's WebView 152 and the iPhone 12's WKWebView, 2026-10-01). The video is always re-encoded;
  *   an AAC-LC audio track is COPIED when it costs no more than the encode would or the engine has
  *   no AAC encoder (`chooseAudioRoute`); every other track is encoded;
- * - **720p on its short side, ~2.5 Mb/s, at most 30 fps**, rotation baked into the frames - the
- *   numbers live in `videoEncodingPlan.ts`;
+ * - **720p on its short side, ~2.5 Mb/s, a CONSTANT 30 fps** (a variable-rate source is resampled
+ *   onto the grid), rotation baked into the frames - the numbers live in `videoEncodingPlan.ts`;
  * - and a `File` whose `type` NAMES ITS CODECS (`video/mp4; codecs="avc1...,mp4a.40.2"`), which is
  *   the fact `chooseSegmentedPlayback` reads to decide that a ref may stream.
  *
@@ -34,6 +34,15 @@ import {
   type VideoEncodingPlan,
   type VideoProfileName,
 } from './videoEncodingPlan';
+import {
+  audioHoleMap,
+  packetHoles,
+  pairedPackets,
+  restoreAudioTimestamp,
+  type AudioHoleMap,
+  type AudioHoleStep,
+  type DecodedChunk,
+} from './audioTimeline';
 
 /**
  * How far past `maxSeconds` a source may run and still be accepted. A recorder told to stop at 90 s
@@ -248,13 +257,71 @@ export async function prepareVideoForUpload(
             quality: new mb.Quality({ bitrate: profile.audioBitrate }),
           })
         : null;
-    const audioRoute = chooseAudioRoute({
+    // The window the conversion reads (mediabunny's own rule: the trim, or from the earliest
+    // timestamp of the converted tracks, never below 0, to their end). Every sample it hands the
+    // audio hook is relative to its start.
+    const keptAudio = audioTrack && !removeAudio ? audioTrack : null;
+    const windowStart =
+      trim?.start ??
+      Math.max(
+        0,
+        await input.getFirstTimestamp(keptAudio ? [videoTrack, keptAudio] : [videoTrack])
+      );
+    const windowEnd = trim?.end ?? Infinity;
+
+    // Whether the source's audio has holes is read from its PACKETS, never from this engine's
+    // decoder: Chrome's closes them (audioTimeline.ts), another may not, and the route must not
+    // depend on which one did the uploading.
+    const packetTimes = keptAudio ? await readPacketTimes(mb, keptAudio, signal) : [];
+    const holes = packetHoles(packetTimes);
+    const routeFacts = {
       codecString,
       removeAudio,
       sourceBitrate: sourceAudioBitrate,
       canEncodeAac,
       audioBitrate: profile.audioBitrate,
-    });
+    };
+    let audioRoute = chooseAudioRoute({ ...routeFacts, hasHoles: holes.holes > 0 });
+    let audioHoles: AudioHoleStep[] = [];
+    if (holes.holes > 0 && keptAudio) {
+      console.warn(
+        `[video-prep] the source's audio has ${holes.holes} hole(s) in its packets,` +
+          ` ${Math.round(holes.holeSeconds * 1000)} ms in all`
+      );
+      if (audioRoute === 'encode') {
+        const placed = await placeAudioHoles(mb, keptAudio, packetTimes, {
+          start: windowStart,
+          signal,
+        });
+        if (placed.kind === 'map') {
+          audioHoles = placed.steps;
+          console.debug(
+            `[video-prep] audio holes placed on the decoder's timeline: ${placed.holes} step(s),` +
+              ` ${Math.round(placed.holeSeconds * 1000)} ms, ${placed.overlaps} overlap(s)`
+          );
+        } else {
+          // The restore cannot run: the route the source would have had without its holes is kept,
+          // and the loss is named below with its consequence.
+          audioRoute = chooseAudioRoute({ ...routeFacts, hasHoles: false });
+          const why =
+            placed.kind === 'unpaired'
+              ? `the decoder emitted ${placed.decoded} chunk(s) for ${placed.packets} packet(s)`
+              : placed.kind === 'unanchored'
+                ? `the first chunk at ${placed.firstChunk.toFixed(3)} s matches no packet`
+                : `the decoder failed: ${placed.error}`;
+          const line =
+            `[video-prep] audio holes NOT restored (${why}): ` + holeConsequence(audioRoute);
+          // A pairing that does not hold is a decoder this code does not understand; a throw is not.
+          if (placed.kind === 'failed') console.warn(line);
+          else console.error(line);
+        }
+      } else {
+        // No AAC encoder on this engine (Firefox, an iOS before 26): the holes go into the file.
+        console.warn(
+          `[video-prep] audio holes NOT restored (no AAC encoder): ` + holeConsequence(audioRoute)
+        );
+      }
+    }
     // A copied track costs what it carries, measured over every packet; an encoded one, the plan's.
     const audioBitrate =
       audioRoute === 'copy'
@@ -267,13 +334,11 @@ export async function prepareVideoForUpload(
         (canEncodeAac !== null ? `, AAC encoder ${canEncodeAac ? 'present' : 'absent'}` : '')
     );
 
-    const stats = await videoTrack.computePacketStats(120);
     const plan = planVideoEncoding(
       {
         displayWidth: await videoTrack.getDisplayWidth(),
         displayHeight: await videoTrack.getDisplayHeight(),
         durationSeconds,
-        frameRate: stats.averagePacketRate,
         audioBitrate,
       },
       maxBytes,
@@ -292,7 +357,12 @@ export async function prepareVideoForUpload(
         `video: ${durationSeconds.toFixed(1)} s cannot fit ${maxBytes} bytes at the lowest bitrate`
       );
     }
-    console.debug(`[video-prep] plan: ${describePlan(plan)}, ${durationSeconds.toFixed(2)} s`);
+    // The source's own rate, for the log only: the output is resampled to the plan's whatever it is.
+    const sourceRate = (await videoTrack.computePacketStats(120)).averagePacketRate;
+    console.debug(
+      `[video-prep] plan: ${describePlan(plan)}, ${durationSeconds.toFixed(2)} s,` +
+        ` source ${sourceRate.toFixed(2)} fps`
+    );
 
     const output = new mb.Output({
       format: new mb.Mp4OutputFormat({ fastStart: 'fragmented' }),
@@ -309,14 +379,21 @@ export async function prepareVideoForUpload(
         height: plan.height,
         fit: 'contain',
         quality: new mb.Quality({ bitrate: plan.videoBitrate, bitrateMode: 'variable' }),
-        ...(plan.frameRate !== undefined ? { frameRate: plan.frameRate } : {}),
+        // CONSTANT, whatever the source: every frame lands on the 1/30 s grid, a hole in a
+        // variable-rate source is filled by holding the frame before it, and the track's timescale
+        // is the rate itself. The audio keeps the source's own timeline (holes restored below).
+        frameRate: plan.frameRate,
         keyFrameInterval: VIDEO_KEY_FRAME_INTERVAL,
         // Baked into the frames: a rotation left in the track header is one more thing every
         // player, MSE included, has to honour for the video to stand up.
         allowTransformationMetadata: false,
         forceTranscode: true,
       },
-      audio: audioConversionOptions(mb, audioRoute, profile.audioBitrate),
+      audio: audioConversionOptions(mb, audioRoute, profile.audioBitrate, {
+        holes: audioHoles,
+        start: windowStart,
+        end: windowEnd,
+      }),
       ...(trim ? { trim } : {}),
     });
     // A dropped track is a refusal, never a quieter video: an engine that cannot decode the source
@@ -402,6 +479,66 @@ export function videoSpanTrim(
   return { start, end };
 }
 
+/** What a holed track that could not be restored becomes, said where the loss is logged. */
+function holeConsequence(route: 'none' | 'copy' | 'encode'): string {
+  return route === 'copy'
+    ? 'copied with its holes: the sound after each hole plays early on Chrome'
+    : 'encoded without its holes: the sound after each hole plays early';
+}
+
+/** Every audio packet's timestamp, metadata only (no packet data is read). */
+async function readPacketTimes(
+  mb: typeof import('mediabunny'),
+  track: import('mediabunny').InputAudioTrack,
+  signal: AbortSignal | undefined
+): Promise<number[]> {
+  const times: number[] = [];
+  for await (const p of new mb.EncodedPacketSink(track).packets(undefined, undefined, {
+    metadataOnly: true,
+  })) {
+    if (signal?.aborted) throw new VideoPrepareError('aborted', 'video preparation aborted');
+    times.push(p.timestamp);
+  }
+  return times;
+}
+
+/**
+ * Where a holed track's holes land on this engine's decoder: the track decoded once from the
+ * conversion's start - where the conversion's decoder starts too - to its END, each chunk paired
+ * with its packet. Not to the window's end: the conversion cuts there on the decoder's collapsed
+ * timeline, the packets on the real one, so a hole inside a trimmed window would leave more chunks
+ * than packets (the audio hook does the cut instead). Only called for a track with holes that is
+ * re-encoded. A decoder that throws is an answer (`failed`), never a refusal of the upload; a first
+ * chunk no packet starts at (a hole inside the span the decoder pre-rolls) is `unanchored`, and a
+ * decoder that yields nothing is `failed`.
+ */
+async function placeAudioHoles(
+  mb: typeof import('mediabunny'),
+  track: import('mediabunny').InputAudioTrack,
+  packetTimes: number[],
+  window: { start: number; signal: AbortSignal | undefined }
+): Promise<
+  AudioHoleMap | { kind: 'failed'; error: string } | { kind: 'unanchored'; firstChunk: number }
+> {
+  const decoded: DecodedChunk[] = [];
+  try {
+    for await (const s of new mb.AudioSampleSink(track).samples(window.start)) {
+      decoded.push({ timestamp: s.timestamp, duration: s.duration });
+      s.close();
+      if (window.signal?.aborted) {
+        throw new VideoPrepareError('aborted', 'video preparation aborted');
+      }
+    }
+  } catch (e) {
+    if (isVideoPrepareError(e)) throw e;
+    return { kind: 'failed', error: String(e) };
+  }
+  if (decoded.length === 0) return { kind: 'failed', error: 'the decoder emitted no chunk' };
+  const paired = pairedPackets(packetTimes, decoded);
+  if (!paired) return { kind: 'unanchored', firstChunk: decoded[0].timestamp };
+  return audioHoleMap(paired, decoded);
+}
+
 /** The codec string of AAC-LC, the one audio format the output carries. */
 export const AAC_LC_CODEC_STRING = 'mp4a.40.2';
 
@@ -417,6 +554,12 @@ export interface AudioRouteFacts {
   canEncodeAac: boolean | null;
   /** The profile's AAC bitrate: the most a copied track may cost; defaults to {@link AUDIO_BITRATE}. */
   audioBitrate?: number;
+  /**
+   * The source's audio PACKETS leave holes (`packetHoles` - never this engine's decoder, which may
+   * hide them). A copy would keep them as long samples in the output, which Chrome's decoder closes
+   * again on playback: the sound after each one plays early. Only an encode fills them with silence.
+   */
+  hasHoles?: boolean;
 }
 
 /**
@@ -436,6 +579,7 @@ export function chooseAudioRoute(facts: AudioRouteFacts): 'none' | 'copy' | 'enc
   const audioBitrate = facts.audioBitrate ?? AUDIO_BITRATE;
   if (codecString === null || removeAudio) return 'none';
   if (codecString.toLowerCase() !== AAC_LC_CODEC_STRING) return 'encode';
+  if (facts.hasHoles && canEncodeAac === true) return 'encode';
   if (sourceBitrate !== null && sourceBitrate <= audioBitrate) return 'copy';
   return canEncodeAac === true ? 'encode' : 'copy';
 }
@@ -448,21 +592,50 @@ export function chooseAudioRoute(facts: AudioRouteFacts): 'none' | 'copy' | 'enc
 export function audioConversionOptions(
   mb: typeof import('mediabunny'),
   route: 'none' | 'copy' | 'encode',
-  audioBitrate: number = AUDIO_BITRATE
+  audioBitrate: number = AUDIO_BITRATE,
+  timeline: { holes: AudioHoleStep[]; start: number; end: number } = {
+    holes: [],
+    start: 0,
+    end: Infinity,
+  }
 ) {
   if (route === 'none') return { discard: true as const };
   if (route === 'copy') return { codec: 'aac' as const };
+  const { holes, start, end } = timeline;
+  // The conversion cut its window on the decoder's timeline, where a chunk sits EARLIER than it
+  // belongs: a restored chunk can land past the window's end, and is cut there.
+  const limit = end - start;
   return {
     codec: 'aac' as const,
     quality: new mb.Quality({ bitrate: audioBitrate }),
     forceTranscode: true,
+    // Each decoded chunk moved back to where its packet says it belongs; the encoder fills the gap
+    // this leaves with silence (mediabunny pads any gap of 64 samples or more).
+    ...(holes.length > 0
+      ? {
+          process: (sample: import('mediabunny').AudioSample) => {
+            const at = restoreAudioTimestamp(holes, sample.timestamp + start) - start;
+            if (at >= limit) return null;
+            const frames = Math.min(
+              sample.numberOfFrames,
+              Math.round((limit - at) * sample.sampleRate)
+            );
+            // Less than half a frame before the end: nothing left to encode (an empty AudioData is a
+            // TypeError in WebCodecs).
+            if (frames <= 0) return null;
+            const moved = frames < sample.numberOfFrames ? sample.trim(0, frames) : sample.clone();
+            moved.setTimestamp(at);
+            return moved;
+          },
+        }
+      : {}),
   };
 }
 
 /** The plan, as the log line prints it. */
 function describePlan(plan: VideoEncodingPlan): string {
   return (
-    `${plan.width}x${plan.height}, ${Math.round(plan.videoBitrate / 1000)} kb/s` +
-    (plan.frameRate !== undefined ? `, resampled to ${plan.frameRate} fps` : '')
+    `${plan.width}x${plan.height}, ${Math.round(plan.videoBitrate / 1000)} kb/s, ` +
+    `${plan.frameRate} fps constant`
   );
 }

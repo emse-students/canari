@@ -1,6 +1,6 @@
 import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
 import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
-import { openChannelMessage } from '$lib/utils/graine/channelSeal';
+import { openChannelMessageProving } from '$lib/utils/graine/channelSeal';
 import { reportUnreadableChannelMessage } from '$lib/utils/chat/channelCrypto';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
@@ -11,10 +11,12 @@ import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { mergeReadWatermark, withOwnReadAdvanced } from '$lib/utils/chat/readState';
+import { publishReadState } from '$lib/mls-client/tabMessageSync';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
 import { isJoinAskOutcome } from '../joinAskFrames';
 import { salonGrants } from '$lib/utils/chat/memberRemoval';
+import { applyCommunityNicknameEvent } from '$lib/utils/chat/nicknameActions';
 
 /**
  * Context for handleChannelEvent: MessageHandlerDeps plus the epoch-recovery
@@ -300,6 +302,9 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onRolePermissionsChanged?.({
       roleId,
       permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],
+      // The community's own name for the role: a string, or null for "none - use the default". ABSENT
+      // (a server older than the rename) leaves the name where the last listing put it.
+      label: typeof data.label === 'string' ? data.label : data.label === null ? null : undefined,
     });
     return;
   }
@@ -320,6 +325,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 
   if (event.type === 'workspace.updated') {
     const data = event.data || {};
+    if (data.nickname !== undefined) {
+      // A COMMUNITY NICKNAME CHANGED ("Modifier les pseudos"). It rides this type because every
+      // client knows it - an older one ignores the field - and the event carries nothing else, so
+      // the community entry is not touched.
+      applyCommunityNicknameEvent(String(data.workspaceId || ''), data.nickname);
+      return;
+    }
     onWorkspaceUpdated?.({
       workspaceId: String(data.workspaceId || ''),
       imageMediaId: data.imageMediaId,
@@ -393,7 +405,11 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             const merged = mergeReadWatermark(convo.readWatermarks, userId, Number(data.at));
             return merged ? { ...convo, readWatermarks: merged } : convo;
           })();
-    if (next !== convo) conversations.set(key, next);
+    if (next !== convo) {
+      conversations.set(key, next);
+      // A follower tab of this browser has no socket: it learns the mark from here (`read_state`).
+      publishReadState(key, userId.toLowerCase(), Number(data.at), 'stamped');
+    }
     return;
   }
 
@@ -427,12 +443,15 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       let isSystemNotice = false;
       // The client UUID sealed INSIDE the ciphertext: what this device's own echo is keyed by.
       let innerMessageId: string | undefined;
+      // Whether the open PROVED the author (a v2 session): the native banner names a speaker only
+      // then, and the push trigger decides from the same fact - see `openChannelMessageProving`.
+      let authorProven = false;
       const channelServerMs = parseServerTimestampMs(data.createdAt);
       try {
         if (data.ciphertext) {
           // Opened here rather than left to the history reload: a live bubble that only appeared
           // after a refetch is the symptom the epoch-key path used to have.
-          const bytes = await openChannelMessage(data.channelId, {
+          const opening = await openChannelMessageProving(data.channelId, {
             // The same id the bubble is keyed by below, and the history load reads: a row opened
             // on both paths is one row, never its own replay.
             id: messageId,
@@ -446,7 +465,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
                 ? null
                 : Number(data.messageIndex),
           });
-          const msg = decodeAppMessage(bytes);
+          authorProven = opening.authorProven;
+          const msg = decodeAppMessage(opening.bytes);
           // A reaction is a channel message now (WP-40), so it arrives on this very path. It
           // changes a bubble instead of adding one, and it is the ONLY live route reactions have -
           // there is no server tally left to broadcast.
@@ -563,6 +583,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         // reconcile can compare with the server's rows (see `reconcileSalonUnread`).
         serverTimestamp: channelServerMs,
         skipDbSave: true,
+        authorProven,
         // A follower tab may be the one that composed it: the id lets it settle its echo.
         ...(ownClientId ? { clientMessageId: ownClientId } : {}),
         ...(isSystemNotice ? { isSystem: true } : {}),

@@ -13,7 +13,7 @@ const route = vi.hoisted(() => ({
   page: { params: {}, url: new URL('https://canari.test/forms/create'), state: {} },
 }));
 vi.mock('$app/state', () => route);
-vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}) }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}), beforeNavigate: vi.fn() }));
 vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),
   listMyAssociations: async () => [],
@@ -30,6 +30,12 @@ vi.mock('$lib/forms/cotisationSettings', async (orig) => ({
 vi.mock('$lib/pricing/criteriaOptions', async (orig) => ({
   ...(await orig<typeof import('$lib/pricing/criteriaOptions')>()),
   fetchFormations: async () => [],
+}));
+
+const caps = vi.hoisted(() => ({ formDrafts: true as boolean | null }));
+vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
+  ...(await orig<typeof import('$lib/stores/appVersionCheck.svelte')>()),
+  serverFormDrafts: () => caps.formDrafts,
 }));
 
 import Page from './+page.svelte';

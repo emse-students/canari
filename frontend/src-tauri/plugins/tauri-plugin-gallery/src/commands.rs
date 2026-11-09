@@ -29,8 +29,9 @@ fn valid_session(session: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-/// The file a session stages into. `.mp4`, because iOS Photos reads the container off the
-/// extension of the URL it is given.
+/// The file a session stages into: a reel saved to the gallery, a file shared out, or a document
+/// written through its provider. `.mp4` until `save_video` renames it to the extension of the name it is given, because iOS Photos reads the container
+/// off the extension of the URL it is given; the other two never read the staged file's name.
 fn staged_path<R: Runtime>(app: &AppHandle<R>, session: &str) -> crate::Result<PathBuf> {
     if !valid_session(session) {
         return Err(crate::Error::BadSession);
@@ -114,24 +115,56 @@ pub(crate) async fn save_video<R: Runtime>(
     app: AppHandle<R>,
     session: String,
     name: String,
+    mime: Option<String>,
 ) -> crate::Result<SaveVideoAnswer> {
     if !valid_name(&name) {
         return Err(crate::Error::BadName);
     }
-    let path = staged_path(&app, &session)?;
-    log::debug!("[gallery] save_video {session} as {name}");
+    // A reel is an MP4 and a client older than feed videos names no type; a type that is not a
+    // plain `type/subtype` is refused, never forwarded.
+    let mime = mime.unwrap_or_else(|| "video/mp4".to_string());
+    if !valid_mime(&mime) {
+        return Err(crate::Error::BadName);
+    }
+    let staged = staged_path(&app, &session)?;
+    let path = match renamed_to_extension_of(&staged, &name) {
+        Ok(path) => path,
+        Err(e) => {
+            remove_staged(&staged);
+            return Err(e.into());
+        }
+    };
+    log::debug!("[gallery] save_video {session} as {name} ({mime})");
     #[cfg(mobile)]
     let outcome = app
         .gallery()
-        .save_video(path.to_string_lossy().into_owned(), name)
+        .save_video(path.to_string_lossy().into_owned(), name, mime)
         .map(|o| SaveVideoAnswer { status: o.status });
     #[cfg(not(mobile))]
     let outcome = {
-        let _ = name;
+        let _ = (name, mime);
         Err(crate::Error::Unsupported)
     };
     remove_staged(&path);
     outcome
+}
+
+/// The staged file under the extension of `name` (`.mov`, `.webm`...): iOS Photos reads the
+/// container off the extension of the URL it is given, so an MOV must not wait under `.mp4`. The
+/// extension is a short alphanumeric token or the file keeps its own.
+fn renamed_to_extension_of(staged: &std::path::Path, name: &str) -> std::io::Result<PathBuf> {
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| (1..=5).contains(&e.len()) && e.chars().all(|c| c.is_ascii_alphanumeric()));
+    let Some(ext) = ext else {
+        return Ok(staged.to_path_buf());
+    };
+    let target = staged.with_extension(ext.to_ascii_lowercase());
+    if target != staged {
+        std::fs::rename(staged, &target)?;
+    }
+    Ok(target)
 }
 
 /// Removes a session's staged file - the frontend's answer to a save that failed before
@@ -259,6 +292,69 @@ pub(crate) async fn share_staged<R: Runtime>(
     }
 }
 
+/// What `write_staged_document` answers: the bytes written into the document, its stream closed.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct DocumentWritten {
+    pub written: u64,
+}
+
+/// A destination the Android save dialog handed back: a `content://` document URI, nothing else.
+/// A plain path would bypass the document's provider exactly as the write this command replaces did.
+fn valid_document_uri(uri: &str) -> bool {
+    uri.len() <= 2048
+        && uri
+            .strip_prefix("content://")
+            .is_some_and(|rest| !rest.is_empty())
+        && !uri.chars().any(char::is_control)
+}
+
+/// Writes the session's staged file into the document the Android save dialog created, then
+/// removes the staged copy.
+///
+/// WHY NOT `plugin-fs`'s `writeFile`: on Android it opens the document, DETACHES the descriptor
+/// from its `ParcelFileDescriptor` (`detachFd()`) and lets Rust write and close the raw fd. A
+/// detach tells the provider's close listener "closed" at once, BEFORE a single byte is written,
+/// so a provider that records the size on close records 0 and keeps it: the Downloads provider
+/// then lists the file as "0 octet(s)" while the disk holds every byte, and an app the file is
+/// shared to from there reads that size and refuses the file or sees 0 bytes. Here the stream is
+/// the provider's own, opened and CLOSED through the content resolver after the copy, so its
+/// listener fires once the bytes are in. Measured on the Mi 9T, 2026-11-04
+/// (`docs/wiki/frontend/mobile.md`).
+#[command]
+pub(crate) async fn write_staged_document<R: Runtime>(
+    app: AppHandle<R>,
+    session: String,
+    uri: String,
+) -> crate::Result<DocumentWritten> {
+    let staged = staged_path(&app, &session)?;
+    if !valid_document_uri(&uri) {
+        log::error!("[gallery] write_staged_document {session}: not a content:// document");
+        remove_staged(&staged);
+        return Err(crate::Error::BadUri);
+    }
+    let size = std::fs::metadata(&staged).map(|m| m.len()).unwrap_or(0);
+    // Not the URI: it ends with the file's name.
+    log::debug!("[gallery] write_staged_document {session}: {size} bytes staged");
+    #[cfg(target_os = "android")]
+    let outcome = app
+        .gallery()
+        .write_document(staged.to_string_lossy().into_owned(), uri);
+    #[cfg(not(target_os = "android"))]
+    let outcome: crate::Result<DocumentWritten> = {
+        let _ = uri;
+        Err(crate::Error::AndroidOnly)
+    };
+    match &outcome {
+        Ok(w) => log::debug!(
+            "[gallery] write_staged_document {session}: {} bytes written",
+            w.written
+        ),
+        Err(e) => log::error!("[gallery] write_staged_document {session} failed: {e}"),
+    }
+    remove_staged(&staged);
+    outcome
+}
+
 fn remove_staged(path: &std::path::Path) {
     match std::fs::remove_file(path) {
         Ok(()) => {}
@@ -272,9 +368,10 @@ fn remove_staged(path: &std::path::Path) {
     }
 }
 
-/// One conversation suggested in Android's share sheet, as the page sends it: the shortcut id
-/// (`c:<conversation id>`), the name shown, and the deep link a tap from the launcher opens. The
-/// native side validates each and drops a malformed one (`ShareTargets.kt`).
+/// One conversation suggested in the phone's share sheet, as the page sends it: the id
+/// (`c:<conversation id>`, Android's shortcut id and iOS's `conversationIdentifier`), the name
+/// shown, and the deep link a tap from Android's launcher opens (iOS ignores it). The native side
+/// validates each and drops a malformed one (`ShareTargets.kt`, `ShareSuggestions.swift`).
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ShareTarget {
     pub id: String,
@@ -291,9 +388,10 @@ pub struct PublishAnswer {
     pub leftover: u32,
 }
 
-/// Replaces the conversations Android's share sheet suggests (sharing lot S5) with `targets`, most
-/// recent first. Answers what the platform lists afterwards and what it left. Android only: the iOS suggestions need the
-/// Share Extension (lot S4).
+/// Replaces the conversations the phone's share sheet suggests (sharing lot S5) with `targets`,
+/// most recent first. Answers what the platform holds afterwards and what it left. Android
+/// publishes sharing shortcuts (`ShareTargets.kt`); iOS donates one `INSendMessageIntent` per
+/// target under one group identifier, after deleting that group (`ShareSuggestions.swift`).
 ///
 /// The labels are conversation names: they are NOT logged, only their count.
 #[command]
@@ -305,36 +403,39 @@ pub(crate) async fn publish_share_targets<R: Runtime>(
         "[gallery] publish_share_targets: {} target(s)",
         targets.len()
     );
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         app.gallery().publish_share_targets(targets)
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(mobile))]
     {
         let _ = (app, targets);
-        Err(crate::Error::AndroidOnly)
+        Err(crate::Error::Unsupported)
     }
 }
 
-/// Removes every conversation this app suggested to Android's share sheet - at sign-out, and when
-/// the member turns the suggestions off. Returns how many were removed.
+/// Removes every conversation this app suggested to the phone's share sheet - at sign-out, and when
+/// the member turns the suggestions off. Returns how many were removed (on iOS, how many the last
+/// donation left: the platform deletes a donation group without counting it).
 #[command]
 pub(crate) async fn clear_share_targets<R: Runtime>(app: AppHandle<R>) -> crate::Result<u32> {
     log::debug!("[gallery] clear_share_targets");
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         app.gallery().clear_share_targets().map(|o| o.removed)
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(mobile))]
     {
         let _ = app;
-        Err(crate::Error::AndroidOnly)
+        Err(crate::Error::Unsupported)
     }
 }
 
 /// Removes every `chat_<group>` conversation shortcut the message notifications published - at
 /// sign-out, beside `clear_share_targets`: they carry a conversation's name and a face, and nothing
-/// of an account stays with the system for the next one. Returns how many were removed.
+/// of an account stays with the system for the next one. Returns how many were removed. Android
+/// only, and the page never calls it on iOS: there the notification extension donates no intent
+/// and publishes no shortcut, so there is no such set to erase.
 #[command]
 pub(crate) async fn clear_conversation_shortcuts<R: Runtime>(
     app: AppHandle<R>,
@@ -370,7 +471,9 @@ pub(crate) async fn open_app_settings<R: Runtime>(app: AppHandle<R>) -> crate::R
 
 #[cfg(test)]
 mod tests {
-    use super::{valid_mime, valid_name, valid_session};
+    use super::{
+        renamed_to_extension_of, valid_document_uri, valid_mime, valid_name, valid_session,
+    };
 
     #[test]
     fn a_session_is_a_token_never_a_path() {
@@ -393,6 +496,25 @@ mod tests {
     }
 
     #[test]
+    fn a_staged_file_takes_the_extension_of_the_saved_name() {
+        let dir = std::env::temp_dir().join(format!("gallery-ext-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let staged = dir.join("gallery-s.mp4");
+        std::fs::write(&staged, b"x").unwrap();
+        let moved =
+            renamed_to_extension_of(&staged, "canari-video-2026-11-06-abcd1234.MOV").unwrap();
+        assert_eq!(moved, dir.join("gallery-s.mov"));
+        assert!(moved.exists() && !staged.exists());
+        // A name with no usable extension leaves the file where it is.
+        assert_eq!(renamed_to_extension_of(&moved, "noext").unwrap(), moved);
+        assert_eq!(
+            renamed_to_extension_of(&moved, "a.way-too-long").unwrap(),
+            moved
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_shared_mime_is_a_plain_type_and_subtype() {
         assert!(valid_mime("image/jpeg"));
         assert!(valid_mime(
@@ -403,5 +525,22 @@ mod tests {
         assert!(!valid_mime("text/plain; charset=utf-8"));
         assert!(!valid_mime("/png"));
         assert!(!valid_mime("image/"));
+    }
+
+    #[test]
+    fn a_document_is_a_content_uri_never_a_path() {
+        assert!(valid_document_uri(
+            "content://com.android.providers.downloads.documents/document/msf%3A121"
+        ));
+        assert!(!valid_document_uri("content://"));
+        assert!(!valid_document_uri("/sdcard/Download/canari-log.txt"));
+        assert!(!valid_document_uri(
+            "file:///sdcard/Download/canari-log.txt"
+        ));
+        assert!(!valid_document_uri("content://a/b\ninjected"));
+        assert!(!valid_document_uri(&format!(
+            "content://{}",
+            "a".repeat(2048)
+        )));
     }
 }

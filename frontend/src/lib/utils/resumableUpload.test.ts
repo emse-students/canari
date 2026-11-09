@@ -560,3 +560,88 @@ describe('uploadResumable', () => {
     expect(server.partsReceived()).toBeLessThanOrEqual(parts + lostPuts + attempts);
   });
 });
+
+describe('uploadResumable, single-block (a post photo: ONE AES-GCM block, readable by every reader)', () => {
+  /** Opens a stored single-block blob the way every photo reader does (`decryptMediaBuffer`). */
+  async function opensAsOneBlock(blob: Uint8Array, keyHex: string, ivHex: string) {
+    const key = await crypto.subtle.importKey('raw', hexDecode(keyHex), 'AES-GCM', false, [
+      'decrypt',
+    ]);
+    return new Uint8Array(
+      await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: hexDecode(ivHex) as BufferSource },
+        key,
+        blob as BufferSource
+      )
+    );
+  }
+
+  it('stores one block of plaintext + tag, declares no header, and the ref carries no encoding', async () => {
+    const server = new FakeSessionServer();
+    const row = rowStore();
+    const plaintext = plaintextOf();
+    const done = await up({
+      plaintext,
+      encoding: 'single-block',
+      retentionClass: 'archive',
+      persist: row.persist,
+      port: server.port(),
+    });
+    expect(done.encoding).toBeUndefined();
+    expect(row.last!.encoding).toBe('single-block');
+    const blob = server.stored.get(done.mediaId)!;
+    expect(blob.length).toBe(plaintext.length + 16);
+    expect(sameBytes(await opensAsOneBlock(blob, done.keyHex, done.ivHex), plaintext)).toBe(true);
+  });
+
+  it('a cut on part 3 of 4: the resume sends ONLY parts 3 and 4, and the block still opens', async () => {
+    const server = new FakeSessionServer();
+    const row = rowStore();
+    const plaintext = plaintextOf();
+    let puts = 0;
+    server.fault = (method) => (method === 'PUT' && ++puts === 3 ? 'drop' : undefined);
+    const opts = {
+      plaintext,
+      encoding: 'single-block' as const,
+      retentionClass: 'archive' as const,
+      persist: row.persist,
+    };
+    const err = await up({ ...opts, port: server.port() }).catch((e: unknown) => e);
+    expect(isTransportFailure(err)).toBe(true);
+    const id = row.last!.uploadId!;
+    expect(server.partsReceived(id)).toBe(2);
+    server.fault = () => undefined;
+    const done = await up({ ...opts, state: row.last, port: server.port() });
+    expect(server.partsReceived(id)).toBe(4);
+    const blob = server.stored.get(done.mediaId)!;
+    expect(sameBytes(await opensAsOneBlock(blob, done.keyHex, done.ivHex), plaintext)).toBe(true);
+  });
+
+  it('never resumes a state opened under the OTHER encoding: a new key and a new session', async () => {
+    const server = new FakeSessionServer();
+    const row = rowStore();
+    const plaintext = plaintextOf();
+    let puts = 0;
+    server.fault = (method) => (method === 'PUT' && ++puts === 2 ? 'drop' : undefined);
+    await up({
+      plaintext,
+      retentionClass: 'archive',
+      persist: row.persist,
+      port: server.port(),
+    }).catch(() => undefined);
+    const segmentedState = row.last!;
+    server.fault = () => undefined;
+    const done = await up({
+      plaintext,
+      encoding: 'single-block',
+      state: segmentedState,
+      retentionClass: 'archive',
+      persist: row.persist,
+      port: server.port(),
+    });
+    expect(done.keyHex).not.toBe(segmentedState.keyHex);
+    expect(row.last!.uploadId).not.toBe(segmentedState.uploadId);
+    const blob = server.stored.get(done.mediaId)!;
+    expect(sameBytes(await opensAsOneBlock(blob, done.keyHex, done.ivHex), plaintext)).toBe(true);
+  });
+});

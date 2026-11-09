@@ -110,7 +110,11 @@ export interface ChatSessionCallbacks {
     /** The actor's device that released it - re-decided only where the tree holds its leaf. */
     releasedByDevice: string;
   }) => void;
-  onRolePermissionsChanged?: (event: { roleId: string; permissions: string[] }) => void;
+  onRolePermissionsChanged?: (event: {
+    roleId: string;
+    permissions: string[];
+    label?: string | null;
+  }) => void;
   onChannelUpdated?: (event: {
     channelId: string;
     name?: string;
@@ -299,8 +303,14 @@ export interface SessionContext {
     Array<{ requesterUserId: string; requesterDeviceId: string }>
   >;
 
-  /** Updates the reactive flag exposed by useChatSession to the UI (follower banner). */
+  /** Updates the reactive flag exposed by useChatSession to the UI. */
   setIsTabLeader(v: boolean): void;
+  /**
+   * Reloads the page so it loads the MLS state as the leader it has become - the promotion handler's
+   * own path, taken by a login that was promoted after it loaded the state as a follower
+   * (`promotedSinceLoad`) instead of going live on that copy.
+   */
+  reloadForPromotion(log: (message: string) => void): void;
   /** Callback for the tab-leader promotion -> WebSocket reconnection. */
   setTabLeaderSessionCb(cb: ChatSessionCallbacks | null): void;
 

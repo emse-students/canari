@@ -1,10 +1,13 @@
 import {
+  bookingRevision,
   bookingView,
   privateInfoFor,
   relationTo,
   type BookingRow,
   type ParticipantRow,
 } from './booking-views';
+
+import { DELETED_ACCOUNT } from '../internal/account-erasure';
 
 const HOLDER = 'h'.repeat(64);
 const IN = 'i'.repeat(64);
@@ -71,6 +74,29 @@ describe('bookingView', () => {
     expect(view).not.toHaveProperty('answers');
   });
 
+  it('lists the OTHER people of the booking, never the viewer', () => {
+    const view = (rows: ParticipantRow[], viewer: string) =>
+      bookingView(booking, rows, 'people', 'occupied', viewer).others;
+    expect(view(people, HOLDER)).toEqual([{ id: IN, name: 'In' }]);
+    expect(view(people, IN)).toEqual([{ id: HOLDER, name: 'Holder' }]);
+    const two = [...people, { ...people[0], userId: 'x', userName: 'Two' }];
+    expect(view(two, IN)).toEqual([
+      { id: HOLDER, name: 'Holder' },
+      { id: 'x', name: 'Two' },
+    ]);
+    expect(view([], HOLDER)).toEqual([]);
+  });
+
+  it('sends an empty id for every erased account, so they share no key', () => {
+    const erased = [
+      { ...people[0], userId: DELETED_ACCOUNT, userName: 'Gone' },
+      { ...people[0], userId: DELETED_ACCOUNT + ':2', userName: 'Gone too' },
+    ];
+    expect(
+      bookingView(booking, erased, 'people', 'occupied', HOLDER).others?.map((o) => o.id)
+    ).toEqual(['', '']);
+  });
+
   it.each([
     ['other', 'occupied', false],
     ['other', 'names', true],
@@ -117,5 +143,23 @@ describe('privateInfoFor', () => {
     expect(privateInfoFor('other', false, space, resource)).toBeNull();
     expect(privateInfoFor('people', true, space, resource)).toBeNull();
     expect(privateInfoFor('manager', true, space, resource)).toBeNull();
+  });
+});
+
+describe('bookingRevision', () => {
+  const from = new Date('2026-11-02T10:00:00Z');
+  const to = new Date('2026-11-02T10:30:00Z');
+
+  it('is the same for the same range and people, whatever their order or the date form', () => {
+    expect(bookingRevision(from, to, ['b', 'c'])).toBe(
+      bookingRevision(from.toISOString(), to.toISOString(), ['c', 'b'])
+    );
+  });
+
+  it('changes with a person leaving, a person added, or the range moving', () => {
+    const base = bookingRevision(from, to, ['b', 'c']);
+    expect(bookingRevision(from, to, ['b'])).not.toBe(base);
+    expect(bookingRevision(from, to, ['b', 'c', 'd'])).not.toBe(base);
+    expect(bookingRevision(from, new Date('2026-11-02T11:00:00Z'), ['b', 'c'])).not.toBe(base);
   });
 });

@@ -38,7 +38,28 @@ export interface WorkspaceDetailDto {
   workspace: WorkspaceDto;
   channels: ChannelDto[];
   members: Array<{ userId: string; roleIds?: string[] }>;
-  roles: Array<{ id: string; name: string; priority?: number; permissions?: string[] }>;
+  roles: Array<{
+    id: string;
+    /** The role's identity ('Administrateur', ...): what logic reads. NEVER the label. */
+    name: string;
+    /** The community's own display name for it, or null for the localized default. */
+    displayLabel?: string | null;
+    priority?: number;
+    permissions?: string[];
+  }>;
+}
+
+/**
+ * One member's nickname state in a community, as social-service serves it: `nickname` null is a
+ * clear, dated like a set. `reportSubject` names this exact version for a report.
+ */
+export interface CommunityNicknameDto {
+  userId: string;
+  nickname: string | null;
+  setBy: string;
+  /** Epoch ms on the server's clock. */
+  at: number;
+  reportSubject: string;
 }
 
 /**
@@ -1088,6 +1109,36 @@ export class ChannelService {
     return res.json();
   }
 
+  /**
+   * Every nickname state of a community, set and cleared alike ("Modifier les pseudos"): the server's
+   * whole register, read into the client's by `loadCommunityNicknames` (which drops who it omits).
+   */
+  async listCommunityNicknames(workspaceId: string): Promise<CommunityNicknameDto[]> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/nicknames`
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  /**
+   * Sets (or, with `null`, clears) `userId`'s nickname in a community. The server re-checks the
+   * moderation grant and answers typed refusals (`NICKNAME_REQUIRES_MODERATION`, `USER_BLOCKED`,
+   * `nickname_too_long`, `NICKNAME_TARGET_NOT_MEMBER`), read through `refusalCode`.
+   */
+  async setCommunityNickname(
+    workspaceId: string,
+    userId: string,
+    nickname: string | null
+  ): Promise<CommunityNicknameDto> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/nicknames/${encodeURIComponent(userId)}`,
+      { method: 'PUT', body: JSON.stringify({ nickname }) }
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
   async getChannelAccess(channelId: string): Promise<ChannelAccessState> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/access`);
@@ -1172,6 +1223,27 @@ export class ChannelService {
       {
         method: 'PATCH',
         body: JSON.stringify({ key, granted }),
+      }
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  /**
+   * Gives a role the community's own display name, or resets it (`label` null). Administrators
+   * only: anybody else is refused 403 `ROLE_RENAME_REQUIRES_ADMIN`. A LABEL - the role's identity and
+   * permissions are untouched. The answer is an acknowledgement; every member (this device
+   * included) learns the name from the server's `workspace.role.permissions` announcement.
+   */
+  async setRoleLabel(
+    roleId: string,
+    label: string | null
+  ): Promise<{ roleId: string; roleName: string; label: string | null }> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/roles/${encodeURIComponent(roleId)}/label`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ label }),
       }
     );
     await this.handleError(res);

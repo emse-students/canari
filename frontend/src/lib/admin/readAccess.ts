@@ -19,6 +19,14 @@ export function cellKey(userId: string, campus: string, formation: string | null
   return `${userId}|${campus}|${formation ?? '*'}`;
 }
 
+/**
+ * The key of one person's switch "voit les commentaires" while its write is in flight - in the same
+ * `saving` set as the cells, and never equal to a `cellKey` (no campus is named `comments`).
+ */
+export function commentsKey(userId: string): string {
+  return `${userId}|comments`;
+}
+
 /** The scopes of one campus a person holds, whole campus first, then formations in their order. */
 export interface CampusScopes {
   campus: Campus;

@@ -67,7 +67,7 @@ services:
     # the morning somebody rebuilt. `redis:alpine` is a FLOATING MAJOR - it was serving 8.8.0 on
     # 2026-09-01 and a `docker compose pull` could have moved it to 9 without a line changing
     # here. The tag before the `@` is documentation: the digest is what is fetched.
-    image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+    image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
     restart: always
     # Byte-for-byte production's arguments, INCLUDING `--appendonly yes`. The previous version of
     # this file dropped both the flag and the volume below, so a dev Redis held the shared message
@@ -147,6 +147,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3000
     # TAG IS REQUIRED, WITH NO DEFAULT. Production defaults to `:latest`; the previous version of
     # this file defaulted to `:dev`, a MUTABLE tag, which means a redeploy could not be reproduced
     # and a rollback had no name to roll back to. CD passes the commit sha.
@@ -214,6 +215,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3010
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -391,6 +393,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3012
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -405,6 +408,11 @@ services:
       PORT: "3012"
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
+      # Signs the viewer-bound avatar token (docs/wiki/sessions.md, "The avatar token").
+      AVATAR_TOKEN_SECRET: ${AVATAR_TOKEN_SECRET:-}
+      # Signs the one-time sign-in handoff to the MiConnect sites (docs/wiki/sessions.md, "The
+      # sign-in handoff"). Unset: no handoff is minted and every site opens plainly.
+      HANDOFF_SIGNING_KEY: ${HANDOFF_SIGNING_KEY:-}
       # NO /adminer/ ROUTE HERE: dev is publicly resolvable, holds testers' own rows and has no adminer
       # service (see the note where it would sit). Stated rather than left unset, so a missing line
       # is never what keeps the door shut.
@@ -470,6 +478,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3014
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -572,6 +581,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: frontend:3000
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend-ssr:${FRONTEND_TAG:-dev}
     restart: always
     <<: *dev-limits
@@ -610,6 +620,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
+      canari.deploy.rotation: edge:80
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${FRONTEND_TAG:-dev}
     restart: always
     <<: *dev-limits
@@ -619,6 +630,14 @@ services:
       # ORIGIN / VITE_GATEWAY_URL / VITE_DELIVERY_URL are absent for the same reason as in
       # `docker-compose.prod.yml`: this image is nginx serving a build, nothing reads them at
       # runtime, and a `VITE_` variable is baked in at BUILD time.
+    # WHERE THIS nginx SENDS EACH SERVICE, written by the deploy (infrastructure/lib/rolling.sh) and
+    # read-only here: a replica is taken out - by a reload, proven - before it is stopped. The edge
+    # reads the same directory through its own mount of edge/. NOT `edge/rotation` as
+    # `/etc/nginx/rotation`, the `upstream` lists of 1.6.2: the deploy library of 1.6.2, run by a
+    # rollback, must find no `rotation` path in this image to drain it by DNS rather than refuse it.
+    # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to
+    volumes:
+      - ./edge/targets:/etc/nginx/targets:ro
     expose:
       - "80"
     # `/nginx-health` answers from this nginx alone (no upstream, no access-log line), so healthy means
@@ -641,7 +660,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: pinned
-    image: nginx:1.31.8-alpine@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606
+    image: nginx:1.31.8-alpine@sha256:b2f80f8f88146b0772fdcc7d92cea621aa8c2889fa8d07ed61d4884fcea53e09
     restart: always
     <<: *dev-limits
     command: ["nginx", "-c", "/etc/nginx/edge/nginx.conf", "-g", "daemon off;"]

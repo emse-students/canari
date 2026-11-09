@@ -11,9 +11,9 @@
   import { Send, UserCheck } from '@lucide/svelte';
   import ProfileCard from '$lib/components/profile/ProfileCard.svelte';
   import FollowPersonRow from '$lib/components/follows/FollowPersonRow.svelte';
+  import { withdrawPerson } from '$lib/follows/followState.svelte';
   import {
     appendFollowPage,
-    leaveFollow,
     listFollowers,
     listSentFollowRequests,
     nextFollowCursor,
@@ -22,6 +22,7 @@
   } from '$lib/follows/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { peekUserDisplayName } from '$lib/utils/users/displayName';
+  import { PERSON_LIST_ERROR, PERSON_ROW_BUTTON } from '$lib/components/follows/personListStyles';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
@@ -108,7 +109,8 @@
     pendingId = userId;
     error = '';
     try {
-      await leaveFollow(userId);
+      // Only a request is withdrawn here; one accepted meanwhile stays a follow (the ledger says so).
+      await withdrawPerson(userId);
     } catch (e: unknown) {
       Log.d('ProfileFollowersSection.withdraw failed', e);
       sent = previous;
@@ -117,13 +119,10 @@
       pendingId = null;
     }
   }
-
-  const buttonClass =
-    'text-text-main shrink-0 rounded-lg bg-black/5 px-3 py-1.5 text-xs font-bold transition-colors hover:bg-black/10 disabled:opacity-50 dark:bg-white/10 dark:hover:bg-white/20';
 </script>
 
 {#if error}
-  <p class="rounded-xl bg-red-500/10 px-4 py-3 text-sm font-medium text-red-600">{error}</p>
+  <p class={PERSON_LIST_ERROR}>{error}</p>
 {/if}
 
 <ProfileCard icon={UserCheck} heading={m.profile_followers_heading()} {loading}>
@@ -136,7 +135,7 @@
           {#snippet actions()}
             <button
               type="button"
-              class={buttonClass}
+              class={PERSON_ROW_BUTTON}
               disabled={pendingId === follower.userId}
               onclick={() => handleRemove(follower.userId)}
             >
@@ -149,7 +148,7 @@
     {#if followersNext}
       <button
         type="button"
-        class={buttonClass}
+        class={PERSON_ROW_BUTTON}
         data-followers-more
         disabled={loadingMore !== null}
         onclick={() => loadMore('followers')}
@@ -170,7 +169,7 @@
           {#snippet actions()}
             <button
               type="button"
-              class={buttonClass}
+              class={PERSON_ROW_BUTTON}
               disabled={pendingId === request.userId}
               onclick={() => handleWithdraw(request.userId)}
             >
@@ -183,7 +182,7 @@
     {#if sentNext}
       <button
         type="button"
-        class={buttonClass}
+        class={PERSON_ROW_BUTTON}
         data-sent-requests-more
         disabled={loadingMore !== null}
         onclick={() => loadMore('sent')}

@@ -38,11 +38,26 @@ export class MinesweeperController {
     return this.minesweeperService.submit(userId, challengeId, dto);
   }
 
-  /** Best verified time per user, sorted ascending. */
+  /** Best verified time per user, sorted ascending; `offset` pages down it, `total` ends it. */
   @Get('leaderboard')
-  leaderboard(@Headers('x-user-id') userId: string, @Query('limit') limit?: string) {
+  leaderboard(
+    @Headers('x-user-id') userId: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string
+  ) {
     const n = limit ? Number.parseInt(limit, 10) : undefined;
-    return this.minesweeperService.leaderboard(Number.isFinite(n) ? n : undefined, userId);
+    const o = offset ? Number.parseInt(offset, 10) : undefined;
+    return this.minesweeperService.leaderboard(
+      Number.isFinite(n) ? n : undefined,
+      userId,
+      Number.isFinite(o) ? o : undefined
+    );
+  }
+
+  /** The caller's own ranked record: played, won, best / average / median, recent wins, rank. */
+  @Get('stats')
+  stats(@Headers('x-user-id') userId: string) {
+    return this.minesweeperService.stats(userId);
   }
 
   /** Caller's personal best + rank, if any. */

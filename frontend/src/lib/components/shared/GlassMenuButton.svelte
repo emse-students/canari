@@ -186,7 +186,7 @@
             ? 'text-amber-600 dark:text-amber-400'
             : 'text-text-main'}"
         >
-          <ItemIcon size={18} strokeWidth={2.25} aria-hidden="true" />
+          <ItemIcon size={18} strokeWidth={2.25} aria-hidden="true" class="shrink-0" />
           {item.label}
         </button>
       {/each}

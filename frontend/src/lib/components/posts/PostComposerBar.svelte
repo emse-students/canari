@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { scrollFades } from '$lib/actions/scrollFades';
   import type { Snippet } from 'svelte';
   import {
     Camera,
@@ -13,6 +12,7 @@
     X,
   } from '@lucide/svelte';
   import CameraOverlay from '$lib/components/reels/CameraOverlay.svelte';
+  import type { ComposerReelState } from '$lib/posts/composerReelState';
   import MarkdownComposerToolbar from '$lib/components/shared/MarkdownComposerToolbar.svelte';
   import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
   import { toDatetimeLocalValue } from '$lib/utils/dates';
@@ -22,6 +22,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { getLocale } from '$lib/paraglide/runtime';
   import { m } from '$lib/paraglide/messages';
+  import { POST_ATTACHMENTS_MAX, attachmentsFull } from '$lib/posts/attachmentCap';
 
   /**
    * The bottom bar of the post composer and of the post editor: what can be attached, how the text
@@ -62,6 +63,12 @@
     onFiles: (files: File[]) => void;
     /** Applies a Markdown format to the editor this bar belongs to. */
     onFormat: (type: string) => void;
+    /**
+     * How many attachments the post holds or is about to hold (kept and pending alike). At the
+     * cap (`POST_ATTACHMENTS_MAX`) the attach chips are disabled; `onFiles`' owner also trims what
+     * a drop or a paste brings, since those never pass through a chip.
+     */
+    attachmentCount?: number;
     pollActive: boolean;
     onTogglePoll: () => void;
     formActive: boolean;
@@ -79,21 +86,21 @@
     onLive?: () => void;
     /**
      * Set by the NEW-post composer only: a video filmed with the camera becomes a CanaReel starting
-     * from this text and identity, and `onpublished` closes the composer behind it. Absent (the post
-     * editor), every take is attached.
+     * from `start` (text, identity, "Entre étudiants"), and `onpublished` closes the composer behind
+     * it. Absent (the post editor), every take is attached.
      */
     reel?: {
-      caption: string;
-      identity: string;
+      start: ComposerReelState;
       onpublished: (identity: string) => void;
-      /** "Garder comme post": the publish step's caption and identity, as the member left them. */
-      onkept: (caption: string, identity: string) => void;
+      /** "Garder comme post": the publish step's state, as the member left it. */
+      onkept: (kept: ComposerReelState) => void;
     };
   }
 
   let {
     onFiles,
     onFormat,
+    attachmentCount = 0,
     pollActive,
     onTogglePoll,
     formActive,
@@ -106,6 +113,20 @@
   }: Props = $props();
 
   let formatting = $state(false);
+  /** The chip row's last drawn height (px): the floor of the slot while the formatting row replaces it. */
+  let chipRowHeight = $state(0);
+  /** The post holds the most attachments it may: nothing more can be added. */
+  const full = $derived(attachmentsFull(attachmentCount));
+  /** The line beside the formatting toggle: the attachment counter, then the status, one message. */
+  const statusLine = $derived.by(() => {
+    if (attachmentCount === 0) return status;
+    const counter = m.post_attachments_counter({
+      count: attachmentCount,
+      max: POST_ATTACHMENTS_MAX,
+    });
+    return status ? m.post_attachments_counter_with_status({ counter, status }) : counter;
+  });
+  const fullChip = 'pointer-events-none opacity-50';
   /** The in-app camera is open over the composer. */
   let cameraOpen = $state(false);
   /** The photo library is the native picker (the iOS app), never a file input. */
@@ -177,40 +198,57 @@
       onFiles([file]);
     }}
     onclose={() => (cameraOpen = false)}
-    composerCaption={reel?.caption}
-    composerIdentity={reel?.identity}
+    composerStart={reel?.start}
     onpublished={reel?.onpublished}
     onkept={reel?.onkept}
   />
 {/if}
 
 <div class="flex flex-col gap-2">
-  <div class="flex min-h-9 items-center">
+  <!--
+    THE SWAP IS A SAME-SIZE CONTENT CHANGE. The chips wrap onto two rows on an Android phone and three
+    on an iPhone 12 (measured, 2026-11-06: the text area jumped 148 pt taller under a selection the
+    moment "Aa" was tapped, when the formatting row was a single row of icons). The formatting actions
+    are now labelled chips of the same class, wrapping the same way, so they fill the room the
+    attachments leave; the chip row's last height is also remembered (bound while it is drawn) and
+    held as the slot's floor, for the few points two wrappings can differ by.
+  -->
+  <div
+    class="flex min-h-9 items-stretch"
+    style:min-height={formatting && chipRowHeight > 0 ? `${chipRowHeight}px` : undefined}
+  >
     {#if formatting}
-      <MarkdownComposerToolbar row {onFormat} class="w-full" />
+      <MarkdownComposerToolbar
+        chipClass="{chipClass} {idleChip}"
+        {onFormat}
+        class="w-full content-start"
+      />
     {:else}
       <div
-        use:scrollFades
-        class="no-scrollbar -my-1 flex w-full items-center gap-2 overflow-x-auto px-0.5 py-1"
+        data-chip-row
+        bind:clientHeight={chipRowHeight}
+        class="flex w-full flex-wrap items-center gap-2"
       >
         {#if nativeLibrary}
           <button
             type="button"
-            class="{chipClass} {idleChip}"
+            class="{chipClass} {idleChip} {full ? fullChip : ''}"
             data-post-library
+            disabled={full}
             onclick={pickLibraryNatively}
           >
             <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
             {m.post_composer_photo_video()}
           </button>
         {:else}
-          <label class="{chipClass} {idleChip}">
+          <label class="{chipClass} {idleChip} {full ? fullChip : ''}">
             <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
             {m.post_composer_photo_video()}
             <input
               type="file"
               accept="image/*,video/*"
               multiple
+              disabled={full}
               class="sr-only"
               onchange={(e) => takeFiles(e, 'gallery')}
             />
@@ -218,8 +256,9 @@
         {/if}
         <button
           type="button"
-          class="{chipClass} {idleChip} pointer-fine:hidden"
+          class="{chipClass} {idleChip} pointer-fine:hidden {full ? fullChip : ''}"
           data-post-camera
+          disabled={full}
           onclick={() => {
             Log.d('POST_COMPOSER', 'in-app camera opened');
             cameraOpen = true;
@@ -264,13 +303,14 @@
           />
           {m.post_form_fallback_title()}
         </button>
-        <label class="{chipClass} {idleChip}">
+        <label class="{chipClass} {idleChip} {full ? fullChip : ''}">
           <Paperclip size={16} strokeWidth={2.25} class="text-text-muted" />
           {m.post_composer_file()}
           <input
             type="file"
             accept={DOCUMENT_ACCEPT}
             multiple
+            disabled={full}
             class="sr-only"
             onchange={(e) => takeFiles(e, 'documents')}
           />
@@ -317,7 +357,12 @@
     >
       <ALargeSmall size={20} strokeWidth={2.25} />
     </button>
-    <span class="text-text-muted text-2xs min-w-0 flex-1 truncate font-semibold">{status}</span>
+    <span
+      class="text-2xs min-w-0 flex-1 truncate font-semibold {full
+        ? 'text-amber-700 dark:text-amber-400'
+        : 'text-text-muted'}"
+      data-attachment-counter={attachmentCount > 0 ? '' : undefined}>{statusLine}</span
+    >
     {@render action()}
   </div>
 </div>

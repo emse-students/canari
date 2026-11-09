@@ -15,12 +15,15 @@
  *
  * `MainActivity.isInForeground` is the honest statement of the fact, maintained across
  * `onResume`/`onPause`, and the activity pushes it into the page as `window.__canariForeground`
- * plus a `canari:foreground` event. iOS does NOT write it - its active/inactive fact is a separate
- * signal read only by the banner and queue decisions (`appActive.ts`).
+ * plus a `canari:foreground` event. THE iOS SHELL SPEAKS THE SAME CONTRACT since 2026-11-02
+ * (`canari_ios.mm`, `CanariPublishForeground`, on `didEnterBackground` / `willEnterForeground`):
+ * without it this answered `true` on an iPhone for ever, and a frame processed in the seconds before
+ * suspension counted as read on arrival. `appForeground.contract.test.ts` holds the two shells to it.
+ * The separate ACTIVE/inactive fact (Face ID sheet, Control Center) is not this one: it is read only
+ * by the banner and queue decisions (`appActive.ts`).
  *
- * ON EVERY OTHER RUNTIME THIS IS `true` AND MEANS NOTHING. Web and desktop have a working
- * visibility API and callers keep using it; this exists for the one platform where that API lies,
- * and the default is the quiet one - an app believed to be on screen raises no notification, which
+ * ON WEB AND DESKTOP THIS IS `true` AND MEANS NOTHING. They have a working visibility API and
+ * callers keep using it; the default is the quiet one - an app believed to be on screen raises no notification, which
  * is the behaviour every non-mobile runtime already has from its own checks.
  */
 
@@ -49,14 +52,25 @@ export function isAppInForeground(): boolean {
 /**
  * Calls `onChange` whenever the app moves between foreground and background.
  *
+ * `opening` is the app link the shell says THIS resume opens (a tapped notification), carried by the
+ * event itself so the page knows it before anything reacts to the edge (`resumeOpening.svelte.ts`);
+ * `null` for a plain resume, a background edge, or a shell that sends none.
+ *
  * Returns the unsubscribe. No-op off the platforms that emit it, which is what makes it safe to
  * register unconditionally rather than behind a runtime check at every call site.
  */
-export function onAppForegroundChange(onChange: (foreground: boolean) => void): () => void {
+export function onAppForegroundChange(
+  onChange: (foreground: boolean, opening: string | null) => void
+): () => void {
   if (typeof window === 'undefined') return () => {};
   const handler = (e: Event) => {
-    const detail = (e as CustomEvent<{ foreground?: unknown }>).detail;
-    if (typeof detail?.foreground === 'boolean') onChange(detail.foreground);
+    const detail = (e as CustomEvent<{ foreground?: unknown; opening?: unknown }>).detail;
+    if (typeof detail?.foreground !== 'boolean') return;
+    const opening =
+      detail.foreground && typeof detail.opening === 'string' && detail.opening
+        ? detail.opening
+        : null;
+    onChange(detail.foreground, opening);
   };
   window.addEventListener(APP_FOREGROUND_EVENT, handler);
   return () => window.removeEventListener(APP_FOREGROUND_EVENT, handler);
@@ -73,18 +87,27 @@ export function isAppOnScreen(): boolean {
 }
 
 /**
- * Calls `onChange(onScreen)` on every transition either signal reports - `visibilitychange` on web
- * and desktop, `canari:foreground` on Android, where the visibility API never changes. ONE
+ * Calls `onChange(onScreen)` on every transition either signal reports - `visibilitychange` on web,
+ * desktop and iOS, `canari:foreground` on Android (where the visibility API never changes) and iOS. ONE
  * subscription for the question "did the app just leave the screen", so a caller cannot listen to
  * the half that lies on its platform. Returns the unsubscribe.
  */
 export function onAppScreenChange(onChange: (onScreen: boolean) => void): () => void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
-  const onVisibility = () => onChange(isAppOnScreen());
+  // ONE EDGE PER TRANSITION. On iOS both signals speak - the shell's `canari:foreground` and the
+  // WebView's own `visibilitychange` - so a single trip to the background arrived twice. Reported
+  // only when the combined answer CHANGES, so no listener has to be idempotent against the pair.
+  let last = isAppOnScreen();
+  const report = (onScreen: boolean) => {
+    if (onScreen === last) return;
+    last = onScreen;
+    onChange(onScreen);
+  };
+  const onVisibility = () => report(isAppOnScreen());
   document.addEventListener('visibilitychange', onVisibility);
   // The event's own value, not a re-read of the flag: it is the transition being announced.
   const offForeground = onAppForegroundChange((foreground) =>
-    onChange(foreground && document.visibilityState !== 'hidden')
+    report(foreground && document.visibilityState !== 'hidden')
   );
   return () => {
     document.removeEventListener('visibilitychange', onVisibility);

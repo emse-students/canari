@@ -47,6 +47,8 @@
     onClosePoll?: (messageId: string) => void;
     /** Callback to delete a message by ID. */
     onDelete?: (messageId: string) => void;
+    /** "Annuler partout" / "Supprimer partout" on the sender's own chat reel (reels-in-chat 15.7). */
+    onDeleteReelEverywhere?: (messageId: string) => void;
     /** Re-sends a salon message whose send failed (WP-OFF-2); the row offers it on `error`. */
     onRetrySend?: (messageId: string) => void;
     /** Gives a failed salon message up: removes its row. */
@@ -55,10 +57,18 @@
     onTakeBackSend?: (messageId: string) => void;
     /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
     canModerate?: boolean;
+    /** This conversation's nickname scope: a sender's nickname set here replaces their name. */
+    nicknameScope?: string | null;
     /** Called when the author chooses to edit a message; the edit happens in the composer. */
     onBeginEdit?: (messageId: string, text: string) => void;
     /** Callback to toggle a message's pinned state. Omit to hide the pin action. */
     onTogglePin?: (messageId: string) => void;
+    /**
+     * A conversation reel's viewer met its `410` at `atMs`: record it on the message's local row,
+     * so its tile reads the tombstone across reloads (RC-6). Omit: the tile still draws it for
+     * this mount.
+     */
+    onReelPurged?: (messageId: string, atMs: number) => void;
     /**
      * Where the viewer stands for pinning (`mayPinMessage`): the action is handed to the bubbles
      * only when the rule lets the viewer pin here. Absent = no ranks (DM, group).
@@ -105,12 +115,15 @@
     onVotePoll,
     onClosePoll,
     onDelete,
+    onDeleteReelEverywhere,
     onRetrySend,
     onDiscardSend,
     onTakeBackSend,
     canModerate = false,
+    nicknameScope = null,
     onBeginEdit,
     onTogglePin,
+    onReelPurged,
     pinStanding = { inChannel: false, canModerate: false },
     onJoinChannel,
     pinnedIds = [],
@@ -250,6 +263,7 @@
         <div class="my-3 flex justify-center">
           <MessageBubble
             messageId={msg.id}
+            {nicknameScope}
             senderId={msg.senderId}
             content={msg.content}
             timestamp={messageDate(msg)}
@@ -304,7 +318,8 @@
                   <EmojiText
                     text={getUserFirstNameSync(
                       msg.senderId,
-                      resolvedSenderNames[msg.senderId] || m.user_unknown_label()
+                      resolvedSenderNames[msg.senderId] || m.user_unknown_label(),
+                      nicknameScope ?? undefined
                     )}
                   />
                 {/snippet}
@@ -325,6 +340,7 @@
 
             <MessageBubble
               messageId={msg.id}
+              {nicknameScope}
               senderId={msg.senderId}
               content={msg.content}
               timestamp={messageDate(msg)}
@@ -337,10 +353,13 @@
               isReadReceiptAnchor={msg.id === lastReadOwnMessageId}
               isEdited={msg.isEdited}
               restoredUnverified={msg.restoredUnverified}
+              reelPurgedAt={msg.mediaPurgedAt}
+              {onReelPurged}
               editedAt={msg.editedAt}
               isDeleted={msg.isDeleted}
               status={msg.status}
               {groupPosition}
+              senderHeaderShown={showSender}
               {onJoinChannel}
               onReply={onReply && !msg.awaitingServerId ? () => onReply?.(msg) : undefined}
               onForward={onForward && !msg.awaitingServerId ? () => onForward?.(msg) : undefined}
@@ -349,6 +368,7 @@
               {onVotePoll}
               {onClosePoll}
               onDelete={msg.awaitingServerId ? undefined : onDelete}
+              onDeleteReelEverywhere={msg.awaitingServerId ? undefined : onDeleteReelEverywhere}
               {canModerate}
               onBeginEdit={msg.awaitingServerId ? undefined : onBeginEdit}
               onTogglePin={mayPinMessage(pinStanding) && !msg.awaitingServerId
@@ -380,7 +400,7 @@
           <!-- Who stopped reading HERE, whoever wrote it: the Messenger placement, right-aligned
                under the row whichever side the bubble is on. -->
           <div data-seen-by={msg.id} class="flex w-full justify-end px-0.5">
-            <SeenByHeads readers={seenBy.get(msg.id) ?? []} />
+            <SeenByHeads readers={seenBy.get(msg.id) ?? []} {nicknameScope} />
           </div>
         {/if}
       {/if}

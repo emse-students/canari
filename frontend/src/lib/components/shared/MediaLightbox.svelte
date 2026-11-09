@@ -55,6 +55,7 @@
   import { formatFileSize } from '$lib/utils/fileSize';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { Log } from '$lib/utils/Log';
+  import { holdPlayback } from '$lib/actions/playWhileVisible';
   import { claimTouchMove } from '$lib/utils/touchClaim';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -108,6 +109,13 @@
   );
   $effect(() => {
     historyOverlay.syncOpen();
+  });
+  // WHILE OPEN, WHATEVER PLAYS BEHIND STOPS (owner, 2026-11-06), a photo included: only a mounted
+  // video player counted as an open viewer. `.pre` so the hold lands before the viewer's own video
+  // mounts, which then claims playback itself.
+  $effect.pre(() => {
+    if (!open) return;
+    return holdPlayback('the media lightbox is open');
   });
   /** Every UI-triggered close (Back, Escape, swipe) goes through here, never straight to
    * `onClose`, so it stays in sync with the history entry pushed above. */

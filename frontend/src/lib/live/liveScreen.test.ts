@@ -13,6 +13,14 @@ import {
   LIVE_CAPTURE_SHORT_SIDE_PX,
 } from './constants';
 
+// The microphone hold (`audioSession.ts`, pinned by `audioSession.test.ts`) is passed through: this
+// file's fake streams pin what is ASKED, not the session type.
+vi.mock('$lib/utils/audioSession', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/audioSession')>()),
+  captureUserMedia: (devices: MediaDevices, constraints: MediaStreamConstraints) =>
+    devices.getUserMedia(constraints),
+}));
+
 function track(kind: 'video' | 'audio') {
   return { kind, stop: vi.fn(), getSettings: () => ({ width: 1280, height: 720, frameRate: 30 }) };
 }

@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -170,4 +170,50 @@ export function conversationStartedAtStatement(columns: readonly string[]): stri
   return columns.includes('started_at')
     ? null
     : 'ALTER TABLE conversations ADD COLUMN started_at INTEGER';
+}
+
+/**
+ * The v17 -> v18 table: mutations whose message is not here yet (`PendingMutation`). Created by
+ * every open, fresh or not, like `feed_pages`. Keyed by TAGS of the message, the sender and the slot
+ * (`pendingMutationCodec.ts`) plus the kind, so one sender's later frame of the same kind REPLACES its
+ * earlier one by `rank`, in the upsert itself - and nothing at rest names who reacted to what. No
+ * foreign key to `conversations`: an entry may be written before the conversation row reaches the
+ * store, and it names the conversation only to be cleared with it.
+ */
+export const PENDING_MUTATIONS_TABLE_STATEMENT = `
+            CREATE TABLE IF NOT EXISTS pending_mutations (
+                conversation_id TEXT    NOT NULL,
+                message_tag     TEXT    NOT NULL,
+                sender_tag      TEXT    NOT NULL,
+                kind            TEXT    NOT NULL,
+                slot_tag        TEXT    NOT NULL,
+                tier            INTEGER NOT NULL,
+                rank            INTEGER NOT NULL,
+                at              INTEGER NOT NULL,
+                iv              TEXT,
+                cipher_text     TEXT,
+                PRIMARY KEY (conversation_id, message_tag, sender_tag, kind, slot_tag)
+            )
+        `;
+
+/**
+ * The eviction order of `pending_mutations` within one sender: reactions before deletions and
+ * edits, oldest frame first - IndexedDB's `bySenderTierAt`. A read by message is a prefix of the
+ * primary key and needs no index of its own.
+ */
+export const PENDING_MUTATIONS_ORDER_INDEX_STATEMENT =
+  'CREATE INDEX IF NOT EXISTS idx_pending_mutations_sender_tier_at ON pending_mutations(conversation_id, sender_tag, tier, at)';
+
+/**
+ * The v18 column of `messages`: `rev`, the row's revision, raised by EVERY write - the compare half
+ * of the compare-and-set every rewrite goes through (`messageCas.ts`). An existing row starts at 0.
+ * Returns `null` when the column is there (a fresh file has it from `CREATE TABLE`), so the step is a
+ * no-op twice.
+ *
+ * @param columns Column names of the `messages` table, from `PRAGMA table_info(messages)`.
+ */
+export function messageRevisionStatement(columns: readonly string[]): string | null {
+  return columns.includes('rev')
+    ? null
+    : 'ALTER TABLE messages ADD COLUMN rev INTEGER NOT NULL DEFAULT 0';
 }

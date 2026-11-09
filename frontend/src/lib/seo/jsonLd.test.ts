@@ -2,8 +2,6 @@ import {
   buildArticleJsonLd,
   buildAssociationJsonLd,
   buildBreadcrumbJsonLd,
-  buildEventJsonLd,
-  buildEventListJsonLd,
   buildSiteJsonLd,
   renderJsonLdScript,
   serializeJsonLd,
@@ -99,28 +97,6 @@ describe('entity nodes', () => {
     expect(asso['@type']).toBe('Organization');
     expect(asso.memberOf['@type']).toBe('CollegeOrUniversity');
     expect(asso.memberOf.address.addressLocality).toContain('Saint');
-  });
-
-  it('gives an event the location Google asks for', () => {
-    const event = buildEventJsonLd({
-      name: 'Gala',
-      startDate: '2026-09-01T18:00:00.000Z',
-      url: 'https://canari-emse.fr/calendar',
-    }) as Record<string, any>;
-
-    expect(event.eventAttendanceMode).toContain('OfflineEventAttendanceMode');
-    expect(event.location['@type']).toBe('Place');
-    expect(event).not.toHaveProperty('organizer');
-  });
-
-  it('numbers the list positions from one', () => {
-    const list = buildEventListJsonLd([{ '@type': 'Event' }, { '@type': 'Event' }]) as Record<
-      string,
-      any
-    >;
-
-    expect(list.itemListElement[0].position).toBe(1);
-    expect(list.itemListElement[1].position).toBe(2);
   });
 
   it('builds absolute breadcrumb items, since a crawler resolves them against nothing', () => {

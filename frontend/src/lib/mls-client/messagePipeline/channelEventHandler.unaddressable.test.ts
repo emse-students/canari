@@ -19,7 +19,7 @@ vi.mock('$lib/stores/typingStore.svelte', () => ({ setTyping: vi.fn() }));
 vi.mock('$lib/stores/pinStore.svelte', () => ({ applyPin: vi.fn() }));
 vi.mock('$lib/stores/pollStore.svelte', () => ({ setPollMeta: vi.fn() }));
 vi.mock('$lib/stores/reactionStore.svelte', () => ({ applyChannelReactionFrame: vi.fn() }));
-vi.mock('$lib/utils/graine/channelSeal', () => ({ openChannelMessage: vi.fn() }));
+vi.mock('$lib/utils/graine/channelSeal', () => ({ openChannelMessageProving: vi.fn() }));
 vi.mock('$lib/utils/chat/channelCrypto', () => ({ reportUnreadableChannelMessage: vi.fn() }));
 vi.mock('$lib/proto/codec', () => ({ decodeAppMessage: vi.fn() }));
 vi.mock('$lib/envelope', () => ({ serializeEnvelope: vi.fn(), mkTextEnvelope: vi.fn() }));
@@ -120,6 +120,23 @@ describe('an event whose address is missing', () => {
     );
     expect(onRolePermissionsChanged).not.toHaveBeenCalled();
     expect(said()).toContain('roleId');
+  });
+
+  it('hands on the role name the announcement carries: a string, null for the default, absent as unchanged', async () => {
+    const onRolePermissionsChanged = vi.fn();
+    const send = (data: Record<string, unknown>) =>
+      handleChannelEvent(
+        { type: 'workspace.role.permissions', data: { roleId: 'r1', permissions: [], ...data } },
+        ctx({ onRolePermissionsChanged })
+      );
+    await send({ label: 'Presidence' });
+    await send({ label: null });
+    await send({});
+    expect(onRolePermissionsChanged.mock.calls.map((c) => c[0].label)).toEqual([
+      'Presidence',
+      null,
+      undefined,
+    ]);
   });
 
   it('every one of them accuses at ERROR, so none can be read as informational', async () => {

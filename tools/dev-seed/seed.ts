@@ -9,7 +9,7 @@
  * DETERMINISTIC data set whose every person is visibly invented.
  *
  * WHAT IT SEEDS AND WHAT IT DELIBERATELY DOES NOT.
- *   - Seeded: users, the ten spaces, association categories, associations (one BDE, clubs, a list,
+ *   - Seeded: users, the ten spaces, associations (one BDE, clubs, a list,
  *     an institution), their audiences, memberships, follows, posts and calendar events - the
  *     plaintext surfaces a tester opens first.
  *   - NOT seeded: communities, salons, DMs and anything else under MLS. A community inserted as
@@ -116,13 +116,6 @@ type PersonKey = (typeof PEOPLE)[number]['key'];
 const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'] as const;
 const CAMPUSES = ['saint-etienne', 'gardanne'] as const;
 
-const CATEGORIES = [
-  { key: 'sport', label: 'Sport', sortOrder: 0 },
-  { key: 'culture', label: 'Culture', sortOrder: 1 },
-  { key: 'vie', label: 'Vie étudiante', sortOrder: 2 },
-  { key: 'solidarite', label: 'Solidarité', sortOrder: 3 },
-] as const;
-
 /**
  * The associations. `audience` is the rule set (`null` = any): the institution addresses everyone,
  * so a tester of any formation and campus sees at least its posts.
@@ -132,7 +125,6 @@ const ASSOCIATIONS = [
     key: 'bde',
     name: 'BDE Fictif',
     type: 'association',
-    category: 'vie',
     color: '#2563eb',
     president: 'alice',
     members: ['bruno', 'chloe', 'ines'],
@@ -143,7 +135,6 @@ const ASSOCIATIONS = [
     key: 'echecs',
     name: "Club d'Échecs Fictif",
     type: 'association',
-    category: 'culture',
     color: '#16a34a',
     president: 'bruno',
     members: ['farid', 'jules'],
@@ -154,7 +145,6 @@ const ASSOCIATIONS = [
     key: 'fanfare',
     name: 'Fanfare Fictive',
     type: 'association',
-    category: 'culture',
     color: '#db2777',
     president: 'gaelle',
     members: ['alice', 'hugo'],
@@ -165,7 +155,6 @@ const ASSOCIATIONS = [
     key: 'escalade',
     name: 'Escalade Fictive Gardanne',
     type: 'association',
-    category: 'sport',
     color: '#ea580c',
     president: 'david',
     members: ['emma', 'hugo'],
@@ -176,7 +165,6 @@ const ASSOCIATIONS = [
     key: 'liste',
     name: 'Liste Fictive 2026',
     type: 'list',
-    category: null,
     color: '#7c3aed',
     president: 'ines',
     members: ['jules'],
@@ -187,7 +175,6 @@ const ASSOCIATIONS = [
     key: 'ecole',
     name: 'École Fictive',
     type: 'institution',
-    category: null,
     color: '#0f172a',
     president: 'gaelle',
     members: [],
@@ -198,7 +185,6 @@ const ASSOCIATIONS = [
     key: 'photo',
     name: 'Club Photo Fictif',
     type: 'association',
-    category: 'culture',
     color: '#0891b2',
     president: 'kenza',
     members: ['louis', 'manon', 'rose'],
@@ -209,7 +195,6 @@ const ASSOCIATIONS = [
     key: 'theatre',
     name: 'Troupe de Théâtre Fictive',
     type: 'association',
-    category: 'culture',
     color: '#be123c',
     president: 'noe',
     members: ['oceane', 'jules', 'chloe'],
@@ -220,7 +205,6 @@ const ASSOCIATIONS = [
     key: 'solidaire',
     name: 'Solidarité Fictive',
     type: 'association',
-    category: 'solidarite',
     color: '#65a30d',
     president: 'samir',
     members: ['pablo', 'rose', 'emma'],
@@ -231,7 +215,6 @@ const ASSOCIATIONS = [
     key: 'robotique',
     name: 'Club Robotique Fictif',
     type: 'association',
-    category: 'culture',
     color: '#4f46e5',
     president: 'pablo',
     members: ['david', 'kenza', 'louis'],
@@ -313,7 +296,7 @@ const POSTS: {
     as: 'photo',
     daysAgo: 3,
     markdown:
-      "**Exposition fictive** jeudi au hall : une photo par membre, le thème est *« le reflet »*. Venez avec vos tirages !",
+      '**Exposition fictive** jeudi au hall : une photo par membre, le thème est *« le reflet »*. Venez avec vos tirages !',
   },
   {
     key: 'impro',
@@ -483,20 +466,12 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
     updatedAt: ago(30),
   }));
 
-  const categories = CATEGORIES.map((c) => ({
-    id: uuid(`category:${c.key}`),
-    label: c.label,
-    slug: c.key,
-    sortOrder: c.sortOrder,
-  }));
-
   const associations = ASSOCIATIONS.map((a) => ({
     id: assoId(a.key),
     name: a.name,
     slug: `${a.key}-fictif`,
     description: a.description,
     color: a.color,
-    categoryId: a.category ? uuid(`category:${a.category}`) : null,
     type: a.type,
     promo: a.type === 'list' ? 2026 : null,
     contactEmail: `bureau.${a.key}@${SEED_EMAIL_DOMAIN}`,
@@ -562,7 +537,7 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
     id: uuid(`event:${e.key}`),
     associationId: assoId(e.association),
     title: e.title,
-    description: `Evenement fictif organise par ${ASSOCIATIONS.find((a) => a.key === e.association)?.name}.`,
+    description: `Événement fictif organisé par ${ASSOCIATIONS.find((a) => a.key === e.association)?.name}.`,
     startsAt: ahead(e.days, e.hour),
     endsAt: ahead(e.days, e.hour + 2),
     createdBy: userId(e.author),
@@ -601,10 +576,16 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
         // Dev is where lives are read on the bench phones, so its lives kill switch (migration 015)
         // is open too; production's row defaults to `off`.
         lives_mode: 'on',
+        // Dev keeps today's push payloads (migration 018); the wake-up push is moved to `wake` by
+        // hand at `/admin/platform` for its readings, and a reset puts it back.
+        push_mode: 'full',
+        // Dev starts with the MLS checkpoint skip OFF like every estate (migration 020); it is moved
+        // to `on` by hand at `/admin/platform` for the readings of WP-CHECKPOINT-SKIP, and a reset
+        // puts it back.
+        checkpoint_skip_mode: 'off',
       },
     ],
     users,
-    association_categories: categories,
     associations,
     association_audiences: audiences,
     spaces,

@@ -46,6 +46,17 @@ cargo run --release
 Requires Cloudflare or static TURN configuration. The SFU holds its rooms in process memory and has
 no database or Redis dependency of its own.
 
+## The end-to-end call
+
+`e2e/run.mjs` places a real encrypted call through the built binary: two headless Chromes running
+the app's E2E worker, relay-only through a TURN server when one is given. CI runs it with a
+throwaway coturn on every change to this crate (owner decision D3, 2026-11-01); the proofs it
+requires are in [the wiki](../../docs/wiki/services/call-service.md#the-end-to-end-call-in-ci).
+
+```bash
+cargo build && bun e2e/run.mjs        # no TURN: host candidates, a dev box
+```
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |

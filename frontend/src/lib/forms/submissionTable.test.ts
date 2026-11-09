@@ -159,6 +159,17 @@ describe('submitterName', () => {
     expect(name).toContain('1A2B-3C4D');
   });
 
+  it('files a guest under the name they gave, else the e-mail, before the reference', () => {
+    const guest = { firstName: null, lastName: null, userId: null, reference: '1A2B-3C4D' };
+    // The typed name never stands alone: the guest word and the reference stay beside it.
+    expect(submitterName({ ...guest, guestFirstName: 'Marie', guestLastName: 'Curie' })).toBe(
+      `Marie Curie (${m.form_submitter_guest_reference({ reference: '1A2B-3C4D' })})`
+    );
+    expect(submitterName({ ...guest, reference: null, guestEmail: 'marie@x.fr' })).toBe(
+      `marie@x.fr (${m.form_submitter_guest()})`
+    );
+  });
+
   it('prefers the stored name', () => {
     expect(submitterName({ firstName: 'Ada', lastName: 'Lovelace', userId: 'u1' })).toBe(
       'Ada Lovelace'

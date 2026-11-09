@@ -7,7 +7,10 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
-vi.mock('$lib/stores/auth', () => ({ getToken: vi.fn().mockResolvedValue('') }));
+vi.mock('$lib/stores/auth', () => ({
+  getToken: vi.fn().mockResolvedValue(''),
+  signOutGeneration: () => 0,
+}));
 
 import { TauriMlsService } from './TauriMlsService';
 import { isInEpochGap, resetEpochGapRegistry } from '$lib/utils/chat/epochGapRegistry';
@@ -127,8 +130,7 @@ interface Internals {
   ): Promise<void>;
   verifyDistributionEpoch(groupId: string, activeEpoch: number): Promise<string>;
   onDistributionGapVerdict(listener: ((g: string, v: string) => void) | null): void;
-  initialDrain: Promise<void>;
-  waitForGroupQueueIdle: () => Promise<void>;
+  whenGroupDrained: (groupId: string) => Promise<void>;
   delivery: { fetchCommitsSince: ReturnType<typeof vi.fn> };
 }
 
@@ -200,8 +202,8 @@ describe('TauriMlsService - the epoch cache says what the native manager says', 
     nativeManager({ 'kg-1': 56 });
     const svc = makeService();
     await svc.reloadStateFromDisk();
-    svc.initialDrain = Promise.resolve();
-    svc.waitForGroupQueueIdle = vi.fn().mockResolvedValue(undefined);
+    // This link's drain has settled (the check waits for it, never for the boot's).
+    svc.whenGroupDrained = vi.fn().mockResolvedValue(undefined);
     svc.delivery.fetchCommitsSince = vi.fn().mockResolvedValue({
       commits: [{ baseEpoch: 0, proto: 'AA==' }],
       activeEpoch: 56,

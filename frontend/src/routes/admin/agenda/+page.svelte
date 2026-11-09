@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
@@ -19,8 +20,11 @@
   import { contrastColor, toHex } from '$lib/utils/color';
   import { m } from '$lib/paraglide/messages';
   import ModalOverlay from '$lib/components/shared/ModalOverlay.svelte';
-  import { associationAccentHex } from '$lib/associations/accent';
-  import { formatEventDateTimeRange } from '$lib/calendar/feedEvents';
+  import {
+    eventAccentColor,
+    formatEventDateTimeRange,
+    isNeutralEvent,
+  } from '$lib/calendar/feedEvents';
 
   let events = $state<PendingCalendarEvent[]>([]);
   let loading = $state(true);
@@ -35,9 +39,21 @@
   /** Event currently previewed in the shared detail modal (read-only). */
   let previewEvent = $state<AssociationCalendarFeedEvent | null>(null);
 
-  /** Resolved hex color of the event's primary association (for the date badge). */
+  /**
+   * The date badge's colour: the calendar's own accent, so a neutral event wears "Campus"'s colour
+   * here as on the agenda, never its BDE's.
+   */
   function eventColor(ev: AssociationCalendarFeedEvent): string {
-    return associationAccentHex({ id: ev.associationId, color: ev.associationColor });
+    return eventAccentColor(ev);
+  }
+
+  /**
+   * Whether this viewer was told who files the event. A neutral event reaches a member outside its
+   * BDE's agenda managers MASKED (the server blanks `associationId`): no owner to name, open or
+   * delete through - the row is the BDE's managers' to act on.
+   */
+  function ownerKnown(ev: AssociationCalendarFeedEvent): boolean {
+    return ev.associationId !== '';
   }
 
   async function load() {
@@ -150,7 +166,7 @@
       {#each events as ev (ev.id)}
         {@const color = eventColor(ev)}
         {@const fg = contrastColor(color)}
-        {@const logoSrc = associationLogoSrc(ev.associationLogoUrl)}
+        {@const logoSrc = isNeutralEvent(ev) ? null : associationLogoSrc(ev.associationLogoUrl)}
         <li
           class="border-cn-border flex flex-col gap-4 rounded-2xl border bg-(--cn-surface) px-4 py-4 sm:flex-row sm:items-start"
           style="border-left:4px solid {color};"
@@ -171,12 +187,23 @@
           </div>
           <div class="min-w-0 flex-1 space-y-1">
             <p class="text-cn-dark/80 text-xs font-semibold tracking-wide uppercase">
-              <a
-                href="/associations/{encodeURIComponent(ev.associationSlug)}"
-                class="hover:underline"
-              >
-                {ev.associationName}
-              </a>
+              <!-- A moderator sees who files a neutral event AND that readers see "Campus". -->
+              {#if isNeutralEvent(ev)}
+                <span data-event-neutral>{m.calendar_neutral_label()}</span>
+                {#if ownerKnown(ev)}
+                  <span class="text-text-muted"> · </span>
+                {/if}
+              {/if}
+              {#if ownerKnown(ev)}
+                <a
+                  href="/associations/{encodeURIComponent(ev.associationSlug)}"
+                  class="hover:underline"
+                >
+                  {isNeutralEvent(ev)
+                    ? m.calendar_neutral_filed_by({ association: ev.associationName })
+                    : ev.associationName}
+                </a>
+              {/if}
               {#each ev.coOwners ?? [] as co (co.associationId)}
                 <span class="text-text-muted"> · </span>
                 <a href="/associations/{encodeURIComponent(co.slug)}" class="hover:underline">
@@ -202,41 +229,43 @@
             <!-- Per event, from the server: the BDE of THIS event association's space decides it
                  (WP6c step 2), so the queue may hold rows this viewer sees but does not judge. -->
             {#if ev.canValidate}
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="compact"
                 onclick={() => validate(ev)}
                 disabled={actingId === ev.id}
-                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold disabled:opacity-50"
               >
                 <Check size={14} />
                 {m.common_validate_button()}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="danger-outline"
+                size="compact"
                 onclick={() => openRejectModal(ev)}
                 disabled={actingId === ev.id}
-                class="border-amber-warn/40 text-amber-warn hover:bg-amber-warn/10 inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50"
               >
                 <X size={14} />
                 {m.admin_agenda_reject_button()}
-              </button>
+              </Button>
             {/if}
-            <a
-              href="/associations/{encodeURIComponent(ev.associationSlug)}"
-              class="border-cn-border hover:bg-cn-bg inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-semibold"
-            >
-              <ExternalLink size={14} />
-              {m.admin_agenda_association_link_label()}
-            </a>
-            <button
-              type="button"
-              onclick={() => remove(ev)}
-              disabled={actingId === ev.id}
-              class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50"
-            >
-              <Trash2 size={14} />
-              {m.common_delete_button()}
-            </button>
+            {#if ownerKnown(ev)}
+              <a
+                href="/associations/{encodeURIComponent(ev.associationSlug)}"
+                class="border-cn-border hover:bg-cn-bg inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-semibold"
+              >
+                <ExternalLink size={14} />
+                {m.admin_agenda_association_link_label()}
+              </a>
+              <Button
+                variant="danger-outline"
+                size="compact"
+                onclick={() => remove(ev)}
+                disabled={actingId === ev.id}
+              >
+                <Trash2 size={14} />
+                {m.common_delete_button()}
+              </Button>
+            {/if}
           </div>
         </li>
       {/each}
@@ -283,26 +312,20 @@
       />
     </div>
     <div class="flex justify-end gap-2">
-      <button
-        type="button"
+      <Button
+        variant="secondary"
         onclick={() => {
           rejectTarget = null;
         }}
-        class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
       >
         {m.common_cancel_button()}
-      </button>
-      <button
-        type="button"
-        onclick={confirmReject}
-        disabled={rejecting}
-        class="border-amber-warn/40 text-amber-warn hover:bg-amber-warn/10 inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
-      >
+      </Button>
+      <Button variant="danger" onclick={confirmReject} disabled={rejecting}>
         <X size={14} />
         {rejecting
           ? m.admin_agenda_reject_confirm_progress()
           : m.admin_agenda_reject_confirm_button()}
-      </button>
+      </Button>
     </div>
   {/if}
 </ModalOverlay>

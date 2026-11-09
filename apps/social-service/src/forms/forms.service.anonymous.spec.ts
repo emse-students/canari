@@ -1,5 +1,5 @@
 import * as ExcelJS from 'exceljs';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { FormsService } from './forms.service';
 import type { ExportLabels } from './export-labels';
 
@@ -72,7 +72,8 @@ describe('FormsService - anonymous forms', () => {
       respondentRepo,
       {} as any,
       // FormOrganiserAlertService: switched off, as it ships.
-      { enabled: () => false } as any
+      { enabled: () => false } as any,
+      {} as any
     );
     return { service, manager, saved, formRepo, submissionRepo, respondentRepo };
   }
@@ -106,11 +107,14 @@ describe('FormsService - anonymous forms', () => {
       expect(params).toEqual(['f1', 'u-alice']);
     });
 
+    // The same typed 409 as a named form's (`ALREADY_ANSWERED`), so the page words it from its code.
     it('refuses a second answer from the same account', async () => {
       const { service, saved } = makeService({ inserted: [] });
-      await expect(
-        service.submit('f1', { userId: 'u-alice', answers: { q1: 'bof' } })
-      ).rejects.toThrow(BadRequestException);
+      const refusal = service.submit('f1', { userId: 'u-alice', answers: { q1: 'bof' } });
+      await expect(refusal).rejects.toThrow(ConflictException);
+      await expect(refusal).rejects.toMatchObject({
+        response: { code: 'ALREADY_ANSWERED' },
+      });
       expect(saved).toHaveLength(0);
     });
 

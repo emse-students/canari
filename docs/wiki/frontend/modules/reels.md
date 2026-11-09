@@ -103,9 +103,12 @@ What that decided:
   lens the device lacks is still a typed `unavailable`. The rest of this item is the phone case
   (`facingMode: { exact }`, 2026-10-06). A bare value is an IDEAL, and
   WKWebView answered the BACK lens to `user` on an iPhone (alpha.4 reading) against the decision that the
-  camera opens on the FRONT one (`CameraSession.facing` starts at `user`, the flip is per take, nothing
-  persisted). A lens the phone lacks is an `OverconstrainedError` -> `unavailable`, logged; a track that
-  reports another lens than asked is `console.error`ed. Nothing ever retries on the other lens.
+  camera opens on the FRONT one by default. Since 2026-11-01 it opens on the lens last used anywhere in the
+  app, one memory per device, written once a flip's open succeeded (`reels/cameraLens.ts`,
+  [reels-in-chat](reels-in-chat.md#1-entering-the-camera-from-a-conversation)). A lens the phone lacks is an
+  `OverconstrainedError` -> `unavailable`, logged; a track that reports another lens than asked is
+  `console.error`ed. A flip never retries on the other lens; only the FIRST open on a remembered rear lens
+  falls back, once, logged.
 - **The torch is a capability of the LENS**, read from the open track - so its button exists on the
   back lens and not on the Mi 9T's front one.
 - **Releasing a lens before opening the other** is what the session does anyway (a recorder cannot
@@ -420,7 +423,7 @@ web page cannot remove.
 | | Swipe from the feed (`/camera` tab) | "+" -> new post -> "Caméra" chip | The post editor's camera |
 | --- | --- | --- | --- |
 | Component | `ReelCapture destination="feed"` | `PostComposerBar reel` -> `CameraOverlay` -> `ReelCapture destination="post"` | `PostComposerBar` (no `reel`) -> `destination="post-edit"` |
-| Capture | front lens, the preview's crop, 90 s ring from `reel-limits` | the same | the same |
+| Capture | the lens last used (front by default), the preview's crop, 90 s ring from `reel-limits` | the same | the same |
 | Microphone | with the lens: refused = no camera | asked apart: refused = photos only | asked apart |
 | A FILMED VIDEO | `ReelPublishSheet` -> `kind:'reel'`, `durationMs`, `reel` class (30 days) | **the same** `ReelPublishSheet`, `kind:'reel'`, `durationMs`; caption = the composer's text, identity = its choice | handed back as a file: an existing post never becomes a reel |
 | What the step adds from the composer | - | an amber notice "CanaReel : supprimé au bout de 30 jours" BEFORE "Publier", and "Garder comme post", which hands the video back to the composer as before | - |
@@ -473,7 +476,7 @@ and the editor still hand back; "Garder comme post" hands the video back with it
 
 **Decided 2026-10-30, designed, not built:** on the TAB, "Suivant" becomes "Envoyer à...", a list whose
 first row publishes as below and whose other rows send the same take - the same stored file - to
-several conversations at once ([reels-in-chat section 15](reels-in-chat.md#15-send-to-many---decided-2026-10-30-designed-not-built)).
+several conversations at once ([reels-in-chat section 15](reels-in-chat.md#15-send-to-many---decided-2026-10-30-built-behind-the-writer-switch-section-21)).
 The composer's camera keeps "Publier".
 
 **The review, the editor and the sound removal are on [reel-editor](reel-editor.md)** (2026-10-05):
@@ -582,6 +585,25 @@ has finished, the preload is ABORTED and the player fetches (or streams) it alon
 known and accepted: a reel whose FEED card is still streaming when it is opened is fetched a second
 time by the viewer, since an MSE URL feeds one element - the same rule the media viewer lives by.
 
+### What plays behind the viewer stops when it opens (owner, 2026-11-06)
+
+**Cause, read from the code.** The only "a viewer is open" signal was `followVideoSound`'s counter in
+`actions/playWhileVisible.ts`, raised when a viewer's `<video>` is MOUNTED. A reel mounts its player
+(`PostMedia` -> `VideoPlayer`) after the download or the stream's first segment, and a photo page or a
+reel whose file fails never mounts one. In that gap the feed's ambient video kept decoding (and talking,
+unmuted), and a card scrolling into view started under the viewer.
+
+**The fix is one mechanism**: `holdPlayback(reason)` in the same file. `ReelViewer` calls it in its
+script init and releases it on destroy. A hold pauses every registered VIDEO at once (the feed, an
+inline video of a post page, a lightbox video) and NEVER an audio-only media: a voice note playing in a
+chat plays on when a viewer opens. While any hold or viewer player is open no inline video starts. At
+the FIRST hold it records whether a video was playing, and on the LAST release the video last come
+into view plays again only if one was (`videoWasPlaying`, and nothing foreground plays): a viewer never
+starts a video the reader had not playing. The viewer's own players register later and claim as before.
+Nothing is a timer. Tests: `playbackArbiter.test.ts` (hold pauses ambient and foreground, blocks
+scroll-in starts, release is idempotent, two holds) and `ReelViewer.svelte.test.ts` (hold on open,
+release on close). `MediaLightbox` takes the same hold while `open` (an `$effect.pre`, so it lands before the lightbox's own video mounts); test `MediaLightbox.hold.svelte.test.ts`.
+
 ### A loading reel shows its first frame, never a play glyph (owner, 2026-10-31)
 
 **Reported:** *while a CanaReel loads, a yellow play button shows on a neutral background.* That was
@@ -603,12 +625,75 @@ decoded is now a picture of that frame**, in this order (`ReelSlide`'s `posterUr
 3. **Nothing - the frame's black**, for a reel published before 2026-10-31 that this device has not
    decoded yet. It gets its sharp frame the first time it is preloaded or watched.
 
-**The play button answers a REFUSAL, never a load.** The minimal reel player asks `play()` itself at
-`canplay` (the `autoplay` attribute fails silently) and draws its amber button only on a
-`NotAllowedError` (iOS with sound on, a browser policy) or any other failure, with a warning. An
-`AbortError` is an interruption by a new load: it is asked ONCE more at that load's next
-`loadeddata` / `canplay`, and a second one draws the button. Pinned by `VideoPlayer.svelte.test.ts`, `ReelSlide.svelte.test.ts`,
-`ReelViewer.svelte.test.ts`, `reelPosters.test.ts`, `publishReel.test.ts`.
+**The play button answers a DECIDED OUTCOME, never a load.** The minimal reel player asks `play()`
+itself (the `autoplay` attribute fails silently) and draws its amber button only when the reader
+must act. The states, after the iPhone report of 2026-11-04 (*"some CanaReels do not autoplay, I
+have to tap play"*):
+
+| What the element says | What the player does | Log |
+| --- | --- | --- |
+| `loadstart` | a new LOAD: its autoplay will be asked afresh, earlier answers void | `Log.d` `load N started` |
+| `loadedmetadata` (else `loadeddata` / `canplay`) | asks `play()` ONCE for this load | `Log.d` `autoplay asked` |
+| `play()` resolves | playing - nothing more is asked in this load | - |
+| `NotAllowedError`, muted or with sound | the button (`refused`); the reader's tap plays it as it is, with the sound they chose | `warn` |
+| `AbortError`, the element's `src` changed since the ask | the new source's load asks again at its first event | `debug` |
+| `AbortError`, same `src` | a PAUSE interrupted it (the reader, or the arbiter: screen left, a call): the button (`interrupted`) | `info` |
+| anything else | the button (`errored`) | `warn` |
+| `waiting` while not paused | a SPINNER (`data-video-buffering`), a slow network - never the button; cleared by `playing`, a pause, a new load | `Log.d` with `readyState` / `networkState` |
+| `stalled` | nothing drawn - it also arrives on a PAUSED element, which under `preload="metadata"` may stop fetching by design | `Log.d` with `paused` / `playing` |
+
+The rule is `utils/videoAutoplay.ts` (`decideAutoplayRejection`), classified by the exception's NAME
+at the throw, never by its message, and by ONE fact read when the rejection lands: whether `src`
+still names the resource the ask was made on. **Not the next `loadstart`**: the media load algorithm
+rejects the pending `play()` synchronously and only QUEUES `loadstart`, so when the rejection lands
+the event has not fired yet - a classification waiting for it called every source change a pause.
+The button is drawn on a decided outcome even BEFORE the first frame (over the poster or the black
+box): a paused `preload="metadata"` element may never fetch one. `onPlaybackBlocked` is called ONCE
+per player, a later verdict only logged. Holes closed: (1) the ask used to wait for
+`loadeddata` / `canplay`, which an iPhone with `preload="metadata"` never reaches when WebKit
+declines the `autoplay` attribute (its `InvisibleAutoplayNotPermitted` rule, read in
+`MediaElementSession::autoplayPermitted`: a reel not yet in the viewport) - an explicit `play()` is
+not subject to that rule and makes the engine fetch the data; (2) an `AbortError` with no new load
+waited for a load event that never came - a frozen reel, no button, only a debug line. Every branch
+terminates by a proof, not a count: a refusal is final; a re-ask needs a new source. **The owner's
+rule (2026-11-04): a reel STARTS MUTED** (`videoSound`, muted at every launch); the reader's sound
+button is the explicit request, and only then does the reel's sound play with the iPhone's silent
+switch on.
+
+**A refusal never mutes (lead decision, 2026-11-04, review of #3015).** A first draft muted the
+element AND the app's `videoSound` on a `NotAllowedError` with sound on, and asked again: Instagram's
+answer, but it overrode the reader's explicit choice, re-muting the app on every swipe in a browser
+that refuses each new element's audible autoplay (iOS Safari). The refusal draws the button instead,
+and the tap - a user gesture - plays with sound. **In the iOS app this case never arises**: the
+patched wry sets `mediaTypesRequiringUserActionForPlayback = None` when the webview's `autoplay` is
+on, the default (`frontend/src-tauri/patches/wry/src/wkwebview/mod.rs`); it is a browser's case only.
+Pinned by
+`videoAutoplay.test.ts`, `VideoPlayer.svelte.test.ts`, `ReelSlide.svelte.test.ts`,
+`ReelViewer.svelte.test.ts`, `reelPosters.test.ts`, `publishReel.test.ts`. **Owed on the iPhone 12** (none
+of it read on a device): ten reels swiped on a throttled link - each starts without a tap, a stall shows the spinner, and the in-app log carries no `[VideoPlayer] autoplay` warning or `interrupted by a pause` line the reader did not cause (the device console, Safari Web Inspector, shows the `Log.d` lines: one `autoplay asked` per load).
+
+**The download is said, from the first byte (Mi 9T, v1.6.4-alpha.4, 400 kbps / 400 ms, 2026-11-04).**
+A reel whose segmented read falls back to the whole blob (`segmented, read whole (no-codecs)`) holds
+`PostMedia`'s `loading` for the entire ~55 s download, and the gallery branch drew a static image
+icon (no poster) or the bare poster: #3015's spinner lives in `VideoPlayer`, which mounts only after
+that wait. Now `PostMedia` (gallery mode) draws `shared/MediaSpinner.svelte` over the poster for as
+long as `loading` holds, and `VideoPlayer` draws the same component while it buffers - one visual
+language, one label (`video_loading_label`). Pinned by `PostMedia.loading.svelte.test.ts`. **No
+progress figure**: `MediaService.downloadAndDecrypt` reports none (the bytes land decrypted in one
+piece), so a percentage would be invented; adding one means changing the media service, not the page.
+
+**The preload stays behind the settled reel - decided, not changed (2026-11-04).** Starting the next
+reel's fetch beside the current one's was weighed and refused: (1) on one weak link the two downloads
+share the bandwidth, so the reel being watched gets roughly half of it (~110 s instead of ~55 s for
+the same file at 400 kbps) - the cost lands on the reel the reader is looking at, the gain on one they
+may never reach; (2) the swipe's handover is not a clean win either way: `ReelPreload.stop()` only aborts the
+preload's HOLD on the shared load (`mediaBlobCache.ts`); a request already on the wire is kept
+joinable, so a reel read WHOLE (this defect's path) joins the preload's bytes and loses nothing, but a
+STREAMED segmented reel opens its own fetch (`openSegmentedStream`) and the preload's partial bytes
+are dropped; (3) the order is a correctness fact elsewhere (`settledId`), not a tuning knob. What
+would reopen it: a preload whose bytes the streamed path also joins AND a measurement that the
+reader's dwell on a settled reel is shorter than the next fetch. Neither exists; nothing was measured on
+a device, this is a derivation from the link's arithmetic and the code.
 
 **Owed on the bench phones** (none of this was read on a device): see
 [device-verification](../../device-verification.md) and the PR's reading list - per phone, the
@@ -735,9 +820,10 @@ below; **owed on both phones**
 - **Photo pages** (`reels/fullScreenPost.ts`): a post whose ONLY content is one picture - no other
   media, no poll, no form - is a page like a reel: the same frame, caption and rail, its picture
   instead of the video, no player bar (so the caption sits lower). Several media, a video outside a
-  reel, a file and text alone stay out, and so do **a linked calendar event and a link in the
-  text**: the card draws the event's card (date, place, add to calendar) and the link's preview,
-  and a page would silently drop both. **The list is newest first and nothing else** (lead's
+  reel, a file and text alone stay out, and so does **a linked calendar event**: the card draws
+  the event's card (date, place, add to calendar), and a page would silently drop it. A link in the
+  text kept a post out too until the owner reversed it on 2026-11-06
+  ([below](#a-post-with-a-link-in-its-text-owner-2026-11-06)). **The list is newest first and nothing else** (lead's
   decision): a pin is a feed concept, and a pinned post would head every reader's CanaReels. The list comes from the server
   (`kind=reel&singlePhotos=true`, [server half](../../services/reels.md#reading)); a row it serves
   that the client reads as neither is drawn as a reel and accused once in the log.
@@ -788,6 +874,111 @@ be about seven times FASTER. These numbers are the reference for tuning it; this
 none of them. **Follow-up, after the phone reading of RR:** decide whether the reel pager moves
 towards these thresholds (lead's decision: not in the rail's pull request).
 
+### Carousel pages - a post of several photos and videos (owner, 2026-11-06)
+
+**Asked by the owner:** *"montrer aussi les posts avec plusieurs photos/videos, avec un swipe gauche /
+droite pour passer au media precedent / suivant du post, comme Instagram"*. Every decision below is
+the lead's, taken 2026-11-06, reversible.
+
+- **Which posts** (`fullScreenPageOf` returns `carousel`; the server's `MULTI_MEDIA_POST_SQL`,
+  [server half](../../services/reels.md#reading)): **2 to 10 media, every one a picture or a video**
+  (10 is Instagram's cap, `CAROUSEL_MAX_MEDIA` on both sides), with the SAME exclusions as a single
+  media - no poll, no form, no attached form, no linked event (a link in the text is allowed,
+  [below](#a-post-with-a-link-in-its-text-owner-2026-11-06)). **A file or an
+  audio among them keeps the whole post out**: a page draws pictures and videos only.
+- **The two axes.** Vertical pages the POSTS, horizontal pages the MEDIA of the post on screen
+  (`reelViewerNav.ts`: `reelReleaseVerdict` answers `media-next` / `media-prev`, `stepMediaIndex`).
+  The axis is locked by `classifyMove` on the first movement past the slop, so a curving swipe never
+  does both and the horizontal drag never fights the vertical paging. **Past either end of the strip
+  a drag springs back with the edge resistance - on the first media a drag to the right does NOT
+  close the viewer** (decided 2026-11-06 at review, replacing a first build that closed there: a
+  reader flicking back through the media closed it by overshooting, and Instagram does not close
+  there). Back and the X close a carousel; a page of ONE media keeps the close on the right.
+- **The strip** (`ReelSlide`): one `ReelMediaPane` per media, side by side inside the ONE frame (its
+  ratio is the first media's, each media `object-contain` in it), moved as one transform; a held drag
+  moves it 1:1 with no transition (`mediaDragX`, `mediaDragging`), a release snaps it with the
+  viewer's own `GESTURE.SETTLE_MS` curve. Nothing waits on the strip's `transitionend`: the index
+  moves at once. Reduced motion makes the snap instant through the global rule in `app.css`.
+  **The blurred backdrop reads only the media on show**: the panes out of view carry
+  `data-backdrop-ignore`, and the slide hands `ReelFrame` the visible index as `sourceKey`, so a
+  swipe repaints it - otherwise a neighbour's picture that finished loading last painted the
+  backdrop of the one being looked at (seen in the browser, 2026-11-06).
+- **The position** is a row of dots under the top bar, the visible one lit, named "2 sur 5" for
+  assistive tech (`reels_carousel_position`).
+- **The visible media is kept PER POST** for the viewer's life (`mediaIndexById`): a post scrolled
+  away and back opens where the reader left it.
+- **What plays.** `ReelMediaPane` owns what used to be the slide's media half (download, player,
+  first frame, settle), so the rule is unchanged and per media: ONLY THE ACTIVE PANE - the visible
+  media of the page on screen - MOUNTS A PLAYER. A swipe to the next media unmounts the video that
+  leaves, exactly as a swipe to the next post does, and the playback arbiter sees one viewer at most.
+- **What is fetched ahead** (`carouselMediaRole`): once the visible media has SETTLED (whole and, for
+  a video, playing), its neighbours - the NEXT media, and the previous one, which was fetched to be
+  seen so holding it again is a cache hit - and the opening media of the NEXT post (the viewer's
+  existing `preload`). A video is preloaded only when `worthPreloading` says so (segmented, or under
+  the 28 MB reel cap). The strip's neighbours settle per media (`ReelSlide`), but the settle that
+  gates the NEXT POST is the PAGE's (`settleKeyOf` is the post): once the page has settled, a media
+  swipe keeps it, so the next post's download is never aborted and restarted by a swipe inside the
+  strip.
+- **Desktop.** The arrow keys left and right step the media (off a carousel they are left free), the
+  slide draws left/right chevron buttons on a wide screen, and **the mouse drives the same gesture as
+  the finger**: pointer events of type `mouse` feed the one gesture implementation (a touch keeps the
+  touch path). The click that ends a mouse drag is swallowed in the frame's capture phase, so it
+  neither toggles the player nor counts towards a double-tap like; the flag lives one frame at most
+  (a drag ending outside the frame makes no click, and must not eat the next real tap). A move with
+  no button down (`buttons === 0`: the pointerup was lost, a context menu opened mid-drag) cancels
+  the drag. A picture's native drag is prevented so it cannot cancel the pointer stream.
+- **The double tap.** A swipe makes no `click`, so the double tap (`doubleTapLike`) never sees one;
+  the mouse case is the swallowed click above.
+- **What belongs to the POST, not a media:** the caption, the author line, the rail's reactions, the
+  comments and the send - they do not move with the strip. **The rail's save and sound follow the
+  VISIBLE media**: a video shows them, a picture shows neither, because **no picture save exists**
+  (a photo page has never had one); the save takes the visible video (`SaveableReel.mediaIndex`,
+  `savedMediaOf`) and names it with its place, `canari-video-<day>-<id>-2.mov`, so two videos of one
+  post differ.
+- Pinned by `reelViewerNav.test.ts`, `fullScreenPost.test.ts`, `saveReel.test.ts` and
+  `ReelViewer.carousel.svelte.test.ts` (the swipes, the per-post memory, the players, the
+  preloads and the next post's kept preload, the keys and buttons, the mouse drag, its swallowed
+  click, the lost pointerup, the save).
+  **Owed on a phone**: the feel of the two axes on the Mi 9T and the iPhone 12 (a diagonal flick,
+  a horizontal swipe right after a vertical fling), a carousel video's sound and pause on a swipe,
+  and the save of a carousel video into each gallery.
+
+### A post with a link in its text (owner, 2026-11-06)
+
+**Decided by the owner:** a photo, video or carousel post whose text carries a link DOES appear in
+CanaReels, the link tappable in the caption. Until then it stayed out because the page did not draw
+the link's preview card; the preview is still not drawn - the link itself is, which was the point.
+
+- **Which posts:** `fullScreenPageOf` no longer reads the text. Poll, form, attached form and linked
+  event still keep a post out. The list asks for it with `withLinks=true` beside `multiMedia=true`
+  ([server half](../../services/reels.md#reading)), so a client that does not draw the link - every
+  client built without this change, every release through `1.6.6-alpha.1` - never receives such a
+  post ([legacy-compatibility](../../legacy-compatibility.md)).
+- **The link is the post card's own**: the caption is `PostMarkdown`, whose `link` renderer is
+  `PostMentionLink` - an in-app Canari link goes through `AppLink`, an outside one is an `<a>`
+  that the app's document-level handler (`installAppLinkClickHandler`) sends to `openExternal` and
+  its Safe Browsing gate, as on a card. Nothing new opens a URL.
+- **Tappable, folded or not.** The caption is pointer-transparent so a tap beside the text reaches
+  the video; its `a` and `button` (a mention) are not (`[&_a]:pointer-events-auto`). A long URL
+  wraps anywhere (`wrap-anywhere`), never past the frame; a long caption folds to two lines and
+  unfolds into its own scroll, as before. **The text is always on the viewer's dark scrim**, whatever
+  the app's theme, so its block carries `data-theme="dark"`: the `dark:` variant (`app.css`) then
+  applies inside it, and a link, a mention and a hashtag - hover included - take the colours the post
+  card gives them on a dark surface (`amber-400`, an in-app link's hover `amber-300`). One attribute,
+  never a recolour per renderer: the first build recoloured only the `a`, leaving a mention and a
+  hashtag `amber-700` on black (about 3:1) in the light theme and an in-app link darkening on hover.
+- **Never a swipe nor a like.** A tap does not move, so the viewer's gesture never locks an axis; a
+  drag that STARTS on a link still pages, as everywhere on the page. A tap on a link is the link's
+  for the double tap (`tapBelongsToInnerControl`). The click that ends a MOUSE drag is swallowed in
+  the WINDOW's capture phase, before the document's link handler, so a drag released over a link
+  does not open it.
+- Pinned by `fullScreenPost.test.ts` (a link no longer keeps a picture, a video or a carousel out),
+  `ReelSlide.doubleTap.svelte.test.ts` (the caption's link is an `<a>`, pointer-live, and a double
+  tap on it is no like), `ReelViewer.carousel.svelte.test.ts` (the document's handler sees the
+  drag's click already prevented), `listPostsSearchParams.test.ts` and `allReels.test.ts`.
+  **Owed on a phone:** a tap on a caption link opens it (with the Safe Browsing prompt on a flagged
+  URL), and a swipe started on one still pages, on the Mi 9T and the iPhone 12.
+
 ### The minimal player and the rail tools (user, 2026-10-23)
 
 *"Les Reels d'instagram sont beaucoup plus epures, la barre de lecture est discrete et collee en bas,
@@ -837,9 +1028,23 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
    bottom bar, no native tab bar), at the NEWEST reel. Closing returns to the feed exactly where it
    was - the feed never left the page.
 3. **The list is every reel the member may see, newest first, whatever tab is open**
-   (`reels/allReels.ts`, `GET /api/posts?kind=reel&feed=all` - the C7 list the viewer already swiped
-   through from a reel). Decided over "the open tab's reels": an entry beside the tabs is not one of
-   them, and the Associations tab rarely carries a reel at all.
+   (`reels/allReels.ts` - the C7 list the viewer already swiped through from a reel). Decided over
+   "the open tab's reels": an entry beside the tabs is not one of them, and the Associations tab
+   rarely carries a reel at all. **It is its own server feed, `feed=reels`** (`posts/list-feed.ts`,
+   2026-11-03), NOT `feed=all`: it is the UNION of Associations, Suivis and Mon espace restricted to
+   reels, which is exactly `postVisibleToViewerSql` with no disjunct turned off, plus every filter
+   every arm applies (hidden, live reel, review cohort, blocks, schedule, promo cutoff). Ordered
+   `publishedAt DESC, id DESC` - one row per post, so a reel reached through a follow AND a repost is
+   listed once, at its publication. `reels-list.integration.spec.ts` proves the set equality on
+   PostgreSQL for a same-campus reader, an other-campus accepted follower, a pending follower, a
+   reader who blocked the author and one reached through a member repost.
+   **The defect it fixed (owner, 2026-11-03):** the viewer used to read `feed=all`, the "Mon espace"
+   arm, which is filtered by SPACES (decision 5 of the follow requests) - so someone following a
+   member on another campus never saw that member's reels here, nor a reel a followed person
+   reposted (WP-F6). **What the client sends:** installed clients (up to 1.6.x) send `kind=reel`
+   with no `feed`; the server reads that shape as `feed=reels`
+   ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---kindreel-on-feedall-read-as-the-canareels-viewer-list-2026-11-03),
+   which also carries why the client keeps that shape for one more release).
 4. **The first page is read BEFORE the viewer opens**, because an empty viewer is no answer: with no
    reel yet, a small sheet says "Pas encore de CanaReels" and offers the camera (`ReelsEmptyState`,
    `CAMERA_PLACE`). That page becomes the viewer's own first page (`reelsAfterFirstPage`), not a
@@ -1231,6 +1436,5 @@ and every pass fires `seeking` / `waiting` / `seeked` at 0, no `ended`, never pa
 **Fix, at capture time**: a reel is prepared with `trimToVideo` (`prepareVideoForUpload`,
 `videoSpanTrim`): the output is cut to the video track's own span, so no pass shows a still picture
 over audio (~100 ms per loop on this take). **Not fixed**: the ~210 ms audio pre-roll at each wrap -
-a seek-free loop (re-appending the segments to MSE) is a design of its own, in
-[backlog](../../backlog.md#p3---a-reels-loop-holds-its-first-frame-210-ms-longer-than-the-file-says-on-the-mi-9t-measured-2026-10-16-not-built).
+a seek-free loop (re-appending the segments to MSE) is a design of its own, not built.
 A manual `currentTime = 0` on `ended` would seek too and pre-roll the same way.

@@ -455,7 +455,32 @@ describe('InternalController - the community distribution group', () => {
           tag: 'DISTRIBUTION_PUBLISHER',
           authority: 'distribution_publisher',
           claim: { groupId: 'g-1', userId: PUBLISHER.userId, generation: 0, owed: false },
+          // The publisher sends no commit: it HOLDS the published epoch 7, so it is recorded at
+          // the base leading there, 6 - a frame a peer seals at 7 is one it can read. Recorded
+          // only on a seat no commit admitted, which is not only the creator's: past the creation
+          // (epoch 0) the publisher may have been in the tree long before, so the floor is
+          // INFERRED and never withholds a frame.
+          admittedByBaseEpoch: 6,
+          admissionInferred: true,
         }
+      );
+    });
+
+    it("records the CREATION's publish (epoch 0) as an admission, the creator path", async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
+
+      await controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
+        groupInfo: 'Z2k=',
+        baseEpoch: 0,
+        userId: PUBLISHER.userId,
+        deviceId: PUBLISHER.deviceId,
+      });
+
+      expect(messagingService.activateDeviceMembership).toHaveBeenCalledWith(
+        PUBLISHER.userId,
+        PUBLISHER.deviceId,
+        'g-1',
+        expect.objectContaining({ admittedByBaseEpoch: 0, admissionInferred: false })
       );
     });
 

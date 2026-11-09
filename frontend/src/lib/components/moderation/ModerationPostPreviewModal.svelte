@@ -84,7 +84,7 @@
     {:else if post}
       {@const postId = post.id}
       <Card class="border-cn-border/80 overflow-hidden shadow-sm">
-        <PostHeader {post} />
+        <PostHeader {post} showFollow={false} />
         <PostContent {post} {authToken} fullContent />
       </Card>
       <!--

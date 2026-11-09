@@ -463,7 +463,7 @@ What the measurements say is already within reach, and what stands between it an
 
 **Two Pixel findings that are not on the open path** and go to the queue as their own items: the
 checkpoint per bulk ingest, read watermarks included, is the parked decision of
-[open-questions](../open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)
+[open-questions](../open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)
 (94-238 ms each, off the JavaScript thread since #1826); the 45 identical `[HISTORY_RECONCILE] ...
 asked 30s ago` lines in 250 ms were a noise defect (P3), FIXED 2026-10-17: `reconcileAllGroups` counts the groups already asked inside the window and reports them once in its pass line.
 
@@ -591,6 +591,494 @@ and the "decode + render after the history" link of section 5 (1623 ms at 1x, of
 not a long task and was inferred to be these invokes), against the 200 ms budget of section 4. It
 needs a build carrying this change, so the next pre-release.
 
+### The budget reading on `1.6.0`, 2026-11-01/02: over budget on every row
+
+**Bench.** Mi 9T, a sideloaded rig build `1.6.0 (100600002)` (the rig does not record its bundle; it
+is the build the phone held, signed out, when the dev estate had just been reset). Dev estate, the
+rig's `owner` test account on a fictional seed, signed in with "Rester connecte" ticked
+(`login.mjs`, then `pin.mjs --stay`: the vault path, no PIN on a cold start). The ten-community bench
+of section 5 was seeded again with
+`community-bench-seed.mjs --communities 10 --salons 8 --messages 200` (`BancOuverture-1` to `-10`,
+nine salons in the first, 200 short messages in its `general`). Target `BancOuverture-1`;
+instrument and protocol exactly as sections 1 and 5; no network shim, and no CPU throttle except
+where named. Evidence: `<harness-dir>/a1-bench/r1101-budget/`.
+
+**Readings** (ms from the tap that asked; median / p90 by interpolation / n; the raw values are in
+`runs.ndjson`). In these runs `tap>rail`, `tap>salons` and `tap>target salons` are one number: the
+rows land in the rail's frame.
+
+| condition | n | tap>rail+salons | salon>pane | salon>msgs | switch>salons | reopen>msgs |
+| --- | --- | --- | --- | --- | --- | --- |
+| cold, Wi-Fi, 1x | 7 | **530 / 737** | 441 / 542 | 919 / 1093 | 176 / 190 | 328 / 344 |
+| cold, airplane, 1x | 5 | **376 / 408** | 587 / 611 | 996 / 1012 | 183 / 192 | 354 / 366 |
+| cold, Wi-Fi, cpu4 | 5 | **1747 / 1992** | 1501 / 1600 | 3850 / 3963 | 249 / 254 | 847 / 949 |
+| warm, Wi-Fi, 1x | 5 | **319 / 355** | 291 / 330 | 299 / 578 | 167 / 183 | 339 / 344 |
+| warm, airplane, 1x | 3 | **314 / 318** | 306 / 326 | 332 / 618 | 155 / 161 | 340 / 341 |
+
+`salon>msgs` on a cold run is a salon opened in a PREVIOUS process (F4's stored page), so it is the
+"a salon opened before" row of section 4. A warm run keeps the process, so its `salon>msgs` is the
+in-memory case; its worst value is the run that did the one network open.
+
+**Against the section 4 budget (1x unless said):**
+
+| gesture | budget | measured (median) | verdict |
+| --- | --- | --- | --- |
+| tab -> rail + salons, cold, any network incl. offline | <= 200 | 530 Wi-Fi, 376 offline | over, 1.9x-2.6x |
+| same, cold, 4x | <= 500 | 1747 | over, 3.5x |
+| same, warm | <= 150 | 319 Wi-Fi, 314 offline | over, 2.1x |
+| tap a community in the rail -> its salons | <= 150 | 176 | over by ~25 ms (was 147-177) |
+| a salon opened before, previous process -> pane + last messages | <= 200 | 919 Wi-Fi, 996 offline | over, 4.6x-5x |
+| a salon opened before, same process | <= 200 | 328 Wi-Fi, 354 offline | over, 1.6x-1.8x |
+| same, 4x | <= 500 | reopen 847; previous-process open 3850 | both over |
+| a salon never opened here -> pane | <= 300 | not run (the seed had opened this one) | not measured |
+| long task on these paths | none > 100 | hub 172-225, salon open 546-551, cached reopen 340-348 | over |
+
+**Verdict: the 200 ms budget is not met on any row.** What F1-F7 bought is unchanged: the tab works
+offline (rail and salons in 376 ms with no request; "never" before F1), a salon opened in a previous
+process draws from its stored copy (919 ms against 1.9-3.0 s from the network, and 996 ms offline
+against an empty salon), and a switch between loaded communities stays at ~175 ms. Against the
+2026-10-15 readings on `1.2.8` (tab 384-453, `salon>pane` ~300, `salon>msgs` 978) the tab and the
+salon pane read HIGHER here (530 and 441), on a different build, a different account and a re-seeded
+estate. That comparison is to be re-made on one build; it is not a regression to attribute.
+
+**Where the time goes.**
+- **The tab, 376 offline -> 530 Wi-Fi.** The ~155 ms between the two is boot work on the same main
+  thread while the member taps: 32-52 first-party API calls in the window and the MLS start-up
+  (`mlsReady` at 2.4 s offline, 3.0 s on Wi-Fi). The trace of one Wi-Fi run (`--profile --trace`, rail
+  at +642) shows the main thread busy for the whole window: 627 ms of exclusive time, 226 ms in
+  microtasks and 216 ms in function calls, style and layout 38 ms, paint 6 ms. Before any of it, the
+  press: `click` lands 135 ms after `touchstart` (the CDP press, ~120 ms, plus gesture detection), so
+  ~135 ms of the 530 is the instrument's finger.
+- **A salon open, 919 ms.** One long task of ~550 ms mounting the page (546-551 in every condition,
+  offline included, so it is render and not network). The history request is off the path (stored
+  page first) and its body no longer crosses `plugin-http` in ~48 reads: one IPC call in the open
+  window, against ~48 on `1.2.7`.
+- **A same-process reopen, 328-354 ms** is one 340-350 ms long task for the already-decoded page: the
+  same mount again.
+- **The biggest single cost on every row is the mount of a salon page (340-550 ms), then the boot work
+  sharing the thread with the tab tap (~155 ms), then the instrument's press (~135 ms).** At 4x
+  everything scales ~3.3x (tab 1747 ms, long tasks 1.3-2.1 s): main-thread work.
+
+**Not read, and why.** The F7 signatures batch is not isolated: the "decode + render after history"
+link of section 5 cannot be computed on these runs (its line goes negative, since the stored page is
+drawn before the response), and no earlier build was on the phone for a before/after. A `slow3g` cell,
+the warm-resume profile and a never-opened salon were not run.
+
+**What it says about the next package.** The remaining distance is rendering and main-thread
+contention, not data: (1) mount only the visible bubbles in a salon's first frame and measure
+`longtask ms, salon open` falling from ~550 ms; (2) defer boot work that does not gate the first frame
+(MLS start-up, listing reconcile, key-group chains) until after the tab's first paint, then re-read
+`tap>rail` on Wi-Fi against its offline twin (target: within noise); (3) count the budget from
+`click`, as the first-mount analysis suggests, or the instrument's ~135 ms press keeps every row 135 ms
+over by construction.
+
+### The salon mount, named: 60 rows mounted before the reveal, not 20 (2026-11-02)
+
+**Method.** `community-open.mjs --profile-salon` (new): one V8 CPU profile per salon open, from the
+tap on the row to the first bubble, on the Mi 9T (`1.6.0`, the build of the reading above, cold
+start, BancOuverture-1 and its 200-message `general`). The release bundle is minified, so the chunks
+were dumped from the running WebView (`Debugger.getScriptSource`) and the hot positions of
+`profile-summary.mjs --sources` read against them. A profiled run is slower than a bare one
+(200 us sampling): the profile gives the SHAPE, and the milliseconds against the budget stay the bare
+runs' (the table above).
+
+**What the profile says.** In a 1064 ms window (tap to first bubble, the open is 570-920 ms of it),
+~450 ms is ONE Svelte flush mounting the page: `ChatMessageGroups` 262 ms (the bubbles; `MessageBubble`
+218 ms inclusive, the message text 59 ms of it), the chat header, the composer and the page chrome
+~190 ms, and 187 ms of native `(program)` (style and layout) after it. A DOM count after the open read
+**60 `msg-*` rows mounted**, not the 20 of the first frame.
+
+**Why 60.** `ENTRY_FIRST_FRAME_GROUPS` is 20 (F6, #1875) and works. But `fillViewportThenPin`
+then wants the pane to overflow, so that a scroll event, and with it pagination, can happen.
+On this seed the rows are one line, 37 px: 20 rows are 740 px in a ~750 px pane, short of
+the overflow by a few pixels. The old rule for a short pane was "widen to the FULL 60-group entry", so
+the thread mounted 40 more hidden rows (~260 ms of the task, ~4.4 ms a row) for 40 px of overflow
+and only then revealed. The wiki's own test pinned it: "a thread of one-line rows settles on the
+60-row entry window" (it was documented as intended, and it was the cost).
+
+**What changed** (`ChatArea.svelte`, `renderWindow.ts`, review of #2914 folded in):
+- The fill pass reads what the first frame measured. `fillStart` takes the height the mounted ROWS span
+  (first row's top to last row's bottom, plus the scroller's padding) and the rows mounted, and asks for
+  the rows the deficit needs, rounded up (floor of 4 groups, never more than the full entry window on
+  a measure alone). It reads the rows and not `scrollHeight`: a browser clamps `scrollHeight` to the
+  pane's height, so a short list cannot say how short it is. The last of the four passes keeps the old
+  jump, so the loop still converges whatever a measure says. A one-line thread of this seed fills with
+  24 rows instead of 60 before the reveal.
+- The overflow it aims for, `ENTRY_OVERFLOW_PX`, clears the older-groups trigger,
+  `OLDER_TRIGGER_PX` (80): ONE constant pair, read by `measureScroll` too. A thread pinned to the
+  bottom sits at `scrollTop = overflow`; an entry filled with 40-80 px of overflow made the reveal's own
+  scroll event call `loadOlderGroups` (one task of 140 groups). Pinned by a test over row heights.
+- The widen after the reveal (`widenEntryWindow`) was one task of 40 rows. It is now steps of 10
+  groups, a yield between each (`widenStepStart`), the scroll position compensated per step. No task of
+  the widen is longer than 10 rows (~45 ms on the phone) whatever the thread holds. It and the fill are
+  keyed on an ENTRY COUNTER (`entryEpoch`, bumped at every entry and every fill pass): a repin or an
+  A -> B -> A inside one yield retires the earlier pass instead of running a second widen beside it.
+- `isCoarsePointerDevice` reads ONE shared `MediaQueryList`, created on first use (every bubble asked
+  `matchMedia` in its `$state` initialiser, ~3 ms of the open in all).
+- Known cost, not removed: the widen's `scrollTop` writes (one per step, up to four for the 60-row
+  window) can cancel a fling already under way on iOS. They touch the reader only when the reader has
+  started scrolling inside the ~200 ms of the widen.
+
+**What the instrument now does.** `--profile-salon`, and the `click` of every tap is recorded: the
+report carries `click>rail`, `click>salon msgs` and `click>reopen msgs`. Navigation starts on the
+click, and the CDP press holds the finger ~120 ms before it, so a budget counted from the finger
+landing is over by that much by construction; the `click>` columns are the ones to read against the
+200 ms, the `tap>` ones stay for continuity with the tables above. The tap columns still book the
+instrument's per-frame predicate (`querySelectorAll` and `getBoundingClientRect` once a frame), a few
+milliseconds, not removed.
+
+**Not done, and why.** The boot work that shares the thread with the tab tap (~155 ms: 32-52 API calls
+and the MLS start-up) is NOT moved in this step: nothing in the profile above names which part
+sits on the tap's critical path, and moving it blind could break the ordering that F2/F3 pin.
+The `--profile` window of the tab tap, read against this page's sources, is the next step. The
+Mi 9T re-measure needs a build carrying this change (the installed APK holds `1.6.0`).
+
+### The budget reading on `1.6.3-alpha.2`, 2026-11-02: #2914 shipped, and the clock did not move
+
+**Bench.** Mi 9T, the dev pre-release `1.6.3-alpha.2 (100600302)` read in Paramètres > À propos,
+the build that carries #2914 (the salon mount above). Same dev estate, same rig account, same
+`BancOuverture-1` seed and target, same instrument and protocol as the `1.6.0` reading; no network
+shim, CPU 1x. The run was capped at 15 min and closed after **4 of 7 cold runs** (each run is a full
+cold start plus the gesture chain). Evidence: `<harness-dir>/a1-bench/r1102-budget-163a2/`
+(`runs.ndjson`, `log-cold-none-cpu1.txt`).
+
+| condition | build | n | tap>rail+salons | salon>pane | salon>msgs | switch>salons | reopen>msgs |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| cold, Wi-Fi, 1x | `1.6.0` | 7 | 530 / 737 | 441 / 542 | 919 / 1093 | 176 / 190 | 328 / 344 |
+| cold, Wi-Fi, 1x | `1.6.3-alpha.2` | 4 | **529** / 669 (worst) | 414 / 455 | **918** / 966 | 174 / 206 | 330 / 365 |
+
+(median / p90 for `1.6.0`; median / worst for the four new runs.) Long tasks, median: hub open 209
+(was 172-225), salon open 537 (was 546-551), cached reopen 332 (was 340-348). Requests per run: 34,
+133 kB, one IPC call - unchanged.
+
+**Verdict: no row moved beyond the run-to-run spread, and the 200 ms budget is still met on none.**
+The salon open still costs one ~540 ms long task, and `salon>msgs` from the stored page is 918 ms
+against 919. The fill change of #2914 cuts the rows mounted BEFORE the reveal; the reading says the
+reveal's critical path is not where those rows were spent on this build, or that the widen's steps
+land inside the same window the instrument measures. Which of the two is owed a `--profile-salon`
+run on this build (and the DOM row count after the open) before any further change to the mount.
+**Owed:** the remaining three cold runs, the warm and airplane rows, and the `click>` columns of the
+report, on this build.
+
+### Why #2914 did not move the clock, and the two cuts after it (2026-11-07)
+
+**The answer to the question above: neither reading - the widen never ran.** A salon reveal mounted
+60 rows, not 20, on every build since F6. The render window's floor is `ENTRY_FIRST_FRAME_GROUPS`
+(20) only while `entering` is true; the reveal sets `entering = false`, and in that same flush the
+floor became `INITIAL_RENDER_GROUPS` (60), so `clampWindowStart` lowered the window to 60 groups at
+once. The 40 rows the stepped widen of #2914 was built to spread out were mounted in the reveal's
+own task, before its paint, and `widenEntryWindow` then found nothing to do. The happy-dom test of
+#2914 could not see it: it counted rows after the timers had run, not at the reveal.
+
+**The instrument that found it: `frontend/bench/salon-mount/`** (new, a desktop shape, not the
+phone). A production Svelte build of the real components with the app's stylesheet, mounted in a
+headless Chrome over CDP at the Mi 9T's viewport (411 x 891 CSS px), CPU throttled, nothing else on
+the thread (no session, no MLS, no network). `--scene pane` mounts `ChatArea` over a 200-message
+salon of one-line own messages (the bench seed's shape); `--scene hub` draws the communities hub
+first (ten communities, nine salons each, `Sidebar` beside an always-mounted `ChatArea`, as in
+`MainChatPage`), then times the tap on a salon row: the pane takes the salon, the sidebar hides, the
+listing hands in fresh objects. It reads the reveal in the microtask that commits it (a per-frame
+poll read it a frame late, after the widen's first tasks), the rows mounted at that moment, the long
+tasks, and every warning the ENGINE printed (CDP `Log`). `--compare <dir>` interleaves a baseline
+build run by run. Usage: [the bench's header](../../../frontend/bench/salon-mount/run.mjs).
+
+**It also reproduced the phone's console storm.** The `1.6.3-alpha.2` runs carry ~480
+`Invalid keyframe value for property transform: translate(NaNpx, NaNpx) scale(Infinity, Infinity)`
+lines per run, ~100 inside the salon open's first long task. The hub scene prints 108 per open. The
+rail and the salon rows carry `animate:flip`; Svelte measures and re-measures every row of a keyed
+list at each reconcile, and the open hides the sidebar (`display: none`) in the same flush that
+hands it a fresh listing. Each row's box "moved" to 0 x 0, and `flip` divides by it.
+
+**What changed.**
+- `ChatArea`: `entryWidening`, set in the reveal's own flush and cleared when the widen ends (or by
+  the next entry), keeps the floor at the entry frame until the widen has grown the window itself.
+  The reveal now paints 20 rows; the other 40 follow in steps of 10, one task each, after the paint.
+  Pinned by `ChatArea.entryWindow.svelte.test.ts` ("reveals the entry frame alone"), which reads the
+  rows at the reveal and FAILS on the previous `ChatArea` (60, not 20).
+- Review of #3117: a RETIRED entry's reveal callback now returns at once. It used to drop `entering`
+  even after a switch during its frame, revealing the NEW conversation before its own fill with
+  both flags false (60 rows in one flush) - pinned by "a switch during the reveal frame", which fails
+  on the first version. A switch after the first widen step reaches 60 rows on the new conversation
+  (no stuck `entryWidening`). The widen's target is computed once: a message arriving meanwhile
+  widens the window a few groups past 60, harmlessly.
+- The widen takes no step while a finger is on the thread (`$lib/utils/chat/touchHold.ts`: the
+  touches themselves, released by the last `touchend`/`touchcancel`, no timer), since each step
+  writes `scrollTop` and a write under a drag fights it. It does NOT cover a fling's momentum AFTER
+  the finger lifts: iOS WebKit may cancel momentum on that write.
+- `Sidebar`: `animate:flipShown` (`$lib/utils/flipShown.ts`): `flip` when the row is drawn before and
+  after, NO animation (`duration: 0`, which Svelte answers without touching the element) when either
+  box is empty. A row that appears or disappears has no path to slide along. The drag reorder keeps
+  its animation: both boxes are drawn.
+
+**Measured** (medians of 9 interleaved runs per arm at CPU x4, 7 at x1; this workstation; `first` is
+a fresh page's first open, `reopen` a second open in the same page; ms from the gesture):
+
+| scene, CPU | open | reveal, before | reveal, after | rows at reveal | engine warnings |
+| --- | --- | --- | --- | --- | --- |
+| pane, x4 | first | 711 | **609** | 60 -> 20 | 0 -> 0 |
+| pane, x4 | reopen | 375 | **157** | 60 -> 20 | 0 -> 0 |
+| hub, x4 | first | 563 | **386** | 60 -> 20 | 108 -> 0 |
+| hub, x4 | reopen | 340 | **171** | 60 -> 20 | 108 -> 0 |
+| hub, x1 | first | 99 | **68** | 60 -> 20 | 108 -> 0 |
+| hub, x1 | reopen | 59 | **26** | 60 -> 20 | 108 -> 0 |
+
+The gesture's own task (the mount, before the reveal) did not move beyond the spread (hub x4: 384 ->
+378 first, 172 -> 162 reopen): the gain is the second task, the reveal's, which no longer mounts 40
+rows. The widen's steps after the paint are 55-160 ms each at x4. `flipShown`'s own milliseconds are
+within the noise on desktop; what it removes for certain is the storm and the per-row style reads on
+hidden rows.
+
+**What this does not prove.** The bench is a desktop V8 under throttling, so a SHAPE: the Mi 9T's
+JIT, GPU and WebView differ, and the first open on the phone also pays for code never run before in
+that process, which the bench's `first` only partly reproduces. **Owed on the Mi 9T, with the next
+pre-release:** `community-open.mjs` cold and warm at 1x on the `BancOuverture-1` seed, reading
+`salon>msgs`, `reopen>msgs`, the salon-open long tasks (the first should lose the ~175 ms of 40 rows,
+the reopen fall from ~330 ms), and the console: zero `Invalid keyframe` lines. **And on the iPhone 12
+(WebKit):** open a 200-message salon and fling upward IMMEDIATELY after the reveal, within the
+~200 ms of the widen; the fling must keep its momentum (a `scrollTop` write of a widen step can
+cancel it). If it stops dead, the step must also wait for the scroll to settle.
+
+**Next, by the profile of the reveal-first open** (`--scene pane --profile`, readable build): the
+mount itself, ~145 ms at x4 for a same-page reopen, is the template pass (~80 ms, of which the 20
+bubbles ~63, `MessageTextBody` the largest share inside them) and the mount's effects (~60 ms), whose
+bulk is two synchronous layout reads - `publishComposerHeight`'s first `offsetHeight` (~22 ms) and
+`observeThreadGrowth`'s first `threadReach` (~16 ms) - plus that observer's `MutationObserver` follow
+(~31 ms), which reads layout again after every flush of the entry.
+Moving those reads to a `ResizeObserver`'s first callback (after layout, as `watchClampOverflow` did
+in #2926) is the next candidate; it touches the thread's anchor mechanism, so it needs the
+media-frame bench beside this one. **Measured 2026-11-08 and refuted - see the next subsection.**
+
+### The mount's layout reads, moved and measured: the layout is paid anyway (2026-11-08)
+
+**What was tried** (a variant, built and benched, not shipped): `observeThreadGrowth` read nothing
+at setup nor in its `MutationObserver` while `entering` (its baseline marked stale, re-seeded in the
+observer's next callback, the scroller re-observed to guarantee one), and `publishComposerHeight`
+published its first value from its `ResizeObserver`'s first callback instead of the mount.
+
+**The instrument gained what the CPU profile lacks:** `run.mjs` now prints the engine's own
+counters per open (`Performance.getMetrics`: layouts and style recalculations, and their time,
+whoever triggered them) and counts every window `error` event as an engine warning (a
+`ResizeObserver` loop error is one, and neither `console.*` nor the `Log` domain reports it). A CPU
+profile books a forced layout to the JavaScript that read: remove that read and the same layout is
+booked to the NEXT reader - the composer's textarea sizing, the chat chrome's `--chat-header-height`
+publish, and the entry fill's own measure (`fillViewportThenPin`), which must read. The "~60 ms of
+effects" of the profile above is the pane's one necessary layout and style pass, attributed to
+whoever read first.
+
+**Measured** (medians, this workstation, variant vs `origin/main` interleaved run by run; 9 runs per
+arm at CPU x4, 7 at x1; ms from the gesture):
+
+| scene, CPU | open | gesture task | reveal | layouts (ms) | style recalcs (ms) | rows at reveal | warnings |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| pane, x4 | first | 278 -> 269 | 291 -> 283 | 10 (106) -> 10 (105) | 10 (33) -> 10 (32) | 20 -> 20 | 0 -> 0 |
+| pane, x4 | reopen | 69 -> 60 | 78 -> 69 | 9 (11) -> 9 (11) | 9 (28) -> 9 (28) | 20 -> 20 | 0 -> 0 |
+| hub, x4 | first | 201 -> 192 | 206 -> 196 | 13 (130) -> 13 (128) | 13 (42) -> 13 (41) | 20 -> 20 | 0 -> 0 |
+| hub, x4 | reopen | 82 -> 79 | 84 -> 80 | 12 (15) -> 12 (16) | 12 (30) -> 12 (31) | 20 -> 20 | 0 -> 0 |
+| pane, x1 | first | 53 -> 51 | 56 -> 54 | 11 (20) -> 10 (19) | 11 (6) -> 10 (6) | 20 -> 20 | 0 -> 0 |
+| pane, x1 | reopen | 11 -> 10 | 13 -> 14 | 9 (2) -> 9 (2) | 9 (5) -> 9 (5) | 20 -> 20 | 0 -> 0 |
+| hub, x1 | first | 37 -> 36 | 38 -> 36 | 13 (24) -> 13 (23) | 13 (7) -> 13 (7) | 20 -> 20 | 0 -> 0 |
+| hub, x1 | reopen | 15 -> 15 | 15 -> 16 | 12 (3) -> 12 (3) | 12 (5) -> 12 (6) | 20 -> 20 | 0 -> 0 |
+
+**Verdict: no layout and no style recalculation was removed, on any row.** The thread observer's
+half alone moved nothing (a 9-run pane x4 pass: reopen gesture 68 vs 66 ms); the few milliseconds
+of the table are the composer's half, and a ceiling run that dropped BOTH root custom-property
+writes of the mount (`--chat-composer-height`, `--chat-chrome-bottom`) bought one layout and ~8 ms
+of style at x4 (pane reopen 68 -> 62 ms) - the most this lead can be worth. No `ResizeObserver`
+loop error either way: the composer's first write lands in the step that also observes the
+composer band for the first time, a node shallower than the scroller, so the scroller's resize is
+still deliverable in that step.
+
+**Why neither half shipped.**
+- **The composer's first publish stays in the mount: it is an INPUT of the entry fill.**
+  `fillViewportThenPin` reads the scroller's `padding-bottom`, which IS the published height. Read
+  before the publish it is the stylesheet's fallback (`6rem` or `7.5rem` + inset, against 64 px
+  measured on the bench), so the fill believes the content is 30-60 px taller than it will be,
+  stops short, and the reveal can land under `OLDER_TRIGGER_PX` - the one 140-group
+  `loadOlderGroups` task on the reveal that #2914 removed, on exactly the one-line thread of the
+  phone seed. A few ms of desktop gesture do not pay for that.
+- **The thread observer's reads are where the layout is paid, not extra layouts.** Removing them
+  hands the same layout to the fill's measure. Its `MutationObserver` judgement outside an entry
+  must stay synchronous anyway: a prepend (`loadOlderGroups`, a widen step) restores `scrollTop` by
+  absolute assignment after its own `await tick()` in the same task, so a judgement deferred to the
+  layout step always runs after that restore and adds the prepend's height a second time.
+
+**Where the mount's time is, then:** the template pass (Svelte creating the rows, `MessageBubble`
+and `MessageTextBody` first), and the style recalculations that each write of a measured value
+back into a ROOT custom property triggers for the whole document. A next step, if any, is the
+second: publish those values on the nearest element that holds every consumer instead of the
+root - the consumers of each must be enumerated first. **Owed:** nothing on the phones for this
+step (nothing in the app changed). The media-frame bench the paragraph above asks for is not in the
+repository (only its readings are, [media-frame](media-frame.md)); the anchor did not change, so
+none was owed.
+
+### The budget reading on `1.6.8-alpha.1`, 2026-11-08: the reopen halved, the first open did not move
+
+**Bench.** Mi 9T, the dev pre-release `1.6.8-alpha.1 (100600801)`, sideloaded; it carries the two
+cuts of 2026-11-07 (#3117: the reveal paints 20 rows, `flipShown`) and the Feed-card cuts of the tab
+tap. Same dev estate, rig account, `BancOuverture-1` seed and protocol as the `1.6.3-alpha.2`
+reading; no network shim, CPU 1x. Evidence: `<harness-dir>/a1-bench/co-168a1/` (`runs.ndjson`).
+
+| condition | build | n | tap>rail+salons | salon>pane | salon>msgs | switch>salons | reopen>msgs |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| cold, Wi-Fi, 1x | `1.6.3-alpha.2` | 4 | 529 / 669 | 414 / 455 | 918 / 966 | 174 / 206 | 330 / 365 |
+| cold, Wi-Fi, 1x | `1.6.8-alpha.1` | 6 | **452** / 806 | 601 / 616 | 1041 / 1090 | 154 / 165 | 314 / 335 |
+| warm, Wi-Fi, 1x | `1.6.8-alpha.1` | 3 | 284 / 343 | 267 / 317 | 317 / 605 | 170 / 205 | 330 / 352 |
+
+(median / worst.) `click>` columns, cold: rail 314, salon msgs 958, reopen msgs 229; warm: rail 168,
+salon msgs 230, reopen msgs 241. Long tasks, cold median: hub 172, salon open 464 (was 537), cached
+reopen **168 (was 332)**; warm: 111, 165, 172. Probe ms, cold: 4.3 / 9.8 / 10.4. 35-38 API calls,
+224 kB, one IPC call per cold run. **`Invalid keyframe` lines: 0 on all nine runs** (about 480 a
+run before `flipShown`).
+
+**Verdict.** The cached reopen's long task halved, as the desktop bench predicted, and the console
+storm is gone. The first open did not follow: cold `salon>pane` reads 601 against 414 and
+`salon>msgs` 1041 against 918, beyond the spread of these runs, while the salon-open long task fell
+(537 -> 464). So this build spends the first open's time OUTSIDE its longest task, or before the pane
+is drawn. **Owed next:** a `--chain` / `--profile-salon` run of the cold first open on this build,
+to name where the ~190 ms before the pane went, before any further change to the mount. The 200 ms
+budget is still met on no row.
+
+**And on the iPhone 12:** a fling started at the earliest moment after the reveal, while the widen
+may still be stepping, kept its momentum 3 times out of 3 (plus one at +150 ms) and carried a
+192-message salon to its top, so the widen's `scrollTop` writes do not cancel a fling there.
+
+### Per-bubble and per-day work, cut (2026-11-08)
+
+**Method.** `frontend/bench/salon-mount/` on a readable build (`BENCH_READABLE=1 ... --profile`),
+hub scene, CPU x4, read with `profile-summary.mjs`: the inclusive time per function across the open
+(the reveal's 20 bubbles and the widen's 40). Nothing on the phone: the cold first open's profile the
+section above asks for still needs the Mi 9T.
+
+**What the profile named, before** (one open of 60 bubbles, x4, inclusive ms; a profiled run is
+slower than a bare one, so this is the SHAPE):
+
+| cost | first open | reopen | what it is |
+| --- | --- | --- | --- |
+| `MessageBubble`, all of it | 212 | 222 | the bubbles |
+| `isEmojiOnlyText` | 33 | 17 | a NEW `Intl.Segmenter` per bubble, and the whole text split before counting, to decide the jumbomoji |
+| `calendarDay` / `formatDayLabel` | 18 | 2 | three `Intl.DateTimeFormat` built per day separator, on every regrouping of the WHOLE conversation (`groupMessages` is not windowed) |
+| `MessageMediaRenderer` | 1 | 10 | mounted under every TEXT bubble, where it draws nothing |
+| the four closed overlays (`Modal`, `MessageMobileActions`, `MessageInfoTooltip`, `MessageEmojiPicker`) | 13 | 22 | per bubble, not moved (below) |
+
+**What changed.**
+- `emoji.ts`: ONE segmenter for the page and a lazy `graphemes` (shared with `emojiSvg.ts`, which had
+  its own copy); `isEmojiOnlyText` stops at the first grapheme that is not an emoji, or at the one
+  past `maxCount`. An ordinary message is answered after its first letter, whatever its length.
+  Pinned: one segmenter for every call, a 50 000-character message answered.
+- `dates.ts`: `calendarDay` answers the browser's own zone from the `Date` getters (no `Intl`; a
+  named zone still goes through `Intl`), and `dayLabeler` names many days against one clock with one
+  formatter per label shape. `groupMessages` makes one labeler per pass. `formatDayLabel` is a
+  one-day labeler, so its tests pin both.
+- `MessageBubble`: the media renderer is mounted only for a bubble that has an attachment.
+- The bench: `--days N` spreads the salon over N days (a separator each), the `mixed` shape's senders
+  are seeded in the directory (an unknown one was looked up on the bench server, a 404, a refresh
+  attempt and an engine warning per open), a failed load's warning names its URL, and a temp
+  profile Windows keeps locked no longer throws away the summary.
+
+**Measured** (medians, interleaved run by run against `origin/main` at `519a5693b`, this
+workstation under a heavy foreign load - the absolute milliseconds are 2-3x the 2026-11-07 tables
+and swing by 100 ms run to run, so read the arms against each other, never against those tables):
+
+| scene, shape, CPU | runs | open | gesture task, base -> this | reveal, base -> this |
+| --- | --- | --- | --- | --- |
+| pane, 200 rows over 200 days, mixed senders, x4 | 9 | first | 751 -> **495** | 831 -> **556** |
+| same | 9 | reopen | 347 -> **125** | 377 -> **161** |
+| hub, 200 rows in one day, own, x4 | 9 | first | 425 -> 350 | 433 -> 363 |
+| same | 9 | reopen | 151 -> 164 | 157 -> 169 |
+| hub, one day, own, x1 | 7 | first / reopen | 58 / 25 -> 55 / 23 | 60 / 25 -> 57 / 24 |
+
+Layouts and style recalculations are unchanged on every row (same counts; this cut is script only),
+rows at the reveal unchanged (20, or 10 groups plus their separators on the 200-day salon), engine
+warnings 0 on both arms once the bench's own 404 was removed.
+
+**How to read it.** A salon read for months - one separator a day - paid ~220 ms at x4 per
+REGROUPING for its day names alone, on every open and every message that arrives (`groupMessages`
+runs over the whole conversation, not the render window): that is the size-dependent cost, and it is
+gone. On the bench seed's shape (one day, one-line ASCII messages) the gain is the per-bubble part,
+~0.3 ms a bubble at x4 in the profile, inside the noise of a loaded machine.
+
+**Not moved, and why.** The four overlays every bubble mounts closed (~0.3 ms a bubble at x4) keep
+their place: they play an intro (`Modal`'s `in:fly`, the sheet's `transition:fly`) that a local
+transition plays only when its OWN block is created, so mounting them on demand would drop the
+animation of the first open of each. Mounting them on the bubble's first `pointerdown`/`focusin`,
+before any of them can open, is the candidate; it changes when `bindHistoryOverlay` registers and
+needs its own review.
+
+**Read on the Mi 9T, `v1.6.9-alpha.1` (2026-11-09).** The release APK sideloaded, dev, `community-open.mjs --community "nse banc communaute" --runs 5 --cpu 1 --net none`, the bench account on the vault path; the community is the dev bench one of the test accounts (one salon `general`; not the `BancOuverture-1` seed, so it is NOT the table above's shape and the two are not compared). Medians over five runs, worst in brackets, ms:
+
+| milestone | cold | warm (HOME, 10 s, resume) |
+| --- | --- | --- |
+| tap Communautes to the rail | 434 (723) | 332 (449) |
+| tap to the target community's salons | 782 (1095) | 545 (818) |
+| tap a salon to the pane (composer) | 368 (519) | 291 (328) |
+| tap a salon to its first bubble | **891** (1072) | **299** (558) |
+| reopen of the same salon to its bubbles | 359 (377) | 370 (383) |
+| other community, its first salon, to the pane | 248 (603) | 293 (645) |
+| long tasks over the open | 627 (755) | 246 (573) |
+| longest main-thread gap | 285 (325) | 199 (298) |
+| API calls / kB | 49 / 131 | 5 / 1 |
+
+Cold: `attach` 412 and `nav` 1459. The warm `attach`/`nav` columns (240 s) are not a reading (the tool's attach on a resume waited minutes; cause not investigated). **What this says:** the salon-open milestone is 891 ms cold and 299 ms warm at 1x, still above the 200 ms budget cold (the cold run also makes 49 API calls and holds 627 ms of long tasks over the whole open); the cached reopen is 359-370 ms in both starts, so the per-bubble cut did not move it on a salon of this size, as the note above predicted for a one-day seed. A salon spanning weeks, where the cut was expected to show (`reopen>msgs`, the cached-reopen long task), is still owed: no bench seed holds one. No before/after on the phone: the previous build was not run in the same session.
+
+### The composer's idle warm-up ran a 60 ms task inside every first open, and what is next (2026-11-09)
+
+**What was found.** The bench had hidden it: the page `fetch`ed `/emoji-data-fr.json` against a
+server that did not serve `static/`, so the composer's `warmEmojiPicker` (2026-11-08, so after the
+last phone reading above) failed at its fetch and cost nothing. With the file served, a FIRST open
+shows one more long task, 51-72 ms at x4, 350-550 ms after the gesture and before the widen's steps:
+the warm-up's `buildCatalog` over the ~1900 entries of the dataset. 85 % of it (7 of 8-10 ms on
+desktop at x1; `sort` 0.1, the picture check ~1) was `searchTokens` folding every entry's words
+(NFD, ligatures, a split) for a search box the member has not opened. It runs once per process, at
+the composer's first paint, which is exactly the window the first open is measured over and the
+widen is stepping in.
+
+**What changed.**
+- `EmojiEntry.words` is computed on first read, once per entry (`emojiCatalog.ts`, a memoised
+  getter). Only `EmojiGrid`'s search reads it, so the catalogue the warm-up builds folds nothing, and
+  a typed query folds the entries it ranks, once. Pinned by `emojiCatalog.lazyWords.test.ts`, which
+  counts reads of the one dataset field only the folding touches (0 after the build, 1 after a read,
+  the same array on a second read).
+- `isEmojiOnlyText` answers a text without a pictograph with its regex alone: no segmenter built on
+  the first bubble, no grapheme iterator per row after it. Same answer (a cluster with no
+  pictograph code point cannot match, and a text with none has no such cluster); pinned by "builds no
+  segmenter and pulls nothing for a text without a pictograph" in `emoji.test.ts`.
+
+**Measured** (`frontend/bench/salon-mount`, pane scene, 200 one-line own rows, x4, 9 runs
+interleaved against `origin/main`; a desktop V8 - a SHAPE, not the Mi 9T):
+
+| open | gesture task, base -> this | reveal | long tasks after the gesture, base -> this |
+| --- | --- | --- | --- |
+| first | 288 -> **279** | 303 -> **294** | 1 task, **70 ms** -> **0** (the median of nine; one run of nine kept a 50 ms task) |
+| reopen | 70 -> 66 | 80 -> 75 | 0 -> 0 |
+
+Layouts and style recalculations are unchanged (111 ms / 36 ms on the first open, both arms). The
+gain on the phone is the same task, which the Mi 9T runs at its own speed (4-6x slower than this
+workstation's x1 for script), so a task in the 60-150 ms range that no longer sits in the first
+open's window. **Owed on the Mi 9T, with the next pre-release:** `community-open.mjs`, cold, long
+tasks inside the salon open and `salon>msgs`; the first-open `salon>pane` that read 601 against 414
+on `1.6.8-alpha.1` pre-dates the warm-up and is still unexplained.
+
+**The bench now serves `static/`** for a root-relative fetch of the app's own (`/emoji-data-*.json`)
+and prints the long tasks AFTER the gesture next to the longest one. The 72 engine warnings of a
+first open are the emoji SVGs the bench does not serve (`/emoji/<hash>/*.svg`, 404): a bench gap, not
+an app defect, and the same on both arms.
+
+**Where the rest of a first open's cost is (profile of the same scene, x4; nothing here is fixed).**
+- The first open's LAYOUT is 111 ms of its 279, against 12 ms for the reopen of the same page: the
+  second open hits the engine's text-shaping caches for the same strings. It is paid by whoever
+  reads layout first (`pullToRefresh`'s `scrollTop` read in `syncMoveBinding`, then
+  `publishComposerHeight`): this is the finding of 2026-11-08 again, and moving the read moves the
+  cost. Fewer or shorter text runs in the first frame is the only lever left on it.
+- The 20 bubbles are ~140 of the 290 ms inclusive, flat: no function above 9 ms self (Svelte's
+  `append`, `update_reaction`, then `alternate_3`/`alternate_2` of `MessageBubble`).
+- `Icon` (`@lucide/svelte`) is ~30 ms inclusive on the hub's first open: each icon spreads its
+  attributes through Svelte's `get_attributes`/`get_setters`. A bubble or row icon drawn as a plain
+  inline SVG is the candidate, to be counted (how many icons does a first open mount?) before it is
+  built.
+- Ordered next steps: (1) the four closed overlays per bubble, mounted on first intent (above);
+  (2) the `Icon` count and cost; (3) the Mi 9T first-open reading that names the 190 ms before the
+  pane on `1.6.8-alpha.1`, which no desktop bench can.
+
 ## 7. Not measured, and owed
 
 - **A CPU profile of the warm resume at 4x** (blocker 5's 2 s before the tap is handled):
@@ -607,6 +1095,46 @@ needs a build carrying this change, so the next pre-release.
   --pid <canari pid>` during the gestures and, if the store build exposes no inspectable WebView,
   the exported log alone (its `[A] refresh✓`, `[INIT] MLS ready`, `[WORKSPACE-LOAD]` and `[API]`
   lines carry the chain of section 3). Nothing is installed, driven or signed in.
+
+### The tab tap's boot work, named: Feed cards, not boot (2026-11-02)
+
+A `--profile` of a cold tab tap (1.6.0, Mi 9T at 1x CPU, three runs, read with
+`tools/cold-start/profile-summary.mjs --sources` against the dumped chunks) puts the ~155 ms of
+"boot work" next to the tap in two groups.
+
+- **On the tap's critical path, and moved:** the Feed's `PostCard`s, mounted by the tap itself.
+  Emoji segmentation (`splitEmojiText` through `Intl.Segmenter`) about 52 ms, the first
+  `scrollHeight` read of `watchClampOverflow` (a forced style + layout per card, interleaved with
+  the next card's writes) about 43 ms, markdown lexing about 23 ms.
+- **Overlapping the tap only because the bench taps early, and NOT moved:** MLS
+  `syncGroupCachesFromNative` 24 ms, `apiFetch` + plugin-http about 53 ms, the gateway 10 ms,
+  `reconcileSendRatchets` about 6 ms. They end with the vault unlock; a person's first tap comes
+  later. Moving them later would delay `whenMlsReady()`.
+
+What changed: `splitEmojiText` returns at once for an all-ASCII string (the shape that cannot hold
+an emoji picture; a test runs every code point 0..127 and CRLF through `emojiSvgSrc` to pin it),
+and `watchClampOverflow` takes NO read inside the mount: the ResizeObserver's first callback is
+the first read. The browser delivers it for every newly observed box in the rendering step that
+lays it out, after the rAF callbacks and before paint, so layout is already clean (the
+`scrollHeight` read forces nothing, no forced layout per card) and a card mounted at any point of
+the frame, even inside a rAF callback, is answered before it paints (no "Voir plus" arriving a
+frame late and shifting the page by ~20 px). No timer, no batch. A first version batched the read
+on `requestAnimationFrame`; review showed it shifts a card mounted from a rAF callback, so it was
+dropped. Without `ResizeObserver` (server rendering) nothing is watched.
+
+**Ordering kept, untouched:** F2 (the key-group step waits on `whenMlsReady()`) and F3
+(`loadChannelHistory` fetches at once, decodes only after `whenSalonEntryDecided`). No MLS or API
+call moved, so the existing F2/F3 tests still pin them. The observer-first read is pinned by
+`clampOverflow.test.ts` (nothing read while mounting, answered on the first callback, teardown
+disconnects) on a stubbed ResizeObserver (`src/test/resizeObserverStub.ts`).
+
+**The instrument:** each frame the harness runs a predicate per watcher; its cost used to land in
+the booked number. `community-open.mjs` now times that loop and the report books it as
+`probe ms, hub open / salon open / cached reopen`, separate from the open's own time. **The
+`tap>` and `click>` columns still INCLUDE that cost** (it is reported beside them, not subtracted);
+read the probe columns to correct a number.
+
+Owed: the Mi 9T before/after, after the next pre-release.
 
 ## 8. Evidence
 

@@ -29,8 +29,8 @@ vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: async (id: string) => `User ${id}`,
 }));
 vi.mock('$lib/utils/userAvatarCache', () => ({
-  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
-  releaseUserAvatarDisplayUrl: () => {},
+  resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplay: () => {},
 }));
 
 const mounted: (() => void)[] = [];
@@ -60,6 +60,7 @@ function mountSection(
   comments: PostComment[],
   extra: { pending?: string[]; focus?: string; onReport?: (id: string) => void } = {}
 ) {
+  const onCommentTextChange = vi.fn(async (_text: string) => {});
   const handlers = {
     onDeleteComment: vi.fn(async () => {}),
     onEditComment: vi.fn(async () => {}),
@@ -79,14 +80,14 @@ function mountSection(
       pendingCommentIds: new Set(extra.pending ?? []),
       focusCommentId: extra.focus,
       onReport: extra.onReport,
-      onCommentTextChange: vi.fn(async () => {}),
+      onCommentTextChange,
       onAddComment: vi.fn(async () => 'sent' as const),
       ...handlers,
     },
   });
   mounted.push(() => void unmount(app));
   flushSync();
-  return { target, ...handlers };
+  return { target, onCommentTextChange, ...handlers };
 }
 
 const button = (target: HTMLElement, label: string) =>
@@ -286,5 +287,38 @@ describe('the like is ONE heart, at the right end of the row under the bubble', 
   it('is withheld on a comment the server has not acknowledged yet', () => {
     const { target } = mountSection([comment('pending-1')], { pending: ['pending-1'] });
     expect(target.querySelector('#comment-pending-1 button[aria-pressed]')).toBeNull();
+  });
+});
+
+describe('a reply to a reply starts with a mention TOKEN, never the typed name', () => {
+  const ID = 'd82cd2268993451edb547bdd7ff278447f6619f67d0d73a520897e54f0714df2';
+
+  async function replyTo(comments: PostComment[], id: string) {
+    const view = mountSection(comments);
+    const row = view.target.querySelector<HTMLElement>(`#comment-${id}`)!;
+    [...row.querySelectorAll<HTMLElement>('button')]
+      .find((b) => b.textContent?.trim() === m.post_reply_label())!
+      .click();
+    await settle();
+    return view.onCommentTextChange;
+  }
+
+  it('hands the box the token `@[id] `, not the raw "@First Last" text', async () => {
+    const onChange = await replyTo(
+      [
+        comment('c1'),
+        comment('r1', { parentId: 'c1', userId: ID, firstName: 'Ada', lastName: 'Test' }),
+      ],
+      'r1'
+    );
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(`@[${ID}] `);
+  });
+
+  it('pre-fills nothing for an anonymous reply: its author is never named', async () => {
+    const onChange = await replyTo(
+      [comment('c1'), comment('r1', { parentId: 'c1', userId: ID, anonymous: true })],
+      'r1'
+    );
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

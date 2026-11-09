@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { m } from '$lib/paraglide/messages';
   import {
@@ -176,21 +177,12 @@
           />
         </div>
         <div class="flex justify-end gap-2">
-          <button
-            type="button"
-            onclick={onClose}
-            class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
-          >
+          <Button variant="secondary" onclick={onClose}>
             {m.common_cancel_button()}
-          </button>
-          <button
-            type="submit"
-            disabled={!canContinue}
-            data-testid="refund-continue"
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-          >
+          </Button>
+          <Button type="submit" disabled={!canContinue} data-testid="refund-continue">
             {m.asso_refund_continue()}
-          </button>
+          </Button>
         </div>
       </form>
     {:else if step === 'confirm' || step === 'sending'}
@@ -202,25 +194,19 @@
       </p>
       <p class="text-text-muted text-xs">{m.asso_refund_lydia_notice()}</p>
       <div class="flex justify-end gap-2">
-        <button
-          type="button"
-          disabled={step === 'sending'}
-          onclick={() => (step = 'form')}
-          class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
-        >
+        <Button variant="secondary" disabled={step === 'sending'} onclick={() => (step = 'form')}>
           {m.asso_refund_back()}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="danger"
           disabled={step === 'sending'}
           onclick={send}
           data-testid="refund-send"
-          class="bg-red-err rounded-xl px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
         >
           {step === 'sending'
             ? m.asso_refund_sending()
             : m.asso_refund_confirm_button({ amount: formatAmount(amountCents) })}
-        </button>
+        </Button>
       </div>
     {:else if outcome}
       <p
@@ -236,13 +222,9 @@
         {outcome.text}
       </p>
       <div class="flex justify-end">
-        <button
-          type="button"
-          onclick={onClose}
-          class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
-        >
+        <Button variant="secondary" onclick={onClose}>
           {m.asso_refund_close()}
-        </button>
+        </Button>
       </div>
     {/if}
   </div>

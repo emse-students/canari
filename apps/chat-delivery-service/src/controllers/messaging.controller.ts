@@ -25,10 +25,13 @@ import {
   ValidateCommitBody,
 } from '../services/messaging.service';
 import {
+  canonicalUserId,
   sanitizeDevicePairLogValue,
   sanitizeEpoch,
   sanitizeLeafLogValue,
   sanitizeLogValue,
+  sanitizeOptionalQueryValue,
+  sanitizeQueryValue,
 } from '../utils/sanitize';
 
 /**
@@ -130,6 +133,55 @@ export class MessagingController {
   }
 
   /**
+   * When the server accepted the commit built on `baseEpoch` (`mls_commit_log.createdAt`), for a
+   * line a device derives from that commit - dated by the commit, never by when the device merged
+   * it. `{ acceptedAt: null }` when the log holds no such row. Membership-gated in the service.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/commits/:groupId/accepted-at')
+  async getCommitAcceptedAt(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') deviceId: string | undefined,
+    @Param('groupId') groupId: string,
+    @Query('baseEpoch') baseEpochRaw?: string
+  ) {
+    // Who is asking before what: an unauthenticated request is refused as such, whatever it asked.
+    if (!authUserId) {
+      throw new BadRequestException('missing x-user-id');
+    }
+    const baseEpoch = sanitizeEpoch(baseEpochRaw, 'baseEpoch');
+    return this.messagingService.getCommitAcceptedAt(
+      groupId,
+      baseEpoch,
+      authUserId,
+      sanitizeOptionalQueryValue(deviceId, 'x-canari-device')
+    );
+  }
+
+  /**
+   * When the REQUESTER'S OWN seat in a group was removed (`{ removedAt }`, `null` when nothing
+   * removed it) - the date of the "you were removed" line a device writes when it learns of its
+   * removal from an evidence that carries no time. Reads only the requester's own rows, so it is
+   * not membership-gated: a removed device is exactly who asks.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/groups/:groupId/own-removal')
+  async getOwnRemovalAt(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Headers('x-canari-device') deviceId: string | undefined,
+    @Param('groupId') groupId: string
+  ) {
+    if (!authUserId) {
+      throw new BadRequestException('missing x-user-id');
+    }
+    return this.messagingService.getOwnRemovalAt(
+      groupId,
+      authUserId,
+      sanitizeOptionalQueryValue(deviceId, 'x-canari-device')
+    );
+  }
+
+  /**
    * External-join base (Phase 4): the latest GroupInfo for a group, so an authorized member lacking
    * MLS state can build an external commit to (re)join. Membership-gated in the service.
    */
@@ -137,16 +189,23 @@ export class MessagingController {
   @Get('mls/group-info/:groupId')
   async getGroupInfo(
     @Headers('x-user-id') authUserId: string | undefined,
-    @Param('groupId') groupId: string
+    @Param('groupId') groupId: string,
+    @Query('deviceId') deviceIdRaw?: string
   ) {
     if (!authUserId) {
       throw new BadRequestException('missing x-user-id');
     }
+    // The asking device's seat travels WITH the base when the device names itself (`readDeviceSeat`).
+    const deviceId = sanitizeOptionalQueryValue(deviceIdRaw, 'deviceId');
     // "Nothing stored" is answered as JSON, never as a bare `null`: Nest sends a handler's `null` as
     // an EMPTY body with no content type, which the client cannot tell from a captive portal's empty
     // 2xx - so it read "no base" as an unparseable answer. `{ groupInfo: null }` is what every client,
     // old or new, already reads as "no base".
-    return (await this.messagingService.getGroupInfo(groupId, authUserId)) ?? { groupInfo: null };
+    return (
+      (await this.messagingService.getGroupInfo(groupId, authUserId, deviceId)) ?? {
+        groupInfo: null,
+      }
+    );
   }
 
   /**
@@ -197,9 +256,19 @@ export class MessagingController {
   async notifyWelcomeRequest(
     @Headers('x-user-id') authUserId: string | undefined,
     @Body()
-    body: { groupId: string; requesterUserId: string; requesterDeviceId: string }
+    body: {
+      groupId: string;
+      requesterUserId: string;
+      requesterDeviceId: string;
+      selfJoinIfNobody?: boolean;
+    }
   ) {
-    return this.messagingService.notifyWelcomeRequest(authUserId, body);
+    return this.messagingService.notifyWelcomeRequest(authUserId, {
+      groupId: body.groupId,
+      requesterUserId: body.requesterUserId,
+      requesterDeviceId: body.requesterDeviceId,
+      selfJoinIfNobody: body.selfJoinIfNobody === true,
+    });
   }
 
   /**
@@ -425,15 +494,9 @@ export class MessagingController {
     @Body()
     body: { groups?: { groupId: string; after?: string; limit?: number; until?: string }[] },
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
     @Headers('x-canari-device') headerDeviceId?: string
   ) {
-    return this.messagingService.getHistoryBatch(
-      body?.groups ?? [],
-      headerUserId,
-      headerGlobalAdmin,
-      headerDeviceId
-    );
+    return this.messagingService.getHistoryBatch(body?.groups ?? [], headerUserId, headerDeviceId);
   }
 
   /**
@@ -452,7 +515,6 @@ export class MessagingController {
     @Query('limit') limitRaw?: string,
     @Query('until') until?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
     /**
      * The client's own device id, self-asserted and DIAGNOSTIC ONLY - nothing branches on it, and
      * it cannot refuse the request. It is what lets a burst of walks over one group be attributed
@@ -465,7 +527,6 @@ export class MessagingController {
       groupId,
       after,
       headerUserId,
-      headerGlobalAdmin,
       Number.isFinite(limit) ? limit : undefined,
       until,
       headerDeviceId
@@ -482,7 +543,6 @@ export class MessagingController {
     @Query('limit') limitRaw?: string,
     @Query('after') after?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
     // What the fetching session declares, as on its socket (history-answer-addressing, rule 6).
     @Query('caps') caps?: string
   ): Promise<QueuedMessage[]> {
@@ -491,7 +551,6 @@ export class MessagingController {
       userId,
       deviceId,
       headerUserId,
-      headerGlobalAdmin,
       Number.isFinite(limit) ? limit : 500,
       after,
       caps
@@ -502,10 +561,9 @@ export class MessagingController {
   @Post('mls/messages/ack')
   async acknowledgeMessages(
     @Body() body: AckMessagesBody,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
-    return this.messagingService.acknowledgeMessages(body, headerUserId, headerGlobalAdmin);
+    return this.messagingService.acknowledgeMessages(body, headerUserId);
   }
 
   /** Brings forward the deferred push of rows an inactive iPhone left queued - see the service. */
@@ -545,6 +603,11 @@ export class MessagingController {
    *
    * Guard: no notification if the reactor is the message author (cross-device own-action - the
    * user already knows what they did).
+   *
+   * ONLY A MEMBER OF THE CONVERSATION MAY RING ITS AUTHOR (re-review of #2358): the caller must be
+   * an admitted member of the group, or a reader of the salon (`channel_<id>`), checked before
+   * anything is pushed - {@link MessagingService.assertCallerReactsIn}. A stranger, a removed member
+   * or an unknown id is the 403 `NOT_A_MEMBER`, a seat awaiting admission the 409.
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/notify-reaction')
@@ -561,6 +624,8 @@ export class MessagingController {
     }
   ): Promise<{ sent: number; failed: number }> {
     if (!callerId) throw new BadRequestException('x-user-id header required');
+    const groupId = sanitizeQueryValue(body?.groupId, 'groupId');
+    await this.messagingService.assertCallerReactsIn(groupId, canonicalUserId(callerId));
 
     // Never notify if actor == message author (cross-device own-reaction)
     if (!body.targetSenderId || callerId === body.targetSenderId) {
@@ -569,7 +634,6 @@ export class MessagingController {
 
     const emoji = String(body.emoji ?? '').slice(0, 20);
     const actor = String(body.actorName ?? callerId).slice(0, 100);
-    const groupId = String(body.groupId ?? '');
 
     // Legacy body only - carries the emoji and the actor, never the message. Clients that
     // understand `reaction` compose their own from `strings.xml` / `Localizable.strings`.

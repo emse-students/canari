@@ -6,7 +6,15 @@
   import { goto } from '$app/navigation';
   import { fetchUserProfile, type UserProfile, getSavedUserId } from '$lib/stores/user';
   import { PROFILE_SELF_SEGMENT } from '$lib/profile/profileSections';
-  import { askToFollow, getFollowStatus, leaveFollow, type FollowStatus } from '$lib/follows/api';
+  import { getFollowStatus, type FollowStatus } from '$lib/follows/api';
+  import {
+    askPerson,
+    followEpoch,
+    leavePerson,
+    recordPersonStatus,
+    withdrawPerson,
+  } from '$lib/follows/followState.svelte';
+  import AccountBell from '$lib/components/follows/AccountBell.svelte';
   import {
     describeFollowRefusal,
     followActionOf,
@@ -40,6 +48,7 @@
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
   import ProfileMinesweeperBadge from '$lib/components/profile/ProfileMinesweeperBadge.svelte';
+  import ProfileBirthdayLine from '$lib/components/profile/ProfileBirthdayLine.svelte';
   import {
     fetchUserMemberships,
     fetchUserRoleHistory,
@@ -77,13 +86,21 @@
 
   /** Loads a profile and its extras, ignoring the result if a newer load has since started. */
   async function loadProfile(userId: string, token: number) {
+    const readAt = followEpoch();
     try {
       const [prof, status, blocks] = await Promise.all([
         fetchUserProfile(userId),
-        getFollowStatus(userId).catch((e: unknown) => {
-          Log.d('profile.loadFollowStatus failed', e);
-          return null;
-        }),
+        getFollowStatus(userId)
+          .then((read) => {
+            // The ledger learns what this page read (a chip elsewhere agrees with it) - unless the
+            // reader changed while it was out.
+            recordPersonStatus(userId, read, readAt);
+            return read;
+          })
+          .catch((e: unknown) => {
+            Log.d('profile.loadFollowStatus failed', e);
+            return null;
+          }),
         // A blocked person is hidden from search but their profile stays reachable - by url, or
         // from the blocked list itself - so this page has to know, or it would offer to block
         // somebody who already is.
@@ -168,8 +185,8 @@
 
   const displayFallbackName = $derived.by(() => {
     if (profile?.displayName) return profile.displayName;
-    if (profile?.id) return getUserDisplayNameSync(profile.id, 'Membre Canari');
-    return 'Membre Canari';
+    if (profile?.id) return getUserDisplayNameSync(profile.id, m.profile_public_default_name());
+    return m.profile_public_default_name();
   });
 
   function handleSendMessage() {
@@ -204,8 +221,10 @@
     actionMessage = '';
     Log.d('profile.handleFollowToggle', `${action} from ${was ?? 'none'}`);
     try {
-      if (action === 'ask') followStatus = await askToFollow(profile.id);
-      else await leaveFollow(profile.id);
+      if (action === 'ask') followStatus = await askPerson(profile.id);
+      // A withdraw answers where the pair stands NOW: a request accepted meanwhile stays a follow.
+      else if (action === 'withdraw') followStatus = await withdrawPerson(profile.id);
+      else await leavePerson(profile.id);
     } catch (err) {
       Log.d('profile.handleFollowToggle failed', err);
       followStatus = was;
@@ -321,6 +340,7 @@
           </h1>
           <ProfileMinesweeperBadge userId={profile.id} />
           <ProfileChips {profile} />
+          <ProfileBirthdayLine userId={profile.id} />
         </div>
 
         <!-- Actions -->
@@ -342,6 +362,13 @@
             {/if}
             {followLabel(followStatus)}
           </button>
+          <!--
+            THE BELL (engagement WP-3, L7): offered once the reader FOLLOWS this person (accepted) -
+            a bell on someone whose posts the reader is not told of would be a second, silent follow.
+          -->
+          {#if followStatus === 'accepted'}
+            <AccountBell kind="user" targetId={profile.id} />
+          {/if}
           <button
             onclick={handleSendMessage}
             class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95"

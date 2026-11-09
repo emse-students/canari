@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { wordingFor } from '$lib/associations/kindWording';
+import { m } from '$lib/paraglide/messages';
 import { formatDocumentTitle } from '$lib/seo/resolve';
 import { UpstreamUnavailableError, degradedHeaders } from '$lib/seo/upstream';
 
@@ -40,6 +41,27 @@ describe('the edit page head, resolved by the KIND of the entity', () => {
     const { meta } = await resolveServerSeo('/associations/ghost/edit');
     expect(meta.title).toBe(wordingFor('association').editTitle());
     expect(meta.noindex).toBe(true);
+  });
+});
+
+describe('an association page never shows its slug as a title', () => {
+  beforeEach(() => fetchJson.mockReset());
+
+  it.each(['/associations/bda', '/associations/bda/calendar'])(
+    'the baseline of %s (unknown slug) carries a neutral word, not the slug',
+    async (path) => {
+      fetchJson.mockResolvedValue(null);
+      const { meta } = await resolveServerSeo(path);
+      expect(meta.title).toBe(m.seo_association_title());
+      expect(meta.title).not.toMatch(/bda/i);
+      expect(meta.description).not.toMatch(/bda/i);
+    }
+  );
+
+  it('the real name still replaces the baseline when the service answers', async () => {
+    fetchJson.mockResolvedValue({ name: 'Bureau des Arts' });
+    const { meta } = await resolveServerSeo('/associations/bda-named');
+    expect(meta.title).toContain('Bureau des Arts');
   });
 });
 
@@ -103,7 +125,7 @@ describe('a transport failure of the enrichment is not a refusal, and is never r
     fetchJson.mockRejectedValueOnce(new UpstreamUnavailableError('http://social/x', 'timeout'));
     const first = await resolveServerSeo(path);
     expect(first.degraded).toBe(true);
-    expect(first.meta.title).toBe('Publication');
+    expect(first.meta.title).toBe(m.seo_post_title());
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('DEGRADED head'));
 
     // The next unfurler retry gets the real card: nothing was cached for the failure.
@@ -137,19 +159,26 @@ describe('a transport failure of the enrichment is not a refusal, and is never r
   });
 });
 
-describe('the agenda page is held to the same rule', () => {
+/**
+ * THE HEAD IS SERVED TO ANYBODY, SO IT SHOWS NO MORE THAN THE PUBLIC SHOWCASE (owner, 2026-11-02).
+ * A person's profile and the agenda's events are not on portail-etu.emse.fr, so their pages carry
+ * the generic head and ask no service anything (docs/wiki/anonymous-surface.md).
+ */
+describe('a page the showcase does not show is not described to a visitor', () => {
   beforeEach(() => fetchJson.mockReset());
 
-  it('a timeout of the agenda feed is degraded and not cached as an agenda with no events', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    fetchJson.mockRejectedValue(new UpstreamUnavailableError('http://social/feed', 'timeout'));
-    const first = await resolveServerSeo('/calendar');
-    expect(first.degraded).toBe(true);
-    expect(first.meta.jsonLd).toBeUndefined();
+  it("a person's profile names nobody: no service is asked", async () => {
+    fetchJson.mockResolvedValue({ displayName: 'Ada Lovelace', promo: 2027, formation: 'ICM' });
+    const { meta } = await resolveServerSeo('/profile/0123456789abcdef');
+    expect(fetchJson).not.toHaveBeenCalled();
+    expect(JSON.stringify(meta)).not.toContain('Ada');
+  });
 
-    fetchJson.mockResolvedValue([]);
-    const second = await resolveServerSeo('/calendar');
-    expect(second.degraded).toBe(false);
-    warn.mockRestore();
+  it('the agenda lists no event: no service is asked and no Event node is written', async () => {
+    fetchJson.mockResolvedValue([{ id: 'e1', title: 'Gala', startsAt: '2026-12-01T18:00:00Z' }]);
+    const { meta, degraded } = await resolveServerSeo('/calendar');
+    expect(fetchJson).not.toHaveBeenCalled();
+    expect(degraded).toBe(false);
+    expect(JSON.stringify(meta)).not.toContain('Gala');
   });
 });

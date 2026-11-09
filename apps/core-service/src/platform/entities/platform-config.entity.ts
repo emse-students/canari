@@ -50,6 +50,30 @@ export class PlatformConfig {
     default: 'off',
   })
   livesMode!: LivesMode;
+
+  /**
+   * What an MLS push tells Google and Apple (migration 018): today's payloads, or a content-free
+   * wake-up the device completes from this estate.
+   */
+  @Column({
+    name: 'push_mode',
+    type: 'varchar',
+    length: 16,
+    default: 'full',
+  })
+  pushMode!: PushMode;
+
+  /**
+   * Whether a client may skip the MLS checkpoint after a drain that only received application
+   * frames (migration 020, WP-CHECKPOINT-SKIP). Read by no service: published by `GET /api/version`.
+   */
+  @Column({
+    name: 'checkpoint_skip_mode',
+    type: 'varchar',
+    length: 16,
+    default: 'off',
+  })
+  checkpointSkipMode!: CheckpointSkipMode;
 }
 
 /**
@@ -74,3 +98,30 @@ export type LivesMode = 'off' | 'on';
 
 /** Every {@link LivesMode}, for the DTO's validation. */
 export const LIVES_MODES: readonly LivesMode[] = ['off', 'on'];
+
+/**
+ * What an MLS push carries. `full` is today's payload (conversation and sender ids, the names on a
+ * visible frame, the inline ciphertext); `wake` sends a device that declared it understands one only
+ * `type`, `queuedMessageId` and `silent`, and the device fetches the rest from this estate
+ * (docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md). Read by
+ * chat-delivery-service on every MLS push with a capable destination
+ * (`apps/chat-delivery-service/src/utils/push-mode.ts`, the same two values, held together by the
+ * column's CHECK constraint). Not published to clients: the push itself says which shape it is.
+ */
+export type PushMode = 'full' | 'wake';
+
+/** Every {@link PushMode}, for the DTO's validation. */
+export const PUSH_MODES: readonly PushMode[] = ['full', 'wake'];
+
+/**
+ * Whether an estate's clients may skip the full MLS checkpoint after a live drain that only received
+ * application frames. `off` is today's behaviour (every drain checkpoints); `on` lets a client leave
+ * that checkpoint to the next existing trigger until 100 receive generations are unsaved - the count
+ * is the client's (`frontend/src/lib/mls-client/receiveCheckpointSkip.ts`, the same two values, held
+ * together by the column's CHECK constraint). Published to clients by `GET /api/version`; no service
+ * reads it.
+ */
+export type CheckpointSkipMode = 'off' | 'on';
+
+/** Every {@link CheckpointSkipMode}, for the DTO's validation. */
+export const CHECKPOINT_SKIP_MODES: readonly CheckpointSkipMode[] = ['off', 'on'];

@@ -237,7 +237,7 @@ describe('a join waits on the PUBLISHED FACT, not on a round', () => {
     expect(warn.mock.calls.flat().join(' ')).toContain('HTTP 502');
   });
 
-  it('a failing round does not refuse a join while an OVERLAPPING round still runs', async () => {
+  it('a failing round does not refuse a join while a FRESH round queued behind it still runs', async () => {
     const ctx = makeCtx();
     ctx.server.answer = ABSENT;
     const older = controlledRound(ctx);
@@ -248,43 +248,23 @@ describe('a join waits on the PUBLISHED FACT, not on a round', () => {
       .mockImplementationOnce(newer.impl);
 
     const a = ctx.generateKeyPackage('k');
-    const b = ctx.generateKeyPackage('k');
+    const b = ctx.generateKeyPackage('k', { fresh: true });
     a.catch(() => {});
     b.catch(() => {});
     const joined = externalJoin(ctx, 'g');
     await settle();
+    // The fresh round has not started: it follows the one in flight, never runs beside it.
+    expect(ctx.generateKeyPackageImpl).toHaveBeenCalledTimes(1);
 
-    // The NEWER round fails; the older one is still alive and may publish.
-    newer.fail(new Error('boom'));
+    // The OLDER round fails; the fresh one starts now and may publish.
+    older.fail(new Error('boom'));
     await settle();
+    expect(ctx.generateKeyPackageImpl).toHaveBeenCalledTimes(2);
     expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
 
-    older.release();
-    expect(await joined).toEqual({ joined: true });
-  });
-
-  it('a join is not refused when the OLD round fails after the NEW one succeeded (re-enrolment)', async () => {
-    const ctx = makeCtx();
-    ctx.server.answer = ABSENT;
-    const older = controlledRound(ctx);
-    const newer = controlledRound(ctx);
-    ctx.generateKeyPackageImpl = vi
-      .fn()
-      .mockImplementationOnce(older.impl)
-      .mockImplementationOnce(newer.impl);
-
-    const a = ctx.generateKeyPackage('k');
-    const b = ctx.generateKeyPackage('k');
-    a.catch(() => {});
-    const joined = externalJoin(ctx, 'g');
-    await settle();
-
     newer.release();
-    await b;
     expect(await joined).toEqual({ joined: true });
-
-    older.fail(new Error('late failure of the abandoned identity'));
-    await a.catch(() => {});
+    await b;
     expect(ctx.keyPackageRoundsActive).toBe(0);
   });
 
@@ -392,7 +372,41 @@ describe('generateKeyPackage names the rounds it runs', () => {
     expect(failing.keyPackageRoundsActive).toBe(0);
   });
 
-  it('keeps counting the newer round when an older one settles first', async () => {
+  /**
+   * THE SINGLE FLIGHT. Production 2026-11-07 (`1.6.6`): a web device re-enrolling at sign-in sent
+   * two `register-device` requests in the same millisecond, because two callers each started a
+   * round, both minted, both awaited the one coalesced checkpoint and both published on the same
+   * tick. A second caller now JOINS the round in flight: one round, one publication.
+   */
+  it('two concurrent callers produce ONE round and ONE registration request', async () => {
+    const ctx = makeCtx();
+    const registerDevice = vi.fn().mockResolvedValue(undefined);
+    let checkpointDone!: () => void;
+    // The shared checkpoint both rounds used to await, then publish from on the same tick.
+    const checkpoint = new Promise<void>((resolve) => (checkpointDone = resolve));
+    ctx.generateKeyPackageImpl = vi.fn(async () => {
+      await checkpoint;
+      await registerDevice();
+      return KP;
+    });
+
+    const login = ctx.generateKeyPackage('k');
+    const reconnect = ctx.generateKeyPackage('k');
+    checkpointDone();
+
+    expect(await login).toBe(KP);
+    expect(await reconnect).toBe(KP);
+    expect(ctx.generateKeyPackageImpl).toHaveBeenCalledTimes(1);
+    expect(registerDevice).toHaveBeenCalledTimes(1);
+    expect(ctx.keyPackageRoundsActive).toBe(0);
+    expect(ctx.keyPackageRoundsSettled).toBe(1);
+
+    // Nothing outlives the round: a later call is a new round.
+    await ctx.generateKeyPackage('k');
+    expect(registerDevice).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps counting the FRESH round when the one it followed settles first', async () => {
     const ctx = makeCtx();
     const older = controlledRound(ctx);
     const newer = controlledRound(ctx);
@@ -402,16 +416,21 @@ describe('generateKeyPackage names the rounds it runs', () => {
       .mockImplementationOnce(newer.impl);
 
     const a = ctx.generateKeyPackage('k');
-    const b = ctx.generateKeyPackage('k');
+    const b = ctx.generateKeyPackage('k', { fresh: true });
     const newerPromise = ctx.keyPackageRoundInFlight;
+    // A plain caller arriving now joins the fresh round, the one that starts after the purge.
+    const c = ctx.generateKeyPackage('k');
 
     older.release();
     await a;
     expect(ctx.keyPackageRoundInFlight).toBe(newerPromise);
     expect(ctx.keyPackageRoundsActive).toBe(1);
+    await settle();
 
     newer.release();
     await b;
+    await c;
+    expect(ctx.generateKeyPackageImpl).toHaveBeenCalledTimes(2);
     expect(ctx.keyPackageRoundInFlight).toBeNull();
     expect(ctx.keyPackageRoundsActive).toBe(0);
   });

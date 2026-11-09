@@ -1,4 +1,4 @@
-import { MLS_DEVICE_ID_PREFIX } from '$lib/mls-client/wasmPrefetch';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
  * Whether the PIN gate is a FIRST SETUP, answered from this device alone when it can be.
@@ -21,5 +21,5 @@ export function firstPinSetupFromDevice(
   storage: Pick<Storage, 'getItem'>,
   userId: string
 ): false | null {
-  return storage.getItem(`${MLS_DEVICE_ID_PREFIX}${userId}`) !== null ? false : null;
+  return storage.getItem(ACCOUNT_KEY.deviceId(userId)) !== null ? false : null;
 }

@@ -15,6 +15,7 @@ import { firstValueFrom } from 'rxjs';
 import FormData from 'form-data';
 import { FormFile } from './entities/form-file.entity';
 import { Form } from './entities/form.entity';
+import { respondentFormWhere } from './form-status';
 import { mediaUrl } from '../internal/service-urls';
 import { describeHttpError } from '../common/http-error-log';
 
@@ -207,7 +208,8 @@ export class FormFilesService {
     ) {
       throw new BadRequestException('This question does not ask for a file.');
     }
-    const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
+    // A draft answers what an absent form answers: nobody uploads to a form nobody may answer.
+    const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
     if (!form) throw new NotFoundException('Form not found');
     const item = (form.items ?? []).find((i: { id: string }) => i.id === itemId);
     if (!item || item.type !== FILE_QUESTION_TYPE) {

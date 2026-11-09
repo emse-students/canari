@@ -3,10 +3,19 @@ import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
 import { confirmUnsafeLinkIfNeeded } from '$lib/utils/checkLinkSafety';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
+import { handlePlaceLinkClick } from '$lib/navigation/scrollToTop';
 
 export { isTauriRuntime };
 
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'webcal:']);
+
+/**
+ * Marks an anchor whose click `openEcosystemSite` owns (the app launcher). {@link handleAppLinkClick}
+ * leaves such an anchor to its own `onclick`: otherwise, on the native shells, this capture-phase
+ * handler would open the bare address before the sign-in handoff could be minted. Declared here,
+ * not beside the opener, so this module imports nothing of the authenticated fetch.
+ */
+export const ECOSYSTEM_SITE_ATTRIBUTE = 'data-ecosystem-site';
 
 /** True when the href should leave the WebView and open in the OS browser / default app. */
 export function shouldOpenExternalHref(
@@ -31,7 +40,9 @@ export function shouldOpenExternalHref(
 
 /**
  * Intercept link clicks: Canari app URLs navigate in-app (web + Tauri); other http(s) links
- * open in the system browser on Tauri only.
+ * open in the system browser on Tauri only. A re-tap of the open place's link (a link carrying
+ * `PLACE_LINK_ATTRIBUTE`) scrolls that page to its top instead of navigating: this listener runs
+ * first and stops the click, so it is the ONE place that decision can be made.
  * Returns true when default navigation was cancelled.
  */
 export function handleAppLinkClick(event: MouseEvent): boolean {
@@ -44,10 +55,17 @@ export function handleAppLinkClick(event: MouseEvent): boolean {
 
   const anchor = target.closest('a[href]');
   if (!(anchor instanceof HTMLAnchorElement)) return false;
+  if (anchor.hasAttribute(ECOSYSTEM_SITE_ATTRIBUTE)) return false;
 
   const rawHref = anchor.getAttribute('href') ?? '';
   const href =
     rawHref.startsWith('/') && !rawHref.startsWith('//') ? rawHref : anchor.href || rawHref;
+
+  if (handlePlaceLinkClick(anchor, window.location.pathname)) {
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
 
   const inAppPath = inAppPathFromHref(href);
   if (inAppPath) {

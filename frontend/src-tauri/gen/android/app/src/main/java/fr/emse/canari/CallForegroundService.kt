@@ -101,7 +101,7 @@ class CallForegroundService : Service() {
         private const val WAKE_LOCK_PERIOD_MS = 4L * 60 * 60 * 1000
 
         /** One call at a time, so one notification id. Distinct from every push notification id. */
-        private const val NOTIFICATION_ID = 0x0CA11
+        private const val NOTIFICATION_ID = fr.emse.canari.push.FixedNotifIds.CALL_FOREGROUND
 
         /** The call in the foreground (the page's id for it), or null. Written on the main thread. */
         @Volatile var callId: String? = null

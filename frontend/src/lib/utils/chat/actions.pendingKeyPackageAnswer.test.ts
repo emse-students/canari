@@ -48,7 +48,7 @@ describe('a pending invitation acts on WHICH answer it got', () => {
       releaseAddLock: vi.fn().mockResolvedValue(undefined),
       getGroupMembers: vi.fn().mockResolvedValue([]),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
-      // Empty, so every case below falls through to the single-device fallback under test.
+      // Never asked: the sweep reads the pending device alone (asserted below).
       fetchUserDevices: vi.fn().mockResolvedValue([]),
       fetchDeviceKeyPackage: vi.fn(),
       deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
@@ -80,7 +80,6 @@ describe('a pending invitation acts on WHICH answer it got', () => {
     const log = vi.fn();
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map<string, Conversation>([['g1', conversation()]]),
@@ -138,13 +137,16 @@ describe('a pending invitation acts on WHICH answer it got', () => {
     }
   );
 
-  it('adds the device when there IS a package, which is the whole point of the fallback', async () => {
-    const { mlsService, lines } = await sweep({
+  // ONE PACKAGE IS CLAIMED, THE PENDING DEVICE'S: the account's list claims one from every device
+  // of theirs (production 2026-11-06, `docs/wiki/protocols/key-package-pool.md`).
+  it('adds the device when there IS a package, claiming only that device', async () => {
+    const { mlsService } = await sweep({
       kind: 'package',
       device: { deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) },
     });
 
     expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
-    expect(lines).toContain('KeyPackage retrieved via fallback');
+    expect(mlsService.fetchDeviceKeyPackage).toHaveBeenCalledWith('peer', 'peer-dev');
+    expect(mlsService.fetchUserDevices).not.toHaveBeenCalled();
   });
 });

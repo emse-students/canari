@@ -5,6 +5,7 @@
   import { m } from '$lib/paraglide/messages';
   import { page } from '$app/state';
   import { preloadRouteOnView } from '$lib/actions/preloadRouteOnView';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
 
   const pathname = $derived(page.url.pathname);
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
@@ -55,7 +56,7 @@
   class="bg-cn-surface fixed inset-x-0 bottom-0 z-30 touch-manipulation border-t border-black/5 shadow-[0_-4px_24px_rgba(0,0,0,0.02)] md:hidden dark:border-white/10 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
   style="padding-bottom: var(--safe-area-inset-bottom, 0px)"
 >
-  <div class="flex h-12 items-stretch justify-around">
+  <div class="flex h-(--bottom-nav-height) items-stretch justify-around">
     {#each MOBILE_NAV_PLACES as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}
@@ -64,6 +65,8 @@
       <a
         href={place.href}
         use:preloadRouteOnView={place.href}
+        use:guideAnchor={`nav.${place.id}`}
+        data-app-place={place.href}
         class="group relative flex min-w-0 flex-1 items-center justify-center transition-all duration-200 active:scale-95
  {isActive ? 'text-amber-600 dark:text-amber-400' : 'text-text-muted hover:text-text-main'}"
       >

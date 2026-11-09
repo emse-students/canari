@@ -23,7 +23,15 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
+import type { DataSource, EntityManager } from 'typeorm';
+import type { RedisService } from '../common/redis/redis.service';
+import { commentsWithheldPostIds, withholdCommentsAndPeople } from '../posts/comments-withheld';
+import { bellRowShownSql, PostNotificationsService } from '../posts/post-notifications.service';
+import { readPostOpenVerdict, type OpenablePost } from '../posts/post-openable';
+import { PostsService } from '../posts/posts.service';
+import { ReadGrantsService } from '../read-grants/read-grants.service';
 import {
+  type PostAccessIntent,
   IN_FEED_AUDIENCE_SQL,
   NEWLY_REACHED_BY_REPUBLICATION_SQL,
   announceRecipientsSql,
@@ -164,9 +172,10 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, formation varchar);
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        "isBDE" boolean NOT NULL DEFAULT false);
+        type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
+        archived boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, anonymous boolean NOT NULL DEFAULT false);
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, anonymous boolean NOT NULL DEFAULT false);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
@@ -184,6 +193,8 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
       '074_coorganise.sql',
       '078_read_grants.sql',
       '121_member_reposts.sql',
+      // The bell re-reads a birthday notice against its date (`birthdayRowShownSql`).
+      '148_profile_birthdays.sql',
     ]) {
       await client.query(migration(name));
     }
@@ -421,5 +432,301 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
     await client.query(migration('078_read_grants.sql'));
     const { rows } = await client.query(`SELECT count(*)::int AS n FROM read_grants`);
     expect(rows[0].n).toBe(5);
+  });
+
+  /**
+   * THE 2026-11-04 AMENDMENT (owner): a named reader whose ONLY door to a post is the grant, with
+   * "voit les commentaires" OFF, reads and reacts but sees no comment, writes none, likes none, and
+   * sees reactions and votes as totals - never who. ON restores today's behaviour; a reader who ALSO
+   * reaches the post natively keeps everything. One post (A2's whole-Gardanne post), three readers,
+   * every consumer of `commentsWithheldFromViewerSql` asked through its own shipped code.
+   */
+  describe('comments of a grant-only post (owner, 2026-11-04)', () => {
+    const POST = POSTS[1].id;
+    // grantGa: grant-only, switch never set (OFF). grantOn: grant-only, switch ON. grantNative:
+    // granted Gardanne AND an ISMIN student of Gardanne - the post reaches them through their space.
+    const READERS = ['grantGa', 'grantOn', 'grantNative'] as const;
+    let manager: EntityManager;
+    let readGrants: ReadGrantsService;
+
+    const row = async (): Promise<OpenablePost> =>
+      (
+        await client.query(
+          `SELECT id, "authorId", "associationId", anonymous, "hiddenByModeration", "scheduledAt",
+                  kind, "expiresAt" FROM posts WHERE id = $1`,
+          [POST]
+        )
+      ).rows[0];
+    const gate = async (viewerId: string, intent: PostAccessIntent) =>
+      (await readPostOpenVerdict(manager, await row(), { viewerId }, intent)).refusal;
+    /** The post as the feed hands it to `viewerId`: the shipped shaping on the stored row. */
+    const served = async (viewerId: string) => {
+      const stored = (
+        await client.query(
+          `SELECT id, comments, jsonb_array_length(comments) AS "commentCount", reactions, polls
+             FROM posts WHERE id = $1`,
+          [POST]
+        )
+      ).rows[0] as Record<string, any>;
+      const withheld = await commentsWithheldPostIds(manager, [POST], viewerId);
+      if (withheld.has(POST)) withholdCommentsAndPeople(stored, viewerId);
+      return stored;
+    };
+
+    beforeAll(async () => {
+      // The bell's table first: migration 132 adds its `commentId`.
+      await client.query(`
+        ALTER TABLE posts ADD COLUMN "hiddenByModeration" boolean NOT NULL DEFAULT false,
+          ADD COLUMN "scheduledAt" timestamptz, ADD COLUMN kind varchar NOT NULL DEFAULT 'post',
+          ADD COLUMN "expiresAt" timestamptz, ADD COLUMN comments jsonb NOT NULL DEFAULT '[]',
+          ADD COLUMN reactions jsonb NOT NULL DEFAULT '{}', ADD COLUMN polls jsonb NOT NULL DEFAULT '[]';
+        CREATE TABLE post_notifications (type varchar, "postId" varchar, "recipientId" varchar,
+          "actorId" varchar);
+      `);
+      await client.query(migration('132_read_grant_readers.sql'));
+      await client.query(
+        `INSERT INTO users (id, campus, cursus) VALUES ('grantOn', NULL, '[]'),
+           ('grantNative', 'gardanne', '[{"formation": "ISMIN", "promo": 2023}]')`
+      );
+      await client.query(
+        `INSERT INTO read_grants (user_id, campus, formation, granted_by)
+           VALUES ('grantOn', 'gardanne', NULL, 'admin'), ('grantNative', 'gardanne', NULL, 'admin')`
+      );
+      await client.query(
+        `UPDATE posts SET
+           comments = '[{"id": "c1", "userId": "isminGa", "text": "a student speaks", "likes": ["isminGa"]}]',
+           reactions = '{"isminGa": "like", "poster": "love"}',
+           polls = '[{"id": "poll", "options": [{"id": "o1", "votes": ["isminGa"]}, {"id": "o2", "votes": []}],
+                      "votesByUser": {"isminGa": ["o1"]}}]'
+         WHERE id = $1`,
+        [POST]
+      );
+      manager = {
+        query: (sql: string, params?: unknown[]) =>
+          client.query(sql, params as unknown[]).then((r) => r.rows),
+      } as unknown as EntityManager;
+      readGrants = new ReadGrantsService(
+        {
+          transaction: (fn: (m: EntityManager) => Promise<unknown>) => fn(manager),
+          query: (sql: string, params?: unknown[]) => manager.query(sql, params),
+        } as unknown as DataSource,
+        {
+          incr: () => Promise.resolve(1),
+          deleteByPattern: () => Promise.resolve(0),
+        } as unknown as RedisService
+      );
+    });
+
+    it('the switch is set through the shipped write, and a repeat changes nothing', async () => {
+      expect(await readGrants.setSeesComments('admin', 'grantOn', true)).toEqual({ changed: true });
+      expect(await readGrants.setSeesComments('admin', 'grantOn', true)).toEqual({
+        changed: false,
+      });
+      // OFF on a reader who never had a row is no change either: OFF is the default.
+      expect(await readGrants.setSeesComments('admin', 'grantGa', false)).toEqual({
+        changed: false,
+      });
+    });
+
+    it('the three readers read the post and react to it', async () => {
+      for (const id of READERS) {
+        expect({ id, react: await gate(id, 'READ_OR_REACT') }).toEqual({ id, react: null });
+      }
+    });
+
+    it('list, write and like a comment: refused (404) to the OFF reader only', async () => {
+      // One gate for the three routes: `GET /comments` (`listComments`), `POST /comments` and
+      // `POST /comments/:id/like` all ask `assertVisible(.., 'COMMENT')`.
+      expect(await gate('grantGa', 'COMMENT')).toBe('not-found');
+      expect(await gate('grantOn', 'COMMENT')).toBeNull();
+      expect(await gate('grantNative', 'COMMENT')).toBeNull();
+      expect(await gate('isminGa', 'COMMENT')).toBeNull();
+    });
+
+    it('the comments and their count: absent for the OFF reader, whole for the others', async () => {
+      const off = await served('grantGa');
+      expect(off).not.toHaveProperty('comments');
+      expect(off).not.toHaveProperty('commentCount');
+      expect(off.canSeeComments).toBe(false);
+      for (const id of ['grantOn', 'grantNative'] as const) {
+        const post = await served(id);
+        expect({ id, count: post.commentCount, first: post.comments[0].text }).toEqual({
+          id,
+          count: 1,
+          first: 'a student speaks',
+        });
+      }
+    });
+
+    it('who reacted and who voted: totals only for the OFF reader', async () => {
+      const off = await served('grantGa');
+      expect(off.reactions).toEqual({});
+      expect(off.otherReactionCounts).toEqual({ like: 1, love: 1 });
+      expect(off.polls[0].options.map((o: { votes: unknown }) => o.votes)).toEqual([1, 0]);
+      expect(off.polls[0].votesByUser).toEqual({});
+      expect(JSON.stringify(off)).not.toMatch(/isminGa|poster/);
+      for (const id of ['grantOn', 'grantNative'] as const) {
+        const post = await served(id);
+        expect({ id, reactions: post.reactions, voters: post.polls[0].options[0].votes }).toEqual({
+          id,
+          reactions: { isminGa: 'like', poster: 'love' },
+          voters: ['isminGa'],
+        });
+      }
+    });
+
+    it("a reaction's answer lists the reactors to the others only (`serveReactionsTo`)", async () => {
+      const posts = new PostsService(
+        { manager } as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never
+      );
+      const stored = { ok: true, reactions: { isminGa: 'like', grantGa: 'love', grantOn: 'love' } };
+      expect(await posts.serveReactionsTo(POST, 'grantGa', stored)).toEqual({
+        ok: true,
+        reactions: { grantGa: 'love' },
+        otherReactionCounts: { like: 1, love: 1 },
+      });
+      expect(await posts.serveReactionsTo(POST, 'grantOn', stored)).toBe(stored);
+      expect(await posts.serveReactionsTo(POST, 'grantNative', stored)).toBe(stored);
+      // A reader who cannot open the post at all (the removal is not gated): their own entry only.
+      expect(await posts.serveReactionsTo(POST, 'outsider', stored)).toEqual({
+        ok: true,
+        reactions: {},
+      });
+    });
+
+    it('a poll vote stays closed to a grant: the OFF and ON readers alike, never the native one', async () => {
+      expect(await gate('grantGa', 'VOTE')).toBe('not-found');
+      expect(await gate('grantOn', 'VOTE')).toBe('not-found');
+      expect(await gate('grantNative', 'VOTE')).toBeNull();
+    });
+
+    it('a comment mention or a reply reaches the OFF reader never, the others as before', async () => {
+      const notifications = new PostNotificationsService(
+        {} as never,
+        { manager } as never,
+        {} as never,
+        {} as never
+      );
+      expect(
+        await notifications.mentionRecipientsOf(await row(), 'isminGa', [...READERS], 'COMMENT')
+      ).toEqual(['grantOn', 'grantNative']);
+      // The post's own text keeps the post's rule.
+      expect(
+        await notifications.mentionRecipientsOf(
+          await row(),
+          'poster',
+          [...READERS],
+          'READ_OR_REACT'
+        )
+      ).toEqual([...READERS]);
+    });
+
+    /** Whether the bell shows a row of `type` to `recipientId`, written by `actorId` (and a comment). */
+    const shown = async (
+      type: string,
+      recipientId: string,
+      actorId = 'isminGa',
+      commentId: string | null = null
+    ) =>
+      (
+        await client.query(
+          `SELECT ${bellRowShownSql('n')} AS shown FROM (VALUES ($1::varchar, $2::varchar,
+             $3::varchar, $4::varchar, $5::varchar)) AS n(type, "postId", "recipientId", "actorId", "commentId")`,
+          [type, POST, recipientId, actorId, commentId]
+        )
+      ).rows[0].shown;
+
+    it('the bell hides a comment-borne row from the OFF reader, and nothing else', async () => {
+      expect(await shown('reply', 'grantGa')).toBe(false);
+      expect(await shown('comment', 'grantGa')).toBe(false);
+      expect(await shown('reaction', 'grantGa')).toBe(true);
+      expect(await shown('reply', 'grantOn')).toBe(true);
+      expect(await shown('reply', 'grantNative')).toBe(true);
+    });
+
+    it("the bell tells a comment's mention from the post's: by `commentId`, else by its actor", async () => {
+      // Written since migration 132: the row names its comment, whoever wrote it.
+      expect(await shown('mention', 'grantGa', 'poster', 'c1')).toBe(false);
+      expect(await shown('mention', 'grantGa', '', 'c1')).toBe(false);
+      // Written before: a mention by anybody but the post's author came from a comment...
+      expect(await shown('mention', 'grantGa', 'isminGa')).toBe(false);
+      // ...one by its author (`notifyPostMentions`) is the post's own, and keeps the post's rule.
+      expect(await shown('mention', 'grantGa', 'poster')).toBe(true);
+      // The anonymous actor on a post that is not anonymous is an anonymous or association comment.
+      expect(await shown('mention', 'grantGa', '')).toBe(false);
+      for (const id of ['grantOn', 'grantNative'] as const) {
+        expect({ id, shown: await shown('mention', id, 'isminGa', 'c1') }).toEqual({
+          id,
+          shown: true,
+        });
+      }
+    });
+
+    it("the anonymous actor on an ANONYMOUS post is the post's own mention", async () => {
+      await client.query('BEGIN');
+      try {
+        await client.query(`UPDATE posts SET anonymous = true WHERE id = $1`, [POST]);
+        expect(await shown('mention', 'grantGa', '')).toBe(true);
+        expect(await shown('mention', 'grantGa', '', 'c1')).toBe(false);
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+
+    it("a reader's LAST revoked cell turns their switch back OFF, journalled", async () => {
+      await client.query('BEGIN');
+      try {
+        expect(await readGrants.setCell('admin', 'grantOn', 'gardanne', null, false)).toEqual({
+          changed: true,
+        });
+        const { rows } = await client.query(
+          `SELECT r.sees_comments, (SELECT array_agg(action ORDER BY at, action) FROM read_grant_journal
+             WHERE user_id = 'grantOn') AS actions FROM read_grant_readers r WHERE r.user_id = 'grantOn'`
+        );
+        expect(rows).toEqual([
+          { sees_comments: false, actions: ['cmt_show', 'cmt_hide', 'revoke'] },
+        ]);
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+
+    it('switching OFF again withholds again, and the journal holds the changes only', async () => {
+      await client.query('BEGIN');
+      try {
+        expect(await readGrants.setSeesComments('admin', 'grantOn', false)).toEqual({
+          changed: true,
+        });
+        expect(await gate('grantOn', 'COMMENT')).toBe('not-found');
+        const { rows } = await client.query(
+          `SELECT action, campus FROM read_grant_journal WHERE user_id = 'grantOn' ORDER BY at, action`
+        );
+        expect(rows).toEqual([
+          { action: 'cmt_show', campus: null },
+          { action: 'cmt_hide', campus: null },
+        ]);
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+
+    it('migration 132 is idempotent, and its journal check refuses a cell line with no campus', async () => {
+      await client.query(migration('132_read_grant_readers.sql'));
+      await expect(
+        client.query(
+          `INSERT INTO read_grant_journal (user_id, campus, action, actor) VALUES ('x', NULL, 'grant', 'a')`
+        )
+      ).rejects.toThrow(/read_grant_journal_campus_check/);
+      await expect(
+        client.query(
+          `INSERT INTO read_grant_journal (user_id, campus, action, actor) VALUES ('x', 'gardanne', 'cmt_show', 'a')`
+        )
+      ).rejects.toThrow(/read_grant_journal_campus_check/);
+    });
   });
 });

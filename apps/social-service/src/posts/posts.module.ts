@@ -19,9 +19,12 @@ import { RepublicationsService } from './republications.service';
 import { RepublicationsController } from './republications.controller';
 import { PersonalRepublicationsService } from './personal-republications.service';
 import { MemberRepost } from './entities/member-repost.entity';
+import { MemberRepostNotice } from './entities/member-repost-notice.entity';
 import { UserRepostSetting } from './entities/user-repost-setting.entity';
 import { MemberRepostsService } from './member-reposts.service';
 import { MemberRepostsController } from './member-reposts.controller';
+import { SpacePinsController } from './space-pins.controller';
+import { SpacePinsService } from './space-pins.service';
 import { ProposalsModule } from '../proposals/proposals.module';
 import { AssociationsModule } from '../associations/associations.module';
 import { FollowsModule } from '../follows/follows.module';
@@ -35,6 +38,7 @@ import { ModerationModule } from '../moderation/moderation.module';
       PostNotification,
       PostRepublication,
       MemberRepost,
+      MemberRepostNotice,
       UserRepostSetting,
     ]),
     ConfigModule,
@@ -46,12 +50,18 @@ import { ModerationModule } from '../moderation/moderation.module';
     // and their `repost-personal` kind (`PersonalRepublicationsService`, D38b).
     ProposalsModule,
   ],
-  controllers: [PostsController, RepublicationsController, MemberRepostsController],
+  controllers: [
+    PostsController,
+    RepublicationsController,
+    MemberRepostsController,
+    SpacePinsController,
+  ],
   providers: [
     // A guard with an injected repository is resolved from this module's injector, so it belongs
     // here beside the services. `NginxAuthGuard` needs no entry because it injects nothing.
     FeedAudienceGuard,
     PostsService,
+    SpacePinsService,
     PostInteractionsService,
     CommentIdentityService,
     PostNotificationsService,

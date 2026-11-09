@@ -3,6 +3,7 @@
   import { Ban, LoaderCircle } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { listBlockedUsers, unblockUser, type BlockedUser } from '$lib/users/blocks';
+  import { PERSON_LIST_ERROR, PERSON_ROW_BUTTON } from '$lib/components/follows/personListStyles';
   import { Log } from '$lib/utils/Log';
   import { refusalCode } from '$lib/utils/apiRefusal';
   import { describeRefusalCode } from '$lib/utils/refusalCodes';
@@ -26,7 +27,7 @@
     loading = true;
     error = '';
     try {
-      blocked = await listBlockedUsers();
+      blocked = await listBlockedUsers({ fresh: true });
     } catch (err) {
       Log.d('SettingsBlockedSection.load failed', err);
       error = m.settings_blocked_load_error();
@@ -71,7 +72,7 @@
   </div>
 
   {#if error}
-    <p class="mb-4 rounded-xl bg-red-500/10 px-4 py-3 text-sm font-medium text-red-600">{error}</p>
+    <p class="mb-4 {PERSON_LIST_ERROR}">{error}</p>
   {/if}
 
   {#if loading}
@@ -97,7 +98,7 @@
             type="button"
             onclick={() => handleUnblock(person.userId)}
             disabled={pendingId === person.userId}
-            class="text-text-main shrink-0 rounded-lg bg-black/5 px-3 py-1.5 text-xs font-bold transition-colors hover:bg-black/10 disabled:opacity-50 dark:bg-white/10 dark:hover:bg-white/20"
+            class={PERSON_ROW_BUTTON}
           >
             {m.settings_blocked_unblock_button()}
           </button>

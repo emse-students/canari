@@ -9,6 +9,12 @@
 > drawn as a pill rather than a bare avatar. Why: `docs/wiki/frontend/mobile.md#the-conversations-native-glass-chrome`.
 > And while such a button's menu is displayed the webview takes no touch (`CanariButton`), so the
 > touch that dismisses the menu is never also the page's - same page.
+> Fourth, `setTabBarInteractive({ interactive })` (`set_tab_bar_interactive`): the overlay stops taking
+> touches while a modal web layer (the guided tour's backdrop) covers the page, which it cannot cover
+> since the bar is drawn above the WebView. Why: `docs/wiki/frontend/guided-help.md`.
+> Fifth, `showTabBar` / `hideTabBar` take `{ seq }` (`TabBarVisibilityOptions`), ordered with the
+> interaction switch by one `CommandSequence`: the published JS API's argument-less calls are refused,
+> so the app invokes them by name. Why: `docs/wiki/frontend/mobile.md#the-native-ios-tab-bar`.
 
 # tauri-plugin-system-components
 

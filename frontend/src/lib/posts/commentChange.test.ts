@@ -23,6 +23,11 @@ describe('commentCountOf', () => {
     expect(commentCountOf(post([c('a'), c('b')]))).toBe(2);
     expect(commentCountOf(post([c('a'), c('b')], 1))).toBe(2);
   });
+  it('never counts a moderation tombstone it holds', () => {
+    const tomb = { ...c('t'), removedByModeration: true };
+    expect(commentCountOf(post([tomb, c('r', 't')]))).toBe(1);
+    expect(commentCountOf(post([tomb, c('r', 't')], 1))).toBe(1);
+  });
 });
 
 describe('withCommentCountDelta', () => {
@@ -34,6 +39,13 @@ describe('withCommentCountDelta', () => {
 });
 
 describe('applyCommentChange', () => {
+  it('holds a tombstone it did not hold without counting it', () => {
+    const tomb = { ...c('t'), removedByModeration: true };
+    const next = applyCommentChange(post([c('a')], 30), { kind: 'upsert', comment: tomb });
+    expect(next.comments!.map((x) => x.id)).toEqual(['a', 't']);
+    expect(next.commentCount).toBe(30);
+  });
+
   it('adds a row it does not hold, and counts it', () => {
     const next = applyCommentChange(post([c('a')], 30), { kind: 'upsert', comment: c('z') });
     expect(next.comments!.map((x) => x.id)).toEqual(['a', 'z']);

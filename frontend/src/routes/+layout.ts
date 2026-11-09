@@ -6,9 +6,16 @@ import type { LoadEvent } from '@sveltejs/kit';
 import { currentUserId } from '$lib/stores/user';
 import { checkSessionUserInBackground } from '$lib/utils/sessionProfileCheck';
 import { refresh } from '$lib/stores/auth';
+import { settleBootSession, startBootSession } from '$lib/stores/bootSession.svelte';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
-import { internalPath, isSignedOutPath, loginReturningTo } from '$lib/utils/internalPath';
+import {
+  appPathFromPathname,
+  internalPath,
+  isSignedOutPath,
+  loginReturningTo,
+} from '$lib/utils/internalPath';
+import { guestPathForMemberLink, memberFormIdOfPath } from '$lib/forms/shareLink';
 import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 // See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
 export const ssr = false;
@@ -24,49 +31,66 @@ export const load = async (event: LoadEvent) => {
   if (isAuthRoute) return;
 
   // MLS session already active - no need to re-verify the profile on every navigation.
-  if (globalSession.isLoggedIn) return;
-
-  let userId = currentUserId();
-  if (!userId) {
-    // userId may be null while the HTTP session (refresh cookie) is still valid - a first
-    // launch after OIDC, or a store cleared by the system.
-    // Attempt a silent refresh - _doRefresh restores userId from the JWT sub claim.
-    try {
-      // `event.fetch`, so SvelteKit does not warn on every navigation - see `refresh`.
-      await refresh(event.fetch);
-      userId = currentUserId();
-    } catch {
-      // refresh failed - session truly expired
-    }
-    if (!userId) {
-      // window.location.hash, not event.url.hash: SvelteKit throws on reading `.hash` off a
-      // `load` event's URL (hash changes never re-run load, so it refuses to let one depend on
-      // it) - and since that throw happens while building this very argument, it fires before
-      // `goto()` is even called, well before the `.catch()` below could ever see it. Safe here
-      // regardless, since this whole branch is already behind the `typeof window` guard above.
-      return goto(
-        resolve(
-          internalPath(loginReturningTo(event.url.pathname, event.url.search, window.location.hash))
-        ),
-        { replace: true }
-      ).catch(() => {});
-    }
+  if (globalSession.isLoggedIn) {
+    settleBootSession();
+    return;
   }
 
-  // Skip when MLS login is in progress to avoid racing with the biometric/PIN flow.
-  if (globalSession.isLoginInProgress) return;
+  /** The profile check, once the session is known - never held in front of the page (WP-NAV-1). */
+  const checkSession = (userId: string) => {
+    // Skip when MLS login is in progress to avoid racing with the biometric/PIN flow.
+    if (globalSession.isLoginInProgress) return;
 
-  // THE PROFILE CHECK NEVER HOLDS THE NAVIGATION (WP-NAV-1). It decides one thing - "redirect to
-  // login on a confirmed 404, survive everything else" - and nothing it learns is needed to draw the
-  // page, so it runs beside it. Awaited here it put a profile round trip (20 s deadline) in front of
-  // EVERY navigation while the session was not yet unlocked, which on a weak link is the whole
-  // cold-start window.
-  void checkSessionUserInBackground(userId, () =>
+    // THE PROFILE CHECK NEVER HOLDS THE NAVIGATION (WP-NAV-1). It decides one thing - "redirect to
+    // login on a confirmed 404, survive everything else" - and nothing it learns is needed to draw
+    // the page, so it runs beside it. Awaited here it put a profile round trip (20 s deadline) in
+    // front of EVERY navigation while the session was not yet unlocked, which on a weak link is the
+    // whole cold-start window.
+    void checkSessionUserInBackground(userId, () => goToLogin());
+  };
+
+  // window.location.hash, not event.url.hash: SvelteKit throws on reading `.hash` off a `load`
+  // event's URL (hash changes never re-run load, so it refuses to let one depend on it). Safe here
+  // regardless, since this whole function is already behind the `typeof window` guard above.
+  const goToLogin = () =>
     goto(
       resolve(
         internalPath(loginReturningTo(event.url.pathname, event.url.search, window.location.hash))
       ),
       { replace: true }
-    )
-  );
+    );
+
+  // A SIGNED-OUT visitor on a form's MEMBER link (`/forms/<id>`, the address the forms list used to
+  // hand out for a public form) is sent to the form's guest page when the server serves it as
+  // public, to the login screen otherwise. Asked only here, once no session is confirmed.
+  // Any other path goes to login SYNCHRONOUSLY, as before: only the member-form shape pays a read.
+  const goToLoginOrGuestForm = () => {
+    const appPath = appPathFromPathname(event.url.pathname);
+    if (!memberFormIdOfPath(appPath)) return goToLogin();
+    return guestPathForMemberLink(appPath).then((guest) =>
+      guest ? goto(resolve(internalPath(guest)), { replace: true }) : goToLogin()
+    );
+  };
+
+  const userId = currentUserId();
+  if (userId) {
+    // A known user ends any session question still open (an OIDC return that settled it).
+    settleBootSession();
+    checkSession(userId);
+    return;
+  }
+
+  // userId may be null while the HTTP session (refresh cookie) is still valid - a first launch after
+  // OIDC, or a store cleared by the system. THE SILENT REFRESH RUNS BESIDE THE PAGE, NEVER IN FRONT
+  // OF IT: awaited here, a path that hangs held the whole app on the splash for up to 40 s (two
+  // users abroad, 2026-11-05) - an SPA draws nothing until the root load resolves. The layout draws
+  // the boot state meanwhile (`BootGate`), and `bootSession` navigates or says "unreachable" from
+  // the refresh's own outcome. `event.fetch`, so SvelteKit does not warn on every navigation - see
+  // `refresh`.
+  startBootSession({
+    refresh: () => refresh(event.fetch),
+    currentUserId,
+    goToLogin: () => goToLoginOrGuestForm().catch(() => {}),
+    onSessionKnown: checkSession,
+  });
 };

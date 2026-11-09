@@ -10,17 +10,19 @@
     setPostRepostConsent,
     type PostEntity,
     type PostComment,
+    type PinSpace,
     type PostMediaRef,
     type Poll,
   } from '$lib/posts/api';
   import { Log } from '$lib/utils/Log';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import { withdrawProposal } from '$lib/proposals/api';
   import { pendingRequests } from '$lib/posts/republication';
   import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
-  import { createReport, ModerationApiError } from '$lib/moderation/api';
+  import { describeModerationRefusal } from '$lib/moderation/moderationRefusal';
   import type { ReportReason } from '$lib/moderation/reasons';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
-  import { reportComment } from '$lib/posts/reportComment';
+  import { reportComment, reportPost } from '$lib/posts/reportComment';
   import {
     PostCommentThread,
     onPostComments,
@@ -62,7 +64,7 @@
   import { Pin, CalendarCheck } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
-  import { REACTIONS } from '$lib/posts/reactions';
+  import { REACTIONS, reactionCountsOf } from '$lib/posts/reactions';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -215,19 +217,19 @@
   // Server-answered, per reader and per control. Never re-derived here: an association post carries
   // no `authorId` to compare against, and nothing in a post says whether its reader moderates.
   const canManage = $derived(localPost.canManage === true);
+  // The pencil is the author's alone (2026-11-02). An absent `canEdit` is no pencil, never the bin's
+  // `canManage`: a fallback there would give a moderator back the power the server refuses.
+  const canEdit = $derived(localPost.canEdit === true);
   const canPin = $derived(localPost.canPin === true);
   const canReport = $derived(localPost.canReport === true);
   const canUnmaskAnonymous = $derived(localPost.canUnmaskAnonymous === true);
 
   let userReaction = $derived((localPost.reactions ?? {})[currentUserId] ?? null);
-  let reactions = $derived<Record<string, number>>((localPost.reactions ?? {}) as any);
-  let reactionCounts = $derived.by(() => {
-    const counts: Record<string, number> = {};
-    for (const [, reactionType] of Object.entries(reactions)) {
-      counts[reactionType] = (counts[reactionType] ?? 0) + 1;
-    }
-    return counts;
-  });
+  let reactionCounts = $derived(reactionCountsOf(localPost));
+  // The server's answer (owner, 2026-11-04): false for a named reader whose only door is a read
+  // grant with "voit les commentaires" off. No comment control is drawn then - no button, no count,
+  // no preview, no thread - and the reaction badges are a tally with no "who reacted".
+  const canSeeComments = $derived(localPost.canSeeComments !== false);
   let comments = $derived<PostComment[]>(localPost.comments ?? []);
   let topLevelComments = $derived(comments.filter((c) => !c.parentId));
 
@@ -344,8 +346,8 @@
     try {
       // Still never sent to a server certain to refuse it: when nothing is known, this asks -
       // behind a picker that has already closed and a tally that has already moved.
-      const reactions = await sendPostReaction(localPost.id, reactionType, wasReacted);
-      localPost = { ...localPost, reactions };
+      const served = await sendPostReaction(localPost.id, reactionType, wasReacted);
+      localPost = { ...localPost, ...served };
     } catch (err) {
       // NOT ALWAYS MODERATION. `assertNotMuted()` ASKS the server, so a dropped radio used to tell
       // the reader they are restricted by moderation, which is false and is about them.
@@ -387,9 +389,9 @@
    */
   const postId = $derived(localPost.id);
   $effect(() =>
-    onPostReactions(postId, (reactions) => {
+    onPostReactions(postId, (served) => {
       ledger.answered(['reactions']);
-      localPost = { ...localPost, reactions };
+      localPost = { ...localPost, ...served };
     })
   );
 
@@ -419,7 +421,7 @@
       onDelete?.();
     } catch (err) {
       Log.d('handleDeletePost failed', err);
-      errorMessage = m.post_unable_to_delete_post();
+      errorMessage = describeModerationRefusal(err) ?? m.post_unable_to_delete_post();
     }
   }
 
@@ -457,17 +459,32 @@
     })
   );
 
-  /** Pins or unpins the post (admin only) and updates the local pinned flag on success. */
-  async function togglePin() {
+  /**
+   * Pins the post in ONE space, or unpins it from it (WP-PIN), and takes that space's state from the
+   * answer. `pinned` (shown pinned in the READER's own spaces) is left to the next read: the server
+   * alone knows which spaces are the reader's, and the space acted on may not be one of them.
+   */
+  async function togglePin(space: PinSpace) {
+    const unpin = space.state !== null;
+    Log.d('PostCard.togglePin', `${unpin ? 'unpin' : 'pin'} ${localPost.id} in ${space.spaceId}`);
     try {
-      const fn = localPost.pinned ? unpinPostApi : pinPostApi;
-      const res = await fn(localPost.id);
-      ledger.answered(['pinned']);
-      localPost = { ...localPost, pinned: res.pinned };
+      const res = unpin
+        ? await unpinPostApi(localPost.id, space.spaceId)
+        : await pinPostApi(localPost.id, space.spaceId);
+      ledger.answered(['pinSpaces']);
+      localPost = {
+        ...localPost,
+        pinSpaces: (localPost.pinSpaces ?? []).map((s) =>
+          s.spaceId === res.spaceId ? { ...s, state: res.state } : s
+        ),
+      };
       actionMessage = res.pinned ? m.post_epingle() : m.post_unpinned();
     } catch (err) {
-      Log.d('togglePin failed', err);
-      errorMessage = m.post_unable_to_toggle_pin();
+      Log.d('PostCard.togglePin failed', err);
+      errorMessage =
+        refusalCode(err) === 'space_pin_limit'
+          ? m.post_pin_limit_reached()
+          : m.post_unable_to_toggle_pin();
     }
   }
 
@@ -480,7 +497,7 @@
       actionMessage = m.post_anonymous_removed();
     } catch (err) {
       Log.d('unmaskAnonymous failed', err);
-      errorMessage = m.post_unable_to_unmask();
+      errorMessage = describeModerationRefusal(err) ?? m.post_unable_to_unmask();
     }
   }
 
@@ -545,6 +562,23 @@
     await reloadAfterRepublication();
   }
 
+  /**
+   * WP-F6: the author's "Republie par N personnes" sheet - loaded on its first opening, never with
+   * the card, the way the menu loads its share sheet. Lives here, outside the menu, which unmounts
+   * what it draws when it closes.
+   */
+  let RepostersSheet = $state<typeof import('./PostRepostersSheet.svelte').default | null>(null);
+  let repostersOpen = $state(false);
+
+  function openReposters() {
+    import('./PostRepostersSheet.svelte')
+      .then((mod) => {
+        RepostersSheet = mod.default;
+        repostersOpen = true;
+      })
+      .catch((e: unknown) => Log.d('PostCard', `the reposters sheet did not load: ${String(e)}`));
+  }
+
   /** The requests of the reader's associations still waiting on the author, for the menu. */
   const waitingRequests = $derived(pendingRequests(localPost));
 
@@ -559,23 +593,6 @@
 
   /** The comment awaiting a reason in the report dialog, or null when the dialog is closed. */
   let commentBeingReported = $state<PostComment | null>(null);
-
-  /**
-   * Turns a report refusal into an inline message.
-   *
-   * The duplicate case is read off the server's `code`, never off its wording - see
-   * {@link ModerationApiError}. Anything else is a real failure and is SHOWN: this path used to
-   * swallow every error on the comment side, so a moderation outage looked exactly like a
-   * successful report to the person filing it.
-   */
-  function reportFailed(err: unknown, alreadyMessage: string) {
-    if (err instanceof ModerationApiError && err.isAlreadyReported) {
-      actionMessage = alreadyMessage;
-      return;
-    }
-    Log.d('PostCard.reportFailed', err);
-    errorMessage = m.post_unable_to_report();
-  }
 
   /** Opens the reason dialog for a comment. Same four reasons a post offers. */
   function handleReportComment(commentId: string) {
@@ -599,18 +616,17 @@
     commentBeingReported = null;
   }
 
-  /** Submits the chosen reason for the post itself, through the same dialog a comment uses. */
+  /**
+   * Submits the chosen reason for the post itself, through the same dialog a comment uses, worded
+   * by `reportPost` (filed, already filed, gone, or a failure SHOWN as one); the dialog closes.
+   */
   async function submitReport(reason: ReportReason) {
     reportSubmitting = true;
-    try {
-      await createReport('post', localPost.id, reason, undefined, localPost.authorId ?? null);
-      actionMessage = m.post_signalement_merci();
-    } catch (err) {
-      reportFailed(err, m.post_already_reported());
-    } finally {
-      reportingPost = false;
-      reportSubmitting = false;
-    }
+    const outcome = await reportPost(localPost, reason);
+    if (outcome.ok) actionMessage = outcome.message;
+    else errorMessage = outcome.message;
+    reportingPost = false;
+    reportSubmitting = false;
   }
 </script>
 
@@ -655,8 +671,9 @@
     <div class="flex items-start">
       <PostHeader post={localPost} />
       <PostActionsMenu
-        pinned={localPost.pinned ?? false}
+        pinSpaces={localPost.pinSpaces ?? []}
         {canManage}
+        {canEdit}
         {canPin}
         {canReport}
         {canUnmaskAnonymous}
@@ -682,8 +699,19 @@
         onRepostChange={() => void reloadAfterRepublication()}
         repostsAllowed={localPost.repostConsent?.effective}
         onSetRepostConsent={(allow) => void setRepostConsent(allow)}
+        reposterCount={localPost.repostCount ?? 0}
+        onShowReposters={openReposters}
       />
     </div>
+
+    {#if RepostersSheet}
+      <RepostersSheet
+        open={repostersOpen}
+        postId={localPost.id}
+        onClose={() => (repostersOpen = false)}
+        onRemoved={() => void reloadAfterRepublication()}
+      />
+    {/if}
 
     {#if localPost.linkedCalendarEvent}
       {@const ev = localPost.linkedCalendarEvent}
@@ -739,12 +767,15 @@
         commentCount={commentCountOf(localPost) || undefined}
         onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
         onReactionSelect={handleReaction}
-        onCommentClick={() => openCommentsSheet({ write: comments.length === 0 })}
+        onCommentClick={canSeeComments
+          ? () => openCommentsSheet({ write: comments.length === 0 })
+          : undefined}
       >
         {#snippet reactionSummary()}
           <ReactionsDisplay
             {reactionCounts}
             reactions={localPost.reactions ?? {}}
+            showReactors={canSeeComments}
             {userReaction}
             reactionList={REACTIONS}
             onReactionClick={handleReaction}
@@ -780,17 +811,19 @@
 
     <PostForms {formInfos} />
 
-    <div data-no-double-tap>
-      <CommentsPreview
-        {comments}
-        commentCount={commentCountOf(localPost)}
-        {currentUserId}
-        {authToken}
-        pendingCommentIds={thread.pending}
-        onLike={(id) => void thread.like(id)}
-        onOpen={openCommentsSheet}
-      />
-    </div>
+    {#if canSeeComments}
+      <div data-no-double-tap>
+        <CommentsPreview
+          {comments}
+          commentCount={commentCountOf(localPost)}
+          {currentUserId}
+          {authToken}
+          pendingCommentIds={thread.pending}
+          onLike={(id) => void thread.like(id)}
+          onOpen={openCommentsSheet}
+        />
+      </div>
+    {/if}
 
     <!-- Inline card notifications. -->
     <PostFeedback {errorMessage} {actionMessage} />
@@ -803,34 +836,36 @@
   report dialog and the draft all stay the card's - and `PostComments` is its body. Mounted only
   while open, so the box takes its draft back on every opening.
 -->
-<PostCommentsSheet open={commentsSheetOpen} onClose={() => (commentsSheetOpen = false)}>
-  <PostComments
-    {postId}
-    {comments}
-    {topLevelComments}
-    {commentText}
-    submittingComment={thread.submitting}
-    pendingCommentIds={thread.pending}
-    sendError={commentError}
-    {currentUserId}
-    {authToken}
-    {focusCommentId}
-    autofocusComposer={sheetWrite}
-    onCommentTextChange={async (text) => {
-      commentText = text;
-      commentError = '';
-    }}
-    onAddComment={handleAddComment}
-    onLikeComment={(id) => void thread.like(id)}
-    onEditComment={(id, text) => thread.edit(id, text)}
-    onDeleteComment={(id) => thread.remove(id)}
-    onReport={handleReportComment}
-    onLoadOlder={() => thread.loadMore()}
-    hasMoreComments={thread.hasMore}
-    loadingMore={thread.loadingMore}
-    totalCommentCount={commentCountOf(localPost)}
-  />
-</PostCommentsSheet>
+{#if canSeeComments}
+  <PostCommentsSheet open={commentsSheetOpen} onClose={() => (commentsSheetOpen = false)}>
+    <PostComments
+      {postId}
+      {comments}
+      {topLevelComments}
+      {commentText}
+      submittingComment={thread.submitting}
+      pendingCommentIds={thread.pending}
+      sendError={commentError}
+      {currentUserId}
+      {authToken}
+      {focusCommentId}
+      autofocusComposer={sheetWrite}
+      onCommentTextChange={async (text) => {
+        commentText = text;
+        commentError = '';
+      }}
+      onAddComment={handleAddComment}
+      onLikeComment={(id) => void thread.like(id)}
+      onEditComment={(id, text) => thread.edit(id, text)}
+      onDeleteComment={(id) => thread.remove(id)}
+      onReport={handleReportComment}
+      onLoadOlder={() => thread.loadMore()}
+      hasMoreComments={thread.hasMore}
+      loadingMore={thread.loadingMore}
+      totalCommentCount={commentCountOf(localPost)}
+    />
+  </PostCommentsSheet>
+{/if}
 
 <!--
   A comment and a post are reported through the same four reasons AND the same dialog, and until

@@ -291,7 +291,8 @@ impl MlsError {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct StateLoadRefusal {
     /// One of `STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`, `IDENTITY_MISMATCH`,
-    /// `KEYSTORE_KEY_UNAVAILABLE`, or `None`.
+    /// `KEYSTORE_KEY_UNAVAILABLE`, `SLOT_MOVE_UNFINISHED`, `SLOT_OWNER_UNRECORDED`, `RESET_UNSETTLED`,
+    /// or `None`.
     pub code: Option<&'static str>,
     /// The failure's own text - evidence for a reader of the logs, never a discriminator. For a
     /// coded refusal it is the variant's DETAIL, without the code its `Display` leads with: the
@@ -311,6 +312,24 @@ const KEYSTORE_KEY_UNAVAILABLE: &str = "KEYSTORE_KEY_UNAVAILABLE";
 /// ([`StateLoadRefusal::is_sealed_under_another_key`]).
 const STATE_KEY_MISMATCH: &str = "STATE_KEY_MISMATCH";
 
+/// The code of a sign-in refused because a move of a local state between two accounts' places on
+/// the install (the per-account slot of the native app) was cut part-way and cannot be finished.
+/// NOT a verdict about any state's bytes - nothing was opened - so the frontend destroys nothing,
+/// offers no reset, and tells the user a restart retries the move.
+const SLOT_MOVE_UNFINISHED: &str = "SLOT_MOVE_UNFINISHED";
+
+/// The code of a sign-in that opened its state but could not record, beside it, which account the
+/// state is (the per-account slot's owner record - every later switch, push join and save is bound by
+/// it). NOT a verdict about the state - it opened - and nothing was installed or destroyed: the cause is
+/// the device's storage, and the next sign-in records it again.
+const SLOT_OWNER_UNRECORDED: &str = "SLOT_OWNER_UNRECORDED";
+
+/// The code of a sign-in refused because a "forgot PIN" reset of the account is staged and not settled:
+/// its state is set apart, and only the server's answer says whether the PIN was reset. NOT a verdict
+/// on any state - nothing was opened - so the frontend destroys nothing and asks the user to go online
+/// and retry; the retry settles the reset first.
+const RESET_UNSETTLED: &str = "RESET_UNSETTLED";
+
 impl StateLoadRefusal {
     /// True when the load found no keystore key (biometric mode: a cancelled or refused sheet, a
     /// wiped entry) - an EXPECTED outcome the caller answers with the PIN modal, read from the
@@ -324,6 +343,57 @@ impl StateLoadRefusal {
     /// answers with the old-PIN recovery, read from the `code` field, never from `message`.
     pub fn is_sealed_under_another_key(&self) -> bool {
         self.code == Some(STATE_KEY_MISMATCH)
+    }
+
+    /// A sign-in refused because a move between two accounts' state places is unfinished
+    /// ([`SLOT_MOVE_UNFINISHED`]); `message` says which, for the logs.
+    pub fn slot_move_unfinished(message: String) -> Self {
+        Self {
+            code: Some(SLOT_MOVE_UNFINISHED),
+            message,
+        }
+    }
+
+    /// True for a [`Self::slot_move_unfinished`] refusal, read from the `code` field.
+    pub fn is_slot_move_unfinished(&self) -> bool {
+        self.code == Some(SLOT_MOVE_UNFINISHED)
+    }
+
+    /// A sign-in refused because a PIN reset of the account waits for the server's answer
+    /// ([`RESET_UNSETTLED`]); `message` says so, for the logs.
+    pub fn reset_unsettled(message: String) -> Self {
+        Self {
+            code: Some(RESET_UNSETTLED),
+            message,
+        }
+    }
+
+    /// True for a [`Self::reset_unsettled`] refusal, read from the `code` field.
+    pub fn is_reset_unsettled(&self) -> bool {
+        self.code == Some(RESET_UNSETTLED)
+    }
+
+    /// A sign-in refused because the owner record of the state it opened could not be written
+    /// ([`SLOT_OWNER_UNRECORDED`]); `message` says why, for the logs.
+    pub fn slot_owner_unrecorded(message: String) -> Self {
+        Self {
+            code: Some(SLOT_OWNER_UNRECORDED),
+            message,
+        }
+    }
+
+    /// True for a [`Self::slot_owner_unrecorded`] refusal, read from the `code` field.
+    pub fn is_slot_owner_unrecorded(&self) -> bool {
+        self.code == Some(SLOT_OWNER_UNRECORDED)
+    }
+
+    /// True when the saved state OPENED and its credential names another `user:device` than the one
+    /// signing in (`IDENTITY_MISMATCH`), read from the `code` field. It does NOT say which half
+    /// differs: under the account's own key it is the account's own state with an older device id;
+    /// under a legacy PIN-only envelope it may be another account's. The caller decides by the key that
+    /// opened it (`load_state_with_key`, `src-tauri/src/commands/mls.rs`).
+    pub fn is_identity_mismatch(&self) -> bool {
+        self.code == Some("IDENTITY_MISMATCH")
     }
 }
 

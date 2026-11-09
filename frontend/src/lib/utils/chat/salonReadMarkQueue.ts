@@ -177,6 +177,17 @@ export function salonMarksDeliveredCount(): number {
   return salonMarksDelivered;
 }
 
+/**
+ * ANOTHER TAB OF THIS BROWSER READ A SALON (`conversation_read` with its mark): its mark is on its
+ * way to the server from THAT tab, so it ticks the same counter - a counts request already on the
+ * wire here may predate it, and must not be joined by a caller asking after it. The ticks are per
+ * tab and the marks are not: without this, a leader joined or applied an answer counted before a
+ * follower's read and re-raised the badge that read had cleared (review of #2937).
+ */
+export function noteSalonMarkFromAnotherTab(): void {
+  salonMarksDelivered++;
+}
+
 /** The marks still owed, for tests and diagnostics. */
 export function owedSalonReadMarks(userId: string): Owed {
   return load('salon', userId);

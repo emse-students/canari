@@ -32,8 +32,12 @@ export type AttachSource = 'library' | 'camera' | 'files';
 /** Where the composer runs, as far as picking a file is concerned. */
 export type AttachRuntime = 'ios-app' | 'android-app' | 'ios-web' | 'android-web' | 'desktop';
 
-/** Every type the composer can send - the "all files" entry, and the desktop dialog. */
-export const ALL_FILES_ACCEPT = 'image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip';
+/**
+ * Every file the composer can send - the "all files" entry, and the desktop dialog. A WILDCARD, not a
+ * list: the server and the composer filter nothing by type, and Android's picker greys out whatever
+ * the `accept` does not name (a saved `.txt` log was unselectable, owner report 2026-11-07).
+ */
+export const ALL_FILES_ACCEPT = '*/*';
 
 /** What an `<input>` opened for `source` accepts. The camera opens no input: it is the in-app overlay. */
 export function acceptFor(source: Exclude<AttachSource, 'camera'>): string {

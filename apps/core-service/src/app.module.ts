@@ -18,12 +18,14 @@ import { DeviceRevokedSession } from './auth/entities/device-revoked-session.ent
 import { PlatformConfig } from './platform/entities/platform-config.entity';
 import { PlatformAnnouncement } from './platform/entities/platform-announcement.entity';
 import { PlatformAnnouncementSeen } from './platform/entities/platform-announcement-seen.entity';
+import { HelpSeen } from './platform/entities/help-seen.entity';
 import { AccountErasureJob } from './account-erasure/account-erasure-job.entity';
 import { PaymentModule } from './payment/payment.module';
 import { VersionModule } from './version/version.module';
 import { ExternalModule } from './external/external.module';
 import { InternalModule } from './internal/internal.module';
 import { SkyModule } from './sky/sky.module';
+import { typeormSynchronize } from './typeorm-synchronize';
 
 /** Root NestJS module - wires up TypeORM, config, auth, users, payments, and version. */
 @Module({
@@ -59,9 +61,10 @@ import { SkyModule } from './sky/sky.module';
           PlatformConfig,
           PlatformAnnouncement,
           PlatformAnnouncementSeen,
+          HelpSeen,
           AccountErasureJob,
         ],
-        synchronize: process.env.NODE_ENV !== 'production',
+        synchronize: typeormSynchronize(),
       }),
       inject: [ConfigService],
     }),

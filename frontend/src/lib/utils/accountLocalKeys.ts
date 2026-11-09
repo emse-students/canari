@@ -42,15 +42,32 @@ export const ACCOUNT_KEY = {
    */
   owedInvitations: (userId: string) => `mls_owed_invitations:v1:${userId}`,
   /**
+   * `owedRemovalNotices.ts`: the groups whose "you were removed" line is owed - the removal recorded,
+   * its instant not answered yet (a route this server does not serve, or no answer) - a JSON array.
+   */
+  owedRemovalNotices: (userId: string) => `chat_owed_removal_notices:v1:${userId}`,
+  /**
    * `addLockMarkers.ts`: the add locks this device took and has not had a release ANSWERED for - per
    * group, the token of the acquisition, cleared when its release is answered.
    */
   addLockMarkers: (userId: string) => `mls_add_lock_markers:v1:${userId}`,
+  /** `postComposerDraft.ts`: the account's unsent post (its text and choices, never its media). */
+  postComposerDraft: (userId: string) => `canari_post_composer_draft:${userId}`,
+  /** `postCommentDraft.ts`: the account's unsent comment on one post. */
+  postCommentDraft: (userId: string, postId: string) =>
+    `canari_post_comment_draft:${userId}:${postId}`,
+  /**
+   * `workspaceSnapshot.ts`: the account's last community list, drawn before the network answers.
+   * Called with `''` it is the prefix every sign-out erases.
+   */
+  workspaceSnapshot: (userId: string) => `canari_workspace_snapshot:v1:${userId}`,
   /** `deviceKeyGate.ts`: the device-key change epoch. */
   deviceKeyEpoch: (userId: string) => `canari-device-key-epoch:${userId}`,
   /** `conversations.ts`: the archived conversation ids (lower-cased, as it always was). */
   archivedConversations: (userId: string) =>
     `canari_archived_conversations_${userId.toLowerCase()}`,
+  /** `noHolder.svelte.ts`: conversations the user took off their list because no holder came back. */
+  unopenableHidden: (userId: string) => `canari_unopenable_hidden:v1:${userId}`,
   /** `seenLedgerBounds.ts`: the index of the per-group seen ledgers. */
   seenCipherIndex: (userId: string) => `history_seen_cipher_index:${userId}`,
   /**
@@ -58,6 +75,11 @@ export const ACCOUNT_KEY = {
    * account in one key, other members' ids included, all written by this account's device.
    */
   historyHeldNothing: (userId: string) => `canari_graine_history_held_nothing:v1:${userId}`,
+  /**
+   * `chat/joinPush.ts`: the Welcomes this device has already sent its join push for - group, device
+   * and a fingerprint of the Welcome's bytes, a bounded FIFO.
+   */
+  joinPushesSent: (userId: string) => `mls_join_pushes_sent:v1:${userId}`,
   /**
    * `graine/admissionGate.ts`: what this device recorded by itself about who is admitted - per
    * community the roots and the admissions it verified. Other members' ids, written by this
@@ -147,8 +169,20 @@ export const ACCOUNT_KEY = {
    * backups made before it no longer open here; cleared by the next export.
    */
   backupOwedAfterKeyMove: (userId: string) => `canari_backup_owed_after_key_move:v1:${userId}`,
+  /**
+   * `guidance/seenHelps.svelte.ts`: the first-time helps this account has seen, and those whose
+   * record the server has not acknowledged yet - help ids only. The server's `help_seen` is the
+   * truth; this is the optimistic copy that keeps a help from replaying offline.
+   */
+  seenHelps: (userId: string) => `canari_seen_helps:v1:${userId}`,
   /** No longer written; removed by the device reset and the deletion where an old build left it. */
   syncGuideSeen: (userId: string) => `canari_sync_guide_seen_${userId}`,
+  /**
+   * `conversationNicknames.svelte.ts`: one DM's or group's nickname register - names other members
+   * set, so text about people: erased at sign-out as well as by the deletion.
+   */
+  conversationNicknames: (userId: string, groupId: string) =>
+    `canari_nicknames:v1:${userId}:${groupId}`,
   /** `history.ts`: the processed-ciphertext fingerprints of one group. */
   seenCipher: (userId: string, groupId: string) => `history_seen_cipher:${userId}:${groupId}`,
   /** `history.ts`: the last stream id fetched for one group. */
@@ -201,11 +235,16 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.deviceId(userId),
     ACCOUNT_KEY.retiringDeviceIds(userId),
     ACCOUNT_KEY.owedInvitations(userId),
+    ACCOUNT_KEY.owedRemovalNotices(userId),
     ACCOUNT_KEY.addLockMarkers(userId),
     ACCOUNT_KEY.deviceKeyEpoch(userId),
     ACCOUNT_KEY.archivedConversations(userId),
+    ACCOUNT_KEY.unopenableHidden(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),
+    ACCOUNT_KEY.postComposerDraft(userId),
+    ACCOUNT_KEY.workspaceSnapshot(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
+    ACCOUNT_KEY.joinPushesSent(userId),
     ACCOUNT_KEY.admissionLedger(userId),
     ACCOUNT_KEY.historyClosedSeen(userId),
     ACCOUNT_KEY.pagedHistoryAnswer(userId),
@@ -220,6 +259,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.feedStoreEpoch(userId),
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),
+    ACCOUNT_KEY.seenHelps(userId),
     ACCOUNT_KEY.lastActive(userId),
     ACCOUNT_KEY.restoreKeyRegistered(userId),
     ACCOUNT_KEY.backupRecoveryCode(userId),
@@ -231,6 +271,7 @@ function exactKeys(userId: string): string[] {
 function keyPrefixes(userId: string): string[] {
   return [
     ACCOUNT_KEY.seenCipher(userId, ''),
+    ACCOUNT_KEY.conversationNicknames(userId, ''),
     ACCOUNT_KEY.lastStreamId(userId, ''),
     ACCOUNT_KEY.retryCipher(userId, ''),
     ACCOUNT_KEY.lastConnected(userId, ''),
@@ -239,6 +280,7 @@ function keyPrefixes(userId: string): string[] {
     ACCOUNT_KEY.deviceName(userId, ''),
     ACCOUNT_KEY.leafRefresh(userId, ''),
     ACCOUNT_KEY.refusedDevices(userId, ''),
+    ACCOUNT_KEY.postCommentDraft(userId, ''),
   ];
 }
 

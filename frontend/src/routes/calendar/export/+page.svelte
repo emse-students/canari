@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -502,39 +503,35 @@
               {m.calendar_export_download_label()}
             </p>
             <div class="flex flex-wrap gap-2">
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                class="flex-1 basis-32"
                 data-testid="calendar-export-pdf"
                 onclick={() => handleExport('pdf')}
                 disabled={loading || exporting !== null}
                 aria-busy={exporting === 'pdf'}
                 aria-label={m.calendar_export_download_btn()}
-                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex flex-1 basis-32 items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors disabled:pointer-events-none disabled:opacity-40"
               >
                 <FileDown size={18} aria-hidden="true" />
                 {exporting === 'pdf' ? m.common_generating_label() : m.calendar_export_format_pdf()}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="secondary"
+                class="flex-1 basis-32"
                 data-testid="calendar-export-png"
                 onclick={() => handleExport('png')}
                 disabled={loading || exporting !== null}
                 aria-busy={exporting === 'png'}
                 aria-label={m.calendar_export_download_png_btn()}
-                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex flex-1 basis-32 items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors disabled:pointer-events-none disabled:opacity-40"
               >
                 <FileImage size={18} aria-hidden="true" />
                 {exporting === 'png' ? m.common_generating_label() : m.calendar_export_format_png()}
-              </button>
+              </Button>
             </div>
-            <button
-              type="button"
-              onclick={resetOptions}
-              class="border-cn-border text-text-muted hover:bg-cn-bg inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-xs font-semibold transition-colors"
-            >
+            <Button variant="secondary" size="compact" onclick={resetOptions}>
               <RotateCcw size={14} />
               {m.calendar_export_reset()}
-            </button>
+            </Button>
           </div>
         </div>
 

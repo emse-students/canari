@@ -69,23 +69,56 @@ export async function revalidateFeedAudience(): Promise<boolean | null> {
 }
 
 /**
- * Sends a visitor outside the feed audience to `/chat`, and returns whether it did.
+ * Sends a visitor outside the feed audience to `/chat`, and returns whether it did NOW.
  *
- * ONLY A KNOWN VERDICT REDIRECTS. A reader whose verdict has never been established waits for the
- * first answer, because there is nothing to render from; from then on the remembered one decides
- * immediately and the fresh one lands behind the page. A verdict that stays unknown - first ever
- * visit, on a dead link - keeps the reader here, which is what the layout does one level up.
+ * ONLY A REMEMBERED VERDICT REDIRECTS BEFORE THE PAGE DRAWS, AND AN UNKNOWN ONE NEVER WAITS. A `load`
+ * that awaits holds the whole navigation: SvelteKit renders nothing until EVERY load of it resolves,
+ * and the unknown-verdict question needs a token, which on a first launch is the boot's session
+ * refresh (`bootSession`) - up to about 40 s on a path that hangs, in front of the default route `/`
+ * (2026-11-05, measured in Chromium against an API that never answers). So with no remembered
+ * verdict the page opens and the redirect to `/chat` is made BEHIND it, from the answer, when it
+ * comes. A verdict that never comes - first ever visit, dead link - keeps the reader here, as the
+ * layout does one level up; the feed's own 403 corrects the verdict too
+ * ({@link isOutsideFeedAudience}).
  */
 export async function redirectIfNotFeedAudience(): Promise<boolean> {
   if (isGlobalAdmin()) return false;
 
-  let verdict = feedAudienceState();
-  if (verdict === null) verdict = await revalidateFeedAudience();
-  else void revalidateFeedAudience();
+  const verdict = feedAudienceState();
+  if (verdict === null) {
+    Log.d('FeedAudience', 'no remembered verdict - the page opens, the answer redirects behind it');
+    void revalidateFeedAudience().then((answer) => {
+      if (answer !== false) return;
+      // THE PAGE THE ANSWER IS ABOUT, NOT WHICHEVER IS CURRENT: a reader who left the feed before the
+      // answer came is not pulled away from the page they went to.
+      if (!isFeedPath(currentPath())) {
+        Log.d('FeedAudience', 'outside the audience, but the reader left the feed - no redirect');
+        return;
+      }
+      return sendToChat();
+    });
+    return false;
+  }
+  void revalidateFeedAudience();
 
   if (verdict !== false) return false;
-  await goto(resolve('/chat'), { replace: true }).catch(() => {});
+  await sendToChat();
   return true;
+}
+
+/** The path the browser is on now (the SPA's own location, read when the answer lands). */
+function currentPath(): string {
+  return typeof window === 'undefined' ? '/posts' : window.location.pathname;
+}
+
+/** Whether `path` is the feed or a post of it - the pages the audience gate guards. */
+function isFeedPath(path: string): boolean {
+  return path === '/posts' || path.startsWith('/posts/');
+}
+
+/** Sends the reader to `/chat`; a refused navigation is not an error worth surfacing. */
+async function sendToChat(): Promise<void> {
+  await goto(resolve('/chat'), { replace: true }).catch(() => {});
 }
 
 /** The pure classification: a 403 from the feed read, by status. */

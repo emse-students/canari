@@ -4,6 +4,7 @@ import { get } from 'svelte/store';
 import {
   callHoldsAppSound,
   callSoundHeld,
+  callSoundPhase,
   noteToneSilenced,
   reportCallSoundPhase,
   resetCallSoundGateForTest,
@@ -62,5 +63,17 @@ describe("the app's sound gate during a call", () => {
     expect(callHoldsAppSound()).toBe(true);
     retireCallSoundHolder('old');
     expect(callHoldsAppSound()).toBe(false);
+  });
+
+  it('states the strongest phase among the holders, for the audio session', () => {
+    expect(get(callSoundPhase)).toBe('none');
+    reportCallSoundPhase('a', 'incoming');
+    expect(get(callSoundPhase)).toBe('incoming');
+    reportCallSoundPhase('b', 'incall');
+    expect(get(callSoundPhase)).toBe('incall');
+    reportCallSoundPhase('b', 'ended');
+    expect(get(callSoundPhase)).toBe('incoming');
+    retireCallSoundHolder('a');
+    expect(get(callSoundPhase)).toBe('none');
   });
 });

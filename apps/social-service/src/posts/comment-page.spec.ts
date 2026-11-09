@@ -44,6 +44,20 @@ describe('pageComments cuts whole threads', () => {
     expect(ids(page)).toContain('c2');
   });
 
+  it("shows a moderation tombstone and its protected replies to a reader blocked with the tombstone's writer", () => {
+    // S1 (second review, 2026-11-04): hiding the tombstone from exactly the reader who blocked
+    // its real writer would answer "who wrote this anonymous comment". A tombstone carries no
+    // account; a legacy one written before that may still carry one, and is exempt all the same.
+    const threads = [
+      { id: 't1', parentId: null, removedByModeration: true },
+      { id: 'inst1', userId: 'officer', associationId: 'inst', parentId: 't1' },
+      { id: 't2', userId: 'blocked', parentId: null, removedByModeration: true },
+      { id: 'inst2', userId: 'officer', associationId: 'inst', parentId: 't2' },
+    ];
+    const page = pageComments(threads, { limit: 50, blockedIds: ['blocked'] });
+    expect(ids(page).sort()).toEqual(['inst1', 'inst2', 't1', 't2']);
+  });
+
   it('clamps the limit', () => {
     expect(pageComments(ALL, { limit: 0 }).comments.length).toBeGreaterThan(0);
   });

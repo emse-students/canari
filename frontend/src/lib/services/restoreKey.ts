@@ -130,6 +130,44 @@ export function markRestoreAttempted(): void {
   writeStorage(RESTORE_ATTEMPTED_KEY, '1');
 }
 
+/**
+ * Per install: the PAIR a `RESTORE_ORIGIN_NOT_ALLOWED` was a verdict on - this build (its
+ * version, standing for its signing certificate, which only an uninstall can change, and an
+ * uninstall clears this) and the estate's accepted origins (`originsDigest`, the digest the
+ * registration options carry of `ANDROID_APP_LINK_SHA256`). While BOTH still match, a start does
+ * not mint a key only to have it refused again; a new version OR a changed configuration lifts it
+ * at the next start, so a misconfiguration fixed on the server heals without a release.
+ */
+export const RESTORE_ORIGIN_REFUSED_KEY = 'canari_restore_origin_refused';
+
+/** What a `RESTORE_ORIGIN_NOT_ALLOWED` was given against (see the key above). */
+export interface RestoreOriginRefusal {
+  version: string;
+  originsDigest: string;
+}
+
+/** The recorded {@link RestoreOriginRefusal}, or null when there is none (or it is unreadable). */
+export function restoreOriginRefusal(): RestoreOriginRefusal | null {
+  const raw = readStorage(RESTORE_ORIGIN_REFUSED_KEY);
+  if (raw === null) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<RestoreOriginRefusal>;
+    if (typeof parsed.version === 'string' && typeof parsed.originsDigest === 'string') {
+      return { version: parsed.version, originsDigest: parsed.originsDigest };
+    }
+  } catch {
+    // An unreadable record lifts nothing it cannot name: the next refusal rewrites it.
+  }
+  rwarn(`unreadable origin refusal record dropped: ${raw.slice(0, 80)}`);
+  writeStorage(RESTORE_ORIGIN_REFUSED_KEY, null);
+  return null;
+}
+
+/** Records the pair a `RESTORE_ORIGIN_NOT_ALLOWED` was given against (see the key above). */
+export function recordRestoreOriginRefused(refusal: RestoreOriginRefusal): void {
+  writeStorage(RESTORE_ORIGIN_REFUSED_KEY, JSON.stringify(refusal));
+}
+
 /** Creates (or replaces) this install's key from the server's registration options. */
 export async function createRestoreKey(options: unknown): Promise<CreatedRestoreKey> {
   return invoke<CreatedRestoreKey>(restoreCommand('create'), {

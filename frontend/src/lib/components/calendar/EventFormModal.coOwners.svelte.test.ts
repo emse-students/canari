@@ -202,4 +202,53 @@ describe('event form co-organisers', () => {
     expect(names()).toHaveLength(4);
     expect(names()).not.toContain('Robotique');
   });
+
+  // E2: the date and the partner list belong to the organiser, and the form draws them from the
+  // side the SERVER named - a partner sees neither, and has a way out instead.
+  it('hides the date and the partner list from a partner, and offers withdrawal', async () => {
+    const values = $state({
+      ...blankEventFormValues(),
+      title: 'Gala',
+      targetAssociationId: 'a5',
+      writeSide: 'partner' as const,
+    });
+    let withdrawn = 0;
+    mounted.push(
+      mount(EventFormModal, {
+        target: document.body,
+        props: {
+          open: true,
+          heading: 'h',
+          values,
+          capabilities: {},
+          submitLabel: 'go',
+          savingLabel: 'saving',
+          onSubmit: async () => {},
+          onWithdraw: async () => {
+            withdrawn += 1;
+          },
+          onClose: () => {},
+        },
+      })
+    );
+    flushSync();
+    await tick();
+    expect(document.querySelector('#event-form-start')).toBeNull();
+    expect(document.querySelector('#event-form-end')).toBeNull();
+    expect(document.querySelector('[data-co-owner-counter]')).toBeNull();
+    expect(document.querySelector('[data-write-side="partner"]')).not.toBeNull();
+    const out = [...document.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === m.asso_calendar_partner_withdraw_button()
+    )!;
+    out.click();
+    await tick();
+    expect(withdrawn).toBe(1);
+  });
+
+  it('draws the date for the organiser', async () => {
+    const values = $state({ ...blankEventFormValues(), title: 'x', targetAssociationId: 'a5' });
+    await open(values);
+    expect(document.querySelector('#event-form-start')).not.toBeNull();
+    expect(document.querySelector('[data-write-side="partner"]')).toBeNull();
+  });
 });

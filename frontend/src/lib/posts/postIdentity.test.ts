@@ -3,16 +3,20 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('$lib/associations/api', () => ({
   listAssociations: vi.fn(),
   listMyAssociations: vi.fn(),
+  getMyBdeReach: vi.fn(),
+  SUPER_ADMIN_EXCLUDED_FLAGS: 1,
   // The real flag values: POST_AS_ASSO is bit 0.
   AssociationPermissionFlag: { POST_AS_ASSO: 1 },
   hasPermissionFlag: (permissions: number, flag: number) => (permissions & flag) !== 0,
 }));
-vi.mock('$lib/stores/user', () => ({ isGlobalAdmin: () => false }));
+const admin = vi.hoisted(() => ({ on: false }));
+vi.mock('$lib/stores/user', () => ({ isGlobalAdmin: () => admin.on }));
 
 import {
   commentIdentityFields,
   commentIdentityOf,
   isAssociationIdentity,
+  listLiveAssociations,
   listPostAsAssociations,
   postIdentityFields,
 } from './postIdentity';
@@ -55,6 +59,28 @@ describe('who may be offered as a poster', () => {
     ]);
     const offered = await listPostAsAssociations();
     expect(offered.map((a) => a.id)).toEqual(['speaks', 'speaks-and-more']);
+  });
+});
+
+describe('who may be offered as a live broadcaster', () => {
+  it('is asked of the membership alone: a global admin who is no member is offered nothing', async () => {
+    admin.on = true;
+    vi.mocked(listMyAssociations).mockResolvedValue([asso('speaks', 1), asso('member', 0)]);
+    // The post picker gives a global admin everything (the server's posts accept it)...
+    const { listAssociations } = await import('$lib/associations/api');
+    vi.mocked(listAssociations).mockResolvedValue([
+      asso('speaks', 1),
+      asso('member', 0),
+      asso('other'),
+    ]);
+    expect((await listPostAsAssociations()).map((a) => a.id)).toEqual([
+      'speaks',
+      'member',
+      'other',
+    ]);
+    // ...but POST /api/lives asks mayAct WITHOUT the admin tier: only POST_AS_ASSO held counts.
+    expect((await listLiveAssociations()).map((a) => a.id)).toEqual(['speaks']);
+    admin.on = false;
   });
 });
 

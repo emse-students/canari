@@ -8,7 +8,7 @@ import {
 } from './audienceRefusal';
 
 describe('audience refusals are classified by code, never by message', () => {
-  it('reads each of the five server codes', () => {
+  it('reads each of the six server codes', () => {
     for (const code of Object.values(AUDIENCE_REFUSAL)) {
       expect(audienceRefusalCode(new SocialApiError('english prose', code, 403))).toBe(code);
     }
@@ -29,7 +29,7 @@ describe('audience refusals are classified by code, never by message', () => {
       expect(text.length).toBeGreaterThan(10);
       seen.add(text);
     }
-    expect(seen.size).toBe(5);
+    expect(seen.size).toBe(6);
   });
 
   it('answers null for a foreign error so the caller keeps its own fallback', () => {

@@ -9,7 +9,7 @@
     type SelectedRun,
     type WeekRuns,
   } from '$lib/bookings/availabilityPaint';
-  import { minutesOf, timeChoices } from '$lib/bookings/availability';
+  import { minutesOf, timeOptions } from '$lib/bookings/availability';
   import Select from '$lib/components/ui/Select.svelte';
   import { Log } from '$lib/utils/Log';
   import { Pencil } from '@lucide/svelte';
@@ -60,8 +60,7 @@
     const name = dayNames[day] ?? '';
     return name.charAt(0).toUpperCase() + name.slice(1);
   };
-  const timeOptions = (asEnd: boolean, current: string) =>
-    timeChoices(step, asEnd, current).map((t) => ({ value: t, label: t }));
+  const timeOptionsOf = (asEnd: boolean, current: string) => timeOptions(step, asEnd, current);
 
   function select(run: SelectedRun) {
     Log.d('BOOKINGS', `painter run picked day=${run.day} ${run.start}-${run.end}`);
@@ -263,14 +262,14 @@
           id="week-painter-run-start"
           label={m.bookings_avail_start()}
           value={timeOfMinutes(selected.start)}
-          options={timeOptions(false, timeOfMinutes(selected.start))}
+          options={timeOptionsOf(false, timeOfMinutes(selected.start))}
           onValueChange={(v) => edit(minutesOf(v), selected!.end)}
         />
         <Select
           id="week-painter-run-end"
           label={m.bookings_avail_end()}
           value={timeOfMinutes(selected.end)}
-          options={timeOptions(true, timeOfMinutes(selected.end))}
+          options={timeOptionsOf(true, timeOfMinutes(selected.end))}
           onValueChange={(v) => edit(selected!.start, minutesOf(v))}
         />
       </div>

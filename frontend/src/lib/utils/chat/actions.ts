@@ -15,7 +15,6 @@ import type { OneDeviceAddResult } from '$lib/mls-client/IMlsService';
 import type { Conversation } from '$lib/types';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
-  sendFullHistoryBundle,
   sendHistoryDigestRequest,
   sendHistoryRangeBundle,
   historyStateKeyFor,
@@ -572,7 +571,6 @@ function sanitizeLogIdentity(identity: string): string {
  */
 export async function processPendingInvitations(params: {
   mlsService: IMlsService;
-  storage: IStorage | null;
   userId: string;
   deviceKeyB64: string;
   conversations: Map<string, Conversation>;
@@ -603,7 +601,6 @@ export async function processPendingInvitations(params: {
 }): Promise<boolean> {
   const {
     mlsService,
-    storage,
     userId,
     deviceKeyB64,
     conversations,
@@ -748,64 +745,61 @@ export async function processPendingInvitations(params: {
         // asking which leaf carries THIS package's key (`duplicateKeyHolder`).
         let packageAdded: Uint8Array | null = null;
         try {
-          // Fetch fresh KeyPackage for the pending device. fetchUserDevices only returns
-          // devices active within the last 30 days; fall back to fetchDeviceKeyPackage for
-          // older ones.
-          // Best-effort (`.catch(() => [])`) : a network error here must not short-circuit
-          // the fetchDeviceKeyPackage fallback below (empty list => try the fallback).
-          const devices = await mlsService.fetchUserDevices(inv.userId).catch(() => []);
-          let targetDevice: DeviceKeyPackage | undefined = devices.find(
-            (d) => d.deviceId === inv.deviceId
-          );
-          if (!targetDevice) {
-            const answer = await mlsService.fetchDeviceKeyPackage(inv.userId, inv.deviceId);
+          // CLAIM ONE DEVICE'S PACKAGE, NEVER THE ACCOUNT'S. It is claimed before the leaf check
+          // below, so a fulfilled invitation (vouched) still discards it - that order is owed a
+          // decision (`docs/wiki/backlog.d/p2-what-the-key-package-claim-fix-left.md`).
+          // This read used to be the user's whole device list, which claims a one-time package from
+          // EVERY device of theirs: production
+          // 2026-11-06, a new device admitted to 131 groups by another device of the account
+          // emptied the account's three other pools, and every peer was then served their static
+          // rows (`docs/wiki/protocols/key-package-pool.md`). The single-device
+          // read has no 30-day cutoff either, which the list needed a second request for.
+          const answer = await mlsService.fetchDeviceKeyPackage(inv.userId, inv.deviceId);
 
-            // NOTHING WAS ESTABLISHED, SO NOTHING IS RETIRED. A status code is an answer and a
-            // transport failure is not - and this seam read both as "the device was deregistered"
-            // and DELETED the pending membership on it. One bad minute on one endpoint could
-            // retire an invitation that was perfectly valid. The row stays; the next sweep asks
-            // again, which is what a retry is for.
-            if (answer.kind === 'unanswered') {
-              log(
-                `[PENDING] Device ${inv.deviceId}: the server did not answer (${answer.detail}) - ` +
-                  `invitation kept, next sweep retries`
-              );
-              continue;
-            }
-
-            // A REASON THIS BUILD CANNOT JUDGE RETIRES NOTHING. Retiring is destructive, so only
-            // the allowlisted refusals do it; an `unrecognized` one keeps the row and the next
-            // sweep asks again (the delivery client warned once about the unknown reason itself).
-            if (answer.kind === 'none' && !refusalRetiresInvitation(answer.reason)) {
-              log(
-                `[PENDING] Device ${inv.deviceId}: refusal (${answer.reason}) this build cannot judge - ` +
-                  `invitation kept, next sweep retries`
-              );
-              continue;
-            }
-
-            if (answer.kind === 'none') {
-              // AND WHEN IT DID ANSWER, THE ANSWER NAMES ITS CAUSE. All three retire the row -
-              // this device cannot be added right now and asking again this boot cannot change
-              // that - but `expired` comes BACK on its own: the device mints a fresh package on
-              // its next connection and `registerDevice` re-creates this very membership for every
-              // group its owner is in. Reporting that as "deregistered" is what made a temporary
-              // condition read as a permanent one in every log that recorded it.
-              log(
-                refusalIsTemporary(answer.reason)
-                  ? `[PENDING] Device ${inv.deviceId} has no usable KeyPackage (${answer.reason}) ` +
-                      `-> cleanup; it returns by itself when it next connects`
-                  : `[PENDING] Device ${inv.deviceId} cannot be added (${answer.reason}) -> cleanup`
-              );
-              // Final for this id (`revoked`, `unregistered`): the rest of the sweep knows it.
-              if (!refusalIsTemporary(answer.reason)) cannotBeAdded.set(deviceKey, answer.reason);
-              mlsService.deleteDeviceMembership(inv.userId, inv.deviceId, groupId).catch(() => {});
-              continue;
-            }
-
-            targetDevice = answer.device;
-            log(`[PENDING] KeyPackage retrieved via fallback for ${inv.deviceId} (> 30 days)`);
+          // NOTHING WAS ESTABLISHED, SO NOTHING IS RETIRED. A status code is an answer and a
+          // transport failure is not - and this seam read both as "the device was deregistered"
+          // and DELETED the pending membership on it. One bad minute on one endpoint could
+          // retire an invitation that was perfectly valid. The row stays; the next sweep asks
+          // again, which is what a retry is for.
+          if (answer.kind === 'unanswered') {
+            log(
+              `[PENDING] Device ${inv.deviceId}: the server did not answer (${answer.detail}) - ` +
+                `invitation kept, next sweep retries`
+            );
+            continue;
           }
+
+          // A REASON THIS BUILD CANNOT JUDGE RETIRES NOTHING. Retiring is destructive, so only
+          // the allowlisted refusals do it; an `unrecognized` one keeps the row and the next
+          // sweep asks again (the delivery client warned once about the unknown reason itself).
+          if (answer.kind === 'none' && !refusalRetiresInvitation(answer.reason)) {
+            log(
+              `[PENDING] Device ${inv.deviceId}: refusal (${answer.reason}) this build cannot judge - ` +
+                `invitation kept, next sweep retries`
+            );
+            continue;
+          }
+
+          if (answer.kind === 'none') {
+            // AND WHEN IT DID ANSWER, THE ANSWER NAMES ITS CAUSE. All three retire the row -
+            // this device cannot be added right now and asking again this boot cannot change
+            // that - but `expired` comes BACK on its own: the device mints a fresh package on
+            // its next connection and `registerDevice` re-creates this very membership for every
+            // group its owner is in. Reporting that as "deregistered" is what made a temporary
+            // condition read as a permanent one in every log that recorded it.
+            log(
+              refusalIsTemporary(answer.reason)
+                ? `[PENDING] Device ${inv.deviceId} has no usable KeyPackage (${answer.reason}) ` +
+                    `-> cleanup; it returns by itself when it next connects`
+                : `[PENDING] Device ${inv.deviceId} cannot be added (${answer.reason}) -> cleanup`
+            );
+            // Final for this id (`revoked`, `unregistered`): the rest of the sweep knows it.
+            if (!refusalIsTemporary(answer.reason)) cannotBeAdded.set(deviceKey, answer.reason);
+            mlsService.deleteDeviceMembership(inv.userId, inv.deviceId, groupId).catch(() => {});
+            continue;
+          }
+
+          const targetDevice: DeviceKeyPackage = answer.device;
 
           // Idempotence: if the device's leaf is already in the MLS tree, the invitation is
           // fulfilled - SKIP regardless of server status. Never kick here.
@@ -928,20 +922,9 @@ export async function processPendingInvitations(params: {
             log(`[PENDING] Welcome → ${inv.deviceId} (user: ${inv.userId}) for ${groupId}`);
           }
 
-          // Save MLS state after the merged commit (crash-safety).
+          // Save MLS state after the merged commit (crash-safety). The join push follows the
+          // Welcome's delivery itself (`joinPush.ts`), whichever path delivers it. [[C8]]
           await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
-
-          // The new member has joined at our epoch via the Welcome; send the full history bundle
-          // (APPLICATION MESSAGES, not a commit, so it does not go through validateCommit). [[C8]]
-          await sendFullHistoryBundle(groupId, {
-            storage,
-            deviceKeyB64,
-            mlsService,
-            log,
-            to: digestIdentity(inv.userId, inv.deviceId),
-          }).catch((e) =>
-            log(`[HISTORY_BUNDLE] History send error to ${inv.userId}: ${String(e)}`)
-          );
         } catch (e) {
           // A REFUSED KEY IS NOT A RETRYABLE FAILURE AND RETIRES NOTHING: the package names
           // another device, or this device's key changed with nothing to prove it. The row stays,
@@ -1368,7 +1351,7 @@ export async function discoverMissingGroups(params: {
   // Whether each row is an invitation-link ask no member has answered, as the list says of THIS
   // device's seat: the sidebar reads it as waiting rather than established, and the sweep above
   // removes such a row once the list stops naming it.
-  for (const key of syncAdmissionFlags(conversations, activeServerGroups)) {
+  for (const key of syncAdmissionFlags(conversations, activeServerGroups, log)) {
     const state = conversations.get(key)?.awaitingAdmission
       ? 'awaits a member admission'
       : 'no longer awaits a member';
@@ -1562,7 +1545,6 @@ const WELCOME_COOLDOWN_MS = 30_000;
  */
 export async function handleWelcomeRequest(params: {
   mlsService: IMlsService;
-  storage: IStorage | null;
   userId: string;
   deviceKeyB64: string;
   conversations: Map<string, Conversation>;
@@ -1581,7 +1563,6 @@ export async function handleWelcomeRequest(params: {
 }) {
   const {
     mlsService,
-    storage,
     userId,
     deviceKeyB64,
     conversations,
@@ -1748,31 +1729,22 @@ export async function handleWelcomeRequest(params: {
     // If absent: the device has not yet published its KP -> cannot invite it.
     // Causality is guaranteed upstream: syncConnectionAfterWsOpen does not send a
     // welcome_request until generateKeyPackage has succeeded.
-    // Best-effort: a network error must not short-circuit the fetchDeviceKeyPackage fallback.
-    const devices = await mlsService.fetchUserDevices(requesterUserId).catch(() => []);
-    let targetDevice: DeviceKeyPackage | undefined = devices.find(
-      (d) => d.deviceId === requesterDeviceId
-    );
-    if (!targetDevice) {
-      // fetchUserDevices applies a 30-day cutoff: the requesting device may be absent
-      // (old device reconnecting). Retry via fetchDeviceKeyPackage, which has no cutoff -
-      // same fallback as processPendingInvitations. Without this, a valid but out-of-window
-      // device stays stuck (silent abandon, no re-add possible).
-      const answer = await mlsService.fetchDeviceKeyPackage(requesterUserId, requesterDeviceId);
-      if (answer.kind !== 'package') {
-        // Aborting either way - this path never retires anything - but the line says WHICH, because
-        // "the server was unreachable" and "this device has nothing usable" send a reader looking
-        // in two different places, and they were one sentence until 2026-09-16.
-        log(
-          answer.kind === 'unanswered'
-            ? `[WELCOME_REQ] No KeyPackage answer for ${requesterDeviceId} (${answer.detail}) - aborting`
-            : `[WELCOME_REQ] No KeyPackage for ${requesterDeviceId} (${answer.reason}) - aborting`
-        );
-        return;
-      }
-      targetDevice = answer.device;
-      log(`[WELCOME_REQ] KeyPackage retrieved via fallback for ${requesterDeviceId} (> 30 days)`);
+    // ONE DEVICE IS ASKED, NOT THE ACCOUNT: the user's device list claims a one-time package from
+    // every device of theirs, and this answer uses one (see the pending sweep above, and
+    // `docs/wiki/protocols/key-package-pool.md` for the production night that measured it).
+    const answer = await mlsService.fetchDeviceKeyPackage(requesterUserId, requesterDeviceId);
+    if (answer.kind !== 'package') {
+      // Aborting either way - this path never retires anything - but the line says WHICH, because
+      // "the server was unreachable" and "this device has nothing usable" send a reader looking
+      // in two different places, and they were one sentence until 2026-09-16.
+      log(
+        answer.kind === 'unanswered'
+          ? `[WELCOME_REQ] No KeyPackage answer for ${requesterDeviceId} (${answer.detail}) - aborting`
+          : `[WELCOME_REQ] No KeyPackage for ${requesterDeviceId} (${answer.reason}) - aborting`
+      );
+      return;
     }
+    const targetDevice: DeviceKeyPackage = answer.device;
 
     // ── Check if the device's leaf is already in the MLS tree ────────────
     // Do not check status='active' here: sendWelcome marks the device active
@@ -1906,20 +1878,9 @@ export async function handleWelcomeRequest(params: {
       log(`[WELCOME_REQ] Welcome -> ${requesterUserId}:${requesterDeviceId} for ${groupId}`);
     }
 
-    // Save MLS state after the merged commit (crash-safety).
+    // Save MLS state after the merged commit (crash-safety). The history goes to the requester as
+    // the join push that follows the Welcome's delivery itself (`joinPush.ts`). [[C8]]
     await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
-
-    // Send the full history to the new member. These are APPLICATION MESSAGES (not a commit, do not
-    // go through validateCommit): the recipient has already joined via the Welcome (same epoch as
-    // us). The bundle arrives after the Welcome client-side (order guaranteed by MLS) and reads
-    // IndexedDB. [[C8]]
-    await sendFullHistoryBundle(groupId, {
-      storage,
-      deviceKeyB64,
-      mlsService,
-      log,
-      to: digestIdentity(requesterUserId, requesterDeviceId),
-    }).catch((e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`));
   } catch (e) {
     if (e instanceof DeviceTrustRefusedError) {
       reportDeviceTrustRefusal('[WELCOME_REQ]', groupId, e);

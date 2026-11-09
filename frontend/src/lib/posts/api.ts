@@ -1,8 +1,10 @@
 import { apiFetch } from '$lib/utils/apiFetch';
-import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { ApiRefusalError, refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { responseOrigin } from '$lib/utils/apiJson';
 import { socialUrl } from '$lib/utils/apiUrl';
 import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
+import type { Campus, Formation } from '$lib/profile/miconnectProfile';
 import { nextPostSequence, stampServed } from '$lib/posts/postCardSync';
 
 export type PostMediaRef = MediaRef & { caption?: string };
@@ -108,6 +110,11 @@ export interface PostComment {
   canDelete?: boolean;
   /** Encrypted media attached to this comment (GIF, screenshot, etc.). */
   media?: PostMediaRef;
+  /**
+   * A moderation TOMBSTONE (lead, 2026-11-04): the comment was removed by a moderator but replies it
+   * may not remove still answer it, so its row stays with no text, author or media.
+   */
+  removedByModeration?: boolean;
 }
 
 /** The longest comment, in characters. The server copy is `COMMENT_MAX_LENGTH` in `apps/social-service/src/posts/comment-page.ts`. */
@@ -143,6 +150,8 @@ export interface PostAssociationAuthor {
   name: string;
   slug: string;
   logoUrl: string | null;
+  /** The entity's type - what decides whether its posts may be marked "Entre étudiants". */
+  type?: 'association' | 'list' | 'institution';
 }
 
 /** Validated agenda event linked from a publication. */
@@ -177,11 +186,22 @@ export interface PostEntity {
    * association's officers manage, and nothing in a post says whether its reader moderates the feed.
    */
   canManage?: boolean;
-  /** The pin: a content moderator (BDE `MODERATE`) or a platform admin. */
+  /**
+   * The pencil alone: the post's AUTHOR (its publisher). Nobody else changes a post's text - not a
+   * moderator, not the platform admin (owner, 2026-11-02) - so it can be false where `canManage`
+   * (the bin) is true. Absent from an older server: `canManage` decides both, as it did.
+   */
+  canEdit?: boolean;
+  /**
+   * The pin (WP-PIN): a promotion PER SPACE - true when `pinSpaces` is not empty, i.e. the reader
+   * governs a space where the post is visible (the platform admin, or `MODERATE` in its BDE).
+   */
   canPin?: boolean;
+  /** WP-PIN: the spaces the pin menu lists for this reader, each with the pin's state there. */
+  pinSpaces?: PinSpace[];
   /** The flag: any logged-in reader who is not the post's own publisher. */
   canReport?: boolean;
-  /** Clears `anonymous`, revealing the author again: same tier as `canPin`. */
+  /** Clears `anonymous`, revealing the author again: a moderator of this post or a platform admin. */
   canUnmaskAnonymous?: boolean;
   /**
    * "Republier" (D38): an association post, and the reader may publish as another association that
@@ -190,12 +210,22 @@ export interface PostEntity {
   canRepublish?: boolean;
   /** The poll may be voted: false for a reader who sees the post only through a read grant. */
   canVote?: boolean;
+  /**
+   * The comments (button, count, thread) and the lists of people (who reacted, who voted what) are
+   * shown. False only for a named reader whose ONLY door is a read grant with "voit les
+   * commentaires" off (owner, 2026-11-04): the post then carries no `comments`/`commentCount`, its
+   * `reactions` hold the reader's own only, `otherReactionCounts` the rest as a tally, and its polls
+   * are tallies. Absent is true (an older server).
+   */
+  canSeeComments?: boolean;
+  /** With `canSeeComments: false`: everybody else's reactions, counted by type - never an id. */
+  otherReactionCounts?: Record<string, number>;
   /** "Proposer a une association": the reader publishes in this post's association's name. */
   canProposeRepublication?: boolean;
   /** The republishers (ids in `republishedBy`) whose republication this reader may withdraw. */
   canUnrepublishAs?: string[];
   /**
-   * "Republier au nom d'une association" (D38b): a personal post its author may be ASKED about, by
+   * "Demander a republier" (D38b): a personal post its author may be ASKED about, by
    * an association of the reader's that has not asked yet. The author decides; nothing is shown
    * before they accept.
    */
@@ -224,6 +254,11 @@ export interface PostEntity {
    * follows the account setting) and what applies now. Absent on every other card.
    */
   repostConsent?: { override: boolean | null; effective: boolean };
+  /**
+   * WP-F6: beside `repostConsent`, on the reader's OWN personal post only, how many people the
+   * author is shown as having reposted it - the menu's "Republie par N personnes".
+   */
+  repostCount?: number;
   authorDisplayName?: string | null;
   authorFirstName?: string | null;
   authorLastName?: string | null;
@@ -246,6 +281,11 @@ export interface PostEntity {
    * generic icon even when it never received an `authorId` to draw a real avatar from.
    */
   anonymous?: boolean;
+  /**
+   * "Entre étudiants" (owner, 2026-11-04): read only by students and the publishing association's
+   * members, whatever the path. Served to every reader, so the card says so to all of them.
+   */
+  studentsOnly?: boolean;
   linkedCalendarEventId?: string | null;
   linkedCalendarEvent?: PostLinkedCalendarEvent | null;
   reactions?: Record<string, string>; // userId -> reactionType
@@ -256,6 +296,7 @@ export interface PostEntity {
    * (`posts/commentChange.ts`, `commentCountOf`); absent from a server older than the field.
    */
   commentCount?: number | null;
+  /** WP-PIN: shown pinned in one of THIS READER's spaces (their own, or a read grant's cell). */
   pinned?: boolean;
   scheduledAt?: string | null;
   createdAt: string;
@@ -293,6 +334,12 @@ export interface ReelLimits {
    * 90 s reel cap instead (`servedChatCapMs` checks the answer at run time).
    */
   chatMaxDurationMs: number;
+  /**
+   * The most conversations one "Envoyer à..." press may reach (15, `CHAT_REEL_MAX_TARGETS`), served
+   * since RC-14 and absent from an older server: read through `chatReelTargetCap`, which also holds
+   * it to what one take may carry on this client.
+   */
+  chatReelMaxTargets?: number;
   retentionDays: number;
   warningWindowDays: number;
 }
@@ -338,11 +385,25 @@ export interface ListPostsOptions {
   /** Only reels, or only posts; absent means both, which is what the feed asks (C7). */
   kind?: PostKind;
   /**
-   * With `kind: 'reel'`: the posts whose only content is ONE picture come too - the CanaReels list
-   * (`reels/fullScreenPost.ts`). A server older than it drops the unknown parameter and answers
-   * the reels alone.
+   * With `kind: 'reel'`: the posts whose only content is ONE picture or ONE video come too - the CanaReels list
+   * (`reels/fullScreenPost.ts`). The URL carries the older switch too (`singlePhotos`): a server that
+   * does not know `singleMedia` answers the pictures with the reels, and one older than both
+   * answers the reels alone.
    */
-  singlePhotos?: boolean;
+  singleMedia?: boolean;
+  /**
+   * With `kind: 'reel'`: the posts of TWO TO TEN pictures and videos come too, with the single
+   * ones - the carousel pages (owner, 2026-11-06). The URL carries both older switches with it: a
+   * server that does not know `multiMedia` answers the single pictures and videos, one older still
+   * the pictures (docs/wiki/legacy-compatibility.md).
+   */
+  multiMedia?: boolean;
+  /**
+   * With `multiMedia`: a post with a link in its text comes too, its link drawn in the caption
+   * (owner, 2026-11-06). Sent only with `multiMedia`; a server that does not know it keeps the
+   * link out, which this client reads as before.
+   */
+  withLinks?: boolean;
 }
 
 export interface ScheduledPost {
@@ -367,6 +428,8 @@ export interface CreatePostPayload {
   associationId?: string;
   /** Mutually exclusive with `associationId` - the server ignores this whenever both are set. */
   anonymous?: boolean;
+  /** "Entre étudiants" - offered on an association's or a list's post only (`studentsOnly.ts`). */
+  studentsOnly?: boolean;
   linkedCalendarEventId?: string;
   /** `'reel'` publishes a CanaReel: exactly one video, no poll, form, event or schedule. */
   kind?: PostKind;
@@ -384,6 +447,8 @@ export interface UpdatePostPayload {
   attachedFormId?: string | null;
   linkedCalendarEventId?: string | null;
   scheduledAt?: string | null;
+  /** "Entre étudiants", changed after publication; absent leaves it as stored. */
+  studentsOnly?: boolean;
 }
 
 /**
@@ -402,12 +467,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // A typed refusal: a screen reads the status and the code, never this sentence.
     throw await refusalFromResponse(res, `post-service ${path.split('?')[0]}`);
   }
+  // A 2xx that is not JSON is not the app's answer - a captive portal's page, an edge's: typed here,
+  // at the throw, as the edge's, rather than left to the SyntaxError of `json()`.
+  if (responseOrigin(res) === 'edge') {
+    throw new ApiRefusalError(
+      res.status,
+      null,
+      `post-service ${path.split('?')[0]} answered ${res.status} without JSON (edge)`,
+      { origin: 'edge' }
+    );
+  }
   return (await res.json()) as T;
 }
 
 export { request as socialRequest };
 
-function buildListPostsSearchParams(options: ListPostsOptions): string {
+/** The query string of a list read (exported for its test). */
+export function buildListPostsSearchParams(options: ListPostsOptions): string {
   const p = new URLSearchParams();
   if (options.limit != null) p.set('limit', String(options.limit));
   if (options.offset != null) p.set('offset', String(options.offset));
@@ -415,7 +491,14 @@ function buildListPostsSearchParams(options: ListPostsOptions): string {
   if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
   if (options.kind) p.set('kind', options.kind);
-  if (options.singlePhotos) p.set('singlePhotos', 'true');
+  if (options.multiMedia) p.set('multiMedia', 'true');
+  if (options.multiMedia && options.withLinks) p.set('withLinks', 'true');
+  if (options.singleMedia || options.multiMedia) {
+    p.set('singleMedia', 'true');
+    // An installed server knows only the pictures' switch and drops the unknown one: it keeps
+    // serving pictures, and the client draws no video it was not sent (docs/wiki/legacy-compatibility.md).
+    p.set('singlePhotos', 'true');
+  }
   const s = p.toString();
   return s ? `?${s}` : '';
 }
@@ -454,6 +537,22 @@ export async function updatePost(postId: string, payload: UpdatePostPayload): Pr
 
 export async function deletePost(postId: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/posts/${postId}`, { method: 'DELETE' });
+}
+
+/**
+ * Takes back a post the publish queue may have created (`POST /api/posts/:id/withdraw`): the id is
+ * retired on the server, so a create still on its way is refused, and the post is deleted if it
+ * landed. `mediaIds` are the post's uploaded media: social-service deletes the ones no live row
+ * cites, under this caller as their uploader. `deleted` says whether a row was there.
+ */
+export async function withdrawPost(
+  postId: string,
+  mediaIds: string[]
+): Promise<{ ok: boolean; deleted: boolean }> {
+  return request<{ ok: boolean; deleted: boolean }>(`/api/posts/${postId}/withdraw`, {
+    method: 'POST',
+    body: JSON.stringify({ mediaIds }),
+  });
 }
 
 /** @param limitOrOptions Pass a number for backward compatibility (`limit` only) or query options. */
@@ -500,16 +599,22 @@ export async function votePoll(
 export async function addReaction(
   postId: string,
   reactionType: string
-): Promise<{ ok: boolean; reactions: Record<string, string> }> {
+): Promise<{
+  ok: boolean;
+  reactions: Record<string, string>;
+  otherReactionCounts?: Record<string, number>;
+}> {
   return request(`/api/posts/${postId}/reactions`, {
     method: 'POST',
     body: JSON.stringify({ reactionType }),
   });
 }
 
-export async function removeReaction(
-  postId: string
-): Promise<{ ok: boolean; reactions: Record<string, string> }> {
+export async function removeReaction(postId: string): Promise<{
+  ok: boolean;
+  reactions: Record<string, string>;
+  otherReactionCounts?: Record<string, number>;
+}> {
   return request(`/api/posts/${postId}/reactions`, { method: 'DELETE' });
 }
 
@@ -557,16 +662,73 @@ export async function editComment(
   });
 }
 
-export async function deleteComment(postId: string, commentId: string): Promise<{ ok: boolean }> {
+/** The server's answer to a comment's delete: what it dropped, and what it kept as a tombstone. */
+export interface CommentDeleteAnswer {
+  ok: boolean;
+  /**
+   * Every row the delete took: the comment and its descendants the deleter may remove. Absent from
+   * a server older than the moderation tombstone (it answered `{ ok: true }` alone), which the thread
+   * reads as version skew (`postCommentThread.remove`).
+   */
+  removedIds?: string[];
+  /**
+   * The rows kept as moderation tombstones (`removedByModeration`), served as this reader sees them:
+   * a moderator's delete met a reply it does not moderate, which stays in its context. Absent when none.
+   */
+  tombstones?: PostComment[];
+  /**
+   * How many COUNTED comments left the thread: the live rows removed plus the rows turned into
+   * tombstones (a tombstone is not counted, a pruned one already was not). Absent from an older server.
+   */
+  countedOut?: number;
+}
+
+export async function deleteComment(
+  postId: string,
+  commentId: string
+): Promise<CommentDeleteAnswer> {
   return request(`/api/posts/${postId}/comments/${commentId}`, { method: 'DELETE' });
 }
 
-export async function pinPost(postId: string): Promise<{ ok: boolean; pinned: boolean }> {
-  return request(`/api/posts/${postId}/pin`, { method: 'PATCH' });
+/**
+ * A pin's state in one space (WP-PIN): `shown` (one of the 3 that space's readers see first),
+ * `pending` ("en attente": kept, not shown until a shown one is unpinned), or `null` (not pinned).
+ */
+export type PinState = 'shown' | 'pending' | null;
+
+/** One space where the reader may pin a post, as the server serves it on the card. */
+export interface PinSpace {
+  spaceId: string;
+  formation: Formation;
+  campus: Campus;
+  state: PinState;
 }
 
-export async function unpinPost(postId: string): Promise<{ ok: boolean; pinned: boolean }> {
-  return request(`/api/posts/${postId}/unpin`, { method: 'PATCH' });
+/** What a pin or unpin answers: the post's state IN THAT SPACE after the act. */
+export interface PinResult {
+  ok: boolean;
+  pinned: boolean;
+  spaceId: string;
+  state: PinState;
+}
+
+/**
+ * Pins the post in ONE space, for that space's readers only (WP-PIN). A refusal is typed:
+ * `space_pin_limit` (the space already shows 3), read with `refusalCode`.
+ */
+export async function pinPost(postId: string, spaceId: string): Promise<PinResult> {
+  return request(`/api/posts/${postId}/pin`, {
+    method: 'PATCH',
+    body: JSON.stringify({ spaceId }),
+  });
+}
+
+/** Unpins the post from ONE space (WP-PIN). */
+export async function unpinPost(postId: string, spaceId: string): Promise<PinResult> {
+  return request(`/api/posts/${postId}/unpin`, {
+    method: 'PATCH',
+    body: JSON.stringify({ spaceId }),
+  });
 }
 
 /** Clears the anonymous flag on a post, revealing its author again. Content moderators. */
@@ -626,9 +788,7 @@ export async function requestPersonalRepublication(
  * WP-F6: reposts the post to the caller's ACCEPTED followers. A refusal carries a typed `code`
  * (`MEMBER_REPOST_*`), read with `refusalCode`.
  */
-export async function repostToFollowers(
-  postId: string
-): Promise<{ postId: string; newlyReached: number }> {
+export async function repostToFollowers(postId: string): Promise<{ postId: string }> {
   return request(`/api/posts/${postId}/reposts`, { method: 'POST' });
 }
 

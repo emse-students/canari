@@ -1,0 +1,321 @@
+/**
+ * Migration 146 and the revision statements against a REAL PostgreSQL: the compare-and-set is ONE
+ * statement (`writeFormDraft`), and only a database proves that two saves built on the same revision
+ * cannot both land, that the counter only grows, and that a refused publication leaves the revision.
+ *
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files:
+ *
+ *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- form-draft-revision.integration
+ *
+ * Everything happens in a throwaway schema, dropped at the end.
+ */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { Client } from 'pg';
+import { DataSource } from 'typeorm';
+import {
+  closeFormDraft,
+  followRetagInRevisions,
+  formChangedSinceRevision,
+  formsWithUnpublishedChanges,
+  revisionsAtBase,
+  readFormDraft,
+  writeFormDraft,
+} from './form-draft-revision';
+
+const URL = process.env.SOCIAL_IT_DATABASE_URL;
+const maybe = URL ? describe : describe.skip;
+
+const FORM = '00000000-0000-4000-8000-0000000a0143';
+const OTHER = '00000000-0000-4000-8000-0000000b0143';
+const THIRD = '00000000-0000-4000-8000-0000000c0143';
+const SAVE_1 = '00000000-0000-4000-8000-00000000a001';
+const SAVE_2 = '00000000-0000-4000-8000-00000000a002';
+
+maybe('form revisions against PostgreSQL (migration 146)', () => {
+  const schema = `form_drafts_it_${Math.random().toString(36).slice(2, 10)}`;
+  let admin: Client;
+  let ds: DataSource;
+  const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
+
+  beforeAll(async () => {
+    admin = new Client({ connectionString: URL });
+    await admin.connect();
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    ds = new DataSource({
+      type: 'postgres',
+      url: URL,
+      synchronize: false,
+      extra: { options: `-c search_path=${schema},public`, max: 4 },
+    });
+    await ds.initialize();
+    await q(`CREATE TABLE forms (id uuid PRIMARY KEY, title text, "imageUrl" text,
+      "associationId" uuid, "cotisationVariantKey" text, "ownerId" text,
+      "grantsCotisation" boolean NOT NULL DEFAULT false,
+      "updatedAt" timestamptz NOT NULL DEFAULT now())`);
+    await q(`INSERT INTO forms (id, title) VALUES ($1, 'Gala'), ($2, 'Gala'), ($3, 'Gala')`, [
+      FORM,
+      OTHER,
+      THIRD,
+    ]);
+    const migration = readFileSync(
+      join(process.cwd(), 'src', 'migrations', '146_form_drafts.sql'),
+      'utf8'
+    );
+    await q(migration);
+    // Idempotent for CD: a second run changes nothing and does not fail.
+    await q(migration);
+  });
+
+  afterAll(async () => {
+    await ds?.destroy();
+    await admin?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await admin?.end();
+  });
+
+  it('reads revision 0 and no document for a form never saved', async () => {
+    expect(await readFormDraft(ds.manager, OTHER)).toEqual({
+      revision: 0,
+      document: null,
+      savedAt: null,
+      saveId: null,
+      recentSaveIds: [],
+    });
+  });
+
+  it('lets exactly one of two saves built on the same revision land', async () => {
+    const [a, b] = await Promise.all([
+      writeFormDraft(ds.manager, FORM, 0, { title: 'A' }, null),
+      writeFormDraft(ds.manager, FORM, 0, { title: 'B' }, null),
+    ]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    const winner = (a ?? b)!;
+    expect(winner.revision).toBe(1);
+    const stored = await readFormDraft(ds.manager, FORM);
+    expect(stored.document).toEqual({ title: a ? 'A' : 'B' });
+    // The next save names revision 1; one still naming 0 is refused.
+    expect(await writeFormDraft(ds.manager, FORM, 1, { title: 'C' }, null)).toMatchObject({
+      revision: 2,
+    });
+    expect(await writeFormDraft(ds.manager, FORM, 0, { title: 'stale' }, null)).toBeNull();
+    expect(await formsWithUnpublishedChanges(ds.manager, [FORM, OTHER])).toEqual(new Set([FORM]));
+  });
+
+  it('only grows: an emptied revision refuses the number it had, and a fresh base 0', async () => {
+    await ds.transaction(async (m) => {
+      await readFormDraft(m, FORM, true);
+      expect(await closeFormDraft(m, FORM)).toBe(3);
+    });
+    expect(await readFormDraft(ds.manager, FORM)).toMatchObject({ revision: 3, document: null });
+    expect(await writeFormDraft(ds.manager, FORM, 2, { title: 'old tab' }, null)).toBeNull();
+    expect(await writeFormDraft(ds.manager, FORM, 0, { title: 'old tab' }, null)).toBeNull();
+    expect(await formsWithUnpublishedChanges(ds.manager, [FORM])).toEqual(new Set());
+    expect(await writeFormDraft(ds.manager, FORM, 3, { title: 'D' }, null)).toMatchObject({
+      revision: 4,
+    });
+  });
+
+  it('keeps the revision when the publication that held it is rolled back', async () => {
+    await expect(
+      ds.transaction(async (m) => {
+        await readFormDraft(m, FORM, true);
+        await closeFormDraft(m, FORM);
+        throw new Error('the edit rules refused it');
+      })
+    ).rejects.toThrow('the edit rules refused it');
+    expect(await readFormDraft(ds.manager, FORM)).toMatchObject({
+      revision: 4,
+      document: { title: 'D' },
+    });
+  });
+
+  it('makes a save wait for the publication holding the row, then refuses it', async () => {
+    let release!: () => void;
+    let signalLocked!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const locked = new Promise<void>((r) => (signalLocked = r));
+    const publication = ds.transaction(async (m) => {
+      await readFormDraft(m, FORM, true);
+      signalLocked();
+      await held;
+      await closeFormDraft(m, FORM);
+    });
+    // The save starts only once the publication holds the row: it waits, then finds its base moved.
+    await locked;
+    const save = writeFormDraft(ds.manager, FORM, 4, { title: 'during' }, null);
+    release();
+    await publication;
+    expect(await save).toBeNull();
+    expect(await readFormDraft(ds.manager, FORM)).toMatchObject({ revision: 5, document: null });
+  });
+
+  it('keeps the id of the save that wrote the revision, and forgets it when the revision closes', async () => {
+    await writeFormDraft(ds.manager, THIRD, 0, { title: 'A' }, SAVE_1);
+    expect(await readFormDraft(ds.manager, THIRD)).toMatchObject({ revision: 1, saveId: SAVE_1 });
+    await writeFormDraft(ds.manager, THIRD, 1, { title: 'B' }, SAVE_2);
+    expect(await readFormDraft(ds.manager, THIRD)).toMatchObject({ revision: 2, saveId: SAVE_2 });
+    await ds.transaction(async (m) => {
+      await readFormDraft(m, THIRD, true);
+      await closeFormDraft(m, THIRD);
+    });
+    expect(await readFormDraft(ds.manager, THIRD)).toMatchObject({ revision: 3, saveId: null });
+  });
+
+  it('tells a form written outside its revision since the revision started', async () => {
+    // Revision 4 starts on the form as it is: nothing changed since.
+    await writeFormDraft(ds.manager, THIRD, 3, { title: 'C' }, SAVE_1);
+    const changed = () => ds.transaction((m) => formChangedSinceRevision(m, THIRD));
+    expect(await changed()).toBe(false);
+    // The cover image is not the revision's: uploading one is no change.
+    await q(`UPDATE forms SET "imageUrl" = 'x', "updatedAt" = now() WHERE id = $1`, [THIRD]);
+    expect(await changed()).toBe(false);
+    // An older build edits the form directly: changed, and a later save of the revision does not
+    // move its base onto the new content.
+    await q(`UPDATE forms SET title = 'Edited elsewhere' WHERE id = $1`, [THIRD]);
+    expect(await changed()).toBe(true);
+    await writeFormDraft(ds.manager, THIRD, 4, { title: 'D' }, SAVE_2);
+    expect(await changed()).toBe(true);
+    // Closed, then started again: the new revision's base is the form as it is now.
+    await ds.transaction(async (m) => {
+      await readFormDraft(m, THIRD, true);
+      await closeFormDraft(m, THIRD);
+    });
+    await writeFormDraft(ds.manager, THIRD, 6, { title: 'E' }, SAVE_1);
+    expect(await changed()).toBe(false);
+  });
+
+  it('remembers the saves that wrote it, across a close, and only the last 32', async () => {
+    const RING = '00000000-0000-4000-8000-0000000a0146';
+    await q(`INSERT INTO forms (id, title) VALUES ($1, 'Ring')`, [RING]);
+    const ids = Array.from(
+      { length: 34 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    await writeFormDraft(ds.manager, RING, 0, { title: 'r' }, ids[0]);
+    await ds.transaction(async (m) => {
+      await readFormDraft(m, RING, true);
+      await closeFormDraft(m, RING);
+    });
+    // Closed: the save that wrote the published revision is still known.
+    expect((await readFormDraft(ds.manager, RING)).recentSaveIds).toEqual([ids[0]]);
+    for (let i = 1; i < ids.length; i++) {
+      await writeFormDraft(ds.manager, RING, i + 1, { title: `r${i}` }, ids[i]);
+    }
+    expect((await readFormDraft(ds.manager, RING)).recentSaveIds).toEqual(ids.slice(2));
+  });
+
+  it('a tier retag reaches the revision, and is no change "outside" it', async () => {
+    const ASSO = '00000000-0000-4000-8000-0000000e0146';
+    const RETAGGED = '00000000-0000-4000-8000-0000000f0146';
+    const TURNS_ON = '00000000-0000-4000-8000-0000000d0146';
+    const ELSEWHERE = '00000000-0000-4000-8000-0000000c0146';
+    await q(
+      `INSERT INTO forms (id, title, "associationId", "cotisationVariantKey", "grantsCotisation") VALUES ($1, 'Adhésion', $2, 'old', true)`,
+      [RETAGGED, ASSO]
+    );
+    // A form of the association that grants nothing yet, whose revision turns the grant on with the
+    // old key; and a revision of ANOTHER association naming the same key.
+    await q(
+      `INSERT INTO forms (id, title, "associationId") VALUES ($1, 'Soirée', $2), ($3, 'Autre', $4)`,
+      [TURNS_ON, ASSO, ELSEWHERE, '00000000-0000-4000-8000-0000000b0146']
+    );
+    await writeFormDraft(
+      ds.manager,
+      TURNS_ON,
+      0,
+      { title: 'Soirée', grantsCotisation: true, cotisationVariantKey: 'old' },
+      SAVE_2
+    );
+    await writeFormDraft(
+      ds.manager,
+      ELSEWHERE,
+      0,
+      { title: 'Autre', grantsCotisation: true, cotisationVariantKey: 'old' },
+      SAVE_2
+    );
+    await writeFormDraft(
+      ds.manager,
+      RETAGGED,
+      0,
+      { title: 'Adhésion', cotisationVariantKey: 'old' },
+      SAVE_1
+    );
+    await ds.transaction(async (m) => {
+      const atBase = await revisionsAtBase(m, ASSO);
+      expect(atBase).toContain(RETAGGED);
+      await m.query(`UPDATE forms SET "cotisationVariantKey" = 'new' WHERE id = $1`, [RETAGGED]);
+      await followRetagInRevisions(m, ASSO, [RETAGGED], atBase, 'old', 'new');
+    });
+    expect((await readFormDraft(ds.manager, RETAGGED)).document).toMatchObject({
+      cotisationVariantKey: 'new',
+    });
+    expect((await readFormDraft(ds.manager, TURNS_ON)).document).toMatchObject({
+      cotisationVariantKey: 'new',
+    });
+    expect((await readFormDraft(ds.manager, ELSEWHERE)).document).toMatchObject({
+      cotisationVariantKey: 'old',
+    });
+    expect(await ds.transaction((m) => formChangedSinceRevision(m, RETAGGED))).toBe(false);
+    // Back to the base tier: the key becomes JSON null, never a vanished document.
+    await ds.transaction(async (m) => {
+      const atBase = await revisionsAtBase(m, ASSO);
+      await m.query(`UPDATE forms SET "cotisationVariantKey" = NULL WHERE id = $1`, [RETAGGED]);
+      await followRetagInRevisions(m, ASSO, [RETAGGED], atBase, 'new', null);
+    });
+    expect((await readFormDraft(ds.manager, RETAGGED)).document).toEqual({
+      title: 'Adhésion',
+      cotisationVariantKey: null,
+    });
+    expect(await ds.transaction((m) => formChangedSinceRevision(m, RETAGGED))).toBe(false);
+  });
+
+  it("a revision moving its draft to another association follows THAT association's retag", async () => {
+    // A draft may change association in its revision (owner, 2026-11-09): the tier its revision
+    // names is the NEW association's, so only the new association's retag may rewrite it.
+    const FROM = '00000000-0000-4000-8000-0000000a0147';
+    const TO = '00000000-0000-4000-8000-0000000b0147';
+    const MOVED = '00000000-0000-4000-8000-0000000c0147';
+    const TO_NONE = '00000000-0000-4000-8000-0000000d0147';
+    const GARBAGE = '00000000-0000-4000-8000-0000000e0147';
+    await q(
+      `INSERT INTO forms (id, title, "associationId") VALUES ($1, 'Moved', $4), ($2, 'None', $4), ($3, 'Junk', $4)`,
+      [MOVED, TO_NONE, GARBAGE, FROM]
+    );
+    const granting = { grantsCotisation: true, cotisationVariantKey: 'k' };
+    await writeFormDraft(
+      ds.manager,
+      MOVED,
+      0,
+      { title: 'M', associationId: TO, ...granting },
+      null
+    );
+    await writeFormDraft(
+      ds.manager,
+      TO_NONE,
+      0,
+      { title: 'N', associationId: '', ...granting },
+      null
+    );
+    // Stored as typed: a value that is no uuid must not fail the statement for everyone else.
+    await writeFormDraft(
+      ds.manager,
+      GARBAGE,
+      0,
+      { title: 'J', associationId: 'x', ...granting },
+      null
+    );
+    const key = async (id: string) =>
+      (await readFormDraft(ds.manager, id)).document?.cotisationVariantKey;
+
+    await ds.transaction((m) => followRetagInRevisions(m, FROM, [], [], 'k', 'from-new'));
+    expect([await key(MOVED), await key(TO_NONE), await key(GARBAGE)]).toEqual(['k', 'k', 'k']);
+    await ds.transaction((m) => followRetagInRevisions(m, TO, [], [], 'k', 'to-new'));
+    expect(await key(MOVED)).toBe('to-new');
+    expect(await key(TO_NONE)).toBe('k');
+  });
+
+  it('goes with its form', async () => {
+    await q(`DELETE FROM forms WHERE id = $1`, [FORM]);
+    expect(await readFormDraft(ds.manager, FORM)).toMatchObject({ revision: 0 });
+  });
+});

@@ -16,6 +16,8 @@
  *
  * The reasoning per decision is on docs/wiki/account-erasure.md.
  */
+import type { StoredComment as RemovableComment } from '../posts/comment-identity';
+import { pruneEmptyTombstones } from '../posts/comment-removal';
 
 /** The account id written in place of an erased one. Read as "a deleted account" by every client. */
 export const DELETED_ACCOUNT = '[deleted]';
@@ -61,9 +63,20 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // (the foreign key); its consent setting is its own.
   'member_reposts.reposterId': { action: 'delete' },
   'user_repost_settings.userId': { action: 'delete' },
+  // ...and the record that they were told about someone's repost (migration 123).
+  'member_repost_notices.recipientId': { action: 'delete' },
   'user_follow_notices.followedUserId': { action: 'delete' },
   'association_follows.followerUserId': { action: 'delete' },
+  // The old per-association mute (migration 080), read by nothing since migration 143 copied it
+  // into `account_bells` - deleted until its held drop.
   'association_push_mutes.userId': { action: 'delete' },
+  // The reader's bells (migration 142), and every reader's bell ON this person: the second names
+  // the erased account as a `user` target, and would otherwise outlive it.
+  'account_bells.userId': { action: 'delete' },
+  'account_bells.targetId': { action: 'delete' },
+  // The member's birthday and visibility (migration 148), and when they last set a date.
+  'profile_birthdays.userId': { action: 'delete' },
+  'birthday_changes.userId': { action: 'delete' },
   'user_tags.userId': { action: 'delete' },
   'user_moderation.userId': { action: 'delete' },
   'form_respondents.userId': { action: 'delete' },
@@ -72,6 +85,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // part of the erasure deletes the blob (class `form-file`, owned by the uploader).
   'form_files.uploaderId': { action: 'delete' },
   'form_files.fileName': { action: 'delete', via: 'uploaderId' },
+  // A form question's image (migration 136) belongs to its form, not to whoever uploaded it: the row
+  // is the licence of its release, so it stays and only the uploader becomes `[deleted]`. An unbound
+  // one (never saved) is then citable by nobody and goes with the hourly reconciliation.
+  'form_item_images.uploaderId': { action: 'anonymise' },
   // A republication request addressed to the account (D38b): it is about the account's own post,
   // which goes with it, so the request goes too.
   'proposals.toUserId': { action: 'delete' },
@@ -86,6 +103,8 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'minesweeper_bans.userId': { action: 'delete' },
   'document_reviewer_grants.userId': { action: 'delete' },
   'read_grants.user_id': { action: 'delete' },
+  // The named reader's switch "voit les commentaires" (migration 132): theirs, gone with them.
+  'read_grant_readers.user_id': { action: 'delete' },
   // The claim already turned the legacy row into a `user_tags` row (deleted above); what is left is
   // the name it was matched on, which is the last nominative trace.
   'legacy_cotisations.claimedByUserId': { action: 'delete' },
@@ -111,6 +130,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
     action: 'code',
     by: 'ChannelService.removeAccountFromWorkspaces (governance repair before each removal)',
   },
+  // Who set a member's community nickname (migration 149). The nickname is ABOUT its target and stays
+  // theirs; the setter's id is replaced, so "set by" names nobody. The TARGET's erasure removes the
+  // membership row above, nickname included.
+  'channel_members.nicknameSetBy': { action: 'anonymise' },
 
   // -- Rows that belong to other people too, or are accounting records: anonymised -------------
   'purchase_records.userId': { action: 'anonymise' },
@@ -131,8 +154,13 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'content_reports.reviewedBy': { action: 'anonymise' },
   'content_reports.reportedUserId': { action: 'anonymise' },
   'read_grants.granted_by': { action: 'anonymise' },
+  'read_grant_readers.updated_by': { action: 'anonymise' },
+  // WP-PIN (migration 127): a pin is the space's promotion, not the pinner's - it stays, unsigned.
+  'post_space_pins.pinned_by': { action: 'anonymise' },
   'read_grant_journal.user_id': { action: 'anonymise' },
   'read_grant_journal.actor': { action: 'anonymise' },
+  // The dependency journal (migration 129) keeps WHAT changed; WHO did it is anonymised.
+  'dependency_journal.actor': { action: 'anonymise' },
   'association_calendar_events.createdBy': { action: 'anonymise' },
   'association_calendar_events.validatedBy': { action: 'anonymise' },
   'association_calendar_events.rejectedBy': { action: 'anonymise' },
@@ -156,6 +184,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // accounting record kept as long as the payment it refunds, its authors anonymised.
   'lydia_refunds.requestedByUserId': { action: 'anonymise' },
   'lydia_refunds.resolvedByUserId': { action: 'anonymise' },
+  // Who accepted a payment delegation on the receiver's behalf (migration 125): the delegation's
+  // accounting trail, kept, its author anonymised.
+  'payment_delegation_acceptances.acceptedByUserId': { action: 'anonymise' },
   'user_moderation.mutedBy': { action: 'anonymise' },
   'document_reviewer_grants.grantedBy': { action: 'anonymise' },
   'minesweeper_bans.bannedBy': { action: 'anonymise' },
@@ -183,12 +214,32 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'channel_roles.permissions': NO_ACCOUNT('the permission names of a role'),
   'channel_members.roleIds': NO_ACCOUNT('role ids of one member'),
   'forms.items': NO_ACCOUNT('the questions of a form'),
+  'submissions.lines': NO_ACCOUNT(
+    'the priced lines of one submission (migration 137): product id, cell, quantity, unit price'
+  ),
+  'forms.guestFields': NO_ACCOUNT(
+    'the names of the fields a public form asks a guest (migration 138): lastName, firstName, email'
+  ),
+  // A GUEST'S e-mail belongs to no account: it is written only on a guest's answer (`userId` NULL,
+  // `guest-identity.ts` refuses it from a member), so no account's erasure can reach it - there is
+  // no id to find it by, and the row already names nobody this erasure knows. It lives as long as
+  // the answer (register C8); a guest's own request is answered by hand: found by "guestEmail" or the
+  // two name columns with "userId" IS NULL, and the row anonymised, never deleted (it may be a
+  // payment record) - docs/wiki/compliance/data-subject-requests.md, "A guest with no account".
+  'submissions.guestEmail': {
+    action: 'kept',
+    reason:
+      "a guest's e-mail on a public form's answer (migration 138): written only on rows with no account, so no account's erasure reaches it",
+  },
 
   'association_products.priceMatrix': NO_ACCOUNT('prices by tag of a product'),
   'association_products.requiredTags': NO_ACCOUNT('tag names a buyer must hold'),
   'forms.priceMatrix': NO_ACCOUNT('prices by tag of a form'),
   'forms.paymentMethods': NO_ACCOUNT('payment methods a form accepts'),
   'forms.submitCondition': NO_ACCOUNT('the audience condition (tags, promos) of a form'),
+  'form_drafts.document': NO_ACCOUNT(
+    "a form's unpublished revision: the editor's payload, the same content as `forms`"
+  ),
   'channel_members.notifLevels': NO_ACCOUNT('channel id -> notification level of one member'),
   'poster_projects.layout': NO_ACCOUNT('the layout of a poster'),
   'poster_projects.publication': NO_ACCOUNT(
@@ -362,7 +413,8 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  * The lives part of the erasure (docs/wiki/services/lives.md, "A deleted account").
  *
  * - A live the account broadcast is ENDED (reason `erased`, unless it had already ended) and its
- *   broadcaster becomes {@link DELETED_ACCOUNT}, in ONE statement: an open live never carries the
+ *   broadcaster becomes {@link DELETED_ACCOUNT} and its TITLE (what the member wrote, migration 140)
+ *   is cleared, in ONE statement: an open live never carries the
  *   tombstone, and the partial unique index (one OPEN live per broadcaster) never sees two. The live
  *   sweep deletes the segments and then the row within one run; nothing of it is served meanwhile,
  *   because every read of an ended live is a 410.
@@ -387,6 +439,7 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
     label: 'lives_broadcaster',
     sql: `UPDATE lives
              SET "broadcasterId" = $2,
+                 "title" = NULL,
                  "endReason" = COALESCE("endReason", 'erased'),
                  "endedAt" = COALESCE("endedAt", now())
            WHERE "broadcasterId" = $1`,
@@ -479,6 +532,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   { label: 'member_reposts', sql: `DELETE FROM member_reposts WHERE "reposterId" = $1` },
   { label: 'user_repost_settings', sql: `DELETE FROM user_repost_settings WHERE "userId" = $1` },
   {
+    label: 'member_repost_notices',
+    sql: `DELETE FROM member_repost_notices WHERE "recipientId" = $1`,
+  },
+  {
     label: 'user_follow_notices',
     sql: `DELETE FROM user_follow_notices WHERE "followerUserId" = $1 OR "followedUserId" = $1`,
   },
@@ -487,6 +544,18 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `DELETE FROM association_follows WHERE "followerUserId" = $1`,
   },
   { label: 'push_mutes', sql: `DELETE FROM association_push_mutes WHERE "userId" = $1` },
+  // Every bell naming the account, as reader or as target. No `"targetKind" = 'user'` term: the
+  // other kind's target is an association uuid, never an account id, and the term would leave a row
+  // whose kind the erasure cannot vouch for.
+  {
+    label: 'account_bells',
+    sql: `DELETE FROM account_bells WHERE "userId" = $1 OR "targetId" = $1`,
+  },
+  // The birthday (migration 148): the date, its visibility, the day it was last announced, and
+  // when a date was last set. The followers' notices name the member as their actor and go with
+  // `post_notifications` below.
+  { label: 'profile_birthdays', sql: `DELETE FROM profile_birthdays WHERE "userId" = $1` },
+  { label: 'birthday_changes', sql: `DELETE FROM birthday_changes WHERE "userId" = $1` },
   // Anonymised, in `ERASURE_TIER_ORDER` (checkouts, records, then the tags): the order a settlement
   // (checkout row, record, tag) and a closing (record, tag) take. An erasure that runs first is seen
   // by both: the settlement of an erased buyer's checkout records `paid_not_granted` and grants
@@ -523,6 +592,7 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   },
   { label: 'reviewer_grants', sql: `DELETE FROM document_reviewer_grants WHERE "userId" = $1` },
   { label: 'read_grants', sql: `DELETE FROM read_grants WHERE user_id = $1` },
+  { label: 'read_grant_readers', sql: `DELETE FROM read_grant_readers WHERE user_id = $1` },
   {
     label: 'legacy_cotisations',
     sql: `DELETE FROM legacy_cotisations WHERE "claimedByUserId" = $1`,
@@ -568,6 +638,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `UPDATE submissions SET "paymentSettledBy" = $2 WHERE "paymentSettledBy" = $1`,
   },
   { label: 'forms', sql: `UPDATE forms SET "ownerId" = $2 WHERE "ownerId" = $1` },
+  {
+    label: 'form_item_images',
+    sql: `UPDATE form_item_images SET "uploaderId" = $2 WHERE "uploaderId" = $1`,
+  },
   // Unique per row: `idx_partnership_codes_card_claimant` is UNIQUE (cardId, claimedByUserId) WHERE
   // claimedByUserId IS NOT NULL, so two erased accounts on one card would collide on a constant -
   // and the transaction, the job and the person's sign-in with it, would fail for ever.
@@ -589,12 +663,24 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   },
   { label: 'read_grants_by', sql: `UPDATE read_grants SET granted_by = $2 WHERE granted_by = $1` },
   {
+    label: 'read_grant_readers_by',
+    sql: `UPDATE read_grant_readers SET updated_by = $2 WHERE updated_by = $1`,
+  },
+  {
+    label: 'space_pins_by',
+    sql: `UPDATE post_space_pins SET pinned_by = $2 WHERE pinned_by = $1`,
+  },
+  {
     label: 'read_grant_journal',
     sql: `UPDATE read_grant_journal SET user_id = $2 WHERE user_id = $1`,
   },
   {
     label: 'read_grant_journal_actor',
     sql: `UPDATE read_grant_journal SET actor = $2 WHERE actor = $1`,
+  },
+  {
+    label: 'dependency_journal_actor',
+    sql: `UPDATE dependency_journal SET actor = $2 WHERE actor = $1`,
   },
   {
     label: 'calendar_created',
@@ -625,6 +711,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     label: 'channel_workspaces',
     sql: `UPDATE channel_workspaces SET "createdBy" = $2 WHERE "createdBy" = $1`,
   },
+  {
+    label: 'channel_member_nickname_setters',
+    sql: `UPDATE channel_members SET "nicknameSetBy" = $2 WHERE "nicknameSetBy" = $1`,
+  },
   { label: 'tags_granted', sql: `UPDATE user_tags SET "grantedBy" = $2 WHERE "grantedBy" = $1` },
   {
     label: 'purchase_closings',
@@ -637,6 +727,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'lydia_refunds_resolved_by',
     sql: `UPDATE lydia_refunds SET "resolvedByUserId" = $2 WHERE "resolvedByUserId" = $1`,
+  },
+  {
+    label: 'payment_delegation_acceptances_accepted_by',
+    sql: `UPDATE payment_delegation_acceptances SET "acceptedByUserId" = $2 WHERE "acceptedByUserId" = $1`,
   },
   {
     label: 'moderation_muted',
@@ -735,8 +829,9 @@ export const ERASURE_PROPOSAL_STATEMENTS: readonly ErasureStatement[] = [
  * THE ERASURE'S FIRST STATEMENT: every association whose rows it will write, locked in id order.
  *
  * An association delete (`AssociationsService.remove`) takes its association `FOR UPDATE` FIRST,
- * then deletes what hangs off it: its events, its forms, its members, then the row's cascade (role
- * history, push mutes, proposals, republications, booking spaces and everything under them). The
+ * then deletes what hangs off it: its events, its forms, its members, the readers' bells on it, then
+ * the row's cascade (role history, push mutes, proposals, republications, booking spaces and
+ * everything under them). The
  * erasure writes those same rows, and used to reach the association only at
  * `UPDATE associations SET "createdBy"`. So an erasure holding the account's member row of X, and a
  * delete of X holding X and its events, waited on each other (`40P01`, reproduced on PostgreSQL 18).
@@ -751,6 +846,12 @@ export const ERASURE_PROPOSAL_STATEMENTS: readonly ErasureStatement[] = [
  * lock `UPDATE associations SET "createdBy"` takes later anyway (no upgrade), and it does NOT
  * conflict with a proposal decision's `KEY SHARE`, so a decision is not serialised behind an
  * erasure. Ordered by id, so two erasures sharing associations take them in one order too.
+ *
+ * It also serialises the erasure with the LAST-MANAGER GUARD of a member write
+ * (`AssociationsService.underMemberLock`, `FOR UPDATE` of one association before any member row):
+ * the guard's count never races the `association_members` delete below. The erasure is not refused
+ * by that guard - erasing the last manager leaves none, recovered by a super-admin or the platform
+ * admin (association-permissions.md).
  */
 export const ERASURE_ASSOCIATION_LOCK_SQL = `SELECT a.id FROM associations a
   WHERE a.id::text IN (
@@ -758,6 +859,7 @@ export const ERASURE_ASSOCIATION_LOCK_SQL = `SELECT a.id FROM associations a
     UNION SELECT "associationId"::text FROM association_members WHERE "userId" = $1
     UNION SELECT association_id::text FROM association_role_history WHERE user_id = $1
     UNION SELECT "associationId"::text FROM association_push_mutes WHERE "userId" = $1
+    UNION SELECT "targetId" FROM account_bells WHERE "userId" = $1 AND "targetKind" = 'association'
     UNION SELECT "associationId"::text FROM association_calendar_events
            WHERE "createdBy" = $1 OR "validatedBy" = $1 OR "rejectedBy" = $1
     UNION SELECT "associationId"::text FROM forms WHERE "ownerId" = $1
@@ -916,7 +1018,11 @@ export function scrubComments(
       }
       return next;
     });
-  return { comments: kept, changed };
+  // A moderation tombstone is kept only for the replies under it: one whose last reply was the
+  // account's goes too, as on any delete that empties it (`pruneEmptyTombstones`).
+  const { comments: pruned, pruned: gone } = pruneEmptyTombstones(kept as RemovableComment[]);
+  if (gone.length > 0) changed = true;
+  return { comments: pruned, changed };
 }
 
 /**

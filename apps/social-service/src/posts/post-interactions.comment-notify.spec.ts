@@ -1,3 +1,4 @@
+import { lockedCommentsManager } from './locked-comments.it-fixture';
 import type { CommentIdentityService } from './comment-identity';
 import { Repository } from 'typeorm';
 import { PostInteractionsService } from './post-interactions.service';
@@ -23,12 +24,16 @@ describe('PostInteractionsService.addComment notifications', () => {
       renderMentionsForPush: jest.fn((t: string) => Promise.resolve(t)),
       resolveActorName: jest.fn(() => Promise.resolve('Actor')),
       resolveMentionedUserIds: jest.fn(() => [] as string[]),
+      // The read's gate on mentions, proven in `post-notifications.mention-gate.spec.ts`: open here.
+      mentionRecipientsOf: jest.fn((_post: unknown, _writer: string, ids: string[]) =>
+        Promise.resolve(ids)
+      ),
     };
     const push = { notifyContent: jest.fn(() => Promise.resolve()) };
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
       save: jest.fn((p: unknown) => Promise.resolve(p)),
-      manager: { query: jest.fn(() => Promise.resolve([])) },
+      manager: lockedCommentsManager(post as { comments?: unknown[] }),
     };
     const service = new PostInteractionsService(
       postRepo as unknown as Repository<Post>,
@@ -97,6 +102,80 @@ describe('PostInteractionsService.addComment notifications', () => {
     for (const [, , data] of sent) {
       expect(data).toEqual({ type: 'social', postId: 'p1', commentId });
     }
+    // And every bell ROW it writes names it too: how the bell tells a comment's mention from a
+    // post's (migration 132, `commentBorneNotificationSql`).
+    const rows = notifications.createNotification.mock.calls.map(
+      ([row]: [{ type: string; commentId?: string }]) => [row.type, row.commentId]
+    );
+    expect(rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])))).toEqual([
+      ['comment', commentId],
+      ['mention', commentId],
+      ['reply', commentId],
+    ]);
+  });
+
+  it("asks the read's gate who of the mentioned may be told, as the writer, and tells only them", async () => {
+    const post = { id: 'p1', authorId: 'author', associationId: null, comments: [] };
+    const { service, push, notifications } = makeService(post);
+    notifications.resolveMentionedUserIds.mockReturnValue(['author', 'kept', 'dropped']);
+    notifications.mentionRecipientsOf.mockImplementation((_p, _w, ids: string[]) =>
+      Promise.resolve(ids.filter((id) => id !== 'dropped'))
+    );
+    await service.addComment('p1', { userId: 'reader', text: 'hello' });
+    await flush();
+    // The post author was told as such already, so the gate is asked only about the others.
+    expect(notifications.mentionRecipientsOf).toHaveBeenCalledWith(
+      post,
+      'reader',
+      ['kept', 'dropped'],
+      'COMMENT'
+    );
+    const sent = push.notifyContent.mock.calls as unknown as Array<[string]>;
+    expect(sent.map(([to]) => to).sort()).toEqual(['author', 'kept']);
+  });
+
+  it("asks the comments' gate before telling a parent's writer of a reply, and drops whom it drops", async () => {
+    // A named reader whose comments are withheld (owner, 2026-11-04) wrote the parent before the
+    // switch: the gate (`'COMMENT'`) drops them, so the reply's text reaches nobody it must not.
+    const post = {
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'k', userId: 'withheld-reader', text: 'old' }],
+    };
+    const { service, push, notifications } = makeService(post);
+    notifications.mentionRecipientsOf.mockImplementation((_p, _w, ids: string[]) =>
+      Promise.resolve(ids.filter((id) => id !== 'withheld-reader'))
+    );
+    await service.addComment('p1', { userId: 'replier', text: 'r', parentId: 'k' });
+    await flush();
+    expect(notifications.mentionRecipientsOf).toHaveBeenCalledWith(
+      post,
+      'replier',
+      ['withheld-reader'],
+      'COMMENT'
+    );
+    const sent = push.notifyContent.mock.calls as unknown as Array<[string]>;
+    expect(sent.map(([to]) => to)).toEqual(['author']);
+  });
+
+  it('refuses a reply to, or a like of, a moderation tombstone (409), and tells nobody', async () => {
+    // S2 (second review, 2026-11-04): a reply or a like on a tombstone would be the one path
+    // left to reach the moderated writer, so neither is stored and no notice is written.
+    const tomb = { id: 't', parentId: null, text: '', likes: [], removedByModeration: true };
+    const post = { id: 'p1', authorId: 'author', associationId: null, comments: [tomb] };
+    const { service, created, push } = makeService(post);
+    await expect(
+      service.addComment('p1', { userId: 'reader', text: 'r', parentId: 't' })
+    ).rejects.toMatchObject({ status: 409, response: { code: 'COMMENT_REMOVED_BY_MODERATION' } });
+    await expect(service.likeComment('p1', 't', 'reader')).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'COMMENT_REMOVED_BY_MODERATION' },
+    });
+    await flush();
+    expect(post.comments).toEqual([tomb]);
+    expect(created).toEqual([]);
+    expect(push.notifyContent).not.toHaveBeenCalled();
   });
 
   /** The review cohort (review-cohort.ts): no comment notice crosses it, in either direction. */

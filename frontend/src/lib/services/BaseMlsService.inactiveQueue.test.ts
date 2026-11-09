@@ -21,14 +21,19 @@ type Service = InstanceType<typeof BaseMlsService>;
 import type { DeliveryChannel } from '$lib/mls-client/incomingDelivery';
 import type { MlsPerGroupScheduler, MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 
-abstract class Harness extends BaseMlsService {}
+abstract class Harness extends BaseMlsService {
+  /** No socket in this harness: a test that needs one overrides it. */
+  isWsOpen(): boolean {
+    return false;
+  }
+}
 const makeService = (): Service =>
   new (Harness as unknown as new (platform: 'web' | 'tauri') => Service)('tauri');
 
 const inner = (svc: Service) =>
   svc as unknown as {
     messageScheduler: MlsPerGroupScheduler;
-    enqueueMessage(msg: MlsQueuedMessage, channel: DeliveryChannel): void;
+    enqueueMessage(msg: MlsQueuedMessage, channel: DeliveryChannel, listedAfterAck?: number): void;
   };
 
 const row = (queuedMessageId: string, groupId = 'group-a'): MlsQueuedMessage => ({
@@ -54,7 +59,7 @@ describe('a queued frame while the iPhone app is inactive', () => {
   let pull: ReturnType<typeof vi.fn>;
 
   const deliver = async (msg: MlsQueuedMessage, channel: DeliveryChannel = 'live') => {
-    inner(svc).enqueueMessage(msg, channel);
+    inner(svc).enqueueMessage(msg, channel, 0);
     await inner(svc).messageScheduler.waitUntilIdle();
     // `onDrainEnd` fires the ack and the push-now without awaiting them.
     await new Promise((r) => setTimeout(r, 0));
@@ -161,8 +166,8 @@ describe('a queued frame while the iPhone app is inactive', () => {
     Object.assign(svc, {
       fetchPendingMessages: vi.fn(async () => {
         pulledWhileDraining.push(inner(svc).messageScheduler.draining);
-        inner(svc).enqueueMessage(row('q-a1'), 'pull');
-        inner(svc).enqueueMessage(row('q-a2'), 'pull');
+        inner(svc).enqueueMessage(row('q-a1'), 'pull', 0);
+        inner(svc).enqueueMessage(row('q-a2'), 'pull', 0);
       }),
     });
     active(false);
@@ -199,7 +204,7 @@ describe('a queued frame while the iPhone app is inactive', () => {
         // The socket is still open: the next message lands live before the pull's page does.
         inner(svc).enqueueMessage(row('q-live'), 'live');
         await tick();
-        inner(svc).enqueueMessage(row('q-w1'), 'pull');
+        inner(svc).enqueueMessage(row('q-w1'), 'pull', 0);
       });
       active(true);
       await vi.waitFor(() => expect(applied).toEqual(['q-w1', 'q-live']));
@@ -225,7 +230,7 @@ describe('a queued frame while the iPhone app is inactive', () => {
       realPull(async () => {
         inner(svc).enqueueMessage(row('q-epoch2'), 'live');
         await tick();
-        inner(svc).enqueueMessage({ ...row('q-commit'), isCommit: true }, 'pull');
+        inner(svc).enqueueMessage({ ...row('q-commit'), isCommit: true }, 'pull', 0);
       });
       active(true);
       await vi.waitFor(() => expect(applied).toEqual(['q-commit', 'q-epoch2']));
@@ -262,8 +267,8 @@ describe('a queued frame while the iPhone app is inactive', () => {
       await tick();
       await tick();
       realPull(async () => {
-        inner(svc).enqueueMessage(row('q-w1'), 'pull');
-        inner(svc).enqueueMessage(row('q-live'), 'pull');
+        inner(svc).enqueueMessage(row('q-w1'), 'pull', 0);
+        inner(svc).enqueueMessage(row('q-live'), 'pull', 0);
       });
       await deliver(row('q-live'));
       await vi.waitFor(() => expect(applied).toEqual(['q-w1', 'q-live']));
@@ -277,8 +282,8 @@ describe('a queued frame while the iPhone app is inactive', () => {
         .fn<() => Promise<void>>()
         .mockImplementationOnce(() => new Promise((_, reject) => (failFirst = reject)))
         .mockImplementation(async () => {
-          inner(svc).enqueueMessage(row('q-w1'), 'pull');
-          inner(svc).enqueueMessage(row('q-live'), 'pull');
+          inner(svc).enqueueMessage(row('q-w1'), 'pull', 0);
+          inner(svc).enqueueMessage(row('q-live'), 'pull', 0);
         });
       realPull(serve);
       active(true);
@@ -306,7 +311,7 @@ describe('a queued frame while the iPhone app is inactive', () => {
       active(false);
       await deliver(row('q-w1'));
       const serve = vi.fn(async () => {
-        inner(svc).enqueueMessage(row('q-w1'), 'pull');
+        inner(svc).enqueueMessage(row('q-w1'), 'pull', 0);
       });
       realPull(serve);
       active(true);
@@ -328,8 +333,8 @@ describe('a queued frame while the iPhone app is inactive', () => {
       realPull(async () => {
         inner(svc).enqueueMessage(row('q-live'), 'live');
         await tick();
-        inner(svc).enqueueMessage(row('q-w1'), 'pull');
-        inner(svc).enqueueMessage(row('q-live'), 'pull');
+        inner(svc).enqueueMessage(row('q-w1'), 'pull', 0);
+        inner(svc).enqueueMessage(row('q-live'), 'pull', 0);
         await inner(svc).messageScheduler.waitUntilIdle();
         // The bounded delivery memory evicted both (`DELIVERY_MEMORY`).
         (svc as unknown as { deliveries: Map<string, string> }).deliveries.clear();
@@ -390,7 +395,7 @@ describe('a queued frame while the iPhone app is inactive', () => {
       releaseBy(async () => {
         inner(svc).enqueueMessage(row('q-live'), 'live');
         await tick();
-        inner(svc).enqueueMessage(row('q-w1'), 'pull');
+        inner(svc).enqueueMessage(row('q-w1'), 'pull', 0);
       });
       let seenAtWake: string[] | null = null;
       void svc.whenGroupDrained('group-a').then(() => (seenAtWake = [...applied]));
@@ -406,7 +411,7 @@ describe('a queued frame while the iPhone app is inactive', () => {
       await tick();
       expect(done).toBe(false);
       releaseBy(async () => {
-        inner(svc).enqueueMessage(row('q-w1'), 'pull');
+        inner(svc).enqueueMessage(row('q-w1'), 'pull', 0);
       });
       active(true);
       await vi.waitFor(() => expect(done).toBe(true));
@@ -426,7 +431,7 @@ describe('a queued frame while the iPhone app is inactive', () => {
       await tick();
       // The socket delivers nothing more for the group: only the wait can start the pull.
       const serve = vi.fn(async () => {
-        inner(svc).enqueueMessage(row('q-w1'), 'pull');
+        inner(svc).enqueueMessage(row('q-w1'), 'pull', 0);
       });
       releaseBy(serve);
       let drained = false;
@@ -445,7 +450,7 @@ describe('a queued frame while the iPhone app is inactive', () => {
         .fn<() => Promise<void>>()
         .mockImplementationOnce(() => new Promise((_, reject) => (failFirst = reject)))
         .mockImplementation(async () => {
-          inner(svc).enqueueMessage(row('q-w1'), 'pull');
+          inner(svc).enqueueMessage(row('q-w1'), 'pull', 0);
         });
       releaseBy(serve);
       active(true);
@@ -460,7 +465,7 @@ describe('a queued frame while the iPhone app is inactive', () => {
       expect(applied).toEqual(['q-w1']);
     });
 
-    it('a later pull that lands first leaves the barrier standing while the older one still fetches', async () => {
+    it('a second ask while one pull fetches is OWED, and the slot stays taken until the older one ends', async () => {
       let endOlder: () => void = () => undefined;
       const serve = vi
         .fn<() => Promise<void>>()
@@ -470,15 +475,18 @@ describe('a queued frame while the iPhone app is inactive', () => {
       const slot = () => (svc as unknown as { pendingPullInFlight: unknown }).pendingPullInFlight;
       void svc.fetchPendingMessages();
       void svc.fetchPendingMessages();
-      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(1));
       await tick();
       await tick();
+      // Single-flight: the second ask did not start a second pull beside the first.
+      expect(serve).toHaveBeenCalledTimes(1);
       expect(slot()).not.toBeNull();
       endOlder();
+      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(2));
       await vi.waitFor(() => expect(slot()).toBeNull());
     });
 
-    it('AN OLDER PULL IN FLIGHT does not answer a wait: it started before the release, so the wait pulls at once', async () => {
+    it('AN OLDER PULL IN FLIGHT does not answer a wait: the release pull is owed behind it and lists the group when it ends', async () => {
       active(false);
       await deliver(row('q-w1'));
       let endOlder: () => void = () => undefined;
@@ -486,25 +494,25 @@ describe('a queued frame while the iPhone app is inactive', () => {
         .fn<() => Promise<void>>()
         // P0: started before the release, still in flight across it.
         .mockImplementationOnce(() => new Promise<void>((resolve) => (endOlder = resolve)))
-        // P1: the release's own pull, failing.
-        .mockImplementationOnce(async () => {
-          throw new Error('server error');
-        })
+        // The owed pull, started once P0 ends: the release's own, and the wait's.
         .mockImplementation(async () => {
-          inner(svc).enqueueMessage(row('q-w1'), 'pull');
+          inner(svc).enqueueMessage(row('q-w1'), 'pull', 0);
         });
       releaseBy(serve);
       void svc.fetchPendingMessages();
       await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(1));
       active(true);
-      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(2));
       await tick();
       let drained = false;
       void svc.whenGroupDrained('group-a').then(() => (drained = true));
-      // P0 is still in flight, and cannot list a release made after it started: the wait pulls now.
-      await vi.waitFor(() => expect(serve).toHaveBeenCalledTimes(3));
+      await tick();
+      // P0 is still in flight, and cannot list a release made after it started: nothing is drained,
+      // and no second pull runs beside it.
+      expect(serve).toHaveBeenCalledTimes(1);
+      expect(drained).toBe(false);
       endOlder();
       await vi.waitFor(() => expect(drained).toBe(true));
+      expect(serve).toHaveBeenCalledTimes(2);
       expect(applied).toEqual(['q-w1']);
     });
   });

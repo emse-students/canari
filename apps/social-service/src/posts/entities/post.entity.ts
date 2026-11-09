@@ -51,11 +51,14 @@ export class Post {
   @Column('jsonb', { default: {} })
   reactions: Record<string, string>; // userId -> reactionType
 
-  @Column('jsonb', { default: [] })
+  /**
+   * `update: false`: a `save(post)` never writes it back. Every write of a comment goes through
+   * `writeComments` (`comment-write.ts`), under the post row's lock - a reaction, an edit of the post
+   * or a hide that loaded the row before a comment landed would otherwise store the stale array and
+   * lose that comment.
+   */
+  @Column({ type: 'jsonb', default: [], update: false })
   comments: any[];
-
-  @Column({ type: 'boolean', default: false })
-  pinned: boolean;
 
   /** Set to true when the post is auto-hidden after reaching the report threshold. Moderators review and restore or delete. */
   @Column({ type: 'boolean', default: false })
@@ -78,6 +81,16 @@ export class Post {
    */
   @Column({ type: 'boolean', nullable: true, default: null })
   allowReposts: boolean | null;
+
+  /**
+   * "Entre étudiants" (owner, 2026-11-04; migration 133): read only by students (an account with a
+   * cursus) and the members of the publishing association, whatever the path - the gate is
+   * `studentsOnlyAdmitsUserSql`, one conjunct of `postVisibleToUserSql`. Offered on an association
+   * or list post only (`STUDENTS_ONLY_ASSOCIATION_TYPES`), set at publication and changed afterwards
+   * by whoever may edit the post, both ways. Served to every reader, so the card can say so.
+   */
+  @Column({ type: 'boolean', default: false })
+  studentsOnly: boolean;
 
   @Column({ type: 'timestamptz', nullable: true, default: null })
   scheduledAt: Date | null;

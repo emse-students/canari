@@ -12,9 +12,15 @@
     videoKeyAction,
   } from '$lib/utils/videoPlayback';
   import { resumePosition, takeVideoPosition } from '$lib/utils/videoResume';
+  import {
+    decideAutoplayRejection,
+    playRejectionName,
+    type AutoplayBlockCause,
+  } from '$lib/utils/videoAutoplay';
   import VideoPoster from './VideoPoster.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
+  import MediaSpinner from './MediaSpinner.svelte';
 
   /**
    * CANARI'S VIDEO PLAYER - the full-screen viewer's, wherever a video is opened (user, 2026-10-01).
@@ -94,10 +100,12 @@
     poster?: string | null;
     /**
      * Told once when this video will NOT play by itself and the reader has to act: the engine
-     * refused the autoplay or failed it (`refused`, the play button is shown), or refused the
-     * bytes (`unplayable`). The reel viewer stops waiting on it then, so the next reel preloads.
+     * refused the autoplay (`refused`), something paused it while it was asked (`interrupted`), it
+     * failed otherwise (`errored`) - the play button is shown for each (`videoAutoplay.ts`) - or the
+     * engine refused the bytes (`unplayable`). The reel viewer stops waiting on it then, so the
+     * next reel preloads.
      */
-    onPlaybackBlocked?: (cause: 'refused' | 'unplayable') => void;
+    onPlaybackBlocked?: (cause: AutoplayBlockCause | 'unplayable') => void;
   }
 
   let {
@@ -148,18 +156,24 @@
   /** The engine refused the bytes (codec, container): said, rather than a black box. */
   let unplayable = $state(false);
   /**
-   * THE ENGINE REFUSED TO START PLAYBACK BY ITSELF (`NotAllowedError` - iOS with sound on, a
-   * browser's autoplay policy). Only then does the minimal player draw a play button: it is the
-   * answer to a refusal, never a loading state.
+   * THE AUTOPLAY WILL NOT HAPPEN AND THE READER MUST ACT (`videoAutoplay.ts`: refused, interrupted
+   * by a pause, failed). Only then does the minimal player draw a play button: it is the answer to
+   * a decided outcome, never a loading state - and it is drawn even before the first frame (over the
+   * poster or the black box), since a paused `preload="metadata"` element may never fetch one.
    */
   let autoplayRefused = $state(false);
-  /** The autoplay has an answer (playing, or a decided failure): it is not asked again. */
+  /** The autoplay of the current load has an answer (playing, or a decided failure). */
   let autoplayDone = false;
   /** A `play()` is pending: a second load event does not ask twice. */
   let autoplayInFlight = false;
-  let autoplayAttempts = 0;
-  /** An interrupted autoplay (`AbortError`) is asked ONCE more, at the next load event. */
-  const AUTOPLAY_MAX_ATTEMPTS = 2;
+  /** THE LOAD THE ELEMENT IS ON, bumped by every `loadstart`: it names each load in the logs. */
+  let loadGeneration = 0;
+  /**
+   * THE ELEMENT WAITS FOR DATA WHILE IT SHOULD PLAY (`waiting`): the network is slow. The minimal
+   * player draws a spinner then - a loading state, never the play button, which only a decided
+   * outcome earns. Cleared by `playing`, a pause or a new load.
+   */
+  let buffering = $state(false);
   let controlsVisible = $state(true);
   /** Bumped by every interaction: the fade timer restarts from it. */
   let poke = $state(0);
@@ -361,40 +375,97 @@
       autoplayDone = true;
       return;
     }
+    askAutoplay(video);
+  }
+
+  /**
+   * Asks `play()` for the current load and acts on the answer (`decideAutoplayRejection`). Asked
+   * from `loadedmetadata` on: `play()` before the data is legal and makes the engine fetch it,
+   * whereas waiting for `canplay` left a reel the engine had stopped loading at its metadata (an
+   * iPhone with `preload="metadata"` whose `autoplay` attribute WebKit declined - its
+   * `InvisibleAutoplayNotPermitted` rule, a reel not yet in the viewport) with nobody ever asking.
+   */
+  function askAutoplay(el: HTMLVideoElement) {
     autoplayInFlight = true;
-    autoplayAttempts += 1;
-    const attempt = autoplayAttempts;
-    video
-      .play()
+    // The source the ask is made on: a rejection that finds another one was interrupted by that
+    // new load (`videoAutoplay.ts` - the load rejects synchronously, before its `loadstart`).
+    const askedSrc = el.src;
+    const muted = el.muted;
+    Log.d(
+      'VideoPlayer',
+      `autoplay asked (load ${loadGeneration}, ${muted ? 'muted' : 'with sound'})`
+    );
+    el.play()
       .then(() => {
+        autoplayInFlight = false;
         autoplayDone = true;
       })
       .catch((err: unknown) => {
-        const name = err instanceof Error ? err.name : String(err);
-        if (name === 'AbortError' && attempt < AUTOPLAY_MAX_ATTEMPTS) {
-          // A new load interrupted it: the next `canplay` / `loadeddata` of that load asks again.
+        autoplayInFlight = false;
+        const name = playRejectionName(err);
+        const verdict = decideAutoplayRejection(name, { sourceChanged: el.src !== askedSrc });
+        if (verdict.kind === 'ask-at-next-load') {
           console.debug(
-            `[VideoPlayer] autoplay interrupted (${name}) - asked again at the next load event`
+            `[VideoPlayer] autoplay interrupted by a new source (${name}) - its load asks again`
           );
           return;
         }
         autoplayDone = true;
-        if (name === 'NotAllowedError') {
-          console.warn('[VideoPlayer] autoplay refused by the engine - the play button is shown', {
-            muted: video?.muted,
-          });
+        if (verdict.cause === 'interrupted') {
+          console.info(
+            `[VideoPlayer] autoplay interrupted by a pause (${name}, same source) - the play button is shown`
+          );
         } else {
           console.warn(
-            `[VideoPlayer] autoplay failed (${name}, attempt ${attempt}) - the play button is shown`,
+            `[VideoPlayer] autoplay ${verdict.cause} (${name}, ${muted ? 'muted' : 'with sound'}) - the play button is shown`,
             err
           );
         }
         autoplayRefused = true;
-        onPlaybackBlocked?.('refused');
-      })
-      .finally(() => {
-        autoplayInFlight = false;
+        buffering = false;
+        tellBlocked(verdict.cause);
       });
+  }
+
+  /** `onPlaybackBlocked` was called: the contract is ONE call per player, whatever follows. */
+  let blockedTold = false;
+
+  /** Says once that this video will not play by itself; a later verdict is only logged. */
+  function tellBlocked(cause: AutoplayBlockCause | 'unplayable') {
+    if (blockedTold) {
+      Log.d('VideoPlayer', `blocked again (${cause}) - already told`);
+      return;
+    }
+    blockedTold = true;
+    onPlaybackBlocked?.(cause);
+  }
+
+  /** A new load of the element: its autoplay is asked afresh, earlier answers are void. */
+  function onLoadStart() {
+    loadGeneration += 1;
+    autoplayDone = false;
+    autoplayRefused = false;
+    buffering = false;
+    Log.d('VideoPlayer', `load ${loadGeneration} started`);
+  }
+
+  /** `waiting`: the element should play but has no data - a slow network, drawn as a spinner. */
+  function onWaiting() {
+    if (!video || video.paused || buffering) return;
+    buffering = true;
+    Log.d(
+      'VideoPlayer',
+      `waiting for data (readyState ${video.readyState}, networkState ${video.networkState})`
+    );
+  }
+
+  /** `stalled`: the download made no progress for a while - logged; the spinner is `waiting`'s. */
+  function onStalled() {
+    if (!video) return;
+    Log.d(
+      'VideoPlayer',
+      `download stalled (readyState ${video.readyState}, ${video.paused ? 'paused' : 'playing'})`
+    );
   }
 
   function onVideoError() {
@@ -404,7 +475,7 @@
       msg: video?.error?.message,
     });
     unplayable = true;
-    onPlaybackBlocked?.('unplayable');
+    tellBlocked('unplayable');
   }
 </script>
 
@@ -438,9 +509,11 @@
     use:followVideoSound={soundScope}
     class={videoClass}
     style="transform: var(--lightbox-zoom, none); transform-origin: center;"
+    onloadstart={onLoadStart}
     onloadedmetadata={() => {
       resumeOnce();
       sync();
+      tryAutoplay();
     }}
     onloadeddata={() => {
       frameReady = true;
@@ -456,7 +529,11 @@
       sync();
       poke += 1;
     }}
+    onplaying={() => (buffering = false)}
+    onwaiting={onWaiting}
+    onstalled={onStalled}
     onpause={() => {
+      buffering = false;
       sync();
       controlsVisible = true;
     }}
@@ -491,8 +568,9 @@
            read as "tap to play" on a video that was only loading (owner, 2026-10-31). -->
     {/if}
 
-    {#if paused && frameReady && (!minimal || autoplayRefused)}
-      <!-- The one big target while nothing plays; the bar below repeats it for the keyboard. -->
+    {#if paused && (minimal ? autoplayRefused : frameReady)}
+      <!-- The one big target while nothing plays; the bar below repeats it for the keyboard. The
+           minimal player draws it on a decided outcome only, with or without a first frame. -->
       <button
         type="button"
         class="bg-cn-yellow text-cn-ink absolute top-1/2 left-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
@@ -505,6 +583,11 @@
       >
         <Play size={30} strokeWidth={2.25} fill="currentColor" class="ml-1" />
       </button>
+    {/if}
+
+    {#if minimal && buffering}
+      <!-- A SLOW NETWORK, NOT A REFUSAL: the reel was asked to play and waits for its data. -->
+      <MediaSpinner />
     {/if}
 
     {#if minimal}

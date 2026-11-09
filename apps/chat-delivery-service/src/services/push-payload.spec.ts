@@ -13,7 +13,19 @@ import {
   FCM_DATA_LIMIT,
   IOS_NOTIFICATION_SOUND,
   PushMessageInput,
+  buildWakeApnsRequest,
+  buildWakeDataFields,
+  buildWakeFrameAnswer,
+  buildEnvelopeAnswer,
+  buildInternalAndroidHalf,
+  buildInternalApnsHalf,
+  presentationOf,
+  isInternalSilent,
+  type EnvelopeContent,
 } from './push-payload';
+
+/** The step-1 wake key every wake builder test names. */
+const Q1KEY = { queuedMessageId: 'q-1' };
 
 const baseInput: PushMessageInput = {
   groupId: 'group-1',
@@ -573,5 +585,221 @@ describe('the inline-proto budget', () => {
     const apnsBytes = measureApnsPayload(buildApnsRequest(filled, fields).payload);
     expect(dataBytes).toBeLessThan(FCM_DATA_LIMIT);
     expect(dataBytes + apnsBytes).toBeGreaterThan(FCM_DATA_LIMIT);
+  });
+});
+
+describe('buildWakeApnsRequest', () => {
+  it('keeps a mentions frame passive and soundless, and names nothing', () => {
+    const request = buildWakeApnsRequest(Q1KEY, false, true, 'en');
+    expect(request.payload).toEqual({
+      aps: {
+        'mutable-content': 1,
+        alert: { title: 'Canari', body: 'New message' },
+        'interruption-level': 'passive',
+      },
+      type: 'wake',
+      queuedMessageId: 'q-1',
+      silent: 'false',
+      notifLevel: 'mentions',
+    });
+    expect(request.pushType).toBe('alert');
+  });
+
+  it('plays the message trill on an ordinary frame', () => {
+    const aps = buildWakeApnsRequest(Q1KEY, false, false, 'fr').payload.aps;
+    expect(aps.sound).toBe(IOS_NOTIFICATION_SOUND.message);
+    expect(aps['interruption-level']).toBeUndefined();
+  });
+});
+
+describe('buildWakeDataFields', () => {
+  it('says mentions for a visible frame of a mentions-only conversation, and nothing else', () => {
+    expect(buildWakeDataFields(Q1KEY, false, true)).toEqual({
+      type: 'wake',
+      queuedMessageId: 'q-1',
+      silent: 'false',
+      notifLevel: 'mentions',
+    });
+    expect(buildWakeDataFields(Q1KEY, false, false)).toEqual({
+      type: 'wake',
+      queuedMessageId: 'q-1',
+      silent: 'false',
+    });
+  });
+
+  it('drops the level from a silent frame, as the full map does', () => {
+    expect(buildWakeDataFields(Q1KEY, true, true)).toEqual({
+      type: 'wake',
+      queuedMessageId: 'q-1',
+      silent: 'true',
+    });
+  });
+});
+
+describe('the envelope wake key', () => {
+  it('names the envelope and nothing else, with the same sound as every wake', () => {
+    expect(buildWakeDataFields({ envelopeId: 'e-1' }, false, false)).toEqual({
+      type: 'wake',
+      envelopeId: 'e-1',
+      silent: 'false',
+    });
+    const request = buildWakeApnsRequest({ envelopeId: 'e-1' }, false, false, 'fr');
+    expect(request.payload.aps['thread-id']).toBeUndefined();
+    expect(request.payload.aps.sound).toBe(IOS_NOTIFICATION_SOUND.message);
+  });
+});
+
+/**
+ * WP-W3's gate: what an envelope answers is the same key/value set the full push would have handed
+ * the same platform, and its presentation is what that push's `aps` said
+ * (docs/wiki/protocols/content-free-push.md section 10).
+ */
+describe('buildEnvelopeAnswer - the same push as the full one', () => {
+  const cases: Array<[string, EnvelopeContent]> = [
+    [
+      'a salon message with its inline group',
+      {
+        title: 'BDE - #general',
+        body: '',
+        data: {
+          type: 'channel',
+          channelId: 'c-1',
+          channelName: 'general',
+          workspaceName: 'BDE',
+          senderId: 'u-2',
+          mentioned: 'true',
+          nonce: 'n',
+        },
+        inline: { ciphertext: 'CIPHER', signature: 'SIG', seedFrame: 'SEED', seedGroupId: 'g-k' },
+      },
+    ],
+    [
+      'a social comment',
+      {
+        title: 'Alice',
+        body: 'Alice a commenté : bonjour',
+        data: {
+          type: 'social',
+          contentKey: 'social_comment',
+          actorName: 'Alice',
+          contentArg: 'bonjour',
+          postId: 'p-1',
+        },
+        inline: {},
+      },
+    ],
+    [
+      'a chat reaction',
+      {
+        title: 'Alice',
+        body: 'Alice a réagi',
+        data: { type: 'social', reaction: 'true', groupId: 'g-1', emoji: 'x', senderId: 'u-2' },
+        inline: {},
+      },
+    ],
+    [
+      'a salon read',
+      {
+        title: 'general',
+        body: '',
+        data: { type: 'channel_read', channelId: 'c-1', workspaceId: 'w-1', senderId: 'u-1' },
+        inline: {},
+      },
+    ],
+    [
+      'a join ask',
+      {
+        title: 'Bob',
+        body: 'Bob veut rejoindre Groupe',
+        data: {
+          type: 'social',
+          contentKey: 'chat_join_ask',
+          actorName: 'Bob',
+          contentArg: 'Groupe',
+          groupId: 'g-1',
+          senderId: 'u-3',
+        },
+        inline: {},
+      },
+    ],
+  ];
+
+  it.each(cases)('%s: Android fields equal the full data map', (_name, content) => {
+    const full = buildInternalAndroidHalf(
+      content.title,
+      content.body,
+      content.data,
+      content.inline
+    );
+    const answer = buildEnvelopeAnswer(content, 'android', 'fr');
+    if (answer.status !== 'push') throw new Error('not a push answer');
+    expect(JSON.stringify(answer.fields)).toBe(JSON.stringify(full.payload));
+  });
+
+  it.each(cases)('%s: iOS fields and presentation equal the full APNs push', (_name, content) => {
+    const full = buildInternalApnsHalf(
+      content.title,
+      content.body,
+      content.data,
+      content.inline,
+      'en'
+    ).payload;
+    const { aps, ...custom } = full.payload;
+    const answer = buildEnvelopeAnswer(content, 'ios', 'en');
+    if (answer.status !== 'push') throw new Error('not a push answer');
+    expect(JSON.stringify(answer.fields)).toBe(JSON.stringify(custom));
+    const alert = aps.alert as { title: string; body: string } | undefined;
+    // A silent push presents nothing; any other presents exactly what its `aps` said.
+    const expected = isInternalSilent(content.data)
+      ? null
+      : { title: alert?.title, body: alert?.body, threadId: aps['thread-id'], sound: aps.sound };
+    expect(answer.presentation).toEqual(expected);
+  });
+
+  it('always carries the inline group, which the full push drops past 4 KB', () => {
+    const big: EnvelopeContent = {
+      title: 'BDE - #general',
+      body: '',
+      data: { type: 'channel', channelId: 'c-1' },
+      inline: { ciphertext: 'A'.repeat(10_000), seedFrame: 'S' },
+    };
+    expect(buildInternalAndroidHalf(big.title, big.body, big.data, big.inline).inlined).toBe(false);
+    const answer = buildEnvelopeAnswer(big, 'android', null);
+    if (answer.status !== 'push') throw new Error('not a push answer');
+    expect(answer.fields.ciphertext).toHaveLength(10_000);
+    expect(answer.fields.seedFrame).toBe('S');
+  });
+});
+
+describe('the MLS frame answer carries its presentation', () => {
+  it('is what buildApnsRequest would have put in aps', () => {
+    const answer = buildWakeFrameAnswer({ ...baseInput, groupName: '' }, 'PROTO', 'en');
+    if (answer.status !== 'frame') throw new Error('not a frame answer');
+    expect(answer.fields.proto).toBe('PROTO');
+    expect(answer.presentation).toEqual({
+      title: 'Alice',
+      body: 'New message',
+      threadId: 'group-1',
+      sound: IOS_NOTIFICATION_SOUND.message,
+    });
+  });
+
+  it('is passive and soundless for a mentions-only conversation', () => {
+    const answer = buildWakeFrameAnswer({ ...baseInput, mentionsOnly: true }, 'PROTO', 'fr');
+    if (answer.status !== 'frame') throw new Error('not a frame answer');
+    expect(answer.presentation).toMatchObject({ interruptionLevel: 'passive' });
+    expect(answer.presentation).not.toHaveProperty('sound');
+  });
+
+  it('is null for a silent frame', () => {
+    const answer = buildWakeFrameAnswer({ ...baseInput, silent: true }, 'PROTO', 'fr');
+    if (answer.status !== 'frame') throw new Error('not a frame answer');
+    expect(answer.presentation).toBeNull();
+  });
+
+  it('reads a background request as presenting nothing', () => {
+    expect(
+      presentationOf(buildInternalApnsRequest('t', 'b', { type: 'channel_read' }, 'fr'))
+    ).toBeNull();
   });
 });

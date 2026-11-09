@@ -9,12 +9,15 @@
   import {
     getAssociationBySlug,
     listMembers,
-    isPaymentAccountReady,
+    canTakePayments,
+    keepPaymentsReady,
     getMyBdeReach,
+    grantableFlags,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import BdeDependentsCard from '$lib/components/associations/edit/BdeDependentsCard.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
   import {
@@ -40,6 +43,7 @@
     editTrail,
     kindHasSection,
     editSectionHref,
+    mayEnterEditArea,
     mayOpenEditSection,
     parseEditSection,
     visibleEditSections,
@@ -77,11 +81,15 @@
   let myMembership = $derived(members.find((mb) => mb.userId === userId));
   let isGlobalAdminUser = $derived(isGlobalAdmin());
   /**
-   * BDE super-admin OF THIS association (MANAGE_ASSO in the BDE of a space it reaches, WP6c step
-   * 2): may administer it without being a member. `superAdminOf` is the server's `me/bde-reach`.
+   * BDE super-admin OF THIS association (MANAGE_ASSO in its parent BDE, or itself when a BDE,
+   * WP-D2): may administer it without being a member. `superAdminOf` is the server's `me/bde-reach`,
+   * which never lists an institution: an institution has no governing BDE (owner, 2026-11-02), and
+   * the type check says so here too rather than trusting a stale list.
    */
   let superAdminOf = $state<string[]>([]);
-  let isSuperAdminUser = $derived(!!asso && superAdminOf.includes(asso.id));
+  let isSuperAdminUser = $derived(
+    !!asso && asso.type !== 'institution' && superAdminOf.includes(asso.id)
+  );
 
   /**
    * The wording of what is being edited - an association, a list or an institution. The ONE
@@ -96,7 +104,7 @@
    * card for a deep link straight onto the payments tab.
    */
   let onlinePaymentsReady = $derived(
-    !!asso && isPaymentAccountReady(asso, activePaymentProvider.current)
+    !!asso && canTakePayments(asso, activePaymentProvider.current)
   );
 
   // The tab title names what is edited; the path alone cannot tell an institution from a club.
@@ -151,8 +159,9 @@
    * stricter of the two hid the other one from everybody entitled to it.
    *
    * Archiving is `PATCH :id { archived }`, which the server admits through
-   * `GlobalAdminOrAssociationRoleGuard` at `MANAGE_MEMBERS` - so an association's own admin holds
-   * it, and so does a BDE `MANAGE_ASSO` super-admin, `MANAGE_MEMBERS` not being in
+   * `GlobalAdminOrAssociationRoleGuard` and then asks `MANAGE_MEMBERS` of the `archived` field
+   * (`UPDATE_FIELD_RIGHTS`, read as `rights.archive`) - so an association's own admin holds it, and
+   * so does a BDE `MANAGE_ASSO` super-admin, `MANAGE_MEMBERS` not being in
    * `SUPER_ADMIN_EXCLUDED_FLAGS`. Deleting is `DELETE :id` behind a bare `GlobalAdminGuard` and is
    * the platform administrator's alone. Both were behind `isGlobalAdminUser` here, which is how a
    * BDE member holding the power to administer associations found the section absent (reported
@@ -160,18 +169,19 @@
    *
    * The tab therefore opens on the right to ARCHIVE, and the delete card carries its own tier.
    */
-  let canArchiveAssociation = $derived(canManageMembers);
+  let canArchiveAssociation = $derived(rights.archive);
   /**
    * The delete card's own tier, and it is NOT the platform administrator's any more.
    *
    * `DELETE :id` moved to `GlobalAdminOrBdeSuperAdminGuard` on 2026-09-10 (user), so it now admits
    * exactly what CREATE has always admitted: a global admin, or a BDE member holding
    * `MANAGE_ASSO`. It is deliberately NOT `mayActOnAssociation`, because an association's own
-   * admin never holds it, however many flags they have. Since WP6c step 2 the server checks it in
-   * the handler, scoped: the BDE must govern THIS association (a space it reaches), which is what
-   * `isSuperAdminUser` already reads.
+   * admin never holds it, however many flags they have. Since WP-D2 the server checks it in the
+   * handler, scoped: MANAGE_ASSO in its parent BDE (or itself when a BDE), which is what
+   * `isSuperAdminUser` already reads. Since 2026-11-02 (owner) an INSTITUTION is deleted by the
+   * global admin alone (`INSTITUTION_DELETE_ADMIN_ONLY`): `rights.delete` carries both rules.
    */
-  let canDeleteAssociation = $derived(isGlobalAdminUser || isSuperAdminUser);
+  let canDeleteAssociation = $derived(rights.delete);
   /**
    * The audience tab (WP-B): the server admits a global admin, or a BDE star writing an association
    * or a list of its own campus; an institution's audience is a global admin's alone
@@ -248,6 +258,14 @@
         href: editSectionHref(slug, section),
         label: sectionLabel(section),
         icon: SECTION_ICONS[section],
+        // The first-time help points at the rows the reader holds the right to open: the hub draws
+        // a row only then (`visibleEditSections`), so the anchor follows the right, not a copy of it.
+        guideAnchor:
+          section === 'members'
+            ? 'asso.edit.members'
+            : section === 'audience'
+              ? 'asso.edit.audience'
+              : undefined,
         summary:
           section === 'members'
             ? m.asso_edit_hub_members_summary({ count: members.length })
@@ -261,7 +279,13 @@
   // replaced by the hub. `loading` guards the moment `rights` is still the empty default.
   // Only for someone admitted to the area at all: a reader `loadData` is sending to the public page
   // must not be raced by a second redirect.
-  let mayEnterArea = $derived(isGlobalAdminUser || isSuperAdminUser || !!myMembership?.isAdmin);
+  let mayEnterArea = $derived(
+    mayEnterEditArea({
+      isGlobalAdmin: isGlobalAdminUser,
+      isSuperAdmin: isSuperAdminUser,
+      isMemberAdmin: !!myMembership?.isAdmin,
+    })
+  );
   $effect(() => {
     if (loading || !asso || !editSection || !mayEnterArea) return;
     if (!kindHasSection(asso.type, editSection) || !mayOpenEditSection(editSection, rights)) {
@@ -269,6 +293,19 @@
       void goto(resolve(internalPath(editSectionHref(slug))), { replace: true });
     }
   });
+
+  /**
+   * `paymentsReady` is the SERVER's resolution (own account or an approved delegate), so after the
+   * account changes here it is read back, never guessed on the client.
+   */
+  async function rereadPaymentsReady() {
+    try {
+      const fresh = await getAssociationBySlug(slug);
+      if (asso && fresh.id === asso.id) asso = { ...asso, paymentsReady: fresh.paymentsReady };
+    } catch (err) {
+      console.warn('[associations/edit] payments readiness re-read failed', err);
+    }
+  }
 
   onMount(async () => {
     // Fetched on arrival, not on the first click of the payments tab: a deep link
@@ -310,9 +347,13 @@
       const uid = currentUserId();
       const mine = members.find((mb) => mb.userId === uid);
       // Await the BDE reach so the access decision is deterministic. It is THIS association's
-      // super-admin tier (WP6c step 2): MANAGE_ASSO in the BDE of a space it reaches.
+      // super-admin tier: MANAGE_ASSO in its parent BDE (or itself when a BDE), WP-D2.
       superAdminOf = (await getMyBdeReach()).manageAsso;
-      const canEdit = isGlobalAdmin() || isSuperAdminUser || (!!mine && mine.isAdmin);
+      const canEdit = mayEnterEditArea({
+        isGlobalAdmin: isGlobalAdmin(),
+        isSuperAdmin: isSuperAdminUser,
+        isMemberAdmin: !!mine?.isAdmin,
+      });
       if (!canEdit) {
         await goto(resolve(`associations/${encodeURIComponent(slug)}`));
         return;
@@ -348,10 +389,18 @@
 
       {#if editSection === null}
         <SectionHub rows={hubRows} label={m.asso_edit_hub_label()} />
+        {#if asso?.type === 'association' && asso.isBDE}
+          <BdeDependentsCard {asso} isGlobalAdmin={isGlobalAdminUser} />
+        {/if}
       {/if}
 
       {#if editSection === 'profile'}
-        <EditProfileTab {asso} canEdit={canManageMembers} onUpdated={(a) => (asso = a)} />
+        <EditProfileTab
+          {asso}
+          canEdit={rights.profile}
+          canEditParent={rights.parent}
+          onUpdated={(a) => (asso = keepPaymentsReady(a, asso))}
+        />
       {/if}
 
       {#if editSection === 'payments' && canManagePaymentsSection && asso}
@@ -381,9 +430,11 @@
               {asso}
               onValidated={() => {
                 if (asso) asso = { ...asso, lydiaOnboardingComplete: true };
+                void rereadPaymentsReady();
               }}
               onDisconnected={() => {
                 if (asso) asso = { ...asso, lydiaOnboardingComplete: false };
+                void rereadPaymentsReady();
               }}
             />
           {:else if canManagePayoutAccount && activePaymentProvider.current === 'disabled'}
@@ -400,8 +451,13 @@
         </div>
       {/if}
 
-      {#if editSection === 'members' && canManageMembers}
-        <EditMembersTab {asso} bind:members bind:resolvedMemberNames />
+      {#if editSection === 'members' && rights.memberRoster}
+        <EditMembersTab
+          {asso}
+          grantable={grantableFlags(permissionContext)}
+          bind:members
+          bind:resolvedMemberNames
+        />
       {/if}
 
       {#if editSection === 'documents' && canManageDocuments && asso}
@@ -465,7 +521,7 @@
           {asso}
           kind={asso.type}
           canDelete={canDeleteAssociation}
-          onUpdated={(a) => (asso = a)}
+          onUpdated={(a) => (asso = keepPaymentsReady(a, asso))}
           onDeleted={() => goto(resolve(words.directoryHref))}
         />
       {/if}

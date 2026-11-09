@@ -11,8 +11,8 @@ message, a picture or a post opens the system sheet.
 | --- | --- | --- |
 | S1+S2 | Share IN on Android: the intent filter, the native copy, the "Envoyer a..." picker, the composer staging | built (this page) |
 | S3 | Share OUT (Android + iOS): `share_text` / `share_staged`, message and post menus | built - [share-out](share-out.md) |
-| S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a third signing profile; **the iOS conversation suggestions (`INSendMessageIntent`) follow it**, since they need that extension | **built (2026-10-22), owed the iPhone readings** - [the iOS path](#share-in-ios---the-path) |
-| S5 | Conversation suggestions in the Android sheet (Direct Share / sharing shortcuts) | built (Android), [below](#share-suggestions-android---lot-s5) |
+| S4 | Share IN on iOS: a Share Extension `CanariShare` in the App Group, a third signing profile | **built (2026-10-22), owed the iPhone readings** - [the iOS path](#share-in-ios---the-path) |
+| S5 | Conversation suggestions in the share sheet: Android sharing shortcuts, iOS `INSendMessageIntent` donations read back by `CanariShare` | built - [Android](#share-suggestions-android---lot-s5); **iOS built (2026-10-27), owed a CI compile and the iPhone readings** - [iOS](#share-suggestions-ios---lot-s5) |
 | S6 | A post's or a reel's share sheet, Instagram's: send into a conversation, copy the link, the system sheet; a shared reel's card opens the viewer | built, design decided 2026-10-23 - [below](#a-post-or-a-reel-shared-from-its-sheet---lot-s6) |
 
 ## Share IN, Android - the path
@@ -141,6 +141,19 @@ preselection, never a destination by itself.
   (`CanariFirebaseMessagingService.publishConversationShortcut`) share the dynamic set. NOT
   long-lived: the sheet needs no cached copy, so removing the dynamic shortcut removes it
   everywhere. Capped at `getMaxShortcutCountPerActivity`.
+- **A salon never publishes a conversation shortcut** (2026-11-01), though its notification takes
+  the group shape since then: the cap above is shared, a busy salon posting one per message would
+  evict the DMs' shortcuts and these suggestions, and the sheet offers conversations, not salons.
+  `showMessageNotification` skips `publishConversationShortcut` for a `channel_` id and keeps the
+  large icon (the speaker's face or initials). The `chat_channel_*` shortcuts the WebSocket trigger
+  published before that are retired ONCE PER INSTALL: `CanariApplication` calls
+  `ConversationShortcuts.removeRecordedWithPrefix` (`removeLongLivedShortcuts`, the record rewritten,
+  the count logged at INFO) and then writes the done flag `salon_shortcuts_retired`
+  (SharedPreferences `canari_one_time_steps`) - only after a removal that did not fail, and never on
+  an unreadable record (`ShortcutRecord.readOrNull` answers null), so either is tried again at the
+  next start. **A salon shortcut the user pinned to the home screen is disabled
+  too** (`disablePinnedShortcuts`): it stays on the launcher, greyed out, and says it is no longer
+  available.
 - **Erased at sign-out, with the notifications' conversation shortcuts** (an account switch
   included, the user's rule for the pending share too: nothing of an account stays for the next
   one). `clearAuthUnderway` calls `eraseAccountShortcuts` beside `discardSharedOut`, for
@@ -161,7 +174,7 @@ preselection, never a destination by itself.
   (`conversationIdFromShareTarget`) and preselects it only if the signed-in account's list holds
   that conversation (`suggestionIfHeld`) - a stale shortcut from another account targets nothing,
   and says so in the log.
-- **The setting** "Suggestions dans le partage" (Settings > Preferences, Android app only, ON by
+- **The setting** "Suggestions dans le partage" (Settings > Preferences, both phone apps, ON by
   default, per device): off clears at once. The names leave Canari for the system (launcher, share
   sheet), which the user accepted knowingly; the privacy policy (section 7) and the register (C22)
   say so.
@@ -169,8 +182,86 @@ preselection, never a destination by itself.
 **Known limits.** Android 9 (API 28, the app's minimum) does not list them: that needs
 `androidx.sharetarget` and its chooser service, not shipped for one API level. A shortcut the
 member PINNED from the launcher menu cannot be removed by any app: it is disabled at the next
-publish or clear that drops it, and the launcher decides whether its label stays. iOS: none - the
-suggestions need the Share Extension, so they are part of S4.
+publish or clear that drops it, and the launcher decides whether its label stays. iOS: its own
+half, [below](#share-suggestions-ios---lot-s5).
+
+## Share suggestions, iOS - lot S5
+
+The iPhone twin of the Android suggestions above, with the same decisions: the same list (the
+picker's destinations, `lifecycle === 'active'`, named, `compareConversationRecency`, the top
+`MAX_SHARE_TARGETS` = 5), the same JS path (`syncShareTargets` -> `publishShareTargets` /
+`clearShareTargets`, the "last told" state, the queue), the same setting (now shown on both phone
+apps), the same erase at sign-out, and the same rule that **the picked suggestion is only a hint
+and the picker still opens**. What differs is only what the platform holds.
+
+- **What is donated** (`tauri-plugin-gallery/ios/Sources/ShareSuggestions.swift`, behind the same
+  `publish_share_targets` / `clear_share_targets` commands, which no longer refuse iOS): one
+  `INInteraction` per target, OUTGOING, wrapping an `INSendMessageIntent` whose
+  `conversationIdentifier` is the Android shortcut id `c:<conversation id>` and whose
+  `speakableGroupName` is the name; no recipients and no image (Apple's own example donates a group
+  name alone; the avatar is out of reach here, as on Android). Each carries the group identifier
+  `fr.emse.canari.share-suggestions`, and is donated oldest first so the most recent is the last
+  the system learns. The targets are validated with Android's bounds (`c:` prefix, 200 for the id,
+  100 for the label).
+- **What is removed, and how it is known.** `INInteraction.delete(with: groupIdentifier)` - the
+  group is a name this app alone writes, so the delete takes exactly what the suggestions donated,
+  whichever process donated it, and never `deleteAll` (what the system learned of the app beyond
+  them). A publish DELETES the group FIRST and donates only once the delete succeeded: a failed
+  delete donates nothing and fails the call, so the page forgets what it told the native side and
+  sends the next list whatever it asks - the old account's suggestions are never left beside new
+  ones. The platform neither lists nor counts donations, so `present` is the number it accepted,
+  `leftover` is always 0, and a clear answers how many the last publish left (`UserDefaults`). One
+  serial queue orders a sign-out's clear after a publish in flight.
+- **ON by default on iOS too - owner decision, 2026-11-08.** A donated `INSendMessageIntent` with a
+  `speakableGroupName` feeds Siri suggestions BEYOND the share sheet: the names may appear in
+  Spotlight, the Siri suggestions widget and possibly the lock screen (while Canari's "Show on Lock
+  Screen" is on in iOS Settings). The owner kept the Android default (ON) and asked that it be said
+  plainly: the setting's own text (`settings_share_suggestions_desc`), the privacy policy's iPhone
+  row and register row C22 name those places and say that the setting turns it off. Turning it off
+  deletes the donation group (`clear_share_targets`). No behaviour differs from Android's.
+- **What is never donated**: a message. The intent's `content`, `recipients`, `sender` and
+  `attachments` are all nil - a conversation's NAME and its id are all the system receives (no
+  avatar either: the plugin has no file of it, as on Android). The native lines log counts and
+  `NSError` codes only, through `GalleryLog` (`Logger`, every interpolation `.public` and never a
+  label), never a Swift `NSLog` (`nativeLogContent.test.ts`).
+- **Erased at sign-out**, an account switch included (on one install, B signs in only after A
+  signed out, [backlog](../backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)): `eraseAccountShortcuts` asks `clear_share_targets` on iOS too, ALWAYS
+  (`force`); it does not ask `clear_conversation_shortcuts`, which stays Android-only: the iOS
+  notification extension donates no intent and publishes no shortcut, so there is no second set.
+- **The pick comes back through the Share Extension.** Its `Info.plist` declares
+  `IntentsSupported` = [`INSendMessageIntent`] under `NSExtensionAttributes` - without it the sheet
+  offers none of the donations. When the member picks a suggestion, `extensionContext.intent` is
+  that `INSendMessageIntent`; `ShareViewController` reads its `conversationIdentifier`, checks the
+  shape Android checks (`ShareRules.suggestedTarget`: `c:` and 3 to 200 characters, a malformed one
+  logged and dropped) and the capture writes it into `pending_share.json` under Android's key
+  `target`. The app's import carries every manifest key through unchanged (a Rust test pins
+  `target`), and from there the page is Android's: `conversationIdFromShareTarget`, then
+  `suggestionIfHeld` against the signed-in account.
+- **Intents is linked by hand** in `project.pbxproj` into the app (where the plugin's static library
+  donates) and `CanariShare` (which reads the picked intent). No capability, no entitlement and no
+  portal step: Apple documents none for donating an interaction or declaring `IntentsSupported` in
+  a share extension (the Siri capability is for apps that HANDLE intents); the iPhone reading
+  confirms it.
+- **What Apple's text was read for** ([Supporting suggestions in your app's share
+  extension](https://developer.apple.com/documentation/foundation/supporting-suggestions-in-your-app-s-share-extension)):
+  the extension's `IntentsSupported`, the donation of an `INSendMessageIntent` with
+  `speakableGroupName` and `conversationIdentifier`, `extensionContext.intent` in the extension.
+  It does not mention `NSUserActivityTypes` in the app's `Info.plist`, so none was added at first -
+  **and that was the defect**: the first iPhone syslog (2026-11-08, `1.6.8-alpha.3`) read
+  `publishShareTargets: 5 target(s)`, five `Can NOT donate INSendMessageIntent for fr.emse.canari`,
+  `target #N was not donated (code 1901)`, `publish: 0 of 5 donated`. The donating app must declare
+  the intent in `NSUserActivityTypes`; `canari_iOS/Info.plist` now does (a tracked, hand-kept file:
+  `gen/apple/README.md` forbids a blind `tauri ios init`, `tauri.conf.json` carries no plist merge,
+  and CI only patches the export-compliance key into it, so the key survives). No entitlement was
+  added. **A compile proves nothing about a donation: the iPhone reading after the next pre-release
+  (`donate`, not `0 of N`, then the sheet offering the conversations) is the proof, and is owed.** It says to donate when a message is sent or
+  received; this donates the recency list instead, the Android decision - whether iOS ranks such
+  donations into the sheet is the first thing the iPhone reading answers.
+- Guards: `iosShareExtension.test.ts` (the plist key, the donation, the group delete before every
+  publish and at every clear, the bounds against Kotlin and the page, the commands both sides name,
+  the intent read and the `target` key, the sign-out path, Intents in both frameworks phases),
+  `shareTargets.test.ts` (iOS publishes and clears through the same commands, and erases no
+  conversation shortcut), `app_group_share.rs` (`target` survives the import).
 
 ## A post or a reel, shared from its sheet - lot S6
 
@@ -485,7 +576,29 @@ Android leaves - from there, steps 3 to 6 above are the same code.
   cancel path (a long video shared, then the sheet left at once). The project itself is linted by
   Xcode at the start of every `ios.yml` run (`plutil -lint`, `xcodebuild -list`) and parsed whole by
   the vitest, after a pbxproj with two unclosed objects passed every Windows check.
-  Suggested next lot: iOS conversation suggestions (`INSendMessageIntent`, the S5 twin).
+- **S5 on the iPhone - first a CI compile** (`compile-ios-app` in `ci.yml` on the pull request, then
+  `ios.yml`: the plugin's `ShareSuggestions.swift`, the extension's `import Intents`, the two Intents
+  links), then:
+  - after a few conversations, they appear in the share sheet's suggestion row of Photos and
+    Safari. Apple ranks donations itself - whether a recency list with no message sent is ranked at
+    all is THE question. **Read a "never appears" with this in mind: `publish()` deletes the whole
+    donation group before every donation**, so each publish resets whatever frequency or recency
+    signal Apple had accumulated for those conversations; an empty row may be that reset, not a
+    refusal of recency lists;
+  - **where else the names show** (`speakableGroupName` feeds Siri suggestions, not only the sheet):
+    the lock screen (with Canari's "Show on Lock Screen" in Settings > Siri on and off), Spotlight
+    (a search and the empty-search suggestions), and the Siri suggestions widget - each read, and
+    each gone once the setting is turned off;
+  - picking one opens Canari's picker with it preselected, cold and warm, with the PIN gate up;
+  - a suggestion picked after a sign-out and a second account preselects nothing (the
+    `[SHARE] ... ignored` line);
+  - the toggle off and a sign-out remove them from the sheet;
+  - **a kill right after a sign-out** (before the queued clear reaches Swift) leaves the previous
+    account's names in the sheet and Siri's suggestions until the next sign-in's publish (or the
+    next clear) replaces them - expected from the code, to be seen and timed;
+  - the logs - `[ShareSuggestions]` and `[GalleryPlugin]` lines (`GalleryLog`, Console category
+    `gallery`, each donate or delete error by its code), Console category `share` for the
+    extension's `suggestion=true`, and the page's `[SHARE]` lines.
 
 ## One copy helper, one share-failure path (2026-10-30)
 

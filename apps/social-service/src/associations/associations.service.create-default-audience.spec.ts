@@ -1,9 +1,16 @@
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { COTISATION_TAG_COLLISION } from './cotisation-namespace';
-import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
+import { BDES_WHERE_USER_HOLDS_SQL } from '../spaces/bde';
+import {
+  DEPENDENCY_INSTITUTION,
+  DEPENDENCY_PARENT_CHOICE_REQUIRED,
+  DEPENDENCY_PARENT_NOT_A_BDE,
+  DEPENDENCY_PARENT_NOT_YOURS,
+} from '../spaces/dependency-rules';
 import { SLUG_EXHAUSTED } from './association-slug.util';
 import { AssociationsService } from './associations.service';
 import { AssociationAudience } from '../spaces/association-audience.entity';
+import { ruleInsideGovernedSpaces } from '../spaces/audience-policy';
 import { READER_PROFILE_SQL } from '../spaces/reader-spaces';
 
 /**
@@ -14,20 +21,15 @@ import { READER_PROFILE_SQL } from '../spaces/reader-spaces';
  */
 function makeService(
   campus: string | null,
-  governed: string[] = [],
+  /** Unused since WP-D1 (a non-admin's default audience is its parent's spaces); kept positional. */
+  _standings: unknown[] = [],
   /** Other associations' slugs and tier keys, read by the cotisation-stem guard. */
   stems: { slug: string; variantKey: string | null }[] = []
 ) {
   const manager = {
     save: jest.fn((row: object) => Promise.resolve({ ...row, id: 'new-asso' })),
     query: jest.fn((sql: string) =>
-      Promise.resolve(
-        sql.includes('association_products')
-          ? stems
-          : sql === BDE_GOVERNED_CAMPUSES_SQL
-            ? governed.map((c) => ({ campus: c }))
-            : [{ campus }]
-      )
+      Promise.resolve(sql.includes('association_products') ? stems : [{ campus }])
     ),
     insert: jest.fn(() => Promise.resolve()),
   };
@@ -131,36 +133,218 @@ describe('AssociationsService.create - the default reach (campus, every formatio
   });
 });
 
-describe('AssociationsService.create - a non-admin creator is bound to the campuses its BDE governs', () => {
-  it('creates when the default campus is governed by the creator BDE', async () => {
-    const { service, manager } = makeService('gardanne', ['gardanne']);
+/**
+ * THE PARENT A NEW ENTITY IS CREATED UNDER, AND THE DEFAULT AUDIENCE IT DERIVES (WP-D1, reform 2.5,
+ * owner B1): the creating BDE, picked among several; a non-BDE named as parent becomes the G3 label;
+ * an institution has none. The audience is the spaces the parent governs.
+ */
+describe('AssociationsService.create - the governing parent and its default audience (WP-D1)', () => {
+  /** Associations by id, as `manager.findOne` reads them; the ids of the spaces' governors. */
+  function withDependencies(
+    opts: {
+      byId?: Record<string, { id: string; type: string }>;
+      governing?: Record<string, { formation: string; campus: string }[]>;
+      mine?: string[];
+    } = {}
+  ) {
+    const made = makeService('saint-etienne');
+    const { manager } = made as unknown as {
+      manager: Record<string, jest.Mock> & { query: jest.Mock };
+    };
+    manager.findOne = jest.fn(async (_e: unknown, { where }: { where: { id: string } }) =>
+      opts.byId?.[where.id] ? opts.byId[where.id] : null
+    );
+    manager.count = jest.fn(
+      async (_e: unknown, { where }: { where: { bdeAssociationId: string } }) =>
+        (opts.governing?.[where.bdeAssociationId] ?? []).length
+    );
+    manager.find = jest.fn(
+      async (_e: unknown, { where }: { where: { bdeAssociationId: string } }) =>
+        opts.governing?.[where.bdeAssociationId] ?? []
+    );
+    const base = manager.query.getMockImplementation() as (sql: string) => Promise<unknown>;
+    manager.query.mockImplementation(async (sql: string) =>
+      sql === BDES_WHERE_USER_HOLDS_SQL ? (opts.mine ?? []).map((id) => ({ id })) : base(sql)
+    );
+    return made;
+  }
+  const BDE = { id: 'bde', type: 'association' };
+  const FSSS = { id: 'fsss', type: 'association' };
+  const BDS = { id: 'bds', type: 'association' };
+  const SCHOOL = { id: 'school', type: 'institution' };
+  const SE = (formation: string) => ({ formation, campus: 'saint-etienne' });
+  const governing = { bde: ['ICM', 'ISMIN', 'PDIS', 'Autre'].map(SE), fsss: [SE('FSSS')] };
+
+  async function codeOf(p: Promise<unknown>): Promise<string | null> {
+    const e = await p.then(
+      () => null,
+      (err: unknown) => err
+    );
+    return e ? ((e as ConflictException).getResponse() as { code: string }).code : null;
+  }
+
+  it("gives a non-admin creator's entity its only BDE as parent, journaled, and that BDE's spaces", async () => {
+    const { service, manager, assoRepo } = withDependencies({ governing, mine: ['bde'] });
 
     await service.create(dto, 'star-1', false);
 
+    expect(assoRepo.create.mock.results[0].value).toMatchObject({
+      parentAssociationId: 'bde',
+      displayParentAssociationId: null,
+    });
+    expect(manager.query).toHaveBeenCalledWith(expect.stringContaining('dependency_journal'), [
+      'entity',
+      'new-asso',
+      null,
+      'bde',
+      'star-1',
+      'create',
+    ]);
     expect(manager.insert).toHaveBeenCalledWith(AssociationAudience, [
-      { associationId: 'new-asso', formation: null, campus: 'gardanne' },
+      { associationId: 'new-asso', formation: 'ICM', campus: 'saint-etienne' },
+      { associationId: 'new-asso', formation: 'ISMIN', campus: 'saint-etienne' },
+      { associationId: 'new-asso', formation: 'PDIS', campus: 'saint-etienne' },
+      { associationId: 'new-asso', formation: 'Autre', campus: 'saint-etienne' },
     ]);
   });
 
-  it('REFUSES with a typed 403 when the profile campus is not governed, and writes no rule', async () => {
-    for (const governed of [[], ['saint-etienne']]) {
-      const { service, manager } = makeService('gardanne', governed);
-      const err = await service.create(dto, 'star-2', false).catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(ForbiddenException);
-      expect((err as ForbiddenException).getResponse()).toMatchObject({
-        code: 'AUDIENCE_OUTSIDE_BDE_CAMPUS',
-      });
-      expect(manager.insert).not.toHaveBeenCalled();
-    }
+  it('gives a default audience its PARENT may edit rule by rule, and nothing of the other BDE (WP-D2)', async () => {
+    // Since WP-D2 the parent governs the child and writes inside its own spaces only, so the default
+    // must lie inside them: every rule editable by the parent, none on the FSSS BDE's space.
+    const { service, manager } = withDependencies({ governing, mine: ['bde'] });
+
+    await service.create(dto, 'star-1', false);
+
+    const [, rules] = (manager.insert.mock.calls as unknown[][]).find(
+      (c) => c[0] === AssociationAudience
+    ) as [unknown, { formation: string; campus: string }[]];
+    const parentSpaces = ['ICM', 'ISMIN', 'PDIS', 'Autre', 'FSSS'].map((formation) => ({
+      ...SE(formation),
+      governed: formation !== 'FSSS',
+    }));
+    expect(rules.every((r) => ruleInsideGovernedSpaces(r, parentSpaces))).toBe(true);
+    expect(rules.some((r) => r.formation === 'FSSS')).toBe(false);
   });
 
-  it('leaves a global admin unchanged: no governed-campus query at all', async () => {
-    const { service, manager } = makeService('gardanne', []);
+  it('makes a creator managing two BDEs pick one, and holds the pick to its own BDEs', async () => {
+    const two = withDependencies({
+      byId: { bde: BDE, fsss: FSSS },
+      governing,
+      mine: ['bde', 'fsss'],
+    });
+    expect(await codeOf(two.service.create(dto, 'star-2', false))).toBe(
+      DEPENDENCY_PARENT_CHOICE_REQUIRED
+    );
+    expect(two.manager.save).not.toHaveBeenCalled();
 
-    await service.create(dto, 'admin-1', true);
+    const picked = withDependencies({
+      byId: { bde: BDE, fsss: FSSS },
+      governing,
+      mine: ['bde', 'fsss'],
+    });
+    await picked.service.create(
+      { ...(dto as object), parentAssociationId: 'fsss' } as never,
+      'star-2',
+      false
+    );
+    expect(picked.manager.insert).toHaveBeenCalledWith(AssociationAudience, [
+      { associationId: 'new-asso', formation: 'FSSS', campus: 'saint-etienne' },
+    ]);
 
-    expect(manager.query).not.toHaveBeenCalledWith(BDE_GOVERNED_CAMPUSES_SQL, expect.anything());
-    expect(manager.insert).toHaveBeenCalled();
+    const notMine = withDependencies({ byId: { bde: BDE, fsss: FSSS }, governing, mine: ['bde'] });
+    expect(
+      await codeOf(
+        notMine.service.create(
+          { ...(dto as object), parentAssociationId: 'fsss' } as never,
+          'star-1',
+          false
+        )
+      )
+    ).toBe(DEPENDENCY_PARENT_NOT_YOURS);
+  });
+
+  it('keeps a parent that governs nothing (the BDS) as the G3 label, under the default BDE', async () => {
+    const { service, assoRepo } = withDependencies({
+      byId: { bde: BDE, bds: BDS },
+      governing,
+      mine: ['bde'],
+    });
+
+    await service.create(
+      { ...(dto as object), type: 'list', parentAssociationId: 'bds' } as never,
+      'star-1',
+      false
+    );
+
+    expect(assoRepo.create.mock.results[0].value).toMatchObject({
+      parentAssociationId: 'bde',
+      displayParentAssociationId: 'bds',
+    });
+  });
+
+  // F6: the trigger is the last word on every door. A refusal it raises during the create (a write
+  // that raced the check, a placement naming a parented governor) is the same typed 409, never a 500.
+  it('turns a trigger refusal of the insert into the typed 409, and lets any other error through', async () => {
+    const raced = withDependencies({ governing, mine: ['bde'] });
+    raced.manager.save.mockRejectedValueOnce(
+      Object.assign(new Error('dependency refused'), {
+        driverError: { code: '23514', constraint: DEPENDENCY_PARENT_NOT_A_BDE },
+      })
+    );
+    expect(await codeOf(raced.service.create(dto, 'star-1', false))).toBe(
+      DEPENDENCY_PARENT_NOT_A_BDE
+    );
+
+    const other = withDependencies({ governing, mine: ['bde'] });
+    const boom = Object.assign(new Error('other check'), {
+      driverError: { code: '23514', constraint: 'some_other_check' },
+    });
+    other.manager.save.mockRejectedValueOnce(boom);
+    await expect(other.service.create(dto, 'star-1', false)).rejects.toBe(boom);
+  });
+
+  it('refuses a parent for an institution, and an institution as a parent', async () => {
+    const { service } = withDependencies({ byId: { bde: BDE, school: SCHOOL }, governing });
+    expect(
+      await codeOf(
+        service.create(
+          { ...(institutionDto as object), parentAssociationId: 'bde' } as never,
+          'admin',
+          true
+        )
+      )
+    ).toBe(DEPENDENCY_INSTITUTION);
+    expect(
+      await codeOf(
+        service.create(
+          { ...(dto as object), parentAssociationId: 'school' } as never,
+          'admin',
+          true
+        )
+      )
+    ).toBe(DEPENDENCY_PARENT_NOT_A_BDE);
+  });
+
+  it("lets a platform admin pick a BDE (its spaces) or none (the admin's campus)", async () => {
+    const picked = withDependencies({ byId: { fsss: FSSS }, governing });
+    await picked.service.create(
+      { ...(dto as object), parentAssociationId: 'fsss' } as never,
+      'admin',
+      true
+    );
+    expect(picked.manager.insert).toHaveBeenCalledWith(AssociationAudience, [
+      { associationId: 'new-asso', formation: 'FSSS', campus: 'saint-etienne' },
+    ]);
+
+    const none = withDependencies({ governing });
+    await none.service.create(dto, 'admin', true);
+    expect(none.manager.query).not.toHaveBeenCalledWith(
+      BDES_WHERE_USER_HOLDS_SQL,
+      expect.anything()
+    );
+    expect(none.manager.insert).toHaveBeenCalledWith(AssociationAudience, [
+      { associationId: 'new-asso', formation: null, campus: 'saint-etienne' },
+    ]);
   });
 });
 

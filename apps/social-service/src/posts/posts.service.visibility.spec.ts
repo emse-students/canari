@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { PostsService } from './posts.service';
 import { Post } from './entities/post.entity';
@@ -46,6 +46,8 @@ function makeService(opts: {
     mayAct: jest.fn(() => Promise.resolve(true)),
     mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
     isContentModerator: jest.fn(() => Promise.resolve(false)),
+    moderatedPostIds: () => Promise.resolve(new Set<string>()),
+    mayModeratePost: () => Promise.resolve(false),
     findValidatedCalendarEventSummary: jest.fn(() => Promise.resolve(null)),
   };
   const follows = {
@@ -150,17 +152,83 @@ describe('one post the reader may not see', () => {
   });
 
   it('counts a nominative read grant for READ_OR_REACT and NEVER for a VOTE (WP7)', async () => {
-    const { service, calls } = makeService({ visible: true });
+    const { service, calls } = makeService({ visible: true, existing: post });
     await service.assertVisible('p1', VIEWER, 'READ_OR_REACT');
     await service.assertVisible('p1', VIEWER, 'VOTE');
-    expect(calls[0].sql).toContain('read_grants');
-    expect(calls[1].sql).not.toContain('read_grants');
+    const audience = calls.filter((c) => c.sql.includes('AS visible'));
+    expect(audience[0].sql).toContain('read_grants');
+    expect(audience[1].sql).not.toContain('read_grants');
+  });
+
+  it("asks the comments' predicate for COMMENT, and only for COMMENT (owner, 2026-11-04)", async () => {
+    const { service, calls } = makeService({ visible: true, existing: post });
+    await service.assertVisible('p1', VIEWER, 'READ_OR_REACT');
+    const before = calls.length;
+    await service.assertVisible('p1', VIEWER, 'COMMENT');
+    const commentCalls = calls.slice(before);
+    expect(calls.slice(0, before).some((c) => c.sql.includes('read_grant_readers'))).toBe(false);
+    expect(commentCalls.find((c) => c.sql.includes('AS visible'))?.sql).toContain('read_grants');
+    expect(commentCalls.some((c) => c.sql.includes('read_grant_readers'))).toBe(true);
   });
 
   it('is a 404 for the calendar-link read as well', async () => {
-    const { service } = makeService({ visible: false });
+    const { service } = makeService({ visible: false, existing: post });
     await expect(service.assertVisible('p1', VIEWER, 'READ_OR_REACT')).rejects.toBeInstanceOf(
       NotFoundException
     );
+  });
+});
+
+/**
+ * A REACTION, A COMMENT AND A COMMENT LIKE GO THROUGH `assertVisible`, WHICH IS `getById`'s GATE:
+ * every refusal the read makes, the write makes too, with the same status - not the audience term
+ * alone (it used to be, so a block or a moderation hide stopped the read and let the write through).
+ */
+describe('assertVisible refuses every write the read refuses', () => {
+  const personal = {
+    id: 'p1',
+    authorId: 'author',
+    associationId: null,
+    anonymous: false,
+    hiddenByModeration: false,
+    scheduledAt: null,
+  };
+
+  it('opens a post the reader may see, and hands it back', async () => {
+    const { service } = makeService({ visible: true, existing: personal });
+    await expect(service.assertVisible('p1', VIEWER, 'READ_OR_REACT')).resolves.toMatchObject({
+      post: { id: 'p1' },
+      blockedIds: [],
+    });
+  });
+
+  it.each<[string, { visible?: boolean; blocks?: string[]; existing?: undefined }]>([
+    ['outside the reader audience', { visible: false }],
+    ['whose author a block separates from the reader', { blocks: ['author'] }],
+    ['that does not exist', { existing: undefined }],
+  ])('404 on a post %s', async (_case, opts) => {
+    const { service } = makeService({ visible: true, existing: personal, ...opts });
+    await expect(service.assertVisible('p1', VIEWER, 'READ_OR_REACT')).rejects.toBeInstanceOf(
+      NotFoundException
+    );
+  });
+
+  it('403 on a post hidden by moderation, as the read answers', async () => {
+    const { service } = makeService({
+      visible: true,
+      existing: { ...personal, hiddenByModeration: true },
+    });
+    await expect(service.assertVisible('p1', VIEWER, 'READ_OR_REACT')).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+  });
+
+  it('opens an anonymous post across a block: no oracle on who wrote it', async () => {
+    const { service } = makeService({
+      visible: true,
+      blocks: ['author'],
+      existing: { ...personal, anonymous: true },
+    });
+    await expect(service.assertVisible('p1', VIEWER, 'READ_OR_REACT')).resolves.toBeDefined();
   });
 });

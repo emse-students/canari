@@ -118,7 +118,7 @@ gather() {
         *.sql.gz)
           # pg_dump's LAST line: a dump cut anywhere before it lacks it, whatever its size.
           tar -xOzf "$BACKUP_DIR/$archive" "./$m" 2>/dev/null | gzip -dc 2>/dev/null | tail -c 512 |
-            grep -q 'PostgreSQL database dump complete' || incomplete="$incomplete $m"
+            grep 'PostgreSQL database dump complete' >/dev/null || incomplete="$incomplete $m"
           ;;
       esac
     done

@@ -20,6 +20,7 @@ export const NOTIFICATION_CATEGORIES = [
   'forms',
   'follows',
   'bookings',
+  'birthdays',
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];

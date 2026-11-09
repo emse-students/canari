@@ -14,6 +14,9 @@ weights, spacing, radii, surfaces, the whole colour treatment - is in scope: *"T
 bouger, etre redimensionne"*. The goal is not to erase Canari's identity but to make it
 *"BEAUCOUP plus ergonomique"*.
 
+**Buttons, selects and text fields (2026-11-07):** their height, edge and corner are one convention,
+not a measurement of the reference - [controls](controls.md).
+
 ---
 
 ## 1. The finding in one line
@@ -1124,14 +1127,13 @@ from a lazy per-face `fetch` the client can cache to a per-user upstream call ma
 being assembled, and it would make the user payload fail when MiGallery does. **The discriminator
 this rule asks for has to be known to the layer that would carry it, and here it is not.**
 
-**Chromium does not warn about `apple-mobile-web-app-capable`.** The note said a deprecation warning
-was logged on every load and that `mobile-web-app-capable` should be added beside it. Measured on
-Chrome 153 against the served page (the tag IS in the markup): one console message on a cold load,
-`Initialised in WEB mode (WASM)`, and nothing under `warn`, `error`, `verbose` or `issue`. There is
-also **no web app manifest in this repository**, so the standard spelling would install nothing and
-declare nothing - the Apple tag is the whole of "added to the home screen, this opens without
-Safari's chrome", and it is the only one of the two any engine here reads. Adding the second name
-would have put an inert tag in the source to silence a line that is not printed.
+**Chromium DOES warn about a lone `apple-mobile-web-app-capable` (re-measured 2026-11-01).** An
+earlier note here said it did not (Chrome 153); on Chrome 156 a bare page carrying only the Apple tag
+logs `<meta name="apple-mobile-web-app-capable" content="yes"> is deprecated. Please include <meta
+name="mobile-web-app-capable" content="yes">` as a `warn`, and a page carrying BOTH tags logs nothing.
+So `app.html` keeps both: the standard name silences Chrome, the Apple one is the only spelling Safari
+reads for "added to the home screen, opens without Safari's chrome". There is no web app manifest in
+this repository, so neither name installs anything by itself.
 
 **`MIN_USEFUL_HEIGHT` exceeding the room on the chosen side is not a fault.** A panel smaller than
 it shows a header and a clipped first row, so the height is KEPT and the panel is moved instead.
@@ -2484,8 +2486,10 @@ The height is MEASURED rather than counted, for the same reason `--chat-composer
 depends on how many banners are up, how their text wrapped and how wide the window is, so a constant
 per banner would be a sixth copy of a number that has already drifted five ways.
 
-The five window-scale banners (`EnvironmentBanner`, `MaintenanceAdminBanner`, `MlsFatalErrorBanner`,
-`TabFollowerBanner`, `OfflineBanner`) all render in that one column, above the row - so they are
+The four window-scale banners (`EnvironmentBanner`, `MaintenanceAdminBanner`, `MlsFatalErrorBanner`,
+`OfflineBanner`; `TabFollowerBanner` was the fifth until 2026-11-08, when a follower tab started handing
+its commits to the leader and the banner had nothing left to say - [chat](modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08))
+all render in that one column, above the row - so they are
 full width by construction, and `Banner.svelte` insets itself squarely at `m-3`, the same 0.75rem
 gutter grid every other card in the floating shell sits on. It was `mx-3 mt-2`: three different
 numbers on four sides (user: *"si il y a des marges elles doivent etre egales de tous les cotes"*).
@@ -2496,7 +2500,8 @@ itself by hand reads as correct CSS in review and cannot be caught any other way
 
 ### Verified on the user's own reproduction - two tabs of one account (2026-09-22)
 
-Measured on W1 at 1920px, on the estate built from this branch, with the follower banner up:
+Measured on W1 at 1920px, on the estate built from this branch, with the follower banner up (the
+banner is gone since 2026-11-08; the measurement stands for any window-scale banner):
 
 | | Before | After |
 |---|---|---|

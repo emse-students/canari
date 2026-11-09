@@ -7,12 +7,33 @@ export const COMMENT_PAGE_MAX = 50;
 
 export type CommentOrder = 'recent' | 'oldest';
 
-interface StoredComment {
+/** The fields of a stored comment (`posts.comments`) the reads decide on. */
+export interface StoredComment {
   id: string;
   userId?: string;
   anonymous?: boolean;
   associationId?: string | null;
   parentId?: string | null;
+  /** A moderation tombstone (`comment-removal.ts`): no writer, no text. */
+  removedByModeration?: boolean;
+}
+
+/**
+ * Whether a reader whose blocks (either way) are `blocked` is shown this stored comment: not when
+ * its writer is one of them, unless it is anonymous or an association's - filtering those on
+ * `userId` would let a block probe who wrote them (the rule `blockedAuthorSql` applies to posts).
+ * A moderation TOMBSTONE is always shown: it names nobody, and hiding it would take the protected
+ * replies under it out of the thread and say something about who wrote what it replaced (lead's
+ * review of #2999). The comment page and a comment's report both ask it; the feed's SQL twin is
+ * `PostsService.postSelectBody`.
+ */
+export function commentShownDespiteBlocks(c: StoredComment, blocked: ReadonlySet<string>): boolean {
+  return (
+    c.removedByModeration === true ||
+    !blocked.has(c.userId ?? '') ||
+    c.anonymous === true ||
+    !!c.associationId
+  );
 }
 
 export interface CommentPage<T extends StoredComment> {
@@ -39,10 +60,7 @@ export function pageComments<T extends StoredComment>(
   const order = opts.order ?? 'recent';
   const limit = Math.min(Math.max(opts.limit ?? COMMENT_PAGE_DEFAULT, 1), COMMENT_PAGE_MAX);
   const blocked = new Set(opts.blockedIds ?? []);
-  // An anonymous or association comment is exempt: filtering it on `userId` would let a block
-  // probe who wrote it (the rule `blockedAuthorSql` applies to posts).
-  const visible = (c: T) =>
-    !blocked.has(c.userId ?? '') || c.anonymous === true || !!c.associationId;
+  const visible = (c: T) => commentShownDespiteBlocks(c, blocked);
 
   const heads: { c: T; pos: number }[] = [];
   all.forEach((c, pos) => {

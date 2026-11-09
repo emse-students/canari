@@ -188,6 +188,8 @@ function ctx(
     getEpoch: vi.fn(() => 5),
     exportRatchetTree: vi.fn().mockResolvedValue(new Uint8Array([7])),
     welcomeSendsInFlight: new Map(),
+    // THE JOIN PUSH HANGS ON EVERY DELIVERED WELCOME (`joinPush.ts`): one call per delivery.
+    welcomeDeliveredListener: vi.fn(),
     catchUpOnRefusedCommit: vi.fn().mockResolvedValue(undefined),
     unresolvedGroups: null,
     // The lost-invitation drain (`owedInvitations.ts`): no re-planner unless a case registers one.
@@ -220,6 +222,7 @@ function ctx(
     'deliverOwedWelcomes',
     'sendWelcome',
     'sendWelcomeConsuming',
+    'announceWelcomeDelivered',
     'knownUnresolvedGroups',
     'settleUnresolvedCommits',
     'settleUnresolvedCommitFromLog',
@@ -814,6 +817,44 @@ describe('settleUnresolvedCommits - the resubmission at the next connection', ()
       'd-b2',
     ]);
     expect(c.owed.size).toBe(0);
+  });
+
+  it('announces each Welcome a settled Add delivers, once per device (a kept commit accepted later)', async () => {
+    // Case B of the review of #3185: the Add's outcome was unknown, its commit is accepted at the
+    // next settlement, and the drain delivers every Welcome - the join push hangs on each delivery.
+    const c = ctx(submitting({ accepted: true, duplicate: true }), {
+      state: kept({ excludeDeviceIds: ['u-b:d-b1', 'u-b:d-b2'] }, { welcome: new Uint8Array([3]) }),
+    });
+    await c.settleUnresolvedCommits();
+    expect(c.welcomeDeliveredListener.mock.calls).toEqual([
+      [{ groupId: G, userId: 'u-b', deviceId: 'd-b1', welcome: new Uint8Array([3]) }],
+      [{ groupId: G, userId: 'u-b', deviceId: 'd-b2', welcome: new Uint8Array([3]) }],
+    ]);
+    // A re-run delivers nothing, so it announces nothing.
+    await c.settleUnresolvedCommits();
+    expect(c.welcomeDeliveredListener).toHaveBeenCalledTimes(2);
+  });
+
+  it('announces a Welcome whose first send failed when the drain delivers it, and only then', async () => {
+    // Case A of the review of #3185: one device's Welcome failed with a transport error; it stays
+    // owed, and its delivery at the next settlement is what starts the join push.
+    const c = ctx(submitting({ accepted: true, duplicate: true }), {
+      state: kept({ excludeDeviceIds: ['u-b:d-b'] }, { welcome: new Uint8Array([3]) }),
+    });
+    c.delivery.sendWelcome.mockRejectedValueOnce(lost());
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await c.settleUnresolvedCommits();
+    error.mockRestore();
+    expect(c.welcomeDeliveredListener).not.toHaveBeenCalled();
+    await c.settleUnresolvedCommits();
+    expect(c.welcomeDeliveredListener).toHaveBeenCalledExactlyOnceWith({
+      groupId: G,
+      userId: 'u-b',
+      deviceId: 'd-b',
+      welcome: new Uint8Array([3]),
+    });
+    await c.settleUnresolvedCommits();
+    expect(c.welcomeDeliveredListener).toHaveBeenCalledTimes(1);
   });
 
   it('delivers no Welcome when the kept Add is refused', async () => {
@@ -1968,5 +2009,41 @@ describe("runCommitTransaction - an accepted Add's Welcome is owed in the state,
     expect(c.mergePendingCommit).toHaveBeenCalledTimes(1);
     expect(c.mergePendingCommitOwingWelcome).not.toHaveBeenCalled();
     expect(c.owed.size).toBe(0);
+  });
+});
+
+describe('sendWelcome - every delivered Welcome is announced, whoever sends it', () => {
+  it("announces the Add caller's own delivery once, even when a second send of the same bytes meets it in flight", async () => {
+    const c = ctx(submitting());
+    const send = c.sendWelcome as unknown as (
+      w: Uint8Array,
+      u: string,
+      g: string,
+      d: string
+    ) => Promise<void>;
+    await Promise.all([
+      send.call(c, new Uint8Array([4]), 'u-b', G, 'd-b'),
+      send.call(c, new Uint8Array([4]), 'u-b', G, 'd-b'),
+    ]);
+    expect(c.delivery.sendWelcome).toHaveBeenCalledTimes(1);
+    expect(c.welcomeDeliveredListener).toHaveBeenCalledExactlyOnceWith({
+      groupId: G,
+      userId: 'u-b',
+      deviceId: 'd-b',
+      welcome: new Uint8Array([4]),
+    });
+  });
+
+  it('announces nothing when the send fails', async () => {
+    const c = ctx(submitting());
+    c.delivery.sendWelcome.mockRejectedValueOnce(lost());
+    const send = c.sendWelcome as unknown as (
+      w: Uint8Array,
+      u: string,
+      g: string,
+      d: string
+    ) => Promise<void>;
+    await expect(send.call(c, new Uint8Array([4]), 'u-b', G, 'd-b')).rejects.toThrow();
+    expect(c.welcomeDeliveredListener).not.toHaveBeenCalled();
   });
 });

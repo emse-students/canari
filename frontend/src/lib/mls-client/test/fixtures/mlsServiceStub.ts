@@ -34,7 +34,10 @@ export function createMlsServiceStub(
       skipped: [],
     }),
     processWelcome: vi.fn().mockResolvedValue('gid'),
-    sendMessage: vi.fn().mockResolvedValue({ sealed: new Uint8Array(), receivedAt: null }),
+    // Accepted, with the receive time the server answers every send (the own row's order key).
+    sendMessage: vi
+      .fn()
+      .mockResolvedValue({ sealed: new Uint8Array(), receivedAt: 1_700_000_000_040 }),
     processIncomingMessage: vi.fn().mockResolvedValue(null),
     createDecryptSession: vi.fn().mockResolvedValue({
       decryptPage: vi.fn().mockResolvedValue([]),
@@ -45,6 +48,7 @@ export function createMlsServiceStub(
     connect: vi.fn().mockResolvedValue(undefined),
     isWsOpen: vi.fn().mockReturnValue(true),
     fetchUserDevices: vi.fn().mockResolvedValue([]),
+    listUserDevices: vi.fn().mockResolvedValue([]),
     fetchDeviceKeyPackage: vi.fn().mockResolvedValue({ kind: 'none', reason: 'unregistered' }),
     publishKeyPackage: vi.fn().mockResolvedValue(undefined),
     publishKeyPackages: vi.fn().mockResolvedValue(undefined),
@@ -61,6 +65,8 @@ export function createMlsServiceStub(
     // only shows up as `undefined.length` inside whichever case forgot to override it.
     fetchHistory: vi.fn().mockResolvedValue({ rows: [] }),
     fetchHistoryBatch: vi.fn().mockResolvedValue(new Map()),
+    commitAcceptedAt: vi.fn().mockResolvedValue({ kind: 'none' }),
+    ownRemovalAt: vi.fn().mockResolvedValue({ kind: 'none' }),
     fetchCommitsSince: vi
       .fn()
       .mockResolvedValue({ commits: [], activeEpoch: 0, belowFloor: false }),
@@ -102,6 +108,8 @@ export function createMlsServiceStub(
     getDeviceId: vi.fn().mockReturnValue('device-test'),
     resolveDeviceId: vi.fn().mockResolvedValue('device-test'),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
+    // Not destroyed by default: `openGatewayConnection` reads it outside its `try`.
+    isDestroyed: () => false,
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     getLocalGroups: vi.fn().mockReturnValue([]),
     heldGroupsKnown: vi.fn().mockReturnValue(true),
@@ -167,6 +175,7 @@ export function createMlsServiceStub(
     onMessage: vi.fn(),
     onDisconnect: vi.fn(),
     onWelcomeProcessed: vi.fn(),
+    onWelcomeDelivered: vi.fn(),
     sendWelcomeRequest: vi.fn().mockResolvedValue(null),
     onWelcomeRequest: vi.fn(),
     onBaseRefreshRequest: vi.fn(),

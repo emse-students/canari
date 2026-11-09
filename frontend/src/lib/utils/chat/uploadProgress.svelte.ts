@@ -12,9 +12,16 @@
  * cancel is the ordinary delete of an unsent message (`deleteMessage` withdraws the entry, and the
  * outbox aborts the transfer when it does); its retry goes back through {@link setUploadRetry},
  * registered by the outbox, so the component never imports the queue.
+ *
+ * A SALON ATTACHMENT IS THE OTHER WRITER (2026-11-02). A community salon is server-authoritative and
+ * has no outbox: its attachment is uploaded by `salonAttachmentSend.ts`, which writes the same view
+ * under its echo's id and registers its own retry and cancel for that one message
+ * ({@link setUploadOwner}). One view, one ring, one caption for every attachment, whichever path
+ * carries it.
  */
 
 import { SvelteMap } from 'svelte/reactivity';
+import type { UnsentReason } from '$lib/db/types';
 
 /**
  * - `preparing`: the file is being read and encrypted on this device, no byte has left yet.
@@ -26,6 +33,12 @@ import { SvelteMap } from 'svelte/reactivity';
  *   front of it, never replied). Terminal until the member retries or deletes; nothing runs on its own.
  *   On a TEXT (no upload at all) it is the one view the outbox writes: the server answered 5xx
  *   `MAX_CONSECUTIVE_SERVER_ERRORS` times in a row, and the bubble offers its Retry from it.
+ * - `refused`: the server ANSWERED the upload with a refusal (a status). Written only by a salon
+ *   attachment (`salonAttachmentSend.ts`), whose banner says the server's reason; the outbox retires
+ *   a refused DM file for good instead. Terminal until the member retries or deletes.
+ * - `unanswered`: the whole body was DELIVERED and the server did not answer in time - it may have
+ *   stored the file. Written only by a salon attachment; never a stall, since a Retry uploads the
+ *   file again rather than resuming it.
  * - `error`: the attempts kept failing for a reason that is not the network (an unreadable file, an
  *   unexpected error) - terminal until the member retries or deletes; nothing runs on its own.
  * - `queued`: the entry is in the queue and has not started (its turn has not come, or the file is
@@ -49,6 +62,8 @@ export type UploadPhase =
   | 'retrying'
   | 'blocked'
   | 'failed'
+  | 'refused'
+  | 'unanswered'
   | 'error';
 
 export interface UploadView {
@@ -75,6 +90,28 @@ export function preparePercent(view: UploadView): number | null {
 const views = new SvelteMap<string, UploadView>();
 let retryHandler: ((messageId: string) => void) | null = null;
 
+/** What a writer other than the outbox does for ONE message's retry and cancel. */
+export interface UploadOwner {
+  retry: () => void;
+  cancel: () => void;
+}
+const owners = new SvelteMap<string, UploadOwner>();
+
+/**
+ * Registers (or, with `null`, forgets) the owner of `messageId`'s upload when it is not the outbox:
+ * its retry then goes there, and its cancel replaces the bubble's delete (a salon echo has none - it
+ * has no server row to delete).
+ */
+export function setUploadOwner(messageId: string, owner: UploadOwner | null): void {
+  if (owner) owners.set(messageId, owner);
+  else owners.delete(messageId);
+}
+
+/** Reactive read: the cancel of `messageId`'s upload owner, when one is registered. */
+export function uploadCancelOf(messageId: string): (() => void) | undefined {
+  return owners.get(messageId)?.cancel;
+}
+
 /** Reactive read: the bubble of `messageId` re-renders as its entry's progress moves. */
 export function uploadViewOf(messageId: string): UploadView | undefined {
   return views.get(messageId);
@@ -91,9 +128,34 @@ export function clearUpload(messageId: string): void {
   views.delete(messageId);
 }
 
-/** Drops every view (logout / outbox teardown). */
+/**
+ * Why an attachment the outbox retired for good was never sent, when the cause is the GROUP rather
+ * than the file (review of #2874, M4): the conversation was deleted, or this device is no longer a
+ * member of it (evicted, or a re-admission whose Welcome never came). Without it the bubble said
+ * "refused by the server", which is the file's failure, not this one. The in-memory copy below
+ * serves this tab live; the stored row carries it across a reload and to other tabs
+ * (`StoredMessage.unsentReason`).
+ */
+export type { UnsentReason };
+
+const unsentReasons = new SvelteMap<string, UnsentReason>();
+
+/** Reactive read of {@link UnsentReason} for `messageId`; undefined when the outbox gave none. */
+export function unsentReasonOf(messageId: string): UnsentReason | undefined {
+  return unsentReasons.get(messageId);
+}
+
+/** The outbox, retiring an attachment for a reason that is the group's. */
+export function setUnsentReason(messageId: string, reason: UnsentReason): void {
+  unsentReasons.set(messageId, reason);
+}
+
+/** Drops every view and every reason (logout / outbox teardown). */
 export function clearAllUploads(): void {
   views.clear();
+  unsentReasons.clear();
+  // The owners are NOT the outbox's: each forgets its own (`forgetSalonAttachments`), so an outbox
+  // torn down never strands a salon upload without its cancel.
 }
 
 /**
@@ -104,9 +166,14 @@ export function setUploadRetry(next: ((messageId: string) => void) | null): void
   retryHandler = next;
 }
 
-/** Retry from a bubble. A no-op without a registered outbox (logged out). */
+/**
+ * Retry from a bubble: the message's own upload owner when it has one (a salon attachment), the
+ * outbox otherwise. A no-op with neither (logged out).
+ */
 export function retryUpload(messageId: string): void {
-  retryHandler?.(messageId);
+  const owner = owners.get(messageId);
+  if (owner) owner.retry();
+  else retryHandler?.(messageId);
 }
 
 /**
@@ -124,6 +191,8 @@ export function uploadPercent(view: UploadView): number | null {
     view.phase === 'retrying' ||
     view.phase === 'blocked' ||
     view.phase === 'failed' ||
+    view.phase === 'refused' ||
+    view.phase === 'unanswered' ||
     view.phase === 'error'
   )
     return null;

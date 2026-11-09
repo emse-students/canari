@@ -36,7 +36,9 @@ export const LYDIA_PRO_HELP_ROUTE = '/help/lydia-pro' satisfies AppPath;
  * validated. That is also why an event notification lands on a list rather than on the event: the
  * thing the reader has to do is act on it, and the queue is where acting happens.
  */
-export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'>): AppPath | null {
+export function notificationHref(
+  notif: Pick<PostNotification, 'type' | 'postId' | 'meta'>
+): AppPath | null {
   switch (notif.type) {
     case 'form_reminder':
       return `/forms/${notif.postId}`;
@@ -57,6 +59,11 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'event_deleted':
     case 'event_pending':
       return '/calendar';
+    // The same type reaches the organiser, the partners AND the validators; the validators' row
+    // (meta.audience, written with the push's 'proposed' action) opens the validation queue like
+    // an event proposal, everybody else the agenda.
+    case 'event_pending_coorganiser':
+      return notif.meta?.audience === 'validators' ? '/admin/agenda' : '/calendar';
     // The answer to a profile correction request: `postId` holds the REQUEST's id, which has no page
     // of its own - the profile is where the corrected data, or the request's state, is shown.
     case 'profile_correction_applied':
@@ -75,6 +82,9 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'coorganise_proposed':
     case 'lydia_payments_active':
     case 'lydia_payments_paused':
+    case 'delegation_revoked':
+    case 'delegation_receiver_not_ready':
+    case 'delegation_resumed':
       return null;
     // D38b: the author was asked to let an association carry a personal post. Their inbox is where
     // the answer is given; `postId` is the post, which the inbox row links to.
@@ -86,6 +96,10 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
       return FOLLOW_REQUESTS_ROUTE;
     // The person the reader asked accepted: their profile. `postId` is that person's id.
     case 'follow_accepted':
+      return `/profile/${encodeURIComponent(notif.postId)}`;
+    // A followed person's birthday: their profile, where the reader can wish it. `postId` is that
+    // person's id (docs/wiki/birthdays.md).
+    case 'birthday':
       return `/profile/${encodeURIComponent(notif.postId)}`;
     // The types whose `postId` IS a post.
     case 'comment':
@@ -114,6 +128,8 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'booking_withdrawn':
     case 'booking_added':
     case 'booking_reminder':
+    case 'booking_changed':
+    case 'booking_removed':
       return BOOKINGS_HREF;
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
@@ -148,6 +164,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'event_updated',
   'event_deleted',
   'event_pending',
+  'event_pending_coorganiser',
   'profile_correction_applied',
   'profile_correction_refused',
   'live_cut',
@@ -155,14 +172,20 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'live_withdrawn',
   'follow_request',
   'follow_accepted',
+  'birthday',
   'booking_cancelled',
   'booking_withdrawn',
   'booking_added',
   'booking_reminder',
+  'booking_changed',
+  'booking_removed',
   'lydia_payments_active',
   'lydia_payments_paused',
   'lydia_cashier_added',
   'lydia_refund_issued',
+  'delegation_revoked',
+  'delegation_receiver_not_ready',
+  'delegation_resumed',
 ]);
 
 /** Whether this build knows how to render and route a notification of this type. */
@@ -196,6 +219,12 @@ const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
   // An association's Lydia payments became active / were paused: its payments section.
   lydia_payments_active: 'payments',
   lydia_payments_paused: 'payments',
+  // An entity collecting through a payment delegation (a list) was paused or resumed: its
+  // delegation section, where it picks a receiver (`/associations/<slug>/edit` of a list forwards
+  // to the list route, section kept).
+  delegation_revoked: 'delegation',
+  delegation_receiver_not_ready: 'delegation',
+  delegation_resumed: 'delegation',
 };
 
 /**
@@ -206,7 +235,7 @@ const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
  * notification could not be opened, rather than sending the reader somewhere else.
  */
 export async function resolveNotificationHref(
-  notif: Pick<PostNotification, 'type' | 'postId'>,
+  notif: Pick<PostNotification, 'type' | 'postId' | 'meta'>,
   lookupSlug: (associationId: string) => Promise<string>
 ): Promise<AppPath | null> {
   const section = ASSOCIATION_QUEUE_TYPES[notif.type];

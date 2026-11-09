@@ -751,6 +751,72 @@ against 2026-09-18 - 677 undated then, 597 four days later. The only shape that 
 is the server decoding the `keyPackage` bytes it already holds, which means an MLS decoder in a
 service built never to interpret them; the trade is in `docs/wiki/backlog.md`.
 
+## A READ IS NOT A CLAIM - THE EMPTY-POOL STORM OF 2026-11-06
+
+`GET mls/devices/:userId/:deviceId/key-package` and the account list `GET mls/devices/:userId`
+**claim**: each answer DELETEs one one-time package per device it names (`resolveKeyPackagePayloadForDevice`).
+Three client paths used them only to READ, so packages left the pool and were thrown away. Both
+take `?peek=1` since 2026-11-06, which reads without claiming (below).
+
+**Measured on production, read-only, 2026-11-06.** 430 `[KP] one-time pool EMPTY` warnings in one
+hour against 1 to 12 an hour the rest of the evening, 426 of them in two minutes. Two accounts:
+
+| what happened | the claims it made |
+| --- | --- |
+| A new web device of an account holding about 140 groups sent 131 `welcome_request`s. Another device of the same account answered each one: add lock, then `GET mls/devices/:userId` (131 requests), then commit and Welcome. | Every list call claimed one package from EACH of the account's four devices to use one. The three devices that were not joining lost 131 packages each: 83, 84 and 83 empty serves, pools at 0 afterwards. |
+| The same new device, before each recovery external join, asked whether it was itself published (`awaitOwnKeyPackagePublished`): about 120 `GET .../key-package` for its own id. | One of its OWN packages claimed per question. With the 131 adds, that made 176 empty serves. |
+| Earlier in the evening a new web device of a second account retried seven unjoinable groups on the recovery cadence: an own-publication read, then a `welcome_request` that met `NO_PEER_ONLINE`, every five minutes for an hour. | 77 empty serves. Its pool was 0 when it was read. |
+
+None of this is a client retry loop gone wrong, and none of it is a large group: it is two reads
+that claim. The adder device stayed connected throughout, and a pool is refilled only at connection
+([backlog](../backlog.md#p2---a-devices-one-time-keypackage-pool-is-topped-up-only-when-it-connects-measured-2026-10-25-after-the-stable)).
+So the account's pools stayed empty until each device reconnected.
+
+**What changed.** The pending-invitation sweep and the `welcome_request` answer claim the one device
+they add (`fetchDeviceKeyPackage`), never the account list. The list's 30-day cutoff needed a second
+request anyway, which is now gone. The own-publication read asks `?peek=1`, which answers the same
+refusals and the static row and touches no one-time row. A server without `peek` ignores the query
+and claims, as before, so no client floor is needed and nothing falls back.
+
+**What a static-row serve costs, and why it stays a WARN.** The row carries `last_resort`, so a
+device can join every group built on it (see the section above). The cost is in MLS: one HPKE init
+key opens every Welcome built on that row until the device mints a new last-resort package, which
+happens only when the package reaches the end of its lifetime. With the two reads fixed, an empty
+pool means one remaining thing: the device was added faster than it refills. The line still accuses
+that. What is still open is in
+[backlog](../backlog.d/p2-what-the-key-package-claim-fix-left.md).
+
+**The account list peeks too, and a claim is never shared (2026-11-06, second step).** The list
+takes the same `?peek=1`: every device is judged as the single-device peek judges it, its static
+row is the package, and no one-time row is touched (`getUserDevices`, `devices.controller.ts`).
+**A peek refuses exactly when a claim would** (third step): a device whose static row elapsed is
+still listed while it holds a usable one-time package, because a claim would serve it one. The peek
+COUNTS those packages (`countUsableOneTimePackages`, the same `usableOneTimePackage` predicate the
+claim, `prekeys/count` and, negated, `reclaimExpiredKeyPackages` read) and never takes one. Before this, such a device was missing from the
+roster, so the device panel could neither show nor revoke it and the pre-claim marker was written
+without it. The client has two methods, one per question:
+
+| method | request | who calls it | shared in flight |
+| --- | --- | --- | --- |
+| `listUserDevices` | `GET mls/devices/:u?peek=1`, returns no package | the settings device count (polled every 30 s), the device panel, the device-notice wiring (a device's name, the pre-claim at registration) | yes, `${userId}:devices:peek` |
+| `fetchUserDevices` | `GET mls/devices/:u`, claims one package per device | group and DM creation (every device of a person, and the creator's own), `admitNewcomer` | **never** |
+
+A claim is not joined because a one-time package serves one Welcome: two adders handed one answer
+(two groups created with one person at once, or a creation and an admission) would build two
+Welcomes on one package and the joiner would refuse the second with `NoMatchingKeyPackage`. A peek
+and a claim have different keys, so they never share a promise either. Who may call
+`fetchUserDevices` is an allowlist, `deviceListClaims.test.ts`; the server half is pinned in
+`devices.controller.static-fallback.spec.ts`.
+
+No legacy entry: the server's default (no query) still claims, because that is what an adder asks
+for, not a shim kept for old clients. Installed clients below this change keep claiming on their
+roster reads until they update; a new client against an older server sends `?peek=1`, which that
+server ignores, and claims as before.
+
+**The expected effect on the WARN.** A roster read no longer reaches `[KP] one-time pool EMPTY`.
+The line is then written only when an adder claims (creation, admission, the sweep and the
+`welcome_request` answer, one device each) faster than the device refills at its next connection.
+
 ## How a client reads a key-package 404, and which answers retire an invitation (floor 1.2.7)
 
 `GET mls/devices/:userId/:deviceId/key-package` 404s only with a `reason` in its body: `revoked`,

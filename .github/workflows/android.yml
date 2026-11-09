@@ -108,6 +108,25 @@ jobs:
           distribution: 'zulu'
           java-version: '21'
 
+      # THE GRADLE DOWNLOADS ARE RESTORED, NEVER WRITTEN, and the key is the one `compile-android-app`
+      # (ci.yml) saves from `main`. The wrapper distribution (services.gradle.org) and the Kotlin
+      # compiler jar (Maven Central) were fetched cold on every release; v1.6.9-alpha.1 failed three
+      # times on a 504 from those hosts. A cache only avoids a download - Gradle still resolves and
+      # builds from the committed build files, so what is built does not change. READ-ONLY ON
+      # PURPOSE: a cache is scoped to the ref that wrote it, a release runs on a tag ref that no later
+      # release reads, and a save from it would be a write a release can never reuse. What a release
+      # restores is therefore only what `main` wrote (code that already passed review and CI), never
+      # a pull request's cache (`refs/pull/N/merge`, unreadable from here). A miss downloads exactly
+      # as before. docs/wiki/cicd.md#the-android-release-build-restores-gradle-it-never-saves-it-2026-11-09
+      - name: Restore Gradle downloads (written by main)
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-app-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/android/**/*.gradle*', 'frontend/src-tauri/gen/android/**/*.kts', 'frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-app-${{ runner.os }}-
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -315,8 +334,8 @@ jobs:
       - name: Locate build outputs
         id: outputs
         run: |
-          AAB=$(find frontend/src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | head -1)
-          APK=$(find frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release -name "*.apk" | head -1)
+          AAB=$(find frontend/src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | sed -n 1p)
+          APK=$(find frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release -name "*.apk" | sed -n 1p)
           echo "aab=$AAB" >> "$GITHUB_OUTPUT"
           echo "apk=$APK" >> "$GITHUB_OUTPUT"
           echo "AAB: $AAB"

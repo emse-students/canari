@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { untrack } from 'svelte';
   import { Columns3, Download, Plus, Trash2 } from '@lucide/svelte';
   import FormSection from '$lib/components/forms/FormSection.svelte';
@@ -22,7 +23,12 @@
     type ManagedSpace,
     type SlotMode,
   } from '$lib/bookings/api';
-  import { DEFAULT_SLOT_MINUTES, durationChoices, SLOT_LENGTH_CHOICES } from '$lib/bookings/wizard';
+  import {
+    DEFAULT_SLOT_MINUTES,
+    durationChoices,
+    durationLabel,
+    SLOT_LENGTH_CHOICES,
+  } from '$lib/bookings/wizard';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { strandedIdsOf } from '$lib/bookings/stranded';
   import { columnsHidden } from '$lib/bookings/columns';
@@ -110,6 +116,12 @@
       : undefined
   );
   const zones = $derived(timeZoneChoices(draft.timeZone));
+  /** The longest single booking as words, null while the field is empty (no limit) or invalid. */
+  const longestBooking = $derived(
+    /^\d+$/.test(draft.maxMinutes.trim()) && Number(draft.maxMinutes) > 0
+      ? Number(draft.maxMinutes)
+      : null
+  );
   /** The step the availability editor offers times on: the SAVED one, which the server reads. */
   const savedStep = $derived(space.slotMode === 'step' ? space.stepMinutes : null);
   /** The slot length a painted slot opens: the SAVED one too, null when none is stored. */
@@ -145,10 +157,11 @@
     }
   }
 
-  function problemOf(field: NumberField | 'name'): string | undefined {
+  function problemOf(field: NumberField | 'name' | 'maxMinutes'): string | undefined {
     const p = problems[field];
     if (!p) return undefined;
     if (p === 'required' || field === 'name') return m.bookings_problem_required();
+    if (field === 'maxMinutes') return m.bookings_problem_max_minutes();
     return m.bookings_problem_range(NUMBER_BOUNDS[field as NumberField]);
   }
 
@@ -344,13 +357,6 @@
         bind:value={draft.stepMinutes}
         error={problemOf('stepMinutes')}
       />
-      <Input
-        id="space-max-steps"
-        label={m.bookings_field_max_steps()}
-        inputmode="numeric"
-        bind:value={draft.maxSteps}
-        error={problemOf('maxSteps')}
-      />
     </div>
   {/if}
 
@@ -366,14 +372,10 @@
         <p class={CONTROL_HINT_CLASS}>{m.bookings_columns_hidden_hint()}</p>
       </div>
       {#if !revealing}
-        <button
-          type="button"
-          onclick={startReveal}
-          class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors"
-        >
+        <Button variant="secondary" onclick={startReveal}>
           <Plus size={16} />
           {m.bookings_resource_add_button()}
-        </button>
+        </Button>
       {/if}
       {#if revealing}
         <div class="w-full space-y-3">
@@ -384,22 +386,16 @@
             maxlength={120}
           />
           <div class="flex flex-wrap justify-end gap-2">
-            <button
-              type="button"
-              onclick={() => (revealing = false)}
-              class="text-text-main hover:bg-control-fill rounded-xl px-4 py-2.5 text-sm font-bold"
-            >
+            <Button variant="ghost" onclick={() => (revealing = false)}>
               {m.common_cancel_button()}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
               onclick={() => newResource(newColumnName)}
               disabled={addingResource || !newColumnName.trim()}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold disabled:opacity-40"
             >
               <Plus size={16} />
               {m.bookings_columns_add_confirm()}
-            </button>
+            </Button>
           </div>
         </div>
       {/if}
@@ -430,15 +426,10 @@
     </p>
   {/if}
   {#if !hidden}
-    <button
-      type="button"
-      onclick={() => newResource()}
-      disabled={addingResource}
-      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-40"
-    >
+    <Button variant="secondary" onclick={() => newResource()} disabled={addingResource}>
       <Plus size={16} />
       {m.bookings_resource_add_button()}
-    </button>
+    </Button>
   {/if}
 </FormSection>
 
@@ -509,6 +500,7 @@
 <FormQuestionsSection
   bind:items={draft.items}
   requiresPayment={false}
+  offerPricedGrid={false}
   {tiers}
   {formations}
   fileHint={m.bookings_builder_file_hint()}
@@ -581,6 +573,28 @@
       />
     </div>
   </div>
+  {#if draft.slotMode === 'step'}
+    <div>
+      <Input
+        id="space-max-minutes"
+        label={m.bookings_field_max_minutes()}
+        inputmode="numeric"
+        placeholder={m.bookings_field_max_minutes_none()}
+        bind:value={draft.maxMinutes}
+        error={problemOf('maxMinutes')}
+      />
+      <p class={CONTROL_HINT_CLASS}>
+        {m.bookings_field_max_minutes_hint({ step: draft.stepMinutes.trim() })}
+        {#if longestBooking !== null}
+          <strong
+            >{m.bookings_field_max_minutes_result({
+              duration: durationLabel(longestBooking),
+            })}</strong
+          >
+        {/if}
+      </p>
+    </div>
+  {/if}
   <p class={CONTROL_HINT_CLASS}>{m.bookings_field_empty_hint()}</p>
   <div>
     <Input
@@ -623,29 +637,20 @@
   <p class={CONTROL_HINT_CLASS}>{m.bookings_field_retention_hint()}</p>
   <div class="border-cn-border/60 space-y-2 border-t pt-4">
     <p class="text-text-muted text-sm">{m.bookings_export_hint()}</p>
-    <button
-      type="button"
-      onclick={exportXlsx}
-      disabled={exporting}
-      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-40"
-    >
+    <Button variant="secondary" onclick={exportXlsx} disabled={exporting}>
       <Download size={16} />
       {m.bookings_export_button()}
-    </button>
+    </Button>
     {#if exportError}
       <p class="text-red-err text-xs font-medium" role="alert">{exportError}</p>
     {/if}
   </div>
   <div class="border-cn-border/60 space-y-2 border-t pt-4">
     <p class="text-text-muted text-sm">{m.bookings_delete_space_hint()}</p>
-    <button
-      type="button"
-      onclick={removeSpace}
-      class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors"
-    >
+    <Button variant="danger-outline" onclick={removeSpace}>
       <Trash2 size={16} />
       {m.bookings_delete_space_button()}
-    </button>
+    </Button>
   </div>
 </FormSection>
 

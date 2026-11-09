@@ -2,6 +2,7 @@ import { apiFetch, type ApiFetchOptions } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { currentUserId } from '$lib/stores/userState.svelte';
 
 /** One person the signed-in user has blocked. */
 export interface BlockedUser {
@@ -41,10 +42,53 @@ async function request<T>(path: string, init: ApiFetchOptions = {}): Promise<T> 
   return (await res.json()) as T;
 }
 
-/** The people the signed-in user has blocked, newest first. */
-export async function listBlockedUsers(): Promise<BlockedUser[]> {
-  Log.d('blocks.listBlockedUsers');
-  return request<BlockedUser[]>('/api/users/me/blocks');
+/**
+ * The one cached read of the reader's blocks, keyed by WHO is signed in so an account switch never
+ * reads the previous account's list. Dropped by {@link blockUser} and {@link unblockUser} (the only
+ * writers on this device) and by a failed read, so it is never staler than the last local change.
+ */
+let blocksCache: { owner: string | null; rows: Promise<BlockedUser[]> } | null = null;
+
+/** Listeners told that the reader's blocks changed here (see {@link onBlocksChanged}). */
+const blockListeners = new Set<() => void>();
+
+/**
+ * Runs `listener` after every {@link blockUser} and {@link unblockUser} on this device - for state
+ * derived from the blocks (the follow chips' ledger: a block severs both follows server-side).
+ * Returns the unsubscribe.
+ */
+export function onBlocksChanged(listener: () => void): () => void {
+  blockListeners.add(listener);
+  return () => blockListeners.delete(listener);
+}
+
+function notifyBlocksChanged(): void {
+  for (const l of blockListeners) {
+    try {
+      l();
+    } catch (e) {
+      Log.d('blocks.notifyBlocksChanged listener failed', e);
+    }
+  }
+}
+
+/**
+ * The people the signed-in user has blocked, newest first. Cached (see above); `fresh` bypasses
+ * the cache for a screen whose whole job is to show the truth, such as the blocked-accounts list.
+ */
+export async function listBlockedUsers({ fresh = false }: { fresh?: boolean } = {}): Promise<
+  BlockedUser[]
+> {
+  const owner = currentUserId() ?? null;
+  if (!fresh && blocksCache && blocksCache.owner === owner) return blocksCache.rows;
+  Log.d('blocks.listBlockedUsers', { fresh });
+  const rows = request<BlockedUser[]>('/api/users/me/blocks');
+  const entry = { owner, rows };
+  blocksCache = entry;
+  rows.catch(() => {
+    if (blocksCache === entry) blocksCache = null;
+  });
+  return rows;
 }
 
 /**
@@ -57,18 +101,28 @@ export async function listBlockedUsers(): Promise<BlockedUser[]> {
  */
 export async function blockUser(userId: string): Promise<{ ok: true }> {
   Log.d('blocks.blockUser', userId);
-  return request<{ ok: true }>('/api/users/me/blocks', {
-    method: 'POST',
-    body: JSON.stringify({ userId }),
-  });
+  blocksCache = null;
+  try {
+    return await request<{ ok: true }>('/api/users/me/blocks', {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    });
+  } finally {
+    notifyBlocksChanged();
+  }
 }
 
 /** Lifts a block. Only the person who set it can. */
 export async function unblockUser(userId: string): Promise<{ ok: true }> {
   Log.d('blocks.unblockUser', userId);
-  return request<{ ok: true }>(`/api/users/me/blocks/${encodeURIComponent(userId)}`, {
-    method: 'DELETE',
-  });
+  blocksCache = null;
+  try {
+    return await request<{ ok: true }>(`/api/users/me/blocks/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    });
+  } finally {
+    notifyBlocksChanged();
+  }
 }
 
 /**

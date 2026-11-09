@@ -7,6 +7,7 @@ import {
 } from './mlsStatePersisterRegistry';
 import { flushMacrotask } from '../../test/flush';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
+import { Log } from '$lib/utils/Log';
 
 vi.mock('$lib/utils/scheduling/yieldToMainThread', () => ({
   yieldToMainThread: vi.fn().mockResolvedValue(undefined),
@@ -326,7 +327,7 @@ describe('persistMlsStructuralCheckpoint', () => {
   });
 });
 
-describe('createMlsStatePersister - receive-skip measurement switch', () => {
+describe('createMlsStatePersister - receive checkpoint skip (WP-CHECKPOINT-SKIP)', () => {
   const live = { bufferUi: true, showOverlay: false };
   const replay = { bufferUi: false, showOverlay: false };
 
@@ -334,7 +335,7 @@ describe('createMlsStatePersister - receive-skip measurement switch', () => {
     const persistCheckpoint = vi.fn(persistImpl ?? (() => Promise.resolve()));
     const persister = createMlsStatePersister({
       mlsService: { persistCheckpoint } as any,
-      receiveSkipBudget,
+      receiveSkipBudget: receiveSkipBudget === undefined ? undefined : () => receiveSkipBudget,
     });
     return { persistCheckpoint, persister };
   }
@@ -423,6 +424,128 @@ describe('createMlsStatePersister - receive-skip measurement switch', () => {
   });
 });
 
+describe('createMlsStatePersister - the switch is read at every drain end', () => {
+  const live = { bufferUi: true, showOverlay: false };
+  const replay = { bufferUi: false, showOverlay: false };
+
+  afterEach(() => vi.restoreAllMocks());
+
+  /** A persister whose budget is whatever `state.budget` holds when a drain ends. */
+  function makeSwitchable(persistImpl?: () => Promise<void>) {
+    const state = { budget: 0 };
+    const lines: string[] = [];
+    const persistCheckpoint = vi.fn(persistImpl ?? (() => Promise.resolve()));
+    const persister = createMlsStatePersister({
+      mlsService: { persistCheckpoint } as any,
+      log: (msg) => lines.push(msg),
+      receiveSkipBudget: () => state.budget,
+    });
+    return { state, lines, persistCheckpoint, persister };
+  }
+
+  async function drain(persister: ReturnType<typeof makeSwitchable>['persister'], frames = 1) {
+    persister.onBulkIngestStart();
+    for (let i = 0; i < frames; i++) persister.scheduleDeferred();
+    await persister.onBulkIngestEnd(live);
+    await flushMacrotask();
+  }
+
+  it('OFF -> ON mid-session: drains checkpoint, then defer once the server says on', async () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const { state, persistCheckpoint, persister } = makeSwitchable();
+    await drain(persister);
+    await drain(persister);
+    expect(persistCheckpoint).toHaveBeenCalledTimes(2);
+    state.budget = 100;
+    await drain(persister);
+    await drain(persister);
+    expect(persistCheckpoint).toHaveBeenCalledTimes(2);
+  });
+
+  it('ON -> OFF mid-session: the next drain checkpoints everything the skipped ones left', async () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const { state, persistCheckpoint, persister } = makeSwitchable();
+    state.budget = 100;
+    await drain(persister, 3);
+    await drain(persister, 3);
+    expect(persistCheckpoint).not.toHaveBeenCalled();
+    state.budget = 0;
+    await drain(persister);
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('a replay that closed inside a live drain while OFF still forces the outer close once ON', async () => {
+    const { state, persistCheckpoint, persister } = makeSwitchable();
+    persister.onBulkIngestStart();
+    persister.onBulkIngestStart();
+    persister.scheduleDeferred();
+    await persister.onBulkIngestEnd(replay);
+    state.budget = 100;
+    await persister.onBulkIngestEnd(live);
+    await flushMacrotask();
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('OFF logs exactly what it always logged: no switch line, no summary, no debug, no warn', async () => {
+    const debug = vi.spyOn(Log, 'd').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { lines, persister } = makeSwitchable();
+    await drain(persister);
+    expect(lines).toEqual([
+      '[MLS] Disk writes deferred (bulk ingest depth=1)',
+      '[MLS] Bulk ingest done - flushing an encrypted checkpoint if needed.',
+      expect.stringMatching(/^\[MLS\] Encrypted state checkpoint persisted\.( \(\d+ ms\))?$/),
+    ]);
+    expect(debug).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('ON: one debug line per deferred drain, never a warn, and one counted summary on the checkpoint', async () => {
+    const debug = vi.spyOn(Log, 'd').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { state, lines, persister } = makeSwitchable();
+    state.budget = 5;
+    await drain(persister, 2);
+    await drain(persister, 2);
+    await drain(persister, 2);
+    expect(debug).toHaveBeenCalledTimes(2);
+    expect(String(debug.mock.calls[1][1])).toContain('(4/5 receive generations unsaved)');
+    expect(warn).not.toHaveBeenCalled();
+    expect(lines.filter((l) => l.includes('Checkpoint skip ON'))).toHaveLength(1);
+    expect(lines.filter((l) => l.includes('checkpoint persisted'))).toEqual([
+      expect.stringContaining('Covers 6 receive generations left by 2 skipped drains.'),
+    ]);
+    state.budget = 0;
+    await drain(persister);
+    expect(lines.filter((l) => l.includes('Checkpoint skip OFF'))).toHaveLength(1);
+    expect(lines[lines.length - 1]).not.toContain('Covers');
+  });
+
+  it('ON: a failed write that covered skipped drains is the one accusing line, and is retried', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    let fail = true;
+    const { state, lines, persistCheckpoint, persister } = makeSwitchable(() =>
+      fail ? Promise.reject(new Error('disk')) : Promise.resolve()
+    );
+    state.budget = 100;
+    await drain(persister, 2);
+    await persister.flush().catch(() => {});
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain(
+      'still behind by 2 receive generations of 1 skipped drains'
+    );
+    expect(lines.some((l) => l.includes('checkpoint failed'))).toBe(false);
+    fail = false;
+    await persister.flush();
+    expect(persistCheckpoint).toHaveBeenCalledTimes(2);
+    expect(lines[lines.length - 1]).toContain(
+      'Covers 2 receive generations left by 1 skipped drains.'
+    );
+  });
+});
+
 describe('createMlsStatePersister - frames read outside the conversation path', () => {
   const live = { bufferUi: true, showOverlay: false };
 
@@ -430,7 +553,7 @@ describe('createMlsStatePersister - frames read outside the conversation path', 
     const persistCheckpoint = vi.fn(persistImpl ?? (() => Promise.resolve()));
     const persister = createMlsStatePersister({
       mlsService: { persistCheckpoint } as any,
-      receiveSkipBudget: budget,
+      receiveSkipBudget: () => budget,
     });
     return { persistCheckpoint, persister };
   }
@@ -489,7 +612,7 @@ describe('createMlsStatePersister - frames read outside the conversation path', 
   });
 });
 
-describe('persistMlsStructuralCheckpoint and the measurement switch', () => {
+describe('persistMlsStructuralCheckpoint and the skip switch', () => {
   const live = { bufferUi: true, showOverlay: false };
 
   afterEach(() => unregisterMlsStatePersister());
@@ -503,7 +626,7 @@ describe('persistMlsStructuralCheckpoint and the measurement switch', () => {
     });
     const persister = createMlsStatePersister({
       mlsService: { persistCheckpoint } as any,
-      receiveSkipBudget: budget,
+      receiveSkipBudget: () => budget,
     });
     registerMlsStatePersister(persister);
     await persistMlsStructuralCheckpoint().catch(() => {});

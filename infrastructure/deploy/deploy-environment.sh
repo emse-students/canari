@@ -112,7 +112,7 @@ cd "$DEPLOY_PATH" || {
 # The estate is identified by the compose file's own `name:`, not by the directory or by a `-p` this
 # script passes. Read it back and SAY it: the two deployed files sit in one directory, and a missing
 # `name:` used to mean dev silently joined production's project and its volumes.
-PROJECT="$(grep -E '^name:[[:space:]]*' "$COMPOSE_FILE" | head -1 |
+PROJECT="$(grep -E '^name:[[:space:]]*' "$COMPOSE_FILE" | sed -n 1p |
   sed 's/^name:[[:space:]]*//; s/[[:space:]]*$//' || true)"
 [ -n "$PROJECT" ] || {
   printf 'deploy-environment: %s declares no top-level "name:" - refusing, because its project would then be named after its directory, which is shared with the other deployed estate\n' \
@@ -222,6 +222,42 @@ else
   printf '\nno service image changes were reported - not pulling\n'
 fi
 
+# ── How each service may be replaced, and the proxies' replica lists ─────────
+# Read BEFORE ANY `up`, for two reasons. A declaration two replicas could not honour is refused while
+# nothing has changed. And the frontend and the edge include their replica list unconditionally, so a
+# list that does not exist - a fresh host, a lost directory - is a proxy that cannot start:
+# rotation_seed writes every list in its resting form (each service by its DNS name) first.
+#
+# Where rolling.sh writes the lists: inside edge/, which the edge already mounts, and mounted
+# read-only into the frontend as /etc/nginx/targets (both compose files). Not tracked by git, so
+# `git reset --hard` leaves the lists the running proxies were reloaded on. edge/rotation/ holds the
+# `upstream` lists of 1.6.2, which this library never touches: a frontend of that release still reads
+# them on the first deploy carrying the targets, and its library rewrites them on a rollback.
+# docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to.
+ROTATION_DIR="$DEPLOY_PATH/infrastructure/edge/targets"
+# shellcheck source-path=SCRIPTDIR source=../lib/rolling.sh
+. "$DEPLOY_PATH/infrastructure/lib/rolling.sh"
+# WHATEVER ENDS THIS SCRIPT puts a list a replacement had taken out back at rest, and says so: a
+# failure, `set -e`, a cancelled job or a dropped session. A signal becomes an exit, so the EXIT trap
+# runs for it too (bash runs no EXIT trap on a signal it has no trap for). Best effort - a proxy that
+# cannot be reloaded now is reloaded by the next deploy's rotation_seed, first.
+trap 'rotation_restore_in_flight "the deploy exited (status $?)" || true' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+printf '\nreading how each service may be replaced\n'
+REPLACE_PLAN="$(dc config --format json | python3 "$DEPLOY_PATH/infrastructure/lib/replace-modes.py" "${REGISTRY}/${IMAGE_PREFIX}/")" || {
+  printf '::error::%s declares a service this deploy cannot replace safely - see the lines above; nothing was changed\n' \
+    "$COMPOSE_FILE" >&2
+  exit 1
+}
+printf '%s\n' "$REPLACE_PLAN"
+rotation_seed <<<"$REPLACE_PLAN" || {
+  printf '::error::the replica lists in %s could not be written or loaded - nothing was changed\n' "$ROTATION_DIR" >&2
+  exit 1
+}
+
 # ── The database first, and its migrations BEFORE any application service ──────
 # Services used to start first and migrate after, so a deploy had a window in which new code met the
 # old schema: `relation "spaces" does not exist` and `column "Post.publishedAt" does not exist`
@@ -270,6 +306,17 @@ psql() {
 # shellcheck source-path=SCRIPTDIR source=../lib/migrations.sh
 . "$DEPLOY_PATH/infrastructure/lib/migrations.sh"
 
+# THE BACKUP RIGHT BEFORE A MIGRATION THE OWNER APPROVED (owner, 2026-11-01). The loop calls this
+# before each held file `migration-approvals.txt` approves, and applies nothing more if it fails. The
+# dump is the nightly backup's own (`dump-auth-db.sh`), so a restore reads it the same way; it lands
+# in `pre-migration/` under the directory THIS account's crontab names for the nightly backup (no
+# default: an unnamed directory refuses), named after the estate and the migration.
+# shellcheck source-path=SCRIPTDIR source=../backup/dump-auth-db.sh
+. "$DEPLOY_PATH/infrastructure/backup/dump-auth-db.sh"
+migration_backup() {
+  pre_migration_backup "$1" "$PROJECT" dc
+}
+
 apply_migrations
 
 # ── Replace every service, without taking the estate off the air ─────────────
@@ -314,17 +361,6 @@ on_port_conflict() {
     return 1
   }
 }
-
-# shellcheck source-path=SCRIPTDIR source=../lib/rolling.sh
-. "$DEPLOY_PATH/infrastructure/lib/rolling.sh"
-
-printf '\nreading how each service may be replaced\n'
-REPLACE_PLAN="$(dc config --format json | python3 "$DEPLOY_PATH/infrastructure/lib/replace-modes.py" "${REGISTRY}/${IMAGE_PREFIX}/")" || {
-  printf '::error::%s declares a service this deploy cannot replace safely - see the lines above; nothing was changed\n' \
-    "$COMPOSE_FILE" >&2
-  exit 1
-}
-printf '%s\n' "$REPLACE_PLAN"
 
 if ! replace_services <<<"$REPLACE_PLAN"; then
   printf '::error::the estate was not fully replaced - every service before the failing one runs the new release, the failing one and those after it still run the previous one\n' >&2
@@ -391,7 +427,7 @@ for _ in $(seq 1 36); do
 
   missing=""
   for service in $critical; do
-    printf '%s\n' "$running" | grep -qx "$service" || missing="$missing $service"
+    grep -qx "$service" <<<"$running" || missing="$missing $service"
   done
 
   if [ -z "$missing" ]; then
@@ -419,7 +455,7 @@ retry_http() {
   local i
   for i in $(seq 1 "$attempts"); do
     status="$(eval "$cmd" || true)"
-    if printf '%s' "$status" | grep -Eq "$expected"; then
+    if grep -Eq "$expected" <<<"$status"; then
       printf 'ok   %s (HTTP %s)\n' "$label" "$status"
       return 0
     fi

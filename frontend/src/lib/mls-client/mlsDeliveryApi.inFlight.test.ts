@@ -67,16 +67,52 @@ describe('the account-level reads of a boot (WP-W4)', () => {
     expect(urls).toHaveLength(2);
   });
 
-  it('sends ONE devices/:id request for simultaneous askers, and keeps accounts apart', async () => {
+  it('sends ONE peek of devices/:id for simultaneous roster readers, and keeps accounts apart', async () => {
     const { api, urls } = counting('[]');
     await Promise.all([
-      api.fetchUserDevices('u1'),
-      api.fetchUserDevices('u1'),
-      api.fetchUserDevices('u1'),
-      api.fetchUserDevices('u2'),
+      api.listUserDevices('u1'),
+      api.listUserDevices('u1'),
+      api.listUserDevices('u1'),
+      api.listUserDevices('u2'),
     ]);
+    expect(urls.filter((u) => u.endsWith('/api/mls/devices/u1?peek=1'))).toHaveLength(1);
+    expect(urls.filter((u) => u.endsWith('/api/mls/devices/u2?peek=1'))).toHaveLength(1);
+    // A roster read claims nothing: no request without the peek reached the wire.
+    expect(urls.filter((u) => !u.endsWith('?peek=1'))).toHaveLength(0);
+  });
+
+  // A CLAIM IS NEVER SHARED: each answer spends one package per device, and two adders handed one
+  // answer would build two Welcomes on one package - the joiner refuses the second.
+  it('sends one CLAIMING devices/:id per adder, even when they ask at once', async () => {
+    const { api, urls } = counting(JSON.stringify([{ deviceId: 'd1', keyPackage: 'AQID' }]));
+    const [first, second] = await Promise.all([
+      api.fetchUserDevices('u1'),
+      api.fetchUserDevices('u1'),
+    ]);
+    expect(urls.filter((u) => u.endsWith('/api/mls/devices/u1'))).toHaveLength(2);
+    expect(first).not.toBe(second);
+  });
+
+  it('a roster read and a claim never share one request', async () => {
+    const { api, urls } = counting('[]');
+    await Promise.all([api.listUserDevices('u1'), api.fetchUserDevices('u1')]);
+    expect(urls.filter((u) => u.endsWith('/api/mls/devices/u1?peek=1'))).toHaveLength(1);
     expect(urls.filter((u) => u.endsWith('/api/mls/devices/u1'))).toHaveLength(1);
-    expect(urls.filter((u) => u.endsWith('/api/mls/devices/u2'))).toHaveLength(1);
+  });
+
+  it('a roster entry carries no KeyPackage, because none was claimed for it', async () => {
+    const { api } = counting(
+      JSON.stringify([{ deviceId: 'd1', keyPackage: 'AQID', deviceName: 'Mi 9T', deviceOs: 7 }])
+    );
+    await expect(api.listUserDevices('u1')).resolves.toEqual([
+      {
+        deviceId: 'd1',
+        userId: 'u1',
+        deviceName: 'Mi 9T',
+        deviceOs: undefined,
+        deviceAppVersion: undefined,
+      },
+    ]);
   });
 
   it('a failed shared read rejects every joiner and is not remembered', async () => {

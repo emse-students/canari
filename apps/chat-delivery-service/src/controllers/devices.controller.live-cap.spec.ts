@@ -72,8 +72,6 @@ describe('DevicesController - the cap counts live devices', () => {
           provide: getRepositoryToken(KeyPackage),
           useValue: {
             findOne: jest.fn().mockResolvedValue(null),
-            save: jest.fn().mockResolvedValue({}),
-            create: jest.fn((v) => v),
             createQueryBuilder: jest.fn(() => qb),
           },
         },
@@ -87,7 +85,11 @@ describe('DevicesController - the cap counts live devices', () => {
           useValue: { findOne: jest.fn().mockResolvedValue(null), find: jest.fn(() => []) },
         },
         { provide: 'REDIS_CLIENT', useValue: {} },
-        { provide: DataSource, useValue: {} },
+        // The key package row is written by ONE upsert statement (`upsertDeviceKeyPackage`).
+        {
+          provide: DataSource,
+          useValue: { query: jest.fn().mockResolvedValue([{ inserted: true }]) },
+        },
         { provide: MessagingService, useValue: {} },
         { provide: DeviceSignatureKeysService, useValue: { record: jest.fn() } },
       ],
@@ -100,7 +102,7 @@ describe('DevicesController - the cap counts live devices', () => {
   });
 
   /** Registration runs far enough to have asked the cap its question. */
-  const register = () => controller.registerDevice(BODY, 'u1', undefined);
+  const register = () => controller.registerDevice(BODY, 'u1');
 
   it('counts DEVICES, not key-package rows', async () => {
     await register();

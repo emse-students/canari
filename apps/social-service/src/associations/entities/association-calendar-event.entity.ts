@@ -18,6 +18,20 @@ export enum AssociationCalendarEventKind {
   Break = 'break',
 }
 
+/**
+ * WHO A READER IS TOLD AN EVENT IS FROM (owner, 2026-11-08; docs/wiki/frontend/modules/calendar.md,
+ * "Neutral campus events").
+ * - `association`: the owning association's name, logo and page, as every event always had.
+ * - `neutral`: the generic label "Campus" and nothing else. The OWNER is still the BDE that filed it
+ *   - it keeps edit rights, validation, deletion, audience and notices - but no API field a reader
+ *   outside the BDE's agenda managers receives names it (`event-presentation.ts`). Only a BDE may
+ *   file one.
+ */
+export enum AssociationCalendarEventPresentation {
+  Association = 'association',
+  Neutral = 'neutral',
+}
+
 /** Scheduled event displayed on an association public page (meetings, deadlines, etc.). */
 @Entity('association_calendar_events')
 export class AssociationCalendarEvent {
@@ -42,6 +56,17 @@ export class AssociationCalendarEvent {
 
   @Column({ type: 'varchar', length: 255 })
   createdBy: string;
+
+  /**
+   * `neutral` hides the owning BDE from every reader who does not manage its agenda (migration 144).
+   * The default is the old behaviour, so a release that never names the column writes what it did.
+   */
+  @Column({
+    type: 'varchar',
+    length: 16,
+    default: AssociationCalendarEventPresentation.Association,
+  })
+  presentation: AssociationCalendarEventPresentation;
 
   /** Visual kind: normal `event` (card) or `break` (full-day background band). */
   @Column({ type: 'varchar', length: 16, default: AssociationCalendarEventKind.Event })

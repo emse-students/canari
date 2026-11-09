@@ -42,6 +42,13 @@ describing it as a live rival is what made it look like a design decision rather
 | `user` | the reported account's id | the account's display name |
 | `live` | a live's id | the broadcaster's display name, plus `live: { state, ..., broadcasterStanding }` - open, ended, cut or gone ([lives](services/lives.md#moderation-wp-l8-server-half)) |
 | `live_chat` | a live chat MESSAGE's id (with `liveId` and the plaintext `message`) | the kept line's text, plus `liveChat: { text, authorName, keptUntil, integrity, ... }` ([lives](services/lives.md#a-reported-chat-line-wp-l8b)) |
+| `nickname` | ONE version of a community nickname, `<member row id>@<set-at ms>` | that version's text while it is still shown, null once it was changed or cleared ([chat](frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)) |
+
+`nickname` arrived on 2026-11-08 ("Modifier les pseudos"): reportable by a member of that community
+only, its `reportedUserId` the setter read from the membership row, every refusal the `404
+CONTENT_NOT_FOUND` of a post. Only global admins see it in the queue: a BDE's scope
+(`reportInBdeScopeSql`) does not name it. A community moderator reverses one by clearing it. An MLS
+group's nicknames never reach a server and are not reportable.
 
 `live` arrived with WP-L8 (2026-10-19, decision D6: a live is moderated like a post). Its `reportedUserId` is
 the broadcaster read from the live row, never the client's; the live must still have a row and be
@@ -66,6 +73,21 @@ nobody; it could not have worked, because message bodies are MLS ciphertext and 
 nothing to show - `contentPreview` was hard-coded null for it. It was removed rather than
 implemented. Reporting a message would mean the client attaching the decrypted excerpt, which is a
 privacy decision about what a reporter discloses, not a missing endpoint.
+
+### A report follows the read's predicate (2026-11-02)
+
+**A write or a notification on a post follows the read's predicate.** A report on a `post` or a
+`comment` is accepted only from a reporter who may OPEN that post through the same gate the read by
+id uses - `readPostOpenVerdict` (`apps/social-service/src/posts/post-openable.ts`): the post's
+audience, no block either way with a personal non-anonymous post's author, not hidden by
+moderation, not scheduled later, not an expired reel. A comment also has to be one the read shows
+that reporter (`commentShownDespiteBlocks`: not by a writer a block separates from them, unless
+anonymous or an association's). Every refusal is the same `404 { code: 'CONTENT_NOT_FOUND' }`, a
+hidden post's included, so the route is no oracle. Until this rule, a post or comment report
+checked nothing - and five reports hide a post (auto-hide, below), so a post its reporter could
+never read could still be hidden by them. Lives already had this rule (`reportableLive`). Proven
+against PostgreSQL in `post-openable.integration.spec.ts`; the same gate also decides who a mention
+may notify ([posts](frontend/modules/posts.md#a-write-or-a-notification-follows-the-reads-predicate-2026-11-02)).
 
 ### One reason list, everywhere
 
@@ -114,6 +136,129 @@ The lazy purge is gone, the cron is the only mechanism, and its clock is `review
 `/api/moderation/*` and by the post controls that give the same people the same reach - and, since
 WP-L8, by the staff cut of a live.
 
+**SCOPED SINCE 2026-11-02 (owner).** That predicate is now only the DOOR: a BDE moderator reads the
+reports, the hidden posts and the muted people of the spaces its BDE governs, and every act (hide,
+delete, unmask, mute, cut, review) asks the scope of its target - a 403
+`MODERATION_OUT_OF_SCOPE` outside it. The platform admin stays global. What "in scope" means per
+target is tabled in [profiles-and-access, D23 amended](profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02).
+
+**A post's integrity: only its author changes its text (owner, 2026-11-02).** Moderation hides,
+deletes and unmasks; it never edits. Neither a BDE moderator nor the platform admin may change
+another person's post (403 `POST_EDIT_PUBLISHER_ONLY`); the pencil is the served `canEdit`, apart from
+the bin (`canManage`). **A comment follows the same rule** (owner, 2026-11-02): its author alone edits
+it - a moderator or the platform admin hides or deletes it, and an edit by either is a 403
+`COMMENT_EDIT_AUTHOR_ONLY`. For a post or comment in an association's name, the author is any holder
+of `POST_AS_ASSO` in it (decided the same day). Deleting a comment is MODERATE's within its scope: a
+moderator of the post deletes a plain or an anonymous comment under it, and an association's only
+when it moderates that association too (next paragraph) - which `commentRights.canDelete` serves and
+`POST /moderation/comments/:id/delete` enforces alike.
+
+**No BDE moderates content in an INSTITUTION's or ANOTHER BDE's name (owner, 2026-11-03).** Whatever
+the path - hide, delete, unmask, reading an association comment's writer, cutting a live, a report on
+any of them - only the platform admin acts on it; a BDE keeps moderating, in its governed spaces, what
+students and the associations and lists it governs publish. ONE predicate decides every act:
+`bdeModeratesPublisherSql` (`spaces/bde-moderation.ts`, the management predicate read for `MODERATE`,
+false for an institution and for another BDE) for whatever is in an association's name, the per-space
+standing for a person's. A post and a live were already judged by their publisher (#2953); since this
+change a **comment** is too - its post must be in scope AND its own publisher (`bdeModeratesCommentSql`;
+`moderatesComment` in `posts/comment-identity.ts` is its in-memory twin, proved to agree on real SQL).
+A comment is judged on ITSELF: its replies never shield it (decision below). **The reports queue lists
+only what the BDE may act on** - an escalated item is simply absent from it, and stays in the platform
+admin's queue (decided 2026-11-04, the simpler and reversible of the two options: no "escalated" row to
+render). A refused act is classified at the throw: 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the
+target is in an institution's or a BDE's name, `MODERATION_OUT_OF_SCOPE` otherwise,
+`MODERATOR_REQUIRED` for a caller who moderates nowhere - each worded by the client through
+`describeModerationRefusal` (`frontend/src/lib/moderation/moderationRefusal.ts`), on the post card and
+in the reports queue alike (`ModerationApiError` is an `ApiRefusalError`, so `refusalCode` reads it).
+**Not moderation, and so unchanged:** pinning a post in a space (WP-PIN, a promotion - a BDE may pin
+another BDE's or an institution's post), the agenda rights over an institution's event (owner,
+2026-11-03, `holdsBdeAgendaRightOverSql`), and a mute or a broadcast withdrawal, which name a person.
+Proved in `bde-moderation.integration.spec.ts` ("the owner's rule of 2026-11-03"). A student's
+content inside an institution's or another BDE's post or live: [the place decides](#decided-by-the-owner-2026-11-04).
+
+#### Decided by the owner (2026-11-04)
+
+- **The place decides.** A student's comment under an institution's or another BDE's post, and a
+  student's line in the chat of such a live, is judged by the post or live it sits in
+  (`bdeModeratesCommentSql`, `bdeModeratesLiveSql`): no BDE moderates it, whoever wrote it - the
+  platform admin does. The reading where the student's own BDE acts wherever the comment sits was
+  weighed and turned down.
+
+#### Decisions taken (2026-11-04, the lead, reversible)
+
+- **A reply in a protected name does not shield what it answers.** A student's comment answered by an
+  institution's (or another BDE's) reply is the BDE's to delete, judged by its post and its own
+  publisher only. The first build refused it (the delete would have taken the reply), which made any
+  thread untouchable through a single reply in a protected name.
+- **A moderator's delete that meets a reply it does not moderate leaves a TOMBSTONE.** The delete takes
+  the comment's descendants RECURSIVELY and judges each with the same rule (`planCommentRemoval`,
+  `posts/comment-removal.ts`, used by both delete paths: `PostInteractionsService.deleteComment` and
+  `ModerationService.deleteCommentById`). A node it may remove goes; one it may not stays; a removed
+  node under which something stays is kept as a tombstone - its row kept, text, likes and media
+  blanked, `removedByModeration: true` - so the protected reply keeps its context. The marker lives in
+  the `posts.comments` jsonb, so no migration. It is served with no author and no right
+  (`canEdit`/`canDelete` false) and drawn as one line, "Commentaire retiré par la modération"
+  (`post_comment_removed_by_moderation`). A tombstone left with no reply is removed at once, on any
+  later delete that empties it, and by account erasure when it scrubs the last reply under it
+  (`scrubComments`, `internal/account-erasure.ts`).
+- **A tombstone carries NO account, and no block hides it** (second review). It stores no `userId`
+  (erasure has nothing to find in it), and both block filters exempt `removedByModeration` rows
+  (`commentShownDespiteBlocks` in `posts/comment-page.ts`, the `shown` clause of `postSelectBody`).
+  Hiding it from exactly the readers who blocked its real writer would answer "who wrote this
+  anonymous comment" - the probe the anonymous exemption already refuses - and would cut the protected
+  replies under it out of the page. A tombstone written before this rule still carries a `userId`; the
+  exemption covers it all the same.
+- **A tombstone takes no reply and no heart**: both are refused with a 409
+  `COMMENT_REMOVED_BY_MODERATION` (`refuseRemovedByModeration`), worded on the client by
+  `post_comment_removed_by_moderation_refusal`, so nothing new ever notifies the moderated writer.
+- **A tombstone is not counted.** `commentCount` (the server's SQL and the client's
+  `commentCountOf`) skips `removedByModeration` rows; a delete answers `countedOut`, the comments that
+  left the count (removed live rows plus rows turned into tombstones), and the client moves the count
+  by that.
+- **Both delete paths release the media** of every removed row and of every row turned into a
+  tombstone (`rowsReleasedBy`): the author's path through `PostMediaRetentionService.release`, the
+  moderation route through `applyMediaRetentionClass` (the same call, `ModerationService` holding its
+  own `HttpService` because `PostsModule` already imports `ModerationModule`).
+- **The bell follows the thread** (`forgetCommentNotices`, `posts/comment-write.ts`): a notification
+  whose `commentId` (migration 132) names a removed comment is deleted, one naming a tombstoned comment
+  has its preview text blanked. Best effort: a failure logs `[NOTIFY]` at ERROR and the delete stands.
+- **Every comment write holds the post row** (`writeComments`, `posts/comment-write.ts`): add, like,
+  edit, the author's delete and the moderation delete each read `posts.comments` under
+  `SELECT ... FOR UPDATE` in one transaction and write the array back in it. They were five
+  read-modify-writes of one jsonb, so a reply racing a moderation delete could resurrect the removed
+  comment or lose the reply. The entity column is `update: false`, so no other `save(post)` (a
+  reaction, an edit of the post, a hide) can write a stale copy back either. Proved on a real
+  PostgreSQL by `comment-write.integration.spec.ts` (two writers queued on one held lock, both orders).
+- **The author's own delete keeps taking the whole thread**, as before: it is not moderation, and an
+  author withdrawing a comment takes the replies under it, whoever wrote them. The owner confirmed it on
+  2026-11-04: a reply in a protected name goes with the question it answers.
+- **An app newer than its server** (a delete answered `{ ok: true }` alone) drops the comment and its
+  whole subtree locally, as that server did, and logs `[VERSION-SKEW]` at warn. An app older than the
+  tombstone drew one as an empty bubble, until floor `1.6.6` retired those builds -
+  [legacy-compatibility](legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08).
+
+**The queue's comment branch at volume (measured 2026-11-04, scratch PostgreSQL 18).** 2,000 posts,
+20,000 comments (200 threads of 50 with chained replies), 2,000 reports (1,000 on comments), one BDE
+and 60 associations. The branch is UNCORRELATED - the comment ids of the posts in scope, hashed once
+per query - so it is linear in the comments of the posts in scope and does not grow with the number
+of reports. Its publisher half was first a correlated subplan re-run per association comment:
+**2,644 ms** for the branch alone, 2,746 ms for a page of 50. Rewritten as an uncorrelated set (the
+associations the moderator moderates, hashed once): **67-76 ms** for the branch and **~280 ms** for the
+whole page (post branch 19 ms, user branch 2 ms; expanding every comment with no predicate costs
+7 ms), with the same 949 comment rows in scope. A per-report correlated EXISTS was rejected: nothing
+indexes a comment id inside the jsonb, so it would scan every post once per comment report.
+
+**A mute and a live withdrawal stay ONE platform-wide row (owner, 2026-11-02: "Laisser tel quel").**
+A measure is about a person, not about a BDE: any BDE whose spaces hold that person may lift it or
+rewrite its reason, whichever BDE took it, and the platform admin always may. Deliberate, not an
+oversight - a second BDE seeing the same person is a second moderator of them.
+
+**What an out-of-scope moderator can infer, accepted (owner, 2026-11-02).** On an anonymous post a BDE
+moderator outside its scope is served no pin and no unmask capability, so it can tell the post is not
+in its scope - which says the author belongs to another BDE's spaces. This follows from the rule that
+moderation goes to the author's BDE: serving the controls to the right BDE alone is what tells the
+others they are not it.
+
 ### Anonymous posts - the fourth control that predicate now gates
 
 A personal post (never an association one - the two are mutually exclusive, and an association
@@ -121,7 +266,8 @@ post already anonymizes its author for everyone unconditionally) can be marked `
 creation - one option in the same "who is publishing" identity picker as the personal profile and
 each managed association, open to every user rather than gated to association admins.
 `PostsService.mustHideAnonymousAuthor` strips `authorId` from the response for every viewer
-**except** the same `isContentModerator` tier, or the post's own author (2026-09-17: a moderator
+**except** a moderator of THAT post (the platform admin, or since 2026-11-02 a BDE whose governed
+spaces hold it), or the post's own author (2026-09-17: a moderator
 must be able to tell WHO published an anonymous post, and so must the author looking at their own
 post - not just THAT it exists). `canUnmaskAnonymous` (same shape as `canPin`) is drawn from the
 moderator tier only, never from self-authorship. `PATCH /posts/:postId/unmask` (`PostsController`,
@@ -194,6 +340,13 @@ Two write paths never checked `anonymous` before resolving and storing the real 
 - Neither is shown the other's **personal posts**, nor their **comments** under anybody's post -
   in the feed, in search, by id, and under an agenda event. **An association post and an anonymous
   post are exempt**, and the section below is why.
+- Neither can **react to, comment on, like a comment of or report** a personal post of the other,
+  and neither is **notified of a mention** by the other, on any post: a write or a notification
+  follows the read's predicate ([posts](frontend/modules/posts.md#a-write-or-a-notification-follows-the-reads-predicate-2026-11-02)).
+- Neither can **set the other's nickname** in a conversation they share ("Modifier les pseudos"): a
+  community refuses it at the server (`403 USER_BLOCKED`); in a group the setter's client asks first,
+  and the target's own devices do not show a nickname of themselves set by someone they stand in a
+  block with ([chat](frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)).
 
 ### What a block does not do
 

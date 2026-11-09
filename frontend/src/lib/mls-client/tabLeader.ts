@@ -96,15 +96,9 @@ let tabChannel: BroadcastChannel | null = null;
 let leaderPromotedHandler: (() => void) | null = null;
 let leaderDemotedHandler: (() => 'reloads' | void) | null = null;
 
-/** Stored resolve from holdLeaderLockUntilUnload - allows explicitly releasing the lock. */
-let releaseLeaderLock: (() => void) | null = null;
 /**
  * How to get back in the queue after handing leadership over - set by whatever took the lock.
- *
- * The logger belongs to the election, and `releaseLeadership` is reached from a BroadcastChannel
- * listener that has none. Storing the CLOSURE rather than the logger keeps the knowledge where it
- * already is, and pairs it with `releaseLeaderLock`: both are set on acquiring and cleared on
- * releasing, so there is one state, not two that can disagree.
+ * Storing the CLOSURE rather than the logger keeps the knowledge where it already is.
  */
 let requeueForPromotion: (() => void) | null = null;
 
@@ -145,7 +139,6 @@ export function setTabLeaderDemotedHandler(handler: (() => 'reloads' | void) | n
 
 function holdLeaderLockUntilUnload(): Promise<void> {
   return new Promise<void>((release) => {
-    releaseLeaderLock = release;
     if (typeof window === 'undefined') {
       release();
       return;
@@ -162,34 +155,10 @@ function holdLeaderLockUntilUnload(): Promise<void> {
 }
 
 /**
- * Explicitly releases leadership of this tab.
- * Called when another tab requests a takeover.
- */
-export function releaseLeadership(): void {
-  if (leadership !== 'leader') return;
-  decide('follower');
-  if (heartbeatInterval) {
-    clearInterval(heartbeatInterval);
-    heartbeatInterval = null;
-  }
-  try {
-    if (localStorage.getItem(LEADER_KEY) === TAB_ID) {
-      localStorage.removeItem(LEADER_KEY);
-      localStorage.removeItem(HEARTBEAT_KEY);
-    }
-  } catch {
-    /* quota */
-  }
-  tabChannel?.postMessage({ type: 'leader_closing', tabId: TAB_ID });
-  // Release the Web Lock if active (the next tab in the queue acquires it automatically).
-  releaseLeaderLock?.();
-  releaseLeaderLock = null;
-  handOver();
-}
-
-/**
- * The half of a demotion both paths share (a take-over, a stolen lock): tell the session, and get
- * back in the queue ONLY if this document goes on living.
+ * A demotion (the lock stolen by a tab reloading after its promotion): tell the session, and get
+ * back in the queue ONLY if this document goes on living. The member's "Prendre la main" that also
+ * led here was removed with the follower banner on 2026-11-08: a follower tab now hands its commits
+ * to the leader (`tabCommitDelegation.ts`), so no tab ever needs to take the lead over by hand.
  *
  * Handing leadership over is not leaving the election: the tab that took over will close one day,
  * and a document holding no outstanding request is never told - it stays read-only and offline for
@@ -215,26 +184,10 @@ function handOver(): void {
   requeue?.();
 }
 
-/**
- * From a follower tab: asks the leader tab to release its leadership
- * so this tab can take over.
- */
-export function requestLeadershipTakeover(): void {
-  if (typeof BroadcastChannel === 'undefined') return;
-  if (!tabChannel) tabChannel = new BroadcastChannel('canari-mls-tab');
-  tabChannel.postMessage({ type: 'request_takeover' });
-}
-
 function ensureTabChannelForLocalStorage(log: (msg: string) => void): void {
   if (tabChannel) return;
   tabChannel = new BroadcastChannel('canari-mls-tab');
   tabChannel.addEventListener('message', (ev: MessageEvent) => {
-    // Leader releases its leadership on request from a follower tab.
-    if (ev.data?.type === 'request_takeover' && leadership === 'leader') {
-      log('[TAB] Takeover request received - releasing leadership.');
-      releaseLeadership();
-      return;
-    }
     if (ev.data?.type === 'leader_closing' && leadership !== 'leader') {
       const delay = Math.random() * 300;
       setTimeout(() => {
@@ -269,7 +222,7 @@ function ensureTabChannelForLocalStorage(log: (msg: string) => void): void {
  * **A PROMOTION THAT RELOADS GAVE THE LOCK AWAY, AND "PRENDRE LA MAIN" NEVER STUCK.** A promoted
  * tab reloads to pick up the MLS state the old leader left (see the promotion handler in
  * `useChatSession.svelte.ts`), and Web Locks are per-document: the reload releases the lock it was
- * just granted. The tab it took over from had requeued at once (`releaseLeadership`), so it was
+ * just granted. The tab it took over from had requeued at once (the take-over, removed 2026-11-08), so it was
  * granted the lock back before the reloaded page could ask. Measured on production 2026-09-28, one
  * click on the button:
  *
@@ -331,7 +284,6 @@ function onLeaderLockRejected(e: unknown, log: (msg: string) => void): void {
   if (leadership !== 'leader' || (e as { name?: unknown } | null)?.name !== 'AbortError') return;
   log('[TAB] Leader lock reclaimed by a tab reloading after its promotion - handing over.');
   decide('follower');
-  releaseLeaderLock = null;
   handOver();
 }
 
@@ -371,16 +323,7 @@ function queueForPromotion(log: (msg: string) => void): void {
  * Returns true if this tab immediately became leader.
  */
 async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
-  if (!tabChannel) {
-    tabChannel = new BroadcastChannel('canari-mls-tab');
-    // Listen for takeover requests from follower tabs.
-    tabChannel.addEventListener('message', (ev: MessageEvent) => {
-      if (ev.data?.type === 'request_takeover' && leadership === 'leader') {
-        log('[TAB] Takeover request received - releasing leadership (Web Locks).');
-        releaseLeadership();
-      }
-    });
-  }
+  if (!tabChannel) tabChannel = new BroadcastChannel('canari-mls-tab');
 
   const reclaim = consumePromotionReload();
   if (reclaim) log('[TAB] Reloaded after a promotion - reclaiming the leader lock.');
@@ -560,7 +503,7 @@ async function initWithLocalStorage(log: (msg: string) => void): Promise<boolean
  * Measured on W2, 2026-09-21: `navigator.locks.query()` answered `canari-tab-leader` held by
  * client `BCDAE226...` AND pending for client `BCDAE226...`, in a profile with exactly one page.
  * The tab showed "Messagerie chiffree active dans un autre onglet", read *Hors-ligne*, and listed
- * nothing - permanently. "Prendre la main" cannot rescue it: `requestLeadershipTakeover` posts on
+ * nothing - permanently. "Prendre la main" (removed 2026-11-08) could not rescue it: `requestLeadershipTakeover` posted on
  * a `BroadcastChannel`, which never delivers to the context that posted, and the only tab that
  * could release the lock is the one asking.
  *
@@ -625,7 +568,6 @@ export function resetTabLeaderStateForTests(): void {
   decided = armDecided();
   // The memo goes with them, or the next case would be handed the previous case's election.
   election = null;
-  releaseLeaderLock = null;
   requeueForPromotion = null;
   try {
     sessionStorage.removeItem(PROMOTION_RELOAD_KEY);

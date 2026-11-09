@@ -48,7 +48,6 @@ function makeContext(conversations: Map<string, Conversation>): WelcomeRequestCo
       getGroupMeta: vi.fn().mockResolvedValue({ name: 'Test', isGroup: true }),
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: ASKER.requesterUserId }]),
     }),
-    storage: null,
     userId: 'user-me',
     deviceKeyB64: 'key',
     conversations,

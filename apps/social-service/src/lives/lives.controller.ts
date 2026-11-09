@@ -10,6 +10,7 @@ import {
   HttpCode,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Put,
   Query,
@@ -20,9 +21,9 @@ import type { Request } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { AssociationsService } from '../associations/associations.service';
 import { LiveEnabledGuard } from './live-enabled.guard';
-import { LIVE_SEGMENT_MAX_BYTES, liveLimits } from './live.constants';
+import { LIVE_POSTER_MAX_BYTES, LIVE_SEGMENT_MAX_BYTES, liveLimits } from './live.constants';
 import { LiveChatService, type LiveChatBlock } from './live-chat.service';
-import { LivesService, type LiveManifest } from './lives.service';
+import { LivesService, type LiveArrivalsBlock, type LiveManifest } from './lives.service';
 import { readBoundedBody } from './read-bounded-body';
 
 /** The caller nginx authenticated, as every account id is compared: trimmed, lower case. */
@@ -97,6 +98,7 @@ export class LivesController {
     @Body() body: { reason?: unknown; details?: unknown }
   ) {
     const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_WITHDRAWAL_FORBIDDEN');
+    await this.assertModeratesBroadcaster(caller, globalAdmin, target);
     return this.lives.withdraw(caller, target, body ?? {});
   }
 
@@ -109,6 +111,7 @@ export class LivesController {
     @Headers('x-global-admin') globalAdmin: string | undefined
   ) {
     const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_WITHDRAWAL_FORBIDDEN');
+    await this.assertModeratesBroadcaster(caller, globalAdmin, target);
     return this.lives.liftWithdrawal(caller, target);
   }
 
@@ -130,8 +133,27 @@ export class LivesController {
     return caller;
   }
 
-  /** The open lives the caller may watch, newest first. */
+  /**
+   * After `assertStaff` (the door): the SCOPE of a person-directed act (owner, 2026-11-02) - a BDE
+   * moderator withdraws or restores the broadcast right of a person of its own spaces only, else
+   * 403 `MODERATION_OUT_OF_SCOPE`. A platform admin is not asked.
+   */
+  private async assertModeratesBroadcaster(
+    caller: string,
+    globalAdmin: string | undefined,
+    target: string
+  ): Promise<void> {
+    const isGlobalAdmin = globalAdmin === 'true';
+    if (await this.associations.mayModerateUser(caller, target, { isGlobalAdmin })) return;
+    await this.associations.refuseModeration(caller, { kind: 'broadcaster', id: target });
+  }
+
+  /**
+   * The open lives the caller may watch, newest first, with each one's preview key. `no-store`: the
+   * answer is per reader, and a key never sits in any cache.
+   */
   @Get()
+  @Header('Cache-Control', 'no-store')
   list(@Headers('x-user-id') userId: string) {
     return this.lives.listOpen(callerOf(userId));
   }
@@ -144,9 +166,50 @@ export class LivesController {
   @Post()
   start(
     @Headers('x-user-id') userId: string,
-    @Body() body: { key?: unknown; associationId?: unknown; acceptedRulesVersion?: unknown }
+    @Body()
+    body: {
+      key?: unknown;
+      associationId?: unknown;
+      acceptedRulesVersion?: unknown;
+      title?: unknown;
+    }
   ) {
     return this.lives.start(callerOf(userId), body ?? {});
+  }
+
+  /**
+   * The broadcaster sets or clears the live's title while on air: `{ title: string | null }` (owner,
+   * 2026-11-07). 400 `LIVE_TITLE_INVALID` (with `maxChars`), 403 `LIVE_MUTED`, 404 `LIVE_NOT_FOUND`
+   * for another member's live, 410 once ended. Answers `{ id, title }`.
+   */
+  @Patch(':id')
+  @HttpCode(200)
+  setTitle(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string,
+    @Body() body: { title?: unknown }
+  ) {
+    return this.lives.setTitle(callerOf(userId), id.toLowerCase(), body ?? {});
+  }
+
+  /**
+   * The live's PREVIEW IMAGE, raw `application/octet-stream`, sealed under the POSTER key (HKDF of
+   * the live key, `live-poster-key.ts`), at most
+   * {@link LIVE_POSTER_MAX_BYTES} (owner, 2026-11-07). Broadcaster only; replaces the previous one.
+   * Refusals in `LivesService.ingestPoster`; over the bound 413 `LIVE_POSTER_TOO_LARGE`.
+   */
+  @Put(':id/poster')
+  async putPoster(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string,
+    @Req() req: Request
+  ) {
+    const data = await readBoundedBody(req, LIVE_POSTER_MAX_BYTES, {
+      what: 'a poster',
+      tooLargeCode: 'LIVE_POSTER_TOO_LARGE',
+      emptyCode: 'LIVE_POSTER_EMPTY',
+    });
+    return this.lives.ingestPoster(callerOf(userId), id.toLowerCase(), data);
   }
 
   /**
@@ -174,8 +237,9 @@ export class LivesController {
     @Query('from') from?: string,
     @Query('chat') chat?: string,
     @Query('messagesAfter') messagesAfter?: string,
-    @Query('reactionsAfter') reactionsAfter?: string
-  ): Promise<LiveManifest & { chat?: LiveChatBlock }> {
+    @Query('reactionsAfter') reactionsAfter?: string,
+    @Query('arrivalsAfter') arrivalsAfter?: string
+  ): Promise<LiveManifest & { chat?: LiveChatBlock & Partial<LiveArrivalsBlock> }> {
     const caller = callerOf(userId);
     // The cursors are checked BEFORE the manifest, so a malformed one never costs a seat renewal.
     const cursors =
@@ -185,17 +249,29 @@ export class LivesController {
               messagesAfter === undefined ? undefined : seqOf(messagesAfter, 'MESSAGES_AFTER'),
             reactionsAfter:
               reactionsAfter === undefined ? undefined : seqOf(reactionsAfter, 'REACTIONS_AFTER'),
+            arrivalsAfter:
+              arrivalsAfter === undefined ? undefined : seqOf(arrivalsAfter, 'ARRIVALS_AFTER'),
           }
         : null;
-    const manifest = await this.lives.manifest(
+    const { chatWithheld, ...manifest } = await this.lives.manifest(
       caller,
       id,
       from === undefined ? undefined : indexOf(from, 'FROM')
     );
     if (!cursors) return manifest;
     // THE CHAT RIDES THE POLL THE VIEWER ALREADY MAKES (WP-L6, C3): one request a tick, read after
-    // the manifest let this viewer watch.
-    return { ...manifest, chat: await this.chat.read(caller, id, cursors) };
+    // the manifest let this viewer watch. Whether it is WITHHELD from them (a named reader, owner
+    // 2026-11-04) was decided by that same watch statement, so it is asked again on every poll and a
+    // switch flipped in the read-access grid holds from the next one, without a reconnect.
+    // ONE read of the block list per poll, for the chat and the arrivals alike.
+    const blocked = await this.lives.blockedFor(caller);
+    const block = await this.chat.read(caller, id, cursors, { withheld: chatWithheld, blocked });
+    // THE ARRIVAL LINES (owner, 2026-11-07) ride the same block - and are NOT served to a reader the
+    // chat is withheld from: they take no part in it, so they are shown none and announced to none.
+    const arrivals = chatWithheld
+      ? null
+      : await this.lives.readArrivals(caller, id, cursors.arrivalsAfter, blocked);
+    return { ...manifest, chat: { ...block, ...arrivals } };
   }
 
   /**
@@ -245,7 +321,8 @@ export class LivesController {
   /**
    * STAFF CUT a live (WP-L8): `{ reason: 'spam'|'harassment'|'inappropriate'|'other', details? }`.
    * Who may: `isContentModerator` - a platform admin or a BDE member holding `MODERATE`, the ONE
-   * predicate of the posts' moderation controls and of `/api/moderation`. Anyone else is 403
+   * predicate of the posts' moderation controls and of `/api/moderation` - and, for a BDE, only a
+   * live of its governed spaces (`mayModerateLive`, 403 `MODERATION_OUT_OF_SCOPE`). Anyone else is 403
    * `LIVE_CUT_FORBIDDEN`, asked BEFORE the live is looked up, so the refusal says nothing about
    * whether the live exists. Idempotent: a repeat answers the first cut with `newlyCut: false`.
    */
@@ -258,6 +335,13 @@ export class LivesController {
     @Body() body: { reason?: unknown; details?: unknown }
   ) {
     const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_CUT_FORBIDDEN');
-    return this.lives.cut(caller, id.toLowerCase(), body ?? {});
+    // The scope (owner, 2026-11-02): a BDE cuts the lives of its governed spaces only. Asked after
+    // the door, so a non-moderator still learns nothing of whether the live exists.
+    const liveId = id.toLowerCase();
+    const isGlobalAdmin = globalAdmin === 'true';
+    if (!(await this.associations.mayModerateLive(caller, liveId, { isGlobalAdmin }))) {
+      await this.associations.refuseModeration(caller, { kind: 'live', id: liveId });
+    }
+    return this.lives.cut(caller, liveId, body ?? {});
   }
 }

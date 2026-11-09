@@ -16,6 +16,9 @@ import {
 } from './publicSections';
 import { previousCrumb } from '$lib/components/navigation/breadcrumb';
 import { ASSOCIATION_SECTION_PATH, resolveSeoForPath } from '$lib/seo/resolve';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { m } from '$lib/paraglide/messages';
 import { load as associationLoad } from '../../routes/associations/[slug]/[[section]]/+page';
 
 const nothing = { productCount: 0, partnershipCount: 0 };
@@ -154,5 +157,30 @@ describe('a section is never a second indexable page of the entity', () => {
     expect(run('calendar').seo.noindex).toBe(true);
     expect(run(undefined).seo.noindex).toBeUndefined();
     expect(run(undefined).seo.path).toBe('/associations/bde');
+  });
+
+  it('never invents a title or a description from the slug', () => {
+    type Args = Parameters<typeof associationLoad>[0];
+    for (const section of [undefined, 'calendar']) {
+      const seo = (
+        associationLoad({
+          params: { slug: 'bde-emse', section },
+          url: new URL('http://x/associations/bde-emse'),
+        } as unknown as Args) as { seo: { title: string; description: string } }
+      ).seo;
+      expect(seo.title).toBe(m.seo_association_title());
+      expect(seo.title).not.toContain('bde-emse');
+      expect(seo.description).not.toContain('bde-emse');
+    }
+  });
+
+  it('the detail view hands the loaded name over through pageTitle and clears it on leave', () => {
+    const src = readFileSync(
+      join(process.cwd(), 'src/lib/components/associations/AssociationDetailView.svelte'),
+      'utf8'
+    );
+    expect(src).toMatch(/setPageTitle\(name\)/);
+    expect(src).toMatch(/return \(\) => setPageTitle\(null\)/);
+    expect(src).toContain('asso?.name?.trim()');
   });
 });

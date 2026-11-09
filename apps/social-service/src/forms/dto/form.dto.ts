@@ -1,4 +1,6 @@
 import {
+  ArrayMaxSize,
+  ArrayUnique,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -7,9 +9,12 @@ import {
   IsInt,
   IsNotEmpty,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
+  Matches,
   MaxLength,
   Min,
   ValidateNested,
@@ -23,17 +28,26 @@ import {
   FORM_ITEM_ID_MAX_LENGTH,
 } from '../form-files.service';
 import { SUPPORTED_QUESTION_TYPES } from './question-types';
-
-/** Max keys per answers record - prevents oversized payloads. */
-const ANSWERS_MAX_KEYS = 50;
-/** Max character length per string answer. */
-const ANSWERS_MAX_STRING_LEN = 2000;
-/** Max number of selected options per multi-select answer. */
-const ANSWERS_MAX_ARRAY_LEN = 50;
+import { QUESTION_IMAGE_ALT_MAX_LENGTH, QUESTION_IMAGE_URL_RE } from '../form-item-images.service';
+import {
+  ANSWER_MAX_SELECTIONS,
+  ANSWER_MAX_TEXT_LENGTH,
+  FORM_MAX_QUESTIONS,
+  GRID_MAX_ROWS,
+  isAcceptedAnswerValue,
+  PRODUCT_GRID_MAX_CELLS,
+  GUEST_EMAIL_MAX_LENGTH,
+  GUEST_NAME_MAX_LENGTH,
+  type FormAnswerValue,
+} from '../answer-bounds';
+import { GUEST_IDENTITY_FIELDS, type GuestIdentityField } from '../guest-identity';
 
 /**
- * Validates that `answers` is a shallow Record whose values are strings, string arrays, or numbers,
- * all within accepted size bounds.
+ * Validates that `answers` is a shallow Record of at most {@link FORM_MAX_QUESTIONS} keys whose
+ * values are strings, string arrays, numbers, a survey grid's flat row map or a priced grid's
+ * cell quantities - all within the bounds of
+ * `libs/contracts/form-answers.json` (`isAcceptedAnswerValue`). A grid's rows and columns are judged
+ * against the form by `submit`; this checks only the shape and the size.
  */
 export function IsValidAnswers(options?: ValidationOptions) {
   return function (object: object, propertyName: string) {
@@ -46,24 +60,11 @@ export function IsValidAnswers(options?: ValidationOptions) {
         validate(value: unknown): boolean {
           if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
           const entries = Object.entries(value as Record<string, unknown>);
-          if (entries.length > ANSWERS_MAX_KEYS) return false;
-          for (const [, v] of entries) {
-            if (typeof v === 'string') {
-              if (v.length > ANSWERS_MAX_STRING_LEN) return false;
-            } else if (Array.isArray(v)) {
-              if (v.length > ANSWERS_MAX_ARRAY_LEN) return false;
-              if (
-                v.some((item) => typeof item !== 'string' || item.length > ANSWERS_MAX_STRING_LEN)
-              )
-                return false;
-            } else if (typeof v !== 'number') {
-              return false;
-            }
-          }
-          return true;
+          if (entries.length > FORM_MAX_QUESTIONS) return false;
+          return entries.every(([, v]) => isAcceptedAnswerValue(v));
         },
         defaultMessage() {
-          return `answers must contain at most ${ANSWERS_MAX_KEYS} keys; each value must be a string (max ${ANSWERS_MAX_STRING_LEN} chars), an array of strings (max ${ANSWERS_MAX_ARRAY_LEN} items), or a number`;
+          return `answers must contain at most ${FORM_MAX_QUESTIONS} keys; each value must be a string (max ${ANSWER_MAX_TEXT_LENGTH} chars), an array of strings (max ${ANSWER_MAX_SELECTIONS} items), a number, a survey grid of at most ${GRID_MAX_ROWS} rows, or a priced grid of at most ${PRODUCT_GRID_MAX_CELLS} cells`;
         },
       },
     });
@@ -115,6 +116,14 @@ export class FormItemDto {
   @IsOptional()
   rows?: string[];
 
+  /**
+   * A REQUIRED grid demands an answer in every row when this is on; off (the default) one answered
+   * row is enough (decided 2026-11-06, D5). Read only for `matrix_single` / `matrix_multiple`.
+   */
+  @IsBoolean()
+  @IsOptional()
+  requireEveryRow?: boolean;
+
   @IsOptional()
   scale?: {
     min: number;
@@ -137,10 +146,24 @@ export class FormItemDto {
   @IsOptional()
   description?: string;
 
-  /** Optional image URL displayed above the input field in the fill page. */
+  /**
+   * Optional image shown under the question's label and help: the public URL the item-image upload
+   * answered (`/api/media/public/<uuid>`) and nothing else - never an outside address a guest's
+   * browser would be sent to. An empty string is no image. WHICH ids a form may cite is the
+   * service's check (`FormItemImagesService.claimForSave`).
+   */
   @IsString()
   @IsOptional()
+  @Matches(new RegExp(`${QUESTION_IMAGE_URL_RE.source}|^$`), {
+    message: 'imageUrl must be an image uploaded for this form',
+  })
   imageUrl?: string;
+
+  /** The image's text alternative, read by a screen reader; absent: the question's label is used. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(QUESTION_IMAGE_ALT_MAX_LENGTH)
+  imageAlt?: string;
 
   /**
    * Legacy conditional display: the id of the question this one depends on. Still accepted and
@@ -167,9 +190,26 @@ export class FormItemDto {
    */
   @IsOptional()
   showIf?: unknown;
+
+  /**
+   * A priced grid's definition (`type: 'product_grid'`): rows, columns, max per cell, closed cells,
+   * prices. Validated structurally in the service (`normaliseProductGridItems`, the shared rule in
+   * `product-grid-contract.ts`) like `showIf`, and stored normalised; ignored on any other type.
+   */
+  @IsOptional()
+  productGrid?: unknown;
 }
 
 export class CreateFormDto {
+  /**
+   * CREATE ONLY: the create's idempotency key, minted by the client so that a create whose answer
+   * was lost is sent again as the SAME create (the stored form is answered). Never the form's id:
+   * the server mints that. An edit sending it is refused (`FORM_CREATE_KEY_ON_EDIT`).
+   */
+  @IsUUID('4')
+  @IsOptional()
+  clientCreateId?: string;
+
   @IsString()
   @IsNotEmpty()
   title: string;
@@ -220,9 +260,13 @@ export class CreateFormDto {
   @IsOptional()
   ownerId?: string;
 
+  /**
+   * The association the form belongs to. On an edit: absent leaves it; `''` or `null` names none.
+   * Only a DRAFT may change it (`FormsService.associationAfterEdit`).
+   */
   @IsString()
   @IsOptional()
-  associationId?: string;
+  associationId?: string | null;
 
   /**
    * The pricing grid: `{ dimensions, cells }`. Absent or null leaves `basePrice` the only price.
@@ -265,6 +309,28 @@ export class CreateFormDto {
   @IsOptional()
   isPublic?: boolean;
 
+  /**
+   * CREATE ONLY: `true` stores the form as a DRAFT, seen by its managers alone until
+   * `POST /forms/:id/publish` (`form-status.ts`). Absent is a client that predates drafts: its form
+   * is published at once, as it always was. Refused on an edit - publishing is its own route, and a
+   * published form never goes back to draft.
+   */
+  @IsBoolean()
+  @IsOptional()
+  draft?: boolean;
+
+  /**
+   * What a public form asks a guest about who they are (`guest-identity.ts`): any of `lastName`,
+   * `firstName`, `email`, each required of the guest once asked. Absent keeps the stored value; an
+   * empty list or null asks nothing (stored as null).
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(GUEST_IDENTITY_FIELDS.length)
+  @ArrayUnique()
+  @IsIn(GUEST_IDENTITY_FIELDS, { each: true })
+  guestFields?: GuestIdentityField[] | null;
+
   /** Allow the same user to submit multiple times (e.g. product orders). */
   @IsBoolean()
   @IsOptional()
@@ -274,6 +340,14 @@ export class CreateFormDto {
   @IsBoolean()
   @IsOptional()
   allowCashPayment?: boolean;
+
+  /**
+   * Whether online payment is accepted (`payment-offer.ts`). Absent keeps the stored value - true
+   * for a new form, which is what every client before the choice meant.
+   */
+  @IsBoolean()
+  @IsOptional()
+  allowOnlinePayment?: boolean;
 
   /** Days before an unvalidated cash submission expires. */
   @IsInt()
@@ -295,18 +369,83 @@ export class CreateFormDto {
 export class UpdateFormDto extends CreateFormDto {}
 
 /**
- * A guest's answer to a public form: the answers, how they pay when the form charges, and nothing
- * that could name anyone. No account, no stored address, no return URL - the server chooses where
- * Lydia sends a guest back (`FormsService.submit`).
+ * An autosave of the editor (owner, 2026-11-08; `form-draft-revision.ts`): the revision it was built
+ * on, and the whole payload as typed. The document is NOT validated here - a half-built form is what
+ * an autosave carries - but as an edit's body when the revision is published.
+ */
+export class SaveFormDraftDto {
+  @IsInt()
+  @Min(0)
+  baseRevision: number;
+
+  @IsObject()
+  document: Record<string, unknown>;
+
+  /**
+   * The client's id for THIS save, kept on the revision it writes: a client whose answer was lost
+   * finds its own id in the 409 of its next save, and adopts the revision instead of a conflict.
+   */
+  @IsUUID('4')
+  @IsOptional()
+  saveId?: string;
+}
+
+/** Publishing or discarding the unpublished revision the editor holds, by its number. */
+export class FormRevisionDto {
+  @IsInt()
+  @Min(0)
+  revision: number;
+}
+
+/**
+ * Publishing the revision: `overwrite` confirms publishing over a form written since the revision
+ * started (refused `FORM_CHANGED_SINCE_REVISION` without it).
+ */
+export class PublishFormRevisionDto extends FormRevisionDto {
+  @IsBoolean()
+  @IsOptional()
+  overwrite?: boolean;
+}
+
+/**
+ * A guest's answer to a public form: the answers, how they pay when the form charges, and - only
+ * when the form asks for them (`guest-identity.ts`, owner 2026-11-06) - a name and an e-mail. No
+ * account, no stored network address, no return URL - the server chooses where Lydia sends a guest
+ * back (`FormsService.submit`).
  */
 export class GuestSubmitFormDto {
   @IsValidAnswers()
-  answers: Record<string, string | string[] | number>;
+  answers: Record<string, FormAnswerValue>;
 
-  /** Where Lydia sends the payment request. Forwarded to core-service, never persisted (PP2). */
+  /**
+   * Where Lydia sends the payment request when the form does NOT ask for the guest's e-mail.
+   * Forwarded to core-service, never persisted (PP2). When the form asks for it, `guestEmail` is
+   * that address and this field is not read.
+   */
   @IsEmail()
   @IsOptional()
   payerEmail?: string;
+
+  /**
+   * A guest's last name, first name and e-mail - only when the form asks for each
+   * (`guest-identity.ts`, which refuses one it does not ask and requires one it does). When the
+   * form asks for the e-mail it is also where Lydia sends the payment request (one address, typed
+   * once), and it is stored with the answer.
+   */
+  @IsString()
+  @IsOptional()
+  @MaxLength(GUEST_NAME_MAX_LENGTH)
+  guestLastName?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(GUEST_NAME_MAX_LENGTH)
+  guestFirstName?: string;
+
+  @IsEmail()
+  @IsOptional()
+  @MaxLength(GUEST_EMAIL_MAX_LENGTH)
+  guestEmail?: string;
 
   /** `online` (default) or `cash` (when the form allows it). */
   @IsString()
@@ -349,8 +488,23 @@ export class SubmitFormDto {
   @IsOptional()
   payerEmail?: string;
 
+  /**
+   * DECLARED SO A MEMBER'S ANSWER CARRYING THEM IS REFUSED, NOT STRIPPED. A member is never asked
+   * for a guest's name or e-mail (Canari knows who they are); the global pipe's `whitelist` would
+   * silently drop an undeclared field, and a dropped field is a save that did something else than
+   * it said. `guestIdentityFor` answers 400 `FORM_GUEST_IDENTITY_NOT_ASKED` for any of them.
+   */
+  @IsOptional()
+  guestLastName?: string;
+
+  @IsOptional()
+  guestFirstName?: string;
+
+  @IsOptional()
+  guestEmail?: string;
+
   @IsValidAnswers()
-  answers: Record<string, string | string[] | number>;
+  answers: Record<string, FormAnswerValue>;
 
   @IsString()
   @IsOptional()

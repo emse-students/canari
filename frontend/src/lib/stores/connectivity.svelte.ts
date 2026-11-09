@@ -93,8 +93,23 @@ export interface TrackRequestOptions {
 
 /** A request counted by {@link ConnectivityStore.trackRequest}; settle it exactly once. */
 export interface TrackedRequest {
-  /** The server answered (any status). `latencyMs` is excluded from the average when `measured` is false. */
+  /**
+   * OUR API answered (any status, its JSON - see `responseOrigin`). `latencyMs` is excluded from the
+   * average when `measured` is false.
+   */
   answered(measured?: boolean): void;
+  /**
+   * Something answered that is not proven to be our API (no JSON type): a captive portal's `511`, a
+   * WAF's HTML `403`, an edge's 5xx page - and equally our own non-JSON answers, which the header
+   * cannot tell apart (a binary live segment, a `204`, a void handler, nginx's HTML `401` from
+   * `auth_request`). So it says nothing about REACHABILITY, which it leaves where it was, and no
+   * latency sample is taken. It does say the LINK delivered an answer: the stall count restarts and
+   * `lastAnswerAt` moves, so slow / not-JSON / slow is never two stalls in a row, and a slow route
+   * beside it is not read as a quiet link by the in-flight hint.
+   *
+   * @param what The request and what answered it, for the debug line.
+   */
+  unproven(what: string): void;
   /** The request failed before an answer: a transport failure, a deadline expiry or a cancellation. */
   failed(error: unknown): void;
 }
@@ -341,6 +356,14 @@ class ConnectivityStore {
         this.lastAnswerAt = Date.now();
         this.notifyServerReachable();
         if (measured) this.observeLatency(Date.now() - startedAt);
+        this.recomputeSlow();
+      },
+      unproven: (what) => {
+        if (!this.inFlight.has(id)) return;
+        settle();
+        this.consecutiveStalls = 0;
+        this.lastAnswerAt = Date.now();
+        console.debug(`[CONNECTIVITY] ${what} - not proven to be the API, reachability unchanged`);
         this.recomputeSlow();
       },
       failed: (error) => {

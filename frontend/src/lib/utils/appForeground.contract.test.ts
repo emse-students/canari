@@ -1,0 +1,120 @@
+import { readFileSync } from 'node:fs';
+import { APP_FOREGROUND_EVENT } from './appForeground';
+
+/**
+ * BOTH PHONE SHELLS TELL THE PAGE WHETHER THE APP IS ON SCREEN, IN ONE CONTRACT (2026-11-02).
+ *
+ * The page has ONE implementation (`appForeground.ts`, `appForegroundState.svelte.ts`) and it reads
+ * `window.__canariForeground` plus the `canari:foreground` event. Android wrote both; iOS wrote
+ * neither, so on an iPhone the page believed itself on screen for ever and a frame processed in the
+ * seconds before suspension counted as read on arrival. A shell that drifts from the contract makes
+ * the page silently go back to "always on screen", which no other test would see.
+ */
+const android = readFileSync(
+  'src-tauri/gen/android/app/src/main/java/fr/emse/canari/MainActivity.kt',
+  'utf8'
+);
+const ios = readFileSync('src-tauri/gen/apple/Sources/canari/canari_ios.mm', 'utf8');
+
+/** The body of the ObjC function `name` (up to the next top-level closing brace). */
+function objcBody(source: string, signature: string): string {
+  const start = source.indexOf(signature);
+  expect(start, signature).toBeGreaterThan(-1);
+  return source.slice(start, source.indexOf('\n}\n', start));
+}
+
+describe('the foreground contract between the shells and the page', () => {
+  it('names the event the page listens for', () => {
+    expect(APP_FOREGROUND_EVENT).toBe('canari:foreground');
+  });
+
+  it.each([
+    ['Android', android],
+    ['iOS', ios],
+  ])('%s writes the global AND dispatches the event', (_shell, source) => {
+    expect(source).toContain('window.__canariForeground=');
+    expect(source).toContain(`new CustomEvent('${APP_FOREGROUND_EVENT}',{detail:{foreground:`);
+  });
+
+  it.each([
+    ['Android', android],
+    ['iOS', ios],
+  ])('%s carries the link a resume opens in the edge itself', (_shell, source) => {
+    expect(source).toMatch(/detail:\{foreground:[^}]*,opening:/);
+  });
+
+  /** The block of the LAST observer registered for `name` (didBecomeActive has two). */
+  function observer(name: string): string {
+    const at = ios.lastIndexOf(`addObserverForName:${name}`);
+    expect(at, name).toBeGreaterThan(-1);
+    return ios.slice(at, ios.indexOf('}];', at));
+  }
+
+  it('iOS publishes leaving at didEnterBackground, and coming back when the resume COMPLETES', () => {
+    expect(observer('UIApplicationDidEnterBackgroundNotification')).toContain(
+      'CanariPublishForeground(nil);'
+    );
+    // The resume begins at willEnterForeground and publishes nothing there: a tapped notification
+    // reaches the delegate before the resume completes, and its link must ride the edge.
+    const begins = observer('UIApplicationWillEnterForegroundNotification');
+    expect(begins).toContain('g_resumePending = true;');
+    expect(begins).not.toContain('CanariPublishForeground');
+    // ...and it is PUBLISHED from the answer of a notification-center round trip, so a tap whose
+    // delegate call comes after `didBecomeActive` is still noted first; a `didBecomeActive` with no
+    // resume pending drops any link a cold launch left.
+    const completes = observer('UIApplicationDidBecomeActiveNotification');
+    const noResume = completes.indexOf('if (!g_resumePending) {');
+    expect(noResume).toBeGreaterThan(-1);
+    expect(completes.slice(noResume, completes.indexOf('return;', noResume))).toContain(
+      'g_resumeOpening = nil;'
+    );
+    const roundTrip = completes.indexOf('getNotificationSettingsWithCompletionHandler:');
+    expect(roundTrip).toBeGreaterThan(noResume);
+    expect(completes.indexOf('CanariPublishForeground(opening);')).toBeGreaterThan(roundTrip);
+    // The ordering is an argument, not a proof: both ends of the round trip are logged, so the
+    // device reading (device-verification LA steps 5 and 8) places the tap line between them.
+    const awaiting = completes.indexOf('awaiting the notification-center round trip');
+    expect(awaiting).toBeGreaterThan(noResume);
+    expect(awaiting).toBeLessThan(roundTrip);
+    const answered = completes.indexOf('round trip answered: publishing the foreground edge');
+    expect(answered).toBeGreaterThan(roundTrip);
+    expect(answered).toBeLessThan(completes.indexOf('CanariPublishForeground(opening);'));
+    // The tap is accepted as the resume's while one is in progress, even on an active app.
+    expect(objcBody(ios, 'void CanariNoteResumeOpening(')).toContain(
+      'state == UIApplicationStateActive && !g_resumePending'
+    );
+    const loadObserver = ios.slice(
+      ios.indexOf('@implementation CanariLoadObserver'),
+      ios.indexOf('@end', ios.indexOf('@implementation CanariLoadObserver'))
+    );
+    expect(loadObserver).toContain('CanariPublishForeground(nil);');
+  });
+
+  it('iOS notes a tap on a PAGE notification, with the page marker, only when a plugin takes it and before it does', async () => {
+    const { PAGE_NOTIFICATION_OPENING } = await import('./chat/resumeOpening.svelte');
+    const push = readFileSync('src-tauri/gen/apple/Sources/canari/canari_push.mm', 'utf8');
+    const note = push.indexOf(`CanariNoteResumeOpening(@"${PAGE_NOTIFICATION_OPENING}");`);
+    expect(note).toBeGreaterThan(-1);
+    expect(note).toBeLessThan(push.indexOf('didReceiveNotificationResponse:response', note));
+    // Only inside the branch that HAS a plugin to hand it to: without one no handler names anything.
+    const branch = push.lastIndexOf('if ([plugin respondsToSelector:_cmd]) {', note);
+    expect(branch).toBeGreaterThan(-1);
+    expect(push.slice(branch, note)).not.toContain('}');
+  });
+
+  it('iOS notes a tapped notification for the resume BEFORE the page is told of the tap', () => {
+    const push = readFileSync('src-tauri/gen/apple/Sources/canari/canari_push.mm', 'utf8');
+    const note = push.indexOf('CanariNoteResumeOpening(deepLink);');
+    expect(note).toBeGreaterThan(-1);
+    expect(note).toBeLessThan(push.indexOf('CanariQueueNotificationTap(deepLink);', note));
+  });
+
+  it('iOS never publishes from the ACTIVE pair handlers: a Face ID sheet does not take the app off screen', () => {
+    for (const signature of [
+      'static void CanariOnDidBecomeActive(',
+      'static void CanariOnWillResignActive(',
+    ]) {
+      expect(objcBody(ios, signature), signature).not.toContain('CanariPublishForeground');
+    }
+  });
+});
