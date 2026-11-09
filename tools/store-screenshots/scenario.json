@@ -55,7 +55,16 @@
         "Nickel, on se retrouve à 19 h 30 alors",
         "Je lance le sondage du thème, vous avez voté ?",
         "Oui ! Années 80 pour moi",
-        "Années 80 gagne, on sort les perruques"
+        "Années 80 gagne, on sort les perruques",
+        "Les perruques arrivent jeudi, je m'en occupe",
+        "Je prépare la playlist des années 80",
+        "Parfait, je fais l'affiche pour demain",
+        "Tu peux la poster dans le groupe quand elle est prête ?",
+        "Oui, je l'envoie ce soir",
+        "Trop hâte, ça va être top vendredi",
+        "On se retrouve devant la salle, comme prévu",
+        "Parfait, à vendredi alors !",
+        "Hâte d'y être !"
       ],
       "en": [
         "Who brings the speakers?",
@@ -71,7 +80,16 @@
         "Perfect, so we meet at 7:30 pm",
         "Did you all vote in the theme poll?",
         "Yes! 80s for me",
-        "80s wins, time to get the wigs out"
+        "80s wins, time to get the wigs out",
+        "The wigs arrive on Thursday, I'll handle them",
+        "I'm putting together the 80s playlist",
+        "Perfect, I'll make the poster for tomorrow",
+        "Can you post it here when it's ready?",
+        "Sure, I'll send it tonight",
+        "Can't wait, Friday is going to be great",
+        "We meet in front of the hall, as planned",
+        "Perfect, see you Friday then!",
+        "Can't wait!"
       ]
     },
     "speakers": {
@@ -89,7 +107,16 @@
         "third",
         "fourth",
         "peer",
-        "owner"
+        "owner",
+        "fourth",
+        "peer",
+        "third",
+        "owner",
+        "third",
+        "fourth",
+        "peer",
+        "owner",
+        "peer"
       ],
       "en": [
         "owner",
@@ -105,7 +132,16 @@
         "third",
         "fourth",
         "peer",
-        "owner"
+        "owner",
+        "fourth",
+        "peer",
+        "third",
+        "owner",
+        "third",
+        "fourth",
+        "peer",
+        "owner",
+        "peer"
       ]
     }
   },
@@ -134,7 +170,10 @@
     },
     "when": "Friday 20:00, relative to the capture date"
   },
-  "allowedInitials": { "fr": ["SD", "BD", "CP", "CR"], "en": ["IP", "BD", "CP", "CR"] },
+  "allowedInitials": {
+    "fr": [],
+    "en": []
+  },
   "forbiddenOnScreen": [
     "Canari Test",
     "Environnement de test",
@@ -146,7 +185,11 @@
   "shots": [
     {
       "id": "1-promise",
-      "ios": [{"tab":2}],
+      "ios": [
+        {
+          "tab": 2
+        }
+      ],
       "route": "/chat",
       "caption": {
         "fr": "Ta vie asso, au même endroit",
@@ -167,9 +210,17 @@
     },
     {
       "id": "2-messaging",
-      "scrollTop": 330,
-      "iosScrollFromTop": 270,
-      "ios": [{"tab":2},{"tap":{"fr":"Soirée d'intégration","en":"Integration party"}}],
+      "ios": [
+        {
+          "tab": 2
+        },
+        {
+          "tap": {
+            "fr": "Soirée d'intégration",
+            "en": "Integration party"
+          }
+        }
+      ],
       "route": "/chat",
       "open": {
         "fr": "Soirée d'intégration",
@@ -185,31 +236,75 @@
       },
       "expect": {
         "fr": [
-          "Top ! Et les chips"
+          "Soirée d'intégration",
+          "Parfait, à vendredi alors"
         ],
         "en": [
-          "Great! And who is on snacks"
+          "Integration party",
+          "Perfect, see you Friday then"
         ]
       }
     },
     {
       "id": "3-communities",
-      "ios": [{"tab":1},{"tap":{"fr":"Campus","en":"Campus"}},{"tap":{"fr":"général","en":"général"}}],
+      "ios": [
+        {
+          "tab": 1
+        },
+        {
+          "tap": {
+            "fr": "Campus",
+            "en": "Campus"
+          }
+        },
+        {
+          "tap": {
+            "fr": "général",
+            "en": "général"
+          }
+        }
+      ],
       "route": "/communities",
-      "open": [{"fr":"Campus","en":"Campus"},{"fr":"général","en":"général"}],
+      "open": [
+        {
+          "fr": "Campus",
+          "en": "Campus"
+        },
+        {
+          "fr": "général",
+          "en": "général"
+        }
+      ],
       "caption": {
         "fr": "Des communautés à ton image",
         "en": "Communities of your own"
       },
       "expect": {
-        "fr": ["Bienvenue dans le campus"],
-        "en": ["Welcome to the campus"]
+        "fr": [
+          "Bienvenue dans le campus"
+        ],
+        "en": [
+          "Welcome to the campus"
+        ]
       }
     },
     {
       "id": "4-feed-polls",
-      "scrollAnchor": { "fr": "votez pour le thème", "en": "vote for the theme" },
-      "ios": [{"tab":0},{"tap":{"fr":"Associations","en":"Associations"}}],
+      "scrollAnchor": {
+        "fr": "votez pour le thème",
+        "en": "vote for the theme"
+      },
+      "ios": [
+        {
+          "tab": 0
+        },
+        {
+          "tap": {
+            "fr": "Associations",
+            "en": "Associations"
+          }
+        }
+      ],
       "route": "/posts",
       "caption": {
         "fr": "Actus et sondages du campus",
@@ -230,9 +325,26 @@
     },
     {
       "id": "5-agenda",
-      "ios": [{"tab":3},{"tap":{"fr":"Agenda Événements et calendrier","en":"Calendar Events and calendar"},"retry":true}],
-      "waitFor": {"fr": "Soirée d'intégration", "en": "Integration party"},
-      "scrollAnchor": {"fr": "Soirée d'intégration", "en": "Integration party"},
+      "ios": [
+        {
+          "tab": 3
+        },
+        {
+          "tap": {
+            "fr": "Agenda Événements et calendrier",
+            "en": "Calendar Events and calendar"
+          },
+          "retry": true
+        }
+      ],
+      "waitFor": {
+        "fr": "Soirée d'intégration",
+        "en": "Integration party"
+      },
+      "scrollAnchor": {
+        "fr": "Soirée d'intégration",
+        "en": "Integration party"
+      },
       "route": "/calendar",
       "caption": {
         "fr": "Agenda et associations réunis",
@@ -249,7 +361,30 @@
     },
     {
       "id": "6-privacy",
-      "ios": [{"tab":3},{"tap":{"fr":"Voir mon profil","en":"View my profile"}},{"tap":{"fr":"Paramètres","en":"Settings"}},{"tap":{"fr":"Sécurité & appareils","en":"Security & devices"}}],
+      "ios": [
+        {
+          "tab": 3,
+          "top": true
+        },
+        {
+          "tap": {
+            "fr": "Voir mon profil",
+            "en": "View my profile"
+          }
+        },
+        {
+          "tap": {
+            "fr": "Paramètres",
+            "en": "Settings"
+          }
+        },
+        {
+          "tap": {
+            "fr": "Sécurité & appareils",
+            "en": "Security & devices"
+          }
+        }
+      ],
       "route": "/settings/security",
       "caption": {
         "fr": "Ta vie privée, protégée",

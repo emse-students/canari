@@ -149,9 +149,11 @@ export const CLOSE_BANNER = `(()=>{const el=[...document.querySelectorAll('div,s
  * @param {string} lang the language the capture was set to
  * @param {number} windowHeight the window height in points; elements wholly below it are off screen
  * @param {string[]} allowedInitials initials of a group or association badge (an organisation mark, not a person): not reported
+ * @param {number} topInset height in points of the status bar: an element wholly above it is under the bar, not visible
  */
-export function treeProbe(flat, lang, windowHeight = 844, allowedInitials = []) {
-  const onScreen = flat.filter((e) => e.rect && e.rect.height > 0 && e.rect.width > 0 && e.rect.y < windowHeight && e.rect.y + e.rect.height > 0);
+export function treeProbe(flat, lang, windowHeight = 844, allowedInitials = [], topInset = 47) {
+  // Content scrolled under the status bar (its bottom edge above `topInset`) is hidden by the bar's own blur: not on screen.
+  const onScreen = flat.filter((e) => e.rect && e.rect.height > 0 && e.rect.width > 0 && e.rect.y < windowHeight && e.rect.y + e.rect.height > topInset);
   const ordered = [...onScreen].sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x);
   const initials = ordered.filter((e) => {
     const bare = String(e.type ?? '').replace(/^XCUIElementType/, '');

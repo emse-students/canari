@@ -98,7 +98,7 @@ function verify(source = opt('source', 'web')) {
         continue;
       }
       const text = readFileSync(f, 'utf8');
-      for (const s of shot.expect[lang]) if (!text.includes(s)) problems.push(`${source}/${lang}/${shot.id}: missing demo text "${s}"`);
+      for (const s of [...shot.expect[lang], ...(shot.expectBySource?.[source]?.[lang] ?? [])]) if (!text.includes(s)) problems.push(`${source}/${lang}/${shot.id}: missing demo text "${s}"`);
       for (const l of text.split(String.fromCharCode(10)).filter((x) => x.startsWith('[MEDIA]'))) problems.push(`${source}/${lang}/${shot.id}: ${l.slice(8)}`);
       for (const s of scenario.forbiddenOnScreen) if (text.includes(s)) problems.push(`${source}/${lang}/${shot.id}: forbidden text on screen "${s}"`);
     }
@@ -115,7 +115,10 @@ function fontFile() {
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 /** The HTML of one composed image. Layout is in units of the canvas width so every size shares one design. */
-function page(size, caption, sub, img) {
+/** Fraction of a native capture's width taken by its system status bar: cropped off, since it carries the phone's own clock and notification icons (a bench phone's, never a demo's). */
+const STATUS_BAR = { android: 84 / 1080, ios: 130 / 1206 };
+
+function page(size, caption, sub, img, trim = 0) {
   const { width: W, height: H } = size;
   const { field, ink } = cfg.look;
   const feature = size.kind === 'feature';
@@ -136,7 +139,7 @@ body{position:relative;font-family:Fredoka,sans-serif;color:${ink}}
      ? `left:${0.64 * W}px;width:${0.27 * W}px;top:${0.1 * H}px;height:${H}px`
      : `left:${0.07 * W}px;width:${0.86 * W}px;top:${sub ? 0.4 * W : 0.34 * W}px;height:${H}px`
  }}
-.ui img{display:block;width:100%;height:auto}`;
+.ui img{display:block;width:100%;height:auto;margin-top:-${(trim * 100).toFixed(3)}%}`;
   return `<!doctype html><meta charset=utf-8><style>${css}</style><div class=cap><h1>${esc(caption)}</h1>${sub && !feature ? `<p>${esc(sub)}</p>` : ''}</div><div class=ui><img src="${img}"></div>`;
 }
 
@@ -174,7 +177,7 @@ async function compose() {
           }
           const imgName = `${lang}-${src}-${it.shot}.png`;
           copyFileSync(join(work, src, lang, `${it.shot}.png`), join(stage, imgName));
-          writeFileSync(join(stage, 'c.html'), page(size, it.caption, it.sub, imgName));
+          writeFileSync(join(stage, 'c.html'), page(size, it.caption, it.sub, imgName, hasNative ? STATUS_BAR[native] : 0));
           await tab.send('Emulation.setDeviceMetricsOverride', { width: size.width, height: size.height, deviceScaleFactor: 1, mobile: false });
           await tab.goto(`http://127.0.0.1:${srv.port}/c.html`, 600);
           await tab.ev('document.fonts.ready.then(()=>Promise.all([...document.images].map(i=>i.decode())))');

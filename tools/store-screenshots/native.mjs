@@ -79,6 +79,14 @@ async function runIos() {
           const t = bar[step.tab];
           if (!t) throw new Error(`tab ${step.tab} not on screen (${bar.length} tabs): is the app signed in?`);
           await ios.tapAt(sid, Math.round(t.x + t.width / 2), Math.round(t.y + t.height / 2));
+          if (step.top) {
+            // The tab keeps the scroll position it was left at: drag back to the top (right margin, fast).
+            await sleep(2500);
+            for (let i = 0; i < 3; i++) {
+              await ios.swipe(sid, 382, 300, 382, 700, 0.25);
+              await sleep(1500);
+            }
+          }
         } else {
           await ios.tapText(sid, step.tap[lang]);
           await sleep(4500);
