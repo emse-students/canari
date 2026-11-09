@@ -8,9 +8,13 @@
  * now goes through `gotoAppPath`, which loads such a path as a document (the server on the web, the
  * embedded build on a phone).
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+
+// The association picker's panel leaves by an outro when an option is chosen.
+afterAll(adoptTransitionAnimations());
 
 const route = vi.hoisted(() => ({
   page: { params: {}, url: new URL('https://canari.test/forms/create'), state: {} },
@@ -42,7 +46,7 @@ vi.mock('$lib/forms/api', async (orig) => ({
   saveFormDraft: api.saveFormDraft,
   publishFormDraft: api.publishFormDraft,
 }));
-const assos = vi.hoisted(() => ({ list: [] as { id: string; name: string }[] }));
+const assos = vi.hoisted(() => ({ list: [] as { id: string; name: string; type?: string }[] }));
 vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),
   listMyAssociations: async () => assos.list,
@@ -244,36 +248,92 @@ describe('the form builder saves as it is typed', () => {
   );
 });
 
-describe('the association of a create sent', () => {
+/** Opens the association picker and picks the option labelled `label`. */
+async function pickAssociation(label: string) {
+  document.querySelector<HTMLButtonElement>('#association-select')!.click();
+  await settle();
+  const option = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(
+    (o) => o.textContent?.trim() === label
+  );
+  expect(option, `no option ${label}`).toBeDefined();
+  option!.click();
+  await settle();
+}
+
+/** Types `value` into the title. */
+async function typeTitle(value: string) {
+  const title = document.querySelector<HTMLInputElement>(
+    `input[placeholder="${m.form_title_placeholder()}"]`
+  )!;
+  title.value = value;
+  title.dispatchEvent(new Event('input', { bubbles: true }));
+  await settle();
+}
+
+/** The association each create named, in order. */
+const createdUnder = () =>
+  api.createForm.mock.calls.map(([p]) => (p as { associationId?: string }).associationId);
+/** The association the last saved revision carries. */
+const lastSavedAssociation = () =>
+  (api.saveFormDraft.mock.calls.at(-1)![2] as { associationId?: string }).associationId;
+
+// THE AUTOSAVE MUST NOT LOCK THE OWNER (owner, 2026-11-09: "la sauvegarde auto empeche de modifier
+// le proprietaire du formulaire"). The first autosave creates the draft under the association picked
+// then; the picker used to shut from that moment. A later choice now rides in the revision, and the
+// publication moves the draft (`FormsService.associationAfterEdit`).
+describe('the association of a draft being built', () => {
+  const BDE = { id: 'a1', name: 'BDE', type: 'association' };
+  const BDS = { id: 'a2', name: 'BDS', type: 'association' };
+
+  async function openBuilder() {
+    route.page.url = new URL('https://canari.test/forms/create?association=a1');
+    const app = mount(Page, { target: document.body });
+    mounted.push(() => void unmount(app));
+    await settle();
+    await vi.waitFor(() => expect(document.querySelector('#association-select')).not.toBeNull());
+  }
+
   it(
-    'is fixed from the FIRST create sent, answered or not: its replay must name the same one',
+    'stays changeable after the first autosave: the new choice is saved, and two quick edits keep it',
     async () => {
-      vi.spyOn(console, 'warn').mockImplementation(() => {});
-      assos.list = [{ id: 'a1', name: 'BDE' }];
-      api.createForm.mockRejectedValueOnce(new TypeError('Failed to fetch'));
-      route.page.url = new URL('https://canari.test/forms/create');
-      const app = mount(Page, { target: document.body });
-      mounted.push(() => void unmount(app));
-      await settle();
-      const picker = () => document.querySelector<HTMLElement>('#association-select');
-      const shut = () =>
-        picker()?.hasAttribute('disabled') === true ||
-        picker()?.getAttribute('aria-disabled') === 'true';
-      await vi.waitFor(() => expect(picker()).not.toBeNull());
-      expect(shut()).toBe(false);
+      assos.list = [BDE, BDS];
+      await openBuilder();
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       try {
-        const title = document.querySelector<HTMLInputElement>(
-          `input[placeholder="${m.form_title_placeholder()}"]`
-        )!;
-        title.value = 'Soiree';
-        title.dispatchEvent(new Event('input', { bubbles: true }));
-        await settle();
+        await typeTitle('Soiree');
         await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
         await settle();
-        // The create reached no answer: it may have stored the form all the same.
-        expect(api.createForm).toHaveBeenCalledTimes(1);
-        expect(shut()).toBe(true);
+        expect(createdUnder()).toEqual(['a1']);
+        const picker = document.querySelector<HTMLButtonElement>('#association-select')!;
+        expect(picker.disabled).toBe(false);
+
+        // Two quick edits, inside one pause: the association, then the title.
+        await pickAssociation('BDS');
+        await typeTitle('Soiree BDS');
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        expect(api.saveFormDraft).toHaveBeenLastCalledWith(
+          serverId(),
+          1,
+          expect.objectContaining({ title: 'Soiree BDS', associationId: 'a2' }),
+          expect.any(String),
+          { leaving: false }
+        );
+        // The draft exists: never created again, under either association.
+        expect(createdUnder()).toEqual(['a1']);
+        expect(document.querySelector('[data-testid="form-association-pending"]')).not.toBeNull();
+
+        // A later edit does not put the old association back.
+        await typeTitle('Soiree BDS 2');
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        expect(lastSavedAssociation()).toBe('a2');
+
+        // And back to personal: said, not left out (an absent field would mean "leave it").
+        await pickAssociation(m.form_association_none());
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        expect(lastSavedAssociation()).toBe('');
       } finally {
         vi.useRealTimers();
         assos.list = [];
@@ -281,33 +341,54 @@ describe('the association of a create sent', () => {
     },
     MOUNT_BUDGET_MS
   );
+
   it(
-    'opens again after a definite refusal of that create: nothing was stored under it',
+    'a create that reached no answer is replayed naming the association it was SENT with, the revision the new one',
     async () => {
       vi.spyOn(console, 'warn').mockImplementation(() => {});
-      assos.list = [{ id: 'a1', name: 'BDE' }];
-      api.createForm.mockRejectedValueOnce(new SocialApiError('Forbidden', null, 403));
-      route.page.url = new URL('https://canari.test/forms/create');
-      const app = mount(Page, { target: document.body });
-      mounted.push(() => void unmount(app));
-      await settle();
-      const picker = () => document.querySelector<HTMLElement>('#association-select');
-      const shut = () =>
-        picker()?.hasAttribute('disabled') === true ||
-        picker()?.getAttribute('aria-disabled') === 'true';
-      await vi.waitFor(() => expect(picker()).not.toBeNull());
+      assos.list = [BDE, BDS];
+      api.createForm.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      await openBuilder();
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       try {
-        const title = document.querySelector<HTMLInputElement>(
-          `input[placeholder="${m.form_title_placeholder()}"]`
-        )!;
-        title.value = 'Soiree';
-        title.dispatchEvent(new Event('input', { bubbles: true }));
-        await settle();
+        await typeTitle('Soiree');
         await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
         await settle();
-        expect(api.createForm).toHaveBeenCalledTimes(1);
-        expect(shut()).toBe(false);
+        expect(createdUnder()).toEqual(['a1']);
+        // It may have stored the form under a1 all the same; the builder still chooses.
+        await pickAssociation('BDS');
+        window.dispatchEvent(new Event('online'));
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        expect(createdUnder()).toEqual(['a1', 'a1']);
+        expect(lastSavedAssociation()).toBe('a2');
+      } finally {
+        vi.useRealTimers();
+        assos.list = [];
+      }
+    },
+    MOUNT_BUDGET_MS
+  );
+
+  it(
+    'after a definite refusal of that create (nothing stored), the next create names the choice of then',
+    async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      assos.list = [BDE, BDS];
+      api.createForm.mockRejectedValueOnce(new SocialApiError('Forbidden', null, 403));
+      await openBuilder();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        await typeTitle('Soiree');
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        expect(createdUnder()).toEqual(['a1']);
+        await pickAssociation('BDS');
+        await typeTitle('Soiree BDS');
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        expect(createdUnder()).toEqual(['a1', 'a2']);
+        expect(document.querySelector('[data-testid="form-association-pending"]')).toBeNull();
       } finally {
         vi.useRealTimers();
         assos.list = [];
