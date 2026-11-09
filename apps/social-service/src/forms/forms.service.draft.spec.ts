@@ -117,15 +117,13 @@ describe('FormsService - drafts', () => {
       transaction: jest.fn((fn: (m: unknown) => Promise<unknown>) =>
         fn({
           createQueryBuilder: formRepo.createQueryBuilder,
-          // A create published at once (engagement WP-4): the form's own save, in the transaction
-          // that writes its followers' opening rows.
+          // A create published at once (engagement WP-4), and a move under the row lock it
+          // re-reads the status with: the form's own save, in the transaction.
           save: (_entity: unknown, x: unknown) => formRepo.save(x),
           query: jest.fn(() => Promise.resolve([])),
           // The publication's locked read of the form: the same row.
           findOne: (_entity: unknown, opts: { where: Record<string, unknown> }) =>
             formRepo.findOne(opts),
-          // A move's write, under the row lock it re-reads the status with.
-          save: (_entity: unknown, x: Record<string, unknown>) => formRepo.save(x),
         })
       ),
       query: jest.fn(),
