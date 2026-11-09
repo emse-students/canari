@@ -118,11 +118,20 @@ describe('the grapheme split', () => {
 
   it('stops at the first grapheme that is not an emoji, whatever the length', async () => {
     await withCountingSegmenter(({ isEmojiOnlyText }, counts) => {
-      expect(isEmojiOnlyText(`banc ouverture ${'x'.repeat(50_000)}`, 5)).toBe(false);
+      expect(isEmojiOnlyText(`banc ouverture 😀 ${'x'.repeat(50_000)}`, 5)).toBe(false);
       expect(counts.pulled).toBe(1);
       counts.pulled = 0;
       expect(isEmojiOnlyText(`😀😀${'x'.repeat(50_000)}`, 5)).toBe(false);
       expect(counts.pulled).toBe(3);
+    });
+  });
+
+  it('builds no segmenter and pulls nothing for a text without a pictograph', async () => {
+    await withCountingSegmenter(({ isEmojiOnlyText }, counts) => {
+      expect(isEmojiOnlyText(`banc ouverture ${'x'.repeat(50_000)}`, 5)).toBe(false);
+      expect(isEmojiOnlyText('1234 #*', 5)).toBe(false);
+      expect(counts.built).toBe(0);
+      expect(counts.pulled).toBe(0);
     });
   });
 

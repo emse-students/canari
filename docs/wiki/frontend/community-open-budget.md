@@ -1010,6 +1010,65 @@ only, within the spread), and the same on a salon spanning weeks, which no bench
 (`community-bench-seed.mjs` writes its messages in one burst) - `reopen>msgs` and the cached-reopen
 long task are the readings that should move there.
 
+### The composer's idle warm-up ran a 60 ms task inside every first open, and what is next (2026-11-09)
+
+**What was found.** The bench had hidden it: the page `fetch`ed `/emoji-data-fr.json` against a
+server that did not serve `static/`, so the composer's `warmEmojiPicker` (2026-11-08, so after the
+last phone reading above) failed at its fetch and cost nothing. With the file served, a FIRST open
+shows one more long task, 51-72 ms at x4, 350-550 ms after the gesture and before the widen's steps:
+the warm-up's `buildCatalog` over the ~1900 entries of the dataset. 85 % of it (7 of 8-10 ms on
+desktop at x1; `sort` 0.1, the picture check ~1) was `searchTokens` folding every entry's words
+(NFD, ligatures, a split) for a search box the member has not opened. It runs once per process, at
+the composer's first paint, which is exactly the window the first open is measured over and the
+widen is stepping in.
+
+**What changed.**
+- `EmojiEntry.words` is computed on first read, once per entry (`emojiCatalog.ts`, a memoised
+  getter). Only `EmojiGrid`'s search reads it, so the catalogue the warm-up builds folds nothing, and
+  a typed query folds the entries it ranks, once. Pinned by `emojiCatalog.lazyWords.test.ts`, which
+  counts reads of the one dataset field only the folding touches (0 after the build, 1 after a read,
+  the same array on a second read).
+- `isEmojiOnlyText` answers a text without a pictograph with its regex alone: no segmenter built on
+  the first bubble, no grapheme iterator per row after it. Same answer (a cluster with no
+  pictograph code point cannot match, and a text with none has no such cluster); pinned by "builds no
+  segmenter and pulls nothing for a text without a pictograph" in `emoji.test.ts`.
+
+**Measured** (`frontend/bench/salon-mount`, pane scene, 200 one-line own rows, x4, 9 runs
+interleaved against `origin/main`; a desktop V8 - a SHAPE, not the Mi 9T):
+
+| open | gesture task, base -> this | reveal | long tasks after the gesture, base -> this |
+| --- | --- | --- | --- |
+| first | 288 -> **279** | 303 -> **294** | 1 task, **70 ms** -> **0** (the median of nine; one run of nine kept a 50 ms task) |
+| reopen | 70 -> 66 | 80 -> 75 | 0 -> 0 |
+
+Layouts and style recalculations are unchanged (111 ms / 36 ms on the first open, both arms). The
+gain on the phone is the same task, which the Mi 9T runs at its own speed (4-6x slower than this
+workstation's x1 for script), so a task in the 60-150 ms range that no longer sits in the first
+open's window. **Owed on the Mi 9T, with the next pre-release:** `community-open.mjs`, cold, long
+tasks inside the salon open and `salon>msgs`; the first-open `salon>pane` that read 601 against 414
+on `1.6.8-alpha.1` pre-dates the warm-up and is still unexplained.
+
+**The bench now serves `static/`** for a root-relative fetch of the app's own (`/emoji-data-*.json`)
+and prints the long tasks AFTER the gesture next to the longest one. The 72 engine warnings of a
+first open are the emoji SVGs the bench does not serve (`/emoji/<hash>/*.svg`, 404): a bench gap, not
+an app defect, and the same on both arms.
+
+**Where the rest of a first open's cost is (profile of the same scene, x4; nothing here is fixed).**
+- The first open's LAYOUT is 111 ms of its 279, against 12 ms for the reopen of the same page: the
+  second open hits the engine's text-shaping caches for the same strings. It is paid by whoever
+  reads layout first (`pullToRefresh`'s `scrollTop` read in `syncMoveBinding`, then
+  `publishComposerHeight`): this is the finding of 2026-11-08 again, and moving the read moves the
+  cost. Fewer or shorter text runs in the first frame is the only lever left on it.
+- The 20 bubbles are ~140 of the 290 ms inclusive, flat: no function above 9 ms self (Svelte's
+  `append`, `update_reaction`, then `alternate_3`/`alternate_2` of `MessageBubble`).
+- `Icon` (`@lucide/svelte`) is ~30 ms inclusive on the hub's first open: each icon spreads its
+  attributes through Svelte's `get_attributes`/`get_setters`. A bubble or row icon drawn as a plain
+  inline SVG is the candidate, to be counted (how many icons does a first open mount?) before it is
+  built.
+- Ordered next steps: (1) the four closed overlays per bubble, mounted on first intent (above);
+  (2) the `Icon` count and cost; (3) the Mi 9T first-open reading that names the 190 ms before the
+  pane on `1.6.8-alpha.1`, which no desktop bench can.
+
 ## 7. Not measured, and owed
 
 - **A CPU profile of the warm resume at 4x** (blocker 5's 2 s before the tap is handled):
