@@ -222,6 +222,21 @@ export const LIVE_RULES_VERSION = 2;
  */
 export const LIVE_CHAT_MESSAGE_MAX_CHARS = 300;
 
+/**
+ * HOW MANY ACCOUNTS ONE CHAT LINE MAY MENTION (owner, 2026-11-09): the first `LIVE_CHAT_MENTIONS_MAX`
+ * of those a line declares are told, the rest are dropped by the server; `LIVE_CHAT_MENTIONS_DECLARED_MAX`
+ * bounds the list a client may declare at all (a longer one is 400 `LIVE_MESSAGE_INVALID`).
+ */
+export const LIVE_CHAT_MENTIONS_MAX = 5;
+export const LIVE_CHAT_MENTIONS_DECLARED_MAX = 20;
+
+/**
+ * A person is told of a mention by the SAME author on the SAME live at most once per this window,
+ * counted from the rows themselves (`live_chat_messages."mentionedUserIds"`), never a clock held in
+ * memory - the rule of every other limit of the chat (C6).
+ */
+export const LIVE_CHAT_MENTION_WINDOW_MS = 60_000;
+
 /** The AES-GCM overhead of a sealed message: a 12-byte IV and a 16-byte tag (C12). */
 export const LIVE_CHAT_SEAL_OVERHEAD_BYTES = 12 + 16;
 

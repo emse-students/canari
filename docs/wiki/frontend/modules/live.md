@@ -1006,7 +1006,7 @@ and drops the rest; **with reduced motion nothing moves** - one static counter p
 since the viewer opened.
 
 **What a line is (C11, C15).** Text, through `EmojiText` (Noto SVG for each emoji): never markup,
-never a link, never a mention; the name and the text are each a `<bdi>` (the text `dir="auto"`), so a U+202E in a message cannot reverse the line around it. The composer's `maxlength` is the server's `chatMessageMaxChars`
+never a link; a mention is the one exception ([below](#mentions-in-the-chat-owner-2026-11-09)); the name and the text are each a `<bdi>` (the text `dir="auto"`), so a U+202E in a message cannot reverse the line around it. The composer's `maxlength` is the server's `chatMessageMaxChars`
 (read once from `GET /api/lives/limits`), and `send` refuses an empty or longer message before
 sealing. Every string is Paraglide (`live_chat_*`, `live_reaction*`).
 
@@ -1282,3 +1282,22 @@ read that lands after `stop()` writes nothing (`#watchEpoch`).
 **The real count is owed a reading on the Mi 9T and the iPhone 12**: every read logs one greppable line,
 `[CAMERA_COUNT]` (logged once per session, again only if the count changes) `videoinput=N coarsePointer=.. facingMode=.. -> switch hidden|offered`. If a phone says
 `videoinput=1`, the rule is wrong for that browser and the line is the evidence.
+
+## Mentions in the chat (owner, 2026-11-09)
+
+The composer of `LiveChatPanel` is the shared `MentionComposerInput` (`singleLine`, Enter sends) instead
+of a plain input. `@` opens the ONE picker of the app: its roster is `liveMentionRoster` (the people the
+chat shows, latest speaker first, then the broadcaster) and its `audienceFilter` (`liveAudienceFilter`,
+from the `audienceOf` prop the viewer and the broadcaster's chat pass) tops it up from the name search
+with accounts the server's `mention-audience` lets through; a failed ask offers nobody from the
+directory and warns. The text carries `@[id]` tokens; `LiveChatSession.deliver` reads them from the line
+it drew and sends them as `mentions` beside the sealed text, the same ones on a retry. A line draws
+through `LiveChatLineText` and `LiveChatMention`; `mentionsViewer` tints the line of the account it names.
+Server: [lives](../../services/lives.md#mentions-in-the-live-chat-owner-2026-11-09). Owed: a phone
+reading of the picker over a playing live (the keyboard and the dropdown above the composer), and the
+push on both phones.
+
+**A defect found on the way.** `useMentionAutocomplete.suggestLocally` wrote `suggestions` and read it
+back to set `open`, inside the effect that follows the roster prop: the first `@` of any roster-backed
+picker ended in `effect_update_depth_exceeded` when the component was MOUNTED (no existing test did).
+Fixed by reading the local value; pinned by `MentionComposerInput.roster.svelte.test.ts`.
