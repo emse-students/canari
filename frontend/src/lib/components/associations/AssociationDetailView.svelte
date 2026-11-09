@@ -473,9 +473,7 @@
             {/if}
           </div>
           <!-- ONE ROW OF ACTIONS under the name, wrapping only when it must (design audit M7, 2026-11-09): they stacked as full-width bars on a phone, three of them taller than the identity above. -->
-          <div
-            class="flex w-full shrink-0 flex-row flex-wrap items-center gap-2 sm:w-auto"
-          >
+          <div class="flex w-full shrink-0 flex-row flex-wrap items-center gap-2 sm:w-auto">
             {#if userId}
               <Button variant="secondary" onclick={() => toggleFollow()} disabled={followLoading}>
                 {#if following}
