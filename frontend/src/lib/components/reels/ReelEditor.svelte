@@ -516,7 +516,7 @@
   }
 
   const toolClass =
-    'inline-flex h-11 w-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500';
+    'inline-flex h-11 w-11 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent-icon';
 </script>
 
 <div class="absolute inset-0 z-20 overflow-hidden bg-black text-white" data-reel-editor>
@@ -658,7 +658,7 @@
     <h1 class="min-w-0 text-base font-bold">{m.reels_editor_title()}</h1>
     <button
       type="button"
-      class="text-cn-ink inline-flex h-11 items-center gap-1.5 rounded-full bg-amber-500 px-4 text-sm font-bold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
+      class="text-cn-ink bg-accent hover:bg-accent-hover inline-flex h-11 items-center gap-1.5 rounded-full px-4 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
       disabled={busy}
       onclick={next}
       data-reel-editor-next
@@ -685,13 +685,13 @@
           bind:this={draftInput}
           bind:value={draft}
           maxlength="80"
-          class="min-w-0 flex-1 rounded-lg bg-white/15 px-3 py-2 text-base outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+          class="focus-visible:ring-accent-icon min-w-0 flex-1 rounded-lg bg-white/15 px-3 py-2 text-base outline-none focus-visible:ring-2"
           placeholder={m.reels_editor_text_placeholder()}
           aria-label={m.reels_editor_text_label()}
         />
         <button
           type="submit"
-          class="inline-flex items-center gap-2 rounded-lg bg-white/15 px-4 py-2 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500"
+          class="focus-visible:ring-accent-icon inline-flex items-center gap-2 rounded-lg bg-white/15 px-4 py-2 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2"
         >
           {m.reels_editor_text_done()}
         </button>
@@ -701,7 +701,7 @@
         {#each shelf as emoji (emoji)}
           <button
             type="button"
-            class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500"
+            class="focus-visible:ring-accent-icon inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg outline-none hover:bg-white/15 focus-visible:ring-2"
             aria-label={m.reels_editor_emoji_add({ emoji })}
             onclick={() => addEmoji(emoji)}
           >
@@ -710,7 +710,7 @@
         {/each}
         <button
           type="button"
-          class="inline-flex h-11 shrink-0 items-center justify-center rounded-lg px-3 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {gridOpen
+          class="focus-visible:ring-accent-icon inline-flex h-11 shrink-0 items-center justify-center rounded-lg px-3 text-sm font-semibold outline-none focus-visible:ring-2 {gridOpen
             ? 'bg-white/25'
             : 'hover:bg-white/15'}"
           aria-pressed={gridOpen}
@@ -736,7 +736,7 @@
         {#each TEXT_FONTS as face (face)}
           <button
             type="button"
-            class="inline-flex h-9 min-w-11 items-center justify-center rounded-lg px-2 text-base font-bold outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {font ===
+            class="focus-visible:ring-accent-icon inline-flex h-9 min-w-11 items-center justify-center rounded-lg px-2 text-base font-bold outline-none focus-visible:ring-2 {font ===
             face
               ? 'bg-white/25'
               : 'hover:bg-white/15'}"
@@ -750,7 +750,7 @@
         {/each}
         <button
           type="button"
-          class="inline-flex h-9 min-w-11 items-center justify-center rounded-lg px-2 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {background ===
+          class="focus-visible:ring-accent-icon inline-flex h-9 min-w-11 items-center justify-center rounded-lg px-2 outline-none focus-visible:ring-2 {background ===
           'pill'
             ? 'bg-white/25'
             : 'hover:bg-white/15'}"
@@ -770,7 +770,7 @@
         {#each colors as swatch (swatch)}
           <button
             type="button"
-            class="h-8 w-8 rounded-full border-2 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {color ===
+            class="focus-visible:ring-accent-icon h-8 w-8 rounded-full border-2 outline-none focus-visible:ring-2 {color ===
             swatch
               ? 'border-white'
               : 'border-white/30'}"
@@ -788,7 +788,7 @@
         {#each STROKE_WIDTHS as width, index (width)}
           <button
             type="button"
-            class="inline-flex h-9 w-11 items-center justify-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {penWidth ===
+            class="focus-visible:ring-accent-icon inline-flex h-9 w-11 items-center justify-center rounded-lg outline-none focus-visible:ring-2 {penWidth ===
             width
               ? 'bg-white/25'
               : 'hover:bg-white/15'}"

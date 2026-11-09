@@ -187,7 +187,7 @@
   data-removed={isRemoved}
   data-awaiting-admission={awaitingAdmission}
   data-selected={isSelected}
-  class="group flex w-full items-center gap-4 rounded-2xl p-3.5 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98] {isSelected
+  class="group focus-visible:ring-accent-icon flex w-full items-center gap-4 rounded-2xl p-3.5 text-left transition-all duration-200 outline-none focus-visible:ring-2 active:scale-[0.98] {isSelected
     ? 'bg-cn-surface border border-black/5 shadow-sm dark:border-white/10 '
     : unreadCount > 0
       ? 'hover:bg-cn-surface border border-transparent bg-white/30 dark:hover:bg-white/10'
@@ -239,7 +239,7 @@
         -->
         {#if pendingAsks > 0}
           <span
-            class="text-2xs bg-cn-yellow text-cn-ink inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1.5 font-bold shadow-sm"
+            class="text-2xs bg-accent text-cn-ink inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1.5 font-bold shadow-sm"
             data-join-asks={pendingAsks}
             role="img"
             aria-label={m.join_request_pending_badge_label({ count: pendingAsks })}

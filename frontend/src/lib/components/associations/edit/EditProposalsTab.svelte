@@ -112,7 +112,7 @@
     </p>
     <a
       href="/posts/{encodeURIComponent(proposal.subjectId)}"
-      class="text-xs font-semibold text-amber-600 hover:underline dark:text-amber-400"
+      class="text-accent-text text-xs font-semibold hover:underline"
     >
       {m.asso_republications_view_post()}
     </a>
@@ -142,7 +142,7 @@
   {#if loading}
     <div class="flex justify-center py-6">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else}
@@ -181,7 +181,7 @@
                 </button>
                 <button
                   type="button"
-                  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
+                  class="bg-accent text-cn-ink hover:bg-accent-hover rounded-xl px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
                   disabled={busy !== null || !proposal.subject}
                   onclick={() => decide(proposal, 'accept')}
                 >

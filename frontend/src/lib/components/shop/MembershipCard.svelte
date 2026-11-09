@@ -72,14 +72,14 @@
                 </p>
                 <ProductPrice product={tier} size="row" siblings={allProducts} />
                 {#if gridRefuses(tier)}
-                  <p class="text-xs text-amber-700 dark:text-amber-400">
+                  <p class="text-accent-text text-xs">
                     {m.shop_price_unavailable_hint()}
                   </p>
                 {:else if gridPriceIsProvisional(tier, signedIn)}
                   <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
                 {/if}
                 {#if membersBlocked(tier)}
-                  <p class="text-xs text-amber-700 dark:text-amber-400">
+                  <p class="text-accent-text text-xs">
                     {m.shop_members_only_hint()}
                   </p>
                 {/if}

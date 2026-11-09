@@ -51,7 +51,7 @@
         value={channelName}
         oninput={(e) => onChannelNameChange((e.target as HTMLInputElement).value)}
         placeholder={m.chat_modal_channel_name_placeholder()}
-        class="bg-cn-surface w-full rounded-xl border border-white/60 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-amber-400/45 dark:border-white/10"
+        class="bg-cn-surface focus:ring-accent/45 w-full rounded-xl border border-white/60 px-4 py-2.5 text-sm outline-none focus:ring-2 dark:border-white/10"
         onkeydown={(e) => e.key === 'Enter' && onSubmitChannel()}
       />
     </div>
@@ -78,7 +78,7 @@
           onclick={() => onVisibilityChange('private')}
           class="flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all {visibility ===
           'private'
-            ? 'border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400'
+            ? 'border-accent/30 bg-accent/10 text-accent-text border'
             : 'text-text-muted hover:text-text-main bg-cn-surface border border-white/60 dark:border-white/10 '}"
         >
           <Lock size={16} />
@@ -95,7 +95,7 @@
     <button
       onclick={onSubmitChannel}
       disabled={!channelName.trim()}
-      class="text-cn-ink w-full rounded-xl bg-amber-500 py-2.5 font-semibold transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+      class="text-cn-ink bg-accent hover:bg-accent-hover w-full rounded-xl py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50"
     >
       {m.chat_modal_create_channel_button()}
     </button>

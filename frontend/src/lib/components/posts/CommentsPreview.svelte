@@ -130,7 +130,7 @@
     <button
       type="button"
       onclick={() => onOpen({ write: true })}
-      class="mt-3 flex w-full items-center gap-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+      class="focus-visible:ring-accent-icon mt-3 flex w-full items-center gap-2.5 text-left outline-none focus-visible:ring-2"
     >
       <span class="block h-8 w-8 shrink-0"><Avatar userId={currentUserId} fill /></span>
       <span

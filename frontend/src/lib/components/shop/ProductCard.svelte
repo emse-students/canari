@@ -52,7 +52,7 @@
         <p class="text-text-main text-base font-semibold">{productDisplayName(product)}</p>
         {#if product.membersOnly}
           <span
-            class="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+            class="bg-accent/20 text-accent-text rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap"
           >
             {m.shop_members_only_badge()}
           </span>
@@ -82,12 +82,12 @@
         class="w-full"
       />
       {#if refused}
-        <p class="text-xs text-amber-700 dark:text-amber-400">{m.shop_price_unavailable_hint()}</p>
+        <p class="text-accent-text text-xs">{m.shop_price_unavailable_hint()}</p>
       {:else if gridPriceIsProvisional(product, signedIn)}
         <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
       {/if}
       {#if membersBlocked}
-        <p class="text-xs text-amber-700 dark:text-amber-400">{m.shop_members_only_hint()}</p>
+        <p class="text-accent-text text-xs">{m.shop_members_only_hint()}</p>
       {/if}
     </div>
   </div>

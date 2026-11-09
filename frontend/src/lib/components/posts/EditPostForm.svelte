@@ -369,7 +369,7 @@
 </script>
 
 <article
-  class="bg-cn-surface relative overflow-hidden rounded-lg border border-black/5 shadow-sm transition-all duration-300 focus-within:border-amber-500/30 focus-within:shadow-lg dark:border-white/10"
+  class="bg-cn-surface focus-within:border-accent/30 relative overflow-hidden rounded-lg border border-black/5 shadow-sm transition-all duration-300 focus-within:shadow-lg dark:border-white/10"
 >
   <!-- Header: what this is, and - since the identity cannot change - who it is published as. -->
   <div class="border-cn-border border-b px-5 py-3">
@@ -377,7 +377,7 @@
     {#if post.association}
       <p class="text-text-muted text-2xs mt-0.5 font-semibold">
         {m.post_edit_published_as()}
-        <span class="text-amber-600 dark:text-amber-400">{post.association.name}</span>
+        <span class="text-accent-text">{post.association.name}</span>
       </p>
     {/if}
   </div>
@@ -401,7 +401,7 @@
             for="edit-post-linked-calendar-event"
             class="text-text-muted text-2xs mb-1.5 ml-1 flex items-center gap-1.5 font-bold tracking-wider uppercase"
           >
-            <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
+            <CalendarCheck size={14} strokeWidth={2.5} class="text-accent-text" />
             {m.post_create_link_event_label()}
           </label>
           <Picker
@@ -606,7 +606,7 @@
         <button
           type="button"
           onclick={onCancel}
-          class="text-text-muted hover:text-text-main shrink-0 rounded-lg px-3 py-2 text-sm font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          class="text-text-muted hover:text-text-main focus-visible:ring-accent/50 shrink-0 rounded-lg px-3 py-2 text-sm font-bold transition-colors outline-none focus-visible:ring-2"
         >
           {m.common_cancel_button()}
         </button>

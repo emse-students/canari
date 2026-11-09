@@ -431,7 +431,7 @@ it('minimal: a loading reel shows its first frame picture, never a play glyph', 
 it('minimal: with no picture a loading reel is a black box, with no glyph', () => {
   const { target } = mountMinimal();
   expect(target.querySelector('[data-video-first-frame-poster]')).toBeNull();
-  expect(target.querySelector('.bg-cn-yellow')).toBeNull();
+  expect(target.querySelector('.bg-accent')).toBeNull();
 });
 
 it('minimal: a play button only when the engine REFUSES the autoplay', async () => {

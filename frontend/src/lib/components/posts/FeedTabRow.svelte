@@ -151,7 +151,7 @@
         <span
           aria-hidden="true"
           data-feed-tab-pill
-          class="pointer-events-none absolute inset-y-0 left-0 rounded-full border border-amber-500/40 bg-amber-500/20"
+          class="border-accent/40 bg-accent/20 pointer-events-none absolute inset-y-0 left-0 rounded-full border"
           style:width="{pill.w}px"
           style:transform="translate3d({pill.x}px, 0, 0)"
           style:transition={pillAnimated
@@ -166,7 +166,7 @@
           use:guideAnchor={`posts.tab.${tab.feed}`}
           onclick={() => onFeed(tab.feed)}
           aria-pressed={feed === tab.feed}
-          class="tap-target relative flex-1 shrink-0 rounded-full px-3.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none {feed ===
+          class="tap-target focus-visible:ring-accent-icon relative flex-1 shrink-0 rounded-full px-3.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:outline-none {feed ===
           tab.feed
             ? 'text-text-main font-semibold'
             : 'text-text-muted hover:text-text-main font-medium'}"

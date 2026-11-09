@@ -392,7 +392,7 @@
             class="{step.state === 'done'
               ? 'bg-green-ok/20 text-green-ok'
               : step.state === 'current' || step.state === 'in-flight'
-                ? 'bg-cn-yellow text-cn-ink'
+                ? 'bg-accent text-cn-ink'
                 : step.state === 'paused'
                   ? 'bg-red-err/10 text-red-err'
                   : 'bg-cn-bg text-text-muted'} text-2xs mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-bold"

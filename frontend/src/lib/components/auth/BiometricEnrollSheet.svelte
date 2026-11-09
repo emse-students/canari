@@ -33,8 +33,8 @@
   <div class="bg-text-muted/40 mx-auto mb-5 h-1 w-10 rounded-full"></div>
 
   <div class="mb-5 flex justify-center">
-    <div class="rounded-full bg-amber-500/10 p-5">
-      <FingerprintPattern size={52} strokeWidth={1.5} class="text-amber-500" />
+    <div class="bg-accent/10 rounded-full p-5">
+      <FingerprintPattern size={52} strokeWidth={1.5} class="text-accent-text" />
     </div>
   </div>
 
@@ -48,7 +48,7 @@
   <button
     type="button"
     onclick={onEnroll}
-    class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl py-3.5 text-sm font-bold transition-all active:scale-95"
+    class="bg-accent text-cn-ink hover:bg-accent-hover w-full rounded-xl py-3.5 text-sm font-bold transition-all active:scale-95"
   >
     {m.auth_biometric_enable_btn()}
   </button>

@@ -180,7 +180,7 @@
     {#snippet actions()}
       <a
         href="/forms/create"
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
+        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
       >
         <Plus size={16} />
         {m.form_list_new_button()}
@@ -191,7 +191,7 @@
   {#if loading}
     <div class="flex justify-center py-16">
       <div
-        class="border-cn-yellow h-10 w-10 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-10 w-10 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if forms.length === 0}
@@ -199,7 +199,7 @@
       class="border-cn-border rounded-2xl border-2 border-dashed bg-(--cn-surface) px-8 py-16 text-center"
     >
       <div
-        class="bg-cn-yellow/15 text-cn-dark mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl"
+        class="bg-accent/15 text-cn-dark mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl"
       >
         <FileText size={28} />
       </div>
@@ -209,7 +209,7 @@
       </p>
       <a
         href="/forms/create"
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
+        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
       >
         <Plus size={16} />
         {m.form_list_create_button()}
@@ -223,8 +223,8 @@
           class="border-cn-border rounded-2xl border-2 bg-(--cn-surface) transition-colors {expandedForms[
             form.id
           ]
-            ? 'border-cn-yellow/40'
-            : 'hover:border-cn-yellow/40'}"
+            ? 'border-accent/40'
+            : 'hover:border-accent/40'}"
         >
           <!-- Card header -->
           <div class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:p-5">
@@ -242,7 +242,7 @@
               <p class="mt-1.5 flex items-center gap-1.5 text-xs font-semibold">
                 {#if form.associationName}
                   <span
-                    class="bg-cn-yellow/15 text-cn-dark inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+                    class="bg-accent/15 text-cn-dark inline-flex items-center gap-1 rounded-full px-2 py-0.5"
                   >
                     <Users size={11} />
                     {m.form_list_association_badge({ association: form.associationName })}
@@ -281,7 +281,7 @@
             >
               <a
                 href="/forms/{form.id}/edit"
-                class="ui-icon-button bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl transition-colors"
+                class="ui-icon-button bg-accent text-cn-ink hover:bg-accent-hover rounded-xl transition-colors"
                 aria-label={m.form_list_edit_button()}
                 title={m.form_list_edit_button()}
               >
@@ -304,7 +304,7 @@
               {#if !isDraftForm(form)}
                 <button
                   onclick={() => copyFormLink(form)}
-                  class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
+                  class="ui-icon-button border-cn-border text-text-main hover:border-accent/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
                   aria-label={m.form_list_share_button()}
                   title={m.form_list_share_button()}
                 >
@@ -312,7 +312,7 @@
                 </button>
                 <button
                   onclick={() => (qrForm = form)}
-                  class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
+                  class="ui-icon-button border-cn-border text-text-main hover:border-accent/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
                   aria-label={m.qr_button()}
                   title={m.qr_button()}
                 >
@@ -329,8 +329,8 @@
                 class="ui-icon-button rounded-xl border-2 bg-(--cn-surface) transition-colors {expandedForms[
                   form.id
                 ]
-                  ? 'border-cn-yellow/40 bg-cn-yellow/10 text-cn-dark'
-                  : 'border-cn-border text-text-main hover:border-cn-yellow/40'}"
+                  ? 'border-accent/40 bg-accent/10 text-cn-dark'
+                  : 'border-cn-border text-text-main hover:border-accent/40'}"
                 aria-label={m.form_list_responses_button()}
                 title={m.form_list_responses_button()}
               >
@@ -358,7 +358,7 @@
               {#if submissionsData[form.id] === 'loading'}
                 <div class="flex justify-center py-4">
                   <div
-                    class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
+                    class="border-accent-icon h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
                   ></div>
                 </div>
               {:else if submissionsData[form.id] === 'error'}

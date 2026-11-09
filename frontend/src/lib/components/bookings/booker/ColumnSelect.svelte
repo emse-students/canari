@@ -36,7 +36,7 @@
           onclick={() => onSelect(resource.id)}
           class="min-h-11 rounded-full border px-4 text-sm font-semibold transition-colors {resource.id ===
           value
-            ? 'bg-cn-yellow text-cn-ink border-cn-yellow'
+            ? 'bg-accent text-cn-ink border-accent-icon'
             : 'border-cn-border bg-cn-surface text-text-main hover:bg-cn-border/30'}"
         >
           {resource.name}

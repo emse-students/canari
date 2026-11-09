@@ -75,7 +75,7 @@
       checked={enabled}
       disabled={sources.length === 0}
       onchange={(e) => toggle(e.currentTarget.checked)}
-      class="accent-cn-yellow mt-0.5 size-4"
+      class="accent-accent mt-0.5 size-4"
     />
     <span>
       <span class="text-text-main block text-xs font-semibold">

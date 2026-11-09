@@ -163,7 +163,7 @@
     {/if}
     <button
       onclick={refreshAll}
-      class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-text-main flex items-center gap-1.5 rounded-lg border bg-(--cn-surface) px-3 py-1.5 text-sm transition-colors"
+      class="border-cn-border text-text-muted hover:border-accent-icon hover:text-text-main flex items-center gap-1.5 rounded-lg border bg-(--cn-surface) px-3 py-1.5 text-sm transition-colors"
     >
       <RefreshCw size={14} />
       {m.common_refresh_button()}
@@ -244,7 +244,7 @@
             data-testid="period-{w}"
             onclick={() => choosePeriod(w)}
             class="px-3 py-1.5 transition-colors {period === w
-              ? 'bg-cn-yellow text-black'
+              ? 'bg-accent text-black'
               : 'text-text-muted hover:text-text-main'}"
           >
             {w === '24h'

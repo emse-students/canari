@@ -80,8 +80,8 @@
           data-menu-item={item.key}
           aria-current={item.selected ? 'true' : undefined}
           onclick={() => select(item.key)}
-          class="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60 {item.selected
-            ? 'bg-cn-yellow/15'
+          class="focus-visible:ring-accent/60 flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors outline-none focus-visible:ring-2 {item.selected
+            ? 'bg-accent/15'
             : 'hover:bg-black/5 dark:hover:bg-white/10'}"
         >
           {#if Icon}

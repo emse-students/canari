@@ -222,7 +222,7 @@
         type="button"
         onclick={add}
         data-testid="wizard-add"
-        class="bg-cn-yellow text-cn-ink min-h-11 rounded-lg px-5 text-sm font-bold"
+        class="bg-accent text-cn-ink min-h-11 rounded-lg px-5 text-sm font-bold"
         >{m.form_add_wizard_add()}</button
       >
     {/if}

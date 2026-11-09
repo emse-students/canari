@@ -485,7 +485,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
   bind:this={root}
-  class="relative flex items-center justify-center overflow-hidden bg-black outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {klass}"
+  class="focus-visible:ring-accent-icon relative flex items-center justify-center overflow-hidden bg-black outline-none focus-visible:ring-2 {klass}"
   role="group"
   aria-label={m.video_player_label()}
   tabindex="0"
@@ -573,7 +573,7 @@
            minimal player draws it on a decided outcome only, with or without a first frame. -->
       <button
         type="button"
-        class="bg-cn-yellow text-cn-ink absolute top-1/2 left-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
+        class="bg-accent text-cn-ink absolute top-1/2 left-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
         aria-label={m.video_play_label()}
         tabindex="-1"
         onclick={(e) => {
@@ -667,7 +667,7 @@
       >
         <button
           type="button"
-          class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500"
+          class="ui-icon-button focus-visible:ring-accent-icon rounded-full outline-none hover:bg-white/15 focus-visible:ring-2"
           aria-label={paused ? m.video_play_label() : m.video_pause_label()}
           onclick={togglePlay}
         >
@@ -702,13 +702,10 @@
               class="absolute inset-y-0 left-0 bg-white/45"
               style="width: {buffered * 100}%"
             ></div>
-            <div
-              class="bg-cn-yellow absolute inset-y-0 left-0"
-              style="width: {played * 100}%"
-            ></div>
+            <div class="bg-accent absolute inset-y-0 left-0" style="width: {played * 100}%"></div>
           </div>
           <div
-            class="bg-cn-yellow absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full shadow transition-transform group-focus-visible/seek:scale-125 group-focus-visible/seek:ring-2 group-focus-visible/seek:ring-white {scrubbing
+            class="bg-accent absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full shadow transition-transform group-focus-visible/seek:scale-125 group-focus-visible/seek:ring-2 group-focus-visible/seek:ring-white {scrubbing
               ? 'scale-125'
               : ''}"
             style="left: {played * 100}%"
@@ -717,9 +714,9 @@
 
         <button
           type="button"
-          class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500 {muted
+          class="ui-icon-button focus-visible:ring-accent-icon rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 {muted
             ? ''
-            : 'text-cn-yellow'}"
+            : 'text-accent'}"
           aria-label={m.video_sound_label()}
           aria-pressed={!muted}
           disabled={soundScope === 'silent'}
@@ -735,7 +732,7 @@
         {#if canFullscreen}
           <button
             type="button"
-            class="ui-icon-button rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-amber-500"
+            class="ui-icon-button focus-visible:ring-accent-icon rounded-full outline-none hover:bg-white/15 focus-visible:ring-2"
             aria-label={fullscreen ? m.video_exit_fullscreen_label() : m.video_fullscreen_label()}
             onclick={() => void toggleFullscreen()}
           >

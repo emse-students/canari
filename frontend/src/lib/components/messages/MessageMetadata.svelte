@@ -151,7 +151,7 @@
         </span>
       {:else if status === 'unconfirmed'}
         <span
-          class="text-2xs inline-flex items-center gap-1 font-semibold text-amber-600"
+          class="text-2xs text-accent-text inline-flex items-center gap-1 font-semibold"
           data-testid="message-unconfirmed"
         >
           <CircleHelp size={12} />

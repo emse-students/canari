@@ -207,7 +207,7 @@
   {#if loading}
     <div class="flex justify-center py-12">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else}
@@ -377,7 +377,7 @@
                   {#if childLoading === child.associationId}
                     <div class="flex justify-center py-6">
                       <div
-                        class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
+                        class="border-accent-icon h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
                       ></div>
                     </div>
                   {:else if (childPurchases[child.associationId]?.length ?? 0) === 0}

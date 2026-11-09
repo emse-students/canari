@@ -204,7 +204,7 @@
       data-reel-send-feed
     >
       <span
-        class="bg-cn-yellow/20 text-text-main flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+        class="bg-accent/20 text-text-main flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
       >
         <Film size={20} strokeWidth={2.25} />
       </span>
@@ -224,7 +224,7 @@
         bind:value={query}
         placeholder={m.reel_sendto_search()}
         aria-label={m.reel_sendto_search()}
-        class="border-cn-border text-text-main focus:border-cn-yellow w-full rounded-lg border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
+        class="border-cn-border text-text-main focus:border-accent-icon w-full rounded-lg border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
         data-reel-send-search
       />
     </div>
@@ -345,7 +345,7 @@
   <span
     class={[
       'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2',
-      on ? 'border-cn-yellow bg-cn-yellow text-black' : 'border-cn-border',
+      on ? 'border-accent-icon bg-accent text-black' : 'border-cn-border',
     ]}
     aria-hidden="true"
   >

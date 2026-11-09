@@ -83,16 +83,14 @@
         <p class="text-red-err text-sm">{error}</p>
         <button
           onclick={() => goto('/login', { replace: true })}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover mt-4 rounded-2xl px-6 py-3 font-bold transition-all"
+          class="bg-accent text-cn-ink hover:bg-accent-hover mt-4 rounded-2xl px-6 py-3 font-bold transition-all"
         >
           {m.auth_callback_retry()}
         </button>
       </div>
     {:else}
       <div class="space-y-4">
-        <div
-          class="bg-cn-yellow/20 mx-auto flex h-16 w-16 items-center justify-center rounded-full"
-        >
+        <div class="bg-accent/20 mx-auto flex h-16 w-16 items-center justify-center rounded-full">
           <span
             class="border-cn-dark/20 border-t-cn-dark inline-block h-6 w-6 animate-spin rounded-full border-3"
           ></span>

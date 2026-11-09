@@ -423,7 +423,7 @@
                 <span class="text-text-main truncate" title={bar.label}>{bar.label}</span>
                 <span class="bg-control-fill h-2.5 overflow-hidden rounded-full">
                   <span
-                    class="bg-cn-yellow block h-full rounded-full"
+                    class="bg-accent block h-full rounded-full"
                     style:width="{Math.round((100 * bar.count) / max)}%"
                   ></span>
                 </span>
@@ -448,7 +448,7 @@
                 >
                 <span class="bg-control-fill h-2.5 overflow-hidden rounded-full">
                   <span
-                    class="bg-cn-yellow block h-full rounded-full"
+                    class="bg-accent block h-full rounded-full"
                     style:width="{Math.round((100 * view.totals.total.units) / max)}%"
                   ></span>
                 </span>

@@ -72,7 +72,7 @@
   style="animation-fill-mode: backwards;"
 >
   <div class="mb-2 flex items-center gap-3">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
+    <div class="bg-accent/10 text-cn-dark rounded-xl p-2.5">
       <Info size={22} strokeWidth={2.5} />
     </div>
     <h2 class="text-text-main text-lg font-bold">{m.settings_about_heading()}</h2>

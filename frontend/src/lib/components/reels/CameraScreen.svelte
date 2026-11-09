@@ -404,7 +404,7 @@
     <div class="absolute inset-0 flex items-center justify-center">
       <button
         type="button"
-        class="inline-flex flex-col items-center gap-3 rounded-lg px-6 py-4 text-sm font-semibold text-white/90 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="focus-visible:ring-accent-icon inline-flex flex-col items-center gap-3 rounded-lg px-6 py-4 text-sm font-semibold text-white/90 outline-none hover:bg-white/10 focus-visible:ring-2"
         data-camera-reopen
         onclick={reopen}
       >
@@ -425,7 +425,7 @@
       <p class="text-sm text-white/70">{text.body()}</p>
       <button
         type="button"
-        class="mt-2 inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="focus-visible:ring-accent-icon mt-2 inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2"
         onclick={() => void session.start()}
       >
         <RefreshCcw size={16} strokeWidth={2.5} />
@@ -434,7 +434,7 @@
       {#if session.fault === 'denied' && canOpenSettings}
         <button
           type="button"
-          class="text-cn-ink inline-flex items-center gap-2 rounded-full bg-amber-500 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white"
+          class="text-cn-ink bg-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white"
           onclick={() => void openSettings()}
           data-camera-open-settings
         >
@@ -459,7 +459,7 @@
     {:else}
       <button
         type="button"
-        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
         aria-label={m.reels_camera_close()}
         title={m.reels_camera_close()}
         onclick={close}
@@ -473,7 +473,7 @@
         {#if session.canSwitch}
           <button
             type="button"
-            class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+            class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 disabled:opacity-40"
             aria-label={m.reels_camera_switch()}
             title={m.reels_camera_switch()}
             disabled={session.flipping || !flipAllowed}
@@ -485,14 +485,14 @@
         {#if session.torchAvailable}
           <button
             type="button"
-            class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+            class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
             aria-label={session.torchOn ? m.reels_camera_torch_off() : m.reels_camera_torch_on()}
             aria-pressed={session.torchOn}
             title={session.torchOn ? m.reels_camera_torch_off() : m.reels_camera_torch_on()}
             onclick={() => void session.toggleTorch()}
           >
             {#if session.torchOn}
-              <Zap size={22} strokeWidth={2.25} class="text-amber-400" />
+              <Zap size={22} strokeWidth={2.25} class="text-accent-text" />
             {:else}
               <ZapOff size={22} strokeWidth={2.25} />
             {/if}

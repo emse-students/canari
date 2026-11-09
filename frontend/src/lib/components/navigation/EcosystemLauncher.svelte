@@ -113,7 +113,7 @@
             e.preventDefault();
             openEcosystemSite(site.id);
           }}
-          class="text-text-main flex flex-col items-center gap-2 rounded-lg px-1 py-3 text-sm font-medium transition-colors hover:bg-amber-500/10"
+          class="text-text-main hover:bg-accent/10 flex flex-col items-center gap-2 rounded-lg px-1 py-3 text-sm font-medium transition-colors"
         >
           <img src={site.logo} alt="" width="48" height="48" class="size-12" />
           <span class="max-w-full truncate">{site.label()}</span>

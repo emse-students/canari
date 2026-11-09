@@ -90,9 +90,9 @@
         <span
           class="flex size-8 items-center justify-center rounded-full text-sm font-bold transition-colors {day.date ===
           date
-            ? 'bg-cn-yellow text-cn-ink'
+            ? 'bg-accent text-cn-ink'
             : day.date === today
-              ? 'border-cn-yellow text-text-main border'
+              ? 'border-accent-icon text-text-main border'
               : 'text-text-main'}"
         >
           {head.num}

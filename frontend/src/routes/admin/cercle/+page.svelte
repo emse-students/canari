@@ -255,9 +255,7 @@
 {#if ready}
   <div class="space-y-6">
     <header class="flex items-start gap-3">
-      <span
-        class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl"
-      >
+      <span class="bg-accent/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl">
         <Wallet size={20} />
       </span>
       <div>
@@ -275,7 +273,7 @@
     {#if loading}
       <div class="flex justify-center py-10">
         <div
-          class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+          class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else}
@@ -288,7 +286,7 @@
           value={selectedAssoId}
           options={assoOptions}
           label={m.admin_cercle_asso_label()}
-          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-md items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          triggerClass="border-cn-border text-text-main focus-visible:ring-accent/40 flex w-full max-w-md items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
           onValueChange={(v) => {
             selectedAssoId = v;
             void loadProduct();
@@ -425,7 +423,7 @@
             <button
               type="submit"
               disabled={saving}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
+              class="bg-accent text-cn-ink hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
             >
               {saving
                 ? m.admin_cercle_saving()

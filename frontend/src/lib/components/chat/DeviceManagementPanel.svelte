@@ -354,7 +354,7 @@
   <div class="px-1">
     {#if loading}
       <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-12">
-        <Loader size={28} class="animate-spin text-amber-500" />
+        <Loader size={28} class="text-accent-text animate-spin" />
         <span class="text-sm font-semibold tracking-wide">{m.chat_syncing_devices()}</span>
       </div>
     {:else}
@@ -407,7 +407,7 @@
 
             <div
               class="rounded-3xl border p-4 transition-all duration-300 hover:shadow-md sm:p-5 {row.isCurrentDevice
-                ? 'border-amber-500/30 bg-amber-500/5 shadow-inner'
+                ? 'border-accent/30 bg-accent/5 shadow-inner'
                 : row.device === null
                   ? 'border-orange-500/30 bg-orange-500/5'
                   : 'bg-cn-surface border-black/5 dark:border-white/10 '}"
@@ -415,7 +415,7 @@
               <div class="flex items-start gap-4 sm:items-center">
                 <div
                   class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm {row.isCurrentDevice
-                    ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+                    ? 'bg-accent/20 text-accent-text'
                     : row.device === null
                       ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400'
                       : 'text-text-muted bg-cn-surface '}"
@@ -437,7 +437,7 @@
                         bind:value={editingName}
                         placeholder={m.chat_device_name_placeholder()}
                         maxlength="80"
-                        class="text-text-main placeholder:text-text-muted bg-cn-surface flex-1 rounded-lg border border-black/10 px-3 py-1.5 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none dark:border-white/10"
+                        class="text-text-main placeholder:text-text-muted bg-cn-surface focus:ring-accent-icon flex-1 rounded-lg border border-black/10 px-3 py-1.5 text-sm focus:ring-2 focus:outline-none dark:border-white/10"
                       />
                       <Button onclick={() => void saveName()}>
                         {m.common_ok_button()}
@@ -463,7 +463,7 @@
                       {/if}
                       {#if row.isCurrentDevice}
                         <span
-                          class="text-cn-ink text-2xs rounded-full bg-amber-500 px-2 py-0.5 font-bold tracking-wider uppercase shadow-sm"
+                          class="text-cn-ink text-2xs bg-accent rounded-full px-2 py-0.5 font-bold tracking-wider uppercase shadow-sm"
                         >
                           {m.chat_current_device_badge()}
                         </span>
@@ -519,7 +519,7 @@
                   {#if row.device}
                     <button
                       onclick={() => row.device && startEditing(row.device.deviceId)}
-                      class="ui-icon-button bg-cn-border/50 text-text-muted rounded-xl hover:bg-amber-500/15 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-amber-500/20 dark:hover:text-amber-400"
+                      class="ui-icon-button bg-cn-border/50 text-text-muted hover:bg-accent/15 hover:text-accent-text focus-visible:ring-accent-icon rounded-xl focus-visible:ring-2"
                       title={m.chat_rename_device_title()}
                       aria-label={m.chat_rename_device_label()}
                     >

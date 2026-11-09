@@ -30,7 +30,7 @@
       {#each bookings as booking (booking.id)}
         <li class="flex items-center gap-3 px-4 py-3">
           <span
-            class="bg-cn-yellow text-cn-ink flex size-8 shrink-0 items-center justify-center rounded-full"
+            class="bg-accent text-cn-ink flex size-8 shrink-0 items-center justify-center rounded-full"
             aria-hidden="true"
           >
             <CalendarClock size={16} />

@@ -105,7 +105,7 @@
   panelClass="flex max-h-[85vh] w-full flex-col rounded-t-2xl bg-(--cn-surface) shadow-2xl sm:max-w-lg sm:rounded-2xl"
 >
   <div class="border-cn-border flex items-center gap-2 border-b p-4">
-    <ChartColumn size={18} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
+    <ChartColumn size={18} strokeWidth={2.5} class="text-accent-icon shrink-0" />
     <h2 class="text-text-main flex-1 text-base font-bold">{m.channel_poll_title()}</h2>
     <button
       type="button"
@@ -127,7 +127,7 @@
         bind:value={question}
         maxlength="300"
         placeholder={m.channel_poll_question_placeholder()}
-        class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+        class="border-cn-border text-text-main focus:ring-accent/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
       />
     </div>
 
@@ -137,7 +137,7 @@
       class="flex cursor-pointer items-center justify-between rounded-xl bg-black/5 px-4 py-3 select-none dark:bg-white/5"
     >
       <span class="text-text-main text-sm font-semibold">{m.post_poll_allow_multiple_label()}</span>
-      <input type="checkbox" bind:checked={multipleChoice} class="accent-cn-yellow h-5 w-5" />
+      <input type="checkbox" bind:checked={multipleChoice} class="accent-accent h-5 w-5" />
     </label>
 
     <div>
@@ -172,7 +172,7 @@
       type="button"
       onclick={submit}
       disabled={!canSubmit || submitting}
-      class="bg-cn-yellow text-cn-ink rounded-xl px-5 py-2 text-sm font-bold transition-all hover:brightness-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+      class="bg-accent text-cn-ink rounded-xl px-5 py-2 text-sm font-bold transition-all hover:brightness-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {submitting ? m.common_sending_label() : m.channel_poll_submit_button()}
     </button>

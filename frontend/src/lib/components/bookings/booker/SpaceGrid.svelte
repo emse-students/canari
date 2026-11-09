@@ -405,7 +405,7 @@
       role="status"
       class="{blockMode
         ? 'bg-red-err text-cn-surface'
-        : 'bg-cn-yellow text-cn-ink'} pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-sm font-bold tabular-nums shadow-lg"
+        : 'bg-accent text-cn-ink'} pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-sm font-bold tabular-nums shadow-lg"
     >
       {selectedReading}
     </p>
@@ -480,11 +480,11 @@
                 class="group absolute z-10 block p-px text-left outline-none"
               >
                 <span
-                  class="group-focus-visible:ring-cn-yellow @container block h-full overflow-hidden rounded-lg border px-1.5 py-0.5 text-xs leading-tight group-focus-visible:ring-2 motion-safe:transition-colors {run.kind ===
+                  class="group-focus-visible:ring-accent-icon @container block h-full overflow-hidden rounded-lg border px-1.5 py-0.5 text-xs leading-tight group-focus-visible:ring-2 motion-safe:transition-colors {run.kind ===
                   'blocked'
                     ? 'bg-red-err/10 text-red-err border-red-err/30'
                     : r.mine
-                      ? 'bg-cn-yellow/25 text-text-main border-cn-yellow/60 group-hover:bg-cn-yellow/35'
+                      ? 'bg-accent/25 text-text-main border-accent/60 group-hover:bg-accent/35'
                       : 'bg-control-fill text-text-main border-cn-border group-hover:bg-control-fill/70'}"
                 >
                   {#if run.kind === 'blocked'}
@@ -546,7 +546,7 @@
                 data-selection
                 class="block h-full overflow-hidden rounded-lg border px-1.5 py-1 text-xs leading-tight font-bold shadow-sm motion-safe:transition-colors {blockMode
                   ? 'bg-red-err/20 text-red-err border-red-err'
-                  : 'bg-cn-yellow text-cn-ink border-cn-yellow'}"
+                  : 'bg-accent text-cn-ink border-accent-icon'}"
               >
                 <span class="block truncate tabular-nums">{selectedReading}</span>
               </span>
@@ -575,7 +575,7 @@
                 })}
                 title={formatTimeRange(unit.startMs, unit.endMs, space.timeZone)}
                 style={boxStyle(placed.topMin, placed.heightMin, placed.lane, placed.lanes)}
-                class="focus-visible:ring-cn-yellow absolute z-10 block cursor-pointer rounded-lg outline-none focus-visible:ring-2 disabled:cursor-default motion-safe:transition-colors {blockMode
+                class="focus-visible:ring-accent-icon absolute z-10 block cursor-pointer rounded-lg outline-none focus-visible:ring-2 disabled:cursor-default motion-safe:transition-colors {blockMode
                   ? 'hover:bg-red-err/10'
                   : 'hover:bg-green-ok/20'}"
               ></button>

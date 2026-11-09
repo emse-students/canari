@@ -471,7 +471,7 @@
   {#if loading}
     <div class="flex justify-center py-10">
       <div
-        class="border-cn-yellow h-7 w-7 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-7 w-7 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error}
@@ -491,8 +491,8 @@
  {stats.usedBytes / stats.quotaBytes > 0.9
             ? 'bg-red-500'
             : stats.usedBytes / stats.quotaBytes > 0.75
-              ? 'bg-amber-500'
-              : 'bg-cn-yellow'}"
+              ? 'bg-accent'
+              : 'bg-accent'}"
           style="width: {Math.min(100, (stats.usedBytes / stats.quotaBytes) * 100).toFixed(1)}%"
         ></div>
       </div>
@@ -600,7 +600,7 @@
               >
                 {#if downloadingId === doc.id}
                   <div
-                    class="border-cn-yellow h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
+                    class="border-accent-icon h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
                   ></div>
                 {:else}
                   <Download size={15} />

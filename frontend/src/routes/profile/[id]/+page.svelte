@@ -305,7 +305,7 @@
   <div class="space-y-6 md:space-y-8">
     {#if loading}
       <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-32" in:fade>
-        <LoaderCircle size={32} class="text-cn-yellow animate-spin" strokeWidth={2.5} />
+        <LoaderCircle size={32} class="text-accent-icon animate-spin" strokeWidth={2.5} />
         <span class="text-sm font-bold tracking-wider uppercase">{m.profile_public_loading()}</span>
       </div>
     {:else if error}
@@ -349,9 +349,9 @@
             onclick={handleFollowToggle}
             disabled={followLoading}
             data-follow-status={followStatus ?? 'none'}
-            class="focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-60 {followStatus
+            class="focus-visible:ring-accent/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-60 {followStatus
               ? 'text-text-main bg-cn-surface border border-black/10 hover:border-red-500/20 hover:bg-red-500/10 hover:text-red-600 dark:border-white/10 '
-              : 'bg-cn-yellow/10 border-cn-yellow/20 dark:text-cn-yellow hover:bg-cn-yellow/20 border text-amber-700'}"
+              : 'bg-accent/10 border-accent/20 dark:text-accent-text hover:bg-accent/20 text-accent-text border'}"
           >
             {#if followStatus === 'accepted'}
               <UserCheck size={18} strokeWidth={2.5} />
@@ -371,7 +371,7 @@
           {/if}
           <button
             onclick={handleSendMessage}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95"
+            class="bg-accent text-cn-ink hover:bg-accent-hover shadow-accent/20 focus-visible:ring-accent/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95"
           >
             <MessageCircle size={18} strokeWidth={2.5} />
             {m.profile_public_message_btn()}

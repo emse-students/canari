@@ -184,7 +184,7 @@
        window has passed, since a second tap there likes the post; anywhere else it means nothing. -->
   <button
     type="button"
-    class="absolute inset-0 cursor-zoom-in outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 focus-visible:ring-inset"
+    class="focus-visible:ring-accent/50 absolute inset-0 cursor-zoom-in outline-none focus-visible:ring-4 focus-visible:ring-inset"
     aria-label={openLabel}
     data-double-tap-defers
     onclick={(e) => {
@@ -196,15 +196,15 @@
   ></button>
   <!-- THE APP'S AMBER, NOT THE PICTURE'S COLOUR (user, 2026-10-01, Mi 9T: green). The button was
        55 % black over a blurred backdrop, so it took the hue of whatever frame was under it - on a
-       green clip, green. It is now a near-opaque scrim with no blur, carrying the theme's `--cn-yellow` glyph while
-       muted, and a solid `--cn-yellow` disc once the sound is on, so its colour says the state and
+       green clip, green. It is now a near-opaque scrim with no blur, carrying the theme's `--accent` glyph while
+       muted, and a solid `--accent` disc once the sound is on, so its colour says the state and
        nothing else. -->
   {#if manualPlay && !playing && frameReady}
     <!-- The one big target while nothing plays, over the open-viewer tap: it starts the video where
          it is, and everything around it opens the viewer. The amber disc is `VideoPlayer`'s. -->
     <button
       type="button"
-      class="bg-cn-yellow text-cn-ink absolute top-1/2 left-1/2 flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
+      class="bg-accent text-cn-ink absolute top-1/2 left-1/2 flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
       aria-label={m.video_play_label()}
       onclick={playNow}
     >
@@ -217,9 +217,9 @@
 
     <button
       type="button"
-      class="absolute right-2.5 bottom-2.5 inline-flex h-8 w-8 items-center justify-center rounded-full shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {videoSound.muted
-        ? 'bg-cn-scrim/90 text-cn-yellow'
-        : 'bg-cn-yellow text-cn-ink'}"
+      class="focus-visible:ring-accent-icon absolute right-2.5 bottom-2.5 inline-flex h-8 w-8 items-center justify-center rounded-full shadow-sm outline-none focus-visible:ring-2 {videoSound.muted
+        ? 'bg-cn-scrim/90 text-accent'
+        : 'bg-accent text-cn-ink'}"
       aria-label={m.video_sound_label()}
       aria-pressed={!videoSound.muted}
       onclick={toggleSound}

@@ -54,7 +54,7 @@
       {:else}
         {#each splitWithHighlight(segment.value, normalizedSearchTerm) as part, pIndex (`${pIndex}-${part.text}`)}
           {#if part.hit}
-            <mark class="rounded bg-amber-300/60 px-0.5 text-inherit"
+            <mark class="bg-accent/20 rounded px-0.5 text-inherit"
               ><EmojiText text={part.text} /></mark
             >
           {:else}

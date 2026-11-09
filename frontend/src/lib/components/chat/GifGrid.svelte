@@ -193,7 +193,7 @@
         onkeydown={(e) => {
           if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
         }}
-        class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent py-2 pr-9 pl-9 text-sm focus:ring-2 focus:outline-none"
+        class="border-cn-border text-text-main focus:ring-accent/40 w-full rounded-xl border bg-transparent py-2 pr-9 pl-9 text-sm focus:ring-2 focus:outline-none"
       />
       {#if query}
         <button
@@ -238,7 +238,7 @@
           <button
             type="button"
             onclick={() => onPick(gif)}
-            class="focus-visible:ring-cn-yellow absolute overflow-hidden rounded-lg outline-none focus-visible:ring-2 active:opacity-80"
+            class="focus-visible:ring-accent-icon absolute overflow-hidden rounded-lg outline-none focus-visible:ring-2 active:opacity-80"
             style="left: {tile.x}px; top: {tile.y}px; width: {tile.width}px; height: {tile.height}px"
             aria-label={m.chat_send_gif_action_label()}
           >
@@ -279,7 +279,7 @@
       {#if loading && results.length === 0}
         <div class="flex justify-center py-10">
           <div
-            class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+            class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
           ></div>
         </div>
       {/if}

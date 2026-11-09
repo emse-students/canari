@@ -50,7 +50,7 @@
     {#if canCreate}
       <a
         href={creation.href}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold shadow-sm transition-all"
+        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold shadow-sm transition-all"
       >
         <Plus size={16} />
         {creation.label}
@@ -64,7 +64,7 @@
         href={item.href}
         aria-current={active ? 'page' : undefined}
         class="inline-flex items-center rounded-full border px-3 py-1.5 text-sm font-semibold transition-colors sm:px-4 {active
-          ? 'border-cn-yellow bg-cn-yellow/15 text-text-main'
+          ? 'border-accent-icon bg-accent/15 text-text-main'
           : 'border-cn-border text-text-muted hover:text-text-main hover:bg-(--cn-surface)'}"
       >
         {item.label}

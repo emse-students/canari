@@ -89,7 +89,7 @@
     >
       <p class="text-text-muted text-sm">{m.profile_correction_help()}</p>
       <textarea
-        class="bg-cn-surface min-h-28 w-full rounded-xl border border-black/10 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
+        class="bg-cn-surface focus:ring-accent/50 min-h-28 w-full rounded-xl border border-black/10 px-3 py-2 text-sm outline-none focus:ring-2 dark:border-white/10"
         bind:value={message}
         maxlength={CORRECTION_MESSAGE_MAX}
         placeholder={m.profile_correction_placeholder()}
@@ -110,7 +110,7 @@
         <button
           type="submit"
           disabled={sending || !message.trim()}
-          class="bg-cn-yellow text-cn-dark flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+          class="bg-accent text-cn-dark flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
         >
           {#if sending}<LoaderCircle size={14} class="animate-spin" />{/if}
           {m.profile_correction_send()}

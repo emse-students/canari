@@ -60,7 +60,7 @@
         onclick={changeProfilePhoto}
         title={m.profile_photo_change_label()}
         aria-label={m.profile_photo_change_label()}
-        class="tap-target bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink shadow-cn-yellow/30 absolute right-0 bottom-0 flex h-8
+        class="tap-target bg-accent hover:bg-accent-hover text-cn-ink shadow-accent/30 absolute right-0 bottom-0 flex h-8
  w-8 items-center justify-center
  rounded-full shadow-md ring-2 ring-white transition-all
  active:scale-95 dark:ring-(--cn-bg)"
@@ -81,7 +81,7 @@
       href={resolve('/settings')}
       title={m.settings_page_title()}
       aria-label={m.settings_page_title()}
-      class="ui-icon-button text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow absolute top-0 right-0 rounded-xl hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
+      class="ui-icon-button text-text-muted hover:text-cn-dark focus-visible:ring-accent-icon absolute top-0 right-0 rounded-xl hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
     >
       <SlidersHorizontal size={18} strokeWidth={2.5} />
     </a>

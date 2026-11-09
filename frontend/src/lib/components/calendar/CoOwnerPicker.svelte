@@ -213,7 +213,7 @@
                   }}
                   class="{group.muted
                     ? 'text-text-muted'
-                    : 'text-text-main'} hover:bg-cn-yellow/10 flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors"
+                    : 'text-text-main'} hover:bg-accent/10 flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors"
                 >
                   {#if asso.color}
                     <span

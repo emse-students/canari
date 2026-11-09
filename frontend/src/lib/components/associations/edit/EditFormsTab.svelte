@@ -149,7 +149,7 @@
       href="/forms/create?association={encodeURIComponent(asso.id)}&returnTo={encodeURIComponent(
         editSectionHref(asso.slug, 'formulaires', asso.type === 'list' ? '/lists' : '/associations')
       )}"
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
+      class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
     >
       <Plus size={16} />
       {m.asso_forms_new_form_button()}
@@ -192,7 +192,7 @@
   {#if formsLoading}
     <div class="flex justify-center py-8">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if forms.length === 0}
@@ -246,13 +246,13 @@
             >
               <a
                 href="/forms/{form.id}"
-                class="text-cn-yellow text-xs font-semibold hover:underline"
+                class="text-accent-text text-xs font-semibold hover:underline"
                 target="_blank"
                 rel="noopener noreferrer">{m.asso_forms_view_link()}</a
               >
               <a
                 href="/forms/{form.id}/edit"
-                class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors"
+                class="border-cn-border text-text-main hover:border-accent/40 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors"
               >
                 <Pencil size={12} />
                 {m.asso_forms_edit_action()}

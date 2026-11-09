@@ -818,7 +818,7 @@
           {#if tiersLoading}
             <div class="text-text-muted flex items-center gap-2 text-sm">
               <div
-                class="border-cn-yellow h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
+                class="border-accent-icon h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
               ></div>
               {m.common_loading_label()}
             </div>
@@ -886,7 +886,7 @@
                           checked={product.isActive}
                           disabled={togglingTierId === product.id}
                           onchange={() => void handleToggleTierActive(product)}
-                          class="accent-cn-yellow size-4"
+                          class="accent-accent size-4"
                         />
                         <span class={product.isActive ? 'text-text-main' : 'text-text-muted'}>
                           {m.asso_cotisations_tier_active_label()}
@@ -988,7 +988,7 @@
                               type="checkbox"
                               checked={editingMatrix !== null}
                               onchange={(e) => toggleTierGrid(product, e.currentTarget.checked)}
-                              class="accent-cn-yellow mt-0.5 size-4"
+                              class="accent-accent mt-0.5 size-4"
                             />
                             <span>
                               <span class="text-text-main block text-xs font-semibold">
@@ -1135,7 +1135,7 @@
           type="text"
           bind:value={search}
           placeholder={m.asso_cotisations_search_placeholder()}
-          class="border-cn-border w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:border-amber-400/60 focus:ring-2 focus:ring-amber-400/45"
+          class="border-cn-border focus:border-accent/60 focus:ring-accent/45 w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:ring-2"
         />
       </div>
 
@@ -1150,7 +1150,7 @@
       {#if rosterLoading}
         <div class="flex justify-center py-8">
           <div
-            class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+            class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
           ></div>
         </div>
       {:else if rosterItems.length === 0}
@@ -1226,7 +1226,7 @@
         {#if rosterLoadingMore}
           <div class="flex justify-center py-3">
             <div
-              class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
+              class="border-accent-icon h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
             ></div>
           </div>
         {/if}

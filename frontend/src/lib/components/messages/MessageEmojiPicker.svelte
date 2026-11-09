@@ -149,9 +149,7 @@
       message cannot take another distinct reaction - is below, and it says something.
     -->
     {#if reactionsAtLimit}
-      <p
-        class="text-2xs border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-amber-700 dark:text-amber-400"
-      >
+      <p class="text-2xs border-accent/20 bg-accent/10 text-accent-text border-b px-4 py-2">
         {m.msg_max_reactions_label({ max: MAX_DISTINCT_MESSAGE_REACTIONS })}
       </p>
     {/if}

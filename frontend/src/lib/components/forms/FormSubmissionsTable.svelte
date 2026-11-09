@@ -269,7 +269,7 @@
                 type="button"
                 onclick={() => void downloadFile(file)}
                 disabled={downloadingFileId === file.id}
-                class="text-text-main hover:text-cn-yellow inline-flex max-w-full items-center gap-1.5 text-sm font-medium underline-offset-2 hover:underline disabled:opacity-50"
+                class="text-text-main hover:text-accent-text inline-flex max-w-full items-center gap-1.5 text-sm font-medium underline-offset-2 hover:underline disabled:opacity-50"
                 title={m.form_answer_file_download()}
               >
                 <Download size={14} class="shrink-0" />

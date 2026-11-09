@@ -62,7 +62,7 @@
   const accentVars = $derived(
     accentColor
       ? `--tile-accent: ${accentColor}; --tile-accent-ink: ${contrastColor(accentColor)};`
-      : '--tile-accent: var(--color-cn-yellow); --tile-accent-ink: var(--color-cn-ink);'
+      : '--tile-accent: var(--color-accent); --tile-accent-ink: var(--color-cn-ink);'
   );
 </script>
 

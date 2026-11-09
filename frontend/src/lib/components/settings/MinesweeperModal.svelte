@@ -1067,7 +1067,7 @@
             cx="22"
             cy="22"
             r="18"
-            class="stroke-cn-yellow fill-none"
+            class="stroke-accent-icon fill-none"
             stroke-width="4"
             stroke-linecap="round"
             transform="rotate(-90 22 22)"
@@ -1093,22 +1093,22 @@
             }}
           >
             {#if isWin}
-              <Trophy size={28} class="text-cn-yellow" />
+              <Trophy size={28} class="text-accent-icon" />
             {:else}
               <Bomb size={28} class="text-red-500" />
             {/if}
             <p
               class="text-2xl font-bold sm:text-3xl {isWin
-                ? 'ms-win-pulse text-cn-yellow'
+                ? 'ms-win-pulse text-accent-text'
                 : 'text-red-500'}"
             >
               {isWin ? m.minesweeper_status_won() : m.minesweeper_status_lost()}
             </p>
             {#if isWin}
               <p
-                class="bg-cn-yellow/15 text-text-main flex items-center gap-2 rounded-lg px-4 py-2 font-mono text-xl font-bold tabular-nums sm:text-2xl"
+                class="bg-accent/15 text-text-main flex items-center gap-2 rounded-lg px-4 py-2 font-mono text-xl font-bold tabular-nums sm:text-2xl"
               >
-                <Timer size={20} class="text-cn-yellow shrink-0" strokeWidth={2.5} />
+                <Timer size={20} class="text-accent-icon shrink-0" strokeWidth={2.5} />
                 {m.minesweeper_time({
                   time: formatDurationMs(winDurationMs ?? elapsedMs),
                 })}
@@ -1120,9 +1120,9 @@
                   </p>
                 {:else if winRank != null}
                   <p
-                    class="bg-cn-yellow/10 text-cn-dark inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-bold"
+                    class="bg-accent/10 text-cn-dark inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-bold"
                   >
-                    <Trophy size={14} class="text-cn-yellow" strokeWidth={2.5} />
+                    <Trophy size={14} class="text-accent-icon" strokeWidth={2.5} />
                     {#if winRanksGained > 0}
                       {m.minesweeper_rank_up({
                         rank: String(winRank),
@@ -1138,7 +1138,7 @@
             <button
               type="button"
               onclick={newGame}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover mt-1 flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-colors"
+              class="bg-accent text-cn-ink hover:bg-accent-hover mt-1 flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-colors"
             >
               <RotateCcw size={15} strokeWidth={2.5} />
               {m.minesweeper_new_game()}
@@ -1174,7 +1174,7 @@
           </span>
           {#if rankedMode}
             <span title={m.minesweeper_ranked()} role="img" aria-label={m.minesweeper_ranked()}>
-              <Trophy size={14} class="text-cn-yellow" />
+              <Trophy size={14} class="text-accent-icon" />
             </span>
           {/if}
           <button
@@ -1182,7 +1182,7 @@
             onclick={newGame}
             aria-label={m.minesweeper_new_game()}
             title={m.minesweeper_new_game()}
-            class="ui-icon-button text-cn-dark hover:bg-cn-yellow/20 rounded-full transition-colors"
+            class="ui-icon-button text-cn-dark hover:bg-accent/20 rounded-full transition-colors"
           >
             <RotateCcw size={16} strokeWidth={2.5} />
           </button>
@@ -1203,7 +1203,7 @@
           onclick={openLeaderboard}
           aria-label={m.minesweeper_leaderboard()}
           title={m.minesweeper_leaderboard()}
-          class="ui-icon-button bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover pointer-events-auto rounded-full shadow-sm transition-colors"
+          class="ui-icon-button bg-accent text-cn-ink hover:bg-accent-hover pointer-events-auto rounded-full shadow-sm transition-colors"
         >
           <Trophy size={20} strokeWidth={2.5} />
         </button>
@@ -1229,7 +1229,7 @@
         aria-pressed={flagPrimary}
         title={m.minesweeper_mode_hint()}
         class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-5 text-sm font-bold shadow-md backdrop-blur-sm transition-colors {flagPrimary
-          ? 'bg-cn-yellow text-cn-ink'
+          ? 'bg-accent text-cn-ink'
           : 'ms-chip text-text-main'}"
       >
         {#if flagPrimary}
@@ -1247,7 +1247,7 @@
         aria-pressed={unranked}
         title={m.minesweeper_unranked_hint()}
         class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50 {unranked
-          ? 'bg-cn-yellow text-cn-ink'
+          ? 'bg-accent text-cn-ink'
           : 'ms-chip text-text-main'}"
       >
         <Trophy size={18} strokeWidth={2.5} class={unranked ? 'opacity-40' : ''} />
@@ -1329,7 +1329,7 @@
                       {#if isAdmin}
                         <button
                           type="button"
-                          class="ui-icon-button ui-icon-button--sm text-text-muted rounded-full outline-none hover:text-red-500 focus-visible:ring-2 focus-visible:ring-amber-500"
+                          class="ui-icon-button ui-icon-button--sm text-text-muted focus-visible:ring-accent-icon rounded-full outline-none hover:text-red-500 focus-visible:ring-2"
                           aria-label={m.minesweeper_admin_remove_score()}
                           title={m.minesweeper_admin_remove_score()}
                           onclick={() => void removeScore(entry)}
@@ -1338,7 +1338,7 @@
                         </button>
                         <button
                           type="button"
-                          class="ui-icon-button ui-icon-button--sm text-text-muted rounded-full outline-none hover:text-red-500 focus-visible:ring-2 focus-visible:ring-amber-500"
+                          class="ui-icon-button ui-icon-button--sm text-text-muted focus-visible:ring-accent-icon rounded-full outline-none hover:text-red-500 focus-visible:ring-2"
                           aria-label={m.minesweeper_admin_ban()}
                           title={m.minesweeper_admin_ban()}
                           onclick={() => void banPlayer(entry)}
@@ -1386,7 +1386,7 @@
                     </span>
                     <button
                       type="button"
-                      class="ui-icon-button ui-icon-button--sm text-text-muted hover:text-green-ok rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                      class="ui-icon-button ui-icon-button--sm text-text-muted hover:text-green-ok focus-visible:ring-accent-icon rounded-full outline-none focus-visible:ring-2"
                       aria-label={m.minesweeper_admin_unban()}
                       title={m.minesweeper_admin_unban()}
                       onclick={() => void unbanPlayer(ban)}
@@ -1437,7 +1437,7 @@
             </span>
             <span
               class="shrink-0 rounded-full px-3 py-1 text-xs font-bold {settings.doubleTapZoom
-                ? 'bg-cn-yellow text-cn-ink'
+                ? 'bg-accent text-cn-ink'
                 : 'bg-cn-surface text-text-muted'}"
             >
               {settings.doubleTapZoom ? m.minesweeper_setting_on() : m.minesweeper_setting_off()}
@@ -1456,7 +1456,7 @@
             </span>
             <span
               class="shrink-0 rounded-full px-3 py-1 text-xs font-bold {settings.haptics
-                ? 'bg-cn-yellow text-cn-ink'
+                ? 'bg-accent text-cn-ink'
                 : 'bg-cn-surface text-text-muted'}"
             >
               {settings.haptics ? m.minesweeper_setting_on() : m.minesweeper_setting_off()}
@@ -1481,7 +1481,7 @@
               value={settings.longPressMs}
               oninput={(e) =>
                 updateSettings({ longPressMs: clampLongPressMs(e.currentTarget.valueAsNumber) })}
-              class="accent-cn-yellow mt-2 w-full"
+              class="accent-accent mt-2 w-full"
             />
           </div>
 
@@ -1498,7 +1498,7 @@
                   onclick={() => updateSettings({ animations: speed })}
                   class="flex-1 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors {settings.animations ===
                   speed
-                    ? 'bg-cn-yellow text-cn-ink'
+                    ? 'bg-accent text-cn-ink'
                     : 'text-text-muted hover:text-text-main'}"
                 >
                   {animationLabel(speed)}
@@ -1566,7 +1566,7 @@
         {#each sparkBars as bar (bar.scoreId)}
           <span
             title={bar.label}
-            class="min-w-0 flex-1 rounded-sm {bar.best ? 'bg-cn-yellow' : 'bg-cn-yellow/40'}"
+            class="min-w-0 flex-1 rounded-sm {bar.best ? 'bg-accent' : 'bg-accent/40'}"
             style="height: {bar.percent}%;"
           ></span>
         {/each}

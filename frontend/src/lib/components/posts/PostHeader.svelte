@@ -68,7 +68,7 @@
   {#if authorHref}
     <a
       href={authorHref}
-      class="shrink-0 rounded-full shadow-sm transition-transform duration-200 outline-none hover:scale-105 focus-visible:ring-2 focus-visible:ring-amber-500"
+      class="focus-visible:ring-accent-icon shrink-0 rounded-full shadow-sm transition-transform duration-200 outline-none hover:scale-105 focus-visible:ring-2"
       aria-label={authorLinkLabel}
     >
       <PostAuthorAvatar {post} />
@@ -84,7 +84,7 @@
       {#if authorHref}
         <a
           href={authorHref}
-          class="text-text-main text-sm font-bold transition-colors outline-none hover:text-amber-600 focus-visible:underline dark:hover:text-amber-400"
+          class="text-text-main hover:text-accent-text text-sm font-bold transition-colors outline-none focus-visible:underline"
         >
           <EmojiText text={getPostAuthorName()} />
         </a>

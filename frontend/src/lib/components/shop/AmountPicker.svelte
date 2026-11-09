@@ -100,7 +100,7 @@
         aria-pressed={selected}
         onclick={() => pickChip(cents)}
         class="min-h-11 rounded-full border px-4 text-sm font-semibold transition-colors {selected
-          ? 'bg-cn-yellow text-cn-ink border-transparent'
+          ? 'bg-accent text-cn-ink border-transparent'
           : 'border-cn-border text-text-main hover:bg-cn-border/40'}"
       >
         {formatAmountCents(cents, currency, locale, true)}
@@ -111,7 +111,7 @@
       aria-pressed={keypadOpen}
       onclick={openKeypad}
       class="min-h-11 rounded-full border px-4 text-sm font-semibold transition-colors {keypadOpen
-        ? 'bg-cn-yellow text-cn-ink border-transparent'
+        ? 'bg-accent text-cn-ink border-transparent'
         : 'border-cn-border text-text-main hover:bg-cn-border/40'}"
     >
       {m.shop_amount_other()}
@@ -144,11 +144,11 @@
   {/if}
 
   {#if belowMin && minCents != null}
-    <p class="text-center text-xs text-amber-700 dark:text-amber-400" role="status">
+    <p class="text-accent-text text-center text-xs" role="status">
       {m.shop_amount_min_hint({ min: formatAmountCents(minCents, currency, locale) })}
     </p>
   {:else if aboveMax && maxCents != null}
-    <p class="text-center text-xs text-amber-700 dark:text-amber-400" role="status">
+    <p class="text-accent-text text-center text-xs" role="status">
       {m.shop_amount_max_hint({ max: formatAmountCents(maxCents, currency, locale) })}
     </p>
   {/if}

@@ -107,7 +107,7 @@
   style="animation-fill-mode: backwards;"
 >
   <div class="mb-2 flex items-center gap-3">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
+    <div class="bg-accent/10 text-cn-dark rounded-xl p-2.5">
       <RefreshCw size={22} strokeWidth={2.5} />
     </div>
     <h2 class="text-text-main text-lg font-bold">{m.profile_backup_heading()}</h2>
@@ -119,7 +119,7 @@
   {#if session.isLoggedIn}
     {#if backupOwed}
       <p
-        class="border-cn-yellow/40 bg-cn-yellow/10 text-text-main mb-4 rounded-xl border px-4 py-3 text-sm leading-relaxed font-medium"
+        class="border-accent/40 bg-accent/10 text-text-main mb-4 rounded-xl border px-4 py-3 text-sm leading-relaxed font-medium"
         role="status"
         data-testid="backup-owed-after-key-move"
       >
@@ -131,7 +131,7 @@
         type="button"
         onclick={triggerImport}
         disabled={session.isImporting}
-        class="border-cn-border hover:border-cn-yellow/40 bg-cn-surface flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all active:scale-95 disabled:opacity-50"
+        class="border-cn-border hover:border-accent/40 bg-cn-surface flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all active:scale-95 disabled:opacity-50"
       >
         <Upload size={22} class="text-text-muted" />
         <span class="text-text-main text-sm font-bold">{m.profile_backup_import_label()}</span>
@@ -142,7 +142,7 @@
         type="button"
         onclick={handleExport}
         disabled={session.isExporting}
-        class="border-cn-border hover:border-cn-yellow/40 bg-cn-surface flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all active:scale-95 disabled:opacity-50"
+        class="border-cn-border hover:border-accent/40 bg-cn-surface flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all active:scale-95 disabled:opacity-50"
       >
         <Download size={22} class="text-text-muted" />
         <span class="text-text-main text-sm font-bold">{m.profile_backup_export_label()}</span>

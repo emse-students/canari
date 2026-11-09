@@ -193,7 +193,7 @@
       <button
         type="submit"
         disabled={loading}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50 sm:w-auto"
+        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50 sm:w-auto"
       >
         {#if loading}
           <LoaderCircle size={16} class="animate-spin" />
@@ -228,7 +228,7 @@
             <li class="flex items-center gap-2">
               <a
                 href="/profile/{encodeURIComponent(user.id)}"
-                class="border-cn-border hover:border-cn-yellow/40 bg-cn-surface flex min-w-0 flex-1 items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
+                class="border-cn-border hover:border-accent/40 bg-cn-surface flex min-w-0 flex-1 items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
               >
                 <div class="h-11 w-11 shrink-0 overflow-hidden rounded-full">
                   <Avatar userId={user.id} fill shape="circle" />

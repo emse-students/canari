@@ -50,7 +50,7 @@
   style="animation-fill-mode: backwards;"
 >
   <div class="mb-2 flex items-center gap-3">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
+    <div class="bg-accent/10 text-cn-dark rounded-xl p-2.5">
       <HardDrive size={22} strokeWidth={2.5} />
     </div>
     <h2 class="text-text-main text-lg font-bold">{m.settings_storage_heading()}</h2>
@@ -92,7 +92,7 @@
       type="button"
       onclick={handleClearCache}
       disabled={clearing || usage.mediaCacheBytes === 0}
-      class="border-cn-border text-text-main hover:border-cn-yellow/40 mt-6 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all active:scale-95 disabled:opacity-50 sm:ml-[3.75rem]"
+      class="border-cn-border text-text-main hover:border-accent/40 mt-6 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all active:scale-95 disabled:opacity-50 sm:ml-[3.75rem]"
     >
       {#if clearing}
         <LoaderCircle size={16} class="animate-spin" />

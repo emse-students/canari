@@ -52,7 +52,7 @@
 >
   <div class="mb-4 flex items-center justify-between">
     <div class="flex items-center gap-3">
-      <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
+      <div class="bg-accent/10 text-cn-dark rounded-xl p-2.5">
         <UserRound size={22} strokeWidth={2.5} />
       </div>
       <h2 class="text-text-main text-lg font-bold">{m.profile_bio_heading()}</h2>
@@ -60,7 +60,7 @@
     {#if !editing}
       <button
         onclick={startEdit}
-        class="text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
+        class="text-text-muted hover:text-cn-dark focus-visible:ring-accent-icon inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
       >
         <PenLine size={16} strokeWidth={2.5} />
         {m.common_edit_label()}
@@ -78,7 +78,7 @@
         bind:value={input}
         maxlength={500}
         minHeight="100px"
-        class="focus-within:border-cn-yellow/50 focus-within:ring-cn-yellow/30 bg-cn-surface w-full min-w-0 overflow-hidden rounded-2xl border border-black/10 shadow-inner transition-all focus-within:ring-2 dark:border-white/10"
+        class="focus-within:border-accent/50 focus-within:ring-accent/30 bg-cn-surface w-full min-w-0 overflow-hidden rounded-2xl border border-black/10 shadow-inner transition-all focus-within:ring-2 dark:border-white/10"
         editorClass="min-h-[100px] w-full max-w-full px-4 py-3 text-sm text-text-main leading-relaxed"
         placeholder={m.profile_bio_placeholder()}
       />
@@ -100,7 +100,7 @@
           <button
             onclick={save}
             disabled={saving || input.trim() === profile.bio}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 focus-visible:ring-cn-yellow/50 inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+            class="bg-accent text-cn-ink hover:bg-accent-hover shadow-accent/20 focus-visible:ring-accent/50 inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
           >
             {#if saving}
               <LoaderCircle size={16} class="animate-spin" strokeWidth={3} />

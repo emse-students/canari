@@ -441,7 +441,7 @@
           <div class="mb-2 flex items-center gap-2">
             {#if Icon}
               <span
-                class="bg-cn-yellow/15 text-guide-ink flex size-8 shrink-0 items-center justify-center rounded-lg"
+                class="bg-accent/15 text-guide-ink flex size-8 shrink-0 items-center justify-center rounded-lg"
                 aria-hidden="true"
               >
                 <Icon size={18} />
@@ -503,7 +503,7 @@
         {:else}
           <button
             type="button"
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-4 py-2 text-sm font-bold transition-colors"
+            class="bg-accent text-cn-ink hover:bg-accent-hover rounded-lg px-4 py-2 text-sm font-bold transition-colors"
             onclick={() => guideEngine.next()}
             data-guide-next
           >

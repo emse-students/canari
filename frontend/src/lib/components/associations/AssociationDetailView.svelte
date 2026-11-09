@@ -398,7 +398,7 @@
   {#if loading}
     <div class="flex items-center justify-center py-20">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error && !asso}
@@ -466,7 +466,7 @@
             {/if}
             {#if kind === 'list' && asso.promo}
               <span
-                class="text-cn-dark bg-cn-yellow/20 mt-2 inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
+                class="text-cn-dark bg-accent/20 mt-2 inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
               >
                 {m.list_campaigns_heading({ year: asso.promo })}
               </span>
@@ -507,7 +507,7 @@
               <a
                 href="{base}/{encodeURIComponent(slug)}/edit"
                 use:guideAnchor={'asso.manage'}
-                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
+                class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
               >
                 <Settings size={16} />
                 {wordingFor(asso.type).manageButton()}

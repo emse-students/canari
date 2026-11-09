@@ -107,7 +107,7 @@
     <div class="text-text-muted space-y-4 text-sm leading-relaxed">
       <div class="flex justify-center">
         <span
-          class="text-amber-warn flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15"
+          class="text-amber-warn bg-amber-warn/15 flex h-14 w-14 items-center justify-center rounded-2xl"
         >
           <Wrench size={28} />
         </span>

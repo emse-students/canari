@@ -25,9 +25,9 @@
   class="from-cn-ink to-cn-scrim pointer-events-none absolute inset-0 flex items-center justify-center bg-linear-to-br"
   aria-hidden="true"
 >
-  <div class="from-cn-yellow/20 absolute inset-0 bg-radial to-transparent to-70%"></div>
+  <div class="from-accent/20 absolute inset-0 bg-radial to-transparent to-70%"></div>
   <span
-    class="bg-cn-yellow text-cn-ink relative flex items-center justify-center rounded-full shadow-lg {compact
+    class="bg-accent text-cn-ink relative flex items-center justify-center rounded-full shadow-lg {compact
       ? 'h-11 w-11'
       : 'h-14 w-14'}"
   >

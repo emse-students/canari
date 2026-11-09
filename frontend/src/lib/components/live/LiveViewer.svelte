@@ -326,7 +326,7 @@
       <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
       <button
         type="button"
-        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
         aria-label={videoSound.muted ? m.live_viewer_unmute() : m.live_viewer_mute()}
         title={videoSound.muted ? m.live_viewer_unmute() : m.live_viewer_mute()}
         aria-pressed={!videoSound.muted}
@@ -343,7 +343,7 @@
       {#if !chatWithheld}
         <button
           type="button"
-          class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-cn-yellow rounded-full outline-none focus-visible:ring-2"
+          class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-accent-icon rounded-full outline-none focus-visible:ring-2"
           aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
           title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
           aria-pressed={chatOpen}
@@ -360,7 +360,7 @@
       {#if !terminal}
         <button
           type="button"
-          class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+          class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
           aria-label={m.live_share_label()}
           title={m.live_share_label()}
           onclick={() => shareLiveLink(live.id)}
@@ -372,7 +372,7 @@
       <button
         bind:this={closeButton}
         type="button"
-        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
         aria-label={m.live_viewer_close()}
         title={m.live_viewer_close()}
         onclick={() => overlay.dismissFromUi()}
@@ -431,7 +431,7 @@
           <p class="mt-1 text-sm opacity-90">{m.live_viewer_full_body()}</p>
           <button
             type="button"
-            class="bg-cn-yellow text-cn-ink mt-4 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
+            class="bg-accent text-cn-ink mt-4 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
             bind:this={actionButton}
             onclick={() => player?.retry()}
             data-live-retry

@@ -513,7 +513,7 @@
   {#if productsLoading}
     <div class="flex justify-center py-6">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if otherProducts.length === 0}

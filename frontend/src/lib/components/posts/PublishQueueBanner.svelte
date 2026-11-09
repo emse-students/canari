@@ -50,7 +50,7 @@
       {#if view.phase !== 'failed' && view.phase !== 'withdrawing' && view.count > 0}
         <span class="bg-cn-border block h-1 w-full overflow-hidden rounded-full" aria-hidden="true">
           <span
-            class="bg-cn-yellow block h-full rounded-full transition-[width] duration-300"
+            class="bg-accent block h-full rounded-full transition-[width] duration-300"
             style:width="{Math.round(view.fraction * 100)}%"
           ></span>
         </span>
@@ -73,7 +73,7 @@
           <button
             type="button"
             onclick={() => void retryQueuedPost(view.id)}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-2.5 py-1 text-xs font-semibold"
+            class="bg-accent text-cn-ink hover:bg-accent-hover rounded-lg px-2.5 py-1 text-xs font-semibold"
           >
             {view.phase === 'paused' ? m.publish_queue_resume() : m.publish_queue_retry()}
           </button>

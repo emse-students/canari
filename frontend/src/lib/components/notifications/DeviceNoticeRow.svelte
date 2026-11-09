@@ -90,6 +90,6 @@
     </div>
   </div>
   {#if unread}
-    <span class="mt-2 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true"></span>
+    <span class="bg-accent mt-2 h-2.5 w-2.5 shrink-0 rounded-full" aria-hidden="true"></span>
   {/if}
 </div>

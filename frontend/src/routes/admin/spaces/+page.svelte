@@ -282,17 +282,15 @@
 
   /** The classes of a check box: filled when all are in, outlined when only some are. */
   function boxClass(state: Coverage): string {
-    if (state === 'all') return 'border-cn-yellow bg-cn-yellow/20 text-cn-dark';
-    if (state === 'some') return 'border-cn-yellow/60 text-cn-dark';
+    if (state === 'all') return 'border-accent-icon bg-accent/20 text-cn-dark';
+    if (state === 'some') return 'border-accent/60 text-cn-dark';
     return 'border-cn-border text-transparent hover:text-text-muted';
   }
 </script>
 
 <div class="space-y-6">
   <header class="flex items-start gap-3">
-    <span
-      class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl"
-    >
+    <span class="bg-accent/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl">
       <Layers size={20} />
     </span>
     <div class="min-w-0 flex-1">
@@ -356,7 +354,7 @@
   {#if loading}
     <div class="flex justify-center py-16">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else}
@@ -510,7 +508,7 @@
                             })}
                             onclick={() => toggleBde(space, association)}
                             class="absolute -top-1.5 -right-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full border transition-opacity disabled:opacity-50 {isBde
-                              ? 'border-cn-yellow bg-cn-yellow text-cn-ink'
+                              ? 'border-accent-icon bg-accent text-cn-ink'
                               : 'border-cn-border text-text-muted bg-(--cn-surface) opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}"
                           >
                             <Star size={10} />
@@ -538,7 +536,7 @@
             class="text-text-muted transition-transform group-not-open/section:-rotate-90"
           />
           {sectionTitles[kind]}
-          <span class="bg-cn-yellow/20 text-cn-dark rounded-full px-2 py-0.5 text-xs font-semibold">
+          <span class="bg-accent/20 text-cn-dark rounded-full px-2 py-0.5 text-xs font-semibold">
             {section.next ? `${section.rows.length}+` : section.rows.length}
           </span>
         </summary>

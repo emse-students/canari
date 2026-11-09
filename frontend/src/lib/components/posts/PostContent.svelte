@@ -162,7 +162,7 @@
         <button
           type="button"
           onclick={() => (expanded = !expanded)}
-          class="mt-1 text-xs font-bold text-amber-600 outline-none hover:underline focus-visible:underline dark:text-amber-400"
+          class="text-accent-text mt-1 text-xs font-bold outline-none hover:underline focus-visible:underline"
         >
           {expanded ? m.post_voir_moins() : m.post_voir_plus()}
         </button>
@@ -233,7 +233,7 @@
                 <button
                   type="button"
                   onclick={() => openLightbox(i)}
-                  class="bg-cn-scrim/60 absolute inset-0 flex items-center justify-center text-white outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 focus-visible:ring-inset"
+                  class="bg-cn-scrim/60 focus-visible:ring-accent/50 absolute inset-0 flex items-center justify-center text-white outline-none focus-visible:ring-4 focus-visible:ring-inset"
                   aria-label={m.post_gallery_more_label({ count: gallery.overflow })}
                   data-gallery-more
                   data-double-tap-defers

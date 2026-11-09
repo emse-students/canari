@@ -107,7 +107,7 @@
          line-height 1 the cap top sits 0.166em below the line box top and the baseline 0.131em
          above its bottom (measured from canvas metrics at 1000px, 2026-10-31). -->
     <p
-      class="font-brand text-text-main -mt-[0.166em] -mb-[0.131em] text-xl leading-none font-bold tracking-wide capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400"
+      class="font-brand text-text-main group-hover:text-accent-text -mt-[0.166em] -mb-[0.131em] text-xl leading-none font-bold tracking-wide capitalize transition-colors duration-300"
     >
       {brandName}
     </p>

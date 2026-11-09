@@ -83,7 +83,7 @@
   >
     {#if loading}
       <div class="flex justify-center py-6">
-        <LoaderCircle size={28} class="text-cn-yellow animate-spin" />
+        <LoaderCircle size={28} class="text-accent-icon animate-spin" />
       </div>
     {:else if joined}
       <div class="flex flex-col items-center gap-3 py-2">
@@ -98,7 +98,7 @@
         </p>
         <a
           href={resolve('/chat')}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover mt-1 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
+          class="bg-accent text-cn-ink hover:bg-accent-hover mt-1 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
         >
           {m.group_join_go_to_chat()}
         </a>
@@ -114,7 +114,7 @@
       </div>
     {:else}
       <div
-        class="bg-cn-yellow/10 text-cn-dark mx-auto flex h-16 w-16 items-center justify-center rounded-2xl"
+        class="bg-accent/10 text-cn-dark mx-auto flex h-16 w-16 items-center justify-center rounded-2xl"
       >
         <Users size={30} />
       </div>
@@ -128,7 +128,7 @@
         type="button"
         onclick={join}
         disabled={joining}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold transition-colors disabled:opacity-50"
+        class="bg-accent text-cn-ink hover:bg-accent-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold transition-colors disabled:opacity-50"
       >
         {joining ? m.common_sending_label() : m.group_join_btn()}
       </button>

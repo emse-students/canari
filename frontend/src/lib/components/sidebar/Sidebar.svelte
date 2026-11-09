@@ -636,7 +636,7 @@
                 : undefined}
               class="relative h-12 w-12 shrink-0 overflow-hidden rounded-2xl transition-all duration-200 select-none [-webkit-touch-callout:none] {selectedCommunityWorkspaceId ===
               workspace.id
-                ? 'ring-cn-yellow ring-offset-cn-bg ring-2 ring-offset-2'
+                ? 'ring-accent-icon ring-offset-cn-bg ring-2 ring-offset-2'
                 : 'opacity-70 hover:rounded-xl hover:opacity-100'}"
               onclick={() => {
                 if (selectedCommunityWorkspaceId === workspace.id) return;
@@ -809,7 +809,7 @@
               <button
                 type="button"
                 onclick={() => openNewChatModal('contact')}
-                class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-xs font-semibold transition-all active:scale-95"
+                class="text-cn-ink bg-accent rounded-xl px-4 py-2 text-xs font-semibold transition-all active:scale-95"
               >
                 {m.chat_new_discussion_label()}
               </button>
@@ -888,7 +888,7 @@
                       }`}
                   class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors pointer-coarse:min-h-11 {selectedChannelId ===
                   channel.id
-                    ? 'text-text-main bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)]'
+                    ? 'text-text-main bg-[color-mix(in_srgb,var(--accent)_16%,transparent)]'
                     : 'text-text-muted hover:text-text-main hover:bg-cn-surface dark:hover:bg-black/20'}"
                 >
                   <span class="opacity-70" aria-hidden="true">
@@ -915,7 +915,7 @@
                   {#if unreadCount}
                     <span
                       aria-hidden="true"
-                      class="bg-cn-ink text-cn-yellow text-2xs inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-bold"
+                      class="bg-cn-ink text-accent text-2xs inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-bold"
                     >
                       {unreadCount > 99 ? '99+' : unreadCount}
                     </span>

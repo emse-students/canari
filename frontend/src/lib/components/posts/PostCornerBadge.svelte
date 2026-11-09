@@ -8,7 +8,7 @@
    *
    * It WAS two spans - "EPINGLE" written in `PostCard` and "NOUVEAU" written in the feed page -
    * identical but for an icon, and they diverged the moment one of them was touched: the amber glow
-   * (`shadow-md shadow-amber-500/30`) was removed from the pinned chip in #639 because a
+   * (`shadow-md shadow-accent/30`) was removed from the pinned chip in #639 because a
    * colour-tinted shadow was the only one of its kind on that surface and read as an accident, and
    * the new-post chip kept it. A reader saw the defect fixed on one post and alive on the next.
    *
@@ -38,7 +38,7 @@
   for the card's own header underneath it.
 -->
 <span
-  class="text-cn-ink text-2xs pointer-events-none absolute -top-2 left-4 z-10 inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 font-bold tracking-widest uppercase"
+  class="text-cn-ink text-2xs bg-accent pointer-events-none absolute -top-2 left-4 z-10 inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-bold tracking-widest uppercase"
 >
   {@render icon?.()}
   {label}

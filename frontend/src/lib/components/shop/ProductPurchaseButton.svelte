@@ -102,7 +102,7 @@
   type="button"
   onclick={handlePurchase}
   disabled={isDisabled}
-  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition-opacity disabled:cursor-not-allowed disabled:opacity-50 {className}"
+  class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition-opacity disabled:cursor-not-allowed disabled:opacity-50 {className}"
 >
   {#if checkingOut}
     <span

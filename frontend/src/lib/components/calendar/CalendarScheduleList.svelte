@@ -188,7 +188,7 @@
 {#if loading}
   <div class="border-cn-border bg-cn-surface rounded-2xl border p-8 text-center">
     <div
-      class="border-cn-yellow mx-auto h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+      class="border-accent-icon mx-auto h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
     ></div>
   </div>
 {:else if empty}
@@ -226,7 +226,7 @@
                 <div class="text-zoom-w-11 shrink-0 text-center">
                   <div
                     class="text-zoom-size-9 mx-auto flex items-center justify-center rounded-full text-lg font-bold {today
-                      ? 'bg-cn-yellow text-cn-ink'
+                      ? 'bg-accent text-cn-ink'
                       : 'text-text-main'}"
                   >
                     {group.day}
@@ -321,7 +321,7 @@
       <div bind:this={sentinel} class="flex justify-center py-4" aria-live="polite">
         <span class="sr-only">{m.calendar_schedule_loading_more()}</span>
         <div
-          class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-2 border-t-transparent"
+          class="border-accent-icon h-5 w-5 animate-spin rounded-full border-2 border-t-transparent"
           aria-hidden="true"
         ></div>
       </div>
