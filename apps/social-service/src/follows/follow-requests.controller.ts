@@ -80,6 +80,16 @@ export class FollowRequestsController {
   }
 
   /**
+   * Withdraws the caller's request to `userId` - ONLY a request nobody answered. Unlike
+   * `DELETE users/:userId/follow` it never removes an accepted follow: 409 `FOLLOW_REQUEST_ANSWERED`
+   * when the person accepted meanwhile, 404 `FOLLOW_REQUEST_NOT_FOUND` when there is no request
+   * (refused, or already withdrawn).
+   */
+  @Delete('users/:userId/follow-request')
+  withdrawRequest(@Headers('x-user-id') xUserId: string, @Param('userId') userId: string) {
+    return this.requests.withdraw(xUserId, userId);
+  }
+  /**
    * Where the calling user stands with the given user: `status` is `accepted`, `pending` or `null`.
    * `following` keeps the meaning a client older than the request screens gives it - its button
    * shows the leave action - so it is true for a pending request too, and that client can withdraw

@@ -9,10 +9,11 @@ import { flushSync, mount, unmount } from 'svelte';
 
 vi.mock('$lib/follows/followState.svelte', () => ({
   ensureAssociationsLoaded: () => {},
+  followEpoch: () => 0,
   ensureBlocksLoaded: () => {},
   ensurePersonStatus: () => {},
   personChipState: () => null,
-  isAssociationFollowed: () => false,
+  associationChipState: () => false,
   tapPerson: () => Promise.resolve(),
   tapAssociation: () => Promise.resolve(),
 }));
@@ -34,7 +35,7 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function header(overrides: Partial<PostEntity>) {
+function header(overrides: Partial<PostEntity>, showFollow = true) {
   const target = document.createElement('div');
   document.body.appendChild(target);
   const post = {
@@ -50,7 +51,7 @@ function header(overrides: Partial<PostEntity>) {
     updatedAt: new Date().toISOString(),
     ...overrides,
   } as PostEntity;
-  const app = mount(PostHeader, { target, props: { post } });
+  const app = mount(PostHeader, { target, props: { post, showFollow } });
   mounted.push(() => void unmount(app));
   flushSync();
   return target;
@@ -70,6 +71,21 @@ describe('PostHeader follow chip', () => {
     } as Partial<PostEntity>);
     expect(t.querySelector('[data-follow-chip="association"]')).not.toBeNull();
     expect(t.querySelector('[data-follow-chip="user"]')).toBeNull();
+  });
+
+  it('offers nothing in the moderation preview (showFollow off)', () => {
+    expect(
+      header({ authorId: 'u1', authorFirstName: 'Marie' }, false).querySelector(
+        '[data-follow-chip]'
+      )
+    ).toBeNull();
+  });
+
+  it('is icon-only on a phone, so the name keeps its row', () => {
+    const label = header({ authorId: 'u1', authorFirstName: 'Marie' }).querySelector(
+      '[data-follow-chip] span'
+    )!;
+    expect(label.classList.contains('max-sm:hidden')).toBe(true);
   });
 
   it('offers nothing on an anonymous post, even one whose author the reader may see', () => {

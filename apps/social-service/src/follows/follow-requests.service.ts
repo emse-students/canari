@@ -137,6 +137,16 @@ export class FollowRequestsService {
     return { ok: true };
   }
 
+  /**
+   * Withdraws a request not answered yet and nothing else ({@link FollowsService.withdrawRequest}):
+   * its bell row goes with it, as in {@link leave}. An accepted follow is a 409, never removed here.
+   */
+  async withdraw(followerUserId: string, followedUserId: string): Promise<{ ok: boolean }> {
+    await this.follows.withdrawRequest(followerUserId, followedUserId);
+    await this.dropRequestNotification(followedUserId, followerUserId);
+    return { ok: true };
+  }
+
   /** The requests waiting for `userId`'s answer, newest first - their own inbox and nobody else's. */
   async incoming(userId: string, limit: number, after?: string): Promise<FollowListEntry[]> {
     return this.listPage(

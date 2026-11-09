@@ -9,10 +9,12 @@ vi.mock('$lib/utils/associationLogoCache', () => ({
 }));
 vi.mock('$lib/follows/followState.svelte', () => ({
   ensureAssociationsLoaded: () => {},
+  followEpoch: () => 0,
   ensureBlocksLoaded: () => {},
   ensurePersonStatus: () => {},
   personChipState: () => null,
-  isAssociationFollowed: (id: string) => id === 'followed',
+  associationChipState: (id: string) =>
+    id === 'followed' || id === 'member' ? (id === 'member' ? 'hidden' : true) : false,
   tapPerson: () => Promise.resolve(),
   tapAssociation: () => Promise.resolve(),
 }));
@@ -26,10 +28,16 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function tile(id: string) {
+function tile(id: string, extra: Partial<Association> = {}) {
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const association = { id, name: 'BDE', slug: 'bde', type: 'association' } as Association;
+  const association = {
+    id,
+    name: 'BDE',
+    slug: 'bde',
+    type: 'association',
+    ...extra,
+  } as Association;
   const app = mount(AssociationTile, { target, props: { association, href: '/associations/bde' } });
   mounted.push(() => void unmount(app));
   flushSync();
@@ -42,6 +50,18 @@ describe('AssociationTile follow chip', () => {
     const chip = t.querySelector('[data-follow-chip="association"]');
     expect(chip).not.toBeNull();
     expect(chip!.closest('a')).toBeNull();
+  });
+
+  it('offers nothing for an association the reader belongs to, nor an archived one', () => {
+    expect(tile('member').querySelector('[data-follow-chip]')).toBeNull();
+    expect(tile('a2', { archived: true }).querySelector('[data-follow-chip]')).toBeNull();
+  });
+
+  it('puts the chip in its own row under the card, never over its text', () => {
+    const t = tile('a1');
+    const card = t.querySelector('a')!;
+    expect(card.contains(t.querySelector('[data-follow-chip]'))).toBe(false);
+    expect(card.parentElement!.classList.contains('flex-col')).toBe(true);
   });
 
   it('offers nothing for an association already followed', () => {

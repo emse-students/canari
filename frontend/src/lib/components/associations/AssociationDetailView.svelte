@@ -10,8 +10,6 @@
   import {
     getAssociationBySlug,
     listMembers,
-    followAssociation,
-    unfollowAssociation,
     getAssociationFollowStatus,
     hasPermissionFlag,
     getMyBdeReach,
@@ -28,6 +26,11 @@
   } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import AccountBell from '$lib/components/follows/AccountBell.svelte';
+  import {
+    followAssociationLedgered,
+    recordAssociationFollowed,
+    unfollowAssociationLedgered,
+  } from '$lib/follows/followState.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS, type PageWidth } from '$lib/components/layout/pageWidth';
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
@@ -297,6 +300,8 @@
           : Promise.resolve({ following: false }),
       ]);
       following = followStatus.following;
+      // The ledger learns what this page read, so a card or a post header agrees with it.
+      recordAssociationFollowed(asso.id, following);
       const names: Record<string, string> = {};
       for (const m of members) {
         names[m.userId] = rosterDisplayName(m);
@@ -336,8 +341,8 @@
     following = !wasFollowing;
     followLoading = true;
     try {
-      if (wasFollowing) await unfollowAssociation(asso.id);
-      else await followAssociation(asso.id);
+      if (wasFollowing) await unfollowAssociationLedgered(asso.id);
+      else await followAssociationLedgered(asso.id);
     } catch (err) {
       Log.d('AssociationDetailView.toggleFollow failed', err);
       following = wasFollowing;

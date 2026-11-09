@@ -20,9 +20,11 @@
   interface Props {
     /** The post whose author/association and creation time are displayed. */
     post: PostEntity;
+    /** Whether "Suivre" is offered beside the publisher; off in the moderation preview. */
+    showFollow?: boolean;
   }
 
-  let { post }: Props = $props();
+  let { post, showFollow = true }: Props = $props();
 
   /**
    * Who wrote an anonymous post, when the server told this reader (author, moderator, admin): drawn
@@ -128,9 +130,16 @@
     An association post offers the association; a personal post offers its author; an anonymous post
     offers nothing - there is nobody to follow, and a revealed author is never turned into a button.
   -->
-  {#if post.association}
-    <FollowChip kind="association" targetId={post.association.id} name={post.association.name} />
+  {#if !showFollow}
+    <!-- the moderation preview: a moderator reads the post, they do not follow its author from there -->
+  {:else if post.association}
+    <FollowChip
+      kind="association"
+      targetId={post.association.id}
+      name={post.association.name}
+      iconOnlyOnPhone
+    />
   {:else if post.authorId && !post.anonymous}
-    <FollowChip kind="user" targetId={post.authorId} name={getPostAuthorName()} />
+    <FollowChip kind="user" targetId={post.authorId} name={getPostAuthorName()} iconOnlyOnPhone />
   {/if}
 </div>

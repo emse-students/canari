@@ -5827,5 +5827,6 @@
   "form_edit_load_action": "Chargement du formulaire",
   "form_create_key_reused": "Ce brouillon a déjà été créé pour une autre association. Rechargez la page pour repartir de « Mes formulaires ».",
   "form_create_key_gone": "Ce brouillon a été supprimé entre-temps.",
-  "follow_chip_follow_named": "Suivre {name}"
+  "follow_chip_follow_named": "Suivre {name}",
+  "follow_chip_withdraw_named": "Retirer la demande de suivi à {name}"
 }

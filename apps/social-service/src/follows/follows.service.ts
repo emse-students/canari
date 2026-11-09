@@ -31,6 +31,10 @@ export const FOLLOW_CODES = {
   pendingLimit: 'FOLLOW_PENDING_LIMIT',
   /** The asker has notified {@link FOLLOW_ASKS_PER_DAY} new people in the last day (429). */
   dailyLimit: 'FOLLOW_DAILY_LIMIT',
+  /** A withdraw found the request already ACCEPTED (409): it is a follow now, not withdrawn. */
+  requestAnswered: 'FOLLOW_REQUEST_ANSWERED',
+  /** A withdraw found no request: the person refused it, or it was withdrawn already (404). */
+  requestNotFound: 'FOLLOW_REQUEST_NOT_FOUND',
 } as const;
 
 /**
@@ -407,6 +411,37 @@ export class FollowsService {
     return { ok: true, removed: rows[0].status };
   }
 
+  /**
+   * Withdraws a request NOT ANSWERED YET - and only that: `DELETE ... WHERE status = 'pending'`, so
+   * a tap on "Demande envoyee" that raced the person's acceptance can never become a silent
+   * unfollow. A row that was answered in between is a 409 `FOLLOW_REQUEST_ANSWERED` (the caller
+   * refreshes its status: it now follows), and no row at all - the person refused it, or it was
+   * withdrawn already - is a 404 `FOLLOW_REQUEST_NOT_FOUND` (the caller refreshes to none). Typed,
+   * so no client reads a message.
+   */
+  async withdrawRequest(followerUserId: string, followedUserId: string): Promise<{ ok: boolean }> {
+    const result: unknown = await this.userFollowRepo.query(
+      `DELETE FROM user_follows
+        WHERE "followerUserId" = $1 AND "followedUserId" = $2 AND status = '${FOLLOW_PENDING}'
+        RETURNING status`,
+      [followerUserId, followedUserId]
+    );
+    const rows = (Array.isArray(result) && Array.isArray(result[0]) ? result[0] : []) as unknown[];
+    if (rows.length > 0) {
+      this.logger.debug(
+        `[FOLLOW] ${short(followerUserId)} withdrew the request to ${short(followedUserId)}`
+      );
+      return { ok: true };
+    }
+    const now = await this.userFollowStatus(followerUserId, followedUserId);
+    this.logger.debug(
+      `[FOLLOW] ${short(followerUserId)} withdraw of ${short(followedUserId)}: nothing pending (now ${now ?? 'no row'})`
+    );
+    if (now === FOLLOW_ACCEPTED) {
+      throw new ConflictException({ code: FOLLOW_CODES.requestAnswered });
+    }
+    throw new NotFoundException({ code: FOLLOW_CODES.requestNotFound });
+  }
   /**
    * Where the viewer stands with the given user: `accepted` (a follow), `pending` (a request not
    * answered yet) or `null` (neither).

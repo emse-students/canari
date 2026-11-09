@@ -9,6 +9,7 @@ import { flushSync, mount, unmount, tick } from 'svelte';
 const api = vi.hoisted(() => ({
   askToFollow: vi.fn(),
   leaveFollow: vi.fn(),
+  withdrawFollowRequest: vi.fn(),
   getFollowStatuses: vi.fn(),
 }));
 vi.mock('$lib/follows/api', async (importOriginal) => ({
@@ -17,7 +18,9 @@ vi.mock('$lib/follows/api', async (importOriginal) => ({
 }));
 const asso = vi.hoisted(() => ({
   followAssociation: vi.fn(),
+  unfollowAssociation: vi.fn(),
   listMyFollowedAssociations: vi.fn(),
+  ensureMyAssociations: vi.fn(),
 }));
 vi.mock('$lib/associations/api', () => asso);
 const blocks = vi.hoisted(() => ({
@@ -29,13 +32,29 @@ const blocks = vi.hoisted(() => ({
   listener: null as null | (() => void),
 }));
 vi.mock('$lib/users/blocks', () => blocks);
+const conn = vi.hoisted(() => ({
+  reconnect: null as null | (() => void),
+}));
+vi.mock('$lib/stores/connectivity.svelte', () => ({
+  connectivity: {
+    onReconnect: (l: () => void) => {
+      conn.reconnect = l;
+      return () => {};
+    },
+  },
+}));
 const toast = vi.hoisted(() => ({ showToast: vi.fn() }));
 vi.mock('$lib/stores/toast.svelte', () => toast);
 vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'me' }));
 
 import FollowChip from './FollowChip.svelte';
 import { resetFollowState } from '$lib/follows/followState.svelte';
-import { FOLLOW_BLOCKED } from '$lib/follows/api';
+import { forgetReaderCaches } from '$lib/utils/sharedCache';
+import {
+  FOLLOW_BLOCKED,
+  FOLLOW_REQUEST_ANSWERED,
+  FOLLOW_REQUEST_NOT_FOUND,
+} from '$lib/follows/api';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { m } from '$lib/paraglide/messages';
 
@@ -61,6 +80,7 @@ beforeEach(() => {
   resetFollowState();
   blocks.listBlockedUsers.mockResolvedValue([]);
   asso.listMyFollowedAssociations.mockResolvedValue([]);
+  asso.ensureMyAssociations.mockResolvedValue([]);
 });
 afterEach(() => {
   if (component) unmount(component);
@@ -83,11 +103,13 @@ describe('a person', () => {
 
   it('a tap on the request withdraws it', async () => {
     api.getFollowStatuses.mockResolvedValue({ u1: 'pending' });
-    api.leaveFollow.mockResolvedValue(undefined);
+    api.withdrawFollowRequest.mockResolvedValue(undefined);
     await render('user', 'u1');
+    expect(chip()?.getAttribute('aria-label')).toBe(m.follow_chip_withdraw_named({ name: 'X' }));
     chip()!.click();
     await settle();
-    expect(api.leaveFollow).toHaveBeenCalledWith('u1');
+    expect(api.withdrawFollowRequest).toHaveBeenCalledWith('u1');
+    expect(api.leaveFollow).not.toHaveBeenCalled();
     expect(chip()?.dataset.followChipState).toBe('ask');
   });
 
@@ -131,6 +153,103 @@ describe('a person', () => {
     await settle();
     expect(api.getFollowStatuses).toHaveBeenCalledTimes(1);
     unmount(second);
+  });
+});
+
+describe('a withdraw that raced the other side', () => {
+  it('an acceptance meanwhile leaves a FOLLOW: the chip goes away, no toast, nothing unfollowed', async () => {
+    api.getFollowStatuses.mockResolvedValue({ u1: 'pending' });
+    api.withdrawFollowRequest.mockRejectedValue(
+      new ApiRefusalError(409, FOLLOW_REQUEST_ANSWERED, 'x')
+    );
+    await render('user', 'u1');
+    chip()!.click();
+    await settle();
+    expect(chip()).toBeNull();
+    expect(toast.showToast).not.toHaveBeenCalled();
+    expect(api.leaveFollow).not.toHaveBeenCalled();
+  });
+
+  it('a refusal by the other side leaves none: Suivre again, no toast, no stuck state', async () => {
+    api.getFollowStatuses.mockResolvedValue({ u1: 'pending' });
+    api.withdrawFollowRequest.mockRejectedValue(
+      new ApiRefusalError(404, FOLLOW_REQUEST_NOT_FOUND, 'x')
+    );
+    await render('user', 'u1');
+    chip()!.click();
+    await settle();
+    expect(chip()?.dataset.followChipState).toBe('ask');
+    expect(toast.showToast).not.toHaveBeenCalled();
+  });
+
+  it('a second tap while the first is out does nothing', async () => {
+    api.getFollowStatuses.mockResolvedValue({});
+    api.askToFollow.mockReturnValue(new Promise(() => {}));
+    await render('user', 'u1');
+    chip()!.click();
+    await settle();
+    chip()!.click();
+    await settle();
+    expect(api.askToFollow).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a read that fails', () => {
+  it('is asked ONCE, not again - the failure does not re-trigger its own readers', async () => {
+    api.getFollowStatuses.mockRejectedValue(new Error('offline'));
+    await render('user', 'u1');
+    await settle();
+    await settle();
+    expect(api.getFollowStatuses).toHaveBeenCalledTimes(1);
+    expect(chip()).toBeNull();
+  });
+
+  it('is asked again exactly once when the connection comes back', async () => {
+    api.getFollowStatuses.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({});
+    await render('user', 'u1');
+    expect(api.getFollowStatuses).toHaveBeenCalledTimes(1);
+    conn.reconnect!();
+    await settle();
+    await settle();
+    expect(api.getFollowStatuses).toHaveBeenCalledTimes(2);
+    expect(chip()?.dataset.followChipState).toBe('ask');
+  });
+
+  it('failed associations are asked once too, and again on the reconnect', async () => {
+    asso.listMyFollowedAssociations.mockRejectedValueOnce(new Error('502'));
+    await render('association', 'a1');
+    await settle();
+    expect(asso.listMyFollowedAssociations).toHaveBeenCalledTimes(1);
+    conn.reconnect!();
+    await settle();
+    expect(asso.listMyFollowedAssociations).toHaveBeenCalledTimes(2);
+    expect(chip()).not.toBeNull();
+  });
+});
+
+describe('another account', () => {
+  it('an answer in flight for account A never lands in B, and B asks for itself', async () => {
+    let answerA!: (v: Record<string, string>) => void;
+    api.getFollowStatuses
+      .mockReturnValueOnce(new Promise((r) => (answerA = r)))
+      .mockResolvedValueOnce({});
+    await render('user', 'u1');
+    forgetReaderCaches(); // the account switch
+    answerA({ u1: 'accepted' });
+    await settle();
+    await settle();
+    // B's own read was asked, and its answer (none) is what the chip draws - not A's 'accepted'.
+    expect(api.getFollowStatuses).toHaveBeenCalledTimes(2);
+    expect(chip()?.dataset.followChipState).toBe('ask');
+  });
+
+  it('forgets the previous account state at once', async () => {
+    api.getFollowStatuses.mockResolvedValue({ u1: 'accepted' });
+    await render('user', 'u1');
+    forgetReaderCaches();
+    api.getFollowStatuses.mockResolvedValue({});
+    await settle();
+    expect(chip()?.dataset.followChipState).toBe('ask');
   });
 });
 
@@ -183,6 +302,21 @@ describe('an association', () => {
     chip()!.click();
     await settle();
     expect(asso.followAssociation).toHaveBeenCalledWith('a1');
+    expect(chip()).toBeNull();
+  });
+
+  it('draws nothing for an association the reader belongs to', async () => {
+    asso.ensureMyAssociations.mockResolvedValue([{ id: 'a1' }]);
+    await render('association', 'a1');
+    expect(chip()).toBeNull();
+  });
+
+  it('draws nothing for an archived association', async () => {
+    component = mount(FollowChip, {
+      target: document.body,
+      props: { kind: 'association', targetId: 'a1', archived: true },
+    });
+    await settle();
     expect(chip()).toBeNull();
   });
 

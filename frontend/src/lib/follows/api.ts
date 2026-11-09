@@ -156,3 +156,18 @@ export async function getFollowStatuses(
   );
   return statuses;
 }
+
+/** The request was ACCEPTED while the withdraw was on its way (409): it is a follow now. */
+export const FOLLOW_REQUEST_ANSWERED = 'FOLLOW_REQUEST_ANSWERED';
+/** No request to withdraw (404): the person refused it, or it was withdrawn already. */
+export const FOLLOW_REQUEST_NOT_FOUND = 'FOLLOW_REQUEST_NOT_FOUND';
+
+/**
+ * Withdraws a request not answered yet - and ONLY that: unlike {@link leaveFollow} it never removes
+ * an accepted follow (409 `FOLLOW_REQUEST_ANSWERED` instead), so a tap on "Demande envoyee" that
+ * raced the person's acceptance is never a silent unfollow.
+ */
+export async function withdrawFollowRequest(userId: string): Promise<void> {
+  Log.d('follows', `withdraw ${userId.slice(0, 8)}`);
+  await socialRequest<{ ok: boolean }>(`${user(userId)}/follow-request`, { method: 'DELETE' });
+}

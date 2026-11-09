@@ -119,3 +119,14 @@ describe('FollowRequestsController.statuses (engagement WP-2)', () => {
     expect(userFollowStatuses).not.toHaveBeenCalled();
   });
 });
+
+describe('FollowRequestsController.withdrawRequest (engagement WP-2)', () => {
+  it('withdraws through the pending-only service call, never the unfollow', async () => {
+    const withdraw = jest.fn(() => Promise.resolve({ ok: true }));
+    const leave = jest.fn();
+    const c = new FollowRequestsController({ withdraw, leave } as never, {} as never, {} as never);
+    expect(await c.withdrawRequest('me', 'you')).toEqual({ ok: true });
+    expect(withdraw).toHaveBeenCalledWith('me', 'you');
+    expect(leave).not.toHaveBeenCalled();
+  });
+});

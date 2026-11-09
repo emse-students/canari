@@ -873,6 +873,41 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     expect(dropped).toEqual([`${POST_LIST_CACHE_PREFIX}*`]);
   });
 
+  describe('withdraw: only a request nobody answered (engagement WP-2)', () => {
+    it('removes a pending request and its bell row, and answers ok', async () => {
+      await requests.ask('ann', 'bob');
+      expect(await requests.withdraw('ann', 'bob')).toEqual({ ok: true });
+      expect(await statusOf('ann', 'bob')).toBeNull();
+      expect(await bellOf('bob')).toEqual([]);
+    });
+
+    it('NEVER removes an accepted follow: a 409 FOLLOW_REQUEST_ANSWERED, the row stays', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.accept('bob', 'ann');
+      const err = await refusalOf(requests.withdraw('ann', 'bob'));
+      expect(codeOf(err)).toBe('FOLLOW_REQUEST_ANSWERED');
+      expect((err as { getStatus: () => number }).getStatus()).toBe(409);
+      expect(await statusOf('ann', 'bob')).toBe('accepted');
+    });
+
+    it('a request the person refused, or none at all, is a 404 FOLLOW_REQUEST_NOT_FOUND', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.refuse('bob', 'ann');
+      for (const to of ['bob', 'cid']) {
+        const err = await refusalOf(requests.withdraw('ann', to));
+        expect(codeOf(err)).toBe('FOLLOW_REQUEST_NOT_FOUND');
+        expect((err as { getStatus: () => number }).getStatus()).toBe(404);
+      }
+    });
+
+    it('leaves another asker request to the same person untouched', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.ask('cid', 'bob');
+      await requests.withdraw('ann', 'bob');
+      expect(await statusOf('cid', 'bob')).toBe('pending');
+    });
+  });
+
   describe('userFollowStatuses: the chips of a whole page in ONE query (engagement WP-2)', () => {
     it('answers the caller own standing per id: accepted, pending, and nothing for the rest', async () => {
       await requests.ask('ann', 'bob');

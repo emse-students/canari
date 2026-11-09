@@ -15,10 +15,11 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 // The follow chip's state is its own spec (`FollowChip.svelte.test.ts`); here it must not reach the network.
 vi.mock('$lib/follows/followState.svelte', () => ({
   ensureAssociationsLoaded: () => {},
+  followEpoch: () => 0,
   ensureBlocksLoaded: () => {},
   ensurePersonStatus: () => {},
   personChipState: () => 'hidden',
-  isAssociationFollowed: () => true,
+  associationChipState: () => 'hidden',
   tapPerson: () => Promise.resolve(),
   tapAssociation: () => Promise.resolve(),
 }));

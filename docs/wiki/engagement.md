@@ -741,34 +741,62 @@ then WP-9). Shipping it earlier would guard nothing.
 
 ### WP-2 - Suivre everywhere (BUILT)
 
-One component, `components/follows/FollowChip.svelte`, drawn in three places: the post header
-(`PostHeader`: the association of an association post, the author of a personal post, nothing on an
-anonymous one, a revealed author included), the directory rows, and `AssociationTile` (the chip is a
-sibling of the tile's link, never inside it).
+One component, `components/follows/FollowChip.svelte` (on `ui/Button`, compact, with a 44 px hit area),
+drawn in three places: the post header (`PostHeader`: the association of an association post, the
+author of a personal post, nothing on an anonymous one - a revealed author included - and nothing in
+the moderation preview, `showFollow={false}`; icon-only below `sm` so the name keeps its row), the
+directory rows, and `AssociationTile` (the chip is a sibling of the link, in its own row under the
+card, never over its text). It is NEVER drawn for yourself, a blocked account, a person already
+followed or requested-and-accepted, an association already followed, an ARCHIVED association, or one
+the reader is a MEMBER of (lead decision), and it draws nothing while its answer is unknown.
 
-**The "do I follow this" fact is read in ONE bulk call per tick.** `POST /api/posts/me/follow-statuses`
-(`FollowRequestsController.statuses`, `FollowsService.userFollowStatuses`) takes `{ userIds }`, at most
-100 (a longer list is a 400 `FOLLOW_STATUS_BATCH_TOO_LARGE`, a body that is not a list of non-empty
-strings a 400 `FOLLOW_STATUS_BATCH_INVALID`), runs ONE query (`= ANY($2)`) on the CALLER's own rows of
-`user_follows` and answers `{ statuses: { id: 'pending' | 'accepted' } }`, an id with no row absent
-(none). It says exactly what `follow-status` says per id and no more: an id across the review cohort's
-boundary reads as none, a block already reads as none (it severs both follows), and nothing about the
-OTHER side - a person who follows the caller, or blocked them, is invisible. Blocks are NOT in this
-answer on purpose: "they blocked you" would be new knowledge no single route gives, so the chip still
-reads the caller's own blocks once (`listBlockedUsers`, cached).
+**The server half, two small routes (both under `/api/posts`, `FollowRequestsController`).**
 
-On the client `follows/followState.svelte.ts` is the shared reactive ledger. Chips ask for an id, the
-ledger dedups it and flushes everything asked in the same tick through a microtask (no timer), chunked
-at the cap: a feed or search page of N authors is ONE request. Answers are cached for the session; a
-tap writes its own answer; a block or an unblock on this device (`onBlocksChanged`) drops what was read,
-and a chip still on screen asks again. Followed associations are one read of `me/following`. A chip
-draws nothing while its answer is unknown, and never for yourself, a blocked account, a person already
-followed or an association already followed. A tap on a person asks (the chip reads "Demande envoyee",
-a second tap withdraws) with the profile's own pure rules (`followButton.ts`: action, optimistic status,
-refusal sentence); a refusal puts the state back and toasts. An association follows at once and the chip
-goes away. Proof: `follow-requests.integration.spec.ts` on PostgreSQL (statuses, one statement, caller
-side only, a stranger's private account, blocks both ways, agreement with `follow-status`),
-`follow-requests.controller.spec.ts` (cap, typed 400s), and the chip specs (N chips = 1 request).
+- `POST me/follow-statuses` takes `{ userIds }`, at most 100 (400 `FOLLOW_STATUS_BATCH_TOO_LARGE`; a
+  body that is not a list of non-empty strings, 400 `FOLLOW_STATUS_BATCH_INVALID`), runs ONE
+  `= ANY($2)` query on the CALLER's own `user_follows` rows and answers `{ statuses: { id: 'pending' |
+  'accepted' } }`, an absent id meaning none. It says what `follow-status` says per id and no more: the
+  review cohort's boundary reads as none, a block already reads as none (it severs both follows), and
+  nothing about the OTHER side is visible. Blocks are NOT in the answer on purpose ("they blocked
+  you" is knowledge no single route gives); the chip reads the caller's own blocks once.
+- `DELETE users/:userId/follow-request` WITHDRAWS: `DELETE ... WHERE status = 'pending'`. An
+  accepted row is never touched - 409 `FOLLOW_REQUEST_ANSWERED` - and no row (the person refused,
+  or already withdrawn) is 404 `FOLLOW_REQUEST_NOT_FOUND`. The old `DELETE users/:userId/follow`
+  stays for unfollowing and for old clients; every WP-2 surface withdraws through the new route, so a
+  tap on "Demande envoyee" that raced an acceptance is never a silent unfollow.
+
+**The ledger** (`follows/followState.svelte.ts`) is the ONE source of truth in the session, and every
+writer goes through it: the chips, the profile page (`askPerson`, `withdrawPerson`, `leavePerson`,
+and what its status read found), the association page (`followAssociationLedgered`,
+`unfollowAssociationLedgered`, and what its status read found) and the sent-requests list
+(`withdrawPerson`). The `ProfileFollowersSection` followers list removes a FOLLOWER, which is not a
+follow of the reader's, so it writes nothing.
+
+- **Reads are batched, not per author**: the ids asked in the same tick leave in ONE call through a
+  microtask (no timer), chunked at the cap, deduplicated, cached per session. Followed associations
+  and memberships are one read each, shared by every card.
+- **A failed read is asked ONCE per epoch.** The ids it failed for are recorded and never asked again
+  until a real event: the connection coming back (`connectivity.onReconnect`, which retries exactly
+  the failures once), a block or unblock on this device (`onBlocksChanged` - a block severs follows,
+  so everything read is void), or another account. (The first version kept the asked ids in a
+  reactive set read by the chip's effect: a failure re-ran every effect, a new request each
+  microtask, forever.) The ledger's sets are plain on purpose.
+- **An epoch ends every read of a previous reader.** The ledger is a per-reader cache
+  (`registerPerReaderCache(resetFollowState)`, run on sign-out and account switch); a read, an
+  association read or a blocks read that left for account A compares the epoch when it lands and is
+  dropped after the switch to B. A chip still on screen reads the reactive epoch and asks again.
+- **A tap** flips the state at once, is guarded by a per-id in-flight set (a second tap does nothing),
+  and puts the state back with a toast on a refusal (the profile's sentences). A withdraw that
+  raced the other side ends in what the server says now - a follow (409) or none (404) - with no
+  toast and no stuck state. An association follows at once and the chip goes away.
+
+Proof: `follow-requests.integration.spec.ts` on PostgreSQL (statuses; one statement; caller side
+only; a stranger's private account; blocks both ways; agreement with `follow-status`; the withdraw
+route: pending removed with its bell row, accepted refused and kept, refused/absent is a 404, another
+asker untouched), `follow-requests.controller.spec.ts` (cap, typed 400s), and the chip specs (N chips
+= 1 request, chunking, session cache, block refetch, a rejected read asked once and again on a
+reconnect, an account switch mid-flight, the withdraw races, double taps, member and archived
+hidden, the aria-label of a pending request naming the person).
 
 ### Which migrations are held
 

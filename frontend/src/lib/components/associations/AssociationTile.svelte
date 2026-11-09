@@ -98,8 +98,8 @@
 </script>
 
 <!-- The chip is the anchor's SIBLING, never its child: a button inside a link is invalid and a tap would reach both. -->
-<div class="relative h-full">
-  <a {href} class="block h-full">
+<div class="flex h-full flex-col gap-1.5">
+  <a {href} class="block min-h-0 flex-1">
     <CardTile
       accentColor={accent}
       class="h-full {association.archived ? 'opacity-75 transition-opacity hover:opacity-100' : ''}"
@@ -216,7 +216,13 @@
       </div>
     </CardTile>
   </a>
-  <div class="absolute right-3 bottom-3">
-    <FollowChip kind="association" targetId={association.id} name={association.name} />
+  <!-- Its own row UNDER the card, never over the text: the footer of a card is as long as its role or count line, and a chip laid on it covered it at 15rem. -->
+  <div class="flex justify-end empty:hidden">
+    <FollowChip
+      kind="association"
+      targetId={association.id}
+      name={association.name}
+      archived={association.archived === true}
+    />
   </div>
 </div>
