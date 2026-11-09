@@ -58,6 +58,14 @@ afterEach(() => {
 });
 
 describe('the birthday settings', () => {
+  it('after a removal inside the window, offers no save and names the day it opens', async () => {
+    api.fetchMyBirthday.mockResolvedValue({ birthday: null, changeOpensOn: '2026-12-08' });
+    await render();
+    expect(saveButton().disabled).toBe(true);
+    expect(select('birthday-day').disabled).toBe(true);
+    expect(opens()?.textContent).toContain('2026');
+  });
+
   it('says before the first save that a date counts from tomorrow and holds 30 days', async () => {
     api.fetchMyBirthday.mockResolvedValue({ birthday: null, changeOpensOn: null });
     await render();

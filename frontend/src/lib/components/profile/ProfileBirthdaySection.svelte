@@ -231,7 +231,11 @@
     {/if}
 
     <div class="mt-5 flex flex-wrap gap-2">
-      <Button onclick={() => void save()} disabled={!valid || unchanged} loading={busy}>
+      <Button
+        onclick={() => void save()}
+        disabled={!valid || unchanged || (dateLocked && !stored)}
+        loading={busy}
+      >
         {m.profile_birthday_save()}
       </Button>
       {#if stored}

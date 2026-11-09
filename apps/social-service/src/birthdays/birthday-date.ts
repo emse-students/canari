@@ -89,9 +89,24 @@ export const BIRTHDAY_CHANGE_WINDOW_DAYS = 30;
 
 /**
  * SQL condition: birthday row `b` may be announced on the Paris date `date` - never announced, or
- * last announced at least {@link BIRTHDAY_NOTICE_EVERY_DAYS} days before. The notifier's claim.
+ * last announced at least {@link BIRTHDAY_NOTICE_EVERY_DAYS} days before, and not before the
+ * `noticeOpensOn` a clear kept (`birthday_changes`: a clear then a set buys nothing). The claim.
  */
 export function noticeOpenSql(b: string, date: string): string {
-  return `(${b}."lastAnnouncedOn" IS NULL
-    OR ${b}."lastAnnouncedOn" <= ${date} - ${BIRTHDAY_NOTICE_EVERY_DAYS})`;
+  return `((${b}."lastAnnouncedOn" IS NULL
+      OR ${b}."lastAnnouncedOn" <= ${date} - ${BIRTHDAY_NOTICE_EVERY_DAYS})
+    AND NOT EXISTS (SELECT 1 FROM birthday_changes notice_gate
+      WHERE notice_gate."userId" = ${b}."userId" AND notice_gate."noticeOpensOn" > ${date}))`;
+}
+
+/**
+ * SQL condition: birthday row `b` is CELEBRATED on the Paris date `date` - the ring and the
+ * profile's line: its day ({@link celebratedOnSql}), set before that day ({@link dateInEffectSql}),
+ * and that day's notice was sent or may be ({@link noticeOpenSql}). The ring follows the notice's
+ * eligibility, so a date moved within the 300 days moves no ring either.
+ */
+export function celebratedTodaySql(b: string, date: string): string {
+  return `(${celebratedOnSql(`${b}.month`, `${b}.day`, date)}
+    AND ${dateInEffectSql(b, date)}
+    AND (${b}."lastAnnouncedOn" = ${date} OR ${noticeOpenSql(b, date)}))`;
 }

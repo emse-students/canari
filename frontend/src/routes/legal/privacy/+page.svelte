@@ -211,11 +211,16 @@
           peuvent voir la date reçoivent une notification (« C'est l'anniversaire de ... ») ; ils
           peuvent couper cette catégorie dans leurs réglages de notifications. Une date enregistrée
           compte à partir du lendemain ; vos abonnés sont prévenus au plus une fois tous les 300
-          jours, et le serveur garde pour cela le dernier jour où ils l'ont été. Une nouvelle date
-          ne peut être enregistrée qu'une fois tous les 30 jours (la retirer puis la remettre compte
-          comme un changement) : le serveur garde à cette fin le moment où vous avez enregistré une
-          date, sans la date elle-même. Vous pouvez retirer la date à tout moment depuis votre
-          profil.
+          jours, et le serveur garde pour cela le dernier jour où ils l'ont été. Le cercle festif ne
+          s'affiche que les jours où cette notification a été ou peut être envoyée. Une nouvelle
+          date ne peut être enregistrée qu'une fois tous les 30 jours (la retirer puis la remettre
+          compte comme un changement ; une correction le jour même reste possible) : le serveur
+          garde à cette fin le moment où vous avez enregistré une date, sans la date elle-même. Si
+          vous retirez la date après que vos abonnés ont été prévenus, le serveur garde seulement
+          une date « pas de notification avant le » (le jour de cette notification plus 300 jours,
+          ce qui permet de situer approximativement votre dernier anniversaire) : aucune nouvelle
+          date n'est annoncée ni fêtée avant elle. Vous pouvez retirer la date à tout moment depuis
+          votre profil.
         </dd>
       </div>
       <div>
@@ -838,8 +843,9 @@
             <td>
               La date, qui la voit et le dernier jour où vos abonnés ont été prévenus : jusqu'à ce
               que vous la retiriez (aussitôt supprimés) ou la suppression du compte ; le moment où
-              une date a été enregistrée (sans la date) : 30 jours, ou jusqu'à la suppression du
-              compte
+              une date a été enregistrée (sans la date) : 30 jours ; après un retrait qui suit une
+              notification, la date « pas de notification avant le » : jusqu'à ce jour, au plus 300
+              jours après cette notification ; les deux sont supprimés à la suppression du compte
             </td>
           </tr>
           <tr>

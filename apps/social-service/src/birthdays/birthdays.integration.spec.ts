@@ -429,7 +429,9 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
 
   it('the account erasure removes the date, its notices and the rows naming the member', async () => {
     await setFree('ann', { month: 9, day: 9 });
-    expect((await birthdays.state('ann')).changeOpensOn).not.toBeNull();
+    expect(
+      (await q(`SELECT count(*)::int AS n FROM birthday_changes WHERE "userId" = 'ann'`)).rows[0].n
+    ).toBe(1);
     await notifier.announceDue({ today: '2027-09-09', hour: 9 });
     expect((await birthdays.mine('ann'))?.month).toBe(9);
     // A change row the erasure must reach (the tick above purged the one older than its day).
@@ -490,10 +492,15 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
 
   it('refuses a new date within 30 days of the last, a clear then a set included, never a visibility edit', async () => {
     const { today } = await parisToday();
-    const first = await birthdays.setMine('ann', { month: 5, day: 5 });
-    expect(first.birthday).toEqual({ month: 5, day: 5, visibility: 'followers' });
-    const opensOn = first.changeOpensOn;
-    expect((await q(`SELECT to_char($1::date + 30, 'YYYY-MM-DD') AS d`, [today])).rows[0].d).toBe(
+    expect((await birthdays.setMine('ann', { month: 5, day: 5 })).birthday).toEqual({
+      month: 5,
+      day: 5,
+      visibility: 'followers',
+    });
+    // The next Paris day: the window runs from yesterday's set.
+    await q(`UPDATE birthday_changes SET "changedAt" = now() - interval '1 day'`);
+    const opensOn = (await birthdays.state('ann')).changeOpensOn;
+    expect((await q(`SELECT to_char($1::date + 29, 'YYYY-MM-DD') AS d`, [today])).rows[0].d).toBe(
       opensOn
     );
 
@@ -521,5 +528,95 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
       (await q(`SELECT "userId" FROM birthday_changes ORDER BY 1`)).rows.map((r) => r.userId)
     ).toEqual(['oth']);
     expect((await birthdays.setMine('ann', { month: 5, day: 6 })).birthday?.day).toBe(6);
+  });
+
+  it('accepts corrections the same Paris day without restarting the window, and refuses the next day', async () => {
+    const { today } = await parisToday();
+    await birthdays.setMine('ann', { month: 5, day: 5 });
+    const firstSet = (await q(`SELECT "changedAt" FROM birthday_changes WHERE "userId" = 'ann'`))
+      .rows[0].changedAt as Date;
+    // A typo fixed twice, then a clear and a set: all the same day, all accepted.
+    expect((await birthdays.setMine('ann', { month: 5, day: 6 })).birthday?.day).toBe(6);
+    expect((await birthdays.setMine('ann', { month: 5, day: 7 })).birthday?.day).toBe(7);
+    await birthdays.clearMine('ann');
+    const again = await birthdays.setMine('ann', { month: 5, day: 8 });
+    expect(again).toEqual({
+      birthday: { month: 5, day: 8, visibility: 'followers' },
+      changeOpensOn: null,
+    });
+    // The window still runs from the day's FIRST set.
+    expect(
+      (await q(`SELECT "changedAt" FROM birthday_changes WHERE "userId" = 'ann'`)).rows[0].changedAt
+    ).toEqual(firstSet);
+    // The next day: refused, until the 30th day after that first set.
+    await q(`UPDATE birthday_changes SET "changedAt" = "changedAt" - interval '1 day'`);
+    expect(await refusalOf(birthdays.setMine('ann', { month: 5, day: 9 }))).toBe(
+      BIRTHDAY_CHANGE_TOO_SOON
+    );
+    expect((await birthdays.state('ann')).changeOpensOn).toBe(
+      (await q(`SELECT to_char($1::date + 29, 'YYYY-MM-DD') AS d`, [today])).rows[0].d
+    );
+  });
+
+  it('after an announcement, a clear then a set announces and rings nothing before day 300', async () => {
+    await q(`DELETE FROM post_notifications`);
+    await setFree('ann', { month: 6, day: 10, visibility: 'followers' });
+    expect((await notifier.announceDue({ today: '2027-06-10', hour: 9 })).claimed).toBe(1);
+    // "Retirer": the date goes, and only the day a notice opens again stays - no date of birth.
+    await birthdays.clearMine('ann');
+    const kept = (
+      await q(
+        `SELECT to_char("noticeOpensOn", 'YYYY-MM-DD') AS opens FROM birthday_changes
+          WHERE "userId" = 'ann'`
+      )
+    ).rows;
+    expect(kept).toEqual([{ opens: '2028-04-05' }]);
+    expect(
+      (await q(`SELECT count(*)::int AS n FROM profile_birthdays WHERE "userId" = 'ann'`)).rows[0].n
+    ).toBe(0);
+
+    // 30 days on, a new date is accepted - and announced on none of its days before day 300.
+    const openWindow = () => q(`UPDATE birthday_changes SET "changedAt" = NULL`);
+    await openWindow();
+    await birthdays.setMine('ann', { month: 7, day: 11 });
+    expect((await notifier.announceDue({ today: '2027-07-11', hour: 9 })).claimed).toBe(0);
+    await openWindow();
+    await birthdays.setMine('ann', { month: 4, day: 4 });
+    expect((await notifier.announceDue({ today: '2028-04-04', hour: 9 })).claimed).toBe(0);
+    await openWindow();
+    await birthdays.setMine('ann', { month: 4, day: 5 });
+    expect((await notifier.announceDue({ today: '2028-04-05', hour: 9 })).claimed).toBe(1);
+    // The day it passes, the hourly job empties it and the row goes.
+    expect(
+      (await q(`SELECT count(*)::int AS n FROM birthday_changes WHERE "userId" = 'ann'`)).rows[0].n
+    ).toBe(0);
+    await flush();
+    expect(await birthdayRows()).toEqual(['fol<ann', 'fol<ann']);
+  });
+
+  it('rings only on a day whose notice was sent or may be: a monthly move moves no ring', async () => {
+    const { m, d, today } = await parisToday();
+    await setFree('ann', { month: m, day: d, visibility: 'school' });
+    await setYesterday();
+    const ringed = async () => (await birthdays.ofUser('oth', 'ann')).today;
+    const listed = async () => (await birthdays.today('oth')).userIds;
+    // Announced a month ago, the date moved onto today: no ring, for the member neither.
+    await q(`UPDATE profile_birthdays SET "lastAnnouncedOn" = $1::date - 30`, [today]);
+    expect(await ringed()).toBe(false);
+    expect((await birthdays.ofUser('ann', 'ann')).today).toBe(false);
+    expect(await listed()).toEqual([]);
+    // Announced today, or 300 days ago or more: the ring.
+    await q(`UPDATE profile_birthdays SET "lastAnnouncedOn" = $1::date`, [today]);
+    expect(await ringed()).toBe(true);
+    await q(`UPDATE profile_birthdays SET "lastAnnouncedOn" = $1::date - 300`, [today]);
+    expect(await ringed()).toBe(true);
+    expect(await listed()).toEqual(['ann']);
+    // A gate a clear kept holds the ring until its day.
+    await q(`UPDATE birthday_changes SET "noticeOpensOn" = $1::date + 5 WHERE "userId" = 'ann'`, [
+      today,
+    ]);
+    expect(await ringed()).toBe(false);
+    await q(`UPDATE birthday_changes SET "noticeOpensOn" = $1::date`, [today]);
+    expect(await ringed()).toBe(true);
   });
 });

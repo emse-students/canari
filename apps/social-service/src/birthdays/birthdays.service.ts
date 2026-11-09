@@ -3,10 +3,10 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import {
   BIRTHDAY_CHANGE_WINDOW_DAYS,
+  BIRTHDAY_NOTICE_EVERY_DAYS,
   BIRTHDAY_TIME_ZONE,
   PARIS_TODAY_SQL,
-  celebratedOnSql,
-  dateInEffectSql,
+  celebratedTodaySql,
   parseBirthdayDate,
 } from './birthday-date';
 import { birthdayDateVisibleToSql, birthdayRingVisibleToSql } from './birthday-sql';
@@ -64,13 +64,26 @@ export const BIRTHDAY_BODY_INVALID = 'BIRTHDAY_BODY_INVALID';
  */
 export const BIRTHDAY_CHANGE_TOO_SOON = 'BIRTHDAY_CHANGE_TOO_SOON';
 
-/** SQL: the first Paris date a new date is accepted, from a `birthday_changes` row `c`. */
-const CHANGE_OPENS_ON_SQL = `((c."changedAt" AT TIME ZONE '${BIRTHDAY_TIME_ZONE}')::date + ${BIRTHDAY_CHANGE_WINDOW_DAYS})`;
+/** SQL: the Paris date of a `birthday_changes` row `c`'s last set. */
+const CHANGED_ON_SQL = `(c."changedAt" AT TIME ZONE '${BIRTHDAY_TIME_ZONE}')::date`;
 
-/** SQL, `$1` the member: the first Paris date a new date is accepted, when that is after today. */
+/** SQL: the first Paris date a new date is accepted, from a `birthday_changes` row `c`. */
+const CHANGE_OPENS_ON_SQL = `(${CHANGED_ON_SQL} + ${BIRTHDAY_CHANGE_WINDOW_DAYS})`;
+
+/**
+ * SQL, `$1` the member: the first Paris date a new date is accepted, when a new one is refused
+ * today. A date set TODAY keeps the window open for corrections the same day (a typo, or a clear
+ * then a set): it buys nothing, since a date set today counts from tomorrow, and the window still
+ * runs from the first set of the day.
+ */
 const CHANGE_OPENS_ON_QUERY = `SELECT to_char(${CHANGE_OPENS_ON_SQL}, 'YYYY-MM-DD') AS "opensOn"
    FROM birthday_changes c
-  WHERE c."userId" = $1 AND ${CHANGE_OPENS_ON_SQL} > ${PARIS_TODAY_SQL}`;
+  WHERE c."userId" = $1 AND c."changedAt" IS NOT NULL
+    AND ${CHANGED_ON_SQL} < ${PARIS_TODAY_SQL}
+    AND ${CHANGE_OPENS_ON_SQL} > ${PARIS_TODAY_SQL}`;
+
+/** SQL, `$1` the member: the transaction-scoped lock every write of their birthday takes. */
+const MEMBER_LOCK_SQL = `SELECT pg_advisory_xact_lock(hashtextextended('profile_birthdays:' || $1, 0))`;
 
 const short = (id: string) => id.slice(0, 8);
 
@@ -113,8 +126,9 @@ export class BirthdaysService {
    * A body without a visibility keeps the stored one, or takes the default (`followers`) on a first
    * write. A visibility edit is always accepted; a NEW date (a first one, a move, or a set after a
    * clear) is refused `409 BIRTHDAY_CHANGE_TOO_SOON` within {@link BIRTHDAY_CHANGE_WINDOW_DAYS}
-   * days of the last one, and takes effect from the next Paris day (`dateSetAt`). Serialised per
-   * member by a transaction-scoped advisory lock, so two devices cannot both pass the window.
+   * days of the last one - a correction the same Paris day as that one excepted, which keeps the
+   * window - and takes effect from the next Paris day (`dateSetAt`). Serialised per member by a
+   * transaction-scoped advisory lock, so two devices cannot both pass the window.
    */
   async setMine(userId: string, body: unknown): Promise<OwnBirthdayState> {
     if (!body || typeof body !== 'object') {
@@ -125,7 +139,7 @@ export class BirthdaysService {
     const visibility =
       raw.visibility === undefined ? null : parseProfileFieldVisibility(raw.visibility);
     const isNewDate = await this.ds.transaction(async (m) => {
-      await m.query(`SELECT pg_advisory_xact_lock(hashtext('profile_birthdays:' || $1))`, [userId]);
+      await m.query(MEMBER_LOCK_SQL, [userId]);
       const [stored] = (await m.query(
         `SELECT month, day FROM profile_birthdays WHERE "userId" = $1`,
         [userId]
@@ -146,9 +160,13 @@ export class BirthdaysService {
             message: `a new date is accepted from ${recent.opensOn}`,
           });
         }
+        // A correction the same Paris day keeps the day's first `changedAt`: the window is not
+        // restarted. `noticeOpensOn`, if a clear kept one, is left as it is.
         await m.query(
-          `INSERT INTO birthday_changes ("userId", "changedAt") VALUES ($1, now())
-           ON CONFLICT ("userId") DO UPDATE SET "changedAt" = now()`,
+          `INSERT INTO birthday_changes AS c ("userId", "changedAt") VALUES ($1, now())
+           ON CONFLICT ("userId") DO UPDATE SET "changedAt" = CASE
+             WHEN c."changedAt" IS NOT NULL AND ${CHANGED_ON_SQL} = ${PARIS_TODAY_SQL}
+             THEN c."changedAt" ELSE now() END`,
           [userId]
         );
       }
@@ -171,29 +189,45 @@ export class BirthdaysService {
   }
 
   /**
-   * Removes the caller's birthday - the date, its visibility and the day it was last announced go
-   * with the row: no date, no ring, no notice. Always accepted, idempotent. What stays is the
-   * `birthday_changes` row (when a date was last set, never which), so a set right after still
-   * counts as a change; the notifier's hourly job deletes it 30 days after that set.
+   * Removes the caller's birthday - the date and its visibility go with the row: no date, no ring,
+   * no notice. Always accepted, idempotent. What stays, in `birthday_changes`, never names the date:
+   * when one was last set (a set right after still counts as a change), and, when the date was
+   * announced less than 300 days ago, `noticeOpensOn = lastAnnouncedOn + 300` - no new date is
+   * announced or ringed before it, so a clear then a set buys no notice the 300 days refuse. The
+   * notifier's hourly job empties each once it passes (lead decision, L23 amended).
    */
   async clearMine(userId: string): Promise<OwnBirthdayState> {
-    await this.ds.query(`DELETE FROM profile_birthdays WHERE "userId" = $1`, [userId]);
-    this.logger.log(`[BIRTHDAY] cleared user=${short(userId)}`);
+    const kept = await this.ds.transaction(async (m) => {
+      await m.query(MEMBER_LOCK_SQL, [userId]);
+      const rows = (await m.query(
+        `WITH gone AS (
+           DELETE FROM profile_birthdays WHERE "userId" = $1 RETURNING "lastAnnouncedOn"
+         )
+         INSERT INTO birthday_changes AS c ("userId", "noticeOpensOn")
+         SELECT $1, g."lastAnnouncedOn" + ${BIRTHDAY_NOTICE_EVERY_DAYS} FROM gone g
+          WHERE g."lastAnnouncedOn" + ${BIRTHDAY_NOTICE_EVERY_DAYS} > ${PARIS_TODAY_SQL}
+         ON CONFLICT ("userId") DO UPDATE
+           SET "noticeOpensOn" = GREATEST(c."noticeOpensOn", EXCLUDED."noticeOpensOn")
+         RETURNING c."userId"`,
+        [userId]
+      )) as unknown[];
+      return rows.length > 0;
+    });
+    this.logger.log(`[BIRTHDAY] cleared user=${short(userId)} noticeGateKept=${kept}`);
     return this.state(userId);
   }
 
   /**
    * `userId`'s birthday as `viewerId` may read it, in ONE statement: the date only when
    * {@link birthdayDateVisibleToSql} admits the viewer, `today` when the ring may be shown to them
-   * ({@link birthdayRingVisibleToSql}), the date is celebrated on today's Paris date, and it was set
-   * before today began.
+   * ({@link birthdayRingVisibleToSql}) and the date is celebrated today ({@link celebratedTodaySql}:
+   * its day, set before today, and today's notice sent or still possible).
    */
   async ofUser(viewerId: string, userId: string): Promise<ViewedBirthday> {
     const [row] = (await this.ds.query(
       `SELECT CASE WHEN ${birthdayDateVisibleToSql('b', '$1')} THEN b.month END AS month,
               CASE WHEN ${birthdayDateVisibleToSql('b', '$1')} THEN b.day END AS day,
-              (${celebratedOnSql('b.month', 'b.day', PARIS_TODAY_SQL)}
-                AND ${dateInEffectSql('b', PARIS_TODAY_SQL)}
+              (${celebratedTodaySql('b', PARIS_TODAY_SQL)}
                 AND ${birthdayRingVisibleToSql('b."userId"', '$1')}) AS today
          FROM profile_birthdays b WHERE b."userId" = $2`,
       [viewerId, userId]
@@ -217,8 +251,7 @@ export class BirthdaysService {
       `SELECT to_char(${PARIS_TODAY_SQL}, 'YYYY-MM-DD') AS date, b."userId" AS "userId"
          FROM (SELECT 1) one
          LEFT JOIN profile_birthdays b
-           ON ${celebratedOnSql('b.month', 'b.day', PARIS_TODAY_SQL)}
-          AND ${dateInEffectSql('b', PARIS_TODAY_SQL)}
+           ON ${celebratedTodaySql('b', PARIS_TODAY_SQL)}
           AND ${birthdayRingVisibleToSql('b."userId"', '$1')}
         ORDER BY b."userId"`,
       [viewerId]

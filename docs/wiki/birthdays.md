@@ -25,9 +25,12 @@ Everything is in social-service, migration `148_profile_birthdays.sql`:
   last set - a visibility edit leaves it), `lastAnnouncedOn` (the Paris date the followers were last
   told, the notice's claim), `updatedAt`. CHECKs refuse a month outside 1..12 and a day the month
   cannot have (29 February is allowed, 30 February is not). "Retirer" deletes the row, and with it
-  everything about the date.
-- `birthday_changes`: `userId` (PK), `changedAt` - when a date was last set, never which. It outlives
-  a removal only for the 30-day change window, and the notifier's hourly job deletes it then.
+  the date and its visibility.
+- `birthday_changes`: `userId` (PK) and two facts that outlive a removal on purpose, never a date of
+  birth: `changedAt` (when a date was last set - the 30-day window) and `noticeOpensOn` (written by
+  a removal that follows an announcement: `lastAnnouncedOn + 300`, the first day a notice or a ring
+  is possible again). The notifier's hourly job empties each once it passes and deletes the empty
+  row.
 
 Social-service holds the follows, the bell (`account_bells`) and the notifications, so the visibility
 rule and the notice are one SQL statement each, with no cross-service call. **Core's profile DTO is
@@ -41,26 +44,32 @@ with no row - the field is optional and empty.
 ## A date cannot be moved to buy a ring or a notice (lead decision, 2026-11-09)
 
 The adversarial review of #3180 found that moving the date every day would give a school-wide ring
-and a push to every follower EVERY day. Three rules close it, each reversible by one constant or one
-condition:
+and a push to every follower EVERY day; its re-review found that a removal then a new date reopened
+the notice monthly. These rules close both (engagement L23, amended the same day), each reversible by
+one constant or one condition:
 
 1. **A date counts from the NEXT Paris day.** The ring, the profile's "today" line and the notice all
    require `dateSetAt` before today began (`dateInEffectSql`), the first date included: a member who
    enters their birthday on the day itself is celebrated next year.
 2. **One notice per member per 300 days** (`BIRTHDAY_NOTICE_EVERY_DAYS`), wherever the date is
-   moved: the claim refuses while `lastAnnouncedOn` is closer than that. A date moved after its notice
-   tells nobody again within the 300 days; the ring still shows on the new day (rule 3 bounds that).
-3. **A NEW date at most once per 30 days** (`BIRTHDAY_CHANGE_WINDOW_DAYS`, counted in Paris dates).
+   moved: the claim (`noticeOpenSql`) refuses while `lastAnnouncedOn` is closer than that, AND before
+   a `noticeOpensOn` a removal kept. **A removal after an announcement keeps `noticeOpensOn =
+   lastAnnouncedOn + 300` and nothing else** (option a of the re-review): a new date may then be set
+   under rule 3, but is neither announced nor ringed before that day. Kept at most 300 days after the
+   announcement, it roughly dates the last birthday; the register (C26) and the policy say so.
+3. **The ring follows the notice** (`celebratedTodaySql`): on its day, a date is ringed only when
+   that day's notice was sent (`lastAnnouncedOn` = today) or may still be (rule 2). Moving the date
+   monthly therefore moves no ring either.
+4. **A NEW date at most once per 30 days** (`BIRTHDAY_CHANGE_WINDOW_DAYS`, counted in Paris dates).
    The first date opens the window, and a removal then a new date counts as a change; a visibility
-   edit, or setting the same date again, is never one. The settings show the day the window opens
-   (`changeOpensOn` from `GET posts/me/birthday`) and lock the date until then, so the form never
-   learns it by a refusal; a second device racing the first meets `409 BIRTHDAY_CHANGE_TOO_SOON`
-   (with `opensOn`), shown as its own message. Removing the date is always accepted.
-
-Residue, accepted: a member who removes their date and enters a new one every 30 days gets a ring
-each time and, since a removal deletes `lastAnnouncedOn` with the date, a notice each time - at most
-one per 30 days. Keeping the last notice's day after a removal would close it, at the price of
-keeping a trace of the date after "Retirer", which the owner's rule on removal forbids.
+   edit, or setting the same date again, is never one. **A correction the same Paris day as the
+   window's first set is accepted and keeps the window** (a typo, or a removal then a set that day):
+   it buys nothing, since a date set today counts from tomorrow. The settings show the day the window
+   opens (`changeOpensOn` from `GET posts/me/birthday`, `null` while a correction is still accepted)
+   and lock the date and the Save button until then, so the form never learns it by a refusal; a
+   second device racing the first meets `409 BIRTHDAY_CHANGE_TOO_SOON` (with `opensOn`), shown as its
+   own message. Removing the date is always accepted. Every write of a member's birthday takes
+   `pg_advisory_xact_lock(hashtextextended('profile_birthdays:' || id, 0))`.
 
 ## Who sees what
 
@@ -109,8 +118,8 @@ After the commit, `PostNotificationsService.pushNotice` fans out the pushes (con
 `social_birthday`, category `birthdays`). Each celebrant is its own `try`: one failure is logged and
 the batch goes on. A push that fails after the commit is logged at error and not retried (a retry
 would be the duplicate the claim exists to prevent); **a crash between the commit and the push loses
-that push with no trace**, while the bell rows survive. Each tick also deletes the
-`birthday_changes` rows whose window has closed. A school-visibility member's non-follower sees the date but is not told - the
+that push with no trace**, while the bell rows survive. Each tick also empties the
+`birthday_changes` facts that have passed and deletes the rows left empty. A school-visibility member's non-follower sees the date but is not told - the
 notice is for followers (decision 4).
 
 - **The bell** (engagement L22): a bell on the celebrant at `lives` or `none` withholds the push; the
@@ -148,8 +157,10 @@ account; the coverage spec asserts both columns. The bell rows naming the member
   refused dates, the default visibility, the visibility matrix, the ring on the day only, 29
   February, the morning gate and idempotence, a hidden date telling nobody, the bell withholding,
   the bell row following the visibility, erasure; a date set today celebrated from its next
-  occurrence only; one notice in 300 days wherever the date moves; a new date refused within 30 days
-  (a removal then a set included) and the window purged.
+  occurrence only; one notice in 300 days wherever the date moves; after an announcement, a removal
+  then a new date announced and ringed on none of its days before day 300; no ring on a day whose
+  notice is closed (a monthly move); a new date refused within 30 days (a removal then a set
+  included), same-day corrections accepted without restarting the window, and the purge.
 - `birthday-date.spec.ts`: the two parsers' typed refusals.
 - Frontend: `birthdayDate.test.ts`, `ProfileBirthdaySection.svelte.test.ts` (the note before the
   first save, the date locked while the window is open, a refusal from another device),

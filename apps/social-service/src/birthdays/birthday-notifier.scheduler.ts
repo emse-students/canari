@@ -144,18 +144,34 @@ export class BirthdayNotifier {
   }
 
   /**
-   * Deletes the `birthday_changes` rows whose window closed by `today` (Paris): they only ever
-   * refuse a new date within 30 days of the last one. Caught here, so a failed purge never stops the
-   * notices; the next tick retries it.
+   * Empties what `birthday_changes` no longer needs by `today` (Paris) - a `changedAt` whose 30-day
+   * window closed, a `noticeOpensOn` reached - and deletes the rows left empty. Answers how many rows
+   * were deleted. Caught here, so a failed purge never stops the notices; the next tick retries it.
    */
   private async purgeChanges(today: string): Promise<number> {
     try {
-      const [, purged] = (await this.ds.query(
-        `DELETE FROM birthday_changes
-          WHERE ("changedAt" AT TIME ZONE '${BIRTHDAY_TIME_ZONE}')::date + ${BIRTHDAY_CHANGE_WINDOW_DAYS} <= $1::date`,
-        [today]
-      )) as [unknown[], number];
-      if (purged > 0) this.logger.log(`${TAG} ${today} purged ${purged} closed change window(s)`);
+      // Two statements, one transaction: a statement may not delete a row its own CTE updated.
+      const purged = await this.ds.transaction(async (m) => {
+        await m.query(
+          `UPDATE birthday_changes SET
+             "changedAt" = CASE WHEN ("changedAt" AT TIME ZONE '${BIRTHDAY_TIME_ZONE}')::date
+               + ${BIRTHDAY_CHANGE_WINDOW_DAYS} <= $1::date THEN NULL ELSE "changedAt" END,
+             "noticeOpensOn" = CASE WHEN "noticeOpensOn" <= $1::date THEN NULL
+               ELSE "noticeOpensOn" END
+            WHERE ("changedAt" AT TIME ZONE '${BIRTHDAY_TIME_ZONE}')::date
+               + ${BIRTHDAY_CHANGE_WINDOW_DAYS} <= $1::date
+               OR "noticeOpensOn" <= $1::date`,
+          [today]
+        );
+        const [, deleted] = (await m.query(
+          `DELETE FROM birthday_changes WHERE "changedAt" IS NULL AND "noticeOpensOn" IS NULL`
+        )) as [unknown[], number];
+        return deleted;
+      });
+      if (purged > 0)
+        this.logger.log(
+          `${TAG} ${today} emptied ${purged} birthday_changes row(s) no longer needed`
+        );
       return purged;
     } catch (e) {
       this.logger.error(

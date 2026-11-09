@@ -20,9 +20,14 @@
 --      notifier's conditional UPDATE sets it in the transaction that writes the followers' bell rows,
 --      and refuses while it is within 300 days - so a re-run, a second replica or a restart announces
 --      nothing twice, and a moved date announces nothing twice in a year. Deleted with the row.
--- 2. `birthday_changes`: when a member last set a date, and nothing else - not the date. A date
---    changes at most once per 30 days, a clear then a set counting as a change; the row outlives a
---    clear only for that window, and the notifier's hourly job deletes it after 30 days.
+-- 2. `birthday_changes`: never a date of birth, two facts that outlive a clear on purpose:
+--    - "changedAt": when a date was last set. A NEW date is accepted at most once per 30 days, a
+--      clear then a set counting as a change (a correction the same Paris day keeps the window).
+--      The notifier's hourly job empties it once the 30 days pass.
+--    - "noticeOpensOn": written by a clear that follows an announcement, `lastAnnouncedOn + 300`,
+--      and nothing else: no new date is announced or ringed before it, so a clear then a set
+--      cannot buy a notice the 300 days would refuse. Emptied by the same job once it passes.
+--    The row is deleted once both are empty, and by the account erasure.
 --
 -- The index serves the celebrants' read, `celebratedOnSql` comparing (month, day) as smallints.
 --
@@ -51,7 +56,8 @@ CREATE INDEX IF NOT EXISTS "IDX_profile_birthdays_month_day" ON profile_birthday
 
 CREATE TABLE IF NOT EXISTS birthday_changes (
   "userId" varchar(255) PRIMARY KEY,
-  "changedAt" timestamptz NOT NULL DEFAULT now()
+  "changedAt" timestamptz,
+  "noticeOpensOn" date
 );
 
 COMMIT;
