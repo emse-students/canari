@@ -19,7 +19,7 @@ describe('sitemap.xml', () => {
   it('reads the public association projection and nothing else, and lists no post', async () => {
     fetchJson.mockResolvedValue([{ slug: 'bde', archived: false }]);
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const res = await GET({} as Parameters<typeof GET>[0]);
+    const res = await (GET as unknown as () => Promise<Response>)();
     const xml = await res.text();
     log.mockRestore();
 

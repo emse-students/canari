@@ -1,9 +1,9 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Break the app-wide import cycle (auth store -> composables -> mlsService -> subclasses ->
 // BaseMlsService) that otherwise loads the concrete services before BaseMlsService is defined.
 vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BaseMlsService } from './BaseMlsService';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/incomingDelivery';
