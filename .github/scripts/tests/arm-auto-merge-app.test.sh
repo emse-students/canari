@@ -519,35 +519,62 @@ awk '
   inside && inrun { sub(/^          /, ""); print }
 ' "$wf" >"$work/merge.sh"
 mkdir -p "$work/bin2"
+# API-shaped answers, every `--jq` run by the real jq (through the CRLF shim in $work/bin).
 cat >"$work/bin2/gh" <<'SH'
 #!/usr/bin/env bash
 echo "$*" >>"$FAKE_GH_LOG"
+jqexpr=''
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  [ "${args[$i]}" = --jq ] && jqexpr="${args[$((i + 1))]}"
+done
 case "$1 ${2:-}" in
   "pr merge") case " $* " in *" --auto "*) exit 1 ;; esac; exit 0 ;;
   "pr view") case " $* " in
-      *mergeStateStatus*) echo "$FAKE_STATE" ;;
+      *mergeStateStatus*) jq -nr --arg s "$FAKE_STATE" --argjson d "${FAKE_DRAFT:-false}" '{mergeStateStatus: $s, isDraft: $d}' | jq -r "$jqexpr" ;;
       *) echo false ;;
     esac ;;
-  api*) echo "$FAKE_GREEN" ;;
+  api*) printf '%s' "$FAKE_RUNS" | jq -r "$jqexpr" ;;
 esac
 SH
 chmod +x "$work/bin2/gh"
-merge_case() { # <state> <green count> -> $out, $st
+# A check run as the API answers it: <id> <name> <app slug> <head sha> <conclusion|null>.
+check_run() { jq -nc --argjson i "$1" --arg n "$2" --arg a "$3" --arg h "$4" --arg c "$5" \
+  '{id: $i, name: $n, app: {slug: $a}, head_sha: $h, conclusion: (if $c == "null" then null else $c end)}'; }
+runs() { jq -sc '{check_runs: .}'; }
+GREEN="$(check_run 7 'CI passed' github-actions "$M2" success | runs)"
+merge_case() { # <state> <check runs json> -> $out, $st
   : >"$work/gh.log"
-  out="$(cd "$work" && PATH="$work/bin2:$PATH" GH_TOKEN=x REPO=o/r PR=5 HEAD_SHA="$M2" FAKE_STATE="$1" FAKE_GREEN="$2" FAKE_GH_LOG="$work/gh.log" bash "$work/merge.sh" 2>&1)"
+  out="$(cd "$work" && PATH="$work/bin2:$work/bin:$PATH" GH_TOKEN=x REPO=o/r PR=5 HEAD_SHA="$M2" FAKE_STATE="$1" FAKE_RUNS="$2" FAKE_GH_LOG="$work/gh.log" bash "$work/merge.sh" 2>&1)"
   st=$?
 }
 merged_now() { grep -qxF "pr merge 5 --squash --match-head-commit $M2 --repo o/r" "$work/gh.log"; }
+refused() { # <name>
+  if [ "$st" != 0 ] && ! merged_now; then pass "$1"; else fail "$1 (merged, or the step passed)" "$out"; fi
+}
 for state in CLEAN UNSTABLE; do
-  merge_case "$state" 1
+  merge_case "$state" "$GREEN"
   if [ "$st" = 0 ] && merged_now; then pass "B33 a $state pull request with CI passed green on its head is merged now, on that head"; else fail "B33 $state was not merged now" "$out"; fi
 done
-merge_case UNSTABLE 0
-if [ "$st" != 0 ] && ! merged_now; then pass "B33 an UNSTABLE pull request whose CI passed is not green on the head is not merged, and fails"; else fail "B33 merged without a green CI passed" "$out"; fi
-for state in BLOCKED BEHIND DIRTY UNKNOWN; do
-  merge_case "$state" 1
-  if [ "$st" != 0 ] && ! merged_now; then pass "B33 a $state pull request is not merged now, and the step fails loudly"; else fail "B33 $state was merged or passed" "$out"; fi
+merge_case UNSTABLE '{"check_runs": []}'
+refused "B33 an UNSTABLE pull request with no CI passed on the head is not merged, and fails"
+for state in BLOCKED BEHIND DIRTY UNKNOWN HAS_HOOKS; do
+  merge_case "$state" "$GREEN"
+  refused "B33 a $state pull request is not merged now, and the step fails loudly"
 done
+# THE APP BYPASSES THE RULESET, so these reads are the gate (review of #3244).
+FAKE_DRAFT=true merge_case CLEAN "$GREEN"
+refused "B33 a pull request that is a draft again is never merged, even CLEAN and green"
+merge_case CLEAN "$(check_run 7 'CI passed' some-other-app "$M2" success | runs)"
+refused "B33 a CI passed from another app than GitHub Actions does not merge"
+merge_case CLEAN "$({ check_run 7 'CI passed' github-actions "$M2" success; check_run 9 'CI passed' github-actions "$M2" failure; } | runs)"
+refused "B33 an older green CI passed beside a newer red one does not merge"
+merge_case CLEAN "$({ check_run 9 'CI passed' github-actions "$M2" null; check_run 7 'CI passed' github-actions "$M2" success; } | runs)"
+refused "B33 a newer CI passed still running beside an older green one does not merge"
+merge_case CLEAN "$(check_run 7 'CI passed' github-actions "$M1" success | runs)"
+refused "B33 a CI passed on another commit than the judged head does not merge"
+merge_case CLEAN "$(check_run 7 'CI passedx' github-actions "$M2" success | runs)"
+refused "B33 a check run whose name only resembles CI passed does not merge"
 
 # ── B34: ONE arming implementation - the guard step never arms or merges by itself ───────────────
 # shellcheck disable=SC2016 # the dollar sign is the workflow's own shell text, matched literally

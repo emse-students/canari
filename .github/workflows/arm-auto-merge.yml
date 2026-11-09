@@ -442,16 +442,23 @@ jobs:
           # judged and only if `CI passed` is green on it. The state is read as DATA
           # (`mergeStateStatus`), never from the prose of the refusal: CLEAN is mergeable, UNSTABLE is
           # mergeable with a non-required check red or pending. Every other state fails loudly below.
-          merge_state="$(gh pr view "$PR" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus')"
+          # THE RULESET DOES NOT JUDGE THIS MERGE, THESE READS DO (review of #3244): the App is a
+          # bypass actor of ruleset 22152902 (`bypass_mode: always`, it pushes the release bump), so
+          # a merge it makes directly is not refused for a missing `CI passed`. `mergeStateStatus` is
+          # GitHub's evaluation of the ruleset IGNORING the viewer's bypass (measured: a pull request
+          # with `CI passed` pending reads BLOCKED to an admin), and `CI passed` must be GitHub
+          # Actions' own check run, the NEWEST of them on the head - not any app's, not any one of
+          # several. A draft is refused here too: the event said ready, but it may be a draft again.
+          merge_state="$(gh pr view "$PR" --repo "$REPO" --json mergeStateStatus,isDraft --jq 'if .isDraft then "DRAFT" else .mergeStateStatus end')"
           if [ "$merge_state" = 'CLEAN' ] || [ "$merge_state" = 'UNSTABLE' ]; then
-            green="$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?check_name=CI%20passed&per_page=100" \
-              --jq '[.check_runs[] | select(.name == "CI passed" and .conclusion == "success")] | length')"
-            if [ "$green" -ge 1 ]; then
+            ci="$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?check_name=CI%20passed&per_page=100" \
+              --jq '[.check_runs[] | select(.name == "CI passed" and .app.slug == "github-actions" and .head_sha == $ENV.HEAD_SHA)] | sort_by(.id) | last | .conclusion // "absent"')"
+            if [ "$ci" = 'success' ]; then
               echo "#$PR is already $merge_state and CI passed is green on $HEAD_SHA - merging it now."
               gh pr merge "$PR" --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"
               exit 0
             fi
-            echo "::error::#$PR is $merge_state but CI passed is not green on $HEAD_SHA - not merged."
+            echo "::error::#$PR is $merge_state but GitHub Actions' newest CI passed on $HEAD_SHA reads '$ci' - not merged."
           fi
           # canari-only:end
           echo "::error::Could not arm auto-merge on #$PR, and it is not armed. Check that the"
