@@ -479,6 +479,76 @@ export class VotePollDto {
   optionIds: string[];
 }
 
+/** The most a comment's picture may weigh, sealed: the media service's own ceiling is higher, a comment's is not. */
+export const COMMENT_MEDIA_MAX_BYTES = 16 * 1024 * 1024;
+
+/**
+ * THE ONE PICTURE (or GIF) A COMMENT CARRIES, validated field by field.
+ *
+ * It was `@IsObject()` alone, so a crafted request could store any shape - a video or a `file`
+ * entry, a 4 GB `size`, an `iv` of a megabyte - in a row every reader of the post then renders. The
+ * client's `CommentComposer` strips `type` from the ref it stages, so `type` is optional here but,
+ * when sent, must say `image`; the `mimeType` must be an image either way. `encoding` is not
+ * declared, so `whitelist` drops it: a comment's picture is one AES-GCM block, never the segmented video format.
+ *
+ * What this cannot check is the uploader: like a post's, the blob's owner is recorded by the media
+ * service, which deletes only an object its recorded uploader names (`commentMediaOwners`).
+ */
+export class CommentMediaDto {
+  @IsOptional()
+  @IsString()
+  @IsIn(['image'])
+  type?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  mediaId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(256)
+  key: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  iv: string;
+
+  @IsString()
+  @Matches(/^image\/[a-z0-9.+-]{1,40}$/i, { message: 'mimeType must be an image type' })
+  mimeType: string;
+
+  @IsNumber()
+  @Min(1)
+  @Max(COMMENT_MEDIA_MAX_BYTES)
+  size: number;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  fileName?: string;
+
+  @IsInt()
+  @IsOptional()
+  @Min(1)
+  @Max(20000)
+  width?: number;
+
+  @IsInt()
+  @IsOptional()
+  @Min(1)
+  @Max(20000)
+  height?: number;
+
+  /** The publisher's ThumbHash, as a post's media carries it (see {@link PostMediaDto.placeholder}). */
+  @IsString()
+  @IsOptional()
+  @MaxLength(MEDIA_PLACEHOLDER_MAX_LENGTH)
+  @Matches(/^[A-Za-z0-9+/]*={0,2}$/, { message: 'placeholder must be base64' })
+  placeholder?: string;
+}
+
 export class AddCommentDto {
   @IsString()
   @IsOptional()
@@ -506,16 +576,12 @@ export class AddCommentDto {
   @IsBoolean()
   anonymous?: boolean;
 
-  @IsObject()
+  /** The comment's ONE picture or GIF. See {@link CommentMediaDto}. */
   @IsOptional()
-  media?: {
-    mediaId: string;
-    key: string;
-    iv: string;
-    mimeType: string;
-    size: number;
-    fileName?: string;
-  };
+  @IsObject()
+  @ValidateNested()
+  @Type(() => CommentMediaDto)
+  media?: CommentMediaDto;
 }
 
 export class AddReactionDto {
