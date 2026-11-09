@@ -38,6 +38,10 @@ const COMMUNITY_REFUSALS: Record<string, () => string> = {
   REMOVAL_EXCEEDS_ACTOR: () => m.chat_community_removal_exceeds_actor_error(),
   /** A role assignment, permission edit or new role reaching past the actor's own permissions. */
   ROLE_CHANGE_EXCEEDS_ACTOR: () => m.chat_community_role_change_exceeds_actor_error(),
+  /** A role name that is too long or holds a control character. */
+  ROLE_LABEL_INVALID: () => m.chat_role_name_invalid_error(),
+  /** A role rename by someone who is not an administrator (their screen was stale). */
+  ROLE_RENAME_REQUIRES_ADMIN: () => m.chat_role_name_forbidden_error(),
   /** An invitation naming a role its sender may not grant. */
   INVITE_ROLE_NOT_GRANTABLE: () => m.chat_invite_role_not_grantable_error(),
   /** A salon access edit computed from a row another edit changed since: nothing saved, retryable. */

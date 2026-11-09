@@ -164,16 +164,6 @@ export class Association {
   color: string | null;
 
   /**
-   * Primary thematic category (managed table {@link AssociationCategory}), used to group the
-   * association on the "Carte de la Vie Asso" poster and directory. Loose uuid (no FK
-   * constraint, matching the other reference columns here); nulled server-side when the
-   * referenced category is deleted. Null = uncategorised.
-   */
-  @Column({ type: 'uuid', nullable: true })
-  @Index()
-  categoryId: string | null;
-
-  /**
    * Discriminates a regular association from a promo "list" and an institution. A list keeps the
    * shop, its cotisation, paid forms and the vault, but holds NO Lydia account of its own: it
    * collects only through an accepted payment delegation (`paymentParentAssociationId`). An
@@ -219,6 +209,14 @@ export class Association {
   /** When true, the association is archived: shown under "Anciennes", hidden from "Mes associations". */
   @Column({ default: false })
   archived: boolean;
+
+  /**
+   * When this association's last live was ANNOUNCED (migration 139, WP-1b): the 6-hour limit on
+   * live announcements reads and writes it in segment 0's claim (`LivesService.confirm`), because a
+   * live row is deleted at its end. `select: false`: an internal clock, never served.
+   */
+  @Column({ type: 'timestamptz', nullable: true, select: false })
+  lastLiveAnnouncedAt: Date | null;
 
   /** Public contact e-mail, shown on the trombinoscope export and the association page. */
   @Column({ type: 'varchar', length: 255, nullable: true })

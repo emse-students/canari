@@ -43,6 +43,11 @@ const CONTAINER_TYPES = new Set(['jsonb', 'json', 'simple-array', 'simple-json']
  * metadata cannot see them. Asserted against the migrations below, in both directions.
  */
 const RAW_TABLES = [
+  // The global association categories, read by no code since migration 147 (per-map carte zones)
+  // and kept only until their drop: a label, a slug, an order - no account, nothing to erase.
+  // Removed from this list BY the drop migration
+  // (docs/wiki/backlog.d/drop-the-global-association-categories.md).
+  'association_categories',
   'read_grants',
   'read_grant_journal',
   // Migration 132's per-reader switch "voit les commentaires": the reader, who set it.
@@ -58,10 +63,16 @@ const RAW_TABLES = [
   // Migration 135's retired post ids: an id and a date, no account - written BY the erasure's own
   // delete of the member's posts, so a resend of one never brings it back.
   'deleted_post_ids',
+  // Migration 080's per-association mute: its entity went with engagement WP-3, which copied the
+  // rows into `account_bells` (migration 143); the table stays until its held drop.
+  'association_push_mutes',
   // Migration 127's per-space pins (WP-PIN): who pinned.
   'post_space_pins',
   // Migration 129's dependency journal: the platform admin who changed a parent or a governor.
   'dependency_journal',
+  // Migration 146's unpublished form revisions: a form id and the form's own content, no account -
+  // they go with their form (ON DELETE CASCADE), as its other content does.
+  'form_drafts',
 ];
 
 const SRC = join(__dirname, '..');

@@ -62,6 +62,18 @@ export class PlatformConfig {
     default: 'full',
   })
   pushMode!: PushMode;
+
+  /**
+   * Whether a client may skip the MLS checkpoint after a drain that only received application
+   * frames (migration 020, WP-CHECKPOINT-SKIP). Read by no service: published by `GET /api/version`.
+   */
+  @Column({
+    name: 'checkpoint_skip_mode',
+    type: 'varchar',
+    length: 16,
+    default: 'off',
+  })
+  checkpointSkipMode!: CheckpointSkipMode;
 }
 
 /**
@@ -100,3 +112,16 @@ export type PushMode = 'full' | 'wake';
 
 /** Every {@link PushMode}, for the DTO's validation. */
 export const PUSH_MODES: readonly PushMode[] = ['full', 'wake'];
+
+/**
+ * Whether an estate's clients may skip the full MLS checkpoint after a live drain that only received
+ * application frames. `off` is today's behaviour (every drain checkpoints); `on` lets a client leave
+ * that checkpoint to the next existing trigger until 100 receive generations are unsaved - the count
+ * is the client's (`frontend/src/lib/mls-client/receiveCheckpointSkip.ts`, the same two values, held
+ * together by the column's CHECK constraint). Published to clients by `GET /api/version`; no service
+ * reads it.
+ */
+export type CheckpointSkipMode = 'off' | 'on';
+
+/** Every {@link CheckpointSkipMode}, for the DTO's validation. */
+export const CHECKPOINT_SKIP_MODES: readonly CheckpointSkipMode[] = ['off', 'on'];

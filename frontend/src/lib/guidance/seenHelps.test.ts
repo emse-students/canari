@@ -74,6 +74,21 @@ describe('SeenHelps', () => {
     });
   });
 
+  it('keeps the SERVER-measured age of a seen help, and none for one it has not aged', async () => {
+    apiFetch.mockResolvedValueOnce(
+      json(200, {
+        seen: ['welcome-tour', 'prompt-profile-photo'],
+        ageSeconds: { 'prompt-profile-photo': 90, 'welcome-tour': 'x', retired: 5 },
+      })
+    );
+    await store.load('u1');
+    expect(store.ageSeconds('prompt-profile-photo')).toBe(90);
+    expect(store.ageSeconds('welcome-tour')).toBeNull();
+    expect(store.ageSeconds('hint-chats')).toBeNull();
+    store.reset();
+    expect(store.ageSeconds('prompt-profile-photo')).toBeNull();
+  });
+
   it('owes an unanswered write to the reconnect, and delivers it there', async () => {
     apiFetch.mockResolvedValueOnce(json(200, { seen: [] }));
     await store.load('u1');

@@ -1,63 +1,31 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Controller, Get, Logger, UseGuards } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
-import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
-import { AssociationCategoriesService } from './association-categories.service';
-import {
-  CreateAssociationCategoryDto,
-  ReorderCategoriesDto,
-  UpdateAssociationCategoryDto,
-} from './dto/association-category.dto';
 
 /**
- * Manages the association thematic taxonomy used by the "Carte de la Vie Asso" poster and
- * directory. Reads are public (labels are shown throughout the app); writes are restricted to
- * global admins and BDE super-admins.
+ * THE RETIRED GLOBAL CATEGORY LIST, KEPT AS ONE SHIM (owner, 2026-11-08).
  *
- * Registered BEFORE {@link AssociationsController} in the module so its literal routes win over
- * the `/associations/:id` matcher.
+ * The zones of a "Carte de la Vie Asso" belong to each map since migration 147
+ * (docs/wiki/carte-vie-asso.md, "A carte belongs to one space"), so the platform-wide taxonomy, its
+ * manager and the category picker of the association settings are gone. A build older than that
+ * still reads this list on the carte hub, in the carte editor and on the profile settings tab; it
+ * answers the empty list, so those screens keep loading (every association uncategorised, no
+ * picker option) instead of throwing on a 500 from `associations/:id` - which is what the path
+ * would hit without this route. The old write routes are simply gone: no current screen offers them.
+ *
+ * [LEGACY] listed in docs/wiki/legacy-compatibility.md; removed once `minClientVersion` passes the
+ * first stable carrying migration 147. Signed-in only, as since 2026-11-02 (anonymous-surface.md).
  */
 @Controller('associations/categories')
 export class AssociationCategoriesController {
-  constructor(private readonly service: AssociationCategoriesService) {}
+  private readonly logger = new Logger(AssociationCategoriesController.name);
 
-  /**
-   * Lists categories in display order. Signed-in only since 2026-11-02: the public showcase shows
-   * no categories ([anonymous-surface](../../../../docs/wiki/anonymous-surface.md)).
-   */
+  /** The empty list, to a build older than the per-map zones. */
   @UseGuards(NginxAuthGuard)
   @Get()
-  list() {
-    return this.service.list();
-  }
-
-  /** Creates a category. Global admins and BDE super-admins only. */
-  @UseGuards(NginxAuthGuard, GlobalAdminOrBdeSuperAdminGuard)
-  @Post()
-  create(@Body() dto: CreateAssociationCategoryDto) {
-    return this.service.create(dto);
-  }
-
-  /**
-   * Persists a new top-to-bottom order. Declared before `:id` so `reorder` is not captured as
-   * a category id. Global admins and BDE super-admins only.
-   */
-  @UseGuards(NginxAuthGuard, GlobalAdminOrBdeSuperAdminGuard)
-  @Patch('reorder')
-  reorder(@Body() dto: ReorderCategoriesDto) {
-    return this.service.reorder(dto.orderedIds);
-  }
-
-  /** Updates a category's label/order. Global admins and BDE super-admins only. */
-  @UseGuards(NginxAuthGuard, GlobalAdminOrBdeSuperAdminGuard)
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateAssociationCategoryDto) {
-    return this.service.update(id, dto);
-  }
-
-  /** Deletes a category and detaches it from its associations. Admins/BDE super-admins only. */
-  @UseGuards(NginxAuthGuard, GlobalAdminOrBdeSuperAdminGuard)
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
+  list(): [] {
+    this.logger.warn(
+      '[LEGACY] GET associations/categories from a build older than the per-map carte zones - answered []'
+    );
+    return [];
   }
 }

@@ -476,7 +476,7 @@ and the editor still hand back; "Garder comme post" hands the video back with it
 
 **Decided 2026-10-30, designed, not built:** on the TAB, "Suivant" becomes "Envoyer à...", a list whose
 first row publishes as below and whose other rows send the same take - the same stored file - to
-several conversations at once ([reels-in-chat section 15](reels-in-chat.md#15-send-to-many---decided-2026-10-30-designed-not-built)).
+several conversations at once ([reels-in-chat section 15](reels-in-chat.md#15-send-to-many---decided-2026-10-30-built-behind-the-writer-switch-section-21)).
 The composer's camera keeps "Publier".
 
 **The review, the editor and the sound removal are on [reel-editor](reel-editor.md)** (2026-10-05):

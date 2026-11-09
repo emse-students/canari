@@ -110,8 +110,13 @@ TURN_USERNAME LIVE_ENABLED"
 # report restore AVAILABLE on a stack no phone can restore against. Empty, restore reports itself
 # unavailable (503, fails closed) - and the frontend half, VITE_ANDROID_APP_LINK_SHA256, is already
 # written empty below for the same reason, so the two halves agree.
+#
+# HANDOFF_SIGNING_KEY because it is the PRIVATE half of what every MiConnect site trusts to sign a
+# person straight in (docs/wiki/sessions.md, "The sign-in handoff"): a laptop holding it could forge a
+# token for anybody. Not REGENERATE either: a regenerated hex string is no EC key, and core-service
+# would say so at error on every boot. Empty, the local stack mints nothing and opens sites plainly.
 BLANK="LYDIA_PROVIDER_PRIVATE_TOKEN LYDIA_PROVIDER_TOKEN MICONNECT_EDITOR_TOKEN
-LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256"
+LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256 HANDOFF_SIGNING_KEY"
 
 # Regenerated per local stack: these mint or verify credentials.
 # LYDIA_KEY_ENCRYPTION_SECRET is here and NOT in KEEP: kept, a laptop holding a production dump

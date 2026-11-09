@@ -339,7 +339,7 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | DELETE | `/api/posts/:postId` | Delete post |
 | POST | `/api/posts/:postId/reactions` | Add/toggle reaction |
 | POST | `/api/posts/:postId/comments` | Add comment |
-| PATCH | `/api/posts/:postId/pin` | Pin the post in ONE space, body `{ spaceId }` (WP-PIN): the platform admin, or `MODERATE` in that space's BDE; typed 409 `space_pin_limit` / `space_required` / `post_not_in_space`, 403 `space_pin_forbidden` (checked FIRST: same answer whether the post exists or not), 404 `post_not_found`, and `space_not_found` to the admin only ([spaces-and-audiences-reform](../spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)) |
+| PATCH | `/api/posts/:postId/pin` | Pin the post in ONE space, body `{ spaceId }`, REQUIRED (a `400` without it, since floor `1.6.6`) (WP-PIN): the platform admin, or `MODERATE` in that space's BDE; typed 409 `space_pin_limit` / `post_not_in_space`, 403 `space_pin_forbidden` (checked FIRST: same answer whether the post exists or not), 404 `post_not_found`, and `space_not_found` to the admin only ([spaces-and-audiences-reform](../spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)) |
 | PATCH | `/api/posts/:postId/unpin` | Unpin the post from ONE space, body `{ spaceId }`; same tier and refusals |
 | GET | `/api/posts/space-pins/:spaceId` | The governor's pins of a space: `{ postId, pinnedAt, state }`, `shown` (the 3 readers see first) then `pending` ("en attente") |
 | POST | `/api/posts/users/:userId/follow` | Ask to follow a person: a `pending` request (`{ ok, status }`); 404 `FOLLOW_TARGET_NOT_FOUND` for an id that names no person, 403 `FOLLOW_BLOCKED` across a block, 409 `FOLLOW_PENDING_LIMIT` at 100 unanswered requests, 429 `FOLLOW_DAILY_LIMIT` at 50 new people a day; throttled per caller ([social-service](../services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25)) |
@@ -352,6 +352,8 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | GET | `/api/posts/me/follow-requests/sent` | The caller's unanswered requests (withdraw with `DELETE users/:userId/follow`) |
 | GET | `/api/posts/me/followers` | The caller's accepted followers, most recently accepted first; `createdAt` is the acceptance (`limit` <= 100, `offset`) |
 | DELETE | `/api/posts/me/followers/:userId` | Remove a follower: deleted, nobody told (404 when not one) |
+| GET | `/api/posts/me/bells/:kind/:targetId` | The caller's bell on one account, `kind` `user` or `association`: `{ level }`, `all` (posts and lives, the default) when none is stored ([engagement](../engagement.md#the-bell---data-model-and-how-it-combines-with-categories-and-mutes)) |
+| PUT | `/api/posts/me/bells/:kind/:targetId` | Set it, body `{ level }` (`all`, `lives`, `none`); idempotent; 400 `BELL_INVALID`, 404 `BELL_TARGET_NOT_FOUND` for an association that does not exist or a person the caller does not follow (accepted) |
 
 ### Channels
 

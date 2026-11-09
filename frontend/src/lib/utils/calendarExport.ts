@@ -13,6 +13,7 @@ import {
   dayOccupancy,
   eventCardsOnDay,
   organiserCentred,
+  eventOwners,
   type DayOccupancy,
 } from '$lib/calendar/feedEvents';
 import { localizedWeekdays, monthGridDays } from '$lib/calendar/monthGrid';
@@ -332,12 +333,13 @@ const EVENT_BG_OPACITY = 82;
 
 /** Hex colors for an event in display order: the organiser in the middle band, co-owners around it. */
 function eventHexColors(ev: AssociationCalendarFeedEvent): string[] {
-  return organiserCentred([
-    associationAccentHex({ id: ev.associationId, color: ev.associationColor }),
-    ...(ev.coOwners ?? []).map((co) =>
-      associationAccentHex({ id: co.associationId, color: co.color })
-    ),
-  ]);
+  // Through `eventOwners`, the one list of who an event shows: a neutral event is "Campus" on the
+  // printed sheet too, never its BDE (the exporter is an agenda manager and receives the owner).
+  return organiserCentred(
+    eventOwners(ev).map((owner) =>
+      associationAccentHex({ id: owner.associationId, color: owner.color })
+    )
+  );
 }
 
 /**
@@ -755,13 +757,17 @@ function buildCalendarHtml(
           // collapsed to the single-logo branch and drew it WHOLE across the circle - which looks
           // exactly like a working split and is why "the second logo is missing" stayed unexplained
           // for so long: the symptom was disguised as a correct render.
-          const owners = organiserCentred([
-            { name: ev.associationName, url: ev.associationLogoUrl },
-            ...(ev.coOwners ?? []).map((co) => ({ name: co.name, url: co.logoUrl })),
-          ]);
+          const owners = organiserCentred(
+            eventOwners(ev).map((owner) => ({
+              name: owner.name,
+              url: owner.logoUrl,
+              neutral: owner.neutral === true,
+            }))
+          );
           const logoSrcs = owners.map((o) => resolveLogo(o.url));
           for (const [oi, o] of owners.entries()) {
-            if (logoSrcs[oi] === null) {
+            // "Campus" has no logo by design: its initials are the drawing, not a missing file.
+            if (logoSrcs[oi] === null && !o.neutral) {
               console.warn(
                 `[CalendarExport] No logo for "${o.name}" on "${ev.title}" - its half stays empty (logoUrl: ${o.url ?? 'none set'})`
               );
@@ -932,12 +938,7 @@ export async function withRenderedSheet<T>(
 
   // Primary AND co-owner logos, pre-fetched as data URLs so the raster shows every logo.
   const uniqueLogoUrls = [
-    ...new Set(
-      events.flatMap((ev) => [
-        ev.associationLogoUrl,
-        ...(ev.coOwners ?? []).map((co) => co.logoUrl),
-      ])
-    ),
+    ...new Set(events.flatMap((ev) => eventOwners(ev).map((owner) => owner.logoUrl))),
   ].filter((u): u is string => !!u);
   const resolvedLogos = await Promise.all(
     uniqueLogoUrls.map((url) => fetchDataUrl(associationLogoSrc(url)))

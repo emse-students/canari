@@ -201,7 +201,7 @@ export async function storeIncomingSeed(
   // Mirrored so a push arriving with the app killed can still be opened. Not awaited for
   // correctness - the seed is already durable - but awaited for ORDER: a notification racing the
   // mirror would degrade for no reason.
-  await mirrorGraineSeed(session);
+  await mirrorGraineSeed(session, storingFor.userId);
   return { outcome: nowHeld(seed.sessionId, 'stored'), endorsedBy };
 }
 

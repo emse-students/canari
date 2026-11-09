@@ -5,6 +5,7 @@
   import {
     dependencyRefusalMessage,
     groupDependencies,
+    type BdeFamily,
     labelCandidates,
     mismatchText,
     parentCandidates,
@@ -37,6 +38,35 @@
   let draftLabel = $state('');
   let saving = $state(false);
 
+  /** Per BDE: the list is narrowed to the entities whose audience reaches outside its spaces. */
+  let onlyMismatched = $state<Record<string, boolean>>({});
+
+  const reachesOutside = (e: DependencyEntity) => e.mismatches.includes('reaches_outside_parent');
+  const outsideCount = (family: BdeFamily) => family.children.filter(reachesOutside).length;
+  /** The filter only applies while a flagged child remains: with none left no control exists to undo it. */
+  const visibleChildren = (family: BdeFamily) =>
+    onlyMismatched[family.bde.id] && outsideCount(family) > 0
+      ? family.children.filter(reachesOutside)
+      : family.children;
+
+  /** A BDE's children split into associations and lists, empty blocks dropped. */
+  function subgroups(
+    rows: DependencyEntity[]
+  ): { key: 'association' | 'list'; title: string; rows: DependencyEntity[] }[] {
+    return [
+      {
+        key: 'association' as const,
+        title: m.admin_dependencies_group_associations(),
+        rows: rows.filter((r) => r.type !== 'list'),
+      },
+      {
+        key: 'list' as const,
+        title: m.admin_dependencies_group_lists(),
+        rows: rows.filter((r) => r.type === 'list'),
+      },
+    ].filter((g) => g.rows.length > 0);
+  }
+
   const tree = $derived(groupDependencies(entities));
   const byId = $derived(new Map(entities.map((e) => [e.id, e])));
 
@@ -54,6 +84,12 @@
     loading = true;
     try {
       entities = await listDependencies();
+      // A filter whose flagged children are all gone must not outlive its toggle.
+      for (const family of groupDependencies(entities).families) {
+        if (onlyMismatched[family.bde.id] && outsideCount(family) === 0) {
+          onlyMismatched[family.bde.id] = false;
+        }
+      }
       error = null;
     } catch (e) {
       Log.d('admin.dependencies.load failed', e);
@@ -109,30 +145,53 @@
   {@const label = entity.displayParentAssociationId
     ? byId.get(entity.displayParentAssociationId)
     : undefined}
-  <li class="py-2" data-dependency-row={entity.id}>
-    <div class="flex flex-wrap items-center gap-2">
-      <span class="text-text-main text-sm font-medium" class:opacity-60={entity.archived}>
+  <li class="py-1.5" data-dependency-row={entity.id} data-archived={entity.archived || undefined}>
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 sm:flex-nowrap">
+      <span
+        class="text-text-main min-w-0 truncate text-sm font-medium"
+        class:opacity-60={entity.archived}
+        title={entity.name}
+      >
         {entity.name}
       </span>
-      <span class="text-text-muted text-xs">{kindLabel(entity)}</span>
+      <span
+        class="border-cn-border text-text-muted shrink-0 rounded-full border px-2 text-xs"
+        data-kind={entity.type}
+      >
+        {kindLabel(entity)}
+      </span>
+      {#if entity.archived}
+        <span class="text-text-muted shrink-0 text-xs italic" data-archived-hint>
+          {m.admin_dependencies_archived()}
+        </span>
+      {/if}
       {#if label}
-        <span class="text-text-muted text-xs">
+        <span
+          class="text-text-muted min-w-0 truncate text-xs"
+          title={m.admin_dependencies_shown_under({ name: label.name })}
+        >
           {m.admin_dependencies_shown_under({ name: label.name })}
         </span>
       {/if}
-      {#if editable && editing !== entity.id}
-        <button
-          type="button"
-          class="text-cn-dark ml-auto text-xs font-semibold underline-offset-2 hover:underline"
-          onclick={() => open(entity)}
+      {#each entity.mismatches as mismatch (mismatch)}
+        <span
+          class="text-amber-warn shrink-0"
+          role="img"
+          title={mismatchText(mismatch)}
+          aria-label={mismatchText(mismatch)}
+          data-mismatch={mismatch}
         >
+          <TriangleAlert size={14} />
+        </span>
+      {/each}
+      {#if editable && editing !== entity.id}
+        <Button variant="ghost" size="compact" class="ml-auto" onclick={() => open(entity)}>
           {m.admin_dependencies_change()}
-        </button>
+        </Button>
       {/if}
     </div>
-    {#each entity.mismatches as mismatch (mismatch)}
-      <p class="text-amber-warn mt-1 flex items-center gap-1.5 text-xs" data-mismatch={mismatch}>
-        <TriangleAlert size={12} />
+    {#each entity.mismatches.filter((x) => x !== 'reaches_outside_parent') as mismatch (mismatch)}
+      <p class="text-amber-warn mt-0.5 text-xs" data-mismatch-text={mismatch}>
         {mismatchText(mismatch)}
       </p>
     {/each}
@@ -165,12 +224,27 @@
         <Button loading={saving} disabled={saving} onclick={() => save(entity)}>
           {m.common_save_button()}
         </Button>
-        <Button variant="outline" disabled={saving} onclick={() => (editing = null)}>
+        <Button variant="secondary" disabled={saving} onclick={() => (editing = null)}>
           {m.common_cancel_button()}
         </Button>
       </div>
     {/if}
   </li>
+{/snippet}
+
+{#snippet familyChildren(rows: DependencyEntity[])}
+  {#each subgroups(rows) as sub (sub.key)}
+    <div class="border-cn-border mt-1 ml-3 border-l pl-3" data-subgroup={sub.key}>
+      <h4 class="text-text-muted text-xs font-semibold tracking-wide uppercase">
+        {sub.title} ({sub.rows.length})
+      </h4>
+      <ul class="divide-cn-border/70 divide-y">
+        {#each sub.rows as child (child.id)}
+          {@render row(child, true)}
+        {/each}
+      </ul>
+    </div>
+  {/each}
 {/snippet}
 
 {#snippet group(title: string, rows: DependencyEntity[], editable: boolean)}
@@ -217,13 +291,26 @@
               {m.admin_dependencies_children({ count: family.children.length })}
             </span>
           </h3>
-          {#if family.children.length > 0}
-            <ul class="divide-cn-border/70 border-cn-border ml-3 divide-y border-l pl-3">
-              {#each family.children as child (child.id)}
-                {@render row(child, true)}
-              {/each}
-            </ul>
+          {#if outsideCount(family) > 0}
+            <p
+              class="text-amber-warn mt-1 flex flex-wrap items-center gap-2 text-xs"
+              data-mismatch-summary={family.bde.id}
+            >
+              <TriangleAlert size={14} />
+              {m.admin_dependencies_mismatch_summary({ count: outsideCount(family) })}
+              <Button
+                variant="ghost"
+                size="compact"
+                data-mismatch-filter={family.bde.id}
+                onclick={() => (onlyMismatched[family.bde.id] = !onlyMismatched[family.bde.id])}
+              >
+                {onlyMismatched[family.bde.id]
+                  ? m.admin_dependencies_mismatch_show_all()
+                  : m.admin_dependencies_mismatch_show_only()}
+              </Button>
+            </p>
           {/if}
+          {@render familyChildren(visibleChildren(family))}
         </section>
       {:else}
         <p class="text-text-muted text-sm">{m.admin_dependencies_no_bde()}</p>

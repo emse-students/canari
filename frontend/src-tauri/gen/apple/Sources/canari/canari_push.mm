@@ -525,6 +525,40 @@ static CanariPushContext *_Nullable CanariLoadPushContext(void) {
   return ctx;
 }
 
+/// Why `CanariLoadPushContext` answered nil, for the line that reports it: `absent`,
+/// `unreadable (...)`, or `invalid: <fields> missing` - flagged when it is the shape a sign-out leaves
+/// (no `baseUrl`). One line used to say "absent" for all of them. Read only on that failure path;
+/// never names a value. Mirror of Android's `PushContextVerdict` and the NSE's `pushContextRefusal`.
+static NSString *CanariPushContextRefusal(void) {
+  NSString *dir = CanariTauriDataDir();
+  if (dir == nil) {
+    return @"unreadable (no data directory)";
+  }
+  NSString *path = [dir stringByAppendingPathComponent:kPushContextFileName];
+  if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+    return @"absent";
+  }
+  NSData *data = [NSData dataWithContentsOfFile:path];
+  id json = data == nil ? nil : [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  if (![json isKindOfClass:[NSDictionary class]]) {
+    return @"unreadable (not a JSON object)";
+  }
+  NSMutableArray<NSString *> *missing = [NSMutableArray array];
+  for (NSString *key in @[ @"userId", @"deviceId", @"baseUrl" ]) {
+    id value = ((NSDictionary *)json)[key];
+    if (![value isKindOfClass:[NSString class]] || [(NSString *)value length] == 0) {
+      [missing addObject:key];
+    }
+  }
+  if (missing.count == 0) {
+    return @"usable";
+  }
+  BOOL signedOut = [missing isEqualToArray:@[ @"baseUrl" ]];
+  return [NSString stringWithFormat:@"invalid: %@ missing%@", [missing componentsJoinedByString:@","],
+                                    signedOut ? @" (the shape a sign-out leaves - no sign-in rewrote it)"
+                                              : @""];
+}
+
 static NSData *_Nullable CanariLoadMlsState(void) {
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
@@ -570,18 +604,15 @@ void CanariMirrorPushStateToAppGroup(void) {
   if (contextMirrored != CANARI_MLS_MIRROR_OK) {
     NSLog(@"[CanariPush] mirror %@ failed: code %d", kPushContextFileName, contextMirrored);
   }
+  // graine_seeds.json IS RUST'S TO COPY TOO, UNDER THE GROUP COPY'S WRITERS' LOCK
+  // (`graine_seeds.lock`): copied here without it, a copy read before an account's wipe could land
+  // after the wipe edited the group's copy, and the extension would hold the wiped seeds again.
+  int seedsMirrored = canari_ios_mirror_graine_seeds_to_app_group(src.UTF8String);
+  if (seedsMirrored != CANARI_MLS_MIRROR_OK) {
+    NSLog(@"[CanariPush] mirror %@ failed: code %d", kGraineSeedsFileName, seedsMirrored);
+  }
   NSDataWritingOptions opts =
       NSDataWritingAtomic | NSDataWritingFileProtectionCompleteUntilFirstUserAuthentication;
-  for (NSString *name in @[ kGraineSeedsFileName ]) {
-    NSData *data = [NSData dataWithContentsOfFile:[src stringByAppendingPathComponent:name]];
-    if (data == nil) {
-      continue;
-    }
-    NSError *err = nil;
-    if (![data writeToURL:[container URLByAppendingPathComponent:name] options:opts error:&err]) {
-      NSLog(@"[CanariPush] mirror %@ failed: %@", name, CanariErrorReason(err));
-    }
-  }
   // The push secret lives in the Keychain (app-only). Copy it into the container so the NSE
   // can authenticate the backend fetch paths (omitted proto, commit catch-up, avatar); the
   // common inline-ciphertext decrypt needs no secret. This is NOT the copy's main writer:
@@ -724,6 +755,8 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
     @"social_follow_request" : @"follow_request",
     @"social_follow_accepted" : @"follow_accepted",
+    // A followed person's birthday: the person names the title, the body is the fixed sentence.
+    @"social_birthday" : @"birthday",
     // A new person asks to join a conversation the reader is in (chat-delivery's own key): the
     // person names the title, the conversation's name is the body.
     @"chat_join_ask" : @"join_ask",
@@ -1075,7 +1108,7 @@ static CanariDecryptedMessage *_Nullable CanariTryDecrypt(NSString *queuedMessag
   }
   CanariPushContext *ctx = CanariLoadPushContext();
   if (ctx == nil) {
-    NSLog(@"[CanariPush] tryDecrypt: push_context.json absent");
+    NSLog(@"[CanariPush] tryDecrypt: push_context.json %@", CanariPushContextRefusal());
     return nil;
   }
 
@@ -2805,7 +2838,8 @@ static void CanariHandleQuickReplyAction(NSString *recipientId, NSString *groupI
   if (ctx == nil || ![ctx.userId isEqualToString:recipientId]) {
     NSLog(@"[CanariPush] ERROR the reply's account has no push context here (%@) - NOT sent, and the "
           @"user is told",
-          ctx == nil ? @"push_context.json absent" : @"another account's context");
+          ctx == nil ? [@"push_context.json " stringByAppendingString:CanariPushContextRefusal()]
+                     : @"another account's context");
     CanariShowQuickReplyNotSent();
     completion();
     return;
@@ -2991,7 +3025,7 @@ static void CanariProcessReceivedWelcomeBackground(NSString *groupId, NSString *
                                                    NSString *_Nullable inlineProto) {
   CanariPushContext *ctx = CanariLoadPushContext();
   if (ctx == nil) {
-    NSLog(@"[CanariPush] processReceivedWelcomeBackground: push_context absent");
+    NSLog(@"[CanariPush] processReceivedWelcomeBackground: push_context %@", CanariPushContextRefusal());
     return;
   }
   if (ctx.deviceKeyB64.length == 0) {

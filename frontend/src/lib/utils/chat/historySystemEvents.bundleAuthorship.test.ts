@@ -73,6 +73,7 @@ async function replayBundle(
     userId: 'me',
     conversationId: GROUP,
     authorKeys: keys,
+    nicknameRoster: { getGroupMemberIdentities: async () => [] },
     getConversation: () => convo,
     setConversation: (_name, next) => {
       convo = next;

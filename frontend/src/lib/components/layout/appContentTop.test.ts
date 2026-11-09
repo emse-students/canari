@@ -60,7 +60,6 @@ const WINDOW_SCALE_BANNERS = [
   'EnvironmentBanner',
   'MaintenanceAdminBanner',
   'MlsFatalErrorBanner',
-  'TabFollowerBanner',
   'OfflineBanner',
 ];
 

@@ -4,6 +4,7 @@
   import { X, ImagePlus, Link2 } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
   import Input from '$lib/components/ui/Input.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import CoOwnerPicker from '$lib/components/calendar/CoOwnerPicker.svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
@@ -12,6 +13,7 @@
   import { associationPickerOptions } from '$lib/associations/selectGroups';
   import { calendarErrorMessage } from '$lib/calendar/calendarErrors';
   import {
+    isNeutralForm,
     validateEventForm,
     type EventFormCapabilities,
     type EventFormValues,
@@ -99,6 +101,12 @@
     { value: '', label: m.asso_calendar_link_form_none_option() },
     ...(linkableForms ?? []).map((f) => ({ value: f.id, label: f.title })),
   ]);
+
+  /**
+   * A neutral event ("Campus") carries no co-organiser and no linked form, so both pickers leave
+   * the form while it is chosen - and `toCreatePayload` / `toUpdatePayload` leave both unsent.
+   */
+  const neutral = $derived(isNeutralForm(values, capabilities));
 
   /** Clears the refusal left by the previous attempt whenever the modal is reopened. */
   $effect(() => {
@@ -194,12 +202,28 @@
               options={associationOptions}
               onValueChange={(v) => (values.targetAssociationId = v)}
               variant="field"
-              density="compact"
             />
           </div>
         {/if}
 
         <Input label={m.asso_calendar_event_title_label()} bind:value={values.title} />
+
+        <!--
+          "Au nom du BDE" or neutral (owner, 2026-11-08): offered only to the BDE's agenda managers,
+          and on an existing event only from the organiser side (E2) - the server's own rule.
+        -->
+        {#if capabilities.canSetPresentation && values.writeSide === 'organiser'}
+          <div data-event-presentation={values.presentation}>
+            <Toggle
+              bind:checked={
+                () => values.presentation === 'neutral',
+                (on) => (values.presentation = on ? 'neutral' : 'association')
+              }
+              label={m.asso_calendar_event_neutral_label()}
+              hint={m.asso_calendar_event_neutral_hint()}
+            />
+          </div>
+        {/if}
 
         <!--
           Entry kind: a normal event card vs a full-day background band (break / vacation). Offered
@@ -359,6 +383,8 @@
               </button>
             {/if}
           </div>
+        {:else if neutral}
+          <!-- No co-organiser on a neutral event: each would be a named association on it. -->
         {:else if values.coOwnersLoad === 'ready'}
           <CoOwnerPicker
             bind:selectedIds={values.coOwnerIds}
@@ -373,7 +399,7 @@
           </p>
         {/if}
 
-        {#if capabilities.canLinkForm && linkableForms}
+        {#if capabilities.canLinkForm && linkableForms && !neutral}
           <div class="border-cn-border/70 bg-cn-bg/30 space-y-3 rounded-xl border p-3">
             <p
               class="text-text-muted flex items-center gap-1 text-xs font-bold tracking-wide uppercase"
@@ -392,7 +418,6 @@
                 options={linkableFormOptions}
                 onValueChange={(v) => (values.linkedFormId = v)}
                 variant="field"
-                density="compact"
               />
             </div>
           </div>

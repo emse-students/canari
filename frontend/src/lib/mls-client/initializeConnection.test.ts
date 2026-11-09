@@ -152,7 +152,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
 
     expect(mls.connect).toHaveBeenCalledWith('jwt-access-token', 0);
     expect(setIsWsConnected).toHaveBeenCalledWith(true);
-    expect(mls.generateKeyPackage).toHaveBeenCalledWith('pin1');
+    expect(mls.generateKeyPackage).toHaveBeenCalledWith('pin1', { fresh: true });
     // Group absent from WASM -> onGroupMissing (recovery seam)
     expect(onGroupMissing).toHaveBeenCalledWith('g-not-in-wasm');
     // Group in WASM -> no onGroupMissing

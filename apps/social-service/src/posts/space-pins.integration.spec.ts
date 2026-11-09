@@ -13,7 +13,6 @@
  * - the 4th pin is refused, and two concurrent pins at 2 of 3 leave exactly 3;
  * - a returning hidden pin never makes four shown: it is listed "en attente", and unpinning one of
  *   the 3 promotes it;
- * - the old body-less pin is accepted with exactly one fitting space, else `space_required`;
  * - migration 128 moves the global pin to every governed space where the post is visible.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`; everything happens in a throwaway schema, dropped at the end.
@@ -35,7 +34,6 @@ import {
   SPACE_NOT_FOUND,
   SPACE_PIN_FORBIDDEN,
   SPACE_PIN_LIMIT_CODE,
-  SPACE_REQUIRED,
 } from './space-pins';
 import { SpacePinsService, type PinActor } from './space-pins.service';
 
@@ -397,29 +395,10 @@ maybe('pins per space against PostgreSQL', () => {
     expect(await pinnedFor('isminReader')).toEqual([P.club1, P.club2, P.club4].sort());
   });
 
-  it('an older client pins with no space where exactly one fits, and is told space_required otherwise', async () => {
-    // isminMod governs ISMIN x saint-etienne only: one space fits.
-    await expect(service.pin(P.inst, asUser('isminMod'), undefined)).resolves.toMatchObject({
-      pinned: true,
-      spaceId: isminSe,
-    });
-    // The platform admin governs every space, and the institution's post is seen in five.
-    expect(await outcome(service.pin(P.inst, GRANT, undefined))).toBe(SPACE_REQUIRED);
-    // Nobody governs gardanne: the admin may, but the post fits zero spaces for a BDE.
-    expect(await outcome(service.pin(P.gaOnly, asUser('isminMod'), undefined))).toBe(
-      SPACE_REQUIRED
-    );
-    await expect(service.unpin(P.inst, asUser('isminMod'), undefined)).resolves.toMatchObject({
-      pinned: false,
-      spaceId: isminSe,
-    });
-    expect(await pinnedFor('isminReader')).toEqual([]);
-  });
-
   it('authorises before it looks: an unauthorised caller is told 403 whether or not the post exists', async () => {
     const missing = '00000000-0000-4000-8000-000000000000';
     for (const act of ['pin', 'unpin'] as const) {
-      const run = (post: string, who: PinActor, space: string | undefined) =>
+      const run = (post: string, who: PinActor, space: string) =>
         outcome(service[act](post, who, space));
       // Named space the caller does not govern: the same 403 for a real post and a missing one.
       expect(await run(P.inst, asUser('icmMod'), isminSe)).toBe(SPACE_PIN_FORBIDDEN);
@@ -427,12 +406,8 @@ maybe('pins per space against PostgreSQL', () => {
       // A missing space is no more telling than a foreign one - only the admin hears 404.
       expect(await run(P.inst, asUser('icmMod'), missing)).toBe(SPACE_PIN_FORBIDDEN);
       expect(await run(P.inst, GRANT, missing)).toBe(SPACE_NOT_FOUND);
-      // Body-less, from a caller who governs nothing: 403 either way.
-      expect(await run(P.inst, asUser('isminReader'), undefined)).toBe(SPACE_PIN_FORBIDDEN);
-      expect(await run(missing, asUser('isminReader'), undefined)).toBe(SPACE_PIN_FORBIDDEN);
-      // Authorised, the missing post is a typed 404 - named space or not.
+      // Authorised, the missing post is a typed 404.
       expect(await run(missing, asUser('isminMod'), isminSe)).toBe(POST_NOT_FOUND);
-      expect(await run(missing, asUser('isminMod'), undefined)).toBe(POST_NOT_FOUND);
     }
   });
 

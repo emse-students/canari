@@ -3,21 +3,25 @@
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
-  import { refusalCode } from '$lib/utils/apiRefusal';
+  import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import {
     activePaymentProvider,
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
-  import { goto } from '$app/navigation';
+  import { beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
   import {
     FormNotFoundError,
+    discardFormDraft,
     getForm,
+    getFormDraft,
     getSubmissions,
+    publishFormDraft,
+    saveFormDraft,
     updateForm,
     uploadFormImage,
     uploadFormItemImage,
@@ -85,11 +89,36 @@
     formConflictMessage,
   } from '$lib/forms/formOptionConflict';
   import { Log } from '$lib/utils/Log';
-  import { CircleAlert, FileText, ImagePlus, Users, X } from '@lucide/svelte';
+  import { CircleAlert, ExternalLink, FileText, ImagePlus, Users, X } from '@lucide/svelte';
   import { askedGuestFields } from '$lib/forms/guestIdentity';
+  import {
+    draftRefusalMessage,
+    formViewHref,
+    isDraftForm,
+    publishBlocker,
+  } from '$lib/forms/publish';
+  import Button from '$lib/components/ui/Button.svelte';
+  import { FormAutosave } from '$lib/forms/autosave.svelte';
+  import {
+    copyAgainst,
+    deviceCopyOf,
+    formDraftCopyStore,
+    holdFormEditor,
+  } from '$lib/forms/draftCopies';
+  import { tellCopyDropped } from '$lib/forms/draftResend';
+  import { FORM_CHANGED_SINCE_REVISION } from '$lib/forms/publish';
+  import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { currentUserId } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
 
   const formId = $derived(page.params.id as string);
+
+  /**
+   * Whether this estate stores revisions (`formDrafts` in `/api/version`). An older server has no
+   * revision routes: the editor then saves as it always did, one "Enregistrer" that writes the form
+   * (docs/wiki/legacy-compatibility.md).
+   */
+  const formDrafts = serverFormDrafts() === true;
 
   let form = $state<Form | null>(null);
   let loadError = $state('');
@@ -109,6 +138,8 @@
   let basePrice = $state(0);
   let requiresPayment = $state(false);
   let allowCashPayment = $state(false);
+  /** Online payment accepted (owner, 2026-11-08); off with cash on is a cash-only form. */
+  let allowOnlinePayment = $state(true);
   let cashPaymentExpiryDays = $state<number | undefined>(undefined);
   let fileRetentionDays = $state(FILE_RETENTION_DEFAULT_DAYS);
   let cotisation = $state(emptyCotisationSettings());
@@ -192,8 +223,29 @@
       return;
     }
     try {
-      const f = await getForm(id);
-      form = f;
+      const [stored, revision] = await Promise.all([
+        getForm(id),
+        formDrafts ? getFormDraft(id) : Promise.resolve(null),
+      ]);
+      form = stored;
+      // The editor opens on what was last TYPED: what this device kept and no server holds yet,
+      // else the unpublished revision, else the form as published (owner, 2026-11-08).
+      const copy = revision ? await unsentCopy(id, revision) : null;
+      const typed = copy?.document ?? revision?.document;
+      const f: Form = typed ? ({ ...stored, ...typed } as Form) : stored;
+      const userId = currentUserId();
+      if (revision) {
+        autosave = new FormAutosave({
+          save: (base, document, saveId, leaving) =>
+            saveFormDraft(id, base, document, saveId, { leaving }),
+          revision: revision.revision,
+          hasChanges: !!revision.document,
+          device: userId
+            ? deviceCopyOf(userId, () => ({ formId: id, clientCreateId: null }))
+            : null,
+        });
+        if (copy) autosave.resume(copy.document, copy.saveId, copy.after);
+      }
 
       // The form's own association, fetched by id rather than found in a list: the list of
       // associations the user belongs to would miss the one they have since left, and this form
@@ -208,37 +260,102 @@
         mayGrantCotisation = options.mayGrant;
       }
 
-      title = f.title;
-      description = f.description ?? '';
-      requiresPayment = f.requiresPayment ?? false;
-      basePrice = requiresPayment ? (f.basePrice ?? 0) / 100 : 0;
-      cotisation = cotisationSettingsOf(f);
-      priceMatrix = matrixOf(f.priceMatrix);
-      submitCondition = f.submitCondition ?? null;
-      maxSubmissions = f.maxSubmissions;
-      opensAt = isoToDatetimeLocal(f.opensAt);
-      allowCashPayment = f.allowCashPayment ?? false;
-      allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
-      anonymous = f.anonymous ?? false;
-      isPublic = f.isPublic ?? false;
-      guestFields = askedGuestFields(f.guestFields);
-      cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
-      fileRetentionDays = f.fileRetentionDays ?? FILE_RETENTION_DEFAULT_DAYS;
-      imageUrl = f.imageUrl ?? null;
-      items = fromFormItems(f.items ?? [], requiresPayment);
-      void loadOrderedCells(id, f);
+      applyContent(f);
+      void loadOrderedCells(id, stored);
       try {
         formations = await fetchFormations();
       } catch {
         // The formation criterion offers nothing, and says so. Every other criterion still works.
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
+      console.warn(`[forms-editor] form ${id} not loaded: ${e}`);
       loadError =
         e instanceof FormNotFoundError
           ? m.form_view_not_found()
-          : e.message || m.form_edit_load_error();
+          : (describeApiRefusal(refusalStatus(e), m.form_edit_load_action()) ??
+            m.form_edit_load_error());
     }
   });
+
+  /**
+   * What this device kept of `formId` and the server does not hold - a page closed before its save
+   * landed - when it is built on the revision the server holds, or on one a save it records as sent
+   * before it wrote (`after`: re-based then, a predecessor whose answer was lost). One the server
+   * holds already (its save id is the revision's) is cleared; one built on a revision another
+   * writer moved past is dropped, and the member TOLD.
+   */
+  async function unsentCopy(
+    formId: string,
+    revision: { revision: number; saveId?: string | null; recentSaveIds?: string[] }
+  ) {
+    const userId = currentUserId();
+    if (!userId) return null;
+    try {
+      const store = formDraftCopyStore(userId);
+      const copy = await store.get(formId);
+      if (!copy) return null;
+      const against = copyAgainst(copy, revision);
+      if (against.verdict === 'landed') {
+        await store.deleteIfSent([formId], copy.saveId);
+        Log.d('forms-editor', `device copy of ${formId} had landed: cleared`);
+        return null;
+      }
+      if (against.verdict === 'stale') {
+        console.warn(
+          `[forms-editor] device copy of ${formId} built on revision ${copy.baseRevision} DROPPED: the server is at ${revision.revision}`
+        );
+        await store.delete([formId]);
+        tellCopyDropped(copy);
+        return null;
+      }
+      if (against.copy.baseRevision !== copy.baseRevision) {
+        Log.d(
+          'forms-editor',
+          `device copy of ${formId} re-based on revision ${revision.revision}, written by its predecessor`
+        );
+      }
+      Log.d('forms-editor', `device copy of ${formId} found: the editor opens on it`);
+      return against.copy;
+    } catch (e) {
+      console.warn(`[forms-editor] device copy of ${formId} unreadable: ${e}`);
+      return null;
+    }
+  }
+
+  /** Fills the editor from `f`: the form as published, or with its unpublished revision over it. */
+  function applyContent(f: Form) {
+    title = f.title;
+    description = f.description ?? '';
+    requiresPayment = f.requiresPayment ?? false;
+    basePrice = requiresPayment ? (f.basePrice ?? 0) / 100 : 0;
+    cotisation = cotisationSettingsOf(f);
+    priceMatrix = matrixOf(f.priceMatrix);
+    submitCondition = f.submitCondition ?? null;
+    maxSubmissions = f.maxSubmissions;
+    opensAt = isoToDatetimeLocal(f.opensAt);
+    allowCashPayment = f.allowCashPayment ?? false;
+    allowOnlinePayment = f.allowOnlinePayment ?? true;
+    allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
+    anonymous = f.anonymous ?? false;
+    isPublic = f.isPublic ?? false;
+    guestFields = askedGuestFields(f.guestFields);
+    cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
+    fileRetentionDays = f.fileRetentionDays ?? FILE_RETENTION_DEFAULT_DAYS;
+    imageUrl = f.imageUrl ?? null;
+    items = fromFormItems(f.items ?? [], requiresPayment);
+    // What was just loaded is the baseline: only an edit after it is saved. Taken once the
+    // question cards have mounted - a card completes its question's defaults (a scale's bounds) on
+    // mounting, which is the loaded form as drawn, not an edit.
+    autosaveBaseline = null;
+    void tick().then(() => {
+      autosaveBaseline = JSON.stringify(buildPayload());
+    });
+  }
+
+  /** The autosave of this form's unpublished revision; created once the form and its revision load. */
+  let autosave = $state<FormAutosave | null>(null);
+  /** The payload last handed to the autosave, as JSON: an effect re-run without an edit sends nothing. */
+  let autosaveBaseline: string | null = null;
 
   const titleMissing = $derived(!title.trim());
   /** Questions the grid prices on: their per-option supplements are hidden, not silently ignored. */
@@ -298,7 +415,26 @@
     errorBanner?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 
-  async function handleSave() {
+  /** A draft is built and published from here; a published form's edits wait in its revision. */
+  const isDraft = $derived(isDraftForm(form));
+  /** Why "Publier" is shut: a paid form whose association cannot collect yet. */
+  const blockedReason = $derived(
+    publishBlocker({
+      form: buildPayload(),
+      associationId: association?.id,
+      associationCanBePaid,
+    })
+  );
+  let isPublishing = $state(false);
+  /** The form was written outside its revision: the next "Publier" confirms the overwrite. */
+  let overwriteOffered = $state(false);
+
+  /**
+   * "Publier" / "Publier les modifications" (owner, 2026-11-08): the page's own checks first, in the
+   * reader's language, then the revision is published - the server judges it again with the edit's
+   * rules. Edits are saved as they are typed; there is no other save.
+   */
+  async function handlePublish() {
     if (titleMissing) {
       error = m.form_error_title_required();
       return;
@@ -356,33 +492,18 @@
     isSubmitting = true;
     error = '';
     try {
-      const payload: CreateFormPayload = {
-        title,
-        description,
-        basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
-        priceMatrix: matrixPayload(priceMatrix, requiresPayment),
-        submitCondition,
-        ...cotisationPayload(cotisation, requiresPayment),
-        currency: 'eur',
-        items: toFormItemsPayload(items),
-        maxSubmissions,
-        allowMultipleSubmissions,
-        isPublic,
-        // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
-        guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
-        ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
-        requiresPayment,
-        // `associationId` is deliberately absent: it is fixed at creation and the API refuses a
-        // value that differs from the stored one. Absent means "leave it".
-        ...(requiresPayment ? { allowCashPayment } : {}),
-        ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
-          ? { cashPaymentExpiryDays }
-          : {}),
-        ...(formHasFile ? { fileRetentionDays } : {}),
-      };
-      await updateForm(formId, payload);
-      goto(resolve('/forms'));
+      if (formDrafts) {
+        await publishRevision();
+      } else {
+        // An estate older than revisions: the form is written as the editor always wrote it.
+        await updateForm(formId, buildPayload());
+        Log.d('forms-editor', `saved ${formId} (an estate without revisions)`);
+        goto(resolve('/forms'));
+      }
     } catch (e: any) {
+      // Written outside the revision since it started: publishing would undo that unseen. Said,
+      // and "Publier" becomes "Publier quand meme" for the manager who has read it.
+      if (refusalCode(e) === FORM_CHANGED_SINCE_REVISION) overwriteOffered = true;
       // A grid the server alone could refuse (a cotisation tier it does not sell) is drawn under
       // that grid and its card opened, as the page's own check does.
       gridFault = refusedProductGridFault(e, items);
@@ -392,12 +513,145 @@
         questionImageRefusalMessage(e) ??
         formCodeMessage(refusalCode(e)) ??
         conflictCodeMessage(refusalCode(e)) ??
+        draftRefusalMessage(refusalCode(e)) ??
         providerRefusalMessage(e) ??
-        e.message;
+        describeApiRefusal(refusalStatus(e), m.form_action_publish()) ??
+        m.form_publish_failed();
     } finally {
       isSubmitting = false;
+      isPublishing = false;
     }
   }
+
+  /**
+   * Saves what is pending, then publishes the revision the server holds - applying it, and for a
+   * draft form publishing the form with it, in one transaction (`publishFormDraft`). Nothing is
+   * published while an edit has not reached the server: the status line says why.
+   */
+  async function publishRevision() {
+    if (!autosave) return;
+    await autosave.flush();
+    if (!autosave.settled) {
+      error =
+        autosave.status === 'conflict'
+          ? m.form_draft_conflict_refusal()
+          : m.form_publish_blocked_unsaved();
+      return;
+    }
+    isPublishing = true;
+    const result = await publishFormDraft(formId, autosave.revision, overwriteOffered);
+    overwriteOffered = false;
+    autosave.closed(result.revision, 'published');
+    Log.d('forms-editor', `published ${formId} at revision ${result.revision}`);
+    goto(resolve('/forms'));
+  }
+
+  /** The editor's payload: what the autosave stores and the publication applies. */
+  function buildPayload(): CreateFormPayload {
+    return {
+      title,
+      description,
+      basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
+      priceMatrix: matrixPayload(priceMatrix, requiresPayment),
+      submitCondition,
+      ...cotisationPayload(cotisation, requiresPayment),
+      currency: 'eur',
+      items: toFormItemsPayload(items),
+      maxSubmissions,
+      allowMultipleSubmissions,
+      isPublic,
+      // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
+      guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
+      ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
+      requiresPayment,
+      // `associationId` is deliberately absent: it is fixed at creation and the API refuses a
+      // value that differs from the stored one. Absent means "leave it".
+      ...(requiresPayment ? { allowCashPayment, allowOnlinePayment } : {}),
+      ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
+        ? { cashPaymentExpiryDays }
+        : {}),
+      ...(formHasFile ? { fileRetentionDays } : {}),
+      // A draft has no answer yet: its anonymity is still its builder's choice (server-checked).
+      ...(isDraft ? { anonymous } : {}),
+    };
+  }
+
+  // Every edit is saved as the unpublished revision, debounced (`FormAutosave`).
+  $effect(() => {
+    const document = buildPayload();
+    const json = JSON.stringify(document);
+    untrack(() => {
+      if (!autosave || autosaveBaseline === null || json === autosaveBaseline) return;
+      autosaveBaseline = json;
+      autosave.schedule(document);
+    });
+  });
+
+  // Hidden, left or torn down: saved at once; back online: an edit that reached no server is sent
+  // again. The cleanup saves too - an in-app navigation fires no `pagehide`.
+  $effect(() => {
+    if (!autosave) return;
+    return autosave.attach(window);
+  });
+  // A navigation that keeps this page (another form's editor) tears nothing down: saved here.
+  beforeNavigate(() => {
+    void autosave?.flush();
+  });
+  // While this editor is open, the background resend leaves this form's device copy to it.
+  $effect(() => (formDrafts ? holdFormEditor(formId) : undefined));
+
+  /**
+   * "Voir le formulaire" opens what the respondents would see: the pending edit is saved first, so
+   * the preview draws it. The tab is opened at the press (a popup opened after an await is blocked)
+   * and pointed at the form once the save returns.
+   */
+  async function openView(e: MouseEvent) {
+    if (!form || !autosave || autosave.settled) return;
+    e.preventDefault();
+    const tab = window.open('', '_blank');
+    await autosave.flush();
+    const href = formViewHref(form, autosave.hasChanges);
+    if (tab) {
+      tab.opener = null;
+      tab.location.href = href;
+    } else {
+      console.warn('[forms-editor] the preview tab was not opened (blocked)');
+    }
+  }
+
+  let isDiscarding = $state(false);
+
+  /** "Abandonner les modifications": the revision is emptied and the editor shows the form as published. */
+  async function handleDiscard() {
+    if (!autosave || !form) return;
+    isDiscarding = true;
+    error = '';
+    try {
+      await autosave.flush();
+      const result = await discardFormDraft(formId, autosave.revision);
+      autosave.closed(result.revision, 'discarded');
+      applyContent(form);
+      Log.d('forms-editor', `revision of ${formId} discarded`);
+    } catch (e: any) {
+      error =
+        draftRefusalMessage(refusalCode(e)) ??
+        describeApiRefusal(refusalStatus(e), m.form_action_discard()) ??
+        m.form_discard_failed();
+    } finally {
+      isDiscarding = false;
+    }
+  }
+
+  /** Why "Publier" is shut beyond payments: an edit the server does not hold yet. */
+  const unsavedReason = $derived(
+    autosave && ['offline', 'error'].includes(autosave.status)
+      ? m.form_publish_blocked_unsaved()
+      : autosave?.status === 'conflict'
+        ? m.form_draft_conflict_refusal()
+        : null
+  );
+  /** A published form with edits the respondents do not see yet. */
+  const hasUnpublishedChanges = $derived(!isDraft && !!autosave?.hasChanges);
 
   async function handleImageUpload(e: Event) {
     const input = e.target as HTMLInputElement;
@@ -408,8 +662,9 @@
     try {
       const updated = await uploadFormImage(formId, file);
       imageUrl = updated.imageUrl ?? null;
-    } catch (err: any) {
-      imageError = err.message || 'Error';
+    } catch (err: unknown) {
+      console.warn(`[forms-editor] form image not uploaded: ${err}`);
+      imageError = m.form_builder_image_upload_failed();
     } finally {
       uploadingImage = false;
       input.value = '';
@@ -421,8 +676,9 @@
     try {
       await deleteFormImage(formId);
       imageUrl = null;
-    } catch (err: any) {
-      imageError = err.message || 'Error';
+    } catch (err: unknown) {
+      console.warn(`[forms-editor] form image not removed: ${err}`);
+      imageError = m.form_image_remove_failed();
     } finally {
       uploadingImage = false;
     }
@@ -436,7 +692,24 @@
     subtitle={form?.title}
     backHref="/forms"
     backLabel={m.common_back()}
-  />
+  >
+    {#snippet actions()}
+      {#if form}
+        <!-- The respondent view, in a new tab: a preview while anything is unpublished. -->
+        <Button
+          variant="secondary"
+          href={formViewHref(form, !!autosave?.hasChanges)}
+          target="_blank"
+          rel="noopener"
+          onclick={openView}
+          data-testid="form-view-link"
+        >
+          <ExternalLink size={16} />
+          {m.form_view_open_button()}
+        </Button>
+      {/if}
+    {/snippet}
+  </PageHeader>
 
   {#if loadError}
     <div
@@ -452,6 +725,28 @@
       ></div>
     </div>
   {:else}
+    {#if isDraft}
+      <p
+        class="border-cn-border text-text-muted mb-4 flex items-center gap-2 rounded-2xl border-2 border-dashed px-4 py-3 text-sm"
+        data-testid="form-draft-notice"
+      >
+        <span class="bg-cn-border/40 text-text-main rounded-full px-2 py-0.5 text-xs font-bold">
+          {m.form_status_draft_badge()}
+        </span>
+        {m.form_draft_notice()}
+      </p>
+    {/if}
+    {#if hasUnpublishedChanges}
+      <p
+        class="border-cn-border text-text-muted mb-4 flex items-center gap-2 rounded-2xl border-2 border-dashed px-4 py-3 text-sm"
+        data-testid="form-unpublished-notice"
+      >
+        <span class="bg-cn-border/40 text-text-main rounded-full px-2 py-0.5 text-xs font-bold">
+          {m.form_unpublished_changes_badge()}
+        </span>
+        {m.form_unpublished_changes_notice()}
+      </p>
+    {/if}
     {#if error}
       <div
         bind:this={errorBanner}
@@ -546,6 +841,7 @@
       {isPublic}
       bind:basePrice
       bind:allowCashPayment
+      bind:allowOnlinePayment
       bind:cashPaymentExpiryDays
       bind:priceMatrix
       {tiers}
@@ -589,7 +885,7 @@
         }
       }
       bind:anonymous
-      anonymousFixed
+      anonymousFixed={!isDraft}
       bind:isPublic
       bind:guestFields
       {optionState}
@@ -608,8 +904,22 @@
       {titleMissing}
       {isSubmitting}
       {summary}
+      autosaveStatus={autosave?.status ?? null}
       saveLabel={m.form_save_changes_button()}
-      onSave={handleSave}
+      onSave={formDrafts ? null : handlePublish}
+      publish={formDrafts && (isDraft || hasUnpublishedChanges)
+        ? {
+            onPublish: handlePublish,
+            blockedReason: blockedReason ?? unsavedReason,
+            busy: isPublishing,
+            label: overwriteOffered
+              ? m.form_publish_overwrite_button()
+              : isDraft
+                ? m.form_publish_button()
+                : m.form_publish_changes_button(),
+          }
+        : null}
+      discard={hasUnpublishedChanges ? { onDiscard: handleDiscard, busy: isDiscarding } : null}
     />
   {/if}
 </PageContainer>

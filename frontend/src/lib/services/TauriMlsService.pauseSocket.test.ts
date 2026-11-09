@@ -18,7 +18,11 @@ import { flushMacrotask } from '../../test/flush';
  * accepted one is released.
  */
 interface Internals {
-  ws: { send: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> } | null;
+  ws: {
+    send: ReturnType<typeof vi.fn>;
+    disconnect: ReturnType<typeof vi.fn>;
+    addListener: ReturnType<typeof vi.fn>;
+  } | null;
   pauseSocket(): void;
 }
 
@@ -30,6 +34,7 @@ describe('TauriMlsService.pauseSocket', () => {
     const ws = {
       send: vi.fn().mockResolvedValue(undefined),
       disconnect: vi.fn().mockResolvedValue(undefined),
+      addListener: vi.fn().mockReturnValue(vi.fn()),
     };
     svc.ws = ws;
     svc.pauseSocket();
@@ -44,6 +49,7 @@ describe('TauriMlsService.pauseSocket', () => {
     const ws = {
       send: vi.fn().mockRejectedValue('Trying to work with closed connection'),
       disconnect: vi.fn().mockRejectedValue('Trying to work with closed connection'),
+      addListener: vi.fn().mockReturnValue(vi.fn()),
     };
     svc.ws = ws;
     svc.pauseSocket();
@@ -51,6 +57,80 @@ describe('TauriMlsService.pauseSocket', () => {
     expect(ws.disconnect).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it('does not disconnect, nor warn, when a Close lands while the disconnect frame is sent', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const svc = new TauriMlsService() as unknown as Internals;
+    let watcher: ((msg: { type: string }) => void) | null = null;
+    const unwatch = vi.fn();
+    const ws = {
+      // The peer's Close is delivered while the send is still pending, then the send resolves.
+      send: vi.fn(async () => {
+        watcher?.({ type: 'Close' });
+      }),
+      disconnect: vi.fn().mockRejectedValue('Trying to work with closed connection'),
+      addListener: vi.fn((fn: (msg: { type: string }) => void) => {
+        watcher = fn;
+        return unwatch;
+      }),
+    };
+    svc.ws = ws;
+    svc.pauseSocket();
+    await flush();
+    expect(ws.disconnect).not.toHaveBeenCalled();
+    expect(unwatch).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('logs at info, not warn, when the peer Close lands during the native disconnect', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const svc = new TauriMlsService() as unknown as Internals;
+    let watcher: ((msg: { type: string }) => void) | null = null;
+    const unwatch = vi.fn();
+    const ws = {
+      send: vi.fn().mockResolvedValue(undefined),
+      // The server's reply to the frame arrives while the release runs, which then refuses.
+      disconnect: vi.fn(async () => {
+        watcher?.({ type: 'Close' });
+        throw 'Trying to work with closed connection';
+      }),
+      addListener: vi.fn((fn: (msg: { type: string }) => void) => {
+        watcher = fn;
+        return unwatch;
+      }),
+    };
+    svc.ws = ws;
+    svc.pauseSocket();
+    await flush();
+    expect(ws.disconnect).toHaveBeenCalledTimes(1);
+    expect(unwatch).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('logs at info, not warn, when the gateway closes on our frame and the refusal beats its Close', async () => {
+    // Mi 9T, 2026-11-08, sign-out: the frame was accepted, the gateway ended the connection, the
+    // plugin forgot it and refused `disconnect()` BEFORE delivering the `Close` the watcher waits for.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const svc = new TauriMlsService() as unknown as Internals;
+    const unwatch = vi.fn();
+    const ws = {
+      send: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockRejectedValue('Trying to work with closed connection'),
+      addListener: vi.fn().mockReturnValue(unwatch),
+    };
+    svc.ws = ws;
+    svc.pauseSocket();
+    await flush();
+    expect(ws.disconnect).toHaveBeenCalledTimes(1);
+    expect(unwatch).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join(' ')).toContain('the gateway closed the socket');
+    warn.mockRestore();
+    log.mockRestore();
   });
 
   it('is a no-op with no socket', () => {
@@ -68,7 +148,8 @@ describe('TauriMlsService.pauseSocket', () => {
     const ws = {
       send: vi.fn().mockResolvedValue(undefined),
       disconnect: vi.fn().mockResolvedValue(undefined),
-      addListener: vi.fn().mockReturnValue(unlisten),
+      // The first listener is the session's (`unlisten`), the second the release's short watcher.
+      addListener: vi.fn().mockReturnValueOnce(unlisten).mockReturnValue(vi.fn()),
     };
     NativeWebSocket.connect.mockResolvedValue(ws);
     const svc = new TauriMlsService() as unknown as Internals & {

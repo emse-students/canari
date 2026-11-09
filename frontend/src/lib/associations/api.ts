@@ -12,6 +12,7 @@ import { downloadDecryptedFile } from '$lib/utils/fileDownload';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { readApiJson } from '$lib/utils/apiJson';
 import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
 import type { PriceMatrix } from '$lib/pricing/priceMatrix';
@@ -235,8 +236,6 @@ export interface Association {
   isAdmin?: boolean;
   /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend uses generateAvatarColor fallback. */
   color?: string | null;
-  /** Primary thematic category (managed table). Null when uncategorized. Used by the "Carte de la Vie Asso" poster. */
-  categoryId?: string | null;
   /** Discriminates a regular association from a promo list. */
   type: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year the list belongs to. */
@@ -311,8 +310,6 @@ export interface UpdateAssociationPayload {
   documentQuotaBytes?: number;
   /** Hex color for calendar display. Pass `""` or `null` to revert to auto-generated color. */
   color?: string | null;
-  /** Primary thematic category id. Pass `""` or `null` to clear. */
-  categoryId?: string | null;
   /** Archive/unarchive the association. */
   archived?: boolean;
   /** Public contact e-mail. Pass `""` or `null` to clear. */
@@ -342,6 +339,15 @@ export type AssociationCalendarEventStatus = 'pending' | 'validated' | 'rejected
  *   events and not occupying an event slot (purely graphical).
  */
 export type AssociationCalendarEventKind = 'event' | 'break';
+
+/**
+ * Who a reader is told an event is from (owner, 2026-11-08): `association` is the owner as always;
+ * `neutral` is the generic "Campus" label and nothing else - a BDE files it, stays its owner on the
+ * server, and the server masks the owner fields (`associationId` `''`, no name, no logo, no
+ * `createdBy`) for every reader who does not manage that BDE's agenda. The label is drawn from THIS
+ * field, never from the blanks (`eventOwners`).
+ */
+export type AssociationCalendarEventPresentation = 'association' | 'neutral';
 
 /** Lean summary of an association co-owning a calendar event. */
 export interface CalendarEventCoOwner {
@@ -374,6 +380,8 @@ export interface AssociationCalendarEvent {
   createdAt: string;
   /** Visual kind: `event` (card) or `break` (full-day background band). */
   kind: AssociationCalendarEventKind;
+  /** `neutral`: shown as "Campus", with no association (see the type). */
+  presentation: AssociationCalendarEventPresentation;
   status: AssociationCalendarEventStatus;
   validatedAt: string | null;
   validatedBy: string | null;
@@ -420,6 +428,8 @@ export interface CreateAssociationCalendarEventPayload {
   targetAssocId?: string;
   /** Associations ASKED to co-organise this event (D39, max 10): each decides. */
   coOwnerIds?: string[];
+  /** A BDE's agenda managers only; a neutral event has no co-organiser and no linked form. */
+  presentation?: AssociationCalendarEventPresentation;
 }
 
 export interface UpdateAssociationCalendarEventPayload {
@@ -429,6 +439,8 @@ export interface UpdateAssociationCalendarEventPayload {
   endsAt?: string;
   /** `event` or `break` (a full-day background band). */
   kind?: AssociationCalendarEventKind;
+  /** Omitted unless the surface may decide it (`canSetPresentation`). */
+  presentation?: AssociationCalendarEventPresentation;
   linkedFormId?: string | null;
   /**
    * The co-organisers the form now names, accepted and pending included (D39): a new one is asked,
@@ -446,7 +458,10 @@ export async function listLinkableValidatedCalendarEvents(
   const now = new Date();
   const from = new Date(now.getFullYear(), now.getMonth() - 12, 1).toISOString();
   const to = new Date(now.getFullYear(), now.getMonth() + 24, 0, 23, 59, 59, 999).toISOString();
-  return listAssociationCalendarEvents(associationId, { from, to });
+  const events = await listAssociationCalendarEvents(associationId, { from, to });
+  // A post is published in the association's name, so it never links a neutral event - the server
+  // refuses one (`CALENDAR_NEUTRAL_LINKED_POST`), and offering it would be offering a refusal.
+  return events.filter((ev) => ev.presentation !== 'neutral');
 }
 
 /** Media API base for resolving `/api/media/…` paths (Tauri needs an absolute URL). */
@@ -1066,14 +1081,15 @@ export function invalidateMyAssociations(): void {
   myMemberships.invalidate();
   myBdeReach.invalidate();
   myAssociationsProbe = null;
+  myAssociationsProbeFailed = false;
 }
 
 /**
  * The associations whose BDE grants the caller each SCOPED power (WP6c step 2), as the server's
  * own predicate computes them: `validateEvents` (validate, edit, deposit on, declare a break for)
- * and `manageAsso` (administer as a super-admin). A BDE governs the associations reaching its
- * space, never all of them, so "is a BDE somewhere" (`holdsBdeFlag`) cannot draw a control on ONE
- * association. A global admin holds every power and is not in these lists - callers OR that tier.
+ * and `manageAsso` (administer as a super-admin: MANAGE_ASSO in its parent BDE, or itself when a
+ * BDE, WP-D2). A BDE governs its children, never all associations, so "is a BDE somewhere"
+ * (`holdsBdeFlag`) cannot draw a control on ONE association. A global admin holds every power and is not in these lists - callers OR that tier.
  */
 export interface BdeReach {
   validateEvents: string[];
@@ -1095,13 +1111,53 @@ export async function getMyBdeReach(): Promise<BdeReach> {
 
 /** Session cache for the membership probe; deduplicates concurrent callers. */
 let myAssociationsProbe: Promise<Association[]> | null = null;
+/** Whether the probe above ended in a failure (its list is then `[]`, which is NOT "belongs to nothing"). */
+let myAssociationsProbeFailed = false;
+/** The one-shot reconnect subscription that owes a failed probe its retry; null when none is owed. */
+let stopProbeReconnect: (() => void) | null = null;
+
+/**
+ * Whether the membership probe FAILED: its `[]` then says nothing about what the reader belongs to.
+ * For a caller that must not act on "no memberships" when that is only a failure (the follow chip
+ * offers nothing it cannot tell is not the reader's own).
+ */
+export function didMyAssociationsProbeFail(): boolean {
+  return myAssociationsProbeFailed;
+}
 
 // The probe is not a SharedCache - it is one promise holding three derived flags - so it enrols
 // itself. The list beside it does so through its own `perReader` option, and both have to go: a
 // probe kept across a sign-in answers `isAssociationSuperAdmin()` for the previous account.
 registerPerReaderCache(() => {
   myAssociationsProbe = null;
+  myAssociationsProbeFailed = false;
 });
+
+/**
+ * Re-asks a FAILED membership probe, once, and does nothing when the last probe did not fail.
+ *
+ * A FAILURE IS A STATE, NOT AN ANSWER. Fail-closed is right for the moment (every BDE flag denied),
+ * but the `[]` it hands back must not outlive the cause: it stays held only so that callers do not
+ * each re-ask a server that just refused, and two EVENTS - never a clock - lift it: the
+ * connectivity reconnect ({@link ensureMyAssociations} arms it) and the next navigation (the root
+ * layout calls this from `beforeNavigate`). A retry that fails again is held and armed again; one
+ * in flight is shared by whoever asks meanwhile, because the failed state is already cleared.
+ */
+export async function retryFailedMyAssociationsProbe(): Promise<void> {
+  if (!myAssociationsProbeFailed) return;
+  console.info('[associations] membership probe failed earlier, asking again');
+  await ensureMyAssociations(true);
+}
+
+/** Arms the one reconnect that retries a failed probe; one subscription however many failures. */
+function owedProbeRetryOnReconnect(): void {
+  if (stopProbeReconnect) return;
+  stopProbeReconnect = connectivity.onReconnect(() => {
+    stopProbeReconnect?.();
+    stopProbeReconnect = null;
+    void retryFailedMyAssociationsProbe();
+  });
+}
 
 /**
  * Loads the caller's memberships once per session and publishes EVERY BDE-derived flag from that
@@ -1111,8 +1167,16 @@ registerPerReaderCache(() => {
  * admin layout wants the super-admin and the moderator tier in the same breath - and two caches
  * over the same endpoint would drift the moment one is force-refreshed and the other is not.
  *
- * A failure is a refusal of every flag, and it is logged: a silently empty membership list is
- * indistinguishable from a user who belongs to nothing, and would hide a control with no trace.
+ * A failure is a refusal of every flag, logged at WARN with the status, and it is a FAILED STATE
+ * ({@link didMyAssociationsProbeFail}) retried on the next reconnect or navigation
+ * ({@link retryFailedMyAssociationsProbe}); a silently empty membership list is indistinguishable
+ * from a user who belongs to nothing, and would hide a control with no trace.
+ *
+ * What each caller does with that `[]`: `ensureMayOpenAdmin` reads the three flags (all denied, so
+ * the admin shell stays shut until the retry); the three `ensure*` flag probes below return false;
+ * the dashboard draws no membership entries; the follow chip asks {@link didMyAssociationsProbeFail}
+ * and offers nothing it cannot tell is not the reader's own. A retry that succeeds publishes the
+ * flags through the same user-state setters, which the reactive callers read.
  */
 export async function ensureMyAssociations(force = false): Promise<Association[]> {
   if (force) invalidateMyAssociations();
@@ -1125,7 +1189,13 @@ export async function ensureMyAssociations(force = false): Promise<Association[]
         return assos;
       })
       .catch((err) => {
-        console.error('[associations] membership probe failed, every BDE flag denied', err);
+        const status = err instanceof ApiRefusalError ? err.status : 'no answer';
+        console.warn(
+          `[associations] membership probe failed (${status}), every BDE flag denied until the next reconnect or navigation`,
+          err
+        );
+        myAssociationsProbeFailed = true;
+        owedProbeRetryOnReconnect();
         setAssociationSuperAdmin(false);
         setContentModerator(false);
         setEventValidator(false);
@@ -1187,42 +1257,6 @@ export async function unfollowAssociation(associationId: string): Promise<{ ok: 
   return request<{ ok: boolean }>(`/api/associations/${encodeURIComponent(associationId)}/follow`, {
     method: 'DELETE',
   });
-}
-
-/**
- * The PUSH mute of one association: it silences that association's push notifications for the
- * caller and nothing else - the post stays in the feed and the bell. A separate fact from
- * following, which only decides what the feed's "followed" view shows.
- */
-export async function getAssociationPushMuteStatus(
-  associationId: string
-): Promise<{ muted: boolean }> {
-  return request<{ muted: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/push-mute`
-  );
-}
-
-export async function muteAssociationPush(associationId: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/push-mute`,
-    { method: 'PUT' }
-  );
-}
-
-export async function unmuteAssociationPush(associationId: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(
-    `/api/associations/${encodeURIComponent(associationId)}/push-mute`,
-    { method: 'DELETE' }
-  );
-}
-
-/** The associations the caller muted - the unmute list of the notification settings. */
-export async function listMutedAssociations(): Promise<
-  Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]
-> {
-  return request<Pick<Association, 'id' | 'name' | 'slug' | 'logoUrl'>[]>(
-    '/api/associations/me/push-mutes'
-  );
 }
 
 export async function createAssociation(payload: CreateAssociationPayload): Promise<Association> {
@@ -2699,6 +2733,8 @@ export interface AssociationForm {
   basePrice: number;
   currency: string;
   allowCashPayment: boolean;
+  /** `draft` until published; absent from a server before drafts (then published). */
+  status?: 'draft' | 'published';
   createdAt: string;
 }
 
@@ -3019,99 +3055,6 @@ export async function startLydiaOnboarding(
   return body as { url: string; accountId: string };
 }
 
-// ── Association categories (thematic taxonomy) ───────────────────────────────
-
-/** A managed thematic category used to group associations on the poster and directory. */
-export interface AssociationCategory {
-  id: string;
-  /** Human-readable label (e.g. "Cuisine"). */
-  label: string;
-  /** URL-safe unique identifier (e.g. "cuisine"). */
-  slug: string;
-  /** Display position - lower values appear first. */
-  sortOrder: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CreateAssociationCategoryPayload {
-  label: string;
-  slug: string;
-  sortOrder?: number;
-}
-
-export interface UpdateAssociationCategoryPayload {
-  label?: string;
-  sortOrder?: number;
-}
-
-/**
- * The category list, held for five minutes and shared by every caller.
- *
- * It is a handful of labels that only a global admin can change, read by the association profile
- * tab and both carte screens - and the profile tab is inside a tab strip that UNMOUNTS its panel,
- * so every switch back to it re-asked. Same invalidation rule as the directory: the four writes
- * below drop it, the window only bounds a change made elsewhere.
- */
-const categories = new SharedCache<AssociationCategory[]>(5 * 60_000);
-
-/** Lists categories in display order. Public. */
-export async function listAssociationCategories(): Promise<AssociationCategory[]> {
-  return categories.load('all', () =>
-    request<AssociationCategory[]>('/api/associations/categories')
-  );
-}
-
-/** Creates a category. Global admins / BDE super-admins only. */
-export async function createAssociationCategory(
-  payload: CreateAssociationCategoryPayload
-): Promise<AssociationCategory> {
-  const created = await request<AssociationCategory>('/api/associations/categories', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  categories.invalidate();
-  return created;
-}
-
-/** Updates a category's label/order. Global admins / BDE super-admins only. */
-export async function updateAssociationCategory(
-  id: string,
-  payload: UpdateAssociationCategoryPayload
-): Promise<AssociationCategory> {
-  const updated = await request<AssociationCategory>(
-    `/api/associations/categories/${encodeURIComponent(id)}`,
-    { method: 'PATCH', body: JSON.stringify(payload) }
-  );
-  categories.invalidate();
-  return updated;
-}
-
-/** Deletes a category and detaches it from its associations. Global admins / BDE super-admins only. */
-export async function deleteAssociationCategory(id: string): Promise<{ ok: boolean }> {
-  const result = await request<{ ok: boolean }>(
-    `/api/associations/categories/${encodeURIComponent(id)}`,
-    { method: 'DELETE' }
-  );
-  // A deleted category is detached from its associations, so the directory carries it too.
-  categories.invalidate();
-  invalidateAssociationDirectory();
-  return result;
-}
-
-/** Persists a new top-to-bottom category order. Global admins / BDE super-admins only. */
-export async function reorderAssociationCategories(
-  orderedIds: string[]
-): Promise<AssociationCategory[]> {
-  const reordered = await request<AssociationCategory[]>('/api/associations/categories/reorder', {
-    method: 'PATCH',
-    body: JSON.stringify({ orderedIds }),
-  });
-  // The response IS the new list in the new order, so it seeds rather than evicts.
-  categories.put('all', reordered);
-  return reordered;
-}
-
 // ── Poster projects ("Carte de la Vie Asso") ─────────────────────────────────
 
 /**
@@ -3124,6 +3067,11 @@ export interface PosterProject {
   name: string;
   /** Opaque JSON layout - the editor owns this shape. */
   layout: Record<string, unknown>;
+  /**
+   * The space (formation x campus) the map is drawn for; null for a map migration 147 could not
+   * attach, which only the platform admin sees until it is attached.
+   */
+  spaceId: string | null;
   /** ISO timestamp of the last publish to the public showcase; null when this poster is offline. */
   publishedAt: string | null;
   /**
@@ -3136,24 +3084,127 @@ export interface PosterProject {
   updatedAt: string;
 }
 
+/** A space a map can be drawn for: one formation x campus pair. */
+export interface CarteSpace {
+  id: string;
+  formation: string;
+  campus: string;
+}
+
+/** A zone of ONE map (its own taxonomy since migration 147). */
+export interface PosterZone {
+  id: string;
+  posterProjectId: string;
+  label: string;
+  sortOrder: number;
+}
+
+/**
+ * One association as one map has seen it: its switch and its zone. An association of the map's
+ * space with NO entry is new - offered switched off, with a badge.
+ */
+export interface PosterEntry {
+  posterProjectId: string;
+  associationId: string;
+  enabled: boolean;
+  zoneId: string | null;
+}
+
+/** One map as the editor opens it: its space, zones, switches and what its space offers today. */
+export interface PosterProjectDetail extends PosterProject {
+  space: CarteSpace | null;
+  zones: PosterZone[];
+  entries: PosterEntry[];
+  /** Every association of the map's space today; one with no entry is new. */
+  spaceAssociationIds: string[];
+}
+
 export interface CreatePosterProjectPayload {
   name: string;
+  /** The space the map is drawn for - one the caller manages. */
+  spaceId: string;
   layout?: Record<string, unknown>;
 }
 
 export interface UpdatePosterProjectPayload {
   name?: string;
   layout?: Record<string, unknown>;
+  /** Attaches a map that has no space; an attached map never moves. */
+  spaceId?: string;
 }
 
-/** Lists all poster projects, most-recently-updated first. Admins / BDE super-admins only. */
+/** The refusal codes of the carte routes the editor names to its author. */
+export const CARTE_REFUSAL = {
+  UNIT_OUTSIDE_MAP: 'CARTE_UNIT_OUTSIDE_MAP',
+  NOT_ATTACHED: 'CARTE_NOT_ATTACHED',
+} as const;
+
+/**
+ * The maps the caller manages (those of the spaces its BDE governs; every map for the platform
+ * admin), most-recently-updated first.
+ */
 export async function listPosterProjects(): Promise<PosterProject[]> {
   return request<PosterProject[]>('/api/associations/poster');
 }
 
-/** Loads one poster project (full layout). Admins / BDE super-admins only. */
-export async function getPosterProject(id: string): Promise<PosterProject> {
-  return request<PosterProject>(`/api/associations/poster/${encodeURIComponent(id)}`);
+/** The spaces the caller may create a map for. */
+export async function listCarteSpaces(): Promise<CarteSpace[]> {
+  return request<CarteSpace[]>('/api/associations/poster/spaces');
+}
+
+/** Loads one map with its space, zones and switches. 404 for a map the caller does not manage. */
+export async function getPosterProject(id: string): Promise<PosterProjectDetail> {
+  return request<PosterProjectDetail>(`/api/associations/poster/${encodeURIComponent(id)}`);
+}
+
+/** Adds a zone to a map. */
+export async function createPosterZone(projectId: string, label: string): Promise<PosterZone> {
+  return request<PosterZone>(`/api/associations/poster/${encodeURIComponent(projectId)}/zones`, {
+    method: 'POST',
+    body: JSON.stringify({ label }),
+  });
+}
+
+/** Renames a zone of a map. */
+export async function renamePosterZone(
+  projectId: string,
+  zoneId: string,
+  label: string
+): Promise<PosterZone> {
+  return request<PosterZone>(
+    `/api/associations/poster/${encodeURIComponent(projectId)}/zones/${encodeURIComponent(zoneId)}`,
+    { method: 'PATCH', body: JSON.stringify({ label }) }
+  );
+}
+
+/** Deletes a zone of a map; its associations stay on the map, unzoned. */
+export async function deletePosterZone(projectId: string, zoneId: string): Promise<void> {
+  await request<unknown>(
+    `/api/associations/poster/${encodeURIComponent(projectId)}/zones/${encodeURIComponent(zoneId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+/** Persists the order of a map's zones (every zone, exactly once). */
+export async function reorderPosterZones(
+  projectId: string,
+  orderedIds: string[]
+): Promise<PosterZone[]> {
+  return request<PosterZone[]>(
+    `/api/associations/poster/${encodeURIComponent(projectId)}/zones/order`,
+    { method: 'PUT', body: JSON.stringify({ orderedIds }) }
+  );
+}
+
+/** Writes the switch and/or zone of associations on a map; an absent field is left as it is. */
+export async function setPosterEntries(
+  projectId: string,
+  entries: { associationId: string; enabled?: boolean; zoneId?: string | null }[]
+): Promise<PosterEntry[]> {
+  return request<PosterEntry[]>(
+    `/api/associations/poster/${encodeURIComponent(projectId)}/entries`,
+    { method: 'PUT', body: JSON.stringify({ entries }) }
+  );
 }
 
 /** Creates a poster project owned by the caller. Admins / BDE super-admins only. */
@@ -3185,8 +3236,8 @@ export async function deletePosterProject(id: string): Promise<{ ok: boolean }> 
 }
 
 /**
- * Publishes a poster to the public showcase (portail-etu), replacing whatever was live - at most
- * one map is published at a time. The payload is the normalized geometry document built by
+ * Publishes a poster to the public showcase (portail-etu), replacing the live map of ITS SPACE -
+ * at most one map is live per space. The payload is the normalized geometry document built by
  * {@link buildPublishedCarte}, not the editor layout. Admins / BDE super-admins only.
  *
  * @param fingerprint - Of that exact document, so the editor can later tell whether the live map is

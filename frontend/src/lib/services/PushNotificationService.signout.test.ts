@@ -31,7 +31,8 @@ const { tauriRuntimeStub } = vi.hoisted(() => ({ tauriRuntimeStub: vi.fn(() => t
 vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: tauriRuntimeStub }));
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
 
-const { endPushRegistration, startPushService } = await import('./PushNotificationService');
+const { endPushRegistration, startPushService, stopPushService } =
+  await import('./PushNotificationService');
 
 /** The native answers this test controls, by command name. */
 let answers: Record<string, unknown>;
@@ -151,5 +152,41 @@ describe('the next registration after a sign-out', () => {
       'secret-not-stored'
     );
     error.mockRestore();
+  });
+});
+
+describe('stopPushService, the server half of a live sign-out', () => {
+  beforeEach(() => {
+    sessionStorage.setItem('canari_fcm_token', 'x');
+  });
+
+  it('warns, naming what stays registered, and returns when the call gets no answer', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('network down'));
+    await expect(stopPushService('https://api', 'jwt', 'dev-1')).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('dev-1'), expect.anything());
+    warn.mockRestore();
+  });
+
+  it('is bounded by its own short deadline', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('', { status: 204 }));
+    await stopPushService('https://api', 'jwt', 'dev-1');
+    const init = vi.mocked(globalThis.fetch).mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('keeps the registration marker when the server refuses', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
+    await stopPushService('https://api', 'jwt', 'dev-1');
+    expect(sessionStorage.getItem('canari_fcm_token')).toBe('x');
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('401'));
+    error.mockRestore();
+  });
+
+  it('forgets the registration marker when the server answers 2xx', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('', { status: 204 }));
+    await stopPushService('https://api', 'jwt', 'dev-1');
+    expect(sessionStorage.getItem('canari_fcm_token')).toBeNull();
   });
 });

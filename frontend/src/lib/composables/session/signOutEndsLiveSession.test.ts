@@ -38,6 +38,8 @@ describe('every sign-out ends the live session on the device', () => {
   it('the teardown stops the session AND releases the latch the successful unlock left set', () => {
     const handler = body(shell, 'function handleSignedOut()');
     expect(handler).toContain('globalSession.endSession(sessionCb());');
+    // The deregistration promise is FORWARDED, or `clearAuth` has nothing to wait on.
+    expect(handler).toContain('return pushDeregistered;');
     expect(handler).toContain('_loginInProgress = false;');
   });
 

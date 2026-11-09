@@ -254,8 +254,8 @@ type FakeSender = {
   late?: boolean;
   replaceTrack: (t: { kind: string } | null) => Promise<void>;
   /** What `setParameters` last set (the quality ladder's rung), as the browser keeps it. */
-  params: { encodings: Record<string, unknown>[] };
-  getParameters: () => { encodings: Record<string, unknown>[] };
+  params: { encodings: Record<string, unknown>[]; codecs?: { mimeType: string }[] };
+  getParameters: () => { encodings: Record<string, unknown>[]; codecs?: { mimeType: string }[] };
   setParameters: (p: { encodings: Record<string, unknown>[] }) => Promise<void>;
 };
 
@@ -276,10 +276,24 @@ function fakeSender(track: { kind: string } | null, kind: string): FakeSender {
   return sender;
 }
 
+/**
+ * A receiver: its transform slot, and the codecs its negotiation settled on (`negotiated`, empty
+ * until a test sets them), answered by `getParameters()` as the browser's.
+ */
+function fakeReceiver() {
+  const receiver = withTransformSlot({
+    negotiated: [] as { mimeType: string }[],
+    getParameters(): { codecs: { mimeType: string }[] } {
+      return { codecs: receiver.negotiated };
+    },
+  });
+  return receiver;
+}
+
 /** A transceiver: its `direction` is what this side asks, `codecs` what `setCodecPreferences` set. */
 type FakeTransceiver = {
   sender: FakeSender;
-  receiver: { transform: unknown; late?: boolean };
+  receiver: ReturnType<typeof fakeReceiver>;
   direction: RTCRtpTransceiverDirection;
   readonly currentDirection: RTCRtpTransceiverDirection | null | undefined;
   codecs: { mimeType: string }[] | null;
@@ -393,7 +407,7 @@ class FakePeerConnection {
   constructor(public config: RTCConfiguration) {
     FakePeerConnection.instances.push(this);
   }
-  receivers: { transform: unknown; late?: boolean }[] = [];
+  receivers: ReturnType<typeof fakeReceiver>[] = [];
   /**
    * As the browser: `addTrack` REUSES a transceiver of the same kind whose sender never had a
    * track - one the peer's offer created (`remoteOfferAdds`). Its sender slot was created back
@@ -408,13 +422,13 @@ class FakePeerConnection {
     }
     const sender = fakeSender(track, track.kind);
     this.senders.push(sender);
-    this.receivers.push(withTransformSlot({}));
+    this.receivers.push(fakeReceiver());
     return sender;
   }
   /** Always a NEW transceiver, created in this task. */
   addTransceiver(track: { kind: string }) {
     const sender = fakeSender(track, track.kind);
-    const receiver = withTransformSlot({});
+    const receiver = fakeReceiver();
     this.senders.push(sender);
     this.receivers.push(receiver);
     return this.transceiverOf(sender);
@@ -428,7 +442,7 @@ class FakePeerConnection {
    */
   remoteOfferAdds(kind: string) {
     const sender = fakeSender(null, kind);
-    const receiver = withTransformSlot({});
+    const receiver = fakeReceiver();
     this.senders.push(sender);
     this.receivers.push(receiver);
     const track = { kind, id: `remote-${kind}-1`, readyState: 'live', muted: false };
@@ -1487,6 +1501,67 @@ describe('the E2E worker report (2026-10-19)', () => {
       expect(mimes(mine)).toEqual(['video/VP8', 'video/rtx']);
     });
 
+    it('tells EVERY video transform the codec its transceiver was held to BEFORE it was made - never the frame metadata (WebKit names none, 2026-11-07)', async () => {
+      /**
+       * Each transform made, with the codec EVERY transceiver held at that moment: matched below
+       * to the one transceiver the transform was assigned to, so another transceiver's
+       * preferences can never answer for it.
+       */
+      const made: {
+        transform: unknown;
+        options: Record<string, unknown>;
+        held: Map<unknown, string | undefined>;
+      }[] = [];
+      const { service, pc } = await connectedCall();
+      vi.stubGlobal(
+        'RTCRtpScriptTransform',
+        class extends FakeTransform {
+          constructor(worker: unknown, options: { side: string; kind: string; epoch?: number }) {
+            super(worker, options);
+            const held = new Map(pc.getTransceivers().map((t) => [t, mimes(t)?.[0]]));
+            made.push({ transform: this, options, held });
+          }
+        }
+      );
+      const theirs = pc.remoteOfferAdds('video');
+      await turnCameraOn(service);
+      const cam = pc.getTransceivers().find((t) => t.sender.track?.kind === 'video')!;
+      for (const t of [theirs, cam]) {
+        for (const end of [t.sender, t.receiver]) {
+          const entry = made.find((m) => m.transform === end.transform);
+          expect(entry, 'a transform on every video sender and receiver').toBeDefined();
+          expect(entry!.options.videoCodec).toBe('video/vp8');
+          // ITS transceiver held VP8 when the transform was made.
+          expect(entry!.held.get(t)).toBe('video/VP8');
+        }
+      }
+      // The peer's m-line (receiver + armed sender) and the camera's (sender + receiver).
+      expect(made.filter((t) => t.options.kind === 'video')).toHaveLength(4);
+    });
+
+    // WebKit's frames name no codec, so only the NEGOTIATED codec can show an engine that ignored
+    // `setCodecPreferences` (2026-11-07): a report, once per call, at ERROR - never a behaviour.
+    it('reports ONCE, at ERROR, a video side whose negotiated codec is not the one its transform frames', async () => {
+      const { service, pc, lines } = await connectedCall();
+      const theirs = pc.remoteOfferAdds('video');
+      const settle = () => {
+        pc.signalingState = 'stable';
+        (pc.onsignalingstatechange as unknown as () => void)();
+      };
+      theirs.receiver.negotiated = [{ mimeType: 'video/VP8' }, { mimeType: 'video/rtx' }];
+      settle();
+      expect(lines().filter((l) => l.includes('ERROR E2E report'))).toEqual([]);
+
+      theirs.receiver.negotiated = [{ mimeType: 'video/H264' }, { mimeType: 'video/rtx' }];
+      settle();
+      settle();
+      expect(lines().filter((l) => l.includes('ERROR E2E report'))).toEqual([
+        `[Call] ERROR E2E report: the video receiver (mid -) negotiated video/H264, transform frames video/vp8 - its frames cannot decode`,
+      ]);
+      // A report only: the transform the receiver carries is the one it was given.
+      expect(get(service.callState)).toBe('incall');
+    });
+
     it('OFF stops the capture, empties the SAME sender and goes recvonly; ON hands it a new capture, sendrecv', async () => {
       const { service, pc, lines } = await connectedCall();
       const first = await turnCameraOn(service);
@@ -2036,11 +2111,12 @@ describe('the E2E worker report (2026-10-19)', () => {
       const { lines } = await connectedCall();
       const post = (data: Record<string, unknown>) =>
         workerAnswers.last?.onmessage?.({ data } as MessageEvent);
-      post({ type: 'videoCodecUnexpected', mimeType: 'video/H264', count: 1 });
-      post({ type: 'videoCodecUnexpected', mimeType: 'video/H264', count: 2 });
+      const frame = { mimeType: 'video/H264', transformCodec: 'video/VP8' };
+      post({ type: 'videoCodecUnexpected', ...frame, count: 1 });
+      post({ type: 'videoCodecUnexpected', ...frame, count: 2 });
       post({ type: 'decryptError', detail: 'OperationError', count: 1, mediaKind: 'video' });
-      expect(lines().filter((l) => l.includes('not VP8'))).toEqual([
-        '[Call] ERROR E2E: video frames of video/H264, not VP8, crossed the transform - encrypted whole, they cannot decode (1 so far)',
+      expect(lines().filter((l) => l.includes('not framed as VP8'))).toEqual([
+        '[Call] ERROR E2E: video frames not framed as VP8 crossed the transform (frame codec video/H264, transform codec video/VP8) - encrypted whole, they cannot decode (1 so far)',
       ]);
       expect(lines()).toContain('[Call] E2E decrypt failed (video, 1): OperationError');
     });
@@ -2063,7 +2139,7 @@ describe('the E2E worker report (2026-10-19)', () => {
   it('arms the sender of a peer-created transceiver as armed, not attached (review L1)', async () => {
     const { pc, lines } = await connectedCall();
     pc.remoteOfferAdds('video');
-    expect(lines()).toContain('[Call] E2E sender transform armed, no track yet (video)');
+    expect(lines()).toContain('[Call] E2E sender transform armed, no track yet (video, video/vp8)');
   });
 
   it('WITHDRAWS the claim when the worker can no longer be asked, re-checks, and only an answered check returns it (review of #2159)', async () => {

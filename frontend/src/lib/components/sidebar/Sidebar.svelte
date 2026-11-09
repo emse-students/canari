@@ -4,7 +4,7 @@
   import { previewContentOf } from '$lib/utils/chat/listPreview';
   import { untrack } from 'svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
-  import { flip } from 'svelte/animate';
+  import { flipShown } from '$lib/utils/flipShown';
   import { SvelteMap } from 'svelte/reactivity';
   import { dndzone, TRIGGERS, type DndEvent } from 'svelte-dnd-action';
   import { keepRowActivationKeys } from '$lib/utils/dndActivationKeys';
@@ -21,6 +21,11 @@
   import SidebarNewCommunityModal from './SidebarNewCommunityModal.svelte';
   import SidebarCommunityAdminPanel from './SidebarCommunityAdminPanel.svelte';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import {
+    isHiddenFromList,
+    loadHiddenUnopenable,
+    releaseHiddenOnceActive,
+  } from '$lib/utils/chat/noHolder.svelte';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import type { ConversationOutcome } from '$lib/utils/chat/groupCreation';
   import { conversationRefusalMessage } from '$lib/utils/chat/conversationRefusalMessage';
@@ -394,9 +399,21 @@
    * conversation they were looking at disappeared as they spelled it. Resolving once here makes the
    * filter and the row read the same value by construction instead of agreeing by coincidence.
    */
+  $effect(() => {
+    if (!currentUserId) return;
+    loadHiddenUnopenable(currentUserId);
+    // A hidden conversation seen active once is back on the list for good (review of #2832).
+    for (const [name, convo] of conversations) {
+      if (convo.lifecycle === 'active') releaseHiddenOnceActive(convo.id || name);
+    }
+  });
+
   let conversationRows = $derived.by(() =>
     [...conversations.entries()]
       .filter(([id]) => !isChannelConversationId(id))
+      // A conversation its user took off the list because this device can no longer open it (D5)
+      // - listed again the moment it opens.
+      .filter(([name, convo]) => !isHiddenFromList(convo.id || name, convo.lifecycle))
       .map(([name, convo]) => ({
         name,
         convo,
@@ -597,7 +614,7 @@
       >
         {#each orderedWorkspaces as workspace (workspace.id)}
           {@const hasUnread = communityHasUnread(workspace.channels, conversations)}
-          <div animate:flip={{ duration: 150 }} class="relative">
+          <div animate:flipShown={{ duration: 150 }} class="relative">
             <!-- THE MENU IS A HOLD UNDER A FINGER AND A RIGHT CLICK UNDER A MOUSE (`longPress`), and
                  the mouse's main button is left to the drag: held on an icon, it starts a reorder.
                  The hold swallows the click that ends it - the browser's and the one the drag
@@ -851,7 +868,7 @@
                 <button
                   type="button"
                   data-channel-row={channel.name}
-                  animate:flip={{ duration: 150 }}
+                  animate:flipShown={{ duration: 150 }}
                   onkeydown={(e) =>
                     canReorderChannels && handleChannelKeydown(e, currentWorkspace, channel)}
                   aria-keyshortcuts={canReorderChannels ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}

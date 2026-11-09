@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import {
     Monitor,
     Smartphone,
@@ -438,12 +439,9 @@
                         maxlength="80"
                         class="text-text-main placeholder:text-text-muted bg-cn-surface flex-1 rounded-lg border border-black/10 px-3 py-1.5 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none dark:border-white/10"
                       />
-                      <button
-                        onclick={() => void saveName()}
-                        class="text-cn-ink rounded-lg bg-amber-500 px-2.5 py-1.5 text-xs font-bold transition-all hover:bg-amber-600 active:scale-95"
-                      >
+                      <Button onclick={() => void saveName()}>
                         {m.common_ok_button()}
-                      </button>
+                      </Button>
                       <button
                         onclick={cancelEditing}
                         class="ui-icon-button text-text-muted rounded-lg transition-all hover:bg-black/5 dark:hover:bg-white/5"

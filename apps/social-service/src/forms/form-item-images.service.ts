@@ -57,11 +57,19 @@ async function lockImages(m: Pick<EntityManager, 'query'>, mediaIds: string[]): 
   }
 }
 
-/** Whether any form - archived ones included - still cites `mediaId` in one of its questions. */
+/**
+ * Whether any form - archived ones included - still cites `mediaId` in one of its questions, or an
+ * unpublished revision of one does (migration 146): an image added in the editor is cited by the
+ * revision until it is published or discarded, and must outlive the hour that follows.
+ */
 async function isCited(m: Pick<EntityManager, 'query'>, mediaId: string): Promise<boolean> {
-  const rows = (await m.query(`SELECT 1 FROM forms WHERE items @> $1::jsonb LIMIT 1`, [
-    JSON.stringify([{ imageUrl: questionImageUrl(mediaId) }]),
-  ])) as unknown[];
+  const rows = (await m.query(
+    `SELECT 1 FROM forms WHERE items @> $1::jsonb
+     UNION ALL
+     SELECT 1 FROM form_drafts WHERE document -> 'items' @> $1::jsonb
+     LIMIT 1`,
+    [JSON.stringify([{ imageUrl: questionImageUrl(mediaId) }])]
+  )) as unknown[];
   return rows.length > 0;
 }
 
@@ -80,6 +88,7 @@ async function isCited(m: Pick<EntityManager, 'query'>, mediaId: string): Promis
  * - a RELEASE deletes the blob, then the row, once NO form cites it - re-read under the lock: an
  *   image replaced or removed, its form deleted. A duplicated question cites the same id, so the
  *   image stays while either copy does. An archived form still cites its images;
+ * - an unpublished REVISION (migration 146) cites like a form: kept while the editor holds it;
  * - the hourly RECONCILIATION releases every row older than a day that no form cites: an upload
  *   never saved, a form or an association removed, a release that failed.
  */
@@ -253,6 +262,10 @@ export class FormItemImagesService {
           AND NOT EXISTS (
             SELECT 1 FROM forms f
              WHERE f.items @> jsonb_build_array(jsonb_build_object('imageUrl', '/api/media/public/' || i."mediaId"::text))
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM form_drafts d
+             WHERE d.document -> 'items' @> jsonb_build_array(jsonb_build_object('imageUrl', '/api/media/public/' || i."mediaId"::text))
           )`,
       [UNCITED_IMAGE_GRACE_HOURS]
     )) as Array<{ mediaId: string }>;

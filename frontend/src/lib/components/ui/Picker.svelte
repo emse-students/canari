@@ -70,7 +70,7 @@
     leading,
     placeholder = '',
     variant = 'inline',
-    density = 'compact',
+    density = 'default',
     invalid = false,
   }: Props = $props();
 

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -18,6 +18,15 @@ describe('the app launcher', () => {
       'sky',
       'portail-etu',
     ]);
+  });
+
+  it('equals libs/contracts/ecosystem-sites.json: ids, origins and handoff flags', () => {
+    const contract = JSON.parse(
+      readFileSync(resolve('..', 'libs', 'contracts', 'ecosystem-sites.json'), 'utf8')
+    ) as { sites: Array<{ id: string; origin: string; handoff: boolean }> };
+    expect(ECOSYSTEM_SITES.map((s) => ({ id: s.id, origin: s.href, handoff: s.handoff }))).toEqual(
+      contract.sites.map((s) => ({ id: s.id, origin: s.origin, handoff: s.handoff }))
+    );
   });
 
   it.each(ECOSYSTEM_SITES.map((s) => [s.id, s.href] as const))(

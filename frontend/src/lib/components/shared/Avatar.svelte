@@ -1,6 +1,7 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages';
   import AvatarPlaceholder from '$lib/components/shared/AvatarPlaceholder.svelte';
+  import { birthdaysToday } from '$lib/birthdays/birthdaysToday.svelte';
   import { getInitials } from '$lib/utils/avatar';
   import { avatarUrl } from '$lib/utils/avatarUrl';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
@@ -105,21 +106,30 @@
             : 'w-8 h-8 text-sm'
   );
   const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'squircle');
+  /**
+   * THE BIRTHDAY RING (decision 3, docs/wiki/birthdays.md): drawn HERE, on the one component every
+   * person's face goes through, for a member whose birthday the server says is today - to every
+   * reader, wherever the face appears, never per call site. `.birthday-ring` draws it inside the
+   * avatar's own edge, so no caller's layout or clip changes.
+   */
+  const celebrating = $derived(identified && birthdaysToday.has(userId));
+  const ringClass = $derived(celebrating ? 'birthday-ring' : '');
 </script>
 
 {#if imageFailed || display?.kind === 'none'}
   <AvatarPlaceholder
     seed={userId}
     {initials}
-    class="{shapeClasses} shrink-0 overflow-hidden shadow-sm {sizeClasses}"
+    class="{shapeClasses} shrink-0 overflow-hidden shadow-sm {sizeClasses} {ringClass}"
     title={displayLabel}
     ariaLabel={m.avatar_aria_label({ name: displayLabel })}
   />
 {:else}
   <div
-    class="{shapeClasses} shrink-0 shadow-sm {sizeClasses} relative overflow-hidden"
+    class="{shapeClasses} shrink-0 shadow-sm {sizeClasses} relative overflow-hidden {ringClass}"
     title={displayLabel}
     aria-label={m.avatar_aria_label({ name: displayLabel })}
+    data-birthday={celebrating ? 'today' : undefined}
   >
     {#if !imageLoaded}
       <!-- Placeholder a initiales affiche immediatement (displayLabel est resolu de facon
@@ -133,7 +143,7 @@
            network request the cache existed to avoid. -->
       <img
         src={display.url}
-        alt={`Avatar de ${displayLabel}`}
+        alt={m.avatar_aria_label({ name: displayLabel })}
         decoding="async"
         class="h-full w-full object-cover transition-opacity duration-150 select-none {imageLoaded
           ? 'opacity-100'

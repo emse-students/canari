@@ -72,6 +72,8 @@ export interface LiveChatBlock {
 export interface LiveChatCursors {
   messagesAfter?: number;
   reactionsAfter?: number;
+  /** The arrival lines' cursor (read by `LivesService.readArrivals`, not by this service). */
+  arrivalsAfter?: number;
 }
 
 /** A message's input once checked: the idempotence key and the sealed bytes. */
@@ -442,9 +444,10 @@ export class LiveChatService {
     viewerId: string,
     liveId: string,
     cursors: LiveChatCursors,
-    opts: { withheld?: boolean } = {}
+    opts: { withheld?: boolean; blocked?: ReadonlySet<string> } = {}
   ): Promise<LiveChatBlock> {
-    const blocked = new Set(await blockedUserIdsFor(this.db.manager, viewerId));
+    // The poll's controller reads the block list ONCE and hands it to every reader of the poll.
+    const blocked = opts.blocked ?? new Set(await blockedUserIdsFor(this.db.manager, viewerId));
     if (opts.withheld) {
       // THE CHAT IS WITHHELD FROM THIS VIEWER (owner, 2026-11-04; decided by the caller in the watch
       // rule's statement): not one message row is read. The cursor is the live's newest seq, as a

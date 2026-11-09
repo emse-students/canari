@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { untrack } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import Input from '$lib/components/ui/Input.svelte';
@@ -175,14 +176,9 @@
 
   {#snippet footer()}
     <div class="flex justify-end">
-      <button
-        type="button"
-        disabled={submitting}
-        onclick={submit}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-      >
+      <Button disabled={submitting} onclick={submit}>
         {m.bookings_block_action()}
-      </button>
+      </Button>
     </div>
   {/snippet}
 </Modal>

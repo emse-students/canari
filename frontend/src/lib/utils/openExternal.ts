@@ -9,6 +9,14 @@ export { isTauriRuntime };
 
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'webcal:']);
 
+/**
+ * Marks an anchor whose click `openEcosystemSite` owns (the app launcher). {@link handleAppLinkClick}
+ * leaves such an anchor to its own `onclick`: otherwise, on the native shells, this capture-phase
+ * handler would open the bare address before the sign-in handoff could be minted. Declared here,
+ * not beside the opener, so this module imports nothing of the authenticated fetch.
+ */
+export const ECOSYSTEM_SITE_ATTRIBUTE = 'data-ecosystem-site';
+
 /** True when the href should leave the WebView and open in the OS browser / default app. */
 export function shouldOpenExternalHref(
   href: string,
@@ -47,6 +55,7 @@ export function handleAppLinkClick(event: MouseEvent): boolean {
 
   const anchor = target.closest('a[href]');
   if (!(anchor instanceof HTMLAnchorElement)) return false;
+  if (anchor.hasAttribute(ECOSYSTEM_SITE_ATTRIBUTE)) return false;
 
   const rawHref = anchor.getAttribute('href') ?? '';
   const href =

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { CONTROL_LABEL_CLASS, controlClass } from './controlClasses';
+  /** THE ONE TEXT FIELD: shares its box with `Button` and `Select` (docs/wiki/frontend/controls.md). */
+  import { CONTROL_LABEL_CLASS, controlClass, type ControlDensity } from './controlClasses';
 
   interface Props {
     /** HTML id attribute; auto-generated if omitted. */
@@ -22,6 +23,8 @@
     error?: string;
     /** Marks the input as invalid without an error message. */
     invalid?: boolean;
+    /** `compact` (2rem) is for a dense toolbar only; the default is the row height, 2.5rem. */
+    density?: ControlDensity;
     /** Called on every input event. */
     oninput?: (e: Event & { currentTarget: HTMLInputElement }) => void;
     /** Called on every keydown event. */
@@ -39,6 +42,7 @@
     required = false,
     error,
     invalid = false,
+    density = 'default',
     class: className = '',
     oninput,
     onkeydown,
@@ -67,7 +71,7 @@
     {required}
     aria-invalid={isInvalid || undefined}
     aria-errormessage={error ? `${uniqueId}-error` : undefined}
-    class={controlClass(isInvalid)}
+    class={controlClass(isInvalid, density)}
     {oninput}
     {onkeydown}
     {...rest}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
@@ -23,6 +24,7 @@
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import Avatar from '../shared/Avatar.svelte';
   import UserName from '../shared/UserName.svelte';
+  import CommunityRoleNames from './CommunityRoleNames.svelte';
   import PermissionGrid, {
     type PermissionGridRole,
     type PermissionGridOverride,
@@ -32,6 +34,11 @@
   import { getToken } from '$lib/stores/auth';
   import { channelService, type WorkspaceInviteDto } from '$lib/services/ChannelService';
   import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
+  import {
+    canonicalRoleOf,
+    resolveRoleLabel,
+    type CanonicalRole,
+  } from '$lib/utils/chat/communityRoleLabel';
   import { refusalCode } from '$lib/utils/apiRefusal';
   import {
     GRAINE_DEFAULT_HISTORY_VISIBILITY,
@@ -94,8 +101,6 @@
     onDeleteWorkspace,
     onInviteCommunityMember,
   }: Props = $props();
-
-  type CanonicalRole = 'member' | 'moderator' | 'admin';
 
   let activeTab = $state<'overview' | 'roles' | 'members'>('overview');
 
@@ -199,9 +204,9 @@
 
   /** The three roles a member can hold, in the order every role choice offers them. */
   const roleOptions = $derived<PickerOption[]>([
-    { value: 'member', label: m.chat_role_member() },
-    { value: 'moderator', label: m.chat_role_moderator() },
-    { value: 'admin', label: m.chat_role_admin() },
+    { value: 'member', label: roleLabel('member') },
+    { value: 'moderator', label: roleLabel('moderator') },
+    { value: 'admin', label: roleLabel('admin') },
   ]);
   const historyVisibilityOptions = $derived<PickerOption[]>([
     { value: 'shared', label: m.chat_community_history_shared_option() },
@@ -259,13 +264,6 @@
     },
   ];
 
-  function normalizeRoleLabel(roleName: string): CanonicalRole {
-    const normalized = roleName.trim().toLowerCase();
-    if (normalized.includes('admin')) return 'admin';
-    if (normalized.includes('mod')) return 'moderator';
-    return 'member';
-  }
-
   /** Maps a canonical role to the workspace role name the backend stores. */
   function roleToBackendName(role: CanonicalRole): string {
     if (role === 'admin') return 'Administrateur';
@@ -273,10 +271,26 @@
     return 'Membre';
   }
 
+  /**
+   * What this community calls a canonical role: its own name for it when it set one (live - the
+   * store follows the server's announcement), the localized default otherwise. The ONE call that
+   * puts a role name on this screen; the picked value and every permission stay canonical.
+   */
   function roleLabel(role: CanonicalRole): string {
-    if (role === 'admin') return m.chat_role_admin();
-    if (role === 'moderator') return m.chat_role_moderator();
-    return m.chat_role_member();
+    const stored = [...workspaceRoles]
+      .sort((a, b) => b.priority - a.priority)
+      .find((r) => canonicalRoleOf(r.name) === role);
+    return resolveRoleLabel(role, stored ? globalChannels.roleLabels[stored.id] : null);
+  }
+
+  /** What a listing of roles teaches this panel: which roles exist and the names they carry. */
+  function applyListedRoles(
+    listed: Array<{ id: string; name: string; displayLabel?: string | null; priority?: number }>
+  ) {
+    workspaceRoles = listed.map((r) => ({ id: r.id, name: r.name, priority: r.priority ?? 10 }));
+    globalChannels.setRoleLabels(
+      Object.fromEntries(listed.map((r) => [r.id, r.displayLabel ?? null]))
+    );
   }
 
   function roleBadgeClass(role: CanonicalRole): string {
@@ -294,15 +308,21 @@
     try {
       const wsData = (await channelService.getWorkspaceBySlug(selectedWorkspace.id)) as {
         members?: Array<{ userId: string; roleIds?: string[] }>;
-        roles?: Array<{ id: string; name: string; priority?: number }>;
+        roles?: Array<{
+          id: string;
+          name: string;
+          displayLabel?: string | null;
+          priority?: number;
+        }>;
       };
       if (loadToken !== membersLoadToken) return;
 
       const roles = wsData.roles ?? [];
+      applyListedRoles(roles);
       const members = (wsData.members ?? []).map((mem) => {
         const memberRoles = roles.filter((r) => (mem.roleIds ?? []).includes(r.id));
         const highest = memberRoles.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
-        return { userId: mem.userId, role: normalizeRoleLabel(highest?.name ?? 'member') };
+        return { userId: mem.userId, role: canonicalRoleOf(highest?.name ?? 'member') };
       });
       // Display order is `memberOrder`'s job (family name), not the load's.
       communityMembers = members;
@@ -323,14 +343,15 @@
     rolesError = '';
     try {
       const wsData = (await channelService.getWorkspaceBySlug(selectedWorkspace.id)) as {
-        roles?: Array<{ id: string; name: string; priority?: number }>;
+        roles?: Array<{
+          id: string;
+          name: string;
+          displayLabel?: string | null;
+          priority?: number;
+        }>;
       };
-      const roles: PermissionGridRole[] = (wsData.roles ?? []).map((r) => ({
-        id: r.id,
-        name: r.name,
-        priority: r.priority ?? 10,
-      }));
-      workspaceRoles = roles;
+      applyListedRoles(wsData.roles ?? []);
+      const roles = workspaceRoles;
 
       const perms: Record<string, string[]> = {};
       for (const role of roles) {
@@ -387,6 +408,33 @@
       delete updated[roleId];
       roleSaving = updated;
     }
+  }
+
+  /**
+   * The roles as the grid draws them: the stored name stays the identity, `label` is what is drawn
+   * (the community's own name, or the localized default) and follows the store live.
+   */
+  const gridRoles = $derived<PermissionGridRole[]>(
+    workspaceRoles.map((r) => ({
+      ...r,
+      label: resolveRoleLabel(canonicalRoleOf(r.name), globalChannels.roleLabels[r.id]),
+    }))
+  );
+
+  /** The rows of the role-name editor: identity, priority and the saved custom name. */
+  const roleNameRows = $derived(
+    workspaceRoles.map((r) => ({ ...r, label: globalChannels.roleLabels[r.id] ?? null }))
+  );
+
+  /**
+   * Persists a role's own name (null resets it) and applies the server's answer to the store. The
+   * announcement of the same write says the same thing, so applying both is idempotent - and a
+   * publish that never arrives cannot leave a saved name looking reverted.
+   */
+  async function handleRoleLabelSave(roleId: string, label: string | null) {
+    Log.d('communityAdmin.handleRoleLabelSave', { roleId, reset: label === null });
+    const saved = await channelService.setRoleLabel(roleId, label);
+    globalChannels.setRoleLabel(roleId, saved.label);
   }
 
   /** Persists a member's new role via the workspace-scoped endpoint, then refreshes the list. */
@@ -642,6 +690,15 @@
     historyVisibility = declared ?? GRAINE_DEFAULT_HISTORY_VISIBILITY;
   });
 
+  // ANOTHER COMMUNITY'S ROLES AND NAMES ARE NEVER SHOWN IN THIS ONE: emptied whenever the selected
+  // community changes (and only then), so a picker or badge drawn before the new listing lands shows
+  // the localized defaults, not the previous community's names.
+  $effect(() => {
+    void selectedWorkspace?.workspaceDbId;
+    workspaceRoles = [];
+    globalChannels.setRoleLabels({});
+  });
+
   // Load data lazily when a tab becomes active; reset transient state on close.
   $effect(() => {
     void selectedWorkspace?.id;
@@ -819,8 +876,11 @@
             </div>
           {:else if workspaceRoles.length > 0}
             <!-- The grid draws one card per role itself; a card around it would nest two. -->
+            {#if canManage}
+              <CommunityRoleNames roles={roleNameRows} onSave={handleRoleLabelSave} />
+            {/if}
             <PermissionGrid
-              roles={workspaceRoles}
+              roles={gridRoles}
               permissions={roleGridPermissions}
               overrides={roleOverrides}
               onToggle={handleRolePermissionToggle}
@@ -866,15 +926,15 @@
                     triggerClass="bg-cn-surface text-text-main border-cn-border focus-visible:ring-cn-yellow/40 flex items-center justify-between gap-1 rounded-lg border px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
                     onValueChange={(v) => (inviteRole = asCanonicalRole(v) ?? inviteRole)}
                   />
-                  <button
-                    class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-50"
+                  <Button
+                    size="compact"
                     onclick={handleGenerateInvitation}
                     disabled={inviteLoading}
                   >
                     {inviteLoading
                       ? m.common_sending_label()
                       : m.chat_community_generate_invite_button()}
-                  </button>
+                  </Button>
                 </div>
               </div>
             {/if}
@@ -999,34 +1059,31 @@
                     value={shareLink}
                     class="border-cn-border bg-cn-surface text-text-main min-w-0 flex-1 rounded-xl border px-3 py-2 text-sm"
                   />
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="compact"
+                    class="shrink-0"
                     onclick={() => void loadShareLink(true)}
                     disabled={shareLoading}
-                    class="border-cn-border hover:bg-cn-bg shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50"
                   >
                     {m.chat_regenerate_link_button()}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="compact"
+                    class="shrink-0"
                     onclick={() => (shareQrOpen = true)}
                     aria-label={m.qr_button()}
-                    class="border-cn-border hover:bg-cn-bg flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold"
                   >
                     <QrCode size={14} />
                     {m.qr_button()}
-                  </button>
+                  </Button>
                 </div>
                 <p class="text-text-muted text-xs">{shareBounds}</p>
               {:else}
-                <button
-                  type="button"
-                  onclick={() => void loadShareLink(false)}
-                  disabled={shareLoading}
-                  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-                >
+                <Button onclick={() => void loadShareLink(false)} disabled={shareLoading}>
                   {shareLoading ? m.common_loading_label() : m.chat_generate_invite_link_button()}
-                </button>
+                </Button>
               {/if}
               {#if shareError}
                 <p class="text-red-err text-xs font-medium">{shareError}</p>

@@ -21,16 +21,32 @@ export class HelpSeenService {
   ) {}
 
   /**
-   * The help ids this account has seen, restricted to the CURRENT allowlist: a row whose id a later
-   * release retired is kept in the table (it is the account's own history until erasure) but never
-   * handed to a client that cannot declare it.
+   * The help ids this account has seen, restricted to the CURRENT allowlist, with how long ago each
+   * was first recorded. A row whose id a later release retired is kept in the table (it is the
+   * account's own history until erasure) but never handed to a client that cannot declare it.
+   *
+   * THE AGE IS MEASURED HERE: this application server's `Date.now()` minus the database's `seen_at`
+   * (written once, by the first insert; a repeat is `DO NOTHING`) - two server clocks, never a device's: a client that waits "30 days after the first
+   * showing" (the profile-photo reminder) never compares its own clock to an instant it did not
+   * write, so a skewed phone clock cannot make the reminder early, late or repeated.
    */
-  async seenBy(userId: string): Promise<HelpId[]> {
-    const rows = await this.repo.find({ where: { userId }, select: { helpId: true } });
-    const known = new Set(rows.map((r) => r.helpId));
-    const seen = HELP_IDS.filter((id) => known.has(id));
+  async seenWithAges(
+    userId: string
+  ): Promise<{ seen: HelpId[]; ageSeconds: Partial<Record<HelpId, number>> }> {
+    const rows = await this.repo.find({
+      where: { userId },
+      select: { helpId: true, seenAt: true },
+    });
+    const at = new Map(rows.map((r) => [r.helpId, r.seenAt]));
+    const seen = HELP_IDS.filter((id) => at.has(id));
+    const now = Date.now();
+    const ageSeconds: Partial<Record<HelpId, number>> = {};
+    for (const id of seen) {
+      const seenAt = at.get(id);
+      if (seenAt) ageSeconds[id] = Math.max(0, Math.floor((now - seenAt.getTime()) / 1000));
+    }
     this.logger.debug(`[HELP_SEEN] read user=${userId.slice(0, 8)} seen=${seen.length}`);
-    return seen;
+    return { seen, ageSeconds };
   }
 
   /** Records that this account has seen `helpId`. The caller has already checked the allowlist. */

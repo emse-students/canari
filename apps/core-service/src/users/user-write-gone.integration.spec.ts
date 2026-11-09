@@ -192,7 +192,8 @@ maybe('a user write against PostgreSQL', () => {
       sessions,
       { enabled: false } as never,
       erasure as never,
-      unused
+      unused,
+      {} as never // HandoffService: no handoff route here
     );
   }, 60_000);
 

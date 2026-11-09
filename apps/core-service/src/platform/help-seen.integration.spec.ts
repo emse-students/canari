@@ -67,13 +67,16 @@ maybe('help_seen against PostgreSQL', () => {
   }
 
   it('is idempotent: the same id twice is one row and the same answer', async () => {
-    await expect(controller.list(SUBJECT)).resolves.toEqual({ seen: [] });
+    await expect(controller.list(SUBJECT)).resolves.toEqual({ seen: [], ageSeconds: {} });
     await expect(controller.markSeen(SUBJECT, 'welcome-tour')).resolves.toEqual({ success: true });
     await expect(controller.markSeen(SUBJECT, 'welcome-tour')).resolves.toEqual({ success: true });
     expect(await rows(SUBJECT)).toBe(1);
-    await expect(controller.list(SUBJECT)).resolves.toEqual({ seen: ['welcome-tour'] });
+    await expect(controller.list(SUBJECT)).resolves.toEqual({
+      seen: ['welcome-tour'],
+      ageSeconds: { 'welcome-tour': expect.any(Number) },
+    });
     // Another account's state is its own.
-    await expect(controller.list(OTHER)).resolves.toEqual({ seen: [] });
+    await expect(controller.list(OTHER)).resolves.toEqual({ seen: [], ageSeconds: {} });
   });
 
   it('refuses an id outside the allowlist and writes nothing', async () => {
@@ -88,7 +91,7 @@ maybe('help_seen against PostgreSQL', () => {
 
   it('a row a later release retired is kept in the table and never handed out', async () => {
     await ds.query(`INSERT INTO help_seen (user_id, help_id) VALUES ($1, 'retired-hint')`, [OTHER]);
-    await expect(controller.list(OTHER)).resolves.toEqual({ seen: [] });
+    await expect(controller.list(OTHER)).resolves.toEqual({ seen: [], ageSeconds: {} });
   });
 
   it("is erased by the account erasure's statement, and only for that account", async () => {

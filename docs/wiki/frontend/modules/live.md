@@ -34,7 +34,7 @@ reached by API, and is unaffected.
 | L7 | In what order? | **SUPERSEDED 2026-10-19 by [D1](#decisions-of-2026-10-19): lives come BEFORE the calls revival.** Was: revive calls first, then live. The user added that what mostly blocked calls is that **Apple App Review needs a VIDEO recording showing everything works** (still to do), on top of our own tests. |
 | L8 | Is there a viewer cap? | **No cap, CONFIRMED again 2026-10-20 ("Je ne veux pas de plafond"); the plan is [below](#uncapped-audience---the-plan-2026-10-20)** and the cap of 24 stays in code until it is measured. **No cap** - *"pas de plafond, mais la qualité du live ne sera pas si grande si ? quelle techno utilisent Twitch ou Facebook ?"*. **This CONFLICTS with what exists**: the call path sends one stream per viewer through Cloudflare TURN against a ~950 GB monthly budget ([below](#what-exists-read-from-the-code-on-2026-10-15)), and any other path still leaves through the host's own uplink, which is unknown and shared with the DSI. It is what forces the [architecture choice](#architecture-options-for-an-uncapped-audience), and the honest answer is **a cap set by the host's uplink, to be MEASURED**. |
 | L9 | How many lives at the same time? | **No cap.** |
-| L10 | Who is a follower, for the push? | **The existing relations**: `user_follows` for a member, `association_follows` for an association, minus `association_push_mutes`. |
+| L10 | Who is a follower, for the push? | **The existing relations**: `user_follows` for a member, `association_follows` for an association, minus `association_push_mutes`. **Superseded for associations on 2026-11-07** (owner, [engagement](../../engagement.md) decision 1): an association's live is pushed to everyone who can see it, as its posts are; a member's live still to their accepted followers. |
 | L11 | Safety rules? | **Report, block, staff cut-off, and rules accepted before a member's first live.** Canari users are all adults (an engineering school, admission after prépa at the earliest), so **no age gate**. |
 
 ## What exists, read from the code on 2026-10-15
@@ -494,6 +494,10 @@ since the production flip of 2026-10-30** (dev builds only before it, by the `de
 test). Whether a surface is drawn is the server's runtime kill switch, below. The
 chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); moderation (WP-L8) is merged.
 
+### What stacks over the viewer (2026-11-07)
+
+The viewer sits on `--z-viewer` (300), above `--z-modal` (280). **One rule, `utils/viewerLayer.ts`:** whatever opens over a full-screen viewer takes `--z-viewer-dialog` (305), and a component says so by `markViewerLayer()` in its own initialisation, which `Modal` and `ModalOverlay` read. The live's own dialogs (report, chat-line report, block confirmation) are on `critical` (320) and clear it already. **The defect (owner, Android, 2026-11-07):** a live's link shared "via Canari" arrives as an incoming share, whose picker (`IncomingShareHost`, mounted at the app root) is OUTSIDE the viewer's subtree, so no mark reached it and it opened on 280, under the viewer, until the live closed. `IncomingShareHost` now marks itself; the same fix covers the reel viewer and the broadcaster overlay. Test: `IncomingShareHost.svelte.test.ts`. The viewer has no other sheet (the header has a viewer COUNT, not a list; reactions are an in-page layer).
+
 ### The server's kill switch hides the live surfaces (2026-10-21)
 
 The build switch is not enough once it ships: a store binary cannot be recalled. So every live
@@ -518,14 +522,33 @@ the two values together.
 | `lib/live/fmp4Segments.ts` | The ONE fMP4 box reader of the live: `initSegmentEnd` (where a segment's `ftyp` + `moov` stop), on the same box-header reader as the [broadcaster's](#the-broadcaster-as-built) `Fmp4Splitter`, and `Fmp4ParseError` (a box it cannot frame: "Live indisponible", `playback`) |
 | `lib/live/openLives.ts` | The card's list (the reader's own live left out), `formatLiveElapsed` |
 | `lib/live/liveCrypto.ts` | The seal of [format v1](#the-segment-seal-format-v1); the viewer calls `openLiveSegment` and skips a segment on `LiveSegmentOpenError` |
-| `components/live/` | `LiveFeedCard`, `LiveViewer`, `LiveIdentity` (who is on air: picture and name, a member or an association), `LiveBadge` |
+| `lib/live/livePosterView.ts` | `loadLivePoster`: fetch the preview the list named, open it under the `posterKey` served with it (never the live key), fetched once per name, a typed `LivePosterLoad` for every way it ends |
+| `lib/live/livePosterCrypto.ts` | The preview's seal (`canari-live-poster-v1`, the segment seal's construction with its own label, so neither opens as the other) and `deriveLivePosterKey`, the HKDF that turns the live key into the poster key |
+| `components/live/` | `LiveFeedCard`, `LivePosterImage` (one preview, object URLs revoked), `LiveViewer`, `LiveIdentity` (who is on air: picture and name, a member or an association), `LiveBadge` |
 
-**The card.** At the top of the feed, under the tab row, whatever the tab; hidden during a search and
-when nothing is on air. It asks `GET /api/lives` when the FEED asks for its first page - the tab load
-and `refreshPosts` (pull-to-refresh, retry, reconnect, a publish) bump one counter - so it has **no
-timer of its own**. A lost answer keeps the rows it shows; a refusal (or the switch's `404`) removes
-the card. The notification "X est en live" lands on the feed (D4), where this card is; a deep link to
-one live is not built.
+**The card (reshaped by the owner on 2026-11-07, [lives](../../services/lives.md#titles-and-the-preview-image-owner-2026-11-07)).**
+At the top of the feed, under the tab row, whatever the tab; hidden during a search and when nothing
+is on air. ONE live is a LARGE card (4:5): its preview still, the EN DIRECT badge, the viewer count,
+the title (or "X est en live" without one), who broadcasts and the preview's age; SEVERAL are a
+horizontal snap carousel of the same cards, compact (3:4). A tap opens the viewer. The preview is
+loaded only when the list names a NEW poster (keyed on its name), swapped in once it opened, so the
+card never flashes empty; a failed load keeps the picture it had. **A poster is fetched ONCE**:
+`livePosterView.ts` keeps the newest opened still of each listed live by its name, so a card drawn
+again (one live becoming a carousel, a tab switch) asks the network nothing, and each answered list
+drops the stills of the lives it no longer names (`forgetLivePostersExcept`). The bytes come from
+the poster's own path, `/api/media/public/live-poster/<id>/<name>`, counted by nginx apart from the
+segments; a `429` there is `rate-limited`, a staler picture.
+
+It asks `GET /api/lives` (no seat) when the FEED asks for its first page - the tab load and
+`refreshPosts` (pull-to-refresh, retry, reconnect, a publish) bump one counter - AND, while the card
+intersects the viewport (`IntersectionObserver`) in a visible page, every `previewPeriodMs` (16 s,
+served by `GET /api/lives/limits`, read once and only once a live is on air) - the SAME period the
+broadcaster sends a still on, so each read can name a new one. The next read is
+scheduled when the last one answered, so two never overlap. **That timer decides nothing**: wrong,
+it only makes the picture staler or the list read more often - which is why its period is the
+server's. Off screen, in a hidden page or with no live, no timer runs. A lost answer keeps the cards
+it shows; a refusal (or the switch's `404`) removes the card. The notification "X est en live" lands
+on the feed (D4), where this card is; a deep link to one live is not built.
 
 **The viewer** is an overlay like the reel viewer: a history entry through `bindHistoryOverlay` (Back
 closes it, the feed underneath never leaves the page), `coversScreen`, `role="dialog"` named after
@@ -733,6 +756,25 @@ under 60 % battery where the engine has the Battery API (Android; WebKit has non
 (WP-L1 drained ~40 %/h on a charger). Start is the acceptance; **nothing records the acceptance on
 the server** (owed if L11's "accepted before a member's first live" must be provable).
 
+**The title and the preview (owner, 2026-11-07).** The pre-live sheet carries an optional title field
+when the limits serve `titleMaxChars`: one line, cut at 80 CODE POINTS as typed (`liveTitle.ts`,
+the server's rule mirrored - an `<input maxlength>` counts UTF-16 units and would refuse half the
+emoji the server takes), sent with the start, blank as none. On air, a chip under the badge row
+shows it (or "Ajouter un titre") and opens an inline editor; `saveTitle` sends `PATCH` and shows
+`invalid`, `offline` or `failed` when it was not taken, keeping the previous title.
+
+The preview still is grabbed from the screen's own `<video>` (the camera or a shared screen alike):
+a canvas 480 px wide (never upscaled), JPEG at quality 0.7 - JPEG because WebKit has no WebP
+encoder - sealed under the POSTER key (`deriveLivePosterKey`: WebCrypto HKDF-SHA256 of the live key,
+salt the live id, info `canari-live-poster-v1`, derived once per live - a key that opens this image
+and no segment or chat line, [lives](../../services/lives.md#titles-and-the-preview-image-owner-2026-11-07))
+and `PUT` by `LivePosterSender`. **Its cadence is the segment index, not a clock**: segment 0, then
+every `posterEverySegments(previewPeriodMs)` segments - the server's ONE preview period (16 s) in
+2 s segments, so 8 - and a broadcaster with no segment going out sends no preview. One turn at a time
+(a due index during a turn is skipped, not queued), no retry (the next turn is a fresh frame), an
+ended live stops it for good, a frame over `posterMaxBytes` is skipped; every turn's outcome is
+typed (`LivePosterTurn`) and logged.
+
 ### Every segment is self-contained
 
 **ONE SEGMENT = the recorder's init (`ftyp` + `moov`, ~1.2 kB) + ONE fragment (`moof` + `mdat`,
@@ -776,6 +818,23 @@ be sent (`awayProblem = 'unsendable'`) and a Retry that starts a fresh recorder.
 2026-10-19's review a drop was only counted**, so a recorder whose every segment was over 4 MB stayed
 "on air" with nothing sent. **That a new recorder restarts its media time at zero is an ASSUMPTION** WP-L1 did not measure:
 LIVE-B1 row 8 reads it.
+
+### The screen stays on while broadcasting on the iPhone (2026-11-08)
+
+The broadcaster holds the screen from on-air to the end (`liveBroadcast.svelte.ts`: `hold()` when
+the recorder starts, `release()` on every stop and finish). WKWebView refuses the Screen Wake Lock,
+so the holder is chosen by platform: `screenAwakeHolder('live')` (`mobile/screenAwake.ts`) - the
+iOS app's idle timer through the `canariIdleTimer` handler, `ScreenWakeLock` tagged `LIVE-WAKE`
+elsewhere. Native keeps a SET of owners (`call`, `live`), so a call ending during a live never lets
+the screen sleep under the broadcast, and the other way round; the mechanism, the page-load reset
+and the tests are in [calls](calls.md#the-screen-stays-on-during-an-iphone-video-call-2026-11-08).
+The viewer takes no hold on any platform, before or after this change; whether the screen
+dims while WATCHING on the iPhone is not read.
+
+**Owed on the iPhone 12:** a live broadcast left untouched past the auto-lock delay - the screen
+stays on; `[LIVE-WAKE] iOS idle timer held` and `owners=[live] disabled=1`; at the end `released`
+and `disabled=0`; and a video call received during a live (if the bench allows it) - hanging up
+leaves `owners=[live] disabled=1`.
 
 ### Upload health and the end
 
@@ -966,6 +1025,14 @@ a text or a ciphertext.
 `livePlayer.test.ts`'s chat block, `api.test.ts`'s chat routes, `LiveChatPanel.svelte.test.ts`,
 `LiveViewer.svelte.test.ts`'s chat cases, `LiveBroadcaster.svelte.test.ts`'s on-air chat, `liveBroadcast.svelte.test.ts`'s `chatHeardEnd`). **Owed**: the crypto review of the chat seal, and a phone
 reading of the panel, the bar and the floats on the Mi 9T and the iPhone 12 ([backlog](../../backlog.md)).
+
+## The chat readable over the video, and the host mark (2026-11-07)
+
+The owner's two axes of 2026-11-07: readable over the picture, and more alive.
+
+- **Built, readable.** The bottom block of the viewer carries a taller dark gradient (`via-cn-scrim/30`, `pt-24`, tokens only); a line is medium weight with a double shadow (a tight edge and a soft halo); the oldest lines already fade out at the top of the list (mask). Each line already showed the author's avatar and name; a test now pins it.
+- **Built, the host marked.** `LiveChatPanel` takes `hostId` (the viewer passes `live.broadcasterId`): that account's lines carry a "Host" pill (`live_chat_host`). Nothing new is disclosed: the broadcaster's id is already in the live's list item, and the chat shows authors to its whole audience.
+- **Arrival lines: DECIDED 2026-11-07 (owner), built.** "X a rejoint" lines are visible to every viewer, rate-limited (option (c)); the owner answered knowing it shows everyone who joined. It deliberately reverses the standing rule of [lives](../../services/lives.md#arrival-lines-owner-2026-11-07) ("a count, never an identity"), recorded as decision 12 of the owner's 2026-11-07 list (`docs/wiki/backlog.d/owner-decisions-of-2026-11-07.md`); the server half, the filters and the rate rule are there. **Client:** `LiveChatSession` sends `arrivalsAfter`, and draws each `arrivals` row as a line of `kind: 'arrival'` (the joiner's avatar, the name resolved like an author's, "a rejoint") and the fold as `kind: 'arrivals-more'` ("et N autres ont rejoint", singular for 1). They carry no id, so the panel offers no report and no hide on them; they sort a half step after the poll's message cursor, so a later message lands under them; they never raise the "new messages" chip; only the newest 20 stay (`LIVE_ARRIVAL_LINES_KEPT`). A withheld block carries no arrival fields and resets the cursor, so the next served poll is a joiner's. The privacy policy and the terms were updated with the register (C19).
 
 ## The first rig readings, and what they hold against the `lives_mode` flip (LIVE-WEB, 2026-10-27)
 

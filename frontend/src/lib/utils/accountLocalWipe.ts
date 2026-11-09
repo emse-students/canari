@@ -2,10 +2,13 @@ import { closeCachedStore, closeOpenIndexedDbStores } from '$lib/db';
 import { closeOutboxBlobStores } from '$lib/db/outboxBlob';
 import { closeMlsDb } from '$lib/utils/hex';
 import { publishQueueDbName } from '$lib/posts/publishQueue/publishQueueStore';
+import { forgetTabCommitAccount, tabCommitDbName } from '$lib/utils/chat/tabCommitStore';
+import { formDraftCopiesDbName } from '$lib/forms/draftCopies';
 import { clearDeviceKey } from '$lib/utils/deviceKeyVault';
 import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
 import { dropUploadReleaseMarksOf } from '$lib/utils/chat/uploadReleaseMarks';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { otherAccountOnInstall } from '$lib/utils/installAccounts';
 import {
   ACCOUNT_KEY,
   accountLocalStorageKeysIn,
@@ -39,6 +42,11 @@ export function accountIndexedDbNames(userId: string): string[] {
     // The posts waiting to be published, and their media in the clear: a deleted or revoked
     // account's photos must not outlive it on the device.
     publishQueueDbName(userId),
+    // A follower tab's commits handed to the leader: a group's name, user ids, until answered.
+    tabCommitDbName(userId),
+    // A form's edits no save has landed yet (the editor's device copy): its content and the
+    // account that typed it go together.
+    formDraftCopiesDbName(userId),
   ];
 }
 
@@ -305,6 +313,8 @@ export async function wipeDeletedAccountLocalData(
   // The WebView's databases exist on every platform (a phone's MESSAGE store is SQLite, but its
   // outbox blobs are IndexedDB), and are named by the account, so no other account is reachable.
   await step('the local IndexedDB databases', async () => {
+    // A follower tab's handed-over commits: their store closes and never re-creates the database.
+    forgetTabCommitAccount(userId);
     const results = await Promise.all(
       accountIndexedDbNames(userId).map((name) => deleteIndexedDbByName(name, wipeLogTag(reason)))
     );
@@ -333,6 +343,22 @@ export async function wipeDeletedAccountLocalData(
       const { invoke } = await import('@tauri-apps/api/core');
       const removed = await invoke<number>('delete_user_push_files', { userId });
       console.log(`${tag} native push files: ${removed} file(s) removed`);
+    });
+    // The account's Graine seeds in the push mirror: the entries ONLY this account wrote - an entry
+    // another account also wrote keeps that writer. One written before the label (writer unknown)
+    // goes too when no other account lives here, since nothing else will ever remove it for an
+    // account that is gone; with another account here it may be theirs and stays
+    // (`forget_account_graine_seeds`, `push.rs`).
+    await step('the mirrored Graine seeds', async () => {
+      const aloneOnInstall = !(await otherAccountOnInstall(userId, tag));
+      const { invoke } = await import('@tauri-apps/api/core');
+      const removed = await invoke<number>('forget_account_graine_seeds', {
+        userId,
+        aloneOnInstall,
+      });
+      console.log(
+        `${tag} mirrored Graine seeds: ${removed} seed entry(ies) removed from the app's copy (alone on the install: ${aloneOnInstall})`
+      );
     });
     // The notification replies still waiting for the page: ONLY this account's lines, since the file
     // can hold another account's (`delete_user_quick_replies`, `push.rs`). Always 0 off iOS.

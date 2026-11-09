@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { wordingFor } from '$lib/associations/kindWording';
+import { m } from '$lib/paraglide/messages';
 import { formatDocumentTitle } from '$lib/seo/resolve';
 import { UpstreamUnavailableError, degradedHeaders } from '$lib/seo/upstream';
 
@@ -40,6 +41,27 @@ describe('the edit page head, resolved by the KIND of the entity', () => {
     const { meta } = await resolveServerSeo('/associations/ghost/edit');
     expect(meta.title).toBe(wordingFor('association').editTitle());
     expect(meta.noindex).toBe(true);
+  });
+});
+
+describe('an association page never shows its slug as a title', () => {
+  beforeEach(() => fetchJson.mockReset());
+
+  it.each(['/associations/bda', '/associations/bda/calendar'])(
+    'the baseline of %s (unknown slug) carries a neutral word, not the slug',
+    async (path) => {
+      fetchJson.mockResolvedValue(null);
+      const { meta } = await resolveServerSeo(path);
+      expect(meta.title).toBe(m.seo_association_title());
+      expect(meta.title).not.toMatch(/bda/i);
+      expect(meta.description).not.toMatch(/bda/i);
+    }
+  );
+
+  it('the real name still replaces the baseline when the service answers', async () => {
+    fetchJson.mockResolvedValue({ name: 'Bureau des Arts' });
+    const { meta } = await resolveServerSeo('/associations/bda-named');
+    expect(meta.title).toContain('Bureau des Arts');
   });
 });
 
@@ -103,7 +125,7 @@ describe('a transport failure of the enrichment is not a refusal, and is never r
     fetchJson.mockRejectedValueOnce(new UpstreamUnavailableError('http://social/x', 'timeout'));
     const first = await resolveServerSeo(path);
     expect(first.degraded).toBe(true);
-    expect(first.meta.title).toBe('Publication');
+    expect(first.meta.title).toBe(m.seo_post_title());
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('DEGRADED head'));
 
     // The next unfurler retry gets the real card: nothing was cached for the failure.

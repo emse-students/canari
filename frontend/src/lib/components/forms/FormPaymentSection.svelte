@@ -53,6 +53,11 @@
     basePrice: number;
     /** Whether cash is accepted alongside online payment. */
     allowCashPayment: boolean;
+    /**
+     * Whether online payment is accepted (owner, 2026-11-08): off with cash on is a cash-only form.
+     * Offered to respondents only while the association can collect online (`payment-offer.ts`).
+     */
+    allowOnlinePayment: boolean;
     /** Days before an unvalidated cash submission expires. */
     cashPaymentExpiryDays: number | undefined;
     /** The pricing grid; null when the form has one price for everybody. */
@@ -81,6 +86,7 @@
     isPublic,
     basePrice = $bindable(),
     allowCashPayment = $bindable(),
+    allowOnlinePayment = $bindable(true),
     cashPaymentExpiryDays = $bindable(),
     priceMatrix = $bindable(),
     tiers,
@@ -99,9 +105,18 @@
   const paymentBlocker = $derived.by(() => {
     if (!requiresPayment) return null;
     if (!associationName) return 'no-association';
-    if (!associationCanBePaid) return 'not-ready';
+    // With cash accepted the form is publishable whatever online's readiness: no warning, a note.
+    if (!associationCanBePaid && !allowCashPayment) return 'not-ready';
     return null;
   });
+  /** Online is wanted but not ready, and cash answers meanwhile: said as a note, not a warning. */
+  const cashCoversOnline = $derived(
+    requiresPayment &&
+      !!associationName &&
+      !associationCanBePaid &&
+      allowCashPayment &&
+      allowOnlinePayment
+  );
 
   /** Why the payment switch is shut, by the shared rule - null while it may be switched on. */
   const paymentConflict = $derived(conflictHint(conflictsIfEnabled(optionState, 'takesPayment')));
@@ -177,6 +192,15 @@
               {m.form_no_payments_create_free_button()}
             </button>
           </div>
+        {:else if cashCoversOnline}
+          <!-- Cash is accepted: online not being ready is information, not an obstacle (owner,
+               2026-11-08). The form publishes and is answered in cash until online is ready. -->
+          <p
+            class="border-cn-border text-text-muted rounded-2xl border-2 px-4 py-3 text-sm"
+            data-testid="online-pending-cash-note"
+          >
+            {m.form_payment_online_pending_cash_note()}
+          </p>
         {/if}
 
         <div class="border-cn-border space-y-4 border-t-2 pt-4">
@@ -248,6 +272,12 @@
               {/if}
             </div>
           </div>
+          <!-- The editor's choice (owner, 2026-11-08): off with cash on is a cash-only form. -->
+          <Toggle
+            bind:checked={allowOnlinePayment}
+            label={m.form_online_payment_label()}
+            hint={m.form_online_payment_toggle_hint()}
+          />
 
           <Toggle bind:checked={allowCashPayment} label={m.form_cash_label()} />
           {#if allowCashPayment}

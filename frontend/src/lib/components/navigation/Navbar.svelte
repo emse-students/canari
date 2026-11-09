@@ -1,5 +1,7 @@
 <script lang="ts">
   import StatusPill from '../shared/StatusPill.svelte';
+  import { isHeaderConnected } from '$lib/utils/chat/headerConnection';
+  import { leaderSocketConnected } from '$lib/mls-client/tabLeaderLink.svelte';
   import CanariBrand from './CanariBrand.svelte';
   import EcosystemLauncher from './EcosystemLauncher.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
@@ -57,7 +59,14 @@
       app puts it (user, 2026-09-29: the launcher used to sit between the two account controls).
     -->
     <div class="ml-auto flex shrink-0 items-center gap-2">
-      <StatusPill isConnected={globalSession.isWsConnected} />
+      <StatusPill
+        isConnected={isHeaderConnected({
+          isWsConnected: globalSession.isWsConnected,
+          isLoggedIn: globalSession.isLoggedIn,
+          isTabLeader: globalSession.isTabLeader,
+          leaderConnected: leaderSocketConnected(),
+        })}
+      />
       {#if globalSession.isLoggedIn}
         <EcosystemLauncher />
       {/if}

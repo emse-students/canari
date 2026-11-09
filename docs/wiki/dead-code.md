@@ -29,6 +29,10 @@ in `ci.yml`, no fifth visible workflow). It compares each count with
   --update` lowers the baseline, so a gain is locked the day it is made. `--update` refuses to
   raise any number.
 
+**Run `bun x svelte-kit sync` in `frontend/` first on a fresh checkout** (`bun run check` does it):
+without the generated `.svelte-kit/` types knip reports every route's `./$types` as unresolved and
+misreads the dependencies. CI runs the step after the check.
+
 The baseline is a COUNT per category, not a list, so two pull requests that each delete something
 do not conflict. The target is every number at 0, after which the file is just zeros.
 `frontend/knip.json` is the only place a false positive is declared.
@@ -73,7 +77,10 @@ deleting an export that smells like a bridge, grep its name under `frontend/src-
 
 1. A false positive in knip: prefer an `entry` or `ignoreDependencies` line in `knip.json` with a
    reason in this page; a single symbol may carry a `/** @public */` JSDoc tag, which knip honours.
-2. A translation key reached without being named: add it to `frontend/dead-code-allowlist.json`,
+2. The frontend half of a DECLARED byte-for-byte duplicate (`.github/scripts/lib/declared-duplicates.mjs`,
+   e.g. `src/lib/utils/users/visibleText.ts`): its exports mirror the server copy and cannot lose
+   their `export` one side at a time, so the file gets an `ignoreIssues` entry in `knip.json`.
+3. A translation key reached without being named: add it to `frontend/dead-code-allowlist.json`,
    `{ "messages": { "the_key": "why it is reached" } }`. The reason is mandatory.
 
 ## Rust

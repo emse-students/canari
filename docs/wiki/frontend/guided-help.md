@@ -414,6 +414,50 @@ the two read on the Mi 9T and the iPhone 12, with a one-column and a several-col
   importing `NativeTabBar.svelte` for its state closed that cycle in CI. The bar's state lives in
   `navigation/nativeTabBarState.svelte.ts`, which the component re-exports.
 
+## The profile-photo prompt (owner, 2026-11-07)
+
+Starting with the next update, an account with NO profile photo is invited to add one. **Shown once;
+if there is still no photo 30 days later, ONE reminder; then never again.** Built on this engine, not
+beside it: two helps, `prompt-profile-photo` and `prompt-profile-photo-reminder`
+(`guides/profilePhotoPrompt.ts`), each a single centred step of `kind: 'tour'` (a card over a scrim)
+on `/posts`, declared right after the welcome tour so an existing account meets it at its first
+visit after the update, ahead of the contextual hints (one help per visit, so those wait).
+
+- **The button is the engine's new `action` on a step** (`GuideStep.action`, `GuideEngine#act`): it
+  replaces "Next" on that step, runs, then passes the step like "Next" - so it records the help like
+  any other end. "Passer" stays beside it and records too: a dismissal counts as the showing.
+- **It opens `https://gallery.mitv.fr/mes-photos`** (`MIGALLERY_PROFILE_PHOTO_URL`,
+  `utils/profilePhotoLink.ts`, derived from `ECOSYSTEM_SITES`): MiGallery's "my photos" page, the
+  same one Profile > camera button opens (which now shares the function). MiGallery has no narrower
+  "set profile photo" page.
+- **No photo** is the gallery's own answer, through the batched `avatarPhotoPresence` every avatar
+  uses, held by `ownProfilePhoto.svelte.ts`. `null` (the gallery could not say) shows NOTHING.
+- **Idempotence is the existing `help_seen`** - no migration, no new column. The reminder is timed
+  from the FIRST row's `seen_at`: `GET /api/users/me/help-seen` now also returns
+  `ageSeconds: { <helpId>: seconds }`, computed by the server from `seen_at` on its own clock
+  (`HelpSeenService.seenWithAges`), so no device clock decides "30 days". A first showing still owed
+  to the server has no age, hence no reminder until it is recorded. Additive: an old client ignores
+  the field, and a new client against an old server has no age and never reminds.
+- **The rule is one pure function**, `profilePhotoPromptStage` (`guides/profilePhotoPromptStage.ts`):
+  no photo + never shown -> first; shown, under 30 days -> nothing; 30 days or more and still none
+  -> reminder; reminder shown -> never; a photo, or no answer -> never. Each help's `eligible` asks
+  it about its own stage. Pinned by `guides/profilePhotoPrompt.test.ts`, `seenHelps.test.ts` and the
+  core-service `help-seen.*.spec.ts`.
+- **Owed**: both cards read on the Mi 9T and the iPhone 12 (the scrim over the iOS native bar, the
+  button leaving for the browser and the app coming back), and the reminder read once on a dev account
+  whose first row is aged by hand.
+
+## The birthday prompt (2026-11-09)
+
+`prompt-birthday` (`guides/birthdayPrompt.ts`) is the same shape as the photo card: ONE centred
+step on `/posts`, declared after the two photo helps (an account missing both meets the photo first,
+the birthday on a later visit), its button opening Profile > Anniversaire. **Shown once, with NO
+reminder** - a birthday is personal data the member may not want to give; the reasoning is on
+[birthdays](../birthdays.md#the-entry-point-and-the-prompt-card). `eligible` reads
+`ownBirthday.hasBirthday` (`birthdays/birthdaysToday.svelte.ts`, loaded by `GuideOverlay.svelte`
+beside the photo fact, set by the settings section on load and save): `null` shows nothing. Pinned
+by `guides/birthdayPrompt.test.ts`.
+
 ## The server store
 
 `help_seen` in core-service (migration `019_help_seen.sql`, additive: a new table), beside
@@ -422,7 +466,7 @@ the two read on the Mi 9T and the iPhone 12, with a one-column and a several-col
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/users/me/help-seen` | `{ seen: HelpId[] }` - only ids the current allowlist names |
+| `GET /api/users/me/help-seen` | `{ seen: HelpId[], ageSeconds: { [id]: number } }` - only ids the current allowlist names, each with its age on the server clock |
 | `POST /api/users/me/help-seen/:helpId` | `200 { success: true }`, idempotent (`ON CONFLICT DO NOTHING`); `400 { code: 'HELP_ID_UNKNOWN' }` for an id outside `HELP_IDS`, nothing written |
 
 Both are behind `NginxAuthGuard` and `AccountThrottlerGuard` (30 a minute per account ON EACH

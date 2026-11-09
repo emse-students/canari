@@ -137,8 +137,10 @@ export interface ContentReport {
   /**
    * `user` reports a person; `contentId` is then the reported account's id. `live_chat` reports one
    * line of a live's chat; `contentId` is the message's id and {@link ContentReport.liveChat} the line.
+   * `nickname` reports one VERSION of a community nickname: `contentId` is `<member row>@<set-at ms>`,
+   * the setter is `reportedUserId`, and the preview is null once that version was changed or cleared.
    */
-  contentType: 'post' | 'comment' | 'user' | 'live' | 'live_chat';
+  contentType: 'post' | 'comment' | 'user' | 'live' | 'live_chat' | 'nickname';
   contentId: string;
   reason: string;
   details: string | null;
@@ -175,12 +177,13 @@ export interface MutedUser {
 }
 
 /**
- * Submits a content report for a post, a comment, a person or a live.
+ * Submits a content report for a post, a comment, a person, a live or a community nickname (whose
+ * setter the server reads from the membership row - `reportedUserId` is not sent for one).
  *
  * Throws {@link ModerationApiError}; `isAlreadyReported` tells a duplicate from a real failure.
  */
 export async function createReport(
-  contentType: 'post' | 'comment' | 'user' | 'live',
+  contentType: 'post' | 'comment' | 'user' | 'live' | 'nickname',
   contentId: string,
   reason: 'spam' | 'harassment' | 'inappropriate' | 'other',
   details?: string,

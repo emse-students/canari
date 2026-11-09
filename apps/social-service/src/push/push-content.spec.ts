@@ -37,6 +37,7 @@ import {
   liveStartedContent,
   followRequestContent,
   followAcceptedContent,
+  birthdayContent,
   liveCutContent,
   liveSuspendedContent,
   liveWithdrawnContent,
@@ -78,7 +79,7 @@ describe('push content', () => {
     ['repostProposed', repostProposedContent('BDE', 'hello')],
     ['repostPersonalRequested', repostPersonalRequestedContent('BDE', 'hello')],
     ['coorganiseProposed', coorganiseProposedContent('BDE', 'Gala')],
-    ['liveStarted', liveStartedContent('Claire')],
+    ['liveStarted', liveStartedContent('Claire', '')],
     ['followRequest', followRequestContent('Claire')],
     ['followAccepted', followAcceptedContent('Claire')],
     ['liveCut', liveCutContent()],
@@ -112,6 +113,25 @@ describe('push content', () => {
       actorName: '',
       contentArg: '',
     });
+  });
+
+  it("a live's title is the body of its push; without one, the fixed sentence (owner, 2026-11-07)", () => {
+    const titled = liveStartedContent('BDE', "Soirée d'intégration");
+    expect(pushContentData(titled)).toEqual({
+      contentKey: 'social_live_started',
+      actorName: 'BDE',
+      contentArg: "Soirée d'intégration",
+    });
+    expect([titled.legacyTitle, titled.legacyBody]).toEqual([
+      'BDE est en live',
+      "Soirée d'intégration",
+    ]);
+    const plain = liveStartedContent('BDE', '');
+    expect(pushContentData(plain).contentArg).toBe('');
+    expect([plain.legacyTitle, plain.legacyBody]).toEqual([
+      'BDE est en live',
+      'Appuyez pour regarder',
+    ]);
   });
 
   it('still carries the old wording, for the clients that only read that', () => {
@@ -384,9 +404,10 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_repost_proposed', repostProposedContent(ACTOR, '')],
     ['social_repost_personal_requested', repostPersonalRequestedContent(ACTOR, '')],
     ['social_coorganise_proposed', coorganiseProposedContent(ACTOR, '')],
-    ['social_live_started', liveStartedContent(ACTOR)],
+    ['social_live_started', liveStartedContent(ACTOR, '')],
     ['social_follow_request', followRequestContent(ACTOR)],
     ['social_follow_accepted', followAcceptedContent(ACTOR)],
+    ['social_birthday', birthdayContent(ACTOR)],
     ['social_live_cut', liveCutContent()],
     ['social_live_suspended', liveSuspendedContent()],
     ['social_live_withdrawn', liveWithdrawnContent()],

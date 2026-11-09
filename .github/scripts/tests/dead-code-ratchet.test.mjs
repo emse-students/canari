@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import {
   compareToBaseline,
   KNIP_CATEGORIES,
+  readJsonIfPresent,
   sourceTokens,
   summariseKnip,
   unusedMessageKeys,
@@ -78,6 +79,20 @@ try {
     'an allow-listed key is not reported',
     !unusedMessageKeys(keys, tokens, { reached_by_hand: 'why' }).includes('reached_by_hand')
   );
+  writeFileSync(join(dir, 'present.json'), '{ "messages": { "k": "why" } }');
+  ok(
+    'readJsonIfPresent parses a present file',
+    readJsonIfPresent(join(dir, 'present.json'))?.messages?.k === 'why'
+  );
+  ok('readJsonIfPresent returns null for a missing file', readJsonIfPresent(join(dir, 'no.json')) === null);
+  let threw = false;
+  writeFileSync(join(dir, 'broken.json'), '{');
+  try {
+    readJsonIfPresent(join(dir, 'broken.json'));
+  } catch {
+    threw = true;
+  }
+  ok('readJsonIfPresent still throws on a malformed file', threw);
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

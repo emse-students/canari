@@ -55,6 +55,7 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       count: jest.fn().mockResolvedValue(0),
     });
     let keyPackageDeletes = 0;
+    const txQuery = jest.fn((_sql: string, _params?: unknown[]) => Promise.resolve([{ n: 1 }]));
     const manager = {
       // The key packages, deleted on their own before anything is read, and again by the sweep.
       getRepository: (entity: unknown) => ({
@@ -75,15 +76,18 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
         )
       ),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
-      // A DM's tombstone: one unit of work over its rows.
+      // A DM's tombstone: one unit of work over its rows. The push registrations' delete is the
+      // other unit of work, the only one issuing raw SQL (`txQuery`); it is not a step.
       transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) => {
+        const before = txQuery.mock.calls.length;
         const out = await cb({
           getRepository: () => ({
             update: jest.fn().mockResolvedValue({ affected: 1 }),
             delete: jest.fn().mockResolvedValue({ affected: 0 }),
           }),
+          query: txQuery,
         });
-        steps.push('tombstone');
+        if (txQuery.mock.calls.length === before) steps.push('tombstone');
         return out;
       }),
     };
@@ -189,8 +193,25 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       redis as never,
       messagingService as never
     );
-    return { controller, repos, manager, redis, messagingService, steps };
+    return { controller, repos, manager, txQuery, redis, messagingService, steps };
   }
+
+  it('deletes the push registrations in one transaction, locked in deviceId order first', async () => {
+    // The order a push store locks them in: a bare delete locks in scan order and can deadlock
+    // against a store holding one device and waiting for another (push-envelope.ts).
+    const { controller, repos, txQuery } = make();
+    await controller.deleteUserData(USER, SECRET);
+
+    expect(repos.pushToken.delete).not.toHaveBeenCalled();
+    const statements = txQuery.mock.calls.map(([sql]) => sql.replace(/\s+/g, ' '));
+    expect(statements).toEqual([
+      expect.stringMatching(
+        /SELECT 1 FROM push_token WHERE "userId" = \$1 ORDER BY "deviceId" FOR UPDATE/
+      ),
+      expect.stringMatching(/DELETE FROM push_token WHERE "userId" = \$1/),
+    ]);
+    expect(txQuery.mock.calls.every(([, params]) => params?.[0] === USER)).toBe(true);
+  });
 
   it('deletes the signature keys, the notification preferences and the dismissal markers', async () => {
     const { controller, manager } = make();

@@ -637,7 +637,9 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
       addedBy: 'bob:new-tablet',
       memberAlreadyPresent: true,
       firstInGroup: true,
-      trust: 'first-sight',
+      // THE ONE CLASS D3 KEEPS WITHHELD (owner, 2026-10-31): a known id under a new key. A further
+      // device under a first-sight or pinned key is an ordinary added device (the test below).
+      trust: 'key-changed',
       keyFingerprint: 'beef',
       ...over,
     });
@@ -666,8 +668,44 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
       epoch: 5,
       keyFingerprint: 'beef',
     });
-    expect(error).toHaveBeenCalledWith(expect.stringContaining('never-seen device of a member'));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('known device of a member'));
     error.mockRestore();
+  });
+
+  it('drops an entry an earlier build left owed that is no longer one no member made - no line, no report', async () => {
+    // Under 1.6.6 a further device's own-commit entry under a first-sight key was `unvouched-device`
+    // and could be stored owed (its row not loaded yet). After the upgrade it is an added device
+    // (D2/D3): retried, it must never fall through to a `new-person` accusation of a member.
+    const owed = selfEntry({ trust: 'first-sight', keyFingerprint: '00ff' });
+    const stored = JSON.parse(localStorage.getItem(ACCOUNT_KEY.deviceNotices('alice')) ?? '{}');
+    localStorage.setItem(
+      ACCOUNT_KEY.deviceNotices('alice'),
+      JSON.stringify({ ...stored, owedUninvited: [owed] })
+    );
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { ctx, addMessageToChat } = makeCtx();
+
+    await deliverDeviceEvents([], ctx);
+
+    const lines = addMessageToChat.mock.calls.filter(([, , , o]) =>
+      String((o as { messageId?: string } | undefined)?.messageId).startsWith('uninvited-entry:')
+    );
+    expect(lines).toEqual([]);
+    expect(reporter).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('no longer an entry no member made'));
+    expect(
+      (
+        JSON.parse(localStorage.getItem(ACCOUNT_KEY.deviceNotices('alice')) ?? '{}') as {
+          owedUninvited?: unknown[];
+        }
+      ).owedUninvited ?? []
+    ).toEqual([]);
+    error.mockRestore();
+    info.mockRestore();
   });
 
   it("withholds history from it until a member's Add of it vouches for it", async () => {
@@ -976,13 +1014,21 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     error.mockRestore();
   });
 
-  it('reports a device pinned by ANOTHER group entering this one by itself - the pin vouches for nothing here', async () => {
-    const { ctx } = makeCtx();
-    await deliverDeviceEvents([selfEntry({ trust: 'pinned' })], ctx);
-
-    expect(reporter).toHaveBeenCalledWith(
-      expect.objectContaining({ groupId: 'group-1', kind: 'unvouched-device' })
+  it('a further device entering by itself under its known or a first-seen key is an ordinary added device (D2, D3)', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await deliverDeviceEvents(
+      [
+        selfEntry({ trust: 'pinned' }),
+        selfEntry({ trust: 'first-sight', identity: 'bob:new-phone', addedBy: 'bob:new-phone' }),
+      ],
+      ctx
     );
+
+    expect(reporter).not.toHaveBeenCalled();
+    const accusing = addMessageToChat.mock.calls.filter(([, , , o]) =>
+      String((o as { messageId?: string } | undefined)?.messageId).startsWith('uninvited-entry:')
+    );
+    expect(accusing).toEqual([]);
   });
 
   it('says nothing for a device back in this group, a member-signed Add, or this device itself', async () => {

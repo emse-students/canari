@@ -18,6 +18,7 @@ import {
   LessThanOrEqual,
   EntityManager,
   IsNull,
+  Not,
 } from 'typeorm';
 import * as crypto from 'crypto';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
@@ -89,8 +90,21 @@ import {
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { type AnsweredAsk, announceJoinAskSettled } from '../utils/join-ask-announce';
 import { addInFlightOf, readPendingMembershipFacts } from '../utils/pending-membership-facts';
+import {
+  FURTHER_DEVICE_SELF_JOIN_OPEN,
+  readDeviceSeat,
+  type DeviceSeat,
+  type NoHolderFacts,
+} from '../utils/device-seat';
 import { isBlockedBetween } from '../utils/user-blocks';
-import { readPushMode } from '../utils/push-mode';
+import {
+  ENVELOPE_WAKE_VERSION,
+  MLS_WAKE_VERSION,
+  effectiveWakeVersion,
+  readPushMode,
+  type PushMode,
+} from '../utils/push-mode';
+import { storeEnvelopes, type EnvelopeNotWoken } from '../utils/push-envelope';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import {
   SHARED_PAYLOAD_WRITES_ENV,
@@ -124,6 +138,9 @@ import {
   buildApnsRequest,
   buildWakeApnsRequest,
   buildWakeDataFields,
+  isInternalSilent,
+  type EnvelopeContent,
+  type WakeKey,
   LONGEST_FALLBACK_LOCALE,
   buildInternalAndroidHalf,
   buildInternalApnsHalf,
@@ -500,10 +517,44 @@ export interface SendWelcomeBody {
   groupId: string;
 }
 
+/**
+ * THE ONE BUILDER OF A `welcome_request` FRAME (review of #2832): the frame relayed to an online
+ * member, the frame queued in each member's `pending_welcome_notify:{userId}` list, and the frame a
+ * withdrawal `LREM`s from that list. A withdrawal only finds what the store pushed if both are the
+ * same bytes, so neither site may spell the JSON itself.
+ */
+export function welcomeRequestFrame(
+  groupId: string,
+  requesterUserId: string,
+  requesterDeviceId: string
+): string {
+  return JSON.stringify({ type: 'welcome_request', groupId, requesterUserId, requesterDeviceId });
+}
+
+/** The distinct user ids of `members` (`user:device` keys) other than the requester's own device. */
+function memberUserIdsOtherThan(members: string[], senderKey: string): string[] {
+  return [
+    ...new Set(
+      members
+        .filter((m) => m !== senderKey)
+        .map((m) => m.split(':')[0])
+        .filter(Boolean)
+    ),
+  ];
+}
+
 export interface NotifyWelcomeRequestBody {
   groupId: string;
   requesterUserId: string;
   requesterDeviceId: string;
+  /**
+   * A FURTHER DEVICE'S ASK CARRIES ITS INTENT (D1, review of #2832): when no member device is online
+   * it will join by itself, so a stored ask, its queued frames and a background wake would only open
+   * a second door - an Android member's background Add - racing its own commit. With this set (and
+   * the door open, {@link FURTHER_DEVICE_SELF_JOIN_OPEN}) a `no_peer_online` answer stores, queues
+   * and wakes NOTHING, and withdraws an ask stored by an earlier pass. One door per answer.
+   */
+  selfJoinIfNobody?: boolean;
 }
 
 /**
@@ -868,6 +919,12 @@ export type MissingCommitReason = 'pruned' | 'not-yet' | 'hole';
 @Injectable()
 export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
+
+  /**
+   * {@link FURTHER_DEVICE_SELF_JOIN_OPEN}, read through the instance so a spec can exercise the open
+   * door without a second build of the module.
+   */
+  protected readonly furtherDeviceSelfJoinOpen: boolean = FURTHER_DEVICE_SELF_JOIN_OPEN;
   /** Per-device count of sends that found no push token - see `sendFcmForQueued`. */
   private readonly noPushTokenRepeats = new RepeatCounter();
   /**
@@ -1106,19 +1163,23 @@ export class MessagingService {
    * The FCM message of a content-free wake-up push for one token: the Android data map, or the APNs
    * request in the device's language - nothing else (`buildWakeDataFields`, `buildWakeApnsRequest`).
    * Android keeps the full push's priority and TTL: a wake that arrives late is fetched late, and the
-   * row it names is still queued.
+   * row it names is still there.
    *
    * @param pt - The destination token, whose platform and locale decide the shape.
-   * @param input - The frame's description, read for its id, `silent` and `mentionsOnly` only.
+   * @param key - The row the device will fetch: a queued MLS frame or an envelope.
+   * @param silent - Whether the push draws nothing.
+   * @param mentionsOnly - The recipient keeps the conversation at `mentions` (MLS frames only).
+   * @param android - The Android options the full push of the same kind is sent with.
    */
-  private buildWakeMessage(pt: PushToken, input: PushMessageInput): Message {
+  private buildWakeMessage(
+    pt: PushToken,
+    key: WakeKey,
+    silent: boolean,
+    mentionsOnly: boolean,
+    android: { priority: 'high'; ttl?: number }
+  ): Message {
     if (pt.platform === 'ios') {
-      const request = buildWakeApnsRequest(
-        input.queuedMessageId,
-        input.silent,
-        !!input.mentionsOnly,
-        pt.locale
-      );
+      const request = buildWakeApnsRequest(key, silent, mentionsOnly, pt.locale);
       return {
         token: pt.token,
         apns: {
@@ -1132,8 +1193,8 @@ export class MessagingService {
     }
     return {
       token: pt.token,
-      data: buildWakeDataFields(input.queuedMessageId, input.silent, !!input.mentionsOnly),
-      android: { priority: 'high', ttl: 86_400_000 },
+      data: buildWakeDataFields(key, silent, mentionsOnly),
+      android,
     };
   }
 
@@ -1372,18 +1433,24 @@ export class MessagingService {
     // self-contained by design - so each token now carries exactly the half it reads.
     //
     // THE WAKE-UP PUSH (owner, 2026-11-02): two locks, ANDed - the estate's `push_mode` and the
-    // token's own `wakeCapable` (its binary declared it understands one). The switch is read only
-    // when some destination could take a wake, and never cached; an unreadable switch throws, and
-    // this device's push is not sent (the fan-out logs it; the frame stays queued).
-    const pushMode = pushTokens.some((pt) => pt.wakeCapable)
+    // token's own `wakeVersion` (its binary declared it understands the MLS wake). The switch is read
+    // only when some destination could take a wake, and never cached; an unreadable switch throws,
+    // and this device's push is not sent (the fan-out logs it; the frame stays queued).
+    const pushMode = pushTokens.some((pt) => effectiveWakeVersion(pt) >= MLS_WAKE_VERSION)
       ? await readPushMode(this.groupRepo.manager, this.logger)
       : 'full';
     for (const pt of pushTokens) {
-      const wake = pushMode === 'wake' && pt.wakeCapable;
+      const wake = pushMode === 'wake' && effectiveWakeVersion(pt) >= MLS_WAKE_VERSION;
       try {
         await getMessaging().send(
           wake
-            ? this.buildWakeMessage(pt, messageInput)
+            ? this.buildWakeMessage(
+                pt,
+                { queuedMessageId: messageInput.queuedMessageId },
+                messageInput.silent,
+                !!messageInput.mentionsOnly,
+                { priority: 'high', ttl: 86_400_000 }
+              )
             : pt.platform === 'ios'
               ? {
                   token: pt.token,
@@ -2612,6 +2679,22 @@ export class MessagingService {
         !isUnresolvedIdentity(deviceId);
       /** Whether this commit writes its committer's seat - decided, then done, in the transaction. */
       let committerSeat = false;
+      // D1 IS COUNTABLE (review of #2832): an external commit into a CONVERSATION, replacing no leaf,
+      // by a device whose user already holds another `active` device there is a further device that
+      // let itself in - the door of docs/wiki/protocols/mls-availability-no-holder.md, D1. A device
+      // demoted to `pending` that rejoins by replacing its OWN leaf (a Remove in the commit) is not
+      // D1 and is not counted, nor is a key group, which every device enters this way by design.
+      // WHILE THE GATE IS SHUT the tag counts the entries no current client makes (an older client,
+      // or a modified one): the label says what the commit IS, never which door the server opened.
+      // Read outside the transaction, a log label only - it decides nothing.
+      const ownCommitByFurtherDevice =
+        frame.external &&
+        frame.removedLeaves.length === 0 &&
+        committerNeedsSeat &&
+        distributionScopeOf(group) === null &&
+        (await this.deviceGroupRepo.count({
+          where: { groupId, userId: committer, status: 'active' as const, deviceId: Not(deviceId) },
+        })) > 0;
       // THE ADVANCE, THE BASE AND THE REPLAYABLE COMMIT LAND TOGETHER OR NOT AT ALL.
       //
       // The log row used to be written AFTER this transaction, best-effort, on the reasoning that
@@ -3119,7 +3202,8 @@ export class MessagingService {
       const refusedAdmits = [...admitRefusals, ...admitRefusalsInTx];
       this.logger.log(
         `[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}` +
-          (refusedAdmits.length > 0 ? ` refusedAdmits=${refusedAdmits.length}` : '')
+          (refusedAdmits.length > 0 ? ` refusedAdmits=${refusedAdmits.length}` : '') +
+          (ownCommitByFurtherDevice ? ' kind=own_commit_by_further_device' : '')
       );
 
       return {
@@ -3748,10 +3832,113 @@ export class MessagingService {
    */
   async getGroupInfo(
     groupId: string,
-    requesterUserId: string
-  ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null> {
+    requesterUserId: string,
+    requesterDeviceId?: string
+  ): Promise<{
+    groupInfo: string;
+    baseEpoch: number;
+    activeEpoch: number;
+    seat?: DeviceSeat;
+  } | null> {
     await this.assertMayReadExternalBase(groupId, requesterUserId);
-    return this.readGroupInfo(groupId);
+    const base = await this.readGroupInfo(groupId);
+    // THE ASKING DEVICE'S SEAT, READ AFTER THE BASE (`readDeviceSeat`): a further device of a member
+    // that lets itself in when no member device can answer (`requestReAdd`, D1 of
+    // docs/wiki/protocols/mls-availability-no-holder.md) reads from this one answer whether an Add
+    // already carries it, and waits for that Welcome instead of joining over it.
+    // NOT SERVED WHILE THE DOOR IS SHUT ({@link FURTHER_DEVICE_SELF_JOIN_OPEN}): the client reads a
+    // base with no seat as `seat_unreadable` and does not join by itself.
+    if (!base || !requesterDeviceId || !this.furtherDeviceSelfJoinOpen) return base;
+    const seat = await this.seatOf(groupId, requesterUserId, requesterDeviceId);
+    return { ...base, seat };
+  }
+
+  /** {@link readDeviceSeat} with this service's repositories. */
+  private seatOf(groupId: string, userId: string, deviceId: string): Promise<DeviceSeat> {
+    return readDeviceSeat(
+      {
+        deviceGroupRepo: this.deviceGroupRepo,
+        queuedMessageRepo: this.queuedMessageRepo,
+        redis: this.redis,
+        logger: this.logger,
+      },
+      groupId,
+      userId.trim().toLowerCase(),
+      deviceId
+    );
+  }
+
+  /**
+   * WHAT A REQUESTER NEEDS TO KNOW THAT NOBODY CAN LET IT IN, read in the same answer as the verdict
+   * that no member device is online (`no_peer_online`): the stored base's two epochs (`null` when no
+   * base was ever published) and the requester's own seat, read after the base. The client shows its
+   * no-holder banner only on this whole set (D5 of docs/wiki/protocols/mls-availability-no-holder.md)
+   * - never on elapsed time, a missing message or a pending state. A read that fails answers
+   * nothing (`undefined`), and the client then keeps its ordinary waiting text.
+   */
+  private async noHolderFacts(
+    groupId: string,
+    userId: string,
+    deviceId: string,
+    traceId: string,
+    wakeSent: boolean
+  ): Promise<NoHolderFacts | undefined> {
+    try {
+      // THE SAME DOOR AS THE BASE ITSELF: only a seated user not awaiting a member's admission is
+      // told anything about the group (`assertMayReadExternalBase`). A link ask waits for a member
+      // (D4), and is never a no-holder case. The SAME question the base asks
+      // (`seatAwaitsAdmission`): a flag with an active device under it is a member.
+      const roster = await this.rosterSeat(groupId, userId);
+      if (!roster || (await this.seatAwaitsAdmission(groupId, userId, roster))) return undefined;
+      const base = await this.readGroupInfo(groupId);
+      const seat = await this.seatOf(groupId, userId, deviceId);
+      const liveHolderDevices = await this.liveHolderDevices(groupId, userId, deviceId);
+      return {
+        base: base ? { baseEpoch: base.baseEpoch, activeEpoch: base.activeEpoch } : null,
+        seat,
+        holders: { liveHolderDevices, wakeSent },
+      };
+    } catch (e) {
+      this.logger.warn(
+        `[NO_HOLDER][${traceId}] facts unread group=${groupId} - the requester keeps waiting: ${String(e)}`
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * How many devices other than the asking one still hold `groupId` and are alive: an `active` row,
+   * and a KeyPackage published within {@link RETENTION_WINDOW_MS} - the window this service already
+   * treats as "a device is gone" (`detectStaleDevices`), so a device is never alive for one rule and
+   * dead for this one. A member who did not open the app tonight is counted; one gone for months is
+   * not ({@link HolderLiveness}).
+   */
+  private async liveHolderDevices(
+    groupId: string,
+    requesterUserId: string,
+    requesterDeviceId: string
+  ): Promise<number> {
+    const requester = requesterUserId.trim().toLowerCase();
+    const rows = await this.deviceGroupRepo.find({
+      where: { groupId, status: 'active' },
+      select: { userId: true, deviceId: true },
+    });
+    // EVERY HOLDER BUT THE ASKING DEVICE ITSELF (re-review of #2832): the user's OWN other device
+    // still holding the group is a holder like any member's - it re-adds this one when it comes back.
+    const others = rows.filter(
+      (r) => !(r.userId.trim().toLowerCase() === requester && r.deviceId === requesterDeviceId)
+    );
+    if (others.length === 0) return 0;
+    const live = await this.keyPackageRepo.find({
+      where: {
+        deviceId: In(others.map((r) => r.deviceId)),
+        createdAt: MoreThanOrEqual(new Date(Date.now() - RETENTION_WINDOW_MS)),
+      },
+      select: { userId: true, deviceId: true },
+    });
+    const liveKeys = new Set(live.map((k) => `${k.userId.trim().toLowerCase()}:${k.deviceId}`));
+    return others.filter((r) => liveKeys.has(`${r.userId.trim().toLowerCase()}:${r.deviceId}`))
+      .length;
   }
 
   /**
@@ -6223,7 +6410,7 @@ export class MessagingService {
   async notifyBaseRefreshRequest(
     authUserIdRaw: string | undefined,
     body: NotifyWelcomeRequestBody
-  ): Promise<{ status: string; target?: string }> {
+  ): Promise<{ status: string; target?: string; facts?: NoHolderFacts }> {
     const traceId = this.makeTraceId('base-refresh');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
@@ -6277,7 +6464,16 @@ export class MessagingService {
       `[BASE_REFRESH][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} members=${members.length}` +
         ` - the published base stays stale and no device can external-join until a member returns`
     );
-    return { status: 'no_peer_online' };
+    // A base refresh never stores, queues or wakes anything (above): `wakeSent` is false by
+    // construction.
+    const facts = await this.noHolderFacts(
+      groupId,
+      requesterUserId,
+      requesterDeviceId,
+      traceId,
+      false
+    );
+    return { status: 'no_peer_online', ...(facts ? { facts } : {}) };
   }
 
   /**
@@ -6288,7 +6484,7 @@ export class MessagingService {
   async notifyWelcomeRequest(
     authUserIdRaw: string | undefined,
     body: NotifyWelcomeRequestBody
-  ): Promise<{ status: string; target?: string }> {
+  ): Promise<{ status: string; target?: string; facts?: NoHolderFacts; selfJoin?: boolean }> {
     const traceId = this.makeTraceId('welcome-req');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
@@ -6328,12 +6524,7 @@ export class MessagingService {
         (awaitingAsk ? ` ask=awaiting-member repeat=${nth} (said at 1, 10, 100...)` : '')
     );
 
-    const notification = JSON.stringify({
-      type: 'welcome_request',
-      groupId,
-      requesterUserId,
-      requesterDeviceId,
-    });
+    const notification = welcomeRequestFrame(groupId, requesterUserId, requesterDeviceId);
 
     for (const member of members) {
       if (member === senderKey) continue;
@@ -6394,12 +6585,7 @@ export class MessagingService {
               recipientId: memberUserId,
               deviceId: memberDeviceId,
               proto: Buffer.from(
-                JSON.stringify({
-                  type: 'welcome_request',
-                  groupId,
-                  requesterUserId: storedUserId,
-                  requesterDeviceId: storedDeviceId,
-                })
+                welcomeRequestFrame(groupId, storedUserId, storedDeviceId)
               ).toString('base64'),
               isWelcomeRequest: true,
               groupId,
@@ -6426,6 +6612,43 @@ export class MessagingService {
       }
     }
 
+    // A FURTHER DEVICE THAT WILL JOIN BY ITSELF (`selfJoinIfNobody`, D1): nothing is stored, queued
+    // or woken - an Android member's background Add answering the wake would be a second door racing
+    // the device's own commit - and an ask an EARLIER pass stored is withdrawn, so no member's next
+    // connection replays it either. One door per answer. Not for an ask awaiting a member (D4), and
+    // ONLY ON A CURRENT BASE: on a stale or absent one the device cannot let itself in, so the member's
+    // Add stays its one door and the ask is stored and woken as any other.
+    if (
+      body.selfJoinIfNobody === true &&
+      this.furtherDeviceSelfJoinOpen &&
+      !awaitingAsk &&
+      (await this.baseIsCurrent(groupId, traceId))
+    ) {
+      await this.withdrawStoredWelcomeRequest(
+        groupId,
+        requesterUserId,
+        requesterDeviceId,
+        senderKey,
+        members,
+        traceId
+      );
+      say(
+        `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - a further device that joins by itself: nothing stored, nothing woken`
+      );
+      const facts = await this.noHolderFacts(
+        groupId,
+        requesterUserId,
+        requesterDeviceId,
+        traceId,
+        false
+      );
+      return {
+        status: 'no_peer_online',
+        ...(facts ? { facts } : {}),
+        selfJoin: this.furtherDeviceSelfJoinOpen,
+      };
+    }
+
     // No peer online - persist so the request is replayed when a peer connects.
     const pendingSetKey = `pending_welcome:${groupId}`;
     const pipeline = this.redis.pipeline();
@@ -6436,20 +6659,8 @@ export class MessagingService {
     // Also store per-member in pending_welcome_notify:{userId} so the Gateway can drain
     // signals as soon as a member reconnects, without waiting for the next welcome_request.
     // The format is the JSON that the Gateway will send directly to the WebSocket client.
-    const notificationFrame = JSON.stringify({
-      type: 'welcome_request',
-      groupId,
-      requesterUserId,
-      requesterDeviceId,
-    });
-    const uniqueMemberUserIds = [
-      ...new Set(
-        members
-          .filter((m) => m !== senderKey)
-          .map((m) => m.split(':')[0])
-          .filter(Boolean)
-      ),
-    ];
+    const notificationFrame = welcomeRequestFrame(groupId, requesterUserId, requesterDeviceId);
+    const uniqueMemberUserIds = memberUserIdsOtherThan(members, senderKey);
     if (uniqueMemberUserIds.length > 0) {
       const notifyPipeline = this.redis.pipeline();
       for (const memberUserId of uniqueMemberUserIds) {
@@ -6481,7 +6692,65 @@ export class MessagingService {
       `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis` +
         (awaitingAsk ? ', no FCM wake (an ask awaits a member)' : ', FCM sent to peers')
     );
-    return { status: 'no_peer_online' };
+    const facts = await this.noHolderFacts(
+      groupId,
+      requesterUserId,
+      requesterDeviceId,
+      traceId,
+      !awaitingAsk
+    );
+    return {
+      status: 'no_peer_online',
+      ...(facts ? { facts } : {}),
+      selfJoin: this.furtherDeviceSelfJoinOpen,
+    };
+  }
+
+  /**
+   * Whether `groupId`'s stored base is at the group's epoch - the base a further device lets itself in
+   * on (D1). An unreadable base is not current: the stored ask stays the door.
+   */
+  private async baseIsCurrent(groupId: string, traceId: string): Promise<boolean> {
+    try {
+      const base = await this.readGroupInfo(groupId);
+      return base !== null && base.baseEpoch >= base.activeEpoch;
+    } catch (e) {
+      this.logger.warn(
+        `[WELCOME_REQ][${traceId}] base of group=${groupId} unreadable - a further device's ask is stored as any other: ${String(e)}`
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Withdraws a `welcome_request` an earlier pass stored for `senderKey`: its entry in
+   * `pending_welcome:{groupId}` and the frame queued for each member in
+   * `pending_welcome_notify:{userId}` - built by {@link welcomeRequestFrame}, the same bytes the store
+   * pushed, so `LREM` finds it.
+   * Best-effort and logged: what it misses is a stale ask a member's device answers with an Add the
+   * gate refuses for a seat already active.
+   */
+  private async withdrawStoredWelcomeRequest(
+    groupId: string,
+    requesterUserId: string,
+    requesterDeviceId: string,
+    senderKey: string,
+    members: string[],
+    traceId: string
+  ): Promise<void> {
+    const frame = welcomeRequestFrame(groupId, requesterUserId, requesterDeviceId);
+    try {
+      const pipeline = this.redis.pipeline();
+      pipeline.srem(`pending_welcome:${groupId}`, senderKey);
+      for (const memberUserId of memberUserIdsOtherThan(members, senderKey)) {
+        pipeline.lrem(`pending_welcome_notify:${memberUserId}`, 0, frame);
+      }
+      await pipeline.exec();
+    } catch (e) {
+      this.logger.warn(
+        `[WELCOME_REQ][${traceId}] a stored ask of ${senderKey} for group=${groupId} could not be withdrawn: ${String(e)}`
+      );
+    }
   }
 
   /**
@@ -7568,6 +7837,79 @@ export class MessagingService {
   }
 
   /**
+   * THE ENVELOPE WAKE's decision for one `sendPushToUser` send (content-free push WP-W3,
+   * docs/wiki/protocols/content-free-push.md section 3.2): which devices are woken, and under which
+   * envelope.
+   *
+   * Two locks, ANDed, as for an MLS frame: the estate's `push_mode` and the token's
+   * `effectiveWakeVersion >= ENVELOPE_WAKE_VERSION`. The switch is read only when some destination
+   * could take an envelope wake, and never cached. When it reads `wake`, the push is stored once per
+   * capable device (`storeEnvelopes`) BEFORE any wake leaves, so a device that fetches at once finds it.
+   *
+   * Returns the envelope per device, and the tokens to WITHHOLD: `failed` when the switch could not be
+   * read or the envelopes could not be stored - accused at ERROR, and never sent the full push in their
+   * place, which would hand Google and Apple exactly what the switch withholds;
+   * `registration-gone` (the token was deleted since it was read) and `evicted` (the cap took the new
+   * envelope at once) are no failure - each logged by `storeEnvelopes`.
+   */
+  private async envelopesForWake(
+    userId: string,
+    pushTokens: PushToken[],
+    content: EnvelopeContent,
+    traceId: string
+  ): Promise<{
+    envelopes: Map<string, string>;
+    withheld: Map<string, 'failed' | EnvelopeNotWoken>;
+  }> {
+    const envelopes = new Map<string, string>();
+    const withheld = new Map<string, 'failed' | EnvelopeNotWoken>();
+    const capable = pushTokens.filter((pt) => effectiveWakeVersion(pt) >= ENVELOPE_WAKE_VERSION);
+    if (capable.length === 0) return { envelopes, withheld };
+
+    let mode: PushMode;
+    try {
+      mode = await readPushMode(this.pushTokenRepo.manager, this.logger);
+    } catch (e) {
+      this.logger.error(
+        `[SOCIAL_PUSH][${traceId}] push_mode unreadable - ${capable.length} envelope-capable device(s) of ` +
+          `user=${userId} sent NOTHING: ${String(e)}`
+      );
+      for (const pt of capable) withheld.set(pt.id, 'failed');
+      return { envelopes, withheld };
+    }
+    if (mode !== 'wake') return { envelopes, withheld };
+
+    try {
+      const stored = await storeEnvelopes(
+        this.pushTokenRepo.manager,
+        userId,
+        capable.map((pt) => pt.deviceId),
+        content,
+        this.logger,
+        traceId
+      );
+      for (const pt of capable) {
+        const envelopeId = stored.ids.get(pt.deviceId);
+        if (envelopeId) {
+          envelopes.set(pt.deviceId, envelopeId);
+          continue;
+        }
+        // `storeEnvelopes` answers every device it was asked for, one way or the other.
+        const reason = stored.notWoken.get(pt.deviceId);
+        if (!reason) throw new Error(`storeEnvelopes answered nothing for device ${pt.deviceId}`);
+        withheld.set(pt.id, reason);
+      }
+    } catch (e) {
+      this.logger.error(
+        `[PUSH_ENVELOPE][${traceId}] store failed - ${capable.length} device(s) of user=${userId} ` +
+          `type=${content.data.type ?? 'none'} sent NOTHING: ${String(e)}`
+      );
+      for (const pt of capable) withheld.set(pt.id, 'failed');
+    }
+    return { envelopes, withheld };
+  }
+
+  /**
    * Sends a non-MLS push to every registered device of a user - the side-channel signals where the
    * server never sees the MLS plaintext: reactions, community channel messages and their silent
    * `channel_read` frames, posts, form reminders.
@@ -7579,6 +7921,9 @@ export class MessagingService {
    * `inline` is a group of fields that ride together or not at all - a salon message's ciphertext
    * and the seed frame that opens it - decided per token by what that token's platform is sent
    * (`withInlineGroup`). Empty for every push that has none.
+   *
+   * A device whose binary understands the envelope wake, while `push_mode = wake`, is sent a
+   * content-free wake instead and fetches all of this from its envelope (`envelopesForWake`).
    *
    * Returns { sent, failed } - failure is non-fatal for the caller.
    */
@@ -7642,15 +7987,45 @@ export class MessagingService {
       return { sent: 0, failed: 0 };
     }
 
+    const { envelopes, withheld } = await this.envelopesForWake(
+      userId,
+      pushTokens,
+      { title, body, data, inline },
+      traceId
+    );
+
     let sent = 0;
     let failed = 0;
     for (const pt of pushTokens) {
+      const refusal = withheld.get(pt.id);
+      if (refusal === 'failed') {
+        failed++;
+        continue;
+      }
+      // Not woken, and not a failure: the registration went, or the cap took the new envelope.
+      if (refusal) continue;
       // ONE HALF PER TOKEN, BECAUSE THE PLATFORM IS KNOWN HERE - the duplication `sendFcmForQueued`
       // stopped for its own pushes. Every token used to receive the data map AND an APNs payload the
       // same fields are spread into, so an inlined ciphertext travelled twice in one message and
       // FCM sized the pair. iOS needs the APNs block (a data-only push never wakes the extension);
       // Android reads the data map (onMessageReceived fires in the background) and nothing else.
       try {
+        const envelopeId = envelopes.get(pt.deviceId);
+        if (envelopeId) {
+          // The content-free wake: the device fetches the envelope and runs it through the path
+          // this full push would have taken. Android keeps the full push's options.
+          await getMessaging().send(
+            this.buildWakeMessage(pt, { envelopeId }, isInternalSilent(data), false, {
+              priority: 'high',
+            })
+          );
+          sent++;
+          this.logger.log(
+            `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
+              `mode=wake kind=${data.type ?? 'none'} envelope=${envelopeId.slice(0, 8)}`
+          );
+          continue;
+        }
         let half: { inlined: boolean; bytes: number };
         if (pt.platform === 'ios') {
           const ios = buildInternalApnsHalf(title, body, data, inline, pt.locale);
@@ -7677,7 +8052,7 @@ export class MessagingService {
         sent++;
         this.logger.log(
           `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
-            `inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
+            `mode=full inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
         );
         if (Object.keys(inline).length > 0 && !half.inlined) {
           // Not a failure - the device fetches the message and draws the fallback - but a budget

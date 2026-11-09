@@ -9,8 +9,10 @@ import {
   IsInt,
   IsNotEmpty,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   Matches,
   MaxLength,
@@ -199,6 +201,15 @@ export class FormItemDto {
 }
 
 export class CreateFormDto {
+  /**
+   * CREATE ONLY: the create's idempotency key, minted by the client so that a create whose answer
+   * was lost is sent again as the SAME create (the stored form is answered). Never the form's id:
+   * the server mints that. An edit sending it is refused (`FORM_CREATE_KEY_ON_EDIT`).
+   */
+  @IsUUID('4')
+  @IsOptional()
+  clientCreateId?: string;
+
   @IsString()
   @IsNotEmpty()
   title: string;
@@ -295,6 +306,16 @@ export class CreateFormDto {
   isPublic?: boolean;
 
   /**
+   * CREATE ONLY: `true` stores the form as a DRAFT, seen by its managers alone until
+   * `POST /forms/:id/publish` (`form-status.ts`). Absent is a client that predates drafts: its form
+   * is published at once, as it always was. Refused on an edit - publishing is its own route, and a
+   * published form never goes back to draft.
+   */
+  @IsBoolean()
+  @IsOptional()
+  draft?: boolean;
+
+  /**
    * What a public form asks a guest about who they are (`guest-identity.ts`): any of `lastName`,
    * `firstName`, `email`, each required of the guest once asked. Absent keeps the stored value; an
    * empty list or null asks nothing (stored as null).
@@ -316,6 +337,14 @@ export class CreateFormDto {
   @IsOptional()
   allowCashPayment?: boolean;
 
+  /**
+   * Whether online payment is accepted (`payment-offer.ts`). Absent keeps the stored value - true
+   * for a new form, which is what every client before the choice meant.
+   */
+  @IsBoolean()
+  @IsOptional()
+  allowOnlinePayment?: boolean;
+
   /** Days before an unvalidated cash submission expires. */
   @IsInt()
   @IsOptional()
@@ -334,6 +363,45 @@ export class CreateFormDto {
 }
 
 export class UpdateFormDto extends CreateFormDto {}
+
+/**
+ * An autosave of the editor (owner, 2026-11-08; `form-draft-revision.ts`): the revision it was built
+ * on, and the whole payload as typed. The document is NOT validated here - a half-built form is what
+ * an autosave carries - but as an edit's body when the revision is published.
+ */
+export class SaveFormDraftDto {
+  @IsInt()
+  @Min(0)
+  baseRevision: number;
+
+  @IsObject()
+  document: Record<string, unknown>;
+
+  /**
+   * The client's id for THIS save, kept on the revision it writes: a client whose answer was lost
+   * finds its own id in the 409 of its next save, and adopts the revision instead of a conflict.
+   */
+  @IsUUID('4')
+  @IsOptional()
+  saveId?: string;
+}
+
+/** Publishing or discarding the unpublished revision the editor holds, by its number. */
+export class FormRevisionDto {
+  @IsInt()
+  @Min(0)
+  revision: number;
+}
+
+/**
+ * Publishing the revision: `overwrite` confirms publishing over a form written since the revision
+ * started (refused `FORM_CHANGED_SINCE_REVISION` without it).
+ */
+export class PublishFormRevisionDto extends FormRevisionDto {
+  @IsBoolean()
+  @IsOptional()
+  overwrite?: boolean;
+}
 
 /**
  * A guest's answer to a public form: the answers, how they pay when the form charges, and - only

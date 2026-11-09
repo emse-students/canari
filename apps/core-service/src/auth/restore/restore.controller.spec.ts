@@ -136,7 +136,8 @@ describe('AuthController restore routes', () => {
       sessions as never,
       { enabled: false } as never,
       erasure as never,
-      restore as never
+      restore as never,
+      {} as never // HandoffService: no handoff route here
     );
   });
 
