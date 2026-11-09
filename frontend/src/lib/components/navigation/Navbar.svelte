@@ -80,7 +80,7 @@
           data-slow-link={slowLink.active || undefined}
           class="tap-target rounded-2xl ring-3 transition-all duration-200 {slowLink.active
             ? 'ring-amber-warn'
-            : 'ring-transparent [@media(hover:hover)_and_(pointer:fine)]:hover:ring-amber-400'}"
+            : 'ring-transparent hover:ring-cn-yellow focus-visible:ring-cn-yellow'}"
           aria-label={m.nav_my_profile_label()}
         >
           <Avatar userId={globalSession.userId} size="sm" />

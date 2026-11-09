@@ -70,22 +70,22 @@
         : m.device_notice_body({ when })}
       {m.device_notice_hint()}
     </p>
-    <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
+    <div class="mt-1 flex flex-wrap items-center gap-2 text-sm">
       <a
         href={resolve('/settings/[section]', { section: 'security' })}
-        class="bg-cn-border/60 text-text-main hover:bg-cn-border rounded-full px-3 py-1.5 font-semibold"
+        class="bg-cn-surface-alt text-text-main hover:bg-cn-yellow/30 inline-flex min-h-11 items-center rounded-full px-4 font-semibold"
         onclick={() => dismissDeviceNotice(notice.key)}>{m.device_notice_view()}</a
       >
       <button
         type="button"
-        class="bg-cn-border/60 text-text-main hover:bg-cn-border rounded-full px-3 py-1.5 font-semibold disabled:opacity-50"
+        class="bg-cn-surface-alt text-text-main hover:bg-cn-yellow/30 inline-flex min-h-11 items-center rounded-full px-4 font-semibold disabled:opacity-50"
         disabled={revoking}
         data-device-notice-not-me
         onclick={notMe}>{m.device_notice_not_me()}</button
       >
       <button
         type="button"
-        class="text-text-muted rounded-full px-3 py-1.5 font-semibold"
+        class="bg-cn-surface-alt text-text-muted inline-flex min-h-11 items-center rounded-full px-4 font-semibold"
         data-device-notice-dismiss
         onclick={() => dismissDeviceNotice(notice.key)}>{m.device_notice_dismiss()}</button
       >
