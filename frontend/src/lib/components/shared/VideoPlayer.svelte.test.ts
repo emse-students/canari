@@ -711,3 +711,18 @@ it('minimal: the sound follows the app-wide answer changed elsewhere (the rail)'
   flushSync();
   expect(video.muted).toBe(false);
 });
+
+it('the reel variant draws its video over the WHOLE box, never at its intrinsic size (owner, 2026-11-09)', () => {
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const component = mount(VideoPlayer, { target, props: { src: 'blob:clip', variant: 'reel' } });
+  mounted.push(() => unmount(component));
+  flushSync();
+  const video = target.querySelector('video')!;
+  expect(video.classList.contains('h-full')).toBe(true);
+  expect(video.classList.contains('w-full')).toBe(true);
+  expect(video.className).not.toContain('max-h-full');
+  expect(video.style.objectFit).toBe('cover');
+  expect(video.dataset.reelVideoFit).toBe('cover');
+});

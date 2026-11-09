@@ -27,6 +27,7 @@
   } from '$lib/utils/videoAutoplay';
   import VideoPoster from './VideoPoster.svelte';
   import { Log } from '$lib/utils/Log';
+  import { reelVideoFit } from '$lib/reels/reelFrame';
   import { m } from '$lib/paraglide/messages';
   import MediaSpinner from './MediaSpinner.svelte';
 
@@ -169,6 +170,23 @@
 
   let root: HTMLDivElement | null = $state(null);
   let video: HTMLVideoElement | null = $state(null);
+  /**
+   * THE REEL'S VIDEO FILLS ITS FRAME (owner, 2026-11-09: "Certains posts ont des bords noirs, ils ne
+   * sont pas etires"). An element with no size of its own is drawn at the clip's intrinsic size under
+   * `max-h/max-w`, which leaves bands on ALL FOUR sides when the clip is smaller than its frame; the
+   * reel's is the whole box, fitted by `reelVideoFit` (cover unless the clip is clearly another shape).
+   */
+  const REEL_VIDEO_CLASS = 'absolute inset-0 h-full w-full';
+  let boxWidth = $state(0);
+  let boxHeight = $state(0);
+  let naturalWidth = $state(0);
+  let naturalHeight = $state(0);
+  const reelFit = $derived(
+    reelVideoFit(
+      naturalHeight > 0 ? naturalWidth / naturalHeight : 0,
+      boxHeight > 0 ? boxWidth / boxHeight : 0
+    )
+  );
 
   let paused = $state(true);
   let muted = $state(true);
@@ -521,10 +539,22 @@
     poster={TRANSPARENT_VIDEO_POSTER}
     disableremoteplayback={disableRemotePlayback || undefined}
     use:followVideoSound={soundScope}
-    class={videoClass}
+    class={minimal ? REEL_VIDEO_CLASS : videoClass}
+    style:object-fit={minimal ? reelFit : undefined}
+    bind:clientWidth={boxWidth}
+    bind:clientHeight={boxHeight}
+    data-reel-video-fit={minimal ? reelFit : undefined}
     style="transform: var(--lightbox-zoom, none); transform-origin: center;"
     onloadstart={onLoadStart}
     onloadedmetadata={() => {
+      if (video) {
+        naturalWidth = video.videoWidth;
+        naturalHeight = video.videoHeight;
+        Log.d(
+          'VideoPlayer',
+          `intrinsic ${naturalWidth}x${naturalHeight} in a ${boxWidth}x${boxHeight} box`
+        );
+      }
       resumeOnce();
       sync();
       tryAutoplay();
