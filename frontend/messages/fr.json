@@ -4481,7 +4481,7 @@
   "shared_post_reel_chip": "CanaReel",
   "shared_post_open_label": "Ouvrir la publication de {author}",
   "shared_post_open_reel_label": "Ouvrir le CanaReel de {author}",
-  "shared_post_media_alt": "Aperçu de la publication de {author}",
+  "shared_post_failed_hint": "Aperçu non chargé. Touchez pour ouvrir la publication.",
   "shared_post_no_text": "Publication sans texte",
   "link_preview_profile_member": "Membre Canari",
   "link_preview_join_community": "Rejoindre la communauté",

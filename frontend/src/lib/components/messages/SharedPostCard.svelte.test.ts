@@ -47,7 +47,8 @@ class Observer {
 }
 
 const mounted: (() => void)[] = [];
-const URL_P = 'https://canari.emse.fr/posts/p1';
+const P1 = '11111111-1111-4111-8111-111111111111';
+const URL_P = `https://canari.emse.fr/posts/${P1}`;
 
 function render(url = URL_P): HTMLElement {
   const target = document.createElement('div');
@@ -70,7 +71,7 @@ function tap(target: HTMLElement) {
     .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 }
 
-const base = { id: 'p1', markdown: 'La **soirée** de rentrée', authorFirstName: 'Ada', media: [] };
+const base = { id: P1, markdown: 'La **soirée** de rentrée', authorFirstName: 'Ada', media: [] };
 
 beforeEach(() => {
   near = true;
@@ -147,7 +148,7 @@ describe('SharedPostCard', () => {
     expect(box.getAttribute('style')).toContain('aspect-ratio: 0.5625');
     tap(target);
     await vi.waitFor(() =>
-      expect(document.querySelector('[data-reel-viewer-stub="p1"]')).not.toBeNull()
+      expect(document.querySelector(`[data-reel-viewer-stub="${P1}"]`)).not.toBeNull()
     );
     expect(navigateInAppFromHref).not.toHaveBeenCalled();
   });
@@ -167,6 +168,16 @@ describe('SharedPostCard', () => {
     expect(target.textContent).toContain('Publication indisponible');
     expect(target.querySelector('img')).toBeNull();
     expect(target.querySelector('a')).toBeNull();
+  });
+
+  it('draws a read that got no answer as a link to the post, never as "indisponible"', async () => {
+    getPost.mockRejectedValue(new TypeError('offline'));
+    const target = render();
+    await settled(target, 'failed');
+    expect(target.textContent).not.toContain('Publication indisponible');
+    expect(target.querySelector('[data-shared-post-skeleton]')).toBeNull();
+    tap(target);
+    await vi.waitFor(() => expect(navigateInAppFromHref).toHaveBeenCalledWith(URL_P));
   });
 
   it('turns unavailable when the picture reports an expired file', async () => {

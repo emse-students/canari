@@ -350,7 +350,6 @@ sees "unavailable"; "Copier le lien" and "Partager via..." from both. Tests:
 `LinkPreviewCard.reel.svelte.test.ts` and `canariLinkPreview.test.ts` (a reel's card opens the
 viewer, a post's its page).
 
-
 ## The shared-post bubble (owner, 2026-11-09: "comme Instagram")
 
 A link to `/posts/<id>` in a conversation or a channel draws `SharedPostCard` (chosen in
@@ -360,12 +359,19 @@ decorative glass play disc (`VideoPlayDisc` without `onclick`), a reel as the 9:
 "CanaReel" chip and a tap that opens the reels viewer, the caption on three lines.
 - **Wire format unchanged**: the message is still the bare link, so an older app draws its generic card.
 - **Recipient's rights**: `sharedPostPreview.ts` reads `GET /api/posts/:id` under the reader's
-  session. 401/403/404/410 is a verdict (cached per viewer, drawn "Publication indisponible", nothing
-  of the post kept); any other failure draws the same state but is NOT cached. A reel file answering
-  `expired` turns the card unavailable; any other picture failure drops the picture, keeps the text.
+  session. 403/404/410 is a verdict (cached per viewer for the session, drawn "Publication
+  indisponible", nothing of the post kept). A 401, a 5xx or no answer is `failed`: NOT cached, and
+  drawn as a plain link to the post ("Aperçu non chargé"), never as the verdict. An id that is no
+  UUID is unavailable with no request (the route's `ParseUUIDPipe` would refuse it on every mount).
+  No signed-in viewer, nothing cached. A reel file answering `expired` turns the card unavailable;
+  any other picture failure drops the picture, keeps the text. The name is `postAuthorName`, the
+  post header's own resolver.
 - **Requests**: no batched post read exists on the server. The card asks only once within the
-  viewport band (`nearViewport`); answers are cached (80, keyed viewer + post) and a post shared
-  twice is one in-flight read.
+  viewport band (`nearViewport`); answers are cached (80, keyed viewer + post; a mounted card keeps
+  its own copy, so an eviction costs only the next mount) and a post shared twice is one in-flight
+  read, cleared on success and failure alike.
+- **One reel opener**: `SharedReelViewer` (lazy viewer, live token at the open) is what both this
+  card and `LinkPreviewCard` mount; neither carries its own copy.
 - A post link typed inside a POST body (`PostContent`) keeps the generic card.
 
 ## Share IN, iOS - the path

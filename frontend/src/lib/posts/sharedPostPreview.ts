@@ -1,10 +1,11 @@
 import { getPost, isReel, type PostEntity, type PostMediaRef } from '$lib/posts/api';
+import { postAuthorName } from '$lib/posts/postAuthorName';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
-import { postAuthorDisplayName } from '$lib/utils/canariLinkPreviewFormat';
 import { refusalStatus } from '$lib/utils/apiRefusal';
+import { isTransportFailure } from '$lib/utils/transportFailure';
+import { isUuidLike } from '$lib/utils/uuidShape';
 import { currentUserId } from '$lib/stores/user';
 import { Log } from '$lib/utils/Log';
-import { m } from '$lib/paraglide/messages';
 
 /**
  * WHAT THE SHARED-POST BUBBLE DRAWS (`SharedPostCard`): the Instagram-style card of a post or a
@@ -48,10 +49,24 @@ export interface SharedPostUnavailable {
   state: 'unavailable';
 }
 
-export type SharedPostPreview = SharedPostReady | SharedPostUnavailable;
+/**
+ * The read got no answer about the post (no network, a 5xx, a session being renewed): nothing is
+ * known, so the card must not SAY the post is unavailable - it stays a link to the post's page, and
+ * the next mount asks again. Carries nothing of the post.
+ */
+export interface SharedPostFailed {
+  state: 'failed';
+}
 
-/** The statuses that are a VERDICT about the post (it is gone or closed to this reader). */
-const VERDICT_STATUSES = new Set([401, 403, 404, 410]);
+export type SharedPostPreview = SharedPostReady | SharedPostUnavailable | SharedPostFailed;
+
+/**
+ * The statuses that are a VERDICT about the post for this reader: `404` (deleted, an expired reel,
+ * outside the reader's audience), `403` (hidden by moderation, or a feed closed to the account),
+ * `410`. A `401` is NOT one: it is about the session, which a renewal or a sign-in answers, and
+ * remembering it would draw every share unavailable to the same account once it signs back in.
+ */
+const VERDICT_STATUSES = new Set([403, 404, 410]);
 
 /** The ratio of the preview box for a media of `width` x `height`. */
 export function sharedPostAspect(
@@ -75,7 +90,9 @@ export function sharedPostReady(post: PostEntity): SharedPostReady {
     state: 'ready',
     postId: post.id,
     post,
-    authorName: post.anonymous ? m.post_anonymous_label() : postAuthorDisplayName(post),
+    // The post header's own resolver: the association, "Anonyme" for an anonymous post, or the
+    // author's name - never the author's id as a fallback.
+    authorName: postAuthorName(post),
     caption: truncateForMeta(markdownToPlainText(post.markdown ?? ''), SHARED_POST_CAPTION_MAX),
     media,
     mediaKind: kind,
@@ -89,22 +106,26 @@ const CACHE_MAX = 80;
 /**
  * Verdicts and ready previews, keyed by VIEWER and post id: a verdict is about what ONE reader may
  * see, so an account switch on the same install can never read the previous account's answer.
- * Insertion order is the eviction order.
+ * Insertion order is the eviction order; a mounted card holds its own copy, so an eviction only
+ * costs the NEXT mount a request. A `failed` read is never stored.
  */
-const cache = new Map<string, SharedPostPreview>();
+const cache = new Map<string, SharedPostReady | SharedPostUnavailable>();
 /** Reads in flight, so two bubbles of one post (or a remount) share ONE request. */
 const inFlight = new Map<string, Promise<SharedPostPreview>>();
 
-function keyOf(postId: string): string {
-  return `${currentUserId() ?? ''}:${postId}`;
+/** The cache key, or `null` with no signed-in viewer: an answer nobody owns is never kept. */
+function keyOf(postId: string): string | null {
+  const viewer = currentUserId();
+  return viewer ? `${viewer}:${postId}` : null;
 }
 
 /** The preview already read for `postId` by this viewer, or `null`: lets a remounted row paint at once. */
 export function cachedSharedPostPreview(postId: string): SharedPostPreview | null {
-  return cache.get(keyOf(postId)) ?? null;
+  const key = keyOf(postId);
+  return key ? (cache.get(key) ?? null) : null;
 }
 
-function remember(key: string, preview: SharedPostPreview): void {
+function remember(key: string, preview: SharedPostReady | SharedPostUnavailable): void {
   if (cache.size >= CACHE_MAX) {
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
@@ -119,36 +140,54 @@ export function clearSharedPostPreviews(): void {
 }
 
 /**
- * Reads the post under the CURRENT session. A refusal that is a verdict (401/403/404/410) is cached
- * as `unavailable`; any other failure (no network, a 5xx) is returned as `unavailable` too but NOT
- * cached, so the next mount asks again - a dead link must not turn a post into a tombstone for the
- * session. No batched post read exists on the server, so the one-request-per-visible-card rule is
- * kept by the card's own viewport gate and by this cache.
+ * Reads the post under the CURRENT session. A refusal that is a verdict (403/404/410) is cached as
+ * `unavailable` for the session, which is as long as that answer is true; any other failure (no
+ * network, a 5xx, a 401) is `failed` and NOT cached, so the next mount asks again - a dead link must
+ * not turn a post into a tombstone for the session. An id that is no UUID is `unavailable` with no
+ * request: the server refuses that shape (`ParseUUIDPipe`), and would on every mount. No batched
+ * post read exists on the server, so the one-request-per-visible-card rule is kept by the card's own
+ * viewport gate and by this cache.
  */
 export function fetchSharedPostPreview(postId: string): Promise<SharedPostPreview> {
+  if (!isUuidLike(postId)) {
+    Log.d('SHARED_POST', 'a post link whose id is no UUID: unavailable, nothing asked');
+    return Promise.resolve({ state: 'unavailable' });
+  }
   const key = keyOf(postId);
-  const cached = cache.get(key);
+  const cached = key ? cache.get(key) : undefined;
   if (cached) return Promise.resolve(cached);
-  const running = inFlight.get(key);
+  const flightKey = key ?? `:${postId}`;
+  const running = inFlight.get(flightKey);
   if (running) return running;
+  Log.d('SHARED_POST', `reading the shared post ${postId.slice(0, 8)}`);
   const work = (async (): Promise<SharedPostPreview> => {
     try {
       const preview = sharedPostReady(await getPost(postId));
-      remember(key, preview);
+      if (key) remember(key, preview);
       return preview;
     } catch (error) {
       const status = refusalStatus(error);
-      Log.d(
-        'SHARED_POST',
-        `post ${postId.slice(0, 8)} unavailable (${status ?? 'no answer'}): ${String(error)}`
-      );
-      const gone: SharedPostUnavailable = { state: 'unavailable' };
-      if (status !== null && VERDICT_STATUSES.has(status)) remember(key, gone);
-      return gone;
+      if (status !== null && VERDICT_STATUSES.has(status)) {
+        Log.d('SHARED_POST', `post ${postId.slice(0, 8)} refused to this reader (${status})`);
+        const gone: SharedPostUnavailable = { state: 'unavailable' };
+        if (key) remember(key, gone);
+        return gone;
+      }
+      // Not a verdict, so not remembered - and never silent: this line is all a lost preview leaves.
+      // A dead radio is expected and says so quietly; a 5xx, a 401 or a bug of ours accuses.
+      if (isTransportFailure(error)) {
+        Log.d('SHARED_POST', `post ${postId.slice(0, 8)} not read: no network answer`);
+      } else {
+        console.error(
+          `[SHARED_POST] post ${postId.slice(0, 8)} could not be read (${status ?? 'no status'})`,
+          error
+        );
+      }
+      return { state: 'failed' };
     } finally {
-      inFlight.delete(key);
+      inFlight.delete(flightKey);
     }
   })();
-  inFlight.set(key, work);
+  inFlight.set(flightKey, work);
   return work;
 }

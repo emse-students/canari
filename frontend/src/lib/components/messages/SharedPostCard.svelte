@@ -1,16 +1,17 @@
 <script lang="ts">
-  import { EyeOff } from '@lucide/svelte';
+  import { CloudOff, EyeOff } from '@lucide/svelte';
   import PostAuthorAvatar from '$lib/components/posts/PostAuthorAvatar.svelte';
+  import SharedReelViewer from '$lib/components/reels/SharedReelViewer.svelte';
   import VideoPlayDisc from '$lib/components/ui/player/VideoPlayDisc.svelte';
   import { nearViewport } from '$lib/actions/nearViewport';
   import { getToken } from '$lib/stores/auth';
-  import { currentUserId } from '$lib/stores/user';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
   import { inAppPathFromHref } from '$lib/utils/publicAppUrl';
   import { parseCanariLinkTarget } from '$lib/utils/canariLinkPreviewFormat';
   import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
   import type { MediaFailureCause } from '$lib/utils/mediaErrors';
   import { Log } from '$lib/utils/Log';
+  import type { PostEntity, PostMediaRef } from '$lib/posts/api';
   import {
     cachedSharedPostPreview,
     fetchSharedPostPreview,
@@ -30,7 +31,8 @@
    * The post is read with THIS reader's session once the card is within the viewport band
    * (`nearViewport`), so a long thread of shares fires one request per row that is actually near,
    * and `sharedPostPreview` caches the answer. A post the reader may not see - or one whose reel
-   * file has expired (`410`) - draws "Publication indisponible" and nothing of its content.
+   * file has expired (`410`) - draws "Publication indisponible" and nothing of its content; a read
+   * that got no answer draws a plain link to the post, never that verdict.
    * See `docs/wiki/frontend/sharing.md`, "The shared-post bubble".
    */
   interface Props {
@@ -42,13 +44,32 @@
 
   let { url, standalone = false }: Props = $props();
 
+  /**
+   * What a child's prop reads once `ready` has gone `null`: Svelte re-reads a child's props during
+   * its teardown, after the `{#if}` around it has stopped guarding (durable-rules, "AN `{#if}` IS A
+   * VISUAL GUARD"). Never drawn.
+   */
+  const NO_AUTHOR: Pick<PostEntity, 'association' | 'anonymous' | 'authorId'> = {
+    anonymous: true,
+  };
+  const NO_MEDIA: PostMediaRef = {
+    type: 'image',
+    mediaId: '',
+    key: '',
+    iv: '',
+    mimeType: '',
+    size: 0,
+  };
+
   const postId = $derived.by(() => {
     const target = parseCanariLinkTarget(url);
     return target?.kind === 'post' ? target.postId : null;
   });
   const href = $derived(inAppPathFromHref(url) ?? '#');
 
-  let preview = $state<SharedPostPreview | null>(null);
+  // Raw: the preview is a read-only answer from the cache, never mutated in place - a deep proxy
+  // of the whole post would be paid for on every card for nothing.
+  let preview = $state.raw<SharedPostPreview | null>(null);
   /** Whether the file behind the preview is gone (an expired reel): the card turns unavailable. */
   let mediaGone = $state(false);
   /** Whether the picture failed for another reason: the card drops the picture and keeps the text. */
@@ -64,6 +85,7 @@
     mediaGone = false;
     mediaFailed = false;
     if (!id) {
+      Log.d('SHARED_POST', 'a card whose link names no post: unavailable');
       preview = { state: 'unavailable' };
       return;
     }
@@ -84,6 +106,7 @@
   });
 
   const ready = $derived<SharedPostReady | null>(preview?.state === 'ready' ? preview : null);
+  const failed = $derived(preview?.state === 'failed');
   const unavailable = $derived(preview?.state === 'unavailable' || (ready !== null && mediaGone));
 
   // The picture is decrypted by the post's own media path (`PostMedia`, the client-side CEK),
@@ -94,12 +117,18 @@
     void Promise.all([getToken(), import('$lib/components/posts/PostMedia.svelte')])
       .then(([token, mod]) => {
         if (cancelled) return;
+        if (!token) {
+          // No session to decrypt with: the picture would never draw, so say so and drop it.
+          Log.d('SHARED_POST', 'no session token for the picture: the card keeps its text');
+          mediaFailed = true;
+          return;
+        }
         authToken = token;
         PostMedia = mod.default;
       })
       .catch((error: unknown) => {
-        Log.d('SHARED_POST', `the picture component did not load: ${String(error)}`);
-        mediaFailed = true;
+        console.error('[SHARED_POST] the picture component did not load', error);
+        if (!cancelled) mediaFailed = true;
       });
     return () => {
       cancelled = true;
@@ -124,42 +153,23 @@
       : undefined
   );
 
-  // The reels viewer, loaded on the tap like `LinkPreviewCard` does: most cards are no reel.
-  let ReelViewer = $state<typeof import('$lib/components/reels/ReelViewer.svelte').default | null>(
-    null
-  );
-  let viewerToken = $state('');
-  let openReel = $state<NonNullable<SharedPostReady['reelPost']> | null>(null);
-
-  async function openReelViewer(reel: NonNullable<SharedPostReady['reelPost']>) {
-    Log.d('SHARED_POST', `opening the shared reel ${reel.id.slice(0, 8)} in the viewer`);
-    try {
-      const [token, mod] = await Promise.all([
-        getToken(),
-        import('$lib/components/reels/ReelViewer.svelte'),
-      ]);
-      viewerToken = token;
-      ReelViewer = mod.default;
-      openReel = reel;
-    } catch (error) {
-      console.error('[SHARED_POST] the reels viewer did not open', error);
-    }
-  }
+  /** The reel open in the viewer (`SharedReelViewer`, shared with `LinkPreviewCard`), or `null`. */
+  let openReel = $state.raw<PostEntity | null>(null);
 
   async function handleClick(e: MouseEvent) {
     e.stopPropagation();
     e.preventDefault();
     if (ready?.reelPost) {
-      await openReelViewer(ready.reelPost);
+      openReel = ready.reelPost;
       return;
     }
+    Log.d('SHARED_POST', `opening the shared post's page (${preview?.state ?? 'not read yet'})`);
     await navigateInAppFromHref(url);
   }
 </script>
 
 {#if unavailable}
   <div
-    use:nearViewport={{ onnear: () => (isNear = true) }}
     class="bg-cn-surface text-text-muted flex w-64 max-w-full items-center gap-3 rounded-2xl border border-black/5 p-3 dark:border-white/10 {standalone
       ? ''
       : 'mt-3'}"
@@ -178,8 +188,8 @@
     onclick={handleClick}
     {href}
     aria-label={openLabel}
-    aria-busy={ready ? undefined : 'true'}
-    data-shared-post={ready ? (ready.isReel ? 'reel' : 'post') : 'loading'}
+    aria-busy={ready || failed ? undefined : 'true'}
+    data-shared-post={ready ? (ready.isReel ? 'reel' : 'post') : failed ? 'failed' : 'loading'}
     class="bg-cn-surface flex max-w-full flex-col overflow-hidden rounded-2xl border border-black/5 dark:border-white/10 {ready?.isReel
       ? 'w-56'
       : 'w-64'} {standalone ? '' : 'mt-3'}"
@@ -187,7 +197,7 @@
     <div class="flex items-center gap-2 px-3 py-2">
       {#if ready}
         <span class="h-7 w-7 shrink-0 overflow-hidden rounded-full">
-          <PostAuthorAvatar post={ready.post} fill />
+          <PostAuthorAvatar post={ready?.post ?? NO_AUTHOR} fill />
         </span>
         <span class="text-text-main min-w-0 flex-1 truncate text-sm font-semibold"
           >{ready.authorName}</span
@@ -198,6 +208,17 @@
             >{m.shared_post_reel_chip()}</span
           >
         {/if}
+      {:else if failed}
+        <CloudOff
+          size={22}
+          strokeWidth={2}
+          class="text-text-muted shrink-0 opacity-60"
+          aria-hidden="true"
+        />
+        <div class="min-w-0">
+          <p class="text-text-main text-sm font-semibold">{m.link_label_post()}</p>
+          <p class="text-text-muted text-xs leading-snug">{m.shared_post_failed_hint()}</p>
+        </div>
       {:else}
         <div class="h-7 w-7 shrink-0 animate-pulse rounded-full bg-black/10 dark:bg-white/10"></div>
         <div
@@ -221,7 +242,11 @@
               <!-- Inert: the whole card is the one link, so the picture's own lightbox button must
                    neither take focus nor a tap. -->
               <div class="absolute inset-0" inert>
-                <PostMedia media={ready.media} {authToken} onFailure={onMediaFailure} />
+                <PostMedia
+                  media={ready?.media ?? NO_MEDIA}
+                  {authToken}
+                  onFailure={onMediaFailure}
+                />
               </div>
             {/if}
           {:else}
@@ -246,7 +271,7 @@
       {:else if !showsMedia}
         <p class="text-text-muted px-3 py-2 text-sm italic">{m.shared_post_no_text()}</p>
       {/if}
-    {:else}
+    {:else if !failed}
       <div class="aspect-square w-full animate-pulse bg-black/6 dark:bg-white/8"></div>
       <div class="px-3 py-2">
         <div class="h-3 w-4/5 animate-pulse rounded bg-black/6 dark:bg-white/8"></div>
@@ -255,11 +280,4 @@
   </a>
 {/if}
 
-{#if ReelViewer && openReel}
-  <ReelViewer
-    startPost={openReel}
-    authToken={viewerToken}
-    likerId={currentUserId() ?? undefined}
-    onClose={() => (openReel = null)}
-  />
-{/if}
+<SharedReelViewer reel={openReel} logTag="SHARED_POST" onClose={() => (openReel = null)} />
