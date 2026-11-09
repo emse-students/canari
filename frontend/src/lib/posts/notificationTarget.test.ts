@@ -81,9 +81,14 @@ describe('notificationHref', () => {
     }
   });
 
+  it("opens the post of a friend's activity (engagement WP-9)", () => {
+    expect(notificationHref({ type: 'friend_reaction', postId: 'p1' })).toBe('/posts/p1');
+    expect(notificationHref({ type: 'friend_comment', postId: 'p1' })).toBe('/posts/p1');
+  });
+
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(45);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(47);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];

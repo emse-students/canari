@@ -53,6 +53,9 @@ export const BELL_PUSH_KINDS: ReadonlyMap<string, 'post' | 'live'> = new Map([
   ['member_repost', 'post'],
   ['live_started', 'live'],
   ['birthday', 'post'],
+  // Engagement WP-9: an account's activity is what the account does, so its reduced bell reduces it.
+  ['friend_reaction', 'post'],
+  ['friend_comment', 'post'],
 ]);
 
 /** The account a push is about, as a bell names it, and what the push is to that bell. */

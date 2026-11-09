@@ -597,6 +597,12 @@ export class RepostAccountConsentDto {
   allowReposts: boolean;
 }
 
+/** "Share my activity" (engagement decision 9): the person's reactions and comments told to their followers. */
+export class ActivitySettingsDto {
+  @IsBoolean()
+  shareActivity: boolean;
+}
+
 /** One post's override of that consent (WP-F6): `null` follows the account setting again. */
 export class RepostPostConsentDto {
   @ValidateIf((_o, v) => v !== null)

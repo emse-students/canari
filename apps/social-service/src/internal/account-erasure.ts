@@ -79,6 +79,8 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'follow_suggestion_dismissals.userId': { action: 'delete' },
   'follow_suggestion_dismissals.targetId': { action: 'delete' },
   'engagement_push_days.userId': { action: 'delete' },
+  'user_activity_settings.userId': { action: 'delete' },
+  'post_engagement_notices.recipientId': { action: 'delete' },
   // The member's birthday and visibility (migration 148), and when they last set a date.
   'profile_birthdays.userId': { action: 'delete' },
   'birthday_changes.userId': { action: 'delete' },
@@ -569,6 +571,17 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'engagement_push_days',
     sql: `DELETE FROM engagement_push_days WHERE "userId" = $1`,
+  },
+  // Friends' activity (engagement WP-9): the person's "share my activity" choice, and every ledger
+  // row telling them of a post. A row of another reader about the erased person's post goes with
+  // the post (ON DELETE CASCADE); the ledger never names the actor.
+  {
+    label: 'user_activity_settings',
+    sql: `DELETE FROM user_activity_settings WHERE "userId" = $1`,
+  },
+  {
+    label: 'post_engagement_notices',
+    sql: `DELETE FROM post_engagement_notices WHERE "recipientId" = $1`,
   },
   // The birthday (migration 148): the date, its visibility, the day it was last announced, and
   // when a date was last set. The followers' notices name the member as their actor and go with

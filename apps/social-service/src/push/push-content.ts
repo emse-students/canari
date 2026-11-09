@@ -30,6 +30,8 @@ export type PushContentKey =
   | 'social_followed_post'
   | 'social_association_repost'
   | 'social_member_repost'
+  | 'social_friend_reaction'
+  | 'social_friend_comment'
   | 'social_repost_proposed'
   | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
@@ -669,6 +671,45 @@ export function memberRepostContent(
     arg: preview,
     legacyTitle: `${reposterName} a republié une publication`,
     legacyBody: preview || 'Nouvelle publication',
+  };
+}
+
+/**
+ * An account the recipient follows reacted to a post the recipient can see (engagement WP-9,
+ * friends' activity, docs/wiki/engagement.md). `actorName` is the person who reacted; `arg` is the
+ * opening of the POST's own text - never the reaction, never anything of the reader's.
+ */
+export function friendReactionContent(
+  actorName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
+  return {
+    key: 'social_friend_reaction',
+    icon,
+    actorName,
+    arg: preview,
+    legacyTitle: `${actorName} a réagi à une publication`,
+    legacyBody: preview || 'Voir la publication',
+  };
+}
+
+/**
+ * An account the recipient follows commented on a post the recipient can see (engagement WP-9).
+ * `actorName` is the writer; `arg` is the opening of the POST's text, never the comment's.
+ */
+export function friendCommentContent(
+  actorName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
+  return {
+    key: 'social_friend_comment',
+    icon,
+    actorName,
+    arg: preview,
+    legacyTitle: `${actorName} a commenté une publication`,
+    legacyBody: preview || 'Voir la publication',
   };
 }
 

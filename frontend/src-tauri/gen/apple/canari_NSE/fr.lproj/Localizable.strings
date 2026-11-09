@@ -31,6 +31,10 @@
 "notif.social.association_repost.body" = "Nouvelle publication";
 "notif.social.member_repost.title" = "%@ a republié une publication";
 "notif.social.member_repost.body" = "Nouvelle publication";
+"notif.social.friend_reaction.title" = "%@ a réagi à une publication";
+"notif.social.friend_reaction.body" = "Voir la publication";
+"notif.social.friend_comment.title" = "%@ a commenté une publication";
+"notif.social.friend_comment.body" = "Voir la publication";
 "notif.social.repost_proposed.title" = "%@ propose de relayer une publication";
 "notif.social.repost_proposed.body" = "Publication à relayer";
 "notif.social.repost_personal_requested.title" = "%@ demande à relayer votre publication";

@@ -5757,6 +5757,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_member_repost_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_member_repost_body) }
             )
+            "social_friend_reaction" -> Pair(
+                res.getString(R.string.notif_social_friend_reaction_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_friend_reaction_body) }
+            )
+            "social_friend_comment" -> Pair(
+                res.getString(R.string.notif_social_friend_comment_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_friend_comment_body) }
+            )
             "social_repost_proposed" -> Pair(
                 res.getString(R.string.notif_social_repost_proposed_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_repost_proposed_body) }

@@ -35,7 +35,11 @@ describe('ENGAGEMENT_PUSH_TYPES', () => {
   );
 
   it('caps ONLY the new kinds (decision 11), at 5 a day', () => {
-    expect([...ENGAGEMENT_PUSH_TYPES.keys()].sort()).toEqual(['campus_trend', 'friend_activity']);
+    expect([...ENGAGEMENT_PUSH_TYPES.keys()].sort()).toEqual([
+      'campus_trend',
+      'friend_comment',
+      'friend_reaction',
+    ]);
     expect(ENGAGEMENT_DAILY_PUSH_CAP).toBe(5);
   });
 });

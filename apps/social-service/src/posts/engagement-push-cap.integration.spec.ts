@@ -15,12 +15,12 @@ import { Logger } from '@nestjs/common';
 import { Client, Pool } from 'pg';
 import {
   ENGAGEMENT_DAILY_PUSH_CAP,
+  FRIEND_REACTION_NOTIFICATION,
   claimEngagementPushes,
   pruneEngagementPushDays,
 } from './engagement-push-cap';
 import { PostNotificationsService } from './post-notifications.service';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
-import type { PushContent } from '../push/push-content';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -148,19 +148,6 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       );
     }
 
-    /** The capped kinds are written by WP-9 and WP-10: a content stands in for theirs. */
-    function withCappedContent(svc: PostNotificationsService): PostNotificationsService {
-      const original = (svc as unknown as { pushContent: (...a: unknown[]) => unknown })
-        .pushContent;
-      jest
-        .spyOn(svc as never, 'pushContent' as never)
-        .mockImplementation(((type: string, ...rest: unknown[]) =>
-          type === 'friend_activity'
-            ? ({ contentKey: 'social_friend_activity', arg: 'x' } as unknown as PushContent)
-            : original.call(svc, type, ...rest)) as never);
-      return svc;
-    }
-
     const notice = (type: string, recipientIds: string[]) => ({
       recipientIds,
       type,
@@ -177,9 +164,9 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     });
 
     it('the 6th capped push of a day reaches the bell only, not the phone', async () => {
-      const svc = withCappedContent(service());
+      const svc = service();
       for (let i = 0; i < 6; i++) {
-        await svc.pushNotice(notice('friend_activity', ['r']));
+        await svc.pushNotice(notice(FRIEND_REACTION_NOTIFICATION, ['r']));
       }
       await settle();
       expect(pushed).toEqual(['r', 'r', 'r', 'r', 'r']);
@@ -187,8 +174,8 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     });
 
     it('an association post, a live, an opening and a mention on the same day are never counted', async () => {
-      const svc = withCappedContent(service());
-      for (let i = 0; i < 5; i++) await svc.pushNotice(notice('friend_activity', ['r']));
+      const svc = service();
+      for (let i = 0; i < 5; i++) await svc.pushNotice(notice(FRIEND_REACTION_NOTIFICATION, ['r']));
       for (const type of ['association_post', 'live_started', 'booking_open', 'event_open']) {
         await svc.pushNotice(notice(type, ['r']));
       }
@@ -209,11 +196,13 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     });
 
     it('a failed claim pushes nobody and reaches the caller', async () => {
-      const svc = withCappedContent(service());
+      const svc = service();
       jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
       const broken = { query: () => Promise.reject(new Error('db down')) };
       (svc as unknown as { notifRepo: { manager: unknown } }).notifRepo.manager = broken;
-      await expect(svc.pushNotice(notice('friend_activity', ['r']))).rejects.toThrow('db down');
+      await expect(svc.pushNotice(notice(FRIEND_REACTION_NOTIFICATION, ['r']))).rejects.toThrow(
+        'db down'
+      );
       await settle();
       expect(pushed).toEqual([]);
     });

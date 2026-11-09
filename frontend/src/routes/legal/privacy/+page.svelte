@@ -262,6 +262,28 @@
         </dd>
       </div>
       <div>
+        <dt>Suggestions et activité de vos abonnements</dt>
+        <dd>
+          Des personnes et des associations à suivre vous sont proposées à partir de ce que le
+          service sait déjà (les personnes suivies par celles que vous suivez, vos associations,
+          votre campus, votre formation et votre promotion) ; une suggestion que vous écartez ne
+          revient plus, et ce choix est conservé jusqu'à l'effacement de votre compte. Des
+          publications populaires de votre espace, que vous voyez déjà, peuvent apparaître dans «
+          Mon espace » marquées « Suggestion ». Quand une personne que vous suivez réagit à une
+          publication ou la commente, vous en êtes prévenu une seule fois par publication, et
+          seulement si vous voyez déjà cette publication, sans blocage entre vous, ni avec son
+          auteur ; jamais pour un commentaire anonyme, écrit au nom d'une association ou retiré par
+          la modération, ni pour un commentaire sur une publication anonyme. Vos réactions et
+          commentaires sont annoncés de la même façon à vos abonnés acceptés, sauf si vous
+          désactivez « Partager mon activité » dans les réglages (activé par défaut) : cela arrête
+          les annonces à venir, sans retirer celles déjà envoyées. Ces annonces ne vous envoient pas
+          plus de cinq notifications par jour ; les autres restent dans vos notifications. Sont
+          conservés : votre réglage, le fait qu'un lecteur a déjà été prévenu d'une publication
+          (jusqu'à l'effacement de la publication ou de son compte) et le nombre de ces
+          notifications reçues chaque jour (sept jours).
+        </dd>
+      </div>
+      <div>
         <dt>Lecteurs nommés (accès en lecture accordé à une personne)</dt>
         <dd>
           Un administrateur de la plateforme peut accorder à une personne nommée, par exemple un

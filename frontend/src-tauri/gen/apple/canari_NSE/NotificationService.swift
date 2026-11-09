@@ -243,6 +243,8 @@ class NotificationService: UNNotificationServiceExtension {
     case "social_association_repost": composed = actorTitled("association_repost")
     // WP-F6: the person who reposted names the title.
     case "social_member_repost": composed = actorTitled("member_repost")
+    case "social_friend_reaction": composed = actorTitled("friend_reaction")
+    case "social_friend_comment": composed = actorTitled("friend_comment")
     case "social_repost_proposed": composed = actorTitled("repost_proposed")
     // D38b: an association asks the AUTHOR to republish their personal post.
     case "social_repost_personal_requested": composed = actorTitled("repost_personal_requested")
