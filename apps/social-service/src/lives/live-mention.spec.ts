@@ -55,17 +55,22 @@ describe('the mentions a live chat line declares (owner, 2026-11-09)', () => {
 });
 
 describe('the audience of a mention', () => {
-  it('reads the plain visibility rule, the removals and the blocks, with a window only when asked', () => {
-    const withWindow = liveMentionRecipientsSql();
-    const without = liveMentionRecipientsSql(false);
-    for (const sql of [withWindow, without]) {
-      expect(sql).toContain('live_removed_viewers');
-      expect(sql).toContain('user_blocks');
-      expect(sql).toContain('m_live."broadcasterId"');
+  it('sends under the whole rule and the window, and suggests from the audience and the author alone', () => {
+    const send = liveMentionRecipientsSql('send');
+    const suggest = liveMentionRecipientsSql('suggest');
+    expect(liveMentionRecipientsSql()).toBe(send);
+    for (const sql of [send, suggest]) {
+      expect(sql).toContain('b."blockerId" = $1');
+      expect(sql).toContain('JOIN lives m_live');
     }
-    expect(withWindow).toContain('"mentionedUserIds"');
-    expect(withWindow).toContain('$4');
-    expect(without).not.toContain('"mentionedUserIds"');
-    expect(without).not.toContain('$4');
+    expect(send).toContain('live_removed_viewers');
+    expect(send).toContain('b2."blockerId" = m_live."broadcasterId"');
+    expect(send).toContain('"mentionedUserIds"');
+    expect(send).toContain('$4');
+    // The suggestion is an oracle for ids the caller picks: no third party's removal or block.
+    expect(suggest).not.toContain('live_removed_viewers');
+    expect(suggest).not.toContain('b2.');
+    expect(suggest).not.toContain('"mentionedUserIds"');
+    expect(suggest).not.toContain('$4');
   });
 });

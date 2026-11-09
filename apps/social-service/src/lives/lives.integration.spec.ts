@@ -2631,15 +2631,30 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         expect(mentionNotices()).toHaveLength(2);
       });
 
-      it('answers which of the candidates a picker may suggest: the audience, no block, no removed', async () => {
+      it('answers which of the candidates a picker may suggest: the audience, no block with the author', async () => {
         const live = await start();
-        await lives.removeViewer(ALICE, live.id, DAVE);
         await q('INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)', [EVE, BOB]);
-        const ids = await chat.mentionAudience(BOB, live.id, [CAROL, DAVE, EVE, FRANK, BOB]);
+        const ids = await chat.mentionAudience(BOB, live.id, [CAROL, EVE, FRANK, BOB]);
         expect(ids).toEqual([CAROL]);
         // It is the same rule with no window: a person just mentioned is still suggested.
         await sayTo(BOB, live.id, [CAROL]);
         expect(await chat.mentionAudience(BOB, live.id, [CAROL])).toEqual([CAROL]);
+      });
+
+      it('the suggestion says nothing about a third party: a removal, a block with the broadcaster', async () => {
+        const live = await start();
+        // DAVE removed by the broadcaster, CAROL and the broadcaster blocked: facts between OTHER
+        // people, which an answer for ids the caller chose would hand any viewer (review of #3233).
+        await lives.removeViewer(ALICE, live.id, DAVE);
+        await q('INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)', [
+          CAROL,
+          ALICE,
+        ]);
+        const ids = await chat.mentionAudience(BOB, live.id, [CAROL, DAVE]);
+        expect([...ids].sort((a, b) => a.localeCompare(b))).toEqual([CAROL, DAVE]);
+        // And a line still tells neither of them.
+        await sayTo(BOB, live.id, [CAROL, DAVE]);
+        expect(mentionNotices()).toEqual([]);
       });
 
       it('refuses a malformed list of mentions, and stores nothing for it', async () => {

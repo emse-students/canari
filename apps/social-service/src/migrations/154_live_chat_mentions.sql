@@ -10,5 +10,7 @@
 -- Additive: one column with a default, no index (the window is read inside one live's rows by author,
 -- already served by live_chat_messages_author_idx). Idempotent for CD.
 
+SET lock_timeout = '5s';
+
 ALTER TABLE live_chat_messages
   ADD COLUMN IF NOT EXISTS "mentionedUserIds" text[] NOT NULL DEFAULT '{}';

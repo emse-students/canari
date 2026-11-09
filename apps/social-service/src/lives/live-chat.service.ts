@@ -302,7 +302,7 @@ export class LiveChatService {
       // the live's lock, to people who may see this live (not removed, no block either way, not told
       // by this author in the last minute). The line is stored with exactly who it addresses.
       if (candidates.length > 0) {
-        const kept: { id: string }[] = await tx.query(liveMentionRecipientsSql(), [
+        const kept: { id: string }[] = await tx.query(liveMentionRecipientsSql('send'), [
           authorId,
           liveId,
           candidates,
@@ -329,13 +329,15 @@ export class LiveChatService {
 
   /**
    * Which of the candidate accounts the composer may SUGGEST for an `@` in this live's chat: the
-   * ones a mention would reach (`liveMentionRecipientsSql` without its window), so a suggestion is
-   * never someone who cannot see the live. Read-only; the caller has already let the author chat.
+   * live's audience with no block either way with the author (`liveMentionRecipientsSql('suggest')`),
+   * so a suggestion is never someone who cannot see the live. It asks nothing about third parties (a
+   * removal, a block with the broadcaster): its answer is an oracle for ids the caller picks.
+   * Read-only; the caller has already let the author chat.
    */
   async mentionAudience(authorId: string, liveId: string, raw: unknown): Promise<string[]> {
     const candidates = parseChatMentions(raw, authorId, LIVE_CHAT_MENTIONS_DECLARED_MAX);
     if (candidates.length === 0) return [];
-    const rows: { id: string }[] = await this.db.query(liveMentionRecipientsSql(false), [
+    const rows: { id: string }[] = await this.db.query(liveMentionRecipientsSql('suggest'), [
       authorId,
       liveId,
       candidates,

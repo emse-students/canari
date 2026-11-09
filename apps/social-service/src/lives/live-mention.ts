@@ -37,28 +37,46 @@ export function parseChatMentions(
 }
 
 /**
+ * Which recipient question {@link liveMentionRecipientsSql} answers: `send`, who a line TELLS (the
+ * whole rule, under the live's lock, with the per-person window), or `suggest`, who the `@` picker
+ * may OFFER (the live's audience and the author's own blocks only).
+ */
+export type LiveMentionQuestion = 'send' | 'suggest';
+
+/**
  * WHO OF THE CANDIDATES MAY BE MENTIONED in a live's chat: the ones who can SEE the live - the plain
  * predicate of a post by the same broadcaster (`liveVisibleToUserSql`, the audience of the
- * announcement, so a named reader through a read grant is not in it) - and who are neither removed
- * from the live, nor blocked either way with the author, nor with the broadcaster (the broadcaster
- * themselves may be mentioned).
+ * announcement, so a named reader through a read grant is not in it) - and who have no block either
+ * way with the author.
  *
- * With `withWindow`, a person this author already mentioned on this live inside the window is left
- * out too: one notice, not one per line. Without it the same rule says who the composer may SUGGEST
- * (`LiveChatService.mentionAudience`) - ONE predicate for both, so a suggestion is never someone a
- * mention would then skip for want of audience.
+ * `send` (the fan-out) ALSO leaves out whoever is removed from the live, blocked either way with the
+ * broadcaster (the broadcaster themselves may be mentioned), or already told by this author on this
+ * live inside the window: one notice, not one per line.
  *
- * Parameters: `$1` the author, `$2` the live, `$3` the candidate ids (text[]), and with `withWindow`
- * `$4` the window in ms.
+ * `suggest` (`LiveChatService.mentionAudience`) asks NOTHING about third parties. Its answer goes back
+ * to the caller for ids the caller chose, so every clause it carries is a question anyone who may
+ * chat can ask of anyone: a removal, or a block between a stranger and the broadcaster, would be read
+ * off it twenty ids at a time (review of #3233). The audience is what the picker exists to narrow,
+ * and the author's own blocks are already hidden by the name search it narrows. A person the picker
+ * offers and `send` then skips is told nothing, which says nothing either.
+ *
+ * Parameters: `$1` the author, `$2` the live, `$3` the candidate ids (text[]), and for `send` `$4` the
+ * window in ms.
  */
-export function liveMentionRecipientsSql(withWindow = true): string {
-  const window = withWindow
-    ? `
+export function liveMentionRecipientsSql(question: LiveMentionQuestion = 'send'): string {
+  const sendOnly =
+    question === 'send'
+      ? `
+      AND (cand.id = m_live."broadcasterId" OR NOT EXISTS (SELECT 1 FROM user_blocks b2
+                       WHERE (b2."blockerId" = m_live."broadcasterId" AND b2."blockedId" = cand.id)
+                          OR (b2."blockerId" = cand.id AND b2."blockedId" = m_live."broadcasterId")))
+      AND NOT EXISTS (SELECT 1 FROM live_removed_viewers r
+                       WHERE r."liveId" = $2 AND r."viewerId" = cand.id)
       AND NOT EXISTS (SELECT 1 FROM live_chat_messages prior
                        WHERE prior."liveId" = $2 AND prior."authorId" = $1
                          AND prior."mentionedUserIds" @> ARRAY[cand.id]
                          AND prior."createdAt" + $4 * interval '1 millisecond' > now())`
-    : '';
+      : '';
   return `SELECT DISTINCT cand.id FROM unnest($3::text[]) AS cand(id)
     JOIN users cand_user ON cand_user.id = cand.id
     JOIN lives m_live ON m_live.id = $2
@@ -66,10 +84,5 @@ export function liveMentionRecipientsSql(withWindow = true): string {
       AND ${liveVisibleToUserSql('m_live', 'cand_user')}
       AND NOT EXISTS (SELECT 1 FROM user_blocks b
                        WHERE (b."blockerId" = $1 AND b."blockedId" = cand.id)
-                          OR (b."blockerId" = cand.id AND b."blockedId" = $1))
-      AND (cand.id = m_live."broadcasterId" OR NOT EXISTS (SELECT 1 FROM user_blocks b2
-                       WHERE (b2."blockerId" = m_live."broadcasterId" AND b2."blockedId" = cand.id)
-                          OR (b2."blockerId" = cand.id AND b2."blockedId" = m_live."broadcasterId")))
-      AND NOT EXISTS (SELECT 1 FROM live_removed_viewers r
-                       WHERE r."liveId" = $2 AND r."viewerId" = cand.id)${window}`;
+                          OR (b."blockerId" = cand.id AND b."blockedId" = $1))${sendOnly}`;
 }
