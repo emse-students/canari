@@ -598,6 +598,39 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
         expect(await rows()).toEqual([`form:${ASKER}:asked:true/false`]);
       });
 
+      it('(9) an old image never claims a heads-up after the new image told the opening', async () => {
+        // The old row still says "opens in three minutes"; the organiser moved the opening to now.
+        await q(
+          `INSERT INTO form_reminders ("formId", "userId", "opensAt") VALUES ($1, $2, now() + interval '3 minutes')`,
+          [FORM, ASKER]
+        );
+        await followOpeningMove(ds.manager, 'form', FORM, null);
+        await openNow();
+        await scheduler.checkReminders();
+        expect(pushes()).toEqual([`${ASKER}:form_open`]);
+        const late = await q(
+          `UPDATE form_reminders SET "notified5min" = true WHERE "userId" = $1 AND NOT "notified5min"`,
+          [ASKER]
+        );
+        expect(late.rowCount).toBe(0);
+      });
+
+      it('(10) a draft form owes no heads-up yet, and is told once when it goes live within the window', async () => {
+        await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(3));
+        await q(`UPDATE forms SET status = 'draft' WHERE id = $1`, [FORM]);
+        try {
+          await scheduler.checkReminders();
+          expect(pushes()).toEqual([]);
+          expect(await rows()).toEqual([`form:${ASKER}:asked:false/false`]);
+          await q(`UPDATE forms SET status = 'published' WHERE id = $1`, [FORM]);
+          await scheduler.checkReminders();
+          await scheduler.checkReminders();
+          expect(pushes()).toEqual([`${ASKER}:form_opening_soon`]);
+        } finally {
+          await q(`UPDATE forms SET status = 'published' WHERE id = $1`, [FORM]);
+        }
+      });
+
       it('(8) the purge says how many told and never-told rows it removed', async () => {
         await q(
           `INSERT INTO opening_reminders (kind, "targetId", "userId", "opensAt", origin, "notifiedOnOpen")

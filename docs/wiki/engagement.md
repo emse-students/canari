@@ -306,7 +306,13 @@ L24-L29 above. Never capped (decision 11).
   the database's clock (it was flaky, about 5 runs in 27: the rows open at the database's `now()`
   in microseconds, the tick compares a JS `Date` in milliseconds) - the spec then ran 30 times in a
   row with no failure; and in `bookings.service.integration.spec.ts`, a listed space whose audience
-  is cleared tells its followers, once. The existing form specs run against the new store (`forms.service.*.spec.ts`,
+  is cleared tells its followers, once. **After the third review:** 152's heads-up mirror also
+  requires the new row's opening to be still to come and not yet told (`NOT "notifiedOnOpen" AND
+  "opensAt" >= now()`): test (9) - the organiser moved the opening to now, the new image told "it's
+  open", and the old image's heads-up claim on its row still at T+3 then affects 0 rows (it
+  matched before, so "opens in 5 minutes" would have followed "it's open"); and test (10) - a form
+  back in DRAFT with a due heads-up is neither claimed nor told, then told once when published
+  within the window (it fails with the draft clause of `DUE_HEADS_UP_SQL` removed). The existing form specs run against the new store (`forms.service.*.spec.ts`,
   the five forms integration specs, which now build `opening_reminders`). Unit:
   `push-content.spec.ts` (the two keys against `strings.xml`), `push-category.spec.ts`. Client:
   `NotificationRow.svelte.test.ts`, `notificationTarget.test.ts`, `nativeStrings.test.ts`.

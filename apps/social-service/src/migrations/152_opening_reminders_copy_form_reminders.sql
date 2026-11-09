@@ -17,8 +17,9 @@
 --    - its unsubscribe and its purge (a DELETE) remove the same row;
 --    - its scheduler's CLAIM (a flag going false -> true) is made on `opening_reminders` FIRST, in
 --      the same statement: the old row is stamped only when the new row's flag was still unset AND
---      the NEW row is due for it (its opening passed, or within five minutes for the heads-up) -
---      the new code may have moved the opening ahead, which the old row does not know.
+--      the NEW row is due for it (its opening passed; for the heads-up, its opening still to come
+--      within five minutes AND not already told) - the new code may have moved the opening, ahead
+--      or to now, which the old row does not know: a heads-up after "it's open" is never sent.
 --      Otherwise the trigger cancels the old row's update (RETURN NULL), the old image reads
 --      `affected = 0` and pushes nothing. The new image claims the new row only. So an opening
 --      due while both images run is pushed by exactly one of them - never two, never none.
@@ -68,7 +69,8 @@ BEGIN
          SET "notified5min" = "notified5min" OR claims_heads_up,
              "notifiedOnOpen" = "notifiedOnOpen" OR claims_opening
        WHERE kind = 'form' AND "targetId" = NEW."formId" AND "userId" = NEW."userId"
-         AND (NOT claims_heads_up OR (NOT "notified5min" AND "opensAt" <= now() + interval '5 minutes'))
+         AND (NOT claims_heads_up OR (NOT "notified5min" AND NOT "notifiedOnOpen"
+              AND "opensAt" >= now() AND "opensAt" <= now() + interval '5 minutes'))
          AND (NOT claims_opening OR (NOT "notifiedOnOpen" AND "opensAt" <= now()));
       IF NOT FOUND THEN
         RETURN NULL;
