@@ -182,8 +182,8 @@ refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own
   during the search pause never mixes the old cursor with the new query. A cursor the server did not
   write is the typed `ADMIN_ASSOCIATION_BAD_CURSOR`, never a 500: a malformed shape, an id that is not
   a UUID, and a NUL are all refused this way. Each row carries its audience rules, which
-  replaced the whole-table `GET /api/associations/spaces/audiences` read (kept for old builds,
-  [legacy-compatibility](../../legacy-compatibility.md)).
+  replaced the whole-table `GET /api/associations/spaces/audiences` read (kept for old builds until
+  floor `1.6.6` retired it, [legacy-compatibility](../../legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08)).
   Measured 2026-11-02, read-only: production holds 97 entities (49 associations, 44 lists, 4
   institutions; 49 of them already have no member), dev holds 10. The paging is there so that the
   count does not matter.

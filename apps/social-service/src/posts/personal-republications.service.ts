@@ -411,10 +411,10 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
    * which rolls the acceptance back: nothing is decided, and the client re-reads the warning and
    * asks again. A carrier that is not an institution shows no warning, so nothing is compared.
    *
-   * A build older than #2965 never drew the warning and carries no fingerprint, so its acceptance is
-   * refused here on purpose - never accepted without one - until the floor passes the first stable
-   * carrying it (docs/wiki/legacy-compatibility.md, "an institution's republication request accepted
-   * by a build that never showed its audience").
+   * A build older than #2965 never drew the warning and carries no fingerprint, so its acceptance was
+   * refused here on purpose - never accepted without one. Floor `1.6.6` admits no such build any
+   * more; a fingerprint-less acceptance is now a caller that is not the app
+   * (docs/wiki/legacy-compatibility.md, "Entries `1.6.6` retires or unblocks").
    *
    * What it does NOT promise: after acceptance, who sees the post follows the carrier's LIVE
    * audience and membership, and the author's remedy is to withdraw the republication.
