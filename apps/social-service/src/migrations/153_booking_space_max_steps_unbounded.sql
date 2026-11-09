@@ -12,7 +12,10 @@
 --
 -- ROLLBACK: an image older than this migration reads a NULL maxSteps as one step; the previous
 -- CHECK would refuse a space saved with no maximum, so re-adding it needs those rows set first.
--- Idempotent for CD: re-created only while the stored definition is still the strict one.
+-- Idempotent for CD: the CHECK is re-created only while its stored text (PostgreSQL prints the new
+-- step branch as `(("maxSteps" IS NULL) OR ("maxSteps" >= 1))`) lacks that form. The guard names the
+-- whole step-branch text because the 'slots' branch has its own `"maxSteps" IS NULL`. Verified on
+-- postgres:16: the first run changes the constraint oid, a second run leaves it unchanged.
 
 SET lock_timeout = '5s';
 
@@ -23,7 +26,7 @@ DECLARE
 BEGIN
   SELECT pg_get_constraintdef(oid) INTO def
     FROM pg_constraint WHERE conname = 'booking_spaces_step_shape' AND connamespace = ns;
-  IF def IS NULL OR def LIKE '%"maxSteps" IS NULL OR%' THEN
+  IF def IS NULL OR def LIKE '%(("maxSteps" IS NULL) OR ("maxSteps" >= 1))%' THEN
     RETURN;
   END IF;
   ALTER TABLE booking_spaces DROP CONSTRAINT booking_spaces_step_shape;
