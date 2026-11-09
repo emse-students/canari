@@ -57,6 +57,7 @@
   import { Log } from '$lib/utils/Log';
   import { holdPlayback } from '$lib/actions/playWhileVisible';
   import { claimTouchMove } from '$lib/utils/touchClaim';
+  import { provideViewerChrome } from '$lib/utils/videoViewerChrome.svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import FullScreenViewer from './FullScreenViewer.svelte';
@@ -163,6 +164,12 @@
   // ---- The frame ----
   /** The bars are faded out: a single tap toggles them (the immersive black view). */
   let chromeHidden = $state(false);
+  /**
+   * What a playing video says about the bars (`videoViewerChrome`): its controls fade on their own
+   * clock, and the header, the side arrows and the footer go with them.
+   */
+  const videoChrome = provideViewerChrome();
+  const barsHidden = $derived(chromeHidden || videoChrome.videoControlsHidden);
   let infoOpen = $state(false);
 
   // ---- Swipes: where the picture sits while a finger drags it, and the snap after ----
@@ -730,7 +737,8 @@
     onEscape={handleEscape}
     lockTouch
     immersive
-    chromeHidden={chromeHidden || progress > 0}
+    chromeHidden={barsHidden || progress > 0}
+    onChromeReach={() => videoChrome.raise()}
     backdropOpacity={1 - progress}
   >
     {#snippet headerLead()}
@@ -793,7 +801,7 @@
           <!-- Pointer devices only: a touch screen swipes. -->
           <button
             type="button"
-            class="ui-icon-button pointer-events-auto absolute left-3 z-20 rounded-full bg-black/40 transition-[opacity,background-color] duration-200 hover:bg-black/60 pointer-coarse:hidden {chromeHidden
+            class="ui-icon-button pointer-events-auto absolute left-3 z-20 rounded-full bg-black/40 transition-[opacity,background-color] duration-200 hover:bg-black/60 pointer-coarse:hidden {barsHidden
               ? 'opacity-0'
               : ''}"
             onclick={(e) => {
@@ -842,7 +850,7 @@
         {#if canNext}
           <button
             type="button"
-            class="ui-icon-button pointer-events-auto absolute right-3 z-20 rounded-full bg-black/40 transition-[opacity,background-color] duration-200 hover:bg-black/60 pointer-coarse:hidden {chromeHidden
+            class="ui-icon-button pointer-events-auto absolute right-3 z-20 rounded-full bg-black/40 transition-[opacity,background-color] duration-200 hover:bg-black/60 pointer-coarse:hidden {barsHidden
               ? 'opacity-0'
               : ''}"
             onclick={(e) => {
