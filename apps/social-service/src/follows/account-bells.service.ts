@@ -41,6 +41,9 @@ export const BELL_CODES = {
  * - `followed_post` and `member_repost` are a followed PERSON's publication and repost (L17: a
  *   repost is what that person puts in the reader's feed, so it is one of their "posts").
  * - `live_started` is a person's live when the push names no association.
+ * - `birthday` is a followed person's birthday notice (L22, docs/wiki/engagement.md): it is news OF
+ *   that person, not a live, so "Lives seulement" and "Rien" both withhold its push - the bell row
+ *   stays, as for a post.
  */
 export const BELL_PUSH_KINDS: ReadonlyMap<string, 'post' | 'live'> = new Map([
   ['association_post', 'post'],
@@ -49,6 +52,7 @@ export const BELL_PUSH_KINDS: ReadonlyMap<string, 'post' | 'live'> = new Map([
   ['followed_post', 'post'],
   ['member_repost', 'post'],
   ['live_started', 'live'],
+  ['birthday', 'post'],
 ]);
 
 /** The account a push is about, as a bell names it, and what the push is to that bell. */

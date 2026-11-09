@@ -28,6 +28,7 @@ describe('categoryOfDataPush', () => {
     ['social_live_started', 'posts'],
     ['social_follow_request', 'follows'],
     ['social_follow_accepted', 'follows'],
+    ['social_birthday', 'birthdays'],
     ['chat_join_ask', 'messages'],
     ['form_opening_soon', 'forms'],
     ['form_open', 'forms'],

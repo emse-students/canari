@@ -23,6 +23,7 @@ export const HELP_IDS = [
   'hint-booking-week',
   'prompt-profile-photo',
   'prompt-profile-photo-reminder',
+  'prompt-birthday',
 ] as const;
 
 /**

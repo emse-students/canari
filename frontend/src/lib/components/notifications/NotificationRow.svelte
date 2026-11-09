@@ -10,6 +10,7 @@
     CalendarX,
     UserCheck,
     UserPlus,
+    Cake,
     UserX,
     CalendarCog,
     Newspaper,
@@ -334,7 +335,7 @@
                     ? 'bg-sky-600 text-white'
                     : isPostNotif || isRepostNotif || isPersonalRepostNotif
                       ? 'bg-indigo-500 text-white'
-                      : isFollowNotif
+                      : isFollowNotif || notif.type === 'birthday'
                         ? 'bg-amber-500 text-cn-ink'
                         : notif.type === 'profile_correction_refused'
                           ? 'bg-red-500 text-white'
@@ -428,6 +429,8 @@
         <UserPlus size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'follow_accepted'}
         <UserCheck size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'birthday'}
+        <Cake size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'booking_cancelled'}
         <CalendarX size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'booking_withdrawn'}
@@ -565,6 +568,9 @@
         {notif.type === 'follow_request'
           ? m.notif_follow_request_text()
           : m.notif_follow_accepted_text()}
+      {:else if notif.type === 'birthday'}
+        <!-- A followed person's birthday (docs/wiki/birthdays.md): the sentence is the whole notice. -->
+        {m.notif_birthday_text()}
       {:else if isCoorganiseNotif}
         {m.notif_coorganise_proposed_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>

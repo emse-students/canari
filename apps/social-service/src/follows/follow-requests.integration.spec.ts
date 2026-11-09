@@ -174,6 +174,8 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       '078_read_grants.sql',
       '132_read_grant_readers.sql',
       '121_member_reposts.sql',
+      // The bell re-reads a birthday notice against its date (`birthdayRowShownSql`).
+      '148_profile_birthdays.sql',
     ]) {
       await admin.query(readFileSync(join(__dirname, '..', 'migrations', name), 'utf8'));
     }

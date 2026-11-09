@@ -93,6 +93,8 @@ maybe('the bell page against PostgreSQL (migration 126)', () => {
       '078_read_grants.sql',
       '132_read_grant_readers.sql',
       '121_member_reposts.sql',
+      // The bell re-reads a birthday notice against its date (`birthdayRowShownSql`).
+      '148_profile_birthdays.sql',
       '126_post_notifications_recipient_created.sql',
     ]) {
       await q(migration(file));

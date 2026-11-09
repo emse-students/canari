@@ -36,6 +36,7 @@ export type PushContentKey =
   | 'social_live_started'
   | 'social_follow_request'
   | 'social_follow_accepted'
+  | 'social_birthday'
   | 'social_live_cut'
   | 'social_live_suspended'
   | 'social_live_withdrawn'
@@ -752,6 +753,22 @@ export function followAcceptedContent(accepterName: string, icon?: PushIcon): Pu
     arg: '',
     legacyTitle: `${accepterName} a accepté votre demande`,
     legacyBody: 'Votre demande a été acceptée',
+  };
+}
+
+/**
+ * It is the birthday of a person the recipient follows and whose date they may read (owner,
+ * 2026-11-08, docs/wiki/birthdays.md). `actorName` is that person; `arg` is always empty - the title
+ * is the whole sentence ("C'est l'anniversaire de X"), the body a fixed invitation to wish it.
+ */
+export function birthdayContent(celebrantName: string, icon?: PushIcon): PushContent {
+  return {
+    key: 'social_birthday',
+    icon,
+    actorName: celebrantName,
+    arg: '',
+    legacyTitle: `C'est l'anniversaire de ${celebrantName}`,
+    legacyBody: 'Souhaitez-lui un bon anniversaire',
   };
 }
 

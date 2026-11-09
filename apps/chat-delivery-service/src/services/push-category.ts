@@ -33,6 +33,12 @@ export const NOTIFICATION_CATEGORIES = [
    * one, the reminder before a slot. Off, the bell still lists them - only the push is not sent.
    */
   'bookings',
+  /**
+   * The birthday of a person the reader follows, told on the morning of the day (owner, 2026-11-08,
+   * docs/wiki/birthdays.md): a category of its own, because the owner asked that it can be switched
+   * off on its own. Off, the bell still lists it - only the push is not sent.
+   */
+  'birthdays',
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
@@ -70,6 +76,9 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // draws a switch for. Off, the request still waits in the inbox - only the push is not sent.
   social_follow_request: 'follows',
   social_follow_accepted: 'follows',
+  // A followed person's birthday: its own switch (owner, 2026-11-08). A build older than the switch
+  // draws none for it, which is the cost of the switch the owner asked for: on by default for all.
+  social_birthday: 'birthdays',
   // A new person asks to join a conversation the reader is in (chat-delivery's own key, not
   // social-service's): a conversation matter, so the switch for messages silences it.
   chat_join_ask: 'messages',

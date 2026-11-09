@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="08/11/2026"
+  updated="09/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -195,6 +195,32 @@
           nouvelles demandes par jour, le serveur garde aussi le fait qu'une demande (ou son
           acceptation) a déjà été notifiée entre deux comptes, et sa date, même après un retrait, un
           refus ou un blocage. Suivre une association ne demande rien à personne.
+        </dd>
+      </div>
+      <div>
+        <dt>Anniversaire</dt>
+        <dd>
+          Facultatif : le jour et le mois de votre anniversaire, jamais l'année, et aucun âge n'est
+          calculé ni affiché. Vous choisissez qui voit la date sur votre profil : toute l'école, vos
+          abonnés acceptés (le choix par défaut) ou personne ; une personne bloquée, dans un sens ou
+          dans l'autre, ne la voit jamais. Le jour venu (à l'heure de Paris ; un anniversaire du 29
+          février est fêté le 28 les années non bissextiles), un cercle festif entoure votre photo
+          partout dans l'application et votre profil indique que c'est votre anniversaire, pour tout
+          membre qui peut voir votre profil, quel que soit ce choix ; la date elle-même n'est pas
+          montrée à ceux qui ne peuvent pas la voir. Le matin du jour, vos abonnés acceptés qui
+          peuvent voir la date reçoivent une notification (« C'est l'anniversaire de ... ») ; ils
+          peuvent couper cette catégorie dans leurs réglages de notifications. Une date enregistrée
+          compte à partir du lendemain ; vos abonnés sont prévenus au plus une fois tous les 300
+          jours, et le serveur garde pour cela le dernier jour où ils l'ont été. Le cercle festif ne
+          s'affiche que les jours où cette notification a été ou peut être envoyée. Une nouvelle
+          date ne peut être enregistrée qu'une fois tous les 30 jours (la retirer puis la remettre
+          compte comme un changement ; une correction le jour même reste possible) : le serveur
+          garde à cette fin le moment où vous avez enregistré une date, sans la date elle-même. Si
+          vous retirez la date après que vos abonnés ont été prévenus, le serveur garde seulement
+          une date « pas de notification avant le » (le jour de cette notification plus 300 jours,
+          ce qui permet de situer approximativement votre dernier anniversaire) : aucune nouvelle
+          date n'est annoncée ni fêtée avant elle. Vous pouvez retirer la date à tout moment depuis
+          votre profil.
         </dd>
       </div>
       <div>
@@ -439,12 +465,13 @@
       <div>
         <dt>Aides déjà vues</dt>
         <dd>
-          Les aides déjà vues (la visite guidée de bienvenue, les aides au premier usage et la carte
-          qui invite à ajouter une photo de profil), chacune avec son identifiant et la date,
-          enregistrées sur votre compte pour qu'elles ne réapparaissent pas sur un autre appareil.
-          La date de la première carte « photo de profil » sert aussi à ne vous la rappeler qu'une
-          seule fois, 30 jours plus tard, si vous n'avez toujours pas de photo. Une copie est gardée
-          sur l'appareil jusqu'à la suppression du compte ou la réinitialisation de l'appareil.
+          Les aides déjà vues (la visite guidée de bienvenue, les aides au premier usage, la carte
+          qui invite à ajouter une photo de profil et celle qui invite à indiquer son anniversaire),
+          chacune avec son identifiant et la date, enregistrées sur votre compte pour qu'elles ne
+          réapparaissent pas sur un autre appareil. La date de la première carte « photo de profil »
+          sert aussi à ne vous la rappeler qu'une seule fois, 30 jours plus tard, si vous n'avez
+          toujours pas de photo. Une copie est gardée sur l'appareil jusqu'à la suppression du
+          compte ou la réinitialisation de l'appareil.
         </dd>
       </div>
       <div>
@@ -504,6 +531,14 @@
               direct, condition pour en lancer un</td
             >
             <td>Exécution du service (6.1.b)</td>
+          </tr>
+          <tr>
+            <td>Anniversaire</td>
+            <td
+              >Montrer la date à l'audience que vous avez choisie, marquer le jour d'un cercle
+              festif et en prévenir vos abonnés acceptés qui peuvent voir la date</td
+            >
+            <td>Exécution du service (6.1.b) ; facultatif, retirable à tout moment</td>
           </tr>
           <tr>
             <td>Appels audio</td>
@@ -694,7 +729,10 @@
             </td>
           </tr>
           <tr>
-            <td>Aides déjà vues (visite guidée, aides au premier usage, carte photo de profil)</td>
+            <td>
+              Aides déjà vues (visite guidée, aides au premier usage, cartes photo de profil et
+              anniversaire)
+            </td>
             <td>
               Tant que le compte existe ; supprimée à la suppression du compte. La copie sur
               l'appareil y reste jusqu'à la suppression du compte ou la réinitialisation de
@@ -798,6 +836,16 @@
               abonnement : jusqu'à son retrait par l'un ou l'autre, un blocage (il est aussitôt
               masqué, puis supprimé) ou la suppression d'un des deux comptes ; la trace qu'une
               notification a été envoyée : jusqu'à la suppression d'un des deux comptes
+            </td>
+          </tr>
+          <tr>
+            <td>Anniversaire</td>
+            <td>
+              La date, qui la voit et le dernier jour où vos abonnés ont été prévenus : jusqu'à ce
+              que vous la retiriez (aussitôt supprimés) ou la suppression du compte ; le moment où
+              une date a été enregistrée (sans la date) : 30 jours ; après un retrait qui suit une
+              notification, la date « pas de notification avant le » : jusqu'à ce jour, au plus 300
+              jours après cette notification ; les deux sont supprimés à la suppression du compte
             </td>
           </tr>
           <tr>
