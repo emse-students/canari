@@ -33,9 +33,10 @@
 #
 # `edge-refused` IS NOT AN OUTAGE AND NOT HEALTH: the edge answered for itself, so the reading says
 # nothing about the name and everything about this probe - it is BLINDNESS, reported as such by
-# `upstream-issues.sh`. Measured 2026-11-06..09: every reading of the three Cloudflare-fronted names
-# from a GitHub-hosted runner was a 403 while a phone read 200; classed `unexpected`, it opened
-# three "is down" issues that no reading could ever close.
+# `upstream-issues.sh`. Measured 2026-11-06..09: every reading of three Cloudflare-fronted names from a
+# GitHub-hosted runner was a 403 while a phone read 200; classed `unexpected`, it opened three "is
+# down" issues that no reading could ever close. Those names are now declared UNPROBED below; the
+# class stays for any name that gets challenged later.
 #
 # EVERY READING CARRIES ITS EVIDENCE (the `evidence` column: the `server` and `cf-mitigated`
 # headers, and the first words of the body), because a class this script cannot decide must still
@@ -53,10 +54,16 @@ SPACING="${UPSTREAM_SPACING:-10}"
 RESULTS="${UPSTREAM_RESULTS:-}"
 # A recognisable client, so an operator reading the edge's or the origin's log can tell this probe.
 UA='canari-upstream-monitor (+https://github.com/emse-students/canari)'
-DEFAULT_TARGETS='gallery|https://gallery.mitv.fr/api/health
-dev|https://dev.canari-emse.fr/api/version
-legacy|https://canari-emse.fr/api/version
-production|https://canari.emse.fr/api/version'
+# THE NAMES THIS MONITOR DOES NOT ASK, DECLARED HERE AND NOWHERE ELSE (owner, 2026-11-09). Their
+# zones' bot challenge refuses every GitHub-hosted runner (`403`, `cf-mitigated: challenge`, measured
+# 13 readings out of 13 while a phone read `200`), so a reading from here says nothing about the name
+# - and the project does not depend on a setting of a third party to make it say something. A name
+# is listed as `name|url|reason`, is printed on every run so the gap stays visible, and is NEVER
+# probed; every other name is. To watch one again, move it to DEFAULT_TARGETS.
+UNPROBED_FROM_RUNNERS='gallery|https://gallery.mitv.fr/api/health|behind the edge bot challenge
+dev|https://dev.canari-emse.fr/api/version|behind the edge bot challenge
+legacy|https://canari-emse.fr/api/version|behind the edge bot challenge'
+DEFAULT_TARGETS='production|https://canari.emse.fr/api/version'
 TARGETS="${UPSTREAM_TARGETS-$DEFAULT_TARGETS}"
 
 # The markers of a response Cloudflare's edge wrote ITSELF instead of forwarding the origin's: a
@@ -147,4 +154,12 @@ for ((i = 1; i <= n; i++)); do
 ' "$ev"
   [ -z "$RESULTS" ] || cat "$TMP/$i" >>"$RESULTS"
 done
+
+# The declared gap, printed only for the default run (a drill names its own targets).
+if [ -z "${UPSTREAM_TARGETS+x}" ]; then
+  while IFS='|' read -r name url reason; do
+    [ -z "$name" ] && continue
+    printf '  %-17s %-11s %s  %s\n' "not-probed" "$name" "$url" "($reason)"
+  done <<<"$UNPROBED_FROM_RUNNERS"
+fi
 exit 0

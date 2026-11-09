@@ -10,6 +10,8 @@
 #    origin wrote stays unexpected; every reading carries its evidence (server, cf-mitigated, body);
 #  - one bad attempt followed by a good one is up (a blink is not a reading);
 #  - a finding exits 0 (data, not a fault); only an empty target list exits 2;
+#  - the DEFAULT run probes production only and prints the three names behind the edge bot challenge as
+#    declared unprobed (never asked, never in the results);
 #  - the probe sends a recognisable User-Agent and probes the targets in parallel.
 #
 # Run by `make test-ci-scripts`.
@@ -150,6 +152,20 @@ expect_class b tunnel-down
 # shellcheck disable=SC2016
 if grep -q 'canari-upstream-monitor' "$SCRIPT" && grep -qE -- '-A "\$UA"' "$SCRIPT"; then ok 'the probe sends a recognisable User-Agent'; else fail 'no User-Agent'; fi
 if grep -qE 'probe_one .* &$' "$SCRIPT" && grep -q '^wait$' "$SCRIPT"; then ok 'targets are probed in parallel'; else fail 'targets are probed in sequence'; fi
+
+# The DEFAULT run (UPSTREAM_TARGETS unset): the names behind the edge bot challenge are declared
+# unprobed, printed with their reason, never asked; every other name is asked.
+set_stub https://canari.emse.fr/api/version '200|ok'
+OUT="$(CURL="$TMP/curl" STUB_DIR="$TMP" UPSTREAM_SPACING=0 UPSTREAM_RESULTS="$TMP/results.tsv" bash "$SCRIPT" 2>&1)"
+got=$?
+[ "$got" = 0 ] && ok 'the default run exits 0' || fail "default run exit $got: $OUT"
+[ "$(cut -f1 "$TMP/results.tsv" | tr '
+' ' ')" = 'production ' ] && ok 'the default run probes production and nothing else' || fail "probed: $(cut -f1 "$TMP/results.tsv" | tr '
+' ' ')"
+for n in gallery dev legacy; do
+  grep -qE "^  not-probed +$n .*behind the edge bot challenge" <<<"$OUT" && ok "$n is printed as not probed, with its reason" || fail "$n not declared in: $OUT"
+done
+if grep -qE '^(gallery|dev|legacy)	' "$TMP/results.tsv"; then fail 'an unprobed name reached the results file'; else ok 'an unprobed name never reaches the results file'; fi
 
 TARGETS=''
 run 2 'no target at all is a fault of the script'

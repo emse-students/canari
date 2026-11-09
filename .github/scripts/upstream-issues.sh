@@ -190,7 +190,7 @@ while IFS=$'\t' read -r name class code url evidence; do
 - first refused reading: $first
 - confirmed: $NOW
 
-This is NOT an outage report. It is the monitor saying it is blind: an outage of $name would go unreported while this issue is open. The cause is a security setting of the zone (a bot or challenge rule refusing the monitor's runner), and only a person with access to that zone can lift it. See [upstream-reachability](https://github.com/emse-students/canari/blob/main/docs/wiki/infrastructure/upstream-reachability.md#when-the-monitor-is-refused).
+This is NOT an outage report. It is the monitor saying it is blind: an outage of $name would go unreported while this issue is open. The cause is a security setting of the zone (a bot or challenge rule refusing the monitor's runner), and only a person with access to that zone can lift it; the project does not depend on that, and a name that stays refused is moved to the declared unprobed list of upstream-reachability-report.sh. See [upstream-reachability](https://github.com/emse-students/canari/blob/main/docs/wiki/infrastructure/upstream-reachability.md#when-the-monitor-is-refused).
 
 This issue is closed automatically by the first reading that gets an answer from $name itself.
 <!-- since=$first -->"

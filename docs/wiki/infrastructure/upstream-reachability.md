@@ -8,8 +8,8 @@ a day late. The edge itself is in [cloudflare-edge](cloudflare-edge.md).
 
 Two scripts and one job, `upstream` of `scheduled.yml` (no fifth workflow; by hand, dispatch job `upstream`).
 
-1. **The measurement**, `.github/scripts/upstream-reachability-report.sh`. Probes the gallery's health route and
-   `/api/version` of dev, the legacy name and production, from a GitHub-hosted runner (the question is what a
+1. **The measurement**, `.github/scripts/upstream-reachability-report.sh`. Probes `/api/version` of production (the gallery, dev and the legacy name are declared unprobed, see
+   [When the monitor is refused](#when-the-monitor-is-refused)), from a GitHub-hosted runner (the question is what a
    user's phone asks), in parallel, with a recognisable User-Agent. A target is down only when three attempts,
    ten seconds apart, all fail. Each reading is classed because the cause names who acts:
 
@@ -67,10 +67,21 @@ the monitor is BLIND to that name.
 - any answer the name itself wrote (any class but `edge-refused` and `unreachable`) closes the "cannot read"
   issue with how long the monitor was blind.
 
-**What lifts it is a zone setting, out of the project token's reach**:
-[the backlog entry](../backlog.d/p2-the-edge-challenges-the-upstream-monitor.md) carries the options. Working
-around the challenge from the probe (a browser User-Agent, a solver) is not an option: it would be a monitor
-that lies about how it reads.
+**What the project does about it (owner decision, 2026-11-09).** It does not depend on a third party's
+setting. The three names behind that challenge (the gallery, dev and the legacy name) are declared in ONE
+list, `UNPROBED_FROM_RUNNERS` in the report script, each with its reason; they are printed on every default
+run as `not-probed` and never asked, so no reading of them can open a false "down" or a standing "cannot
+read" issue. Every other name is still probed (today: production). To watch a name again, move it to
+`DEFAULT_TARGETS`. The `edge-refused` class stays for a name that is challenged later. Working around the
+challenge from the probe (a browser User-Agent, a solver) is not an option: it would be a monitor that lies
+about how it reads.
+
+**What nothing watches from outside now**: an outage of the gallery, dev or the legacy name. What covers
+them is only what runs in the estate and the apps: the gallery's avatar path logs `is DOWN` / `is back`
+([below](#the-app-does-not-keep-asking-a-gallery-known-to-be-down-2026-11-07)), which is a log line and
+alerts nobody; dev's deploy checks its containers when it deploys, not afterwards; the legacy name has
+nothing. This is a gap, filed in [the backlog entry](../backlog.d/p2-the-edge-challenges-the-upstream-monitor.md)
+for the lead to decide.
 
 ## Who watches the monitor
 
