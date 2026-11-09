@@ -1319,11 +1319,6 @@
     "select": 0,
     "input": 0
   },
-  "src/routes/settings/+page.svelte": {
-    "button": 1,
-    "select": 0,
-    "input": 0
-  },
   "src/test/stubs/ComposerGoLiveStub.svelte": {
     "button": 1,
     "select": 0,
