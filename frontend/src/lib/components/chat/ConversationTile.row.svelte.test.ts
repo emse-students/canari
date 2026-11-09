@@ -74,4 +74,18 @@ describe('ConversationTile row anatomy', () => {
     expect(target.querySelector('[data-conversation-time]')!.className).toContain('font-semibold');
     expect(target.textContent).toContain('3');
   });
+  it('advances the label as minutes pass, without a new prop', () => {
+    vi.useFakeTimers();
+    try {
+      const at = Date.now() - 60_000;
+      render({ lastActivityAt: at });
+      const time = target.querySelector('[data-conversation-time]')!;
+      expect(time.textContent!.trim()).toBe('1 min');
+      vi.advanceTimersByTime(3 * 60_000);
+      flushSync();
+      expect(time.textContent!.trim()).toBe('4 min');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

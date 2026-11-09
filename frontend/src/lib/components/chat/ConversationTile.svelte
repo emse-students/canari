@@ -12,6 +12,7 @@
   import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
   import { m } from '$lib/paraglide/messages';
   import { timeAgo } from '$lib/utils/time';
+  import { minuteNow } from '$lib/utils/minuteClock.svelte';
   import { canAnswerJoinRequests, pendingJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
 
   interface Props {
@@ -95,9 +96,11 @@
   );
 
   /** The relative time of the last message, empty when the conversation has none. */
-  const timeLabel = $derived(
-    lastActivityAt > 0 ? timeAgo(new Date(lastActivityAt).toISOString()) : ''
-  );
+  const timeLabel = $derived.by(() => {
+    if (lastActivityAt <= 0) return '';
+    minuteNow(); // re-read every minute so "3 min" advances on its own
+    return timeAgo(new Date(lastActivityAt).toISOString());
+  });
 
   // Only direct conversations have a real peer user ID - group/channel names are
   // display names, not user IDs, so we must not use them for presence or avatars.
@@ -199,7 +202,7 @@
   data-removed={isRemoved}
   data-awaiting-admission={awaitingAdmission}
   data-selected={isSelected}
-  class="group flex h-18 w-full items-center gap-3 rounded-2xl px-3 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98] {isSelected
+  class="group focus-visible:ring-cn-yellow flex h-18 w-full items-center gap-3 rounded-2xl px-3 text-left transition-all duration-200 outline-none focus-visible:ring-2 active:scale-[0.98] {isSelected
     ? 'bg-cn-surface border border-black/5 shadow-sm dark:border-white/10 '
     : unreadCount > 0
       ? 'hover:bg-cn-surface border border-transparent bg-white/30 dark:hover:bg-white/10'
