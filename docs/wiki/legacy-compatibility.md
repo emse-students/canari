@@ -27,6 +27,21 @@ the shims below, and that pull request was armed only after `GET /api/version` r
 intention. Before it, both estates read `1.6.2` (2026-11-04; read again unchanged on 2026-11-08
 before the raise). An older figure on this page is the floor at the date its entry names.
 
+### A tolerated degradation: an unbounded booking space on a build older than migration 153 (owner, 2026-11-09)
+
+- **What.** A booking space may have NO longest booking (`maxSteps` NULL, migration 153, #3196), and a
+  new one starts so. A build that predates it reads `maxSteps ?? 1` (`bookingUnitLimit`): a booker
+  can pick ONE step only on such a space; and its organiser editor treats an empty `maxSteps` as
+  required, so it cannot save that space's settings.
+- **Who.** Native apps at or above the floor `1.6.6` but older than the release carrying #3196 (they
+  embed their own frontend); the web app is always current.
+- **Why tolerated.** The wrong reading is a smaller choice, never a wrong booking: the server judges
+  every range (`rangeLengthRefusal`), and the organiser can still edit on the web or an updated app.
+  Gating the server on a client version would defeat the owner's rule that nothing limits unless the
+  organiser typed it.
+- **Removal.** Nothing to remove (no shim in the code): the degradation ends when `minClientVersion`
+  passes the first stable carrying #3196, and this entry is then deleted.
+
 ### Entries `1.6.6` retires or unblocks (the owner's raise of 2026-11-08)
 
 "Carried by" is the first stable whose history holds the pull request (`git tag --contains` on its

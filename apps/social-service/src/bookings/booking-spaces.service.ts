@@ -250,7 +250,7 @@ export class BookingSpacesService {
     if (!isValidTimeZone(next.timeZone)) throw new BadRequestException({ code: 'time-zone' });
     const stepShape =
       next.slotMode === 'step'
-        ? (next.stepMinutes ?? 0) > 0 && (next.maxSteps ?? 0) >= 1
+        ? (next.stepMinutes ?? 0) > 0 && (next.maxSteps === null || next.maxSteps >= 1)
         : next.stepMinutes === null && next.maxSteps === null;
     if (!stepShape) throw new BadRequestException({ code: 'step-shape' });
     // The mirror (`booking_spaces_slot_minutes`): a slot length only on a slots space, in range.
@@ -359,7 +359,8 @@ export class BookingSpacesService {
       ...owner,
       slotMode: 'step',
       stepMinutes: 30,
-      maxSteps: 4,
+      // No longest booking until the organiser sets one (migration 153).
+      maxSteps: null,
       slotMinutes: null,
     });
     this.applySettings(space, dto);

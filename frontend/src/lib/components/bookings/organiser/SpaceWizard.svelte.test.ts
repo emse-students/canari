@@ -153,7 +153,7 @@ describe('SpaceWizard', () => {
     expect(fields).toMatchObject({
       slotMode: 'step',
       stepMinutes: 30,
-      maxSteps: 4,
+      maxSteps: null,
       audience: null,
       nameVisibility: 'names',
       discoverability: 'link',
