@@ -4227,6 +4227,7 @@
   "posts_empty_title": "No posts",
   "posts_empty_followed": "Follow associations or people to see their posts here, or switch to",
   "posts_badge_new": "New",
+  "suggestion_post_badge": "Suggested",
   "posts_all_loaded": "You are all caught up!",
   "posts_card_render_failed": "This post could not be displayed.",
   "posts_stored_refreshing": "Feed saved on this device, updating…",

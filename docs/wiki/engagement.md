@@ -6,7 +6,7 @@ design that answers each one, what each surface reveals and to whom, and the wor
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
-(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); WP-6 BUILT (the surfaces, 2026-11-09, [below](#wp-6---the-surfaces-built)); everything else DESIGNED, not built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
+(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); WP-6 BUILT (the surfaces, 2026-11-09, [below](#wp-6---the-surfaces-built)); WP-7 BUILT (suggested posts, 2026-11-09, [below](#wp-7---suggested-posts-built)); everything else DESIGNED, not built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
 
 Context it must respect, and which nothing here changes:
 
@@ -530,6 +530,40 @@ per-reader state), `components/suggestions/` (`SuggestionCard`, `SuggestionCarou
   follow request from a card reads "Demande envoyée"; an X removes the card and it does not come
   back after a reload; "Suivez aussi..." after a follow on a profile.
 
+### WP-7 - suggested posts (BUILT)
+
+Built 2026-11-09 to decision 8 and L13. The server is `GET /api/posts/me/suggested-posts`
+(`posts/suggested-posts.ts`, `PostsService.listSuggestedPosts`), the client
+`lib/posts/suggestedPosts.svelte.ts`, drawn by the feed route.
+
+- **What is suggested.** A post (`kind = 'post'`, scheduled, not hidden, not anonymous, not the
+  viewer's own) published in the last 7 days, that reaches one of the viewer's spaces
+  (`postReachesSpaceSql`) and is visible to them by `postVisibleToUserSql` with the follower door
+  CLOSED and no read grant - so nothing a grant or a follow is the only reason they could see. The
+  feed's own filters apply as on every feed row: the review cohort, the promotion cutoff, and the
+  block filter both ways (`blockedAuthorSql`, now ONE function in `common/blocked-user-ids.ts` that
+  the feed and the suggestions both call). Its author is an account the viewer does not follow
+  (accepted or requested) and, for an association post, an entity they neither follow nor belong to -
+  the header then carries Suivre (WP-2).
+- **Popular** is the number of distinct accounts that reacted or commented, the author excluded:
+  `posts/engagement-sql.ts` `engagedAccountsSql`, the ONE definition WP-10 and R1 also use. At least
+  3; best first (then newest), at most 10 per read.
+- **Placed** by `placeSuggestedPosts`: one after every 7 feed posts, so at most one in every 8 items
+  and never two in a row (L13); only in Mon espace; never a post the page already shows (the next
+  suggestion takes the slot); never the page's last item. Marked "Suggestion" by the same corner
+  badge as "Nouveau" (`suggestion_post_badge`).
+- **ONE read per reader** when Mon espace opens, per-reader cache, a failure is a `console.warn` and
+  is not asked again in the session (the same contract as WP-6's read).
+- **Proof**: `posts/suggested-posts.integration.spec.ts` on PostgreSQL (visible by the space rule;
+  never through a read grant nor through the follower door; never an author blocked either way;
+  not the viewer's own, not followed or requested, not an entity they follow or belong to; the
+  engagement floor and the 7-day window; the order; a reader of another space gets that space's
+  posts); `lib/posts/suggestedPosts.svelte.test.ts` (the placement rule, the once-per-reader read)
+  and `routes/posts/page.suggestedPosts.svelte.test.ts` (drawn after the 7th post with its badge in
+  Mon espace, never in Suivis).
+- **Owed**: a phone reading on dev (Mon espace with more than 7 posts shows one "Suggestion" card,
+  its header carrying Suivre).
+
 ## The bell - data model, and how it combines with categories and mutes
 
 ```sql
@@ -919,7 +953,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-4** (BUILT, [below](#wp-4---openings-for-followers-built)) | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; never capped | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
 | **WP-5** (BUILT, [above](#wp-5---the-suggestion-query-built)) | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
 | **WP-6** (BUILT, [above](#wp-6---the-surfaces-built)) | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
-| **WP-7** | Suggested posts (decision 8), through the feed's own block filter (`PostsService.blockedAuthorSql`) as every feed row | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door, and never by an author blocked either way |
+| **WP-7** (BUILT, [above](#wp-7---suggested-posts-built)) | Suggested posts (decision 8), through the feed's own block filter (`PostsService.blockedAuthorSql`) as every feed row | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door, and never by an author blocked either way |
 | **WP-8** | The daily cap (decisions 6 and 11): `engagement_push_days`, `ENGAGEMENT_PUSH_TYPES` holding ONLY the new kinds, the statement in `fanOutPush` | `posts/post-notifications.service.ts` | [R2](#r2---the-cap-check) read and written back; integration spec: the 6th capped push of a day is a bell row with no push, two concurrent fan-outs never exceed 5, and an association post, a live, an opening and a mention on the same day are never counted |
 | **WP-9** | Friends' activity (5b) with the ledger `post_engagement_notices` and the activity setting (decision 9: `user_activity_settings`, no row = ON, the Settings switch) | `posts/comment-write.ts`, the reaction write | integration spec, one case per rule of the disclosure list, rule 0 included, and for rule 8 one case EACH: an `anonymous` comment, a comment written as an association, and a `removedByModeration` comment, none of which notifies |
 | **WP-10** | Campus trends (5c) | the reaction write | [R1](#r1---the-trend-threshold) read FIRST and written back; integration spec: exactly one stamp at the crossing write, none after 24 hours, the space-only audience |

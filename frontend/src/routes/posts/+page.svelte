@@ -67,6 +67,12 @@
     feedSuggestionPlacement,
     suggestionsFollowingCount,
   } from '$lib/follows/suggestions.svelte';
+  import {
+    ensureSuggestedPosts,
+    forgetSuggestedPost,
+    placeSuggestedPosts,
+    suggestedPosts,
+  } from '$lib/posts/suggestedPosts.svelte';
   import { initialScrollDirection, nextScrollDirection } from '$lib/utils/scrollDirection';
   import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
   import LiveViewer from '$lib/components/live/LiveViewer.svelte';
@@ -482,6 +488,20 @@
   $effect(() => {
     if (activeFeed === 'all' || activeFeed === 'followed') ensureFeedSuggestions();
   });
+
+  // SUGGESTED POSTS (engagement WP-7, L13): Mon espace only - read once per reader when it opens.
+  $effect(() => {
+    if (activeFeed === 'all') ensureSuggestedPosts();
+  });
+
+  /** Which suggested post follows which feed index, for the posts mounted so far; none off Mon espace. */
+  function suggestedPlacement(shown: PostEntity[]): Record<number, PostEntity> | null {
+    if (activeFeed !== 'all') return null;
+    return placeSuggestedPosts(
+      shown.map((p) => p.id),
+      suggestedPosts()
+    );
+  }
 
   /** Where this feed draws its suggestions for `postCount` posts: one place, or none. */
   function suggestionPlacement(postCount: number) {
@@ -1160,6 +1180,7 @@
 
       {#snippet feedList(resolvedPosts: PostEntity[])}
         {@const placement = suggestionPlacement(resolvedPosts.length)}
+        {@const suggestedAt = suggestedPlacement(resolvedPosts.slice(0, mounted.count))}
         <!-- A REFRESH DOES NOT BLANK A FEED THAT IS ALREADY ON SCREEN. This was `{#if loading}`,
              so a pull-to-refresh at post #30 collapsed the list to four skeletons, shrank the
              document and lost the reader's place - for posts still held in `postsOverride`. Same
@@ -1218,6 +1239,13 @@
             </div>
             {#if placement === 'inline' && i === FEED_CAROUSEL_AFTER_POSTS - 1}
               <FeedSuggestions placement="inline" />
+            {/if}
+            {@const suggested = suggestedAt?.[i]}
+            {#if suggested}
+              <div class="relative" data-suggested-post={suggested.id}>
+                <PostCornerBadge label={m.suggestion_post_badge()} />
+                {@render guardedCard(suggested, () => forgetSuggestedPost(suggested.id))}
+              </div>
             {/if}
           {/each}
 
