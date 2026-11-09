@@ -1422,6 +1422,21 @@ jobs:
           workspaces: frontend/src-tauri
           key: ios-app
 
+      # THE SWIFT PACKAGE DOWNLOADS, SAVED HERE AND ONLY RESTORED BY THE RELEASE (`ios.yml`, the same
+      # key). `Package.resolved` pins 13 packages (Firebase and its binary xcframeworks among them),
+      # cloned and fetched cold from GitHub and Google on every run. SwiftPM keeps the bare clones
+      # and the binary artefacts in `org.swift.swiftpm` and resolves from there when it can.
+      # CocoaPods is not a source of downloads: `gen/apple/Podfile` declares no pod. Every plugin's
+      # `Package.swift` is in the key because a plugin can add a dependency the app project's
+      # `Package.resolved` does not list.
+      # docs/wiki/cicd.md#the-ios-release-build-restores-swiftpm-it-never-saves-it-2026-11-09
+      - name: Cache Swift packages
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/apple/canari.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'frontend/src-tauri/**/ios/Package.swift') }}
+          restore-keys: swiftpm-${{ runner.os }}-
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: |

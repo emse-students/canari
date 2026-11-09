@@ -155,6 +155,21 @@ jobs:
           plutil -lint frontend/src-tauri/gen/apple/canari.xcodeproj/project.pbxproj
           xcodebuild -list -project frontend/src-tauri/gen/apple/canari.xcodeproj
 
+      # THE SWIFT PACKAGE DOWNLOADS ARE RESTORED, NEVER WRITTEN, and the key is the one
+      # `compile-ios-app` (ci.yml) saves from `main` - the iOS twin of the Gradle restore in
+      # `android.yml`. Read-only for the same reason: a cache belongs to the ref that wrote it, a
+      # release runs on a tag ref no later release reads, and a pull request's cache is unreadable
+      # from here, so what is restored is only what reviewed code on `main` fetched. SwiftPM still
+      # resolves from the committed `Package.resolved`; the cache only spares the download. A miss
+      # fetches exactly as before.
+      # docs/wiki/cicd.md#the-ios-release-build-restores-swiftpm-it-never-saves-it-2026-11-09
+      - name: Restore Swift packages (written by main)
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/apple/canari.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'frontend/src-tauri/**/ios/Package.swift') }}
+          restore-keys: swiftpm-${{ runner.os }}-
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:

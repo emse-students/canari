@@ -1086,8 +1086,25 @@ cache, not a retry or a longer timeout: `actions/cache/restore` of `~/.gradle/ca
 - **A cold cache is the old behaviour, not a failure.** `compile-android-app` runs on `main` only
   when the Android tree changed, and an unread entry is evicted after 7 days; a release after that
   downloads as before.
-- `test-android` and `compile-android-app` already cached these paths with `actions/cache`; `ios.yml`
-  caches only Bun (no CocoaPods or SwiftPM cache exists, and `compile-ios-app` has none either).
+- `test-android` and `compile-android-app` already cached these paths with `actions/cache`.
+
+### The iOS release build restores SwiftPM, it never saves it (2026-11-09)
+
+The Android twin above, for the Swift packages: `compile-ios-app` (`ci.yml`) saves
+`~/Library/Caches/org.swift.swiftpm` (SwiftPM's bare clones and binary artefacts) with `actions/cache`
+under `swiftpm-<os>-<hash of the app's Package.resolved and every plugin Package.swift>`, and
+`ios.yml` only `actions/cache/restore`s that key (prefix fallback), for the same read-only reason
+(a tag ref reads what `main` wrote, never a pull request's cache). A miss fetches as before.
+**CocoaPods is not cached because nothing downloads through it**: `gen/apple/Podfile` declares no pod
+(Firebase is a Swift package, see its comment).
+
+**The failure that prompted it was not a dependency fetch.** Main's run on the bump commit of
+`v1.6.9-alpha.1` (`compile-ios-app`) died in `Build MLS WASM`, step `Install wasm-pack`:
+`curl: (56) The requested URL returned error: 504` from the GitHub release download, after a
+WASM-cache miss. A network blip, not a defect in the code, and not iOS-specific: the step is in the
+shared `build-mls-wasm` action, so web, Android and iOS all pay it on a cache miss.
+`scripts/install-wasm-pack.sh` now downloads to a file with `curl --retry 5 --retry-all-errors` and
+unpacks it (a pipe into `tar` cannot be retried); the pinned URL returns the same bytes on a retry.
 
 **BOTH ARMS ARE ALSO HAND-DISPATCHABLE, AND THAT IS A CAPABILITY RATHER THAN A SECOND DOOR.** It is
 the only way to compile Swift, ObjC or Kotlin from the Windows workstation this project is developed
