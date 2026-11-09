@@ -5826,5 +5826,11 @@
   "form_draft_copy_dropped": "The edits to \"{title}\" kept on this device could not be saved: the form was changed elsewhere or no longer exists.",
   "form_edit_load_action": "Loading the form",
   "form_create_key_reused": "This draft was already created for another association. Reload the page and continue from \"My forms\".",
-  "form_create_key_gone": "This draft was deleted in the meantime."
+  "form_create_key_gone": "This draft was deleted in the meantime.",
+  "chat_role_names_title": "Role names",
+  "chat_role_names_description": "Give each role the name your community uses. Only the name changes: what each role may do stays the same. Leave it empty to use the default name.",
+  "chat_role_name_input_label": "Name of the {role} role",
+  "chat_role_name_reset_button": "Default name",
+  "chat_role_name_invalid_error": "This name cannot be saved: 40 characters at most, no control characters.",
+  "chat_role_name_forbidden_error": "Only administrators can rename roles."
 }

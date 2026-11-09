@@ -103,7 +103,11 @@ export interface ChatSessionCallbacks {
     /** The actor's device that released it - re-decided only where the tree holds its leaf. */
     releasedByDevice: string;
   }) => void;
-  onRolePermissionsChanged?: (event: { roleId: string; permissions: string[] }) => void;
+  onRolePermissionsChanged?: (event: {
+    roleId: string;
+    permissions: string[];
+    label?: string | null;
+  }) => void;
   onChannelUpdated?: (event: {
     channelId: string;
     name?: string;

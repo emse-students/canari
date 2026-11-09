@@ -63,6 +63,8 @@ import {
   PIN_REQUIRES_MODERATION,
   REMOVAL_EXCEEDS_ACTOR,
   ROLE_CHANGE_EXCEEDS_ACTOR,
+  ROLE_LABEL_INVALID,
+  ROLE_RENAME_REQUIRES_ADMIN,
   roleGrantsChannelManagement,
   roleGrantsModeration,
   roleGrantsRoleManagement,
@@ -285,6 +287,84 @@ export function validateChannelName(raw: unknown): string {
   if (/\p{Cc}/u.test(name))
     throw new BadRequestException('Channel name cannot contain control characters');
   return name;
+}
+
+/** Longest role display name, counted in characters a person sees (code points). Mirrored by the client's input. */
+export const MAX_ROLE_LABEL_LENGTH = 40;
+
+/**
+ * Whether a role name holds a character that must not be in one: a control, invisible-formatting,
+ * line or paragraph separator character (`\p{Cc}\p{Cf}\p{Zl}\p{Zp}`: zero-width, bidi, BOM, tag).
+ *
+ * JUDGED PER GRAPHEME, because emoji are built from exactly those: inside a grapheme that holds a
+ * pictographic (or a tag flag, which starts with U+1F3F4) the zero-width joiner U+200D and the tag
+ * characters U+E0020-U+E007F are the glue of a family, a profession, the rainbow flag or the England
+ * flag, and are allowed. Everywhere else they stay refused - a joiner between letters, a lone one, a
+ * stray tag. THE SAME RULE, WITH THE SAME TEST VECTORS, IS `isAcceptableRoleLabel` in the client
+ * (`utils/chat/communityRoleLabel.ts`).
+ */
+export function roleLabelHasForbiddenCharacter(label: string): boolean {
+  const forbidden = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+  const emojiGlue = /[‍\u{E0020}-\u{E007F}]/gu;
+  // `Intl.Segmenter` is in the runtime (Node 16+) but not in this project's es2021 type library.
+  const Segmenter = (
+    Intl as unknown as {
+      Segmenter: new (
+        locale?: string,
+        options?: { granularity: 'grapheme' }
+      ) => { segment(text: string): Iterable<{ segment: string }> };
+    }
+  ).Segmenter;
+  for (const { segment } of new Segmenter(undefined, { granularity: 'grapheme' }).segment(label)) {
+    const isEmoji = /\p{Extended_Pictographic}/u.test(segment) || segment.startsWith('\u{1F3F4}');
+    if (forbidden.test(isEmoji ? segment.replace(emojiGlue, '') : segment)) return true;
+  }
+  return false;
+}
+
+/**
+ * A role's DISPLAY name, as the community typed it: trimmed and nothing else, stored as typed (case,
+ * accents, emoji). `null` for "no name of its own" - an absent or blank value resets the role to the
+ * localized default - and a typed 400 `ROLE_LABEL_INVALID` for a value that is not text, a name too
+ * long, or one holding a control, invisible-formatting (zero-width, bidi override, BOM, tag), line or
+ * paragraph separator character (which could make a name read as
+ * another). It is a LABEL: no decision reads it, so no spelling of it can grant or hide anything.
+ */
+export function validateRoleLabel(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') {
+    throw new BadRequestException({ code: ROLE_LABEL_INVALID, message: 'Role name must be text.' });
+  }
+  const label = raw.trim();
+  if (!label) return null;
+  if (Array.from(label).length > MAX_ROLE_LABEL_LENGTH) {
+    throw new BadRequestException({
+      code: ROLE_LABEL_INVALID,
+      message: `Role name too long (max ${MAX_ROLE_LABEL_LENGTH} characters).`,
+    });
+  }
+  if (roleLabelHasForbiddenCharacter(label)) {
+    throw new BadRequestException({
+      code: ROLE_LABEL_INVALID,
+      message: 'Role name cannot contain control or invisible formatting characters.',
+    });
+  }
+  return label;
+}
+
+/**
+ * The `label` of a rename request's body. The KEY is required: only an explicit null or a blank
+ * string resets a name, so a body that forgot the field (`{}`, a wrong key, no body) is a typed
+ * 400 `ROLE_LABEL_INVALID` instead of silently erasing the community's name.
+ */
+export function roleLabelOfBody(body: unknown): unknown {
+  if (typeof body !== 'object' || body === null || !('label' in body)) {
+    throw new BadRequestException({
+      code: ROLE_LABEL_INVALID,
+      message: 'The request must carry a "label" (null or blank resets it).',
+    });
+  }
+  return (body as { label: unknown }).label;
 }
 
 /** The community's own order: the arranged position, then age, then id so it is total. */
@@ -6672,13 +6752,34 @@ export class ChannelService implements OnApplicationBootstrap {
    * administrators, and this discloses nothing a member could not already read.
    */
   private async announceRolePermissions(role: ChannelRole): Promise<void> {
+    const members = await this.announceRoleToCommunity(role);
+    await this.announceStandingToHolders(role, members);
+  }
+
+  /**
+   * The ONE `workspace.role.permissions` publish, to the whole membership. It carries what the
+   * role grants and, ONLY when `withLabel`, the community's own name for it (`label`, null for
+   * none). A publish names what ITS write changed and nothing else: a permission toggle omits
+   * `label` (absent = unchanged on every client), so a toggle whose publish lands after a
+   * concurrent rename cannot put the old name back. Returns the members it was sent to. A rename
+   * changes no one's standing, so it sends this and nothing more.
+   */
+  private async announceRoleToCommunity(
+    role: ChannelRole,
+    withLabel = false
+  ): Promise<ChannelMember[]> {
     const members = await this.memberRepo.find({ where: { workspaceId: role.workspaceId } });
     await this.redis.publishChannelEvent(
       'workspace.role.permissions',
-      { workspaceId: role.workspaceId, roleId: role.id, permissions: role.permissions },
+      {
+        workspaceId: role.workspaceId,
+        roleId: role.id,
+        permissions: role.permissions,
+        ...(withLabel ? { label: role.displayLabel ?? null } : {}),
+      },
       members.map((m) => m.userId)
     );
-    await this.announceStandingToHolders(role, members);
+    return members;
   }
 
   /**
@@ -6742,6 +6843,58 @@ export class ChannelService implements OnApplicationBootstrap {
         `[ROLE] permissions saved but holders not told role=${role.id} holders=${holders.length}: ${e instanceof Error ? e.message : String(e)}`
       );
     }
+  }
+
+  /**
+   * Gives a role the community's own display name, or resets it (`rawLabel` null / blank).
+   *
+   * LABEL ONLY (owner, 2026-11-08): `name` - the role's identity, which every permission decision
+   * and every role lookup reads - is untouched, so no spelling of a label can change what anyone may
+   * do. Only an administrator (`workspace.manage`) renames, decided under the community removal lock
+   * so a demotion committing meanwhile is honoured; a refusal is a typed 403
+   * `ROLE_RENAME_REQUIRES_ADMIN`. The new name is announced to the whole community.
+   */
+  async setRoleDisplayLabel(roleId: string, actorUserId: string, rawLabel: unknown) {
+    const label = validateRoleLabel(rawLabel);
+    const role = await this.roleRepo.findOne({ where: { id: roleId } });
+    if (!role) throw new NotFoundException('Role not found');
+    const workspaceId = role.workspaceId;
+
+    const saved = await this.withCommunityRemovalLock(workspaceId, async (em) => {
+      const actor = await em
+        .getRepository(ChannelMember)
+        .findOne({ where: { workspaceId, userId: actorUserId } });
+      const held = actor ? await this.permissionsOfMember(actor, em) : [];
+      if (!held.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)) {
+        this.logger.warn(
+          `[ROLE] REFUSED rename role=${roleId} - not an administrator workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+        );
+        throw new ForbiddenException({
+          code: ROLE_RENAME_REQUIRES_ADMIN,
+          message: 'Only an administrator may rename a role.',
+        });
+      }
+      const roles = em.getRepository(ChannelRole);
+      const locked = await roles.findOne({
+        where: { id: roleId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!locked) throw new NotFoundException('Role not found');
+      locked.displayLabel = label;
+      return roles.save(locked);
+    });
+
+    this.logger.log(
+      `[ROLE] renamed role=${roleId} workspace=${workspaceId} label=${label === null ? 'default' : `${Array.from(label).length} chars`} by=${actorUserId.slice(0, 8)}`
+    );
+    try {
+      await this.announceRoleToCommunity(saved, true);
+    } catch (e) {
+      this.logger.warn(
+        `[ROLE] renamed but the community was not told role=${roleId}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    return { roleId: saved.id, roleName: saved.name, label: saved.displayLabel ?? null };
   }
 
   /**
