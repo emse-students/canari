@@ -25,6 +25,22 @@ const seen = vi.hoisted(() => ({ ids: new Set<string>() }));
 const markSeen = vi.hoisted(() => vi.fn((id: string) => seen.ids.add(id)));
 const modalWebLayer = vi.hoisted(() => ({ covering: false }));
 
+/**
+ * THE ICON BARREL IS NOT WHAT IS UNDER TEST, AND IT WAS THE COST OF EVERY CASE. `setUp` resets the
+ * module registry so each case gets a fresh reactive session, which re-EVALUATES the whole graph -
+ * and `@lucide/svelte`'s barrel alone re-evaluates in ~340 ms (measured 2026-11-09: 415 ms of a
+ * 430 ms case), so a case that takes 0.4 s alone crossed the 5 s timeout when the full run shared
+ * the CPU. The overlay only draws an icon; an icon is an empty component here.
+ */
+vi.mock('@lucide/svelte', () => {
+  const icon = () => {};
+  const handler: ProxyHandler<Record<string, unknown>> = {
+    get: (_t, key) => (key === 'then' ? undefined : icon),
+    has: () => true,
+  };
+  return new Proxy({}, handler);
+});
+
 vi.mock('$app/navigation', () => ({
   afterNavigate: (cb: NavCallback) => nav.after.push(cb),
   beforeNavigate: (cb: NavCallback) => nav.before.push(cb),
@@ -61,6 +77,9 @@ vi.mock('$lib/guidance/seenHelps.svelte', () => ({
   },
   resetSeenHelps: () => {},
 }));
+// The "publish as an association" hint asks the server which associations the account may post as;
+// it is not under test, and unmocked it made a REAL request that failed and logged an error per case.
+vi.mock('$lib/posts/postAsAccess.svelte', () => ({ canPostAsAssociation: () => false }));
 // The account has a photo here, so the profile-photo prompt never competes with the tour under test.
 vi.mock('$lib/guidance/ownProfilePhoto.svelte', () => ({
   ownProfilePhoto: { hasPhoto: true, load: async () => {} },
