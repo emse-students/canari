@@ -28,7 +28,7 @@
 <LegalDocument
   title={m.legal_cgu_title()}
   subtitle={m.legal_cgu_subtitle()}
-  updated="29/10/2026"
+  updated="07/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -207,9 +207,10 @@
       Tout Utilisateur peut lancer un direct en son nom ; le lancer au nom d'une association demande
       le droit de publier en son nom. Un direct est visible des mêmes membres qu'une publication du
       même auteur : ceux qui partagent un espace avec vous ou, au nom d'une association, ceux
-      qu'elle atteint. Vos abonnés (ou ceux de l'association) qui peuvent le voir reçoivent une
-      notification quand il commence. L'Éditeur peut fermer la fonction à tout moment, pour tout le
-      Service.
+      qu'elle atteint. Quand il commence, une notification est envoyée : pour le direct d'une
+      association, à chaque membre que ses règles ou son adhésion atteignent (au plus un direct
+      annoncé par association toutes les six heures) ; pour le vôtre, à vos abonnés acceptés qui
+      peuvent le voir. L'Éditeur peut fermer la fonction à tout moment, pour tout le Service.
     </p>
     <dl class="legal-terms">
       <div>

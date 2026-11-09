@@ -38,7 +38,8 @@ import {
   LIVE_CHAT_REPORT_MAX_KEEP_MS,
   LIVE_CHAT_REPORT_TEXT_MAX_BYTES,
 } from '../lives/live.constants';
-import { ContentReport } from './entities/content-report.entity';
+import { ContentReport, type ReportContentType } from './entities/content-report.entity';
+import { parseNicknameReportSubject } from '../channels/community-nicknames';
 import { UserModeration } from './entities/user-moderation.entity';
 import { sanitizeLog } from '../common/log.utils';
 import { dropRepublicationsOf } from '../posts/republication-sql';
@@ -63,7 +64,7 @@ const AUTO_HIDE_THRESHOLD = 5;
 
 export interface CreateReportData {
   reporterId: string;
-  contentType: 'post' | 'comment' | 'user' | 'live' | 'live_chat';
+  contentType: ReportContentType;
   contentId: string;
   reason: string;
   details?: string;
@@ -185,6 +186,12 @@ export class ModerationService {
     if (data.contentType === 'post') {
       await this.assertReportablePost(data.reporterId, data.contentId);
     }
+    if (data.contentType === 'nickname') {
+      // The setter is read from the membership row, never taken from the client: it is who a mute
+      // that follows the report acts on.
+      const setBy = await this.assertReportableNickname(data.reporterId, data.contentId);
+      data = { ...data, contentId: data.contentId.toLowerCase(), reportedUserId: setBy };
+    }
     if (data.contentType === 'comment') {
       // The writer is read from the stored comment, never taken from the client: an anonymous
       // comment is served WITHOUT its account, so the reporter cannot name it - and the mute that
@@ -263,6 +270,35 @@ export class ModerationService {
     return row.comment.userId || null;
   }
 
+  /**
+   * A COMMUNITY NICKNAME IS REPORTED BY A MEMBER OF THAT COMMUNITY, and only the version that is still
+   * shown: the subject names the member row AND the instant it was set (`nicknameReportSubject`), so
+   * a nickname changed or cleared since the reporter read it is not reportable - the insult the
+   * report would describe is gone - and the next one set on the same person is a new subject. Every
+   * refusal is the 404 `CONTENT_NOT_FOUND` of a post, so the route is no oracle for a community the
+   * reporter is not in.
+   *
+   * @returns the account that set it, the report's `reportedUserId`.
+   */
+  private async assertReportableNickname(reporterId: string, subject: string): Promise<string> {
+    const parsed = parseNicknameReportSubject(subject);
+    if (!parsed) throw this.unreportable('nickname', subject, reporterId, 'not a nickname subject');
+    const rows: { setBy: string | null }[] = await this.reportRepo.manager.query(
+      `SELECT m."nicknameSetBy" AS "setBy"
+         FROM channel_members m
+        WHERE m.id = $1
+          AND m.nickname IS NOT NULL
+          AND floor(extract(epoch FROM m."nicknameSetAt") * 1000) = $2
+          AND EXISTS (SELECT 1 FROM channel_members r
+                       WHERE r."workspaceId" = m."workspaceId" AND r."userId" = $3)`,
+      [parsed.memberRowId, parsed.setAtMs, reporterId.trim().toLowerCase()]
+    );
+    if (!rows[0]?.setBy) {
+      throw this.unreportable('nickname', subject, reporterId, 'not shown to this reporter');
+    }
+    return rows[0].setBy;
+  }
+
   /** `readPostOpenVerdict` for a reporter, refused as {@link unreportable}. Returns their blocks. */
   private async assertOpenableBy(
     post: OpenablePost,
@@ -285,7 +321,7 @@ export class ModerationService {
 
   /** The one refusal a post or comment report meets, logged with its reason, answered without it. */
   private unreportable(
-    contentType: 'post' | 'comment',
+    contentType: 'post' | 'comment' | 'nickname',
     contentId: string,
     reporterId: string,
     why: string
@@ -657,6 +693,12 @@ export class ModerationService {
       for (const row of rows) userPreviews.set(row.id, row.displayName ?? row.id);
     }
 
+    // A reported nickname's preview is its text while that VERSION is still shown, and null once it
+    // was changed or cleared - a moderator then reads that the report describes something gone.
+    const nicknamePreviews = await this.nicknamePreviews(
+      reports.filter((r) => r.contentType === 'nickname').map((r) => r.contentId)
+    );
+
     const lives = await this.liveReportStates(reports.filter((r) => r.contentType === 'live'));
     const chatLines = await this.chatLineStates(
       reports.filter((r) => r.contentType === 'live_chat')
@@ -677,12 +719,39 @@ export class ModerationService {
                   ? chatLines.get(r.id)?.integrity.content === 'verified'
                     ? chatLines.get(r.id)!.text
                     : null
-                  : null,
+                  : r.contentType === 'nickname'
+                    ? (nicknamePreviews.get(r.contentId) ?? null)
+                    : null,
       postId:
         r.contentType === 'comment' ? (commentPreviews.get(r.contentId)?.postId ?? null) : null,
       live: r.contentType === 'live' ? (lives.get(r.contentId) ?? null) : null,
       liveChat: r.contentType === 'live_chat' ? (chatLines.get(r.id) ?? null) : null,
     }));
+  }
+
+  /** The text of each reported nickname version still shown, by report subject. */
+  private async nicknamePreviews(subjects: string[]): Promise<Map<string, string>> {
+    const previews = new Map<string, string>();
+    const parsed = subjects.flatMap((s) => {
+      const p = parseNicknameReportSubject(s);
+      return p ? [{ subject: s, ...p }] : [];
+    });
+    if (parsed.length === 0) return previews;
+    const rows: { id: string; at: string; nickname: string }[] =
+      await this.reportRepo.manager.query(
+        `SELECT id::text AS id,
+                floor(extract(epoch FROM "nicknameSetAt") * 1000)::bigint::text AS at,
+                nickname
+           FROM channel_members
+          WHERE id::text = ANY($1) AND nickname IS NOT NULL`,
+        [parsed.map((p) => p.memberRowId)]
+      );
+    const shown = new Map(rows.map((r) => [`${r.id}@${r.at}`, r.nickname]));
+    for (const p of parsed) {
+      const text = shown.get(`${p.memberRowId}@${p.setAtMs}`);
+      if (text) previews.set(p.subject, text);
+    }
+    return previews;
   }
 
   /**

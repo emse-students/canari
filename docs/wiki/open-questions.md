@@ -205,7 +205,7 @@ Either one failing keeps the switch `off` and reopens this section.
 
 ### DECISION OWED - should a read receipt wait for a COUNT or an event instead of the 2 s window? (2026-10-15)
 
-Since the sender coalescing, a DM or group watermark is sent when the 2 s window after reading ends,
+Since the sender coalescing, a DM or group watermark was sent when the 2 s window after reading ended (since 2026-11-07 the FIRST mark goes at once and the window only coalesces the marks after it),
 when the reader leaves, or when the app leaves the screen. The window is the mechanism's one clock.
 If it were wrong the cost would be more traffic, never a lost receipt. Under the "termination from a
 proof, never from a clock" rule, that still makes it load-bearing. The alternatives change what a
@@ -354,18 +354,7 @@ in the app container. If it is gone, the app path copies too, exactly as the ext
 initials disc is unaffected either way - it writes to `NSTemporaryDirectory()` on both.
 
 
-### Is a MiGallery application worth it?
-
-An open question, deliberately. The Canari formula (SvelteKit + Tauri) transfers, so the cost is
-knowable - but MiGallery's value is a gallery that a browser already renders well, and the question
-is what an app would add that the web version cannot do. Answer that before estimating anything.
-
-**STILL OPEN, AND NOW WITH A DELIVERABLE ATTACHED (user, 2026-09-10).** Asked directly, the user
-answered neither yes nor no: *"Dis-moi d'abord ce que ca coute."* So what is owed is a costed
-scoping note - scope, dependencies, and **what it adds to the surface that has to be maintained**,
-which is the half that actually decides it. The paragraph above still governs the note's first
-section: it must answer what an app adds that the web cannot do before it estimates anything.
-Nothing is built until the note is read.
+MiGallery application: none - its notifications go through Canari, see [the sign-in handoff and gallery notifications note](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md).
 
 ---
 

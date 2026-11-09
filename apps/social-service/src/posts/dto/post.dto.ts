@@ -605,12 +605,10 @@ export class RepostPostConsentDto {
 }
 
 /**
- * The body of `PATCH /api/posts/:postId/pin|unpin` (WP-PIN): the space to pin in. Optional ONLY for
- * an older client, which sends no body - the server then pins where exactly one space fits, and
- * otherwise answers a typed `space_required` 409 (`SpacePinsService`).
+ * The body of `PATCH /api/posts/:postId/pin|unpin` (WP-PIN): the space to pin in, REQUIRED - a
+ * request naming none is a 400, never a guess (the body-less shim of WP-PIN went with floor `1.6.6`).
  */
 export class PinPostDto {
-  @IsOptional()
   @IsUUID()
-  spaceId?: string;
+  spaceId: string;
 }

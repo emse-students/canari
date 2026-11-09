@@ -22,6 +22,18 @@
  * line boxes are in the component's docblock and these pin the utilities that produced them.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+// The follow chip's state is its own spec (`FollowChip.svelte.test.ts`); here it must not reach the network.
+vi.mock('$lib/follows/followState.svelte', () => ({
+  ensureAssociationsLoaded: () => {},
+  followEpoch: () => 0,
+  retryFailedFollowReads: () => {},
+  ensureBlocksLoaded: () => {},
+  ensurePersonStatus: () => {},
+  personChipState: () => 'hidden',
+  associationChipState: () => 'hidden',
+  tapPerson: () => Promise.resolve(),
+  tapAssociation: () => Promise.resolve(),
+}));
 import { flushSync, mount, tick, unmount } from 'svelte';
 
 // The logo cache resolves a URL to a blob through Cache Storage; the tile's question is WHICH URL.

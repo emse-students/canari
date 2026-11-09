@@ -878,8 +878,11 @@ describe('a private salon is entered one way, and declining says so (G-D1)', () 
     );
 
     // Three moments, one entrance. A fourth that reaches the generic join directly is a fourth copy
-    // of the precondition, which is the defect itself.
-    expect(src.split('enterPrivateSalonGroup(').length - 1).toBe(3);
+    // of the precondition, which is the defect itself. Two CALLS since 2026-11-08: the load's, and
+    // `enterSalonGroupWithAccess`, which the in-session join, the creation and the leader's run of a
+    // follower tab's entry (`tabCommitDelegation`) all share.
+    expect(src.split('enterPrivateSalonGroup(').length - 1).toBe(2);
+    expect(src.split('enterSalonGroupWithAccess(').length - 1).toBe(4);
     expect(src).not.toContain('ensureDistributionGroupFor');
 
     // AND THE COMMUNITY'S GROUP IS ENTERED FROM THE SAME THREE, which is the half this guard did
@@ -887,8 +890,9 @@ describe('a private salon is entered one way, and declining says so (G-D1)', () 
     // the channel and entered a PRIVATE salon's group, so a member added in-session to a PUBLIC
     // salon joined nothing at all and read `nouveau message` until the app restarted (measured
     // 2026-09-21). Creating a salon is the fourth moment and does NOT appear here, deliberately:
-    // a salon cannot be created in a community this device has not already loaded.
-    expect(src.split('ensureCommunityDistributionGroup(').length - 1).toBe(3);
+    // a salon cannot be created in a community this device has not already loaded. The fourth call
+    // (2026-11-08) is the leader running a follower tab's entry of the same group (`tabCommitDelegation`).
+    expect(src.split('ensureCommunityDistributionGroup(').length - 1).toBe(4);
 
     // AND THE THIRD MOMENT LANDS IN THE SESSION LOG. It is the one with no context object to hand,
     // it reached for `console.info`, and its caller is the only thing that can pass the real log.

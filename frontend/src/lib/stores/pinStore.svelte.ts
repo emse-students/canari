@@ -1,5 +1,3 @@
-import { SvelteMap } from 'svelte/reactivity';
-
 /**
  * Per-conversation pin state, as a last-write-wins register per message.
  *
@@ -31,11 +29,15 @@ export type PinEntry = { pinned: boolean; at: number };
  */
 const MAX_ENTRIES = 500;
 
-// Plain Map for the per-conversation container: it's written lazily by load() which may run inside a
-// $derived (reading pinnedMessageIds). Tracking it would throw state_unsafe_mutation on first
-// access. Reactivity is carried by each inner SvelteMap instead - that's what pin/unpin mutate.
-// eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentional: see comment above
-const pins = new Map<string, SvelteMap<string, PinEntry>>();
+// ONE REVISION CARRIES THE REACTIVITY, NOT A SVELTEMAP PER CONVERSATION. A register is created
+// lazily by `load()`, and its first read is very often a `$derived` (the pinned banner). A source
+// created INSIDE a reaction is not tracked by it, so a SvelteMap born there never told that derived
+// about the first pin applied after it (pinStore.reactive.svelte.test.ts, 2026-11-09). `revision` is
+// created with the module, outside every reaction: every reader reads it, every write bumps it. The
+// containers are plain Maps, written by `load()` without notifying anyone, which a derived may do.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- `revision` carries the reactivity
+const pins = new Map<string, Map<string, PinEntry>>();
+let revision = $state(0);
 
 /**
  * Reads the persisted shape, accepting the pre-2026-08-16 one.
@@ -59,11 +61,13 @@ function parseStored(raw: string): Array<[string, PinEntry]> {
   });
 }
 
-/** Lazily loads (and caches) the pin register for a conversation from localStorage. */
-function load(conversationId: string): SvelteMap<string, PinEntry> {
+/** Lazily loads (and caches) the pin register for a conversation from localStorage; a reactive read. */
+function load(conversationId: string): Map<string, PinEntry> {
+  void revision;
   const existing = pins.get(conversationId);
   if (existing) return existing;
-  const map = new SvelteMap<string, PinEntry>();
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- `revision` carries the reactivity
+  const map = new Map<string, PinEntry>();
   try {
     const raw = localStorage.getItem(storageKey(conversationId));
     if (raw) for (const [id, entry] of parseStored(raw)) map.set(id, entry);
@@ -74,7 +78,8 @@ function load(conversationId: string): SvelteMap<string, PinEntry> {
   return map;
 }
 
-function persist(conversationId: string, map: SvelteMap<string, PinEntry>): void {
+function persist(conversationId: string, map: Map<string, PinEntry>): void {
+  revision++;
   // Evict oldest-first when over the cap. A pin is never dropped while a tombstone survives it:
   // both are ordered by the same `at`, which is the only ordering either of them has.
   if (map.size > MAX_ENTRIES) {

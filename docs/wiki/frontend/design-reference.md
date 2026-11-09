@@ -14,6 +14,9 @@ weights, spacing, radii, surfaces, the whole colour treatment - is in scope: *"T
 bouger, etre redimensionne"*. The goal is not to erase Canari's identity but to make it
 *"BEAUCOUP plus ergonomique"*.
 
+**Buttons, selects and text fields (2026-11-07):** their height, edge and corner are one convention,
+not a measurement of the reference - [controls](controls.md).
+
 ---
 
 ## 1. The finding in one line
@@ -2483,8 +2486,10 @@ The height is MEASURED rather than counted, for the same reason `--chat-composer
 depends on how many banners are up, how their text wrapped and how wide the window is, so a constant
 per banner would be a sixth copy of a number that has already drifted five ways.
 
-The five window-scale banners (`EnvironmentBanner`, `MaintenanceAdminBanner`, `MlsFatalErrorBanner`,
-`TabFollowerBanner`, `OfflineBanner`) all render in that one column, above the row - so they are
+The four window-scale banners (`EnvironmentBanner`, `MaintenanceAdminBanner`, `MlsFatalErrorBanner`,
+`OfflineBanner`; `TabFollowerBanner` was the fifth until 2026-11-08, when a follower tab started handing
+its commits to the leader and the banner had nothing left to say - [chat](modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08))
+all render in that one column, above the row - so they are
 full width by construction, and `Banner.svelte` insets itself squarely at `m-3`, the same 0.75rem
 gutter grid every other card in the floating shell sits on. It was `mx-3 mt-2`: three different
 numbers on four sides (user: *"si il y a des marges elles doivent etre egales de tous les cotes"*).
@@ -2495,7 +2500,8 @@ itself by hand reads as correct CSS in review and cannot be caught any other way
 
 ### Verified on the user's own reproduction - two tabs of one account (2026-09-22)
 
-Measured on W1 at 1920px, on the estate built from this branch, with the follower banner up:
+Measured on W1 at 1920px, on the estate built from this branch, with the follower banner up (the
+banner is gone since 2026-11-08; the measurement stands for any window-scale banner):
 
 | | Before | After |
 |---|---|---|

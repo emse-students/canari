@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.6.7</string>
+	<string>1.6.9</string>
 	<key>CFBundleVersion</key>
-	<string>100600702</string>
+	<string>100600901</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIBackgroundModes</key>
@@ -52,6 +52,16 @@
 	<array>
 		<string>fr.emse.canari.cleanup</string>
 		<string>fr.emse.canari.outboxRetry</string>
+	</array>
+	<!-- The conversation suggestions of the share sheet (sharing lot S5): an app may donate an
+	     INSendMessageIntent only if it DECLARES that intent here. Without it every donation is
+	     refused (`Can NOT donate INSendMessageIntent for fr.emse.canari`, code 1901, measured on the
+	     iPhone 2026-11-08: "0 of 5 donated") and the sheet offers no conversation. The share
+	     extension's `IntentsSupported` (canari_Share/Info.plist) is the READING half; this is the
+	     DONATING half. No entitlement goes with it. -->
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INSendMessageIntent</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

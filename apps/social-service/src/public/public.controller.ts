@@ -20,6 +20,8 @@ import { Association } from '../associations/entities/association.entity';
 import { ProductsService } from '../associations/products.service';
 import { PosterService, type PublishedCarteResponse } from '../associations/poster.service';
 import type { PublishedCarteCard, PublishedCarteUnit } from '../associations/published-carte';
+import { CARTE_ERROR } from '../associations/poster-scope';
+import { parsePublicSpaceParam } from '../spaces/public-space';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import { coreUrl } from '../internal/service-urls';
 import { PostPreviewService, type PostSharePreview } from '../posts/post-preview.service';
@@ -143,21 +145,56 @@ export class PublicController {
     }
   }
 
-  /** Lists associations and/or lists. `?type=association|list` restricts; omit for both. */
+  /**
+   * Lists associations and/or lists. `?type=association|list` restricts; omit for both.
+   *
+   * `?space=<formation>:<campus>` (owner, 2026-11-08) keeps, among rows of type `association`, only
+   * those whose audience reaches the space - a carte's set of that space, plus its archived ones,
+   * which the showcase lists in its archived section (`spaces/public-space.ts`); lists and
+   * institutions are not filtered by it. The portail-etu showcase sends its space; without the
+   * parameter the answer is the COMPLETE list, unchanged, because Canari's own sitemap and SEO read
+   * it too. A malformed `space` is a typed 400 (`PUBLIC_SPACE_INVALID`).
+   */
   @Get('associations')
-  async listAssociations(@Query('type') type?: string): Promise<PublicAssociation[]> {
+  async listAssociations(
+    @Query('type') type?: string,
+    @Query('space') rawSpace?: unknown
+  ): Promise<PublicAssociation[]> {
+    const space = parsePublicSpaceParam(rawSpace, 'GET public/associations');
     const filter =
       type === 'association' || type === 'list' || type === 'institution' ? type : undefined;
-    this.logger.debug(`public listAssociations type=${filter ?? 'all'}`);
+    this.logger.debug(
+      `public listAssociations type=${filter ?? 'all'} space=${space ? `${space.formation}:${space.campus}` : 'all'}`
+    );
     const rows = await this.associations.list(filter);
-    return rows.map(toPublic);
+    if (!space) return rows.map(toPublic);
+    const offered = await this.associations.offeredInSpace(space);
+    return rows.filter((a) => a.type !== 'association' || offered.has(a.id)).map(toPublic);
   }
 
-  /** One association/list by slug, with its public members. */
+  /**
+   * One association/list by slug, with its public members.
+   *
+   * With `?space=`, an association (type `association`, archived or not) whose audience does not
+   * reach the space answers 404, the
+   * same as an unknown slug: the showcase of a space must not render another space's association
+   * by URL. Without it, every association answers - Canari's own pages read it.
+   */
   @Get('associations/slug/:slug')
-  async getBySlug(@Param('slug') slug: string) {
+  async getBySlug(@Param('slug') slug: string, @Query('space') rawSpace?: unknown) {
+    const space = parsePublicSpaceParam(rawSpace, 'GET public/associations/slug');
     this.logger.debug(`public getBySlug ${slug}`);
     const a = await this.associations.findBySlug(slug);
+    if (
+      space &&
+      a.type === 'association' &&
+      !(await this.associations.offeredInSpace(space)).has(a.id)
+    ) {
+      this.logger.debug(
+        `public getBySlug ${slug}: not offered by ${space.formation}:${space.campus} - 404`
+      );
+      throw new NotFoundException('Association not found');
+    }
     const members = await this.associations.listMembersPublic(a.id);
     return { ...toPublic(a), members };
   }
@@ -303,22 +340,45 @@ export class PublicController {
   }
 
   /**
-   * The live "Carte de la Vie Asso", rendered interactively by the portail-etu showcase.
+   * The live "Carte de la Vie Asso" of ONE space, rendered interactively by the portail-etu showcase.
+   *
+   * `?space=<formation>:<campus>` names the space (`ICM:saint-etienne`): each space has at most one
+   * live map since migration 147, and the showcase names its own space in its configuration - Canari
+   * knows nothing of which school a showcase belongs to. 404 when that space has no live map; the
+   * showcase then simply omits the map. A value naming no possible space is a typed 400
+   * (`PUBLIC_SPACE_INVALID`).
+   *
+   * [LEGACY] With no `space`, a showcase deployed before it sent one still gets the map while EXACTLY
+   * ONE map is live anywhere, logged at WARN; otherwise a typed 400 (`CARTE_PUBLIC_SPACE_REQUIRED`)
+   * rather than a guess (docs/wiki/legacy-compatibility.md).
    *
    * Returns placement only - each bubble carries an `assoId` the consumer joins against
-   * {@link listAssociations}, so a rename or a new logo shows up with no republish. 404 when no
-   * poster is currently published; the showcase then simply omits the map.
+   * {@link listAssociations}, so a rename or a new logo shows up with no republish.
    *
    * Cached briefly: the payload can embed a background image, and a published map changes at most
    * a few times a year, so a short shared cache keeps the showcase cheap without making an
-   * unpublish take noticeably long to appear.
+   * unpublish take noticeably long to appear. The query string is part of the cache key.
    */
   @Get('carte')
   @Header('Cache-Control', 'public, max-age=300')
-  async getPublishedCarte(): Promise<PublicCarteResponse> {
-    this.logger.debug('public getPublishedCarte');
-    const carte = await this.poster.getPublished();
-    if (!carte) throw new NotFoundException('No published carte');
+  async getPublishedCarte(@Query('space') rawSpace?: unknown): Promise<PublicCarteResponse> {
+    const space = parsePublicSpaceParam(rawSpace, 'GET public/carte');
+    this.logger.debug(
+      `public getPublishedCarte ${space ? `${space.formation}:${space.campus}` : '(no space)'}`
+    );
+    let carte: PublishedCarteResponse | null;
+    if (space) {
+      carte = await this.poster.getPublished(space);
+      if (!carte) throw new NotFoundException('No published carte for this space');
+    } else {
+      carte = await this.poster.getSoleLegacyPublished();
+      if (!carte) {
+        throw new BadRequestException({
+          code: CARTE_ERROR.PUBLIC_SPACE_REQUIRED,
+          message: 'space is required: name it as <formation>:<campus>, e.g. ICM:saint-etienne',
+        });
+      }
+    }
     // Each card's photo by its roster row, the address the public roster hands out. The card's
     // `userId` is served beside it: the showcase keys its card list on that field.
     const avatars = await this.associations.publicAvatarUrlsFor(

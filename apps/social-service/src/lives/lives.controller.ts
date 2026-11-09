@@ -10,6 +10,7 @@ import {
   HttpCode,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Put,
   Query,
@@ -20,7 +21,7 @@ import type { Request } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { AssociationsService } from '../associations/associations.service';
 import { LiveEnabledGuard } from './live-enabled.guard';
-import { LIVE_SEGMENT_MAX_BYTES, liveLimits } from './live.constants';
+import { LIVE_POSTER_MAX_BYTES, LIVE_SEGMENT_MAX_BYTES, liveLimits } from './live.constants';
 import { LiveChatService, type LiveChatBlock } from './live-chat.service';
 import { LivesService, type LiveArrivalsBlock, type LiveManifest } from './lives.service';
 import { readBoundedBody } from './read-bounded-body';
@@ -147,8 +148,12 @@ export class LivesController {
     await this.associations.refuseModeration(caller, { kind: 'broadcaster', id: target });
   }
 
-  /** The open lives the caller may watch, newest first. */
+  /**
+   * The open lives the caller may watch, newest first, with each one's preview key. `no-store`: the
+   * answer is per reader, and a key never sits in any cache.
+   */
   @Get()
+  @Header('Cache-Control', 'no-store')
   list(@Headers('x-user-id') userId: string) {
     return this.lives.listOpen(callerOf(userId));
   }
@@ -161,9 +166,50 @@ export class LivesController {
   @Post()
   start(
     @Headers('x-user-id') userId: string,
-    @Body() body: { key?: unknown; associationId?: unknown; acceptedRulesVersion?: unknown }
+    @Body()
+    body: {
+      key?: unknown;
+      associationId?: unknown;
+      acceptedRulesVersion?: unknown;
+      title?: unknown;
+    }
   ) {
     return this.lives.start(callerOf(userId), body ?? {});
+  }
+
+  /**
+   * The broadcaster sets or clears the live's title while on air: `{ title: string | null }` (owner,
+   * 2026-11-07). 400 `LIVE_TITLE_INVALID` (with `maxChars`), 403 `LIVE_MUTED`, 404 `LIVE_NOT_FOUND`
+   * for another member's live, 410 once ended. Answers `{ id, title }`.
+   */
+  @Patch(':id')
+  @HttpCode(200)
+  setTitle(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string,
+    @Body() body: { title?: unknown }
+  ) {
+    return this.lives.setTitle(callerOf(userId), id.toLowerCase(), body ?? {});
+  }
+
+  /**
+   * The live's PREVIEW IMAGE, raw `application/octet-stream`, sealed under the POSTER key (HKDF of
+   * the live key, `live-poster-key.ts`), at most
+   * {@link LIVE_POSTER_MAX_BYTES} (owner, 2026-11-07). Broadcaster only; replaces the previous one.
+   * Refusals in `LivesService.ingestPoster`; over the bound 413 `LIVE_POSTER_TOO_LARGE`.
+   */
+  @Put(':id/poster')
+  async putPoster(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string,
+    @Req() req: Request
+  ) {
+    const data = await readBoundedBody(req, LIVE_POSTER_MAX_BYTES, {
+      what: 'a poster',
+      tooLargeCode: 'LIVE_POSTER_TOO_LARGE',
+      emptyCode: 'LIVE_POSTER_EMPTY',
+    });
+    return this.lives.ingestPoster(callerOf(userId), id.toLowerCase(), data);
   }
 
   /**

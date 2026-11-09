@@ -152,7 +152,6 @@ describe('references inside the set resolve', () => {
   const associations = ids('associations');
   const fks: [string, string, Set<unknown>, boolean][] = [
     ['associations', 'createdBy', users, false],
-    ['associations', 'categoryId', ids('association_categories'), true],
     ['association_audiences', 'associationId', associations, false],
     ['spaces', 'bdeAssociationId', associations, true],
     ['association_members', 'associationId', associations, false],
@@ -183,7 +182,6 @@ describe('references inside the set resolve', () => {
       void table;
     }
     expect(ids('associations', 'slug').size).toBe(rows.associations.length);
-    expect(ids('association_categories', 'slug').size).toBe(rows.association_categories.length);
     const pairs = (t: string, a: string, b: string) =>
       new Set(rows[t].map((r) => `${r[a]}|${r[b]}`));
     expect(pairs('association_members', 'associationId', 'userId').size).toBe(
@@ -263,6 +261,15 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
   CHK_posts_students_only_entity: {
     sql: `NOT "studentsOnly" OR "associationId" IS NOT NULL`,
     holds: (r) => r.studentsOnly !== true || given(r.associationId),
+  },
+  // `presentation` defaults to 'association' since migration 144; the seed files no neutral event.
+  association_calendar_events_presentation_check: {
+    sql: "presentation IN ('association', 'neutral')",
+    holds: oneOf('presentation', ['association', 'neutral'], true),
+  },
+  association_calendar_events_neutral_no_form_check: {
+    sql: `presentation <> 'neutral' OR "linkedFormId" IS NULL`,
+    holds: (r) => (r.presentation ?? 'association') !== 'neutral' || !given(r.linkedFormId),
   },
   // `kind` defaults to 'post'.
   posts_kind_shape: {

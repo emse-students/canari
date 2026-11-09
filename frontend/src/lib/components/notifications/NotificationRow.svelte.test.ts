@@ -337,6 +337,13 @@ describe('NotificationRow sentence', () => {
     expect(accepted.textContent).toContain(m.notif_follow_accepted_text());
     expect(accepted.textContent).not.toContain('a commenté');
   });
+
+  // A followed person's birthday (docs/wiki/birthdays.md): the cake, the sentence, never a comment's.
+  it("says it is a followed person's birthday, with no text and never the comment sentence", () => {
+    const row = renderRow({ ...postRow('birthday'), postId: 'member-1', text: '' });
+    expect(row.textContent).toContain(m.notif_birthday_text());
+    expect(row.textContent).not.toContain('a commenté');
+  });
 });
 
 /**

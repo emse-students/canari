@@ -535,19 +535,6 @@ describe('SpacesService', () => {
     expect(spaces[2].bde).toBeNull();
   });
 
-  it('lists the rules of every association', async () => {
-    const { service } = make({
-      rules: [
-        { associationId: 'a', formation: 'ICM', campus: 'saint-etienne' },
-        { associationId: 'b', formation: null, campus: 'saint-etienne' },
-      ],
-    });
-    expect(await service.listAudiences()).toEqual([
-      { associationId: 'a', formation: 'ICM', campus: 'saint-etienne' },
-      { associationId: 'b', formation: null, campus: 'saint-etienne' },
-    ]);
-  });
-
   it('replaces the rules in one transaction, de-duplicated', async () => {
     const { service, manager } = make({ association: { id: 'a' } });
     await service.setAudiences(

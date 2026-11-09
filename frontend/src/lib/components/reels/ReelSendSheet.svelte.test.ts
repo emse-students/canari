@@ -43,6 +43,7 @@ vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
 }));
 
 const { default: ReelSendSheet } = await import('./ReelSendSheet.svelte');
+const { m } = await import('$lib/paraglide/messages');
 
 const ME = '11111111-1111-4111-8111-111111111111';
 
@@ -176,6 +177,20 @@ describe('ReelSendSheet', () => {
     row('g-new').click();
     await settle();
     expect(row('g-new').getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('says the conversations receive the published video itself only when the feed AND a chat are ticked (15.5)', async () => {
+    await open();
+    const note = () => document.querySelector('[data-reel-send-same-as-post]');
+    feed().click();
+    await settle();
+    expect(note()).toBeNull();
+    row('g-old').click();
+    await settle();
+    expect(note()?.textContent).toContain(m.reel_sendto_same_as_post());
+    feed().click();
+    await settle();
+    expect(note()).toBeNull();
   });
 
   it('the feed row never counts against the conversation cap', async () => {

@@ -1,3 +1,0 @@
-### Fixed - the order bar of a public form rests on the bottom of the screen
-
-The shell reserved the bottom navigation's room as padding on every page, including the guest form that has no navigation, and a sticky bar stops at the padding edge: it floated high with the page showing under it. The padding now follows the navigation's own mount. See [forms](docs/wiki/frontend/modules/forms.md#the-order-bar-rests-on-the-bottom-of-the-screen-2026-11-07). On every other page the reserve was 1rem taller than the bar (still 4rem after #648 cut the bar to 3rem), so a form's order bar floated 1rem above the navigation; bar and reserve now read one height.

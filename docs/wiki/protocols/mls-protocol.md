@@ -1958,14 +1958,12 @@ created in a follower's copy is one the leader never holds). Its
 state is a copy loaded once: the version guard refuses its writes once the leader has written, so the
 checkpoint above would fail on every follower commit; and before that checkpoint existed, a commit
 sent from a follower moved the group past the state the leader keeps, because the leader cannot read
-a commit of its own leaf back (`OwnPrivateMessage`). Commits are reached from a follower's UI
-(`groupActions.ts`, `groupCreation.ts`, `actions.ts`); refusing them by the leadership fact is the
-gate the outbox already applies to sends. The member is told, by type: a creation answers the
-`follower-tab` refusal, and an invite or a removal shows the same sentence
-(`reportFollowerTabRefusal`, `conversationRefusalMessage.ts`) - do it in the main tab. A community's
-or a salon's key group refused this way (`leaveKeyGroupToMainTab`, `followerTabKeyGroup.ts`) tells
-the member on a gesture (creating a community or a salon, joining a salon) and goes on without the
-group; on a load it is logged and the load goes on, since the main tab enters it.
+a commit of its own leaf back (`OwnPrivateMessage`). **Since 2026-11-08 the follower HANDS the gesture
+to the leader instead of refusing it** - [below](#a-follower-tab-hands-its-commits-to-the-leader-2026-11-08):
+the role is read at the gesture, before anything is asked, so the service's refusal is now reached
+only by a tab demoted between that read and its commit, and says so (`reportFollowerTabRefusal`). A
+key group met by a LOAD in a follower is still left to the main tab's own load and logged
+(`leaveKeyGroupToMainTab`).
 
 **Cost: one checkpoint per commit, awaited under the MLS lock**, which blocks decrypts and sends in
 every group while it runs. The live web path is the WASM ChaCha20 seal
@@ -3090,7 +3088,32 @@ generation the peer has already consumed, then dropped silently (WP-MULTITAB-1).
 held until `beforeunload`, with mutual exclusion guaranteed by the browser rather than by a
 read-modify-write on `localStorage`. The `BroadcastChannel` + heartbeat implementation is the
 fallback for engines without `navigator.locks` (Tauri WebKitGTK, very old browsers), and
-`canari-mls-tab` still carries the takeover and promotion messages on both paths.
+`canari-mls-tab` still carries the promotion messages on both paths (the take-over request was removed on 2026-11-08, with the follower banner).
+
+### A follower tab hands its commits to the leader (2026-11-08)
+
+Decided by the owner: the follower banner is removed and what a follower refused is done from it.
+`tabCommitDelegation.ts` hands each commit-bearing GESTURE (create a group or a DM, invite, remove,
+enter a community's or a salon's key group) to the leader, which runs the very path its own gesture
+runs, on its authoritative state, and answers the outcome by value - the same outcome types a
+leader caller gets (`ConversationOutcome`, `BulkAdditionOutcome`, a removal's ending). The follower's
+copy never commits and never holds the group it asked for; it draws what the leader stored, and a
+follower does not replay a group its copy does not hold.
+
+The request is a durable record (the account's IndexedDB `CanariDBTabCommit_<userId>`, `pending` ->
+`running` -> `done`, every change one read-check-write transaction) with only a signal on
+`canari-tab-messages`, posted once the record has committed. **Only a state LOADED as the leader runs
+one** (`stateAuthority.ts`): a follower promoted in place leads at once but holds a follower's copy
+until its promotion reload, so it runs and answers nothing - and refuses its own commits - and its
+reloaded successor serves. **A leader that dies mid-request is proven dead by the browser**: it ran
+the request holding the record's Web Lock, so a record found `running` with that lock free is
+answered `leader-gone` and never run again - the dead leader may have reached the server, and its
+kept commit is settled at the next connection by the existing machinery; running it twice is the
+double commit. A `pending` record is run by the next leader, the one a handover elects included,
+and deleted unrun once the tab that asked is gone (its requester lock free). A leader that cannot
+serve ANSWERS: `leader-unavailable` at the PIN keypad or signed out, `not-delegable` for a kind it
+has no executor for or a follower of another account. The mechanism, the refusals, the frozen
+background tab it does not cover, and the guard: [chat](../frontend/modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08).
 
 ### A tab queued behind itself and went read-only for ever - FIXED 2026-09-21
 
@@ -3102,7 +3125,8 @@ its own `beforeunload`. On screen: *"Messagerie chiffree active dans un autre on
 *Hors-ligne* header, and not one community ever listed - permanently, with no other tab in
 existence.
 
-**"Prendre la main" cannot rescue it**, and that is the same defect seen from the other end rather
+**"Prendre la main" could not rescue it** (the button is gone since 2026-11-08, with the follower
+banner), and that is the same defect seen from the other end rather
 than a second one: `requestLeadershipTakeover` posts `request_takeover` on a `BroadcastChannel`,
 and **a BroadcastChannel never delivers to the context that posted**. The only tab that could
 release the lock is the one asking for it.

@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { publishQueueDbName } from '$lib/posts/publishQueue/publishQueueStore';
+import { tabCommitDbName } from './chat/tabCommitStore';
 import { loadDeviceKey, saveDeviceKey } from './deviceKeyVault';
 import {
   accountIndexedDbNames,
@@ -116,6 +117,11 @@ describe('wipeDeletedAccountLocalData', () => {
   it("deletes that account's publish queue: its media wait there in the clear", () => {
     expect(accountIndexedDbNames('user-a')).toContain(publishQueueDbName('user-a'));
     expect(publishQueueDbName('user-a')).toBe('CanariDBPublish_user-a');
+  });
+
+  it("deletes that account's handed-over tab commits: group names and user ids wait there", () => {
+    expect(accountIndexedDbNames('user-a')).toContain(tabCommitDbName('user-a'));
+    expect(tabCommitDbName('user-a')).toBe('CanariDBTabCommit_user-a');
   });
 
   it("a revoked device's account wipe does not mark the account deleted - it may sign in here again", async () => {

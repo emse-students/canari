@@ -221,6 +221,8 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
     // The bell's comment-borne rows read the named reader's switch (owner, 2026-11-04).
     await q(migration('132_read_grant_readers.sql'));
     await q(migration('121_member_reposts.sql'));
+    // The bell re-reads a birthday notice against its date (`birthdayRowShownSql`).
+    await q(migration('148_profile_birthdays.sql'));
     // A replay is a no-op (the deploy ledger may run it twice).
     await q(migration('121_member_reposts.sql'));
     await q(migration('123_member_repost_notices.sql'));

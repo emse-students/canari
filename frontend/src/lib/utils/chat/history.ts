@@ -1320,6 +1320,7 @@ export async function replayConversationHistory(params: {
               messageReactions,
               reactionUpdates,
               authorKeys: mlsService,
+              nicknameRoster: mlsService,
               rowPatches,
               pendingById,
               deletedMessages,

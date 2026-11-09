@@ -10,13 +10,24 @@ describe('HelpSeenService', () => {
   beforeEach(() => jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined));
   afterEach(() => jest.restoreAllMocks());
 
-  it('hands back only the ids the allowlist still names', async () => {
+  it('hands back only the ids the allowlist still names, with their server-side age', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-11-30T00:00:00Z'));
     const repo = {
-      find: jest.fn(async () => [{ helpId: 'welcome-tour' }, { helpId: 'retired-hint' }]),
+      find: jest.fn(async () => [
+        { helpId: 'welcome-tour', seenAt: new Date('2026-11-29T23:00:00Z') },
+        { helpId: 'retired-hint', seenAt: new Date('2026-01-01T00:00:00Z') },
+      ]),
     };
     const service = new HelpSeenService(repo as unknown as Repository<HelpSeen>);
-    await expect(service.seenBy('u1')).resolves.toEqual(['welcome-tour']);
-    expect(repo.find).toHaveBeenCalledWith({ where: { userId: 'u1' }, select: { helpId: true } });
+    await expect(service.seenWithAges('u1')).resolves.toEqual({
+      seen: ['welcome-tour'],
+      ageSeconds: { 'welcome-tour': 3600 },
+    });
+    expect(repo.find).toHaveBeenCalledWith({
+      where: { userId: 'u1' },
+      select: { helpId: true, seenAt: true },
+    });
+    jest.useRealTimers();
   });
 
   it('writes with ON CONFLICT DO NOTHING, so a repeat changes nothing', async () => {

@@ -7,7 +7,7 @@
     admitAttachments,
     attachmentCapNotice,
   } from '$lib/posts/attachmentCap';
-  import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
+  import { FileText, Film, Music, CalendarCheck, CircleAlert, CloudUpload } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import { onDestroy, onMount } from 'svelte';
   import type { CreatePostPayload, PostFeed } from '$lib/posts/api';
@@ -27,6 +27,8 @@
   } from '$lib/posts/pollDraft';
   import { LocalizedError } from '$lib/utils/localizedError';
   import { getForms, type Form } from '$lib/forms/api';
+  // A post cannot carry a DRAFT form (the server refuses it): the picker never offers one.
+  import { publishedForms } from '$lib/forms/publish';
   import {
     ANONYMOUS_POST_IDENTITY,
     buildCreateFormHref,
@@ -49,6 +51,7 @@
   } from '$lib/associations/api';
   import {
     isAssociationIdentity,
+    listLiveAssociations,
     listPostAsAssociations,
     postIdentityFields,
   } from '$lib/posts/postIdentity';
@@ -69,6 +72,7 @@
   import FormSection from './FormSection.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { composerDropZone } from '$lib/utils/composerDropZone';
   import { linkableEventPickerOptions } from '$lib/utils/time';
   import { livesAvailable } from '$lib/utils/livesAvailability';
   import { serverLivesMode } from '$lib/stores/appVersionCheck.svelte';
@@ -168,6 +172,8 @@
   // --- Association identity ---
   /** Associations the user may post as (`listPostAsAssociations`). */
   let postAsAssociations = $state<Association[]>([]);
+  /** Ids of the associations a live may be started as (`listLiveAssociations`), a subset of the above. */
+  let liveAssociationIds = $state<ReadonlySet<string>>(new Set());
   /** Who is publishing - `''`, anonymous or an association (`PostIdentityPicker`). */
   let selectedAssociationId = $state('');
   let selectedLinkedCalendarEventId = $state('');
@@ -184,20 +190,28 @@
    * so the chip is not offered while "anonymous" is chosen, nor while the chosen association is not
    * in the list read (a restored draft's): the live would otherwise go out under the wrong name.
    */
-  const liveAssociation = $derived(
+  const chosenAssociation = $derived(
     isAssociationSelected
       ? (postAsAssociations.find((a) => a.id === selectedAssociationId) ?? null)
       : null
   );
+  /**
+   * The chosen association, only where the SERVER's live start would accept it
+   * (`listLiveAssociations`): a global admin posts as any association but may not broadcast as one
+   * they hold no `POST_AS_ASSO` in, and `POST /api/lives` answers `403 LIVE_ASSOCIATION_FORBIDDEN`.
+   */
+  const liveAssociation = $derived(
+    chosenAssociation && liveAssociationIds.has(chosenAssociation.id) ? chosenAssociation : null
+  );
 
   /**
    * "Entre étudiants" (owner, 2026-11-04): OFF by default, offered only while the identity chosen is
-   * an association or a list the member may post as - the same entity read as `liveAssociation`, so
+   * an association or a list the member may post as - the same entity read as `chosenAssociation`, so
    * a restored draft naming an association no longer listed offers nothing and sends nothing.
    */
   let studentsOnly = $state(false);
   const studentsOnlyAssociation = $derived(
-    liveAssociation && studentsOnlyOffered(liveAssociation.type) ? liveAssociation : null
+    chosenAssociation && studentsOnlyOffered(chosenAssociation.type) ? chosenAssociation : null
   );
 
   /**
@@ -224,6 +238,8 @@
   );
 
   let editorField = $state<MarkdownComposerField | null>(null);
+  /** True while a file, image or link is dragged over the sheet; draws the drop overlay. */
+  let dropActive = $state(false);
   /** Which picked file's caption field is open under the strip - at most one (`MediaCaptionChip`). */
   let captionIndex = $state<number | null>(null);
 
@@ -405,7 +421,7 @@
     }
 
     try {
-      availableForms = await getForms();
+      availableForms = publishedForms(await getForms());
     } catch (e) {
       console.error('Failed to load forms', e);
     }
@@ -414,7 +430,7 @@
     if (newFormId) {
       sessionStorage.removeItem(POST_NEW_FORM_ID_KEY);
       try {
-        availableForms = await getForms();
+        availableForms = publishedForms(await getForms());
       } catch {
         /* keep previous list */
       }
@@ -424,6 +440,7 @@
 
     try {
       postAsAssociations = await listPostAsAssociations();
+      liveAssociationIds = new Set((await listLiveAssociations()).map((a) => a.id));
     } catch (e) {
       console.error('Failed to load associations', e);
     }
@@ -631,7 +648,23 @@
   The error banner is in the FOOTER for the reason its comment in the script gives: a keyboard used
   to cover the one sentence that named the cause.
 -->
-<div class="flex min-h-0 flex-1 flex-col">
+<div
+  class="relative flex min-h-0 flex-1 flex-col"
+  role="group"
+  aria-label={m.post_create_message_placeholder()}
+  use:composerDropZone={{ onFiles: addFiles, onActiveChange: (v) => (dropActive = v) }}
+>
+  {#if dropActive}
+    <div
+      transition:fade={{ duration: 150 }}
+      class="border-cn-accent bg-cn-surface/80 pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-lg border-2 border-dashed"
+    >
+      <span class="text-cn-ink flex items-center gap-2 text-sm font-bold">
+        <CloudUpload size={18} strokeWidth={2.5} />
+        {m.post_drop_overlay()}
+      </span>
+    </div>
+  {/if}
   <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-4 pb-3 sm:px-6">
     <!-- Who is publishing: the avatar of that identity, and the choice itself drawn as the name. -->
     <PostIdentityPicker
@@ -848,7 +881,7 @@
       {#snippet action()}
         <Button
           type="button"
-          class="shrink-0 px-5 py-2 text-sm font-bold!"
+          class="shrink-0"
           disabled={publishing || !hasContent(markdown, selectedFiles.length)}
           loading={publishing}
           onclick={publishPost}

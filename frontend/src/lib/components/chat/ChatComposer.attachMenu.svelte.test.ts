@@ -174,7 +174,7 @@ describe('the one attachment menu - Android app', () => {
   // that happy-dom reports as an unhandled animation rejection.
   it.each([
     ['Photothèque', 'image/*,video/*'],
-    ['Tous les fichiers', 'image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip'],
+    ['Tous les fichiers', '*/*'],
   ])('"%s" opens the input that reaches its picker (%s), and closes', (label, accept) => {
     stubMatchMedia(true);
     mountComposer();
@@ -282,7 +282,7 @@ describe('the one attachment menu - the website', () => {
     const input = document.querySelector<HTMLInputElement>(
       'label input[type="file"][aria-label="Joindre un fichier"]'
     );
-    expect(input?.accept).toBe('image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip');
+    expect(input?.accept).toBe('*/*');
     expect(input?.hasAttribute('capture')).toBe(false);
   });
 
@@ -307,7 +307,7 @@ describe('the one attachment menu - the website', () => {
     document.querySelector<HTMLButtonElement>('button[aria-label="Joindre un fichier"]')!.click();
     flushSync();
 
-    expect(opened).toEqual(['image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip']);
+    expect(opened).toEqual(['*/*']);
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 });

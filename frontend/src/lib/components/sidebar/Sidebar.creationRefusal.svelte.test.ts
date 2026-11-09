@@ -17,12 +17,12 @@ import { describe, it, expect, afterEach, afterAll, vi } from 'vitest';
 // The same import-cycle break the other composable suites use: Sidebar -> mediaTouch ->
 // globalChatSingleton, which calls useMessaging() at module scope and reaches back into a half-built
 // module graph. Nothing in this suite goes near the singleton.
-vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
+vi.mock('$lib/stores/globalChatSingleton.svelte', async () => ({
   appendLog: () => {},
   globalSession: {},
   globalConvs: {},
   globalMessaging: {},
-  globalChannels: {},
+  globalChannels: (await import('./globalChannelsStub')).globalChannelsStub(),
   globalNotifs: {},
 }));
 

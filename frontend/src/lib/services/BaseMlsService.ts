@@ -157,6 +157,7 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import {
   checkpointWroteNothing,
   fromBase64,
@@ -213,6 +214,7 @@ import {
   AcceptedCommitNotMergedError,
   CommitStageNotSavedError,
   FollowerTabCommitError,
+  FollowerTabKeyPackageError,
   PreviousCommitUnresolvedError,
   StagedCommitPendingError,
   composeSubmission,
@@ -678,13 +680,18 @@ export abstract class BaseMlsService implements IMlsService {
    * before it will activate a membership: a static KeyPackage on the server. See
    * {@link externalJoin} for the production measurement. Per-process, and held only for the span of
    * one {@link generateKeyPackage} call, so it is a fact about NOW and never a "done" flag.
+   *
+   * AND IT IS THE SINGLE FLIGHT: a {@link generateKeyPackage} call that finds it set returns it
+   * rather than starting a second round, so two callers never publish side by side (the two
+   * same-millisecond `register-device` requests of 2026-11-07).
    */
-  private keyPackageRoundInFlight: Promise<unknown> | null = null;
+  private keyPackageRoundInFlight: Promise<DatedKeyPackage> | null = null;
 
   /**
-   * How many key package rounds are running RIGHT NOW. A count, not the field above: rounds overlap
-   * (boot, `republishKeyMaterial`, a join starting one) and the older one settling must not make
-   * the newer one invisible.
+   * How many key package rounds are running RIGHT NOW. A count, not the field above: rounds still
+   * overlap in two cases - a `fresh` round queued behind the one in flight, and a round started after
+   * an older one was ABANDONED at its deadline (whose work may still be running) - and the older one
+   * settling must not make the newer one invisible.
    */
   private keyPackageRoundsActive = 0;
 
@@ -3822,8 +3829,45 @@ export abstract class BaseMlsService implements IMlsService {
    * owner's revocation goes to the one revocation consequence there is - the `onDeviceRevoked`
    * handler, which confirms with the server and runs `wipeRevokedDevice` - and the round fails.
    * Nothing here mints an id.
+   *
+   * ONE ROUND AT A TIME: A CALLER JOINS THE ROUND IN FLIGHT ({@link keyPackageRoundInFlight}).
+   * Measured on production 2026-11-07, `1.6.6`: a web device re-enrolling at sign-in sent two
+   * `register-device` requests in the same millisecond, and the server answered one of them 500.
+   * Two rounds had started side by side - two callers each finding no round to wait on (the login's
+   * connection sync and the reconnect's, or two external joins each reading "absent" and "no round
+   * running") - both minted, both awaited the ONE coalesced checkpoint (`flushEncrypted`), and both
+   * resumed on the same tick to publish. The overlap was the defect, so it is deleted: the second
+   * caller is handed the first one's promise, and one round publishes for both. No timer is
+   * involved; the field is cleared when the round settles.
+   *
+   * `fresh` is for a caller whose round must START AFTER something it already did -
+   * {@link republishKeyMaterial}, whose purge a round that counted the pool before it would not
+   * see - and the connection sync, whose round must run on the link its socket just proved rather
+   * than inherit the failure of a round started on the link that died. That round is chained AFTER
+   * the one in flight (it waits for it to settle, never runs beside it), its deadline starts only
+   * then, and it is the round later callers join.
+   *
+   * THE SLOT IS PER CLIENT INSTANCE, and an account switch builds a new client
+   * (`mlsHolder.reset` / `retire`), so a round is never joined across accounts or device keys.
    */
-  async generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage> {
+  async generateKeyPackage(
+    deviceKeyB64: string,
+    opts?: { fresh?: boolean }
+  ): Promise<DatedKeyPackage> {
+    // ONLY THE LEADER'S COPY MINTS, as only it commits (`refusesCommitsHere`): every key package
+    // published is minted here, and a private half held by a follower's copy - or by a promoted tab
+    // before its reload - is one no kept state could open a Welcome with.
+    if (refusesCommitsHere()) {
+      console.warn('[MLS] key package refused: this tab holds no leader copy of the MLS state');
+      throw new FollowerTabKeyPackageError();
+    }
+    const inFlight = this.keyPackageRoundInFlight;
+    if (inFlight && !opts?.fresh) {
+      console.log('[MLS] key package round already in flight - joining it, not starting a second');
+      return inFlight;
+    }
+    // A FRESH ROUND FOLLOWS THE ONE IN FLIGHT: it starts once that one settles, whatever it answered.
+    const predecessor = inFlight;
     // NAMED FOR ITS SPAN, so an external join issued while it runs can wait for the publication it
     // depends on ({@link externalJoin}). The identity check keeps a later round from clearing its
     // successor, and `finally` means a throw leaves nothing for a join to wait on.
@@ -3835,7 +3879,16 @@ export abstract class BaseMlsService implements IMlsService {
     // A property of a shared object, not a bare `let`: the deadline handler below flips it while the
     // round is suspended at an `await`, a write control-flow analysis (CodeQL 2552) cannot see.
     const roundState = { stale: false };
-    const round = (async (): Promise<DatedKeyPackage> => {
+    const round = async (): Promise<DatedKeyPackage> => {
+      // NOTHING MINTS FOR A ROUND ITS CALLERS GAVE UP ON. The deadline below starts only once the
+      // predecessor settled, so this cannot fire today; it is the guard that keeps it true if the
+      // order ever changes, because a mint for nobody is the untracked overlap this method removes.
+      if (roundState.stale) {
+        console.error(
+          '[MLS] a key package round was ABANDONED before it started its own work - not minting'
+        );
+        throw new Error('key package round abandoned before it started');
+      }
       try {
         const published = await this.generateKeyPackageImpl(deviceKeyB64);
         // A published round proves this page's identity is accepted: any refused-rotation run ended.
@@ -3911,7 +3964,7 @@ export abstract class BaseMlsService implements IMlsService {
         forgetRefusedRotationReloads();
         return republished;
       }
-    })();
+    };
     // THE CALLER STOPS WAITING AFTER A DEADLINE, THE WORK IS NOT CANCELLED (a native `invoke` and a
     // mint under the MLS lock cannot be aborted). Without this a hang anywhere in the round kept
     // the active count above zero for ever, so every join parked and its flight never cleared.
@@ -3929,17 +3982,32 @@ export abstract class BaseMlsService implements IMlsService {
     // The persist and publish steps inside `generateKeyPackageImpl` are platform code and are NOT
     // gated: a late publish under the CURRENT id is harmless (it is what the next round would do),
     // and the id cannot have changed because only a non-stale round rotates.
-    const bounded = raceDeadline(
-      'key-package-round',
-      round,
-      KEY_PACKAGE_ROUND_DEADLINE_MS,
-      (late) =>
+    //
+    // THE DEADLINE BOUNDS THIS ROUND'S OWN WORK, NEVER ITS WAIT. A fresh round's timer starts when
+    // its predecessor has SETTLED, not when it was asked for: a deadline counted from the call let a
+    // predecessor that took 178 s leave its successor 2 s of its own, abandon it while it kept
+    // minting, empty the slot, and let the next plain caller start a third round beside it - the
+    // overlap this method exists to remove. The wait itself needs no clock: the predecessor is a
+    // bounded round too, so it settles within its own deadline, and so on down the chain.
+    const runBounded = (): Promise<DatedKeyPackage> =>
+      raceDeadline('key-package-round', round(), KEY_PACKAGE_ROUND_DEADLINE_MS, (late) =>
         console.warn(
           late.ok
             ? '[MLS] an abandoned key package round FINISHED late (its bundles are persisted and published)'
             : `[MLS] an abandoned key package round FAILED late: ${sanitizeForLog(String(late.error))}`
         )
-    );
+      );
+    let bounded: Promise<DatedKeyPackage>;
+    if (predecessor) {
+      console.log('[MLS] fresh key package round waits for the round in flight to settle');
+      // Its outcome belongs to its own callers; this round only needs it to be over.
+      bounded = predecessor.then(
+        () => runBounded(),
+        () => runBounded()
+      );
+    } else {
+      bounded = runBounded();
+    }
     this.keyPackageRoundInFlight = bounded;
     this.keyPackageRoundsActive++;
     try {
@@ -4384,12 +4452,22 @@ export abstract class BaseMlsService implements IMlsService {
    * published material.
    */
   async republishKeyMaterial(deviceKeyB64: string): Promise<void> {
+    // REFUSED BEFORE THE PURGE, not at the mint: on a copy that may not mint (`refusesCommitsHere`),
+    // the purge and the local forget below would empty the pool and then fail to refill it.
+    if (refusesCommitsHere()) {
+      console.warn(
+        '[MLS] key material republish refused: this tab holds no leader copy of the MLS state'
+      );
+      throw new FollowerTabKeyPackageError();
+    }
     const now = Date.now();
     if (now - this.lastKeyMaterialRepublish < 30_000) return;
     this.lastKeyMaterialRepublish = now;
     const purged = await this.delivery.deleteAllOneTimePrekeys();
     await this.forgetPurgedPrekeys(purged);
-    await this.generateKeyPackage(deviceKeyB64);
+    // FRESH: a round already in flight may have counted the pool before the purge above, so joining
+    // it could leave the pool empty. This round follows it instead, and counts after the purge.
+    await this.generateKeyPackage(deviceKeyB64, { fresh: true });
   }
 
   /**
@@ -5252,7 +5330,7 @@ export abstract class BaseMlsService implements IMlsService {
    * caller, so no caller can create one around it.
    */
   async createGroup(groupId: string): Promise<void> {
-    if (getTabLeadership() === 'follower') {
+    if (refusesCommitsHere()) {
       console.warn(
         `[MLS] createGroup ${groupId.slice(0, 8)}... refused on a follower tab - only the leader creates groups`
       );
@@ -5402,7 +5480,7 @@ export abstract class BaseMlsService implements IMlsService {
   }> {
     // A FOLLOWER TAB DOES NOT COMMIT (`FollowerTabCommitError`): its state is a copy no disk and no
     // other tab will follow, so a commit it sent stranded the leader behind the group.
-    if (getTabLeadership() === 'follower') {
+    if (refusesCommitsHere()) {
       console.warn(
         `[COMMIT] ${groupId.slice(0, 8)}... commit refused on a follower tab - only the leader commits`
       );
@@ -7516,7 +7594,7 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<ExternalJoinOutcome> {
     // AN EXTERNAL JOIN IS A COMMIT, so a follower tab refuses it as {@link runCommitTransaction}
     // does: the tree it would join into is a copy no disk and no other tab will follow.
-    if (getTabLeadership() === 'follower') {
+    if (refusesCommitsHere()) {
       console.warn(
         `[MLS] externalJoin ${groupId.slice(0, 8)}... refused on a follower tab - only the leader commits`
       );
@@ -8301,7 +8379,7 @@ export abstract class BaseMlsService implements IMlsService {
   async refreshOwnLeaf(groupId: string): Promise<void> {
     // THE ROLE BEFORE THE BASE: a follower tab never commits (`runCommitTransaction` refuses it), so
     // fetching the published base first only cost a request per epoch before the same refusal.
-    if (getTabLeadership() === 'follower') {
+    if (refusesCommitsHere()) {
       console.log(
         `[LEAF_REFRESH] ${groupId.slice(0, 8)}... not refreshed on a follower tab - the leader refreshes`
       );

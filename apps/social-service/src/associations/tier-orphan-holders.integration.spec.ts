@@ -121,6 +121,12 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
       `CREATE TABLE forms (id uuid PRIMARY KEY, "associationId" uuid, "grantsCotisation" boolean NOT NULL,
          "cotisationVariantKey" varchar(100))`
     );
+    // A retag follows the open revisions of the forms it rewrites (`followRetagInRevisions`,
+    // migration 146): the columns it reads and writes.
+    await admin.query(
+      `CREATE TABLE form_drafts ("formId" uuid PRIMARY KEY REFERENCES forms(id) ON DELETE CASCADE,
+         revision integer NOT NULL, document jsonb, "saveId" uuid, "baseFingerprint" text)`
+    );
     await admin.query(
       `CREATE TABLE submissions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "formId" uuid NOT NULL,
          "userId" varchar(255), "paymentStatus" varchar NOT NULL, "paymentRequestedAt" timestamp,

@@ -179,7 +179,7 @@ of its fields' rights; one missing refuses the whole write with a typed 403
 | `archived` | `MANAGE_MEMBERS` - ending the active life is the administrator's act, the Danger panel's, not a profile edit |
 | `cotisationEnabled`, `cotisationMode`, `cotisationExpiresAt` | `MANAGE_PRODUCTS` (D5) - alone now: a holder of it was offered the settings and then refused at the old `MANAGE_MEMBERS` guard |
 | `documentQuotaBytes` | the platform administrator alone - a typed refusal, logged at ERROR, where it used to be dropped silently |
-| `parentAssociationId` (a list's parent) | the platform administrator alone: it is a statement about ANOTHER association, set at creation. Any member manager could rewrite it before; the list profile form draws its picker, and sends it, for the platform admin only (`editRights().parent`). An UNCHANGED value resent by an old build is dropped, not refused ([legacy](legacy-compatibility.md#2027-05-03---a-list-profile-save-that-resends-its-unchanged-parent-2026-11-03)) |
+| `parentAssociationId` (a list's parent) | the platform administrator alone: it is a statement about ANOTHER association, set at creation. Any member manager could rewrite it before; the list profile form draws its picker, and sends it, for the platform admin only (`editRights().parent`). Sent by anyone else it is refused, unchanged or not - the drop of an old build's unchanged resend went with floor `1.6.6` ([legacy](legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08)) |
 
 The client draws from the same table (`frontend/src/lib/associations/updateFields.ts`:
 `editRights().profile` is `mayWriteFields(PROFILE_FORM_FIELDS)`, `archive` is `['archived']`), and
@@ -202,11 +202,12 @@ admin with the new preset, and nothing else (the profile it saves carries no new
 sees a bit it does not know ignores it, and keeps it**: `mayActOnAssociation` tests one flag at a
 time, the role editor counts only the flags it has a label for, and a checkbox writes `permissions ^
 flag`, so an old app toggling another right sends bit 12 back untouched (and `updateFields.test.ts`
-asserts an unknown bit grants and blocks nothing). Two old-app residues, each with a
-dated shim in [legacy-compatibility](legacy-compatibility.md): an OLD app adding an admin posts the
-old preset (no bit 4096), and a member ADD (never an update, so an untick holds) whose mask EQUALS
-an old preset gets `EDIT_PROFILE` ORed in until 2027-05-03 (`legacy-admin-presets.ts`, derived from today's constants); and an old
-list form resends `parentAssociationId` on every save, which is dropped when unchanged. An old app's
+asserts an unknown bit grants and blocks nothing). Two old-app residues
+(builds up to `1.6.2`) had a shim each until floor `1.6.6` retired both
+([legacy-compatibility](legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08)):
+the old "Administrateur" preset (no bit 4096) got `EDIT_PROFILE` ORed in on a member add, and the
+old list form's resend of an unchanged `parentAssociationId` was dropped. Both are now written, or
+refused, as sent. An old app's
 profile tab still draws its controls on `MANAGE_MEMBERS`, so a member holding that without
 `EDIT_PROFILE` meets a 403 there - possible only after a deliberate untick. **`EDIT_PROFILE` sits
 under the member-flag ceiling (#2949) like every flag**: a `MANAGE_MEMBERS` holder grants or revokes

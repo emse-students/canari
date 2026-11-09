@@ -1,6 +1,10 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
-import { FOLLOW_ASKS_PER_MINUTE, FollowRequestsController } from './follow-requests.controller';
+import {
+  FOLLOW_ASKS_PER_MINUTE,
+  FOLLOW_STATUS_BATCH_MAX,
+  FollowRequestsController,
+} from './follow-requests.controller';
 
 /**
  * What the controller itself decides before the service runs: nobody follows themselves, and a
@@ -70,5 +74,59 @@ describe('FollowRequestsController', () => {
       if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
       else process.env.SERVICE_ACCOUNT_USER_ID = saved;
     }
+  });
+});
+
+describe('FollowRequestsController.statuses (engagement WP-2)', () => {
+  function ctl() {
+    const userFollowStatuses = jest.fn(() => Promise.resolve({ bob: 'pending' }));
+    const c = new FollowRequestsController(
+      {} as never,
+      { userFollowStatuses } as never,
+      {} as never
+    );
+    return { c, userFollowStatuses };
+  }
+  const codeOf = (e: unknown) => (e as BadRequestException).getResponse() as { code: string };
+
+  it('answers the statuses of the caller, for the ids asked', async () => {
+    const { c, userFollowStatuses } = ctl();
+    expect(await c.statuses('me', { userIds: ['bob', 'cid'] })).toEqual({
+      statuses: { bob: 'pending' },
+    });
+    expect(userFollowStatuses).toHaveBeenCalledWith('me', ['bob', 'cid']);
+  });
+
+  it('refuses more than the cap with a typed 400 and reads nothing', async () => {
+    const { c, userFollowStatuses } = ctl();
+    const ids = Array.from({ length: FOLLOW_STATUS_BATCH_MAX + 1 }, (_, i) => `u${i}`);
+    const err = await c.statuses('me', { userIds: ids }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(codeOf(err).code).toBe('FOLLOW_STATUS_BATCH_TOO_LARGE');
+    expect(userFollowStatuses).not.toHaveBeenCalled();
+  });
+
+  it('accepts exactly the cap', async () => {
+    const { c } = ctl();
+    const ids = Array.from({ length: FOLLOW_STATUS_BATCH_MAX }, (_, i) => `u${i}`);
+    await expect(c.statuses('me', { userIds: ids })).resolves.toBeDefined();
+  });
+
+  it.each([[undefined], ['bob'], [[1]], [['']], [[null]]])('refuses a body of %j', async (bad) => {
+    const { c, userFollowStatuses } = ctl();
+    const err = await c.statuses('me', { userIds: bad }).catch((e: unknown) => e);
+    expect(codeOf(err).code).toBe('FOLLOW_STATUS_BATCH_INVALID');
+    expect(userFollowStatuses).not.toHaveBeenCalled();
+  });
+});
+
+describe('FollowRequestsController.withdrawRequest (engagement WP-2)', () => {
+  it('withdraws through the pending-only service call, never the unfollow', async () => {
+    const withdraw = jest.fn(() => Promise.resolve({ ok: true }));
+    const leave = jest.fn();
+    const c = new FollowRequestsController({ withdraw, leave } as never, {} as never, {} as never);
+    expect(await c.withdrawRequest('me', 'you')).toEqual({ ok: true });
+    expect(withdraw).toHaveBeenCalledWith('me', 'you');
+    expect(leave).not.toHaveBeenCalled();
   });
 });

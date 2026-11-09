@@ -60,6 +60,12 @@
   import { rememberedKeyboardHeight } from '$lib/stores/keyboardHeightMemory';
   import { abandonHistoryOverlay, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
   import ComposerEmojiPicker from './ComposerEmojiPicker.svelte';
+  import { warmEmojiPicker, whenIdleAfterPaint } from '$lib/utils/emojiPreload';
+  import {
+    emojiPickerDataSource,
+    getPreferredSkinTone,
+    getRecentEmojis,
+  } from '$lib/components/messages/emojiPickerShared';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
   import { Log } from '$lib/utils/Log';
@@ -70,7 +76,8 @@
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
-  import { filesFromTransfer, localFileAddressesFromTransfer } from '$lib/utils/composerTransfer';
+  import { dropEffectFor } from '$lib/utils/composerTransfer';
+  import { handleComposerDrop } from '$lib/utils/composerDrop';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
   import VoiceMessagePlayer from '$lib/components/messages/VoiceMessagePlayer.svelte';
@@ -148,6 +155,8 @@
      * instead of floating over them, which is what it did (user's screenshot, 2026-10-13).
      */
     notice?: Snippet;
+    /** The conversation's nickname scope ("Modifier les pseudos"): the reply bar names its sender in it. */
+    nicknameScope?: string | null;
   }
 
   let {
@@ -171,6 +180,7 @@
     videoPreparation,
     mentionRoster,
     notice,
+    nicknameScope = null,
   }: Props = $props();
 
   /**
@@ -625,10 +635,12 @@
     }
 
     const senderId = replyingTo.senderId;
-    replySenderDisplayName = getUserDisplayNameSync(senderId, senderId);
+    const scope = nicknameScope ?? undefined;
+    replySenderDisplayName = getUserDisplayNameSync(senderId, senderId, scope);
     resolveUserDisplayName(senderId).then((resolved) => {
       if (resolved && replyingTo?.senderId === senderId) {
-        replySenderDisplayName = resolved;
+        // Through the scope again: the resolved profile name must not cover a nickname.
+        replySenderDisplayName = getUserDisplayNameSync(senderId, resolved, scope);
       }
     });
   });
@@ -687,6 +699,7 @@
 
   function handleDragOver(event: DragEvent) {
     event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = dropEffectFor(event.dataTransfer);
     isDragOver = true;
   }
 
@@ -731,20 +744,7 @@
   function handleDrop(event: DragEvent) {
     event.preventDefault();
     isDragOver = false;
-    const files = filesFromTransfer(event.dataTransfer);
-    if (files.length > 0 && onFilesSelected) {
-      onFilesSelected(files);
-      return;
-    }
-    // Same refusal as the editor's own drop: a local file the engine withheld (Firefox + Nemo) is
-    // said out loud rather than silently doing nothing.
-    const refused = localFileAddressesFromTransfer(event.dataTransfer);
-    if (refused.length > 0) {
-      console.warn(
-        `[COMPOSER] drop announced ${refused.length} local file(s) but handed over none - the file manager did not give the browser the file`
-      );
-      showToast(m.composer_drop_file_unreadable());
-    }
+    handleComposerDrop(event.dataTransfer, { onFiles: onFilesSelected });
   }
 
   function fileKey(file: File, index: number): string {
@@ -838,6 +838,13 @@
       Log.d('ChatComposer', `edit entered, caret to ${end}`);
       mentionComposer?.focusEditor();
       mentionComposer?.setSelectionRange(end);
+    });
+  });
+
+  /** The emoji picker's first screen is fetched once the composer has painted and the thread is idle, so opening it (here or on a reaction) paints at once. */
+  onMount(() => {
+    whenIdleAfterPaint(() => {
+      void warmEmojiPicker(emojiPickerDataSource(), getPreferredSkinTone(), getRecentEmojis());
     });
   });
 

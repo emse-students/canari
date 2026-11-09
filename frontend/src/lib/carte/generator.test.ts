@@ -5,7 +5,7 @@ import {
   orderByFamilyName,
   type PosterMemberRef,
 } from './generator';
-import type { Association, AssociationCategory, AssociationMember } from '$lib/associations/api';
+import type { Association, AssociationMember } from '$lib/associations/api';
 
 /** The one association every test in this file groups its roster under. */
 function assoFixture(): Association {
@@ -63,12 +63,7 @@ describe('carte generator', () => {
       },
     ] as AssociationMember[];
 
-    const model = buildPosterModel(
-      [association],
-      [] as AssociationCategory[],
-      { [association.id]: members },
-      'Autre'
-    );
+    const model = buildPosterModel([association], [], {}, { [association.id]: members }, 'Autre');
 
     const bubble = model.zones[0].bubbles[0];
     expect(bubble.president?.userId).toBe('user-a');
@@ -78,7 +73,8 @@ describe('carte generator', () => {
   it('carries the name parts onto every roster reference', () => {
     const model = buildPosterModel(
       [assoFixture()],
-      [] as AssociationCategory[],
+      [],
+      {},
       {
         'asso-1': [
           {
@@ -153,5 +149,29 @@ describe('carte generator', () => {
     expect(bureauCrownOffset(1).y).toBeCloseTo(110.44, 2);
     expect(bureauCrownOffset(2).x).toBeCloseTo(-118.28, 2);
     expect(bureauCrownOffset(2).y).toBeCloseTo(16.14, 2);
+  });
+});
+
+describe('buildPosterModel - the zones of the map', () => {
+  const asso = (id: string, name: string) =>
+    ({ id, name, type: 'association', archived: false }) as Association;
+
+  it('groups by the zones of the map in their order, unzoned last, and skips empty zones', () => {
+    const model = buildPosterModel(
+      [asso('a', 'Alpha'), asso('b', 'Beta'), asso('c', 'Gamma')],
+      [
+        { id: 'z2', label: 'Sport', sortOrder: 1 },
+        { id: 'z1', label: 'Culture', sortOrder: 0 },
+        { id: 'z3', label: 'Vide', sortOrder: 2 },
+      ],
+      { a: 'z2', b: 'z1', c: 'gone' },
+      {},
+      'Sans zone'
+    );
+    expect(model.zones.map((z) => [z.label, z.bubbles.map((b) => b.assoId)])).toEqual([
+      ['Culture', ['b']],
+      ['Sport', ['a']],
+      ['Sans zone', ['c']],
+    ]);
   });
 });

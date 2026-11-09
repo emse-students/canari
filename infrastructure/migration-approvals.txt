@@ -51,3 +51,21 @@ apps/social-service/src/migrations/131_dependency_triggers.sql 9e6eb4f7d8006f639
 # decision asked once production carried `1.6.5`; adversarial review passed 2026-11-07. Any edit to
 # the file holds it again.
 apps/social-service/src/migrations/134_drop_posts_pinned.sql d571439f26c22c40b33f70dfca9eb90ff3782bc8718a88ebc987ee52026d79a8
+
+# 143: the association push mutes copied into the bell (engagement WP-3, L8), with a trigger mirroring
+# every write an older social-service image makes on the old table during the deploy (L19). A backfill
+# (INSERT ... SELECT, ON CONFLICT DO NOTHING) of one small table. Line written by the AUTHOR for the
+# file's final SQL; it is the lead's approval under the owner's 2026-11-03 delegation only once the
+# adversarial review has passed and the lead merges this pull request by hand. Any edit holds it again.
+apps/social-service/src/migrations/143_account_bells_copy_push_mutes.sql 72153fdb6139b52beb9adc22bbfdb612056788787057347f7302c96635c7d779
+
+# 147: a carte de la vie asso belongs to one space (owner, 2026-11-08) - `poster_projects."spaceId"`,
+# per-map zones (`poster_zones`, a copy of the global categories) and switches (`poster_entries`); the
+# live map attached to the ICM space governed by the association `bde` and kept live, every other map
+# attached when unambiguous, else left unattached and offline. Held because it REWRITES the live carte
+# (its document keeps only the associations switched ON, an emptied directory zone dropped, its
+# fingerprint cleared) and DROPS the single-live index for one live map per space. Approved by the lead
+# under the owner's 2026-11-03 delegation (docs/wiki/backlog.d/owner-decisions-of-2026-11-03-evening.md);
+# adversarial review passed 2026-11-08 in two rounds; the dev reading is taken through the 1.6.8
+# pre-release before the stable. Any edit to the file holds it again.
+apps/social-service/src/migrations/147_poster_spaces_and_zones.sql 1f6b76ff3f6b2dec2dae701fbdc33c9aefb8ab6ba2f781796881b46cda0bf491

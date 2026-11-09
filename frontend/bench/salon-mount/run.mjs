@@ -3,11 +3,12 @@
  * NOT GATED BY CI: a hand-run instrument whose numbers are a SHAPE, never a phone's number.
  *
  *   bun bench/salon-mount/run.mjs [--scene pane|hub] [--runs 7] [--rows 200] [--shape own|mixed]
- *                                 [--cpu 4] [--profile <dir>] [--no-build] [--compare <dir>]
+ *                                 [--days 1] [--cpu 4] [--profile <dir>] [--no-build] [--compare <dir>]
  *
  * What it answers: how long a salon whose page is already in memory takes to show its last
  * messages, how many rows were mounted to get there, which long tasks it cost, and how many
- * warnings the engine printed on the way - the "salon open" of
+ * warnings the engine printed on the way (and every `error` event, a ResizeObserver loop included),
+ * plus the style recalculations and layouts the engine ran for it - the "salon open" of
  * docs/wiki/frontend/community-open-budget.md, with nothing else on the thread.
  *   --scene pane   `ChatArea` mounted over the salon (default).
  *   --scene hub    the communities hub drawn first (sidebar: ten communities), then the tap on a
@@ -44,6 +45,8 @@ const SCENE = opt('scene', 'pane');
 const RUNS = Number(opt('runs', 7));
 const ROWS = Number(opt('rows', 200));
 const SHAPE = opt('shape', 'own');
+/** Days the messages span, ending today: one day separator each (1 = the bench seed's shape). */
+const DAYS = Number(opt('days', 1));
 const CPU = Number(opt('cpu', 4));
 const PROFILE_DIR = opt('profile', null);
 const COMPARE = opt('compare', null);
@@ -68,7 +71,14 @@ const server = Bun.serve({
   port: 0,
   fetch(req) {
     const [, arm, ...rest] = new URL(req.url).pathname.split('/');
-    const file = ARMS[arm] ? join(ARMS[arm], ...rest) : null;
+    // A root-relative asset the app fetches itself (`/emoji-data-fr.json`, which the composer's
+    // idle warm-up loads) is served from `static/`, as the app serves it; a miss here made that
+    // fetch fail and hid the warm-up's own cost from the bench.
+    const file = ARMS[arm]
+      ? join(ARMS[arm], ...rest)
+      : /^[\w.-]+$/.test(arm ?? '')
+        ? join(frontend, 'static', arm)
+        : null;
     return file && existsSync(file)
       ? new Response(Bun.file(file))
       : new Response('not found', { status: 404 });
@@ -129,7 +139,9 @@ function connect(wsUrl) {
   ws.addEventListener('message', (m) => {
     const msg = JSON.parse(m.data);
     if (msg.method === 'Log.entryAdded') {
-      const text = msg.params.entry.text.slice(0, 60);
+      // A failed load names no resource in its text: the URL is what tells a bench gap from a defect.
+      const { text: entryText, url } = msg.params.entry;
+      const text = `${entryText.slice(0, 60)}${url ? ` <${url.replace(/^https?:\/\/[^/]+/, '')}>` : ''}`;
       session.warnings.set(text, (session.warnings.get(text) ?? 0) + 1);
     }
     if (msg.id && pending.has(msg.id)) {
@@ -165,6 +177,18 @@ async function evaluate(cx, expression) {
   return r.result.value;
 }
 
+/**
+ * The engine's own counters (`Performance.getMetrics`): how many style recalculations and layouts
+ * ran, and for how long, whoever triggered them - a read inside a script (forced) or the rendering
+ * step (natural). A CPU profile books a forced layout to the JavaScript that read, so moving the read
+ * moves the milliseconds to the next reader without removing any; these counts are what says
+ * whether a change REMOVED work (2026-11-08, community-open-budget).
+ */
+async function engineMetrics(cx) {
+  const { metrics } = await cx.send('Performance.getMetrics');
+  return Object.fromEntries(metrics.map((m) => [m.name, m.value]));
+}
+
 const median = (xs) => {
   const s = xs.filter((x) => typeof x === 'number').sort((a, b) => a - b);
   if (!s.length) return null;
@@ -188,12 +212,13 @@ try {
     await cx.send('Emulation.setCPUThrottlingRate', { rate: CPU });
     await cx.send('Page.enable');
     await cx.send('Log.enable');
+    await cx.send('Performance.enable');
     await cx.send('Page.navigate', { url: pageUrl(arm) });
     for (let i = 0; i < 400; i++) {
       if (await evaluate(cx, 'typeof window.__salonBench === "object"').catch(() => false)) break;
       await new Promise((r) => setTimeout(r, 25));
     }
-    const options = JSON.stringify({ rows: ROWS, shape: SHAPE, settleMs: 1500 });
+    const options = JSON.stringify({ rows: ROWS, shape: SHAPE, days: DAYS, settleMs: 1500 });
     for (const which of ['first', 'reopen']) {
       const profiling = PROFILE_DIR && run === 1 && arm === 'this';
       if (profiling) {
@@ -202,17 +227,27 @@ try {
         await cx.send('Profiler.start');
       }
       cx.warnings.clear();
+      const before = await engineMetrics(cx);
       const r = await evaluate(cx, `window.__salonBench.${ENTRY}(${options})`);
+      const after = await engineMetrics(cx);
+      r.layouts = after.LayoutCount - before.LayoutCount;
+      r.layoutMs = (after.LayoutDuration - before.LayoutDuration) * 1000;
+      r.styles = after.RecalcStyleCount - before.RecalcStyleCount;
+      r.styleMs = (after.RecalcStyleDuration - before.RecalcStyleDuration) * 1000;
       if (profiling) {
         const { profile } = await cx.send('Profiler.stop');
         writeFileSync(join(PROFILE_DIR, `${SCENE}-${which}.cpuprofile`), JSON.stringify(profile));
+      }
+      for (const text of r.errors ?? []) {
+        const key = `error event: ${text.slice(0, 48)}`;
+        cx.warnings.set(key, (cx.warnings.get(key) ?? 0) + 1);
       }
       r.warnings = [...cx.warnings.values()].reduce((a, b) => a + b, 0);
       readings[arm][which].push(r);
       const lt = r.longTasks.map(([s, d]) => `${d}@${s}`).join(' ');
       const said = [...cx.warnings].map(([text, n]) => `${n} x "${text}"`).join('; ');
       console.log(
-        `run ${run} ${arm.padEnd(4)} ${which.padEnd(6)} gesture ${r.mountMs.toFixed(0).padStart(4)} reveal ${String(Math.round(r.revealMs)).padStart(4)} rows ${r.rowsAtReveal}->${r.rowsSettled}  long tasks [${lt}]${said ? `  engine: ${said}` : ''}`
+        `run ${run} ${arm.padEnd(4)} ${which.padEnd(6)} gesture ${r.mountMs.toFixed(0).padStart(4)} reveal ${String(Math.round(r.revealMs)).padStart(4)} rows ${r.rowsAtReveal}->${r.rowsSettled} layouts ${r.layouts} (${r.layoutMs.toFixed(0)} ms) styles ${r.styles} (${r.styleMs.toFixed(0)} ms)  long tasks [${lt}]${said ? `  engine: ${said}` : ''}`
       );
     }
     cx.close();
@@ -224,11 +259,18 @@ try {
   chrome.kill();
   await exited;
   server.stop(true);
-  rmSync(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  // On Windows Chrome's helper processes can hold the profile a moment past the browser's own exit,
+  // beyond the retries: the readings are taken, so a leftover temp directory is SAID, never fatal
+  // (it used to throw here and lose the summary below).
+  try {
+    rmSync(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (e) {
+    console.warn(`the throwaway Chrome profile was left behind: ${profileDir} (${e.code ?? e})`);
+  }
 }
 
 console.log(
-  `\n${SCENE}: ${ROWS} rows (${SHAPE}), cpu x${CPU}, ${VIEWPORT.width}x${VIEWPORT.height}, ${RUNS} runs - medians:`
+  `\n${SCENE}: ${ROWS} rows (${SHAPE}, ${DAYS} day(s)), cpu x${CPU}, ${VIEWPORT.width}x${VIEWPORT.height}, ${RUNS} runs - medians:`
 );
 for (const [arm, which] of Object.keys(ARMS).flatMap((a) => [
   [a, 'first'],
@@ -236,7 +278,11 @@ for (const [arm, which] of Object.keys(ARMS).flatMap((a) => [
 ])) {
   const rs = readings[arm][which];
   const longest = rs.map((r) => Math.max(0, ...r.longTasks.map(([, d]) => d)));
+  // The long tasks AFTER the gesture's own (start > 0): the widen's steps and whatever idle work
+  // (a warm-up, a parse) lands in the window - what the open's critical path shares the thread with.
+  const tail = rs.map((r) => r.longTasks.filter(([s]) => s > 20).reduce((a, [, d]) => a + d, 0));
+  const tailCount = rs.map((r) => r.longTasks.filter(([s]) => s > 20).length);
   console.log(
-    `  ${arm.padEnd(4)} ${which.padEnd(6)} gesture ${median(rs.map((r) => r.mountMs)).toFixed(0)} ms, reveal ${median(rs.map((r) => r.revealMs)).toFixed(0)} ms, longest task ${median(longest)} ms, rows at reveal ${median(rs.map((r) => r.rowsAtReveal))}, settled ${median(rs.map((r) => r.rowsSettled))}, engine warnings ${median(rs.map((r) => r.warnings))}`
+    `  ${arm.padEnd(4)} ${which.padEnd(6)} gesture ${median(rs.map((r) => r.mountMs)).toFixed(0)} ms, reveal ${median(rs.map((r) => r.revealMs)).toFixed(0)} ms, longest task ${median(longest)} ms, long tasks after the gesture ${median(tailCount)} (${median(tail)} ms), rows at reveal ${median(rs.map((r) => r.rowsAtReveal))}, settled ${median(rs.map((r) => r.rowsSettled))}, layouts ${median(rs.map((r) => r.layouts))} (${median(rs.map((r) => r.layoutMs)).toFixed(0)} ms), styles ${median(rs.map((r) => r.styles))} (${median(rs.map((r) => r.styleMs)).toFixed(0)} ms), engine warnings ${median(rs.map((r) => r.warnings))}`
   );
 }

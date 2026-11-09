@@ -26,8 +26,6 @@ export const SPACE_PIN_LIMIT = 3;
 
 /** 409 `code`: the space already shows {@link SPACE_PIN_LIMIT} pins - unpin one first. */
 export const SPACE_PIN_LIMIT_CODE = 'space_pin_limit';
-/** 409 `code`: a request with no `spaceId` matched zero or several spaces - the client must name one. */
-export const SPACE_REQUIRED = 'space_required';
 /** 403 `code`: the caller neither administers the platform nor holds `MODERATE` in this space's BDE. */
 export const SPACE_PIN_FORBIDDEN = 'space_pin_forbidden';
 /** 409 `code`: the post is not visible to this space's readers, so it cannot be promoted there. */
@@ -95,8 +93,8 @@ export const PINNED_FOR_VIEWER_IDS_SQL = `SELECT pf_post.id::text AS id FROM pos
 /**
  * For each of posts `$1`, every space where viewer `$2` may pin it - the post is pinnable there, and
  * `$3` (platform admin) or the BDE standing holds - with its rank there (NULL when not pinned).
- * Answers `postId`, `spaceId`, `formation`, `campus`, `rank`. What `canPin`, the card's space list and
- * a body-less pin or unpin read, so the control offered is the write accepted.
+ * Answers `postId`, `spaceId`, `formation`, `campus`, `rank`. What `canPin` and the card's space list
+ * read, so the control offered is the space a pin or unpin then names.
  *
  * The governed spaces are read FIRST and once (a materialized CTE): every page of every reader asks
  * this, and for the reader who governs nothing - nearly all of them - that set is empty and no post's
@@ -114,14 +112,6 @@ export const PIN_SPACES_FOR_VIEWER_SQL = `WITH ps_governed AS MATERIALIZED (
 /** May user `$1` (`$2`: platform admin) pin in space `$3`? Answers `found` (the space exists) and `may`. */
 export const MAY_PIN_IN_SPACE_SQL = `SELECT true AS found, ($2::boolean OR ${bdePinsInSpaceSql('$1', 'mp_space')}) AS may
   FROM spaces mp_space WHERE mp_space.id = $3::uuid`;
-
-/**
- * Does user `$1` hold the pin right as a BDE in ANY space? Answers `governs`. The door of a body-less
- * pin or unpin: a caller who governs nothing is told 403 before any post is looked at, so the answer
- * says nothing about whether the post exists.
- */
-export const GOVERNS_ANY_SPACE_SQL = `SELECT EXISTS (SELECT 1 FROM spaces ga_space
-  WHERE ${bdePinsInSpaceSql('$1', 'ga_space')}) AS governs`;
 
 /** Is post `$1` pinnable in space `$2`? Answers `pinnable`. */
 export const POST_PINNABLE_IN_SPACE_SQL = `SELECT EXISTS (SELECT 1 FROM posts pp_post

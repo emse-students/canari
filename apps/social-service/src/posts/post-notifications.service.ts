@@ -4,10 +4,7 @@ import { Repository } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
 import { Post } from './entities/post.entity';
 import { PushService } from '../push/push.service';
-import {
-  AssociationPushMutesService,
-  MUTABLE_PUSH_TYPES,
-} from '../follows/association-push-mutes.service';
+import { AccountBellsService, bellTargetOf } from '../follows/account-bells.service';
 import {
   mentionContent,
   replyContent,
@@ -31,6 +28,7 @@ import {
   liveStartedContent,
   followRequestContent,
   followAcceptedContent,
+  birthdayContent,
   liveCutContent,
   liveSuspendedContent,
   liveWithdrawnContent,
@@ -56,6 +54,8 @@ import {
 } from '../spaces/reader-spaces';
 import { isBlockedBetween } from '../common/user-blocks';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
+import { birthdayDateVisibleToSql } from '../birthdays/birthday-sql';
+import { BIRTHDAY_NOTIFICATION } from '../birthdays/birthday-notification';
 
 /** The bell's page when the caller names none: what the bell dropdown asks. */
 export const BELL_PAGE_DEFAULT = 30;
@@ -141,6 +141,19 @@ export function commentBorneNotificationSql(n: string, post: string): string {
 }
 
 /**
+ * Bell row `n` is not a birthday notice, or it is one whose recipient may STILL read the member's date
+ * (`birthdayDateVisibleToSql`, docs/wiki/birthdays.md): the row says whose birthday it was, so a
+ * member who hides the date, removes it, removes the follower or blocks them takes it out of that
+ * follower's bell too - the date never outlives its visibility. A push already delivered cannot be
+ * recalled.
+ */
+export function birthdayRowShownSql(n: string): string {
+  return `${n}.type <> '${BIRTHDAY_NOTIFICATION}' OR EXISTS (SELECT 1 FROM profile_birthdays notif_bday
+    WHERE notif_bday."userId" = ${n}."actorId"
+      AND ${birthdayDateVisibleToSql('notif_bday', `${n}."recipientId"`)})`;
+}
+
+/**
  * Bell row `n` may be shown: a row of a type that names no post, or a row of a post-bound type
  * (`POST_BOUND_NOTIFICATION_TYPES`) whose post exists, is not hidden by moderation, and its
  * recipient still sees (`getNotifications` says why) - with its comments, for a comment-borne row
@@ -153,7 +166,7 @@ export function commentBorneNotificationSql(n: string, post: string): string {
  */
 export function bellRowShownSql(n: string): string {
   const types = POST_BOUND_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
-  return `(${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
+  return `(${birthdayRowShownSql(n)}) AND (${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
     WHERE notif_post.id = (CASE WHEN ${n}.type IN (${types})
         AND ${n}."postId" ~* '${UUID_SHAPE}'
       THEN ${n}."postId"::uuid END)
@@ -240,7 +253,7 @@ const withIcon = (content: PushContent, icon?: PushIcon): PushContent =>
     : content;
 
 /**
- * The rows of a notice are SAVED and only its push failed (the mute lookup is fail-closed).
+ * The rows of a notice are SAVED and only its push failed (the bell lookup is fail-closed).
  * Typed so a caller that must know whether somebody HAS the in-app row - to avoid telling the same
  * person twice - can tell this apart from a failure that wrote nothing, without reading a message.
  */
@@ -265,7 +278,7 @@ export class PostNotificationsService {
     @InjectRepository(PostNotification) private readonly notifRepo: Repository<PostNotification>,
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly push: PushService,
-    private readonly pushMutes: AssociationPushMutesService
+    private readonly bells: AccountBellsService
   ) {}
 
   /**
@@ -313,16 +326,19 @@ export class PostNotificationsService {
       // Co-organisation (D39). `actorName` is the ORGANISING association, `text` the event title.
       case 'coorganise_proposed':
         return coorganiseProposedContent(actorName, text, icon);
-      // A live started (WP-L7). `actorName` is the broadcaster, a person or an association; there
-      // is no text to quote.
+      // A live started (WP-L7). `actorName` is the broadcaster, a person or an association; `text`
+      // is the live's title, empty when it has none (owner, 2026-11-07).
       case 'live_started':
-        return liveStartedContent(actorName, icon);
+        return liveStartedContent(actorName, text, icon);
       // Follow requests (WP-F2). `actorName` is the ASKER for the first and the person who said
       // yes for the second; neither has text to quote.
       case 'follow_request':
         return followRequestContent(actorName, icon);
       case 'follow_accepted':
         return followAcceptedContent(actorName, icon);
+      // A followed person's birthday (docs/wiki/birthdays.md). `actorName` is that person; no text.
+      case 'birthday':
+        return birthdayContent(actorName, icon);
       // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
       // no icon - which moderator acted is not theirs to read, and the reason stays on the row.
       case 'live_cut':
@@ -653,13 +669,16 @@ export class PostNotificationsService {
   }
 
   /**
-   * A push for a notice the bell does NOT keep - one per recipient, through the same mapping, icon
-   * rule, mute and bounded fan-out as {@link createNotifications}, and no `post_notifications` row.
+   * A push for a notice whose `post_notifications` row this method does NOT write - one per
+   * recipient, through the same mapping, icon rule, bell and bounded fan-out as
+   * {@link createNotifications}.
    *
    * For a notice about something that does not outlive its moment: a live (WP-L7) is deleted when it
    * ends (L3), so a bell row naming it would point at a 404 for ever after. The LIVE card at the top
-   * of the feed is its in-app surface (L5). Returns how many recipients were addressed, before the
-   * mute (which only the push consults, exactly as for a post).
+   * of the feed is its in-app surface (L5). And for a notice whose rows the caller wrote ITSELF, in
+   * a transaction of its own: the birthday notice commits its rows with its daily claim
+   * (`BirthdayNotifier`), and pushes once that has committed. Returns how many recipients were
+   * addressed, before the bell (which only the push consults, exactly as for a post).
    */
   async pushNotice(data: {
     recipientIds: string[];
@@ -678,9 +697,9 @@ export class PostNotificationsService {
   }
 
   /**
-   * The push half of a notice: the picture, the content, the mute, then the bounded fan-out. Shared
+   * The push half of a notice: the picture, the content, the bell, then the bounded fan-out. Shared
    * by {@link createNotifications} and {@link pushNotice} so neither can drift from the other's
-   * mapping or mute. Throws only when the mute lookup fails (fail closed, see below).
+   * mapping or bell. Throws only when the bell lookup fails (fail closed, see below).
    */
   private async fanOutPush(
     data: {
@@ -729,29 +748,29 @@ export class PostNotificationsService {
       );
       return;
     }
-    // THE MUTE, applied HERE and server-side: any in-app row is already written (a mute silences
-    // the PUSH, never the bell or the feed), and only a type that reaches a READER of the
-    // association is eligible - managers' operational pushes are never muted (`MUTABLE_PUSH_TYPES`).
+    // THE BELL, applied HERE and server-side (engagement WP-3): any in-app row is already written (a
+    // bell reduces the PUSH, never the bell list or the feed), and only a type a bell can reduce is
+    // eligible (`BELL_PUSH_KINDS`) - mentions, replies, managers' operational pushes never are. The
+    // account is the association when the push carries one, the person acting otherwise.
     let pushRecipients = recipients;
-    if (data.associationId && MUTABLE_PUSH_TYPES.has(data.type)) {
+    const bell = bellTargetOf(data);
+    if (bell) {
       // FAIL CLOSED, LOUDLY: if the lookup fails the push is NOT sent to everyone (that would
-      // override a stated privacy choice) and not silently dropped either - the error is logged
-      // here and rethrown, so the caller's own warning names the post (or live) that was not
-      // pushed. A post's in-app rows are already written, so the bell still carries it.
-      const muted = await this.pushMutes
-        .mutedAmong(data.associationId, recipients)
-        .catch((e: unknown) => {
-          this.logger.error(
-            `[NOTIFY] mute lookup failed for association=${data.associationId?.slice(0, 8)} - ` +
-              `push NOT sent to ${recipients.length} recipient(s): ${String(e)}`
-          );
-          throw e;
-        });
-      if (muted.size > 0) {
-        pushRecipients = recipients.filter((id) => !muted.has(id));
+      // override a stated choice) and not silently dropped either - the error is logged here and
+      // rethrown, so the caller's own warning names the post (or live) that was not pushed. A
+      // post's in-app rows are already written, so the bell list still carries it.
+      const withheld = await this.bells.withheldAmong(bell, recipients).catch((e: unknown) => {
+        this.logger.error(
+          `[NOTIFY] bell lookup failed for ${bell.kind}=${bell.id.slice(0, 8)} - ` +
+            `push NOT sent to ${recipients.length} recipient(s): ${String(e)}`
+        );
+        throw e;
+      });
+      if (withheld.size > 0) {
+        pushRecipients = recipients.filter((id) => !withheld.has(id));
         this.logger.log(
-          `[NOTIFY] type=${data.type} association=${data.associationId.slice(0, 8)} ` +
-            `push withheld from ${muted.size} muted of ${recipients.length}`
+          `[NOTIFY] type=${data.type} ${bell.kind}=${bell.id.slice(0, 8)} ` +
+            `push withheld by the bell from ${withheld.size} of ${recipients.length}`
         );
       }
     }

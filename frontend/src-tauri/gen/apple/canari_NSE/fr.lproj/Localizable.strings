@@ -46,6 +46,8 @@
 "notif.social.join_ask_anon.title" = "Quelqu'un veut rejoindre";
 "notif.social.follow_accepted.title" = "%@ a accepté votre demande";
 "notif.social.follow_accepted.body" = "Votre demande a été acceptée";
+"notif.social.birthday.title" = "C'est l'anniversaire de %@";
+"notif.social.birthday.body" = "Souhaitez-lui un bon anniversaire";
 "notif.social.live_cut.title" = "Votre live a été interrompu";
 "notif.social.live_cut.body" = "La modération a coupé votre live. Ceci est un avertissement.";
 "notif.social.live_suspended.title" = "Lives suspendus";

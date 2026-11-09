@@ -110,8 +110,13 @@ export function sealLiveKey(
   }
 }
 
-/** Logs and builds the typed error. */
-function unavailable(liveId: string, reason: LiveKeyUnavailableReason): LiveKeyUnavailableError {
+/** Builds the typed error, and logs it at ERROR unless the caller reports it itself (`report`). */
+function unavailable(
+  liveId: string,
+  reason: LiveKeyUnavailableReason,
+  report = true
+): LiveKeyUnavailableError {
+  if (!report) return new LiveKeyUnavailableError(liveId, reason);
   logger.error(
     `[LIVE_KEY] the key of live ${liveId} cannot be read: ${reason}` +
       (reason === 'secret-missing'
@@ -124,19 +129,23 @@ function unavailable(liveId: string, reason: LiveKeyUnavailableReason): LiveKeyU
 /**
  * THE ONE OPEN of a live's stored key: the 64-hex key, or a {@link LiveKeyUnavailableError} logged
  * at ERROR. A row still in the previous format answers its plaintext, at WARN (see the file head).
+ * `report = false` is for a caller that reads every open live on every request (the feed list):
+ * it logs nothing here, and owns reporting once per live (`LivesService.listOpen`).
  */
-export function openLiveKey(liveId: string, stored: StoredLiveKey): string {
+export function openLiveKey(liveId: string, stored: StoredLiveKey, report = true): string {
   if (stored.liveKeyCiphertext == null) {
     if (stored.liveKey != null && LIVE_KEY_HEX_RE.test(stored.liveKey)) {
-      logger.warn(
-        `[LIVE_KEY] live ${liveId} still holds its key in the previous, plaintext form - ` +
-          `the live sweep seals it`
-      );
+      if (report)
+        logger.warn(
+          `[LIVE_KEY] live ${liveId} still holds its key in the previous, plaintext form - ` +
+            `the live sweep seals it`
+        );
       return stored.liveKey;
     }
-    throw unavailable(liveId, stored.liveKey == null ? 'absent' : 'malformed');
+    throw unavailable(liveId, stored.liveKey == null ? 'absent' : 'malformed', report);
   }
-  if (stored.liveKeyVersion !== LIVE_KEY_VERSION) throw unavailable(liveId, 'unknown-version');
+  if (stored.liveKeyVersion !== LIVE_KEY_VERSION)
+    throw unavailable(liveId, 'unknown-version', report);
   let opened: string;
   try {
     opened = openSecret(
@@ -146,11 +155,11 @@ export function openLiveKey(liveId: string, stored: StoredLiveKey): string {
       LIVE_KEY_ENCRYPTION_SECRET_ENV
     );
   } catch (e) {
-    if (e instanceof SecretBoxUnavailableError) throw unavailable(liveId, 'secret-missing');
-    if (e instanceof SecretBoxOpenError) throw unavailable(liveId, 'does-not-open');
+    if (e instanceof SecretBoxUnavailableError) throw unavailable(liveId, 'secret-missing', report);
+    if (e instanceof SecretBoxOpenError) throw unavailable(liveId, 'does-not-open', report);
     throw e;
   }
-  if (!LIVE_KEY_HEX_RE.test(opened)) throw unavailable(liveId, 'malformed');
+  if (!LIVE_KEY_HEX_RE.test(opened)) throw unavailable(liveId, 'malformed', report);
   return opened;
 }
 

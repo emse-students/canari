@@ -85,6 +85,7 @@ describe('FormsService - cotisation configuration and granting', () => {
     const associationsService: any = {
       isMember: jest.fn(() => Promise.resolve(true)),
       assertPaymentsReady: jest.fn(() => Promise.resolve()),
+      canTakePaymentsNow: jest.fn(() => Promise.resolve(true)),
       collectionSubjectOf: jest.fn(() =>
         Promise.resolve({
           id: 'a1',

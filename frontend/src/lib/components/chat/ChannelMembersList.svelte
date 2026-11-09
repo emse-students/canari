@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ShieldAlert, User } from '@lucide/svelte';
+  import { ShieldAlert, Tag, User } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import ProfileLink from '$lib/components/shared/ProfileLink.svelte';
   import UserName from '$lib/components/shared/UserName.svelte';
@@ -7,15 +7,50 @@
   import { channelService, type ChannelMemberDto } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
   import { membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
+  import { communityNicknameScope } from '$lib/utils/users/conversationNicknames.svelte';
+  import NicknamesPanel from './NicknamesPanel.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
 
   interface Props {
     /** ID of the channel whose members are displayed. */
     selectedChannelId: string;
     /** ID of the currently authenticated user, used to highlight the current user. */
     currentUserId?: string;
+    /** The salon's community (database id): its nicknames are the names shown, and edited here. */
+    workspaceId?: string | null;
+    /** The server's `viewerCanModerate` for that community - who may name a member. */
+    canModerate?: boolean;
   }
 
-  let { selectedChannelId, currentUserId }: Props = $props();
+  let {
+    selectedChannelId,
+    currentUserId,
+    workspaceId = null,
+    canModerate = false,
+  }: Props = $props();
+
+  const nicknameScope = $derived(workspaceId ? communityNicknameScope(workspaceId) : null);
+
+  // ── "Modifier les pseudos" ───────────────────────────────────────────────────
+  // A community's nicknames are the COMMUNITY's, so the screen lists its members, not this salon's.
+  let showNicknames = $state(false);
+  let communityMembers = $state<string[]>([]);
+
+  async function openNicknames() {
+    if (!workspaceId) return;
+    try {
+      communityMembers = (await channelService.listWorkspaceMembers(workspaceId)).map(
+        (mem) => mem.userId
+      );
+    } catch (e) {
+      // The salon's own members are a subset of the community's: shown rather than nothing, and said.
+      console.warn(
+        `[NICKNAME] members of community ${workspaceId.slice(0, 8)} unreadable - the salon's are listed: ${String(e)}`
+      );
+      communityMembers = channelMembers.map((mem) => mem.userId);
+    }
+    showNicknames = true;
+  }
 
   let fetchedMembers: ChannelMemberDto[] = $state([]);
 
@@ -72,6 +107,18 @@
   the shell now, so this file answers one question: who is in this channel.
 -->
 <div class="space-y-8 px-(--side-panel-inset) py-4 @md:py-5">
+  {#if workspaceId && currentUserId}
+    <Button
+      variant="secondary"
+      class="w-full justify-start"
+      data-open-nicknames
+      onclick={() => void openNicknames()}
+    >
+      <Tag size={16} />
+      {m.chat_nicknames_open_button()}
+    </Button>
+  {/if}
+
   <!-- Admins & Moderators section. -->
   {#if admins.length > 0}
     <div class="animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -98,6 +145,7 @@
             </div>
             <UserName
               userId={member.userId}
+              scope={nicknameScope}
               class="text-text-main truncate text-sm font-bold transition-colors group-hover:text-amber-600 dark:group-hover:text-amber-400"
             />
           </div>
@@ -135,6 +183,7 @@
             </div>
             <UserName
               userId={member.userId}
+              scope={nicknameScope}
               class="text-text-main truncate text-sm font-medium transition-colors group-hover:text-amber-600 dark:group-hover:text-amber-400"
             />
           </div>
@@ -143,3 +192,13 @@
     </div>
   {/if}
 </div>
+
+{#if workspaceId && currentUserId}
+  <NicknamesPanel
+    open={showNicknames}
+    members={communityMembers}
+    viewerId={currentUserId}
+    place={{ kind: 'community', workspaceId, canModerate }}
+    onClose={() => (showNicknames = false)}
+  />
+{/if}

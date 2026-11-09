@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  GoneException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -17,6 +18,40 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { Form } from './entities/form.entity';
 import { retireForms } from './retire-forms';
+import { violatesUniqueIndex } from '../common/pg-errors';
+import {
+  FORM_NO_PAYMENT_METHOD,
+  FORM_ONLINE_PAYMENT_NOT_OFFERED,
+  acceptsOnline,
+  onlineOffered,
+  publishPaymentRefusal,
+} from './payment-offer';
+import { FORM_DRAFT, FORM_PUBLISHED, respondentFormWhere, type FormStatus } from './form-status';
+import {
+  FORM_CHANGED_SINCE_REVISION,
+  FORM_DRAFT_CONFLICT,
+  FORM_DRAFT_EMPTY,
+  FORM_DRAFT_INVALID,
+  FORM_DRAFT_MALFORMED,
+  closeFormDraft,
+  formChangedSinceRevision,
+  formsWithUnpublishedChanges,
+  isStorableDraftDocument,
+  readFormDraft,
+  writeFormDraft,
+  type FormDraftState,
+} from './form-draft-revision';
+import { plainToInstance } from 'class-transformer';
+import { validate, type ValidationError } from 'class-validator';
+
+/** Every constraint a validation refused, nested ones (a question, an option) included, as the pipe says them. */
+function validationMessages(errors: ValidationError[], prefix = ''): string[] {
+  return errors.flatMap((e) => {
+    const path = prefix ? `${prefix}.${e.property}` : e.property;
+    const own = Object.values(e.constraints ?? {}).map((c) => (prefix ? `${path}: ${c}` : c));
+    return [...own, ...validationMessages(e.children ?? [], path)];
+  });
+}
 import {
   PENDING_HOLD_CUTOFF_SQL,
   PAYMENT_REQUEST_LIFETIME_SECONDS,
@@ -178,32 +213,19 @@ import {
   type SubmissionsExportFormat,
 } from './product-grid-export';
 
+/** The typed 400 refusing a `draft` flag on an edit: publishing is its own route. */
+export const FORM_DRAFT_FLAG_ON_EDIT = 'FORM_DRAFT_FLAG_ON_EDIT';
+
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(6).toString('base64url')}`;
 }
 
 /**
- * True when the form collects money for an association recipient: it names one AND it charges, by
- * the ONE predicate that counts every price source - a choice option's supplement included
- * (`chargesMoney`). It used to count the base price, the switch and the grid only, so a form priced
- * by a supplement alone read "free" here: never paused, never asked for a ready association
- * (owner review of #2967, 2026-11-03).
- */
-function formRequiresStripeReadyAssociation(
-  input: Pick<CreateFormDto, 'basePrice' | 'priceMatrix' | 'requiresPayment' | 'items'> & {
-    associationId?: string;
-  }
-): boolean {
-  if (!input.associationId?.trim()) return false;
-  return chargesMoney(input as CreateFormDto);
-}
-
-/**
  * Whether a form can charge a submitter: payment switched on, a base price, a grid cell above 0, or
  * a choice option with a supplement - each of which `submit` turns into a total above 0.
  */
-function chargesMoney(input: CreateFormDto): boolean {
+export function chargesMoney(input: CreateFormDto): boolean {
   if (input.requiresPayment === true || (input.basePrice ?? 0) > 0) return true;
   const cells = (input.priceMatrix as PriceMatrix | null | undefined)?.cells;
   if (cells && Object.values(cells).some((c) => (c ?? 0) > 0)) return true;
@@ -312,6 +334,29 @@ type FormItemLike = AnswerQuestion & { id: string; label: string };
 /** The durable flags a landed payment's effects are claimed through (migrations 084 and 102). */
 type FulfilmentFlag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
 
+/** The 400 refusing a create's idempotency key on an edit. */
+export const FORM_CREATE_KEY_ON_EDIT = 'FORM_CREATE_KEY_ON_EDIT';
+
+/** The 409 refusing a create key replayed for another association than the form it made. */
+export const FORM_CREATE_KEY_REUSED = 'FORM_CREATE_KEY_REUSED';
+
+/** The 410 refusing a create key whose form was deleted (archived) since. */
+export const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
+
+/** The unique index of a create key per owner (migration 146). */
+const FORMS_OWNER_CLIENT_CREATE_ID = 'forms_owner_client_create_id';
+
+/** Whether `err` is the claim refusing a question image bound to another form. */
+function isImageNotYours(err: unknown): boolean {
+  if (!(err instanceof HttpException)) return false;
+  const body = err.getResponse();
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    (body as { code?: string }).code === 'QUESTION_IMAGE_NOT_YOURS'
+  );
+}
+
 @Injectable()
 export class FormsService {
   private readonly logger = new Logger(FormsService.name);
@@ -368,16 +413,54 @@ export class FormsService {
   }
 
   /**
-   * Paid forms linked to an association require its payment onboarding to be complete.
-   * @throws BadRequestException when the association cannot receive payments yet
+   * Whether a PAID form's respondents can pay it NOW (`payment-offer.ts`, owner 2026-11-08): cash is
+   * accepted, or online is accepted and the association can collect online. What a form owes before
+   * it is answerable - at its publication, at a creation published at once (a client before
+   * drafts), and at every edit of a published form. Readiness is READ (`canTakePaymentsNow`), and
+   * only when cash does not already answer, so the refusal is ONE typed code the editor words
+   * whatever the cause underneath (not activated, blocked, payments switched off on the platform).
    */
-  private async assertPaidFormAssociationReady(
-    input: Pick<CreateFormDto, 'basePrice' | 'priceMatrix' | 'requiresPayment' | 'items'> & {
-      associationId?: string;
-    }
+  private async assertRespondentsCanPay(
+    form: CreateFormDto,
+    associationId: string | null | undefined,
+    what: string
   ): Promise<void> {
-    if (!formRequiresStripeReadyAssociation(input)) return;
-    await this.associationsService.assertPaymentsReady(input.associationId!.trim());
+    const id = associationId?.trim() || undefined;
+    if (!chargesMoney(form)) return;
+    // A PERSONAL paid form collects through the platform's own account: no association readiness
+    // to ask, but it still needs a way to be paid (online, or cash) like any other paid form.
+    const code = await publishPaymentRefusal(form, () =>
+      id ? this.associationsService.canTakePaymentsNow(id) : Promise.resolve(true)
+    );
+    if (!code) return;
+    this.logger.log(`[FORMS] ${what} refused: ${code} (association ${id?.slice(0, 8) ?? 'none'})`);
+    if (code === FORM_NO_PAYMENT_METHOD) {
+      throw new BadRequestException({
+        code,
+        message: 'A paid form must accept online payment, cash, or both.',
+      });
+    }
+    throw new ConflictException({
+      code,
+      message:
+        'This association cannot receive online payments yet: accept cash, or wait for its setup.',
+    });
+  }
+
+  /**
+   * The collection rules of a form about to be answerable, together: the association may collect at
+   * all (`assertKindMayPrice`) and its respondents can pay now (`assertRespondentsCanPay`). `stored`
+   * is the published form an edit changes, so an unchanged price is not re-judged on its kind.
+   */
+  private async assertMayCollectNow(
+    form: CreateFormDto,
+    associationId: string | null | undefined,
+    what: string,
+    stored?: Form
+  ): Promise<void> {
+    const id = associationId?.trim() || undefined;
+    await this.assertKindMayPrice(form, id, stored);
+    await this.assertRespondentsCanPay(form, id, what);
   }
 
   /**
@@ -681,7 +764,7 @@ export class FormsService {
    * it may depend on answers not given yet, and `submit` re-reads the whole answer anyway.
    */
   async assertMayUploadAnswerFile(formId: string, userId: string): Promise<void> {
-    const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
+    const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
     if (!form) throw new NotFoundException('Form not found');
     if (!form.submitCondition) return;
     this.assertMaySubmit(form, await this.factsFor(form, userId));
@@ -689,11 +772,79 @@ export class FormsService {
 
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
   async create(input: CreateFormDto, isGlobalAdmin = false) {
+    // A client-minted key makes the create idempotent: a retry whose first answer was lost finds the
+    // form it already created, and is handed it unchanged. The key is the OWNER's (unique per
+    // owner): nothing another account stored is ever looked up, so it answers no existence question.
+    const key = input.clientCreateId;
+    if (key) {
+      const existing = await this.formCreatedWith(input, key);
+      if (existing) return existing;
+    }
+    try {
+      return await this.createNew(input, isGlobalAdmin);
+    } catch (err) {
+      // Two sends of one create raced. The loser meets the winner's row at the insert (the key's
+      // unique index), or earlier at the claim of a question image the winner already bound to its
+      // form (`QUESTION_IMAGE_NOT_YOURS`): either way the create is DONE, and the stored form is the
+      // answer. Any other failure is the create's own.
+      if (key && (violatesUniqueIndex(err, FORMS_OWNER_CLIENT_CREATE_ID) || isImageNotYours(err))) {
+        const existing = await this.formCreatedWith(input, key);
+        if (existing) return existing;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * The form `input.ownerId`'s create keyed `clientCreateId` already stored, or `null`. A repeat
+   * must be the SAME create: one naming another association is refused (`FORM_CREATE_KEY_REUSED`)
+   * rather than answered a form the caller did not ask for; one whose form was archived since is
+   * refused gone (`FORM_CREATE_KEY_GONE`), never answered a form no respondent can reach.
+   */
+  private async formCreatedWith(
+    input: CreateFormDto,
+    clientCreateId: string
+  ): Promise<Form | null> {
+    const existing = await this.formRepo.findOne({
+      where: { ownerId: input.ownerId!, clientCreateId },
+    });
+    if (!existing) return null;
+    const key = clientCreateId.slice(0, 8);
+    if ((existing.associationId ?? null) !== (input.associationId?.trim() || null)) {
+      this.logger.log(
+        `[FORMS] create ${key} repeated for another association than form ${existing.id.slice(0, 8)}'s: refused`
+      );
+      throw new ConflictException({
+        code: FORM_CREATE_KEY_REUSED,
+        message: 'This create key already made a form for another association.',
+        formId: existing.id,
+      });
+    }
+    if (existing.deletedAt) {
+      this.logger.log(
+        `[FORMS] create ${key} repeated: form ${existing.id.slice(0, 8)} is archived`
+      );
+      throw new GoneException({
+        code: FORM_CREATE_KEY_GONE,
+        message: 'The form this create made was deleted.',
+      });
+    }
+    this.logger.log(`[FORMS] create ${key} repeated: form ${existing.id.slice(0, 8)} answered`);
+    return existing;
+  }
+
+  private async createNew(input: CreateFormDto, isGlobalAdmin: boolean) {
     if (input.associationId && !isGlobalAdmin) {
       const member = await this.associationsService.isMember(input.ownerId!, input.associationId);
       if (!member) {
         throw new ForbiddenException('You are not a member of this association.');
       }
+    }
+    // A DRAFT is asked for by a client that publishes separately; a client that predates drafts
+    // sends nothing and its form is published at once, as it always was (`form-status.ts`).
+    const status: FormStatus = input.draft === true ? FORM_DRAFT : FORM_PUBLISHED;
+    if (input.draft === undefined) {
+      this.logger.log('[FORMS] create without `draft`: a client before drafts, published at once');
     }
     assertUniqueItemIds(input.items);
     assertFormItemsShape(input.items);
@@ -708,15 +859,19 @@ export class FormsService {
         associationId: input.associationId?.trim() || null,
       }),
     };
-    await this.assertKindMayPrice(input, input.associationId?.trim());
-    await this.assertPaidFormAssociationReady(input);
+    // Whether the association may collect, and collect NOW, is judged at PUBLICATION for a draft
+    // (owner, 2026-11-08: a paid form is built before its association's Lydia is ready).
+    if (status === FORM_PUBLISHED) {
+      await this.assertMayCollectNow(input, input.associationId, 'create');
+    }
     await this.assertCotisationConfigValid(input, {
       userId: input.ownerId!,
       isGlobalAdmin,
     });
-    const { opensAt: opensAtRaw, closedAt: closedAtRaw, ...rest } = input;
+    const { opensAt: opensAtRaw, closedAt: closedAtRaw, draft: _draft, ...rest } = input;
     const form = this.formRepo.create({
       ...rest,
+      status,
       // One stored shape for "asks a guest nothing": null (`guest-identity.ts`).
       guestFields: storedGuestFields(input.guestFields),
       currency: 'eur',
@@ -789,14 +944,23 @@ export class FormsService {
     return this.withAssociationNames(merged);
   }
 
-  /** Attaches `associationName` to every form that names an association. */
+  /**
+   * Attaches `associationName` to every form that names an association, and
+   * `hasUnpublishedChanges` - whether an unpublished revision holds edits (migration 146): the list
+   * marks it, and its "Voir le formulaire" opens the preview of those edits.
+   */
   private async withAssociationNames(forms: Form[]) {
-    const names = await this.associationsService.namesByIds(
-      forms.map((f) => f.associationId).filter(Boolean)
-    );
+    const [names, changed] = await Promise.all([
+      this.associationsService.namesByIds(forms.map((f) => f.associationId).filter(Boolean)),
+      formsWithUnpublishedChanges(
+        this.formRepo.manager,
+        forms.map((f) => f.id)
+      ),
+    ]);
     return forms.map((form) => ({
       ...form,
       associationName: form.associationId ? (names.get(form.associationId) ?? null) : null,
+      hasUnpublishedChanges: changed.has(form.id),
     }));
   }
 
@@ -807,10 +971,16 @@ export class FormsService {
    * returned `null` as a `200` with an EMPTY body, which the client could only read as a raw
    * "Empty response from server" - a status code is the answer, an empty success is not.
    */
-  async get(id: string) {
+  async get(id: string, viewer?: { userId: string; isGlobalAdmin: boolean }) {
     const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
     if (!form) {
       this.logger.debug(`get: form ${id} not found`);
+      throw new NotFoundException('Form not found');
+    }
+    // A DRAFT is its managers' alone: anyone else is answered what an absent form answers, so a
+    // draft id cannot be probed (`form-status.ts`).
+    if (form.status === FORM_DRAFT && !(await this.managesForm(form, viewer))) {
+      this.logger.debug(`get: form ${id.slice(0, 8)} is a draft, not served to a non-manager`);
       throw new NotFoundException('Form not found');
     }
     const submissionCount = await this.countActiveSubmissions(id);
@@ -828,16 +998,24 @@ export class FormsService {
   }
 
   /**
-   * A paid form is PAUSED while its association cannot collect online now (`collectsNow`): a list
-   * whose payment delegation was revoked or never accepted, or whose receiver lost its Lydia account
-   * (owner, 2026-11-02). Derived on every read, so it resumes with the next accepted delegation; the
-   * online submit is refused by the same readiness (`assertPaymentsReady`). A free form never is.
+   * A paid form's ONLINE payment is PAUSED while it is not offered now (`onlineOffered`,
+   * `payment-offer.ts`): its editor took online off (a cash-only form), or its association cannot
+   * collect online now (`collectsNow`: a list whose payment delegation was revoked or never
+   * accepted, a receiver that lost its Lydia account, an association not set up yet - owner,
+   * 2026-11-02 and 2026-11-08). Derived on every read, so online comes back by itself when the
+   * association becomes ready; a form that takes cash is answered in cash meanwhile, and the online
+   * submit is refused (`assertPaymentsReady`, `FORM_ONLINE_PAYMENT_NOT_OFFERED`). A free form never is.
    */
   private async paymentsPaused(form: Form): Promise<boolean> {
-    if (!formRequiresStripeReadyAssociation(form as unknown as CreateFormDto)) return false;
-    const paused = !(await this.associationsService.collectsNow(form.associationId));
-    if (paused) this.logger.debug(`[Forms] form ${form.id.slice(0, 8)} served paused: payments`);
-    return paused;
+    if (!chargesMoney(form as unknown as CreateFormDto)) return false;
+    // A personal paid form collects through the platform: only its editor's choice pauses online.
+    const offered = await onlineOffered(form, () =>
+      form.associationId
+        ? this.associationsService.collectsNow(form.associationId)
+        : Promise.resolve(true)
+    );
+    if (!offered) this.logger.debug(`[Forms] form ${form.id.slice(0, 8)} served paused: payments`);
+    return !offered;
   }
 
   /**
@@ -854,7 +1032,7 @@ export class FormsService {
    * public route cannot be used to learn which ids exist.
    */
   async getPublic(id: string) {
-    const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
+    const form = await this.formRepo.findOne({ where: respondentFormWhere(id) });
     if (!form?.isPublic) {
       this.logger.debug(`[FORMS] public read refused, not a public form id=${id.slice(0, 8)}`);
       throw new NotFoundException('Form not found');
@@ -904,24 +1082,62 @@ export class FormsService {
   async assertFormManager(formId: string, userId: string, isGlobalAdmin: boolean): Promise<Form> {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     if (!form) throw new NotFoundException('Form not found');
-    if (isGlobalAdmin || form.ownerId === userId) return form;
-    if (
-      form.associationId &&
-      (await this.associationsService.mayAct(
-        userId,
-        form.associationId,
-        AssociationPermissionFlag.MANAGE_FORMS,
-        { isGlobalAdmin }
-      ))
-    ) {
-      return form;
-    }
+    if (await this.managesForm(form, { userId, isGlobalAdmin })) return form;
     throw new ForbiddenException('You are not allowed to manage this form');
   }
 
-  /** Updates a form's metadata and items. Gated by `assertFormManager`. */
-  async update(formId: string, input: CreateFormDto, userId: string, isGlobalAdmin: boolean) {
+  /** Whether `viewer` manages `form`: its owner, a global admin, or MANAGE_FORMS on its association. */
+  private async managesForm(
+    form: Form,
+    viewer: { userId: string; isGlobalAdmin: boolean } | undefined
+  ): Promise<boolean> {
+    if (!viewer?.userId) return false;
+    if (viewer.isGlobalAdmin || form.ownerId === viewer.userId) return true;
+    return (
+      !!form.associationId &&
+      (await this.associationsService.mayAct(
+        viewer.userId,
+        form.associationId,
+        AssociationPermissionFlag.MANAGE_FORMS,
+        { isGlobalAdmin: viewer.isGlobalAdmin }
+      ))
+    );
+  }
+
+  /**
+   * Updates a form's metadata and items. Gated by `assertFormManager`.
+   *
+   * `inTransaction`: the caller's transaction, which this edit's write joins - publishing an
+   * unpublished revision applies it and empties the revision as ONE commit (`publishChanges`). The
+   * caller then owns releasing the question images the edit dropped, after its commit.
+   */
+  async update(
+    formId: string,
+    input: CreateFormDto,
+    userId: string,
+    isGlobalAdmin: boolean,
+    inTransaction?: EntityManager
+  ) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+
+    // Publishing is its own route, and a published form never goes back to draft: a status sent
+    // with an edit is refused rather than ignored (a dropped field is a save that did something else).
+    if (input.draft !== undefined) {
+      this.logger.log(`[FORMS] edit of ${formId.slice(0, 8)} refused: it carried \`draft\``);
+      throw new BadRequestException({
+        code: FORM_DRAFT_FLAG_ON_EDIT,
+        message: 'A form is published through POST /forms/:id/draft/publish, never by an edit.',
+      });
+    }
+    // The create's idempotency key is the create's alone: an edit sending one is refused rather
+    // than written over the stored key (a dropped field is a save that did something else).
+    if (input.clientCreateId !== undefined) {
+      this.logger.log(`[FORMS] edit of ${formId.slice(0, 8)} refused: it carried a create key`);
+      throw new BadRequestException({
+        code: FORM_CREATE_KEY_ON_EDIT,
+        message: 'clientCreateId is sent with a create only.',
+      });
+    }
 
     // THE ASSOCIATION LINK IS FIXED AT CREATION (user decision, 2026-08-23). A form is either
     // personal or an association's, and which one it is decides who owns it: MANAGE_FORMS on the
@@ -941,11 +1157,14 @@ export class FormsService {
       }
     }
 
-    // ANONYMITY IS FIXED AT CREATION for the same reason the association link is: turning it on
+    // ANONYMITY IS FIXED AT PUBLICATION for the same reason the association link is: turning it on
     // would promise anonymity to answers already stored with a name, and turning it off would
     // quietly start naming people who were told they were not. A present, different value is
-    // refused; an absent one means "leave it".
-    if (input.anonymous !== undefined && input.anonymous !== form.anonymous) {
+    // refused; an absent one means "leave it". A DRAFT has no answer and has promised nothing yet,
+    // so its builder may still change it (owner, 2026-11-08: a draft is saved as it is typed).
+    const isDraft = form.status === FORM_DRAFT;
+    const anonymous = isDraft ? (input.anonymous ?? form.anonymous) : form.anonymous;
+    if (!isDraft && input.anonymous !== undefined && input.anonymous !== form.anonymous) {
       throw new BadRequestException(
         'A form stays anonymous, or not, as it was created. Create a new form to change it.'
       );
@@ -967,7 +1186,7 @@ export class FormsService {
     const effective = {
       ...input,
       items,
-      anonymous: form.anonymous,
+      anonymous,
       // The guest fields the form WILL ask: the sent list, else the stored one.
       guestFields: input.guestFields ?? form.guestFields,
       isPublic: input.isPublic ?? form.isPublic,
@@ -977,6 +1196,7 @@ export class FormsService {
         input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
       allowMultipleSubmissions: input.allowMultipleSubmissions ?? form.allowMultipleSubmissions,
       allowCashPayment: input.allowCashPayment ?? form.allowCashPayment,
+      allowOnlinePayment: input.allowOnlinePayment ?? form.allowOnlinePayment,
       // `!== undefined`, not `??`: an explicit null CLEARS the deadline when the form is saved, so
       // the check must see the null, not the stored value it is about to replace.
       cashPaymentExpiryDays:
@@ -1004,8 +1224,12 @@ export class FormsService {
     });
     if (input.items !== undefined) input = { ...input, items: gridItems };
 
-    await this.assertKindMayPrice(input, form.associationId, form);
-    await this.assertPaidFormAssociationReady({ ...input, associationId: form.associationId });
+    // A draft is judged on collecting at its publication; a published form at every edit, on the
+    // form as the edit WILL save it (its payment switches included).
+    if (form.status !== FORM_DRAFT) {
+      await this.assertKindMayPrice(input, form.associationId, form);
+      await this.assertRespondentsCanPay(effective, form.associationId, 'edit');
+    }
     await this.assertCotisationConfigValid(
       { ...input, associationId: form.associationId },
       { userId, isGlobalAdmin }
@@ -1021,6 +1245,7 @@ export class FormsService {
     const citedBefore = questionImageIds(form.items);
     Object.assign(form, {
       ...rest,
+      anonymous,
       // Absent keeps the stored list; a sent one (null and [] included) is stored canonical.
       ...(input.guestFields !== undefined
         ? { guestFields: storedGuestFields(input.guestFields) }
@@ -1038,16 +1263,235 @@ export class FormsService {
       })),
     });
     const citedAfter = questionImageIds(form.items);
-    if (citedBefore.length === 0 && citedAfter.length === 0) return this.formRepo.save(form);
+    // THE STATUS IS NEVER WRITTEN BY AN EDIT: `form` was read before the checks above, and a
+    // publication landing meanwhile would be written back as `draft` by a whole-entity save.
+    // Publishing is its own conditional write; the edit leaves the column alone.
+    const { status, ...written } = form;
+    const withStatus = <T extends object>(saved: T) => ({ ...saved, status });
+    if (inTransaction) {
+      if (citedAfter.length > 0) {
+        await this.formItemImages.claimForSave(inTransaction, form.items, formId, userId);
+      }
+      return withStatus(await inTransaction.save(Form, written as Form));
+    }
+    if (citedBefore.length === 0 && citedAfter.length === 0) {
+      return withStatus(await this.formRepo.save(written as Form));
+    }
     const saved = await this.formRepo.manager.transaction(async (m) => {
       await this.formItemImages.claimForSave(m, form.items, formId, userId);
-      return m.save(Form, form);
+      return m.save(Form, written as Form);
     });
     // Replaced or removed: released once no question of any form cites it (a duplicated question
     // still does). After the commit, so the release re-reads the citations this save wrote.
     const dropped = citedBefore.filter((id) => !citedAfter.includes(id));
     if (dropped.length > 0) await this.formItemImages.releaseUncited(dropped, 'question edited');
+    return withStatus(saved);
+  }
+
+  /**
+   * The unpublished revision of a form, for its editor and its preview (owner, 2026-11-08). Gated by
+   * `assertFormManager`: a respondent never reads a revision.
+   */
+  async getDraft(formId: string, userId: string, isGlobalAdmin: boolean): Promise<FormDraftState> {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    if (form.deletedAt) throw new NotFoundException('Form not found');
+    return readFormDraft(this.formRepo.manager, formId);
+  }
+
+  /**
+   * Saves what the editor holds as the revision after `baseRevision` (the autosave). The document is
+   * stored AS TYPED - a half-built form is what an autosave carries - and judged by the edit's rules
+   * only at its publication. A base another save, a publication or a discard moved is refused
+   * `409 FORM_DRAFT_CONFLICT`, carrying the current revision: never a silent overwrite.
+   */
+  async saveDraft(
+    formId: string,
+    baseRevision: number,
+    document: unknown,
+    saveId: string | null,
+    userId: string,
+    isGlobalAdmin: boolean
+  ) {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    if (form.deletedAt) throw new NotFoundException('Form not found');
+    if (!isStorableDraftDocument(document)) {
+      this.logger.log(
+        `[FORM_DRAFT] ${formId.slice(0, 8)} save refused: not one JSON object within the size bound`
+      );
+      throw new BadRequestException({
+        code: FORM_DRAFT_MALFORMED,
+        message: 'A form revision is the editor payload, as one JSON object.',
+      });
+    }
+    // A question image the revision cites is bound to this form NOW, under the saver's id: an image
+    // uploaded before the form existed (the create page) is then this form's, and a co-manager
+    // publishing the revision later is not refused it as somebody else's upload.
+    const saved = await this.formRepo.manager.transaction(async (m) => {
+      await this.formItemImages.claimForSave(m, document.items, formId, userId);
+      return writeFormDraft(m, formId, baseRevision, document, saveId);
+    });
+    if (!saved) return this.throwDraftConflict(formId, baseRevision, 'save');
+    this.logger.debug(
+      `[FORM_DRAFT] ${formId.slice(0, 8)} saved revision ${saved.revision} (base ${baseRevision})`
+    );
     return saved;
+  }
+
+  /**
+   * Discards the unpublished revision `revision`: the form stays as published. A revision that moved
+   * since the editor read it is refused (another tab's edits are never thrown away unseen). The
+   * question images only the discarded document cited are released after the commit.
+   */
+  async discardDraft(formId: string, revision: number, userId: string, isGlobalAdmin: boolean) {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    if (form.deletedAt) throw new NotFoundException('Form not found');
+    const outcome = await this.formRepo.manager.transaction(async (m) => {
+      const current = await readFormDraft(m, formId, true);
+      if (current.revision !== revision) return { conflict: true as const };
+      if (!current.document) return { conflict: false as const, revision, images: [] as string[] };
+      const next = await closeFormDraft(m, formId);
+      return {
+        conflict: false as const,
+        revision: next,
+        images: questionImageIds(current.document.items),
+      };
+    });
+    if (outcome.conflict) return this.throwDraftConflict(formId, revision, 'discard');
+    this.logger.log(`[FORM_DRAFT] ${formId.slice(0, 8)} revision ${revision} discarded`);
+    if (outcome.images.length > 0) {
+      await this.formItemImages.releaseUncited(outcome.images, 'form revision discarded');
+    }
+    return { revision: outcome.revision };
+  }
+
+  /**
+   * "Publier les modifications" / "Publier" (owner, 2026-11-08): applies the unpublished revision
+   * `revision` to the form with EXACTLY the edit's rules (the DTO's validation, then `update`), and
+   * empties the revision, in ONE transaction holding the revision's row - so a concurrent autosave
+   * waits, then finds its base moved. A DRAFT form is published in that same transaction, after the
+   * collection rules a draft's saves skipped (`assertPublishable`); one with no revision is
+   * published as it stands. A published form with no revision has nothing to publish (409).
+   */
+  async publishChanges(
+    formId: string,
+    revision: number,
+    userId: string,
+    isGlobalAdmin: boolean,
+    overwrite = false
+  ) {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    if (form.deletedAt) throw new NotFoundException('Form not found');
+    const citedBefore = questionImageIds(form.items);
+    const outcome = await this.formRepo.manager.transaction(async (m) => {
+      // LOCK ORDER, ONE FOR EVERY PATH HOLDING BOTH: the `forms` row FIRST, then its `form_drafts`
+      // row. This publication takes them so; the tier retag (`ProductsService`) updates `forms`,
+      // then `followRetagInRevisions` updates `form_drafts`; a save (`writeFormDraft`) and a
+      // discard lock `form_drafts` alone (the save's fingerprint subquery reads `forms` without a
+      // lock). Opposite orders deadlock (40P01) - a 500 for whichever loses.
+      //
+      // The form is judged as it stands INSIDE this transaction, its row held: a write landing
+      // between the manager check above and here (an older build's edit, another publication) is
+      // either before this read or waits for the commit. A draft with no revision is published as
+      // this locked row is.
+      const locked = await m.findOne(Form, {
+        where: { id: formId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!locked || locked.deletedAt) return { refused: 'gone' as const };
+      const current = await readFormDraft(m, formId, true);
+      if (current.revision !== revision) return { refused: 'conflict' as const };
+      const wasDraft = locked.status === FORM_DRAFT;
+      if (!current.document && !wasDraft) return { refused: 'empty' as const };
+      // Written since the revision started (an older build editing the form directly): publishing
+      // would undo that write unseen, so it is refused unless the manager confirmed the overwrite.
+      // The form's row is taken here whatever the answer is used for: an overwrite publishes over
+      // the form as it stands NOW, not as a write landing between this read and the update.
+      const changed = current.document ? await formChangedSinceRevision(m, formId) : false;
+      if (changed && !overwrite) return { refused: 'changed' as const };
+      let saved: Form = locked;
+      if (current.document) {
+        const dto = await this.validatedRevision(current.document);
+        saved = (await this.update(formId, dto, userId, isGlobalAdmin, m)) as Form;
+      }
+      if (wasDraft) {
+        await this.assertPublishable(saved);
+        await m
+          .createQueryBuilder()
+          .update(Form)
+          .set({ status: FORM_PUBLISHED })
+          .where('id = :id AND status = :draft', { id: formId, draft: FORM_DRAFT })
+          .execute();
+      }
+      const next = current.document ? await closeFormDraft(m, formId) : current.revision;
+      return { refused: null, revision: next, items: saved.items as unknown, wasDraft };
+    });
+    if (outcome.refused === 'gone') throw new NotFoundException('Form not found');
+    if (outcome.refused === 'conflict') return this.throwDraftConflict(formId, revision, 'publish');
+    if (outcome.refused === 'changed') {
+      this.logger.log(
+        `[FORM_DRAFT] ${formId.slice(0, 8)} revision ${revision} not published: the form was written since it started`
+      );
+      throw new ConflictException({
+        code: FORM_CHANGED_SINCE_REVISION,
+        message:
+          'This form was changed outside its unpublished revision since the revision started.',
+      });
+    }
+    if (outcome.refused === 'empty') {
+      this.logger.log(
+        `[FORM_DRAFT] ${formId.slice(0, 8)} publish of revision ${revision} refused: no unpublished change`
+      );
+      throw new ConflictException({
+        code: FORM_DRAFT_EMPTY,
+        message: 'This form holds no unpublished changes.',
+      });
+    }
+    this.logger.log(
+      `[FORM_DRAFT] ${formId.slice(0, 8)} revision ${revision} published${outcome.wasDraft ? ', and the form with it' : ''}${overwrite ? ' (overwrite confirmed)' : ''}`
+    );
+    // Replaced or removed by the published revision: released once nothing cites it, after the commit.
+    const citedAfter = questionImageIds(outcome.items);
+    const dropped = citedBefore.filter((id) => !citedAfter.includes(id));
+    if (dropped.length > 0) await this.formItemImages.releaseUncited(dropped, 'revision published');
+    return { id: formId, status: FORM_PUBLISHED, revision: outcome.revision };
+  }
+
+  /**
+   * A stored revision read as the edit route reads its body: the global pipe's validation
+   * (`whitelist`, `transform`), the `draft` flag dropped (publishing is this route's own job).
+   */
+  private async validatedRevision(document: Record<string, unknown>): Promise<CreateFormDto> {
+    const { draft: _draft, clientCreateId: _key, ...body } = document;
+    const dto = plainToInstance(CreateFormDto, body);
+    const errors = await validate(dto, { whitelist: true });
+    if (errors.length > 0) {
+      const messages = validationMessages(errors);
+      this.logger.log(`[FORM_DRAFT] revision refused by validation: ${messages.join('; ')}`);
+      throw new BadRequestException({ code: FORM_DRAFT_INVALID, message: messages });
+    }
+    return dto;
+  }
+
+  /** The typed 409 of a revision moved under its writer, carrying the revision it moved to. */
+  private async throwDraftConflict(formId: string, base: number, what: string): Promise<never> {
+    const current = await readFormDraft(this.formRepo.manager, formId);
+    this.logger.log(
+      `[FORM_DRAFT] ${formId.slice(0, 8)} ${what} on revision ${base} refused: it is at ${current.revision}`
+    );
+    throw new ConflictException({
+      code: FORM_DRAFT_CONFLICT,
+      message: 'This form was changed elsewhere since it was opened.',
+      revision: current.revision,
+      // The save that wrote it: a client whose answer was lost recognises its own and adopts it.
+      saveId: current.saveId,
+      // And the saves before it: a device copy whose own save is here landed, and nothing of it is lost.
+      recentSaveIds: current.recentSaveIds,
+    });
+  }
+
+  /** What a draft owes before it is answerable: the collection rules its saves skipped. */
+  private async assertPublishable(form: Form): Promise<void> {
+    await this.assertMayCollectNow(form as unknown as CreateFormDto, form.associationId, 'publish');
   }
 
   /**
@@ -1441,7 +1885,7 @@ export class FormsService {
      */
     productGridPrices: ProductGridPrices;
   }> {
-    const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
+    const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
     if (!form)
       return {
         hasSubmitted: false,
@@ -1546,7 +1990,7 @@ export class FormsService {
     // A guest names nobody, whatever reached this call: the row and the payment are written with
     // no account and no stored address, by construction rather than by each caller's care.
     if (guest) input = { ...input, userId: undefined, email: undefined };
-    const form = await this.formRepo.findOne({ where: { id, deletedAt: IsNull() } });
+    const form = await this.formRepo.findOne({ where: respondentFormWhere(id) });
     // A guest reaching a form that is not public is told it does not exist, as `getPublic` does.
     if (!form || (guest && !form.isPublic)) throw new NotFoundException('Form not found');
     // Across the review cohort's boundary nothing is submitted or bought: a review account answers
@@ -1794,6 +2238,20 @@ export class FormsService {
     // is answered `alreadyPaid`, never a 409 for the payment they already made.
     if (totalCents > 0) await this.assertGrantedTierIsARise(form, input.userId);
 
+    // An editor who took ONLINE payment off (a cash-only form) is refused an online answer before
+    // anything is written; a form that accepts it but whose association cannot collect is refused
+    // further down by the readiness check, as before (`payment-offer.ts`).
+    if (
+      totalCents > 0 &&
+      !(form.allowCashPayment && input.paymentMethod === 'cash') &&
+      !acceptsOnline(form)
+    ) {
+      this.logger.log(`[Forms] online answer refused on ${id.slice(0, 8)}: online not offered`);
+      throw new ConflictException({
+        code: FORM_ONLINE_PAYMENT_NOT_OFFERED,
+        message: 'This form is paid in cash only.',
+      });
+    }
     // A guest who pays ONLINE leaves for Lydia and comes back with no session: the receipt, minted
     // here and stored hashed on the row, is what its return page shows instead (`guest-receipt.ts`).
     // Cash needs none - the guest reads the reference at once, on the page that sent the answer.
@@ -3316,7 +3774,7 @@ export class FormsService {
 
   /** Subscribes a user to reminders for a form (upsert). Rejects if opensAt is null or already past. */
   async subscribeReminder(formId: string, userId: string) {
-    const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
+    const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
     if (!form) throw new NotFoundException('Form not found');
     if (!form.opensAt || new Date(form.opensAt) <= new Date()) {
       throw new BadRequestException('Form is already open or has no scheduled opening time');

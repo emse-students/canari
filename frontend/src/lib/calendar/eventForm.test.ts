@@ -27,6 +27,7 @@ const BASE: EventFormValues = {
   start: '2026-10-06T18:00',
   end: '2026-10-06T23:00',
   kind: 'break',
+  presentation: 'association',
   linkedFormId: 'form-1',
   coOwnerIds: ['asso-2'],
   coOwnersLoad: 'ready',

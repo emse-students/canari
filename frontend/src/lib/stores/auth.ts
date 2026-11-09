@@ -35,6 +35,7 @@ import {
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { discardSharedOut } from '$lib/sharing/shareOutCleanup';
 import { eraseAccountShortcuts } from '$lib/sharing/shareTargetsNative';
+import { eraseFormDraftCopies } from '$lib/forms/draftCopies';
 import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
 import { endPushRegistration } from '$lib/services/PushNotificationService';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
@@ -388,7 +389,7 @@ export function revokedDeviceOfEndedSession(): RevokedDeviceIdentity | null {
 }
 
 /** The app's reaction to a sign-out, registered by the app shell; see {@link setSignOutHandler}. */
-let _signOutHandler: (() => void) | null = null;
+let _signOutHandler: (() => void | Promise<void>) | null = null;
 
 /**
  * Registers what the app must stop when the session is ended on purpose - the live chat session.
@@ -405,8 +406,12 @@ let _signOutHandler: (() => void) | null = null;
  * Called FIRST in {@link clearAuth}, synchronously, while the access token still exists: the
  * teardown deregisters a live session's push token with it. The DEVICE's half of ending the push
  * registration is not the handler's - `clearAuth` runs it itself, so it holds with no handler.
+ *
+ * It may return a promise (the server's push deregistration, which must answer while the credential
+ * is still valid): `clearAuth` awaits it AFTER the local identity is dropped and BEFORE the
+ * revocation, so the deregistration is never refused for a session it raced.
  */
-export function setSignOutHandler(fn: (() => void) | null): void {
+export function setSignOutHandler(fn: (() => void | Promise<void>) | null): void {
   _signOutHandler = fn;
 }
 
@@ -1425,9 +1430,10 @@ async function clearAuthCounted(options: { revokeServerSession: boolean }): Prom
 async function clearAuthUnderway(options: { revokeServerSession: boolean }): Promise<void> {
   // THE LIVE SESSION ENDS BEFORE ANYTHING IT USES IS GONE - see `setSignOutHandler`. A throw here is
   // a session left running for a signed-out user, so it is accused by name, and the sign-out goes on.
+  let handlerSettled: void | Promise<void> = undefined;
   if (_signOutHandler) {
     try {
-      _signOutHandler();
+      handlerSettled = _signOutHandler();
     } catch (e) {
       console.error(`[A] sign-out handler failed - the live session may still be running: ${e}`);
     }
@@ -1440,6 +1446,8 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   // on disk until it does. AFTER the handler, which reads the registration marker synchronously for
   // the server-side deregistration of a live session.
   void endPushRegistration();
+  // Whose account is leaving, read before the identity below is forgotten.
+  const leavingUserId = currentUserId();
   // THE LOCAL IDENTITY GOES NOW, BEFORE THE FIRST AWAIT - never after the revocation below. The
   // handler has just set `isLoggedIn` false, and every unlock trigger in the app shell (the user-id
   // effect, `afterNavigate`) starts the unlock on "a saved user, nobody logged in". Left until the
@@ -1464,9 +1472,12 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   void discardSharedOut('signed out');
   // And a share INTO Canari still waiting: it must never land in the account signed in next.
   void eraseIncomingShare('signed out');
-  // And the shortcuts Android holds for THIS account - the share sheet's suggestions and the
+  // And the shortcuts the phone holds for THIS account - the share sheet's suggestions and the
   // notifications' conversation shortcuts, names and faces the next account must never see.
   void eraseAccountShortcuts('signed out');
+  // And the forms' edits this device kept for a save that has not landed: the next account must
+  // neither see nor send them (owner, 2026-11-08).
+  void eraseFormDraftCopies(leavingUserId, 'signed out');
   if (!options.revokeServerSession) {
     alog('clear✓ local only - the shared cookie and credential are left to the tab that owns them');
     return;
@@ -1488,6 +1499,14 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   // bounded because on a stalled link it used to hold the sign-out, with no feedback, for as long as
   // the engine tolerates. Past the deadline the local sign-out goes on - that is what signing out
   // IS - and the line says the server did not revoke, because the session row then lives on.
+  //
+  // BUT NOT BEFORE THE HANDLER'S OWN WORK has answered: the push deregistration it started needs the
+  // session alive, so the revocation waits for it (bounded by its own deadline, never rejecting).
+  try {
+    await handlerSettled;
+  } catch (e) {
+    console.error(`[A] sign-out handler's async work failed - going on to the revocation: ${e}`);
+  }
   const carried = usesBodyRefreshTransport() ? await readNativeRefreshToken() : null;
   const t0 = Date.now();
   try {
@@ -1532,7 +1551,14 @@ export async function hasStoredSession(): Promise<boolean> {
     // On Tauri mobile, localStorage may be wiped after an OS process kill while
     // the HttpOnly refresh cookie survives in the WebView cookie store. Attempt a
     // silent refresh - _doRefresh will restore userId from the JWT sub claim.
-    if (isTauri()) {
+    //
+    // ONLY IN A PROCESS THAT HAS NOT SIGNED OUT. That wipe is the work of an OS process kill, so the
+    // question is only ever open at a cold start. A process that ran `clearAuth` emptied the identity
+    // ON PURPOSE and revoked the credential: asking the server would be a request whose answer is
+    // known (`refresh✗401` ~100 ms after every `logout✓200`, both phones, 2026-11-08).
+    if (isTauri() && _signOutGeneration > 0) {
+      alog('session: signed out in this process - no recovery refresh');
+    } else if (isTauri()) {
       try {
         await refresh();
         uid = currentUserId();

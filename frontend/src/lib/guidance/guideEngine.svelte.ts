@@ -266,6 +266,20 @@ export class GuideEngine {
     this.#enter(run.index + 1, 1);
   }
 
+  /** The reader's press on the step's own action button: it runs, then the step is passed like "Next". */
+  act(): void {
+    const run = this.#run;
+    const action = run?.steps[run.index].action;
+    if (!run || !action) return;
+    Log.i('guide', `${run.guide.id}: step ${run.steps[run.index].id} action pressed`);
+    try {
+      action.run();
+    } catch (e) {
+      console.error(`[guide] ${run.guide.id}: the step's action failed`, e);
+    }
+    this.next();
+  }
+
   /** The reader's "Previous". A no-op on the first step. */
   previous(): void {
     const run = this.#run;

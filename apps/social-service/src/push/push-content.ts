@@ -36,6 +36,7 @@ export type PushContentKey =
   | 'social_live_started'
   | 'social_follow_request'
   | 'social_follow_accepted'
+  | 'social_birthday'
   | 'social_live_cut'
   | 'social_live_suspended'
   | 'social_live_withdrawn'
@@ -756,18 +757,40 @@ export function followAcceptedContent(accepterName: string, icon?: PushIcon): Pu
 }
 
 /**
+ * It is the birthday of a person the recipient follows and whose date they may read (owner,
+ * 2026-11-08, docs/wiki/birthdays.md). `actorName` is that person; `arg` is always empty - the title
+ * is the whole sentence ("C'est l'anniversaire de X"), the body a fixed invitation to wish it.
+ */
+export function birthdayContent(celebrantName: string, icon?: PushIcon): PushContent {
+  return {
+    key: 'social_birthday',
+    icon,
+    actorName: celebrantName,
+    arg: '',
+    legacyTitle: `C'est l'anniversaire de ${celebrantName}`,
+    legacyBody: 'Souhaitez-lui un bon anniversaire',
+  };
+}
+
+/**
  * A member or an association the recipient follows started a live (WP-L7, decision L10). `actorName`
  * is the BROADCASTER - the association's name for a live broadcast as one, the member's otherwise;
- * `arg` is always empty: a live has no text to quote, so the body is the fixed sentence.
+ * `arg` is the live's TITLE (owner, 2026-11-07), empty when it has none - the body is then the fixed
+ * sentence. Both natives already read a non-empty `arg` as the body (`actorTitled` on iOS, the
+ * `arg.ifEmpty` on Android), so "BDE est en live" stays the title and the live's title its body.
  */
-export function liveStartedContent(broadcasterName: string, icon?: PushIcon): PushContent {
+export function liveStartedContent(
+  broadcasterName: string,
+  title: string,
+  icon?: PushIcon
+): PushContent {
   return {
     key: 'social_live_started',
     icon,
     actorName: broadcasterName,
-    arg: '',
+    arg: title,
     legacyTitle: `${broadcasterName} est en live`,
-    legacyBody: 'Appuyez pour regarder',
+    legacyBody: title || 'Appuyez pour regarder',
   };
 }
 

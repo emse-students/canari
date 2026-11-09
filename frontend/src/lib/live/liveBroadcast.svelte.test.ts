@@ -92,7 +92,7 @@ describe('LiveBroadcast - preview and start', () => {
   it('goes on air: the generated key and the association reach the server, a recorder runs on the open camera, the screen is held', async () => {
     const { b, deps, recorders, cam } = await ready('asso-1');
     await b.start();
-    expect(deps.startLive).toHaveBeenCalledWith(KEY, 'asso-1', undefined);
+    expect(deps.startLive).toHaveBeenCalledWith(KEY, 'asso-1', undefined, null);
     expect(b.phase).toBe('live');
     expect(b.liveId).toBe(LIVE_ID);
     expect(recorders).toHaveLength(1);
@@ -139,6 +139,11 @@ describe('LiveBroadcast - preview and start', () => {
     ).toBe('association-forbidden');
     expect(
       startProblemOf(
+        new LiveRefusalError(403, 'LIVE_ASSOCIATION_ARCHIVED', '', 'refused', null, null, null)
+      )
+    ).toBe('association-archived');
+    expect(
+      startProblemOf(
         new LiveRefusalError(429, 'LIVE_START_RATE', '', 'rate-limited', null, null, null)
       )
     ).toBe('rate-limited');
@@ -164,7 +169,7 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
     expect(b.rulesPending).toBe(false);
     expect(b.canStart).toBe(true);
     await b.start();
-    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, 1);
+    expect(f.deps.startLive).toHaveBeenCalledWith(KEY, undefined, 1, null);
     expect(b.phase).toBe('live');
   });
 
@@ -172,7 +177,7 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
     const { b, deps } = await ready();
     expect(b.rulesPending).toBe(false);
     await b.start();
-    expect(deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined);
+    expect(deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null);
   });
 
   it('the rules changed since (accepted v1, now v2): shown again', async () => {
@@ -195,7 +200,7 @@ describe('LiveBroadcast - the first-live rules (L11)', () => {
     b.acceptRules();
     expect(b.startProblem).toBeNull();
     await b.start();
-    expect(deps.startLive).toHaveBeenLastCalledWith(KEY, undefined, 2);
+    expect(deps.startLive).toHaveBeenLastCalledWith(KEY, undefined, 2, null);
   });
 
   it('LIVE_RULES_NOT_ACCEPTED with the re-read failing: the limits Retry, Start waits', async () => {
@@ -373,6 +378,27 @@ describe('LiveBroadcast - on air', () => {
     await ending;
     expect(deps.endLive).toHaveBeenCalledTimes(1);
     expect(b.phase).toBe('ended');
+  });
+
+  it('End settles the screen BEFORE the request resolves, and an unanswered end is retried when the link is back, then answered once', async () => {
+    const { b, deps, reconnect, reconnectListeners } = await ready();
+    await b.start();
+    let fail!: (e: unknown) => void;
+    deps.endLive.mockImplementationOnce(() => new Promise((_, rej) => (fail = rej)) as never);
+    await b.end();
+    // Settled with the request still pending.
+    expect(b.phase).toBe('ended');
+    expect(b.endCause).toBe('broadcaster');
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    // A transport failure is no answer: it waits for the link, it does not retry on a clock.
+    fail(new TypeError('offline'));
+    await vi.waitFor(() => expect(reconnectListeners.size).toBe(1));
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    reconnect();
+    await vi.waitFor(() => expect(reconnectListeners.size).toBe(0));
+    expect(deps.endLive).toHaveBeenCalledTimes(2);
+    reconnect();
+    expect(deps.endLive).toHaveBeenCalledTimes(2);
   });
 
   it('leaving while the end waits for the network ends the live once, and the wait does nothing after', async () => {
@@ -815,5 +841,98 @@ describe('LiveBroadcast - the screen as the source (owner, 2026-10-31)', () => {
     await camera.b.start();
     await camera.b.screenShareStopped();
     expect(camera.b.phase).toBe('live');
+  });
+});
+
+describe('LiveBroadcast - the title and the preview image (owner, 2026-11-07)', () => {
+  it('sends the trimmed title with the start, and none when blank', async () => {
+    const first = await ready();
+    first.b.title = '  Soirée  ';
+    await first.b.start();
+    expect(first.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, 'Soirée');
+    expect(first.b.title).toBe('Soirée');
+
+    const second = await ready();
+    second.b.title = '   ';
+    await second.b.start();
+    expect(second.deps.startLive).toHaveBeenCalledWith(KEY, undefined, undefined, null);
+  });
+
+  it('edits the title on air, keeps the old one on a refusal and says why', async () => {
+    const { b, deps } = await ready();
+    b.title = 'Avant';
+    await b.start();
+    await expect(b.saveTitle('Après')).resolves.toBe(true);
+    expect(deps.setLiveTitle).toHaveBeenCalledWith(LIVE_ID, 'Après');
+    expect(b.title).toBe('Après');
+
+    deps.setLiveTitle.mockRejectedValueOnce(
+      new LiveRefusalError(400, 'LIVE_TITLE_INVALID', '', 'refused', null, null, null)
+    );
+    await expect(b.saveTitle('x'.repeat(200))).resolves.toBe(false);
+    expect(b.title).toBe('Après');
+    expect(b.titleProblem).toBe('invalid');
+
+    deps.setLiveTitle.mockRejectedValueOnce(new TransportFailureError(new TypeError('offline')));
+    await expect(b.saveTitle('Encore')).resolves.toBe(false);
+    expect(b.titleProblem).toBe('offline');
+  });
+
+  it('sends a preview on the SEGMENT cadence - index 0, then once per period - sealed under the POSTER key', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveLimits.mockResolvedValue({
+      ...LIMITS,
+      previewPeriodMs: 10_000, // 5 segments of 2 s
+      posterMaxBytes: 1_000,
+    });
+    const cam = fakeCamera();
+    const b = new LiveBroadcast(cam.session, null, f.deps);
+    await cam.session.start();
+    await b.loadLimits();
+    const frame = new Uint8Array([0xff, 0xd8, 1, 2]);
+    b.setPosterCapture(async () => frame);
+    await b.start();
+    for (let i = 0; i < 6; i++) await chunk(f.recorders[0], join(initSegment(), fragment()));
+    await vi.waitFor(() => expect(f.deps.putLivePoster).toHaveBeenCalledTimes(2));
+    // Derived once from the live key, and the live key itself never seals a preview.
+    expect(f.deps.derivePosterKey).toHaveBeenCalledTimes(1);
+    expect(f.deps.derivePosterKey).toHaveBeenCalledWith(KEY, LIVE_ID);
+    expect(f.deps.sealPoster).toHaveBeenCalledWith('pk'.repeat(32), LIVE_ID, frame);
+    expect(f.deps.sealPoster).not.toHaveBeenCalledWith(KEY, LIVE_ID, frame);
+    // The live ends: no preview after it.
+    f.uploaders[0].options.onStopped!(ended());
+    expect(b.phase).toBe('ended');
+    expect(f.deps.putLivePoster).toHaveBeenCalledTimes(2);
+  });
+
+  it('a poster key that failed to derive is derived AGAIN at the next turn, not re-thrown for the live', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveLimits.mockResolvedValue({
+      ...LIMITS,
+      previewPeriodMs: 10_000, // 5 segments of 2 s
+      posterMaxBytes: 1_000,
+    });
+    f.deps.derivePosterKey.mockRejectedValueOnce(new DOMException('no HKDF', 'NotSupportedError'));
+    const cam = fakeCamera();
+    const b = new LiveBroadcast(cam.session, null, f.deps);
+    await cam.session.start();
+    await b.loadLimits();
+    b.setPosterCapture(async () => new Uint8Array([0xff, 0xd8]));
+    await b.start();
+    for (let i = 0; i < 6; i++) await chunk(f.recorders[0], join(initSegment(), fragment()));
+    // Segment 0's turn met the rejection and sent nothing; segment 5's derived again and sent.
+    await vi.waitFor(() => expect(f.deps.putLivePoster).toHaveBeenCalledTimes(1));
+    expect(f.deps.derivePosterKey).toHaveBeenCalledTimes(2);
+    expect(f.deps.sealPoster).toHaveBeenCalledTimes(1);
+  });
+
+  it('captures nothing when the server serves no poster numbers (an older server)', async () => {
+    const { b, deps, recorders } = await ready();
+    const capture = vi.fn(async () => new Uint8Array([1]));
+    b.setPosterCapture(capture);
+    await b.start();
+    await chunk(recorders[0], join(initSegment(), fragment()));
+    expect(capture).not.toHaveBeenCalled();
+    expect(deps.putLivePoster).not.toHaveBeenCalled();
   });
 });
