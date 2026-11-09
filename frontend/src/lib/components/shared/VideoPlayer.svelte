@@ -12,7 +12,7 @@
   import { videoGestures } from '$lib/actions/videoGestures';
   import { videoGlass } from '$lib/utils/videoGlass';
   import VideoChipButton from '$lib/components/ui/player/VideoChipButton.svelte';
-  import VideoPlayDisc from '$lib/components/ui/player/VideoPlayDisc.svelte';
+  import VideoPlayGlyph from '$lib/components/ui/player/VideoPlayGlyph.svelte';
   import VideoScrubber from '$lib/components/ui/player/VideoScrubber.svelte';
   import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
   import VideoExpandButton from '$lib/components/ui/player/VideoExpandButton.svelte';
@@ -752,7 +752,7 @@
       <!-- The one big target while nothing plays; the bar below repeats it for the keyboard. The
            minimal player draws it on a decided outcome only, with or without a first frame; the
            feed's none - it plays by being on screen, as Instagram's does. -->
-      <VideoPlayDisc onclick={togglePlay} size={minimal ? 'lg' : 'md'} tabindex={-1} />
+      <VideoPlayGlyph onclick={togglePlay} size={minimal ? 'lg' : 'md'} tabindex={-1} />
     {/if}
 
     {#if minimal && buffering}

@@ -1824,6 +1824,20 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   box-shadow: var(--glass-video-rim), var(--glass-video-shadow);
   color: #ffffff;
 }
+/* THE GLASS OF A GLYPH THAT HAS NO BOX (`VideoGlassGlyph`: the play triangle, the pause bars): the
+   same tint, sheen and blur as `.glass-video`, clipped to the shape by the element's own
+   `clip-path`. No border and no box shadow - a clipped element cannot carry them - so the rim and the
+   shadow are drawn beside it in SVG. The fallbacks flatten it through the same variables. */
+.glass-video-shape {
+  background: var(--glass-video-sheen), var(--glass-video-bg);
+  -webkit-backdrop-filter: var(--glass-video-blur);
+  backdrop-filter: var(--glass-video-blur);
+}
+.glass-video-shape[data-glass='flat'] {
+  --glass-video-bg: var(--glass-video-flat-bg);
+  --glass-video-sheen: none;
+  --glass-video-blur: none;
+}
 .glass-video[data-glass='flat'] {
   --glass-video-bg: var(--glass-video-flat-bg);
   --glass-video-sheen: none;
