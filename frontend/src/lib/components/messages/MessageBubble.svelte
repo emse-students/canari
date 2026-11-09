@@ -87,6 +87,8 @@
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
 
   interface Props {
+    /** The conversation's nickname scope ("Modifier les pseudos"): names drawn here are read in it. */
+    nicknameScope?: string | null;
     /** Unique identifier of the message, used as the DOM anchor for scroll navigation. */
     messageId: string;
     /** User ID of the message author, used to resolve display names and profile links. */
@@ -232,6 +234,7 @@
     onRetry,
     onDiscard,
     onRestore,
+    nicknameScope = null,
   }: Props = $props();
 
   let bubbleAnchor = $state<HTMLElement | null>(null);
@@ -456,9 +459,15 @@
   });
 
   /** The caption names people already on the page, so it carries given names (the profile's `firstName`), not "Nils FERAL". */
-  const senderFirstName = $derived(getUserFirstNameSync(senderId, senderDisplayName));
+  const senderFirstName = $derived(
+    getUserFirstNameSync(senderId, senderDisplayName, nicknameScope ?? undefined)
+  );
   const quotedFirstName = $derived(
-    getUserFirstNameSync(effectiveReplyTo?.senderId ?? '', quotedDisplayName) || ''
+    getUserFirstNameSync(
+      effectiveReplyTo?.senderId ?? '',
+      quotedDisplayName,
+      nicknameScope ?? undefined
+    ) || ''
   );
 
   // A reaction the user took back is KEPT in the list, carrying the time it was taken back, so the
@@ -1107,6 +1116,7 @@
                   {textSegments}
                   bleed={bleedsMedia}
                   {senderId}
+                  {nicknameScope}
                   sentAt={timestamp}
                   {messageId}
                   {authToken}
@@ -1132,6 +1142,7 @@
             {/if}
 
             <MessageMetadata
+              {nicknameScope}
               {isEdited}
               {restoredUnverified}
               {isOwn}
@@ -1187,6 +1198,7 @@
     />
 
     <MessageMetadata
+      {nicknameScope}
       {isEdited}
       {isOwn}
       {isLastOwn}
@@ -1218,7 +1230,15 @@
       }}
     />
 
-    <MessageInfoTooltip visible={showInfo} {timestamp} {editedAt} {readBy} {isOwn} {isEdited} />
+    <MessageInfoTooltip
+      visible={showInfo}
+      {timestamp}
+      {editedAt}
+      {readBy}
+      {isOwn}
+      {isEdited}
+      {nicknameScope}
+    />
 
     <MessageMobileActions
       visible={showMobileActions && isMobile}

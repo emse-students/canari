@@ -57,6 +57,8 @@
     onTakeBackSend?: (messageId: string) => void;
     /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
     canModerate?: boolean;
+    /** This conversation's nickname scope: a sender's nickname set here replaces their name. */
+    nicknameScope?: string | null;
     /** Called when the author chooses to edit a message; the edit happens in the composer. */
     onBeginEdit?: (messageId: string, text: string) => void;
     /** Callback to toggle a message's pinned state. Omit to hide the pin action. */
@@ -118,6 +120,7 @@
     onDiscardSend,
     onTakeBackSend,
     canModerate = false,
+    nicknameScope = null,
     onBeginEdit,
     onTogglePin,
     onReelPurged,
@@ -260,6 +263,7 @@
         <div class="my-3 flex justify-center">
           <MessageBubble
             messageId={msg.id}
+            {nicknameScope}
             senderId={msg.senderId}
             content={msg.content}
             timestamp={messageDate(msg)}
@@ -314,7 +318,8 @@
                   <EmojiText
                     text={getUserFirstNameSync(
                       msg.senderId,
-                      resolvedSenderNames[msg.senderId] || m.user_unknown_label()
+                      resolvedSenderNames[msg.senderId] || m.user_unknown_label(),
+                      nicknameScope ?? undefined
                     )}
                   />
                 {/snippet}
@@ -335,6 +340,7 @@
 
             <MessageBubble
               messageId={msg.id}
+              {nicknameScope}
               senderId={msg.senderId}
               content={msg.content}
               timestamp={messageDate(msg)}
@@ -394,7 +400,7 @@
           <!-- Who stopped reading HERE, whoever wrote it: the Messenger placement, right-aligned
                under the row whichever side the bubble is on. -->
           <div data-seen-by={msg.id} class="flex w-full justify-end px-0.5">
-            <SeenByHeads readers={seenBy.get(msg.id) ?? []} />
+            <SeenByHeads readers={seenBy.get(msg.id) ?? []} {nicknameScope} />
           </div>
         {/if}
       {/if}

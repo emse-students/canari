@@ -24,6 +24,7 @@ import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 import { sanitizeLog } from '../common/log.utils';
 import { isBlockedBetween } from '../common/user-blocks';
+import { memberCanModerate } from './moderation-grant';
 import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
 import {
   communityCrossesReviewCohortFor,
@@ -88,6 +89,7 @@ import {
   type HistoryVisibility,
   type WorkspaceInviteDto,
 } from './dto/channel.dto';
+import { hasInvisibleCharacter } from './visible-text';
 
 /** One person to cut off one key-distribution group, in a departure. */
 interface DepartureCut {
@@ -293,33 +295,14 @@ export function validateChannelName(raw: unknown): string {
 export const MAX_ROLE_LABEL_LENGTH = 40;
 
 /**
- * Whether a role name holds a character that must not be in one: a control, invisible-formatting,
- * line or paragraph separator character (`\p{Cc}\p{Cf}\p{Zl}\p{Zp}`: zero-width, bidi, BOM, tag).
- *
- * JUDGED PER GRAPHEME, because emoji are built from exactly those: inside a grapheme that holds a
- * pictographic (or a tag flag, which starts with U+1F3F4) the zero-width joiner U+200D and the tag
- * characters U+E0020-U+E007F are the glue of a family, a profession, the rainbow flag or the England
- * flag, and are allowed. Everywhere else they stay refused - a joiner between letters, a lone one, a
- * stray tag. THE SAME RULE, WITH THE SAME TEST VECTORS, IS `isAcceptableRoleLabel` in the client
- * (`utils/chat/communityRoleLabel.ts`).
+ * Whether a role name holds a character that must not be in one: anything the shared text rule
+ * drops (`hasInvisibleCharacter`, `visible-text.ts`, byte-identical to the client's copy, which
+ * `isAcceptableRoleLabel` reads) - a control, invisible-formatting, line or paragraph separator
+ * character, except the glue of an emoji and a joiner between two letters of a script that spells
+ * with one.
  */
 export function roleLabelHasForbiddenCharacter(label: string): boolean {
-  const forbidden = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
-  const emojiGlue = /[‍\u{E0020}-\u{E007F}]/gu;
-  // `Intl.Segmenter` is in the runtime (Node 16+) but not in this project's es2021 type library.
-  const Segmenter = (
-    Intl as unknown as {
-      Segmenter: new (
-        locale?: string,
-        options?: { granularity: 'grapheme' }
-      ) => { segment(text: string): Iterable<{ segment: string }> };
-    }
-  ).Segmenter;
-  for (const { segment } of new Segmenter(undefined, { granularity: 'grapheme' }).segment(label)) {
-    const isEmoji = /\p{Extended_Pictographic}/u.test(segment) || segment.startsWith('\u{1F3F4}');
-    if (forbidden.test(isEmoji ? segment.replace(emojiGlue, '') : segment)) return true;
-  }
-  return false;
+  return hasInvisibleCharacter(label);
 }
 
 /**
@@ -583,9 +566,7 @@ export class ChannelService implements OnApplicationBootstrap {
    * and the enforcement can never drift apart.
    */
   private async memberCanModerateMessages(member: ChannelMember): Promise<boolean> {
-    if (!member.roleIds?.length) return false;
-    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
-    return roles.some((r) => roleGrantsModeration(r.permissions));
+    return memberCanModerate(this.roleRepo, member);
   }
 
   // ================= THE GOVERNANCE POSTCONDITION =================

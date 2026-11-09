@@ -50,6 +50,19 @@ export interface WorkspaceDetailDto {
 }
 
 /**
+ * One member's nickname state in a community, as social-service serves it: `nickname` null is a
+ * clear, dated like a set. `reportSubject` names this exact version for a report.
+ */
+export interface CommunityNicknameDto {
+  userId: string;
+  nickname: string | null;
+  setBy: string;
+  /** Epoch ms on the server's clock. */
+  at: number;
+  reportSubject: string;
+}
+
+/**
  * A community's ONE live invite link. The bounds travel with the token because a link a human can
  * reason about has to show what bounds it - a token alone cannot say whether it expires.
  */
@@ -1091,6 +1104,36 @@ export class ChannelService {
     const query = presence ? '?presence=1' : '';
     const res = await this.fetchWithAuth(
       `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/members${query}`
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  /**
+   * Every nickname state of a community, set and cleared alike ("Modifier les pseudos"): the server's
+   * whole register, read into the client's by `loadCommunityNicknames` (which drops who it omits).
+   */
+  async listCommunityNicknames(workspaceId: string): Promise<CommunityNicknameDto[]> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/nicknames`
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  /**
+   * Sets (or, with `null`, clears) `userId`'s nickname in a community. The server re-checks the
+   * moderation grant and answers typed refusals (`NICKNAME_REQUIRES_MODERATION`, `USER_BLOCKED`,
+   * `nickname_too_long`, `NICKNAME_TARGET_NOT_MEMBER`), read through `refusalCode`.
+   */
+  async setCommunityNickname(
+    workspaceId: string,
+    userId: string,
+    nickname: string | null
+  ): Promise<CommunityNicknameDto> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/nicknames/${encodeURIComponent(userId)}`,
+      { method: 'PUT', body: JSON.stringify({ nickname }) }
     );
     await this.handleError(res);
     return res.json();

@@ -29,9 +29,11 @@
     authToken: string;
     /** Loads the full aggregated shared content from the local message history. */
     loadSharedContent: (conversationId: string) => Promise<SharedContent>;
+    /** The conversation's nickname scope ("Modifier les pseudos"): a sender is named in it. */
+    nicknameScope?: string | null;
   }
 
-  let { conversationId, authToken, loadSharedContent }: Props = $props();
+  let { conversationId, authToken, loadSharedContent, nicknameScope = null }: Props = $props();
 
   type Tab = 'media' | 'links' | 'files';
   let activeTab = $state<Tab>('media');
@@ -60,7 +62,7 @@
   );
 
   function senderName(userId: string): string {
-    return getUserDisplayNameSync(userId);
+    return getUserDisplayNameSync(userId, undefined, nicknameScope ?? undefined);
   }
 
   function hostOf(url: string): string {

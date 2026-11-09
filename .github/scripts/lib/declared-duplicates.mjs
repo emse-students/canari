@@ -181,6 +181,15 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: 'what a name may hold: invisible characters judged per grapheme, a nickname normalized, a role name refused',
+    compare: 'exact',
+    why: 'one question - "is this text writing or hiding" - answered by the client before a nickname frame or a role name is sent, by every reader of an MLS frame (no server checks those), and by the server for a community nickname or a role name; the two must not disagree. No shared TS package; the file takes plain strings and imports nothing, which is what lets the copies be identical, and both specs read libs/contracts/conversation-nickname.json.',
+    files: [
+      'frontend/src/lib/utils/users/visibleText.ts',
+      'apps/social-service/src/channels/visible-text.ts',
+    ],
+  },
+  {
     what: 'the reading of a submitted form answer, screen and spreadsheet',
     compare: 'exact',
     why: 'one question - "what did this person answer" - asked by the responses table and by the XLSX export an hour later, and those two must not be able to disagree. No shared TS package, and the file declares the minimal question shape itself rather than the model on either side, which is what lets the copies be identical.',

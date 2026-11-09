@@ -5,6 +5,7 @@
  * Each function receives `ctx: SessionContext` instead of the closure,
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
+import { forgetConversationNicknames } from '$lib/utils/users/conversationNicknames.svelte';
 import { noteMlsStateLoaded, promotedSinceLoad } from '$lib/mls-client/stateAuthority';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
@@ -811,6 +812,7 @@ async function eraseAccountRecordsLocally(
 ): Promise<void> {
   localStorage.removeItem(ACCOUNT_KEY.deviceId(userIdToReset));
   localStorage.removeItem(ACCOUNT_KEY.syncGuideSeen(userIdToReset));
+  forgetConversationNicknames(userIdToReset);
 
   const deviceNamePrefix = ACCOUNT_KEY.deviceName(userIdToReset, '');
   const keysToDelete: string[] = [];

@@ -106,6 +106,14 @@
 
   let primary = $derived(participants[0]);
   /**
+   * The nickname scope of the call's conversation ("Modifier les pseudos"): the overlay is drawn
+   * inside that conversation, so its title names the peer as the thread does. `currentGroupId` is a
+   * plain field, set before the state that mounts this overlay; reading `callState` is what makes a
+   * later group change visible here. The names handed to the OS (media session, native ring) stay
+   * unscoped, like a notification.
+   */
+  const nicknameScope = $derived(call.callState === 'idle' ? null : callService.currentGroupId);
+  /**
    * The peer's name and id as STRINGS, for the effects that hand them to the OS. `participants` is
    * re-derived by the parent on every change of the conversations map, so `primary` is a NEW object
    * many times a second while nothing about the peer changed: an effect reading it re-ran ~20 times
@@ -815,6 +823,7 @@
           <UserName
             userId={primary.userId}
             fallback={primary.displayName}
+            scope={nicknameScope}
             link={false}
             class="block max-w-full truncate font-bold {videoShowing ? 'text-lg' : 'text-3xl'}"
           />

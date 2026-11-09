@@ -16,6 +16,7 @@ import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
 import { isJoinAskOutcome } from '../joinAskFrames';
 import { salonGrants } from '$lib/utils/chat/memberRemoval';
+import { applyCommunityNicknameEvent } from '$lib/utils/chat/nicknameActions';
 
 /**
  * Context for handleChannelEvent: MessageHandlerDeps plus the epoch-recovery
@@ -324,6 +325,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 
   if (event.type === 'workspace.updated') {
     const data = event.data || {};
+    if (data.nickname !== undefined) {
+      // A COMMUNITY NICKNAME CHANGED ("Modifier les pseudos"). It rides this type because every
+      // client knows it - an older one ignores the field - and the event carries nothing else, so
+      // the community entry is not touched.
+      applyCommunityNicknameEvent(String(data.workspaceId || ''), data.nickname);
+      return;
+    }
     onWorkspaceUpdated?.({
       workspaceId: String(data.workspaceId || ''),
       imageMediaId: data.imageMediaId,

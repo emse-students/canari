@@ -167,6 +167,12 @@ export const ACCOUNT_KEY = {
   seenHelps: (userId: string) => `canari_seen_helps:v1:${userId}`,
   /** No longer written; removed by the device reset and the deletion where an old build left it. */
   syncGuideSeen: (userId: string) => `canari_sync_guide_seen_${userId}`,
+  /**
+   * `conversationNicknames.svelte.ts`: one DM's or group's nickname register - names other members
+   * set, so text about people: erased at sign-out as well as by the deletion.
+   */
+  conversationNicknames: (userId: string, groupId: string) =>
+    `canari_nicknames:v1:${userId}:${groupId}`,
   /** `history.ts`: the processed-ciphertext fingerprints of one group. */
   seenCipher: (userId: string, groupId: string) => `history_seen_cipher:${userId}:${groupId}`,
   /** `history.ts`: the last stream id fetched for one group. */
@@ -253,6 +259,7 @@ function exactKeys(userId: string): string[] {
 function keyPrefixes(userId: string): string[] {
   return [
     ACCOUNT_KEY.seenCipher(userId, ''),
+    ACCOUNT_KEY.conversationNicknames(userId, ''),
     ACCOUNT_KEY.lastStreamId(userId, ''),
     ACCOUNT_KEY.retryCipher(userId, ''),
     ACCOUNT_KEY.lastConnected(userId, ''),

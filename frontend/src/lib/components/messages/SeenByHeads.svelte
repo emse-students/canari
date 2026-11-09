@@ -10,13 +10,15 @@
    * and under the last message each member read in a group or a salon (`ChatMessageGroups`).
    */
   interface Props {
+    /** The conversation's nickname scope ("Modifier les pseudos"): names drawn here are read in it. */
+    nicknameScope?: string | null;
     /** Normalised user ids, already sorted by the caller. */
     readers: string[];
     /** Draws the double check after the heads - the DM receipt's shape. */
     withCheck?: boolean;
   }
 
-  let { readers, withCheck = false }: Props = $props();
+  let { readers, withCheck = false, nicknameScope = null }: Props = $props();
 
   const MAX_HEADS = 3;
 
@@ -25,7 +27,10 @@
    * these serve who the heads cannot: the readers folded into `+N`, and assistive technology, from
    * which the heads are hidden.
    */
-  const names = userDisplayNames(() => readers);
+  const names = userDisplayNames(
+    () => readers,
+    () => nicknameScope
+  );
   const nameOf = (userId: string) => names.get(userId) ?? userId;
   let foldedNames = $derived(readers.slice(MAX_HEADS).map(nameOf).join(', '));
   let allNames = $derived(readers.map(nameOf).join(', '));

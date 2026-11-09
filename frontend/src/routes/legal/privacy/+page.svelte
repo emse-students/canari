@@ -81,7 +81,10 @@
           Chiffrés de bout en bout (protocole MLS, RFC 9420) sur votre appareil avant l'envoi. Le
           serveur ne détient que des contenus chiffrés qu'il ne peut pas lire. Il connaît en
           revanche, en clair : les membres de chaque conversation, le nom des groupes, l'expéditeur,
-          l'heure et la taille de chaque message.
+          l'heure et la taille de chaque message. Un pseudo donné à un membre dans une conversation
+          voyage chiffré comme un message et n'est jamais lu par le serveur : il est gardé sur les
+          appareils des membres, avec qui l'a défini et quand, effacé de l'appareil à la
+          déconnexion, et il n'apparaît jamais dans une notification.
         </dd>
       </div>
       <div>
@@ -91,7 +94,10 @@
           salons, leurs membres et les accusés de lecture affichés dans un salon sont connus du
           serveur. Quand un message de salon est supprimé, le serveur garde son auteur et son
           identifiant aléatoire pendant 30 jours, pour ne pas le republier si l'application renvoie
-          un envoi interrompu.
+          un envoi interrompu. Le pseudo qu'un modérateur donne à un membre dans une communauté est
+          connu du serveur, avec qui l'a défini et quand ; il peut être signalé, il disparaît quand
+          le membre quitte la communauté ou supprime son compte, et le nom de celui qui l'a défini
+          est effacé à la suppression de son compte.
         </dd>
       </div>
       <div>

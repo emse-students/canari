@@ -19,6 +19,7 @@
     Link2,
     Shield,
     Camera,
+    Tag,
   } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
   import ProfileLink from '../shared/ProfileLink.svelte';
@@ -34,6 +35,7 @@
   import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
   import { joiningRows, membersByFamilyName } from '$lib/utils/users/memberOrder.svelte';
   import NotificationLevelControl from './NotificationLevelControl.svelte';
+  import NicknamesPanel from './NicknamesPanel.svelte';
   import CallPermissionControl from './CallPermissionControl.svelte';
   import { callsAvailable } from '$lib/utils/callsAvailability';
   import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
@@ -77,6 +79,11 @@
     onGroupLeave?: () => void;
     /** Callback to invite new members by user ID array. */
     onInviteMembers?: (ids: string[]) => void;
+    /**
+     * Queues a `nickname` frame in this conversation ("Modifier les pseudos"); absent, the screen is
+     * not offered. Its answer is whether the durable queue took the frame.
+     */
+    onSendNickname?: (userId: string, nickname: string | null, at: number) => Promise<boolean>;
   }
 
   let {
@@ -95,7 +102,15 @@
     onGroupDelete,
     onGroupLeave,
     onInviteMembers,
+    onSendNickname,
   }: Props = $props();
+
+  // ── Nicknames ("Modifier les pseudos") ──────────────────────────────────────
+  // A DM's two people are its members too: Messenger names both sides of a conversation.
+  let showNicknames = $state(false);
+  const nicknameMembers = $derived(
+    isGroupConversation ? groupMembers : [currentUserId, contactName].filter(Boolean)
+  );
 
   let confirmDelete = $state(false);
   let confirmLeave = $state(false);
@@ -106,7 +121,10 @@
   // Optimistic rows: invitees still in flight and not yet in the authoritative member list.
   // THE NAMES THE REMOVE CONTROL ANNOUNCES. Every other cell of a member row renders a resolved
   // name; the control announced the raw id, which is the one surface that exists to be read out.
-  const memberNames = userDisplayNames(() => groupMembers);
+  const memberNames = userDisplayNames(
+    () => groupMembers,
+    () => groupId || null
+  );
   // Read by family name (user, 2026-10-05), each row frozen in place once its profile settles.
   const memberOrder = membersByFamilyName(() => groupMembers);
   const orderedMembers = $derived(memberOrder.current);
@@ -420,6 +438,18 @@
     </div>
   {/if}
 
+  {#if groupId && onSendNickname}
+    <Button
+      variant="secondary"
+      class="w-full justify-start"
+      data-open-nicknames
+      onclick={() => (showNicknames = true)}
+    >
+      <Tag size={16} />
+      {m.chat_nicknames_open_button()}
+    </Button>
+  {/if}
+
   <!--
     Invite link section.
 
@@ -512,7 +542,11 @@
               >
                 <div class="flex min-w-0 items-center gap-3">
                   <ProfileLink userId={member}><Avatar userId={member} size="sm" /></ProfileLink>
-                  <UserName userId={member} class="text-text-main truncate text-sm font-semibold" />
+                  <UserName
+                    userId={member}
+                    scope={groupId || null}
+                    class="text-text-main truncate text-sm font-semibold"
+                  />
                   {#if currentUserId && member.toLowerCase() === currentUserId.toLowerCase()}
                     <span
                       class="text-2xs shrink-0 rounded-md bg-amber-500/10 px-1.5 py-0.5 font-bold text-amber-500"
@@ -559,6 +593,7 @@
                   <Avatar userId={pending} size="sm" />
                   <UserName
                     userId={pending}
+                    scope={groupId || null}
                     class="text-text-main truncate text-sm font-semibold"
                   />
                 </div>
@@ -673,6 +708,16 @@
     </div>
   {/if}
 </div>
+
+{#if groupId && onSendNickname}
+  <NicknamesPanel
+    open={showNicknames}
+    members={nicknameMembers}
+    viewerId={currentUserId}
+    place={{ kind: 'group', scope: groupId, send: onSendNickname }}
+    onClose={() => (showNicknames = false)}
+  />
+{/if}
 
 <!-- Group photo cropper -->
 <Modal
