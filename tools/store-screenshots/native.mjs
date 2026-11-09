@@ -72,7 +72,7 @@ async function runIos() {
           let bar = await ios.tabs(sid);
           if (bar.length === 0) {
             // A conversation hides the tab bar: its own back button brings it up.
-            await ios.tapText(sid, 'Retour au menu');
+            await ios.tapText(sid, lang === 'en' ? 'Back to menu' : 'Retour au menu');
             await sleep(2500);
             bar = await ios.tabs(sid);
           }

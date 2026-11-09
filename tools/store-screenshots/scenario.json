@@ -321,13 +321,18 @@
       "open": {
         "fr": "Associations",
         "en": "Associations"
+      },
+      "waitFor": {
+        "fr": "votez pour le thème",
+        "en": "vote for the theme"
       }
     },
     {
       "id": "5-agenda",
       "ios": [
         {
-          "tab": 3
+          "tab": 3,
+          "top": true
         },
         {
           "tap": {
