@@ -258,9 +258,6 @@ export class PostInteractionsService {
       return { next: [...existing, comment], result: found };
     });
     post.comments = [...(post.comments ?? []), comment];
-    // FRIENDS' ACTIVITY (engagement WP-9): rule 8 - only a comment in its writer's own name - is
-    // asked of the stored comment inside.
-    this.tellFriends(post, data.userId, 'comment', comment);
 
     // Fire-and-forget: notify the post author (also for an association post), the parent comment
     // author, and mentioned users.
@@ -401,7 +398,13 @@ export class PostInteractionsService {
           }
         }
       }
-    })();
+    })().finally(() => {
+      // FRIENDS' ACTIVITY (engagement WP-9), only once the comment's own notices are written: a
+      // follower of the writer whom this comment answers or mentions has a row for the post by
+      // then, so rule 7 tells them once - the reply or the mention, never also "X a commente". Rule
+      // 8 - only a comment in its writer's own name - is asked of the stored comment inside.
+      this.tellFriends(post, data.userId, 'comment', comment);
+    });
 
     const [served] = await this.identity.serve([comment], post, {
       viewerId: data.userId,
