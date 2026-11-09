@@ -451,9 +451,9 @@ services:
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
       # Explicit dev avatars (invented geometric portraits); the service refuses to boot with this set
-      # on any estate whose FRONTEND_URL is not dev's. EXTRA is the dev box's private id=file list.
+      # on any estate whose FRONTEND_URL is not dev's. EXTRA is the private id=file list, rendered from the DEV_AVATAR_OVERRIDE_EXTRA GitHub secret.
       DEV_AVATAR_OVERRIDE_DIR: /app/dev-avatars
-      DEV_AVATAR_OVERRIDE_EXTRA: ${DEV_AVATAR_OVERRIDE_EXTRA:-}
+      DEV_AVATAR_OVERRIDE_EXTRA: ${AVATAR_OVERRIDE_EXTRA:-}
       # Account restore on a new Android phone (WP-RESTORE-1): the signing-certificate SHA-256 the
       # restore key's origin is computed from. Empty, every /api/auth/restore route answers 503
       # (docs/wiki/account-restore.md).

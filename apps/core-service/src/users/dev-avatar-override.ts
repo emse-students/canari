@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -58,18 +59,36 @@ export function loadDevAvatars(
         'refusing to boot. This override exists on the dev estate only.'
     );
   }
-  const listed: Record<string, string> = JSON.parse(read(join(dir, 'index.json')).toString('utf8'));
-  for (const pair of (extra ?? '').split(',').map((s) => s.trim()).filter(Boolean)) {
-    const [id, file] = pair.split('=');
-    listed[id] = file;
+  // A Map, never a plain object: an id such as `__proto__` is an ordinary key here, never silently lost.
+  const listed = new Map<string, string>(
+    Object.entries(
+      JSON.parse(read(join(dir, 'index.json')).toString('utf8')) as Record<string, string>
+    )
+  );
+  for (const pair of (extra ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)) {
+    const eq = pair.indexOf('=');
+    const id = pair.slice(0, eq);
+    const file = pair.slice(eq + 1);
+    // Exactly `id=file`: no `=`, or a second one, is a typo to refuse loudly, not to truncate.
+    if (eq < 0 || file.includes('=')) {
+      throw new Error(
+        `dev avatar override: malformed EXTRA entry ${JSON.stringify(pair)}, expected id=file`
+      );
+    }
+    listed.set(id, file);
   }
-  for (const [id, file] of Object.entries(listed)) {
+  for (const [id, file] of listed) {
     if (!SUBJECT_ID.test(id) || !FILE_NAME.test(file)) {
-      throw new Error(`dev avatar override: refused entry ${JSON.stringify(id)} -> ${JSON.stringify(file)}`);
+      throw new Error(
+        `dev avatar override: refused entry ${JSON.stringify(id)} -> ${JSON.stringify(file)}`
+      );
     }
     const body = read(join(dir, file));
-    // A cheap validator from the bytes: a changed file changes it, nothing else does.
-    const etag = `"dev-${body.length}-${body.subarray(0, 16).toString('hex')}"`;
+    // A validator that is a digest of the whole body: a changed file changes it, nothing else does.
+    const etag = `"dev-${createHash('sha256').update(body).digest('hex')}"`;
     out.set(id, { body, contentType: TYPES[file.split('.')[1]], etag });
   }
   return out;

@@ -192,6 +192,31 @@ if [ -f "$CD_DEV" ]; then
   fi
 fi
 
+# =============================================================================
+printf '\na variable only the dev compose reads must be carried by the manifest\n'
+# =============================================================================
+
+# `render-env.sh` REBUILDS infrastructure/.env from the template and the manifest on every deploy, so a
+# value hand-edited into the box's file is wiped by the next one (the dev avatar override's EXTRA list
+# nearly shipped that way, 2026-11-09). A `${VAR}` the dev compose reads and production's does not is a
+# dev-only knob: its only durable source is a manifest row. DERIVED from the two compose files; the one
+# name allowed outside the manifest is FRONTEND_TAG, which deploy-environment.sh exports itself.
+compose_refs() { grep -oE '\$\{[A-Z][A-Z0-9_]*' "$1" | sed 's/^\${//' | sort -u; }
+manifest_keys="$(manifest_rows | awk -F'\t' '{ print $1 }' | sort -u)"
+dev_only_unmanaged="$(comm -23 <(compose_refs infrastructure/docker-compose.dev.yml) <(compose_refs infrastructure/docker-compose.prod.yml) |
+  comm -23 - <(printf '%s\n' "$manifest_keys") | grep -vx 'FRONTEND_TAG' | tr '\n' ' ' || true)"
+if [ -z "${dev_only_unmanaged// /}" ]; then
+  pass "every variable only the dev compose reads is a manifest row, so a deploy cannot wipe it"
+else
+  fail "docker-compose.dev.yml reads variables no manifest row carries (render-env.sh would never write them): $dev_only_unmanaged"
+fi
+# And the avatar override's list specifically stays dev-only, optional and sourced from the DEV_ secret.
+if [ "$(manifest_field AVATAR_OVERRIDE_EXTRA 2)" = "skip" ] && [ "$(manifest_field AVATAR_OVERRIDE_EXTRA 3)" = "warn" ]; then
+  pass "AVATAR_OVERRIDE_EXTRA is skipped in production and optional (warn) on dev"
+else
+  fail "AVATAR_OVERRIDE_EXTRA must be skip in production and warn on dev"
+fi
+
 # ═════════════════════════════════════════════════════════════════════════════
 printf '\nthe two estates never publish the same host port\n'
 # ═════════════════════════════════════════════════════════════════════════════
