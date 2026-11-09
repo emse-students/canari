@@ -93,6 +93,14 @@ function over(fg: string, bg: string, alpha: number): string {
   return `#${[1, 3, 5].map((i) => ch(i).toString(16).padStart(2, '0')).join('')}`;
 }
 
+describe('the active place is an ink glyph on the accent pill', () => {
+  it('the bottom nav paints the active icon box with accent and on-accent', () => {
+    const nav = readFileSync(join(src, 'lib/components/navigation/BottomNav.svelte'), 'utf8');
+    expect(nav).toMatch(/rounded-full[^"]*\{isActive\s*\?\s*'bg-accent text-on-accent'/);
+    expect(nav).toContain('motion-safe:transition-');
+  });
+});
+
 describe('every accent pairing keeps WCAG AA', () => {
   for (const dark of [false, true]) {
     const theme = dark ? 'dark' : 'light';

@@ -112,4 +112,9 @@ it('draws no pill until the active tab has been measured, then places it on that
   const pill = row.querySelector<HTMLElement>('[data-feed-tab-pill]')!;
   expect(pill.style.width).toBe('120px');
   expect(pill.style.transform).toContain('300px');
+  // The accent FILL, with the ink label on it (the pill alone is 1.66:1 on the bar).
+  expect(pill.classList.contains('bg-accent')).toBe(true);
+  expect(row.querySelector('[aria-pressed="true"]')!.classList.contains('text-on-accent')).toBe(
+    true
+  );
 });

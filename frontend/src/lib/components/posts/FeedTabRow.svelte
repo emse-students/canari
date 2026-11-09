@@ -151,7 +151,7 @@
         <span
           aria-hidden="true"
           data-feed-tab-pill
-          class="border-accent/40 bg-accent/20 pointer-events-none absolute inset-y-0 left-0 rounded-full border"
+          class="bg-accent pointer-events-none absolute inset-y-0 left-0 rounded-full"
           style:width="{pill.w}px"
           style:transform="translate3d({pill.x}px, 0, 0)"
           style:transition={pillAnimated
@@ -168,7 +168,7 @@
           aria-pressed={feed === tab.feed}
           class="tap-target focus-visible:ring-accent-icon relative flex-1 shrink-0 rounded-full px-3.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:outline-none {feed ===
           tab.feed
-            ? 'text-text-main font-semibold'
+            ? 'text-on-accent font-semibold'
             : 'text-text-muted hover:text-text-main font-medium'}"
         >
           {tab.label()}

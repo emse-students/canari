@@ -51,6 +51,9 @@
   and pan and drops only the double tap; with it the click followed `touchend` by 27 ms (2026-10-15,
   community-open-budget).
 -->
+<!-- THE ACTIVE PLACE IS AN INK GLYPH ON A YELLOW PILL (owner, 2026-11-09, option B): the accent
+     alone is 1.66:1 on the bar and as a glyph only 3.37:1, so the cue is the pill AND the ink glyph
+     (10.35:1 on it). The hit area stays the whole 44px+ column; the pill is only paint. -->
 <nav
   id="bottom-nav"
   class="bg-cn-surface fixed inset-x-0 bottom-0 z-30 touch-manipulation border-t border-black/5 shadow-[0_-4px_24px_rgba(0,0,0,0.02)] md:hidden dark:border-white/10 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
@@ -68,11 +71,12 @@
         use:guideAnchor={`nav.${place.id}`}
         data-app-place={place.href}
         class="group relative flex min-w-0 flex-1 items-center justify-center transition-all duration-200 active:scale-95
- {isActive ? 'text-accent-icon' : 'text-text-muted hover:text-text-main'}"
+ {isActive ? '' : 'text-text-muted hover:text-text-main'}"
       >
         <span
-          class="relative transition-transform duration-300 {isActive
-            ? ''
+          data-active-pill={isActive ? '' : undefined}
+          class="relative inline-flex h-8 w-14 items-center justify-center rounded-full motion-safe:transition-[transform,background-color] motion-safe:duration-300 {isActive
+            ? 'bg-accent text-on-accent'
             : 'group-hover:scale-110'}"
         >
           <PlaceIcon size={24} strokeWidth={isActive ? 2.5 : 2} />
