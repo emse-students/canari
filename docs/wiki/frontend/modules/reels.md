@@ -723,6 +723,41 @@ neither pauses nor turns the reel: the tap-outside layer is a button, and the un
 type grows UPWARD. The viewer has nothing else at the bottom-right at 390 px (its step buttons are
 `md:` and mid-height; the save and the sound are in the rail), so nothing collides.
 
+### One line per reel view: the outcome the in-app log carries (owner, 2026-11-09)
+
+**Reported:** on Android, `1.6.8`, CanaReels "did not load", and the owner's exported in-app log - a
+week of it - held not one line about a reel (*"Pas de log d'erreur ?"*). Every reel diagnostic in the
+table above is `Log.d`, and the in-app log records `L/I/W/E` only (`utils/appLog.ts`). A failure the
+code DECIDES was already said (`[PostMedia] media not shown (<cause>)` at warn or error,
+`[VideoPlayer] the engine refused the video` at error); the reel that neither failed nor played - a
+download still running, a stream waiting for a range, an element that decoded nothing - left nothing.
+
+**The rule now: every view of a reel's video ends in ONE info line, `[reel-view]`, written when the
+view ends** (`ReelMediaPane.svelte`'s view effect: a swipe away, the carousel moving on, the viewer
+closed). The end of the view is the event; no timer decides that a reel is late. The line is built by
+`reels/reelViewOutcome.ts` from facts the pane already hears: the `<video>`'s own events in the
+capture phase (media events do not bubble, a capturing ancestor still hears them), `PostMedia`'s
+`onLoaded` / `onFailure` / `onPlaybackBlocked`, the stream's live progress (`streamProgressOf(url)` in
+`segmentedMediaStream.ts`, taken at `loadstart` by the element's source URL), the handed-over
+preload's `state` (`ReelPreload`, frozen at its stop) and `mediaRequestGate`'s counts.
+
+| The view | The line |
+| --- | --- |
+| a first frame came | `post <id> media <id>: first frame in 840 ms, left after 12.4 s - stream, 3/12 segment(s) 3.1 MB, preload ready, 1 buffering` (`never playing` when a frame came but `playing` never did) |
+| no first frame | `post <id> media <id>: NO first frame, left after 34.2 s - stopped at: <stage> - <source>, <bytes>, preload <state>, media gate <n> running <n> queued, element readyState <n> networkState <n>[ error <code>]` |
+
+The stages, in the order the bytes travel (`reelViewStoppedAt`): `download failed (<cause>)`;
+`metadata decoded, no frame`; for a stream `stream never reached the element`, `waiting for the file
+header`, `header read, no segment appended`, `segments appended, no metadata decoded`; for a whole read
+`downloading the whole file`, `file in, never handed to the element`, `file handed to the element, no
+metadata decoded`. The source is `stream` or `whole (<reason>)` - the reason `chooseSegmentedPlayback`
+gave. "First frame" is `loadeddata`. A photo page writes no line; a carousel's video pane does. Errors
+keep their own warn / error lines with their class; this line is info whatever the outcome, since a
+reader swiping past a reel before its frame is ordinary - the stage and the time are the evidence.
+Pinned by `reelViewOutcome.test.ts`, `ReelSlide.svelte.test.ts` (one line on leaving, none for a
+neighbour) and `segmentedMediaStream.test.ts` (the progress). The candidate causes of "never loads"
+and the reading that will separate them: [backlog](../../backlog.d/p2-a-canareel-that-never-loads.md).
+
 ### A double tap on a reel likes it (2026-10-19)
 
 **Asked by the user:** *"J'aimerais qu'on puisse liker un CanaReel en double cliquant dessus."* The
