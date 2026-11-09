@@ -114,7 +114,9 @@
       <span>{m.asso_cotisations_rise_sentence_instead({ full: tierPriceLabel(fullCents) })}</span>
     </div>
     {#if riseGivesNoDiscount(quote)}
-      <p class="text-amber-warn text-xs font-semibold">{m.asso_cotisations_rise_no_discount()}</p>
+      <p class="text-amber-warn-text text-xs font-semibold">
+        {m.asso_cotisations_rise_no_discount()}
+      </p>
     {/if}
   {/if}
 

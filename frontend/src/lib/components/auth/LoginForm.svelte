@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fade, slide } from 'svelte/transition';
   import { PLAY_STORE_URL, APP_STORE_URL } from '$lib/utils/appVersion';
+  import { TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -74,16 +75,17 @@
       {#if maintenanceNotice}
         <div
           role="status"
-          class="border-accent/25 bg-accent/15 text-accent-text rounded-xl border px-4 py-3 text-sm font-medium"
+          class="border-amber-warn/25 bg-amber-warn/15 text-amber-warn-text flex items-start gap-2 rounded-xl border px-4 py-3 text-sm font-medium"
         >
-          {maintenanceNotice}
+          <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
+          <span>{maintenanceNotice}</span>
         </div>
       {/if}
 
       <button
         onclick={onLogin}
         disabled={isLoggingIn || loginDisabled}
-        class="bg-accent text-cn-ink hover:bg-accent-hover w-full rounded-2xl py-4 text-lg font-bold transition-colors disabled:cursor-wait disabled:opacity-70"
+        class="bg-accent text-on-accent hover:bg-accent-hover w-full rounded-2xl py-4 text-lg font-bold transition-colors disabled:cursor-wait disabled:opacity-70"
       >
         {#if isLoggingIn}
           <span class="inline-flex items-center gap-2">

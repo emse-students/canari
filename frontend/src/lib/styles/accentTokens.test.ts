@@ -126,8 +126,52 @@ describe('every accent pairing keeps WCAG AA', () => {
     });
   }
 
+  for (const dark of [false, true]) {
+    const theme = dark ? 'dark' : 'light';
+    const surfaces = dark
+      ? ['#000000', '#121212', '#242424']
+      : ['#ffffff', token('cn-bg', false), token('cn-surface-alt', false)];
+    const warn = token('amber-warn', dark);
+    const warnText = token('amber-warn-text', dark);
+
+    it(`${theme}: the warning is 3:1 as a glyph or border on every surface, its text token 4.5:1`, () => {
+      for (const s of surfaces) {
+        expect(ratio(warn, s)).toBeGreaterThanOrEqual(3);
+        expect(ratio(warnText, s)).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+    it(`${theme}: amber-warn-text is 4.5:1 on its own 10/15/20% tints (the status pills and notes)`, () => {
+      for (const s of surfaces)
+        for (const alpha of [0.1, 0.15, 0.2])
+          expect(ratio(warnText, over(warn, s, alpha)), `${s} at ${alpha}`).toBeGreaterThanOrEqual(
+            4.5
+          );
+    });
+  }
+
   it('cn-yellow is an alias of the accent, never a second value', () => {
     expect(css).toMatch(/--cn-yellow:\s*var\(--accent\)/);
     expect(css).not.toMatch(/--cn-yellow:\s*#/);
+  });
+});
+
+describe('a solid accent fill carries the ink token', () => {
+  /** A solid `bg-accent` (no opacity, no variant) and a fixed or theme-flipping text colour in ONE class string. */
+  const SOLID = /(?<![\w:/-])bg-accent(?![\w/-])/;
+  const WRONG_INK =
+    /(?<![\w:-])text-(?:cn-ink|cn-dark|black|white|text-main|text-muted|accent-text|amber-warn(?:-text)?)(?![\w-])/;
+
+  it('uses text-on-accent, never cn-dark / black / white / a theme text colour', () => {
+    const offenders: string[] = [];
+    for (const file of shippedSourceFiles(src)) {
+      const body = withoutAnyComments(readFileSync(file, 'utf8'));
+      for (const piece of body.split(/["'`\n]/))
+        if (SOLID.test(piece) && WRONG_INK.test(piece))
+          offenders.push(`${relative(src, file).replaceAll(sep, '/')}: ${piece.trim()}`);
+    }
+    expect(
+      offenders,
+      'a yellow fill carries `text-on-accent` (cn-dark flips with the theme)'
+    ).toEqual([]);
   });
 });

@@ -246,7 +246,7 @@
         m.form_responses_card_unpaid(),
         String(summary.unpaidCash),
         m.form_responses_card_unpaid_hint({ amount: formatAmount(summary.unpaidCashCents) }),
-        summary.unpaidCash ? 'text-amber-warn' : ''
+        summary.unpaidCash ? 'text-amber-warn-text' : ''
       )}
       {@render card(
         m.form_responses_card_collected(),

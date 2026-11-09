@@ -55,7 +55,7 @@
         >
           <span
             class="flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 {on
-              ? 'border-accent-icon bg-accent text-cn-ink'
+              ? 'border-accent-icon bg-accent text-on-accent'
               : 'border-cn-border'}"
           >
             {#if on}<Check size={11} strokeWidth={3} />{/if}

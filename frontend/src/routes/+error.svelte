@@ -44,7 +44,7 @@
       <button
         type="button"
         onclick={retry}
-        class="bg-accent text-cn-ink rounded-xl px-4 py-2 text-sm font-semibold"
+        class="bg-accent text-on-accent rounded-xl px-4 py-2 text-sm font-semibold"
       >
         {m.common_retry_button()}
       </button>
@@ -54,7 +54,7 @@
       onclick={home}
       class="{failed
         ? 'border-cn-border text-text-main border'
-        : 'bg-accent text-cn-ink'} rounded-xl px-4 py-2 text-sm font-semibold"
+        : 'bg-accent text-on-accent'} rounded-xl px-4 py-2 text-sm font-semibold"
     >
       {m.error_back_home()}
     </button>

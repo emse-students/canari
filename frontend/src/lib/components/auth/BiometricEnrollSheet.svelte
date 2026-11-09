@@ -48,7 +48,7 @@
   <button
     type="button"
     onclick={onEnroll}
-    class="bg-accent text-cn-ink hover:bg-accent-hover w-full rounded-xl py-3.5 text-sm font-bold transition-all active:scale-95"
+    class="bg-accent text-on-accent hover:bg-accent-hover w-full rounded-xl py-3.5 text-sm font-bold transition-all active:scale-95"
   >
     {m.auth_biometric_enable_btn()}
   </button>

@@ -809,7 +809,7 @@
               <button
                 type="button"
                 onclick={() => openNewChatModal('contact')}
-                class="text-cn-ink bg-accent rounded-xl px-4 py-2 text-xs font-semibold transition-all active:scale-95"
+                class="text-on-accent bg-accent rounded-xl px-4 py-2 text-xs font-semibold transition-all active:scale-95"
               >
                 {m.chat_new_discussion_label()}
               </button>

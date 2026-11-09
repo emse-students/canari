@@ -37,7 +37,7 @@
 {#each publishQueueState.views as view (view.id)}
   <Banner variant={view.phase === 'failed' ? 'warn' : 'neutral'} busy={WORKING.has(view.phase)}>
     {#if view.phase === 'failed'}
-      <CircleAlert size={15} class="text-amber-warn shrink-0" aria-hidden="true" />
+      <CircleAlert size={15} class="text-amber-warn-text shrink-0" aria-hidden="true" />
     {:else if view.phase === 'waiting'}
       <CloudOff size={15} class="shrink-0 opacity-70" aria-hidden="true" />
     {:else if view.phase === 'paused'}
@@ -73,7 +73,7 @@
           <button
             type="button"
             onclick={() => void retryQueuedPost(view.id)}
-            class="bg-accent text-cn-ink hover:bg-accent-hover rounded-lg px-2.5 py-1 text-xs font-semibold"
+            class="bg-accent text-on-accent hover:bg-accent-hover rounded-lg px-2.5 py-1 text-xs font-semibold"
           >
             {view.phase === 'paused' ? m.publish_queue_resume() : m.publish_queue_retry()}
           </button>

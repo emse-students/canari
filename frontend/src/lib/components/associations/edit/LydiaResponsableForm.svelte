@@ -123,7 +123,7 @@
     type="button"
     onclick={() => void submit()}
     disabled={sending || !phone.trim() || !userId}
-    class="bg-accent text-cn-ink hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
+    class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
   >
     {sending ? m.asso_lydia_resp_sending() : submitLabel}
   </button>

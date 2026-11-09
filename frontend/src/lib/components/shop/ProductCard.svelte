@@ -7,6 +7,7 @@
   import { gridPriceIsProvisional, gridRefuses } from '$lib/pricing/viewerPrice';
   import { productDisplayName } from '$lib/shop/productCards';
   import { productFallbackIcon } from '$lib/utils/cardIcons';
+  import { TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -82,12 +83,15 @@
         class="w-full"
       />
       {#if refused}
-        <p class="text-accent-text text-xs">{m.shop_price_unavailable_hint()}</p>
+        <p class="text-amber-warn-text flex items-start gap-1 text-xs">
+          <TriangleAlert size={12} class="mt-0.5 shrink-0" aria-hidden="true" />
+          <span>{m.shop_price_unavailable_hint()}</span>
+        </p>
       {:else if gridPriceIsProvisional(product, signedIn)}
         <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
       {/if}
       {#if membersBlocked}
-        <p class="text-accent-text text-xs">{m.shop_members_only_hint()}</p>
+        <p class="text-amber-warn-text text-xs">{m.shop_members_only_hint()}</p>
       {/if}
     </div>
   </div>

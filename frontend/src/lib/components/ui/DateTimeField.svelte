@@ -252,7 +252,7 @@
               aria-pressed={selected}
               disabled={!!min && dayBeforeMin(view.year, view.month, day, min)}
               class="focus-visible:ring-accent/50 mx-auto flex size-9 items-center justify-center rounded-full text-sm font-semibold tabular-nums transition-colors outline-none focus-visible:ring-2 disabled:opacity-30 {selected
-                ? 'bg-accent text-black'
+                ? 'bg-accent text-on-accent'
                 : isToday
                   ? 'text-text-main ring-accent/60 ring-1 hover:bg-black/5 dark:hover:bg-white/10'
                   : 'text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
@@ -273,7 +273,7 @@
               type="button"
               aria-pressed={draft.hour === h}
               class="{CELL} {draft.hour === h
-                ? 'bg-accent text-black'
+                ? 'bg-accent text-on-accent'
                 : 'text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
               onclick={() => (draft = { ...draft, hour: h })}
             >
@@ -288,7 +288,7 @@
               type="button"
               aria-pressed={draft.minute === mi}
               class="{CELL} {draft.minute === mi
-                ? 'bg-accent text-black'
+                ? 'bg-accent text-on-accent'
                 : 'text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
               onclick={() => (draft = { ...draft, minute: mi })}
             >

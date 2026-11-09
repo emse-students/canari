@@ -299,7 +299,7 @@
     class="border-cn-border bg-cn-surface shrink-0 border-t px-3 pt-2 pb-[calc(var(--safe-area-inset-bottom,0px)+0.5rem)]"
   >
     {#if capNotice}
-      <p role="alert" class="text-amber-warn mb-2 text-sm font-semibold" data-reel-send-cap>
+      <p role="alert" class="text-amber-warn-text mb-2 text-sm font-semibold" data-reel-send-cap>
         {m.reel_sendto_cap({ count: cap })}
       </p>
     {/if}
@@ -345,7 +345,7 @@
   <span
     class={[
       'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2',
-      on ? 'border-accent-icon bg-accent text-black' : 'border-cn-border',
+      on ? 'border-accent-icon bg-accent text-on-accent' : 'border-cn-border',
     ]}
     aria-hidden="true"
   >

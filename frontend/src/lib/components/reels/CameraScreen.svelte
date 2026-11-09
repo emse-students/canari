@@ -434,7 +434,7 @@
       {#if session.fault === 'denied' && canOpenSettings}
         <button
           type="button"
-          class="text-cn-ink bg-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white"
+          class="text-on-accent bg-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white"
           onclick={() => void openSettings()}
           data-camera-open-settings
         >

@@ -226,7 +226,7 @@
                 <div class="text-zoom-w-11 shrink-0 text-center">
                   <div
                     class="text-zoom-size-9 mx-auto flex items-center justify-center rounded-full text-lg font-bold {today
-                      ? 'bg-accent text-cn-ink'
+                      ? 'bg-accent text-on-accent'
                       : 'text-text-main'}"
                   >
                     {group.day}

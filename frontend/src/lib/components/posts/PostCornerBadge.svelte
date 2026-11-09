@@ -38,7 +38,7 @@
   for the card's own header underneath it.
 -->
 <span
-  class="text-cn-ink text-2xs bg-accent pointer-events-none absolute -top-2 left-4 z-10 inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-bold tracking-widest uppercase"
+  class="text-on-accent text-2xs bg-accent pointer-events-none absolute -top-2 left-4 z-10 inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-bold tracking-widest uppercase"
 >
   {@render icon?.()}
   {label}

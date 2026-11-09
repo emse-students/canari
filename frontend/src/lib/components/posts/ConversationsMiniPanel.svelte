@@ -282,7 +282,7 @@
   <div class="bg-cn-surface shrink-0 border-t border-black/5 px-4 py-4 dark:border-white/10">
     <a
       href={resolve('/chat')}
-      class="text-cn-ink bg-accent shadow-accent/20 hover:bg-accent-hover hover:shadow-accent/30 focus-visible:ring-accent/50 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-xs font-bold shadow-md transition-all outline-none hover:shadow-lg focus-visible:ring-4 active:scale-[0.98]"
+      class="text-on-accent bg-accent shadow-accent/20 hover:bg-accent-hover hover:shadow-accent/30 focus-visible:ring-accent/50 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-xs font-bold shadow-md transition-all outline-none hover:shadow-lg focus-visible:ring-4 active:scale-[0.98]"
     >
       <MessageCircle size={18} strokeWidth={2.5} class="mt-0.5 ml-0.5" />
       {m.post_conversations_open_messaging_label()}

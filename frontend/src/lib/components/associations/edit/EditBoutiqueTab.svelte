@@ -310,7 +310,7 @@
 
   {#if !onlinePaymentsReady}
     <div
-      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn rounded-xl border px-4 py-3 text-sm"
+      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text rounded-xl border px-4 py-3 text-sm"
     >
       {#if delegationHref}
         {m.list_delegate_required_banner()}
@@ -543,7 +543,7 @@
                   </span>
                   {#if product.membersOnly}
                     <span
-                      class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
+                      class="bg-amber-warn/15 text-amber-warn-text rounded-full px-2 py-0.5 text-xs font-semibold"
                     >
                       {m.asso_boutique_members_only_label()}
                     </span>
@@ -575,7 +575,7 @@
                   does - the badge above cannot carry that, so the line below does.
                 -->
                 {#if !product.isActive && product.activationWithheld}
-                  <p class="text-amber-warn mt-1 text-xs font-semibold">
+                  <p class="text-amber-warn-text mt-1 text-xs font-semibold">
                     {m.asso_boutique_product_withheld_hint()}
                   </p>
                 {/if}

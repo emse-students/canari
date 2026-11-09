@@ -658,7 +658,7 @@
     <h1 class="min-w-0 text-base font-bold">{m.reels_editor_title()}</h1>
     <button
       type="button"
-      class="text-cn-ink bg-accent hover:bg-accent-hover inline-flex h-11 items-center gap-1.5 rounded-full px-4 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
+      class="text-on-accent bg-accent hover:bg-accent-hover inline-flex h-11 items-center gap-1.5 rounded-full px-4 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
       disabled={busy}
       onclick={next}
       data-reel-editor-next

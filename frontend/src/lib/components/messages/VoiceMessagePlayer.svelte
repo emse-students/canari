@@ -248,7 +248,7 @@
         e.stopPropagation();
         togglePlay();
       }}
-      class="text-cn-ink bg-accent hover:bg-accent-hover focus-visible:ring-accent/40 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-md transition-all outline-none hover:scale-105 focus-visible:ring-4 active:scale-95"
+      class="text-on-accent bg-accent hover:bg-accent-hover focus-visible:ring-accent/40 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-md transition-all outline-none hover:scale-105 focus-visible:ring-4 active:scale-95"
       aria-label={isPlaying ? m.msg_pause_voice_message_label() : m.msg_play_voice_message_label()}
     >
       {#if isPlaying}

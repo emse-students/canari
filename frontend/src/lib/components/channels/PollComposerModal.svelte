@@ -172,7 +172,7 @@
       type="button"
       onclick={submit}
       disabled={!canSubmit || submitting}
-      class="bg-accent text-cn-ink rounded-xl px-5 py-2 text-sm font-bold transition-all hover:brightness-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+      class="bg-accent text-on-accent rounded-xl px-5 py-2 text-sm font-bold transition-all hover:brightness-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {submitting ? m.common_sending_label() : m.channel_poll_submit_button()}
     </button>

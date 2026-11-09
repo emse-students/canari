@@ -700,7 +700,7 @@
             <div class="flex items-center justify-between gap-4">
               <div class="flex items-center gap-3">
                 {#if accessIsPrivate}
-                  <div class="text-amber-warn bg-amber-warn/10 rounded-xl p-2">
+                  <div class="text-amber-warn-text bg-amber-warn/10 rounded-xl p-2">
                     <Lock size={18} strokeWidth={2.5} />
                   </div>
                   <div>

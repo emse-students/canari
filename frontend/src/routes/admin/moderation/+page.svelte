@@ -359,7 +359,7 @@
   });
 
   const statusClass: Record<ContentReport['status'], string> = {
-    pending: 'bg-amber-warn/15 text-amber-warn',
+    pending: 'bg-amber-warn/15 text-amber-warn-text',
     reviewed: 'bg-green-100 text-green-700',
     dismissed: 'bg-gray-100 text-text-muted',
   };
@@ -494,7 +494,7 @@
                 {contentTypeLabel[report.contentType]}
               </span>
               <span
-                class="text-amber-warn bg-amber-warn/10 text-2xs rounded-full px-2 py-0.5 font-semibold"
+                class="text-amber-warn-text bg-amber-warn/10 text-2xs rounded-full px-2 py-0.5 font-semibold"
               >
                 {reasonLabel[report.reason] ?? report.reason}
               </span>

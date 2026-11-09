@@ -76,7 +76,7 @@
         type="button"
         onclick={saveNote}
         disabled={noteSaving}
-        class="bg-accent text-cn-ink hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
+        class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
       >
         {noteSaving ? m.common_saving_label() : m.common_save_button()}
       </button>

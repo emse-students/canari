@@ -510,7 +510,7 @@
 
   {#if canEdit && !agenda.loading && sortedPendingEvents.length > 0}
     <div class="space-y-3">
-      <h3 class="text-amber-warn text-sm font-bold tracking-wide uppercase">
+      <h3 class="text-amber-warn-text text-sm font-bold tracking-wide uppercase">
         {m.asso_calendar_pending_section_title({ count: sortedPendingEvents.length })}
       </h3>
       {#each sortedPendingEvents as ev (ev.id)}
@@ -521,7 +521,7 @@
             <p class="text-text-main flex flex-wrap items-center gap-2 font-bold">
               {ev.title}
               <span
-                class="text-amber-warn bg-amber-warn/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
+                class="text-amber-warn-text bg-amber-warn/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
               >
                 {m.asso_calendar_pending_badge()}
               </span>

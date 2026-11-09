@@ -102,7 +102,7 @@
       {#if screen.problem === 'full' || screen.problem === 'retry'}
         <button
           type="button"
-          class="bg-accent text-cn-ink mt-2 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
+          class="bg-accent text-on-accent mt-2 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
           onclick={() => attempt++}
           data-live-route-retry
         >

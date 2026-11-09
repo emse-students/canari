@@ -198,7 +198,7 @@
             onclick={() => themeStore.setPreference(opt.value as 'system' | 'light' | 'dark')}
             class="focus-visible:ring-accent-icon flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2
  {themeStore.preference === opt.value
-              ? 'bg-accent text-cn-ink shadow'
+              ? 'bg-accent text-on-accent shadow'
               : 'text-text-muted hover:text-text-main'}"
           >
             <Icon size={15} strokeWidth={2.5} />
@@ -235,7 +235,9 @@
             title={LOCALE_LABELS[locale]}
             onclick={() => void changeLocale(locale)}
             class="focus-visible:ring-accent-icon rounded-lg px-3 py-1.5 text-xs font-semibold uppercase transition-colors outline-none focus-visible:ring-2
- {getLocale() === locale ? 'bg-accent text-cn-ink shadow' : 'text-text-muted hover:text-text-main'}"
+ {getLocale() === locale
+              ? 'bg-accent text-on-accent shadow'
+              : 'text-text-muted hover:text-text-main'}"
           >
             {locale}
           </button>

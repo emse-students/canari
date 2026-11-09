@@ -175,7 +175,7 @@
       {/if}
       {#each entity.mismatches as mismatch (mismatch)}
         <span
-          class="text-amber-warn shrink-0"
+          class="text-amber-warn-text shrink-0"
           role="img"
           title={mismatchText(mismatch)}
           aria-label={mismatchText(mismatch)}
@@ -191,7 +191,7 @@
       {/if}
     </div>
     {#each entity.mismatches.filter((x) => x !== 'reaches_outside_parent') as mismatch (mismatch)}
-      <p class="text-amber-warn mt-0.5 text-xs" data-mismatch-text={mismatch}>
+      <p class="text-amber-warn-text mt-0.5 text-xs" data-mismatch-text={mismatch}>
         {mismatchText(mismatch)}
       </p>
     {/each}
@@ -293,7 +293,7 @@
           </h3>
           {#if outsideCount(family) > 0}
             <p
-              class="text-amber-warn mt-1 flex flex-wrap items-center gap-2 text-xs"
+              class="text-amber-warn-text mt-1 flex flex-wrap items-center gap-2 text-xs"
               data-mismatch-summary={family.bde.id}
             >
               <TriangleAlert size={14} />

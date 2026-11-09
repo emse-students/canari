@@ -317,7 +317,7 @@
     notif.type === 'reaction'
       ? 'bg-pink-500 text-white'
       : notif.type === 'mention'
-        ? 'bg-accent text-cn-ink'
+        ? 'bg-accent text-on-accent'
         : notif.type === 'reply'
           ? 'bg-blue-500 text-white'
           : notif.type === 'form_reminder'
@@ -326,17 +326,17 @@
                 notif.type === 'lydia_payments_paused' ||
                 notif.type === 'delegation_revoked' ||
                 notif.type === 'delegation_receiver_not_ready'
-              ? 'bg-accent text-cn-ink'
+              ? 'bg-accent text-on-accent'
               : notif.type === 'event_rejected'
                 ? 'bg-red-500 text-white'
                 : notif.type === 'event_pending' || notif.type === 'event_pending_coorganiser'
-                  ? 'bg-accent text-cn-ink'
+                  ? 'bg-accent text-on-accent'
                   : isEventNotif || isCoorganiseNotif
                     ? 'bg-sky-600 text-white'
                     : isPostNotif || isRepostNotif || isPersonalRepostNotif
                       ? 'bg-indigo-500 text-white'
                       : isFollowNotif || notif.type === 'birthday'
-                        ? 'bg-accent text-cn-ink'
+                        ? 'bg-accent text-on-accent'
                         : notif.type === 'profile_correction_refused'
                           ? 'bg-red-500 text-white'
                           : isUnknownNotif

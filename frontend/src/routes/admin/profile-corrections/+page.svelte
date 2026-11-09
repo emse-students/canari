@@ -126,7 +126,7 @@
           <div class="flex flex-wrap gap-2">
             <button
               type="button"
-              class="bg-accent text-cn-dark flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold"
+              class="bg-accent text-on-accent flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-bold"
               onclick={() => void startEdit(row)}
             >
               <UserPen size={14} />

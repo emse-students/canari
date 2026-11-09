@@ -61,7 +61,7 @@
   }: Props = $props();
 
   const VARIANT: Record<NonNullable<Props['variant']>, string> = {
-    primary: 'border-transparent bg-accent text-cn-ink hover:bg-accent-hover',
+    primary: 'border-transparent bg-accent text-on-accent hover:bg-accent-hover',
     secondary: 'bg-cn-surface text-text-main hover:bg-black/5 dark:hover:bg-white/10',
     ghost:
       'border-transparent bg-transparent text-text-muted hover:bg-black/5 hover:text-text-main dark:hover:bg-white/10',

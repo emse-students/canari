@@ -74,11 +74,11 @@
 
 {#if provider === 'lydia' && (grossCents || memberCents || minCents || maxCents)}
   <div
-    class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn space-y-1 rounded-xl border px-4 py-3 text-xs"
+    class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text space-y-1 rounded-xl border px-4 py-3 text-xs"
     role="note"
   >
     <p class="font-semibold">{m.payout_hint_title()}</p>
-    <p class="text-amber-warn">
+    <p class="text-amber-warn-text">
       {m.payout_hint_fees_note({ feeLabel })}
     </p>
     {#if grossCents}
@@ -112,7 +112,7 @@
       </p>
     {/if}
     {#if showOptionSupplementNote && (grossCents || memberCents)}
-      <p class="text-amber-warn">
+      <p class="text-amber-warn-text">
         {m.payout_option_note()}
       </p>
     {/if}

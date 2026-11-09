@@ -78,7 +78,7 @@
     return status === 'paid'
       ? 'bg-emerald-100 text-emerald-700'
       : status === 'pending_cash' || status === 'paid_not_granted'
-        ? 'bg-amber-warn/15 text-amber-warn'
+        ? 'bg-amber-warn/15 text-amber-warn-text'
         : 'bg-cn-surface-alt text-text-muted';
   }
 

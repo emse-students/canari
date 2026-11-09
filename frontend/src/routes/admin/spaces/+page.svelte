@@ -508,7 +508,7 @@
                             })}
                             onclick={() => toggleBde(space, association)}
                             class="absolute -top-1.5 -right-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full border transition-opacity disabled:opacity-50 {isBde
-                              ? 'border-accent-icon bg-accent text-cn-ink'
+                              ? 'border-accent-icon bg-accent text-on-accent'
                               : 'border-cn-border text-text-muted bg-(--cn-surface) opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}"
                           >
                             <Star size={10} />

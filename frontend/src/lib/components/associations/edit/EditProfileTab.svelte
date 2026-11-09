@@ -353,7 +353,7 @@
         type="button"
         onclick={handleSaveProfile}
         disabled={saving}
-        class="bg-accent text-cn-ink hover:bg-accent-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+        class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
       >
         {saving ? m.asso_edit_saving_label() : m.asso_edit_save_profile_button()}
       </button>

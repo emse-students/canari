@@ -782,7 +782,7 @@
               </div>
               {#if canManage}
                 <label
-                  class="bg-accent text-cn-ink hover:bg-accent-hover absolute right-0 bottom-0 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full shadow transition-colors"
+                  class="bg-accent text-on-accent hover:bg-accent-hover absolute right-0 bottom-0 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full shadow transition-colors"
                   title={m.chat_community_change_image_title()}
                 >
                   {#if imageUploading}

@@ -189,7 +189,7 @@
       <button
         type="submit"
         disabled={saving}
-        class="bg-accent text-cn-dark flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+        class="bg-accent text-on-accent flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
       >
         {#if saving}<LoaderCircle size={14} class="animate-spin" />{/if}
         {requestId ? m.profile_edit_save_and_answer() : m.common_save_button()}

@@ -457,7 +457,7 @@
         <button
           type="button"
           onclick={() => pasteAs('rows')}
-          class="bg-accent text-cn-ink min-h-11 rounded-lg px-4 text-sm font-bold"
+          class="bg-accent text-on-accent min-h-11 rounded-lg px-4 text-sm font-bold"
           >{m.form_pgrid_paste_as_rows()}</button
         >
         <button

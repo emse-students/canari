@@ -83,7 +83,7 @@
         <p class="text-red-err text-sm">{error}</p>
         <button
           onclick={() => goto('/login', { replace: true })}
-          class="bg-accent text-cn-ink hover:bg-accent-hover mt-4 rounded-2xl px-6 py-3 font-bold transition-all"
+          class="bg-accent text-on-accent hover:bg-accent-hover mt-4 rounded-2xl px-6 py-3 font-bold transition-all"
         >
           {m.auth_callback_retry()}
         </button>

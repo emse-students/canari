@@ -561,7 +561,7 @@
           type="button"
           onclick={openDeposit}
           use:guideAnchor={'calendar.deposit'}
-          class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
+          class="bg-accent text-on-accent hover:bg-accent-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
         >
           <CalendarPlus size={18} />
           {m.calendar_deposit_button()}
@@ -580,7 +580,7 @@
           <ShieldAlert size={18} />
           {m.calendar_moderate_label()}
           {#if pendingCount > 0}
-            <span class="text-2xs text-cn-ink bg-accent rounded-full px-2 py-0.5 font-bold">
+            <span class="text-2xs text-on-accent bg-accent rounded-full px-2 py-0.5 font-bold">
               {pendingCount}
             </span>
           {/if}
@@ -653,7 +653,7 @@
         type="button"
         onclick={() => (showSubscribeModal = true)}
         data-calendar-subscribe
-        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
       >
         <CalendarCheck size={18} />
         {m.calendar_subscribe()}

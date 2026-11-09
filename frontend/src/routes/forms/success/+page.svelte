@@ -123,7 +123,7 @@
     {#if status === 'pending' || status === 'confirmed'}
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
-        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
       >
         {m.form_success_back_to_form()}
       </a>
@@ -131,7 +131,7 @@
       <!-- The answer is released: the form's own pay button is the retry, one tap away. -->
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
-        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
       >
         {m.form_success_retry()}
       </a>

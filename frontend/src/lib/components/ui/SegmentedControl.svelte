@@ -51,7 +51,7 @@
 
   const ACTIVE = {
     amber: 'bg-accent/15 text-accent-text shadow-sm',
-    yellow: 'bg-accent text-cn-ink shadow-sm',
+    yellow: 'bg-accent text-on-accent shadow-sm',
   } as const;
   const IDLE = 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5';
 

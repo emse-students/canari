@@ -164,7 +164,7 @@
           aria-pressed={filter === tab.key}
           class="tap-target rounded-full px-3 py-1.5 text-sm font-semibold transition-colors {filter ===
           tab.key
-            ? 'bg-accent text-cn-ink'
+            ? 'bg-accent text-on-accent'
             : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10'}"
         >
           {tab.label}

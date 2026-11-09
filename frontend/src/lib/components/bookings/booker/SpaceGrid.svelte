@@ -405,7 +405,7 @@
       role="status"
       class="{blockMode
         ? 'bg-red-err text-cn-surface'
-        : 'bg-accent text-cn-ink'} pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-sm font-bold tabular-nums shadow-lg"
+        : 'bg-accent text-on-accent'} pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-sm font-bold tabular-nums shadow-lg"
     >
       {selectedReading}
     </p>
@@ -546,7 +546,7 @@
                 data-selection
                 class="block h-full overflow-hidden rounded-lg border px-1.5 py-1 text-xs leading-tight font-bold shadow-sm motion-safe:transition-colors {blockMode
                   ? 'bg-red-err/20 text-red-err border-red-err'
-                  : 'bg-accent text-cn-ink border-accent-icon'}"
+                  : 'bg-accent text-on-accent border-accent-icon'}"
               >
                 <span class="block truncate tabular-nums">{selectedReading}</span>
               </span>

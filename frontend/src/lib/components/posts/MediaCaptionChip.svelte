@@ -29,7 +29,7 @@
   aria-label={m.post_composer_caption_toggle()}
   class="text-2xs focus-visible:ring-accent-icon absolute bottom-1 left-1 flex items-center gap-1 rounded-full px-2 py-1 font-bold outline-none before:absolute before:-inset-1.5 before:content-[''] focus-visible:ring-2 {active ||
   hasCaption
-    ? 'bg-accent text-black'
+    ? 'bg-accent text-on-accent'
     : 'bg-black/60 text-white'}"
 >
   <Captions size={12} strokeWidth={2.5} />

@@ -1171,7 +1171,7 @@
                             </div>
                             {#if classified.fresh.has(asso.id)}
                               <span
-                                class="bg-accent text-cn-ink shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
+                                class="bg-accent text-on-accent shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
                               >
                                 {m.carte_asso_new_badge()}
                               </span>

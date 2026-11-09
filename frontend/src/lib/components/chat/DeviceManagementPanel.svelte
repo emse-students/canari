@@ -463,7 +463,7 @@
                       {/if}
                       {#if row.isCurrentDevice}
                         <span
-                          class="text-cn-ink text-2xs bg-accent rounded-full px-2 py-0.5 font-bold tracking-wider uppercase shadow-sm"
+                          class="text-on-accent text-2xs bg-accent rounded-full px-2 py-0.5 font-bold tracking-wider uppercase shadow-sm"
                         >
                           {m.chat_current_device_badge()}
                         </span>

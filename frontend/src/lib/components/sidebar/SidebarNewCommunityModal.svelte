@@ -48,7 +48,7 @@
     <button
       onclick={onSubmit}
       disabled={!communityName.trim()}
-      class="text-cn-ink bg-accent hover:bg-accent-hover w-full rounded-xl py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+      class="text-on-accent bg-accent hover:bg-accent-hover w-full rounded-xl py-2.5 font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50"
     >
       {m.chat_modal_create_community_button()}
     </button>

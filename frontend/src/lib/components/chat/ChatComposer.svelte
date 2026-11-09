@@ -1140,7 +1140,7 @@
           class="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 -translate-y-16"
         >
           <span
-            class="text-cn-ink bg-accent shadow-accent/20 flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-bold whitespace-nowrap shadow-xl"
+            class="text-on-accent bg-accent shadow-accent/20 flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-bold whitespace-nowrap shadow-xl"
           >
             <CloudUpload size={18} strokeWidth={2.5} />
             {m.chat_drag_files_badge()}

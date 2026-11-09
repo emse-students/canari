@@ -76,6 +76,9 @@
      banner stayed light while the text on it went near-white. Tint it with an opacity modifier
      (`bg-amber-warn/10`, `border-amber-warn/30`) rather than reaching for the amber scale. */
   --color-amber-warn: var(--amber-warn);
+  /* The warning as TEXT ON ITS OWN TINT (`bg-amber-warn/15 text-amber-warn-text`): `amber-warn`
+     reads 4.08:1 there in light, under AA at xs. Dark needs no second value. */
+  --color-amber-warn-text: var(--amber-warn-text);
   /* BANNER SURFACES, OPAQUE BY CONSTRUCTION. A banner covers the interface, so what it covers must
      not read through it - a translucent strip puts body text behind its own words and makes the one
      message meant to be read the hardest thing on screen. Four of the six banners were tinted
@@ -448,6 +451,7 @@
      AA. One value in both themes, 6:1 with white. */
   --red-solid: #c42b2b;
   --amber-warn: #b45309;
+  --amber-warn-text: #92400e;
   /* FLAT. The reference has no background gradient at all - it is one solid colour behind
      everything. The three stacked gradients that were here (amber and blue radials over a vertical
      ramp) put a moving tint under every screen, which is exactly the "AI-generated" tell. */
@@ -579,6 +583,7 @@
   --green-ok: #2dd089;
   --red-err: #f07474;
   --amber-warn: #fbbf24;
+  --amber-warn-text: #fbbf24;
   /* NOT FLAT, AND NOT GLASS EITHER (user, 2026-09-08: *"pour faire un peu moins plat, sans repartir
      sur du glassmorphism de fou, on peut imaginer des vignettes"*). ONE soft warm vignette hanging
      from the top, in the brand yellow at 5%, gone by 55% of the way down - not the five 1080px

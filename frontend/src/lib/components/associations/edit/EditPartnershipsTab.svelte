@@ -134,7 +134,7 @@
     <button
       type="button"
       onclick={() => (editing = editing === 'new' ? null : 'new')}
-      class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
+      class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
     >
       <Plus size={16} />
       {m.asso_partnership_new_button()}
@@ -193,7 +193,7 @@
                   </span>
                   {#if card.membersOnly}
                     <span
-                      class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
+                      class="bg-amber-warn/15 text-amber-warn-text rounded-full px-2 py-0.5 text-xs font-semibold"
                     >
                       {m.asso_partnership_members_only_label()}
                     </span>

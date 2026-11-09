@@ -503,7 +503,7 @@
         {:else}
           <button
             type="button"
-            class="bg-accent text-cn-ink hover:bg-accent-hover rounded-lg px-4 py-2 text-sm font-bold transition-colors"
+            class="bg-accent text-on-accent hover:bg-accent-hover rounded-lg px-4 py-2 text-sm font-bold transition-colors"
             onclick={() => guideEngine.next()}
             data-guide-next
           >

@@ -244,7 +244,7 @@
             data-testid="period-{w}"
             onclick={() => choosePeriod(w)}
             class="px-3 py-1.5 transition-colors {period === w
-              ? 'bg-accent text-black'
+              ? 'bg-accent text-on-accent'
               : 'text-text-muted hover:text-text-main'}"
           >
             {w === '24h'

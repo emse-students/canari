@@ -50,6 +50,14 @@
    */
   let pill = $state<{ x: number; w: number } | null>(null);
   let pillAnimated = $state(false);
+  /**
+   * THE LABEL FOLLOWS THE PILL, NOT THE SELECTION. The ink label (`text-on-accent`) is 1.09:1 on the
+   * dark glass, so it may only be drawn once the yellow pill is UNDER it: `settled` is the tab the
+   * pill has reached (null while it slides, and before the first measure), and a label turns ink
+   * only when the selection and the settled tab agree. The leaving label goes muted at once, the
+   * arriving one turns ink at the end of the slide (`transitionend`), so no label is ever ink on glass.
+   */
+  let settled = $state<PostFeed | null>(null);
 
   /** Reads the active button's box into `pill`; true when it moved. */
   function measurePill(row: HTMLElement, selected: PostFeed): boolean {
@@ -69,8 +77,12 @@
     const row = tabs;
     if (!row) return;
     // A selection slides, except the very first placement (nothing to slide from).
-    pillAnimated = untrack(() => pill) !== null;
-    measurePill(row, selected);
+    const animated = untrack(() => pill) !== null;
+    pillAnimated = animated;
+    // Untracked: the measure reads and writes `pill`, and this effect must run once per selection.
+    const slides = untrack(() => measurePill(row, selected)) && animated;
+    // A pill that did not move (or moved without a transition) is already under its label.
+    settled = slides ? null : untrack(() => pill) ? selected : null;
     const observer =
       typeof ResizeObserver === 'undefined'
         ? null
@@ -78,7 +90,9 @@
             // A re-layout (resize, web font) moves the pill with its tab, never as a slide.
             const before = pillAnimated;
             pillAnimated = false;
-            if (!measurePill(row, feed)) pillAnimated = before;
+            // Placed with no transition (first layout, resize): it is under its label at once.
+            if (measurePill(row, feed)) settled = feed;
+            else pillAnimated = before;
           });
     observer?.observe(row);
     // Each tab too: a font swap resizes a button without resizing the row.
@@ -152,6 +166,10 @@
           aria-hidden="true"
           data-feed-tab-pill
           class="bg-accent pointer-events-none absolute inset-y-0 left-0 rounded-full"
+          ontransitionend={(e) => {
+            if (e.propertyName === 'transform') settled = feed;
+          }}
+          ontransitioncancel={() => (settled = null)}
           style:width="{pill.w}px"
           style:transform="translate3d({pill.x}px, 0, 0)"
           style:transition={pillAnimated
@@ -168,7 +186,9 @@
           aria-pressed={feed === tab.feed}
           class="tap-target focus-visible:ring-accent-icon relative flex-1 shrink-0 rounded-full px-3.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:outline-none {feed ===
           tab.feed
-            ? 'text-on-accent font-semibold'
+            ? settled === tab.feed
+              ? 'text-on-accent font-semibold'
+              : 'text-text-muted font-semibold'
             : 'text-text-muted hover:text-text-main font-medium'}"
         >
           {tab.label()}

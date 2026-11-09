@@ -573,7 +573,7 @@
            minimal player draws it on a decided outcome only, with or without a first frame. -->
       <button
         type="button"
-        class="bg-accent text-cn-ink absolute top-1/2 left-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
+        class="bg-accent text-on-accent absolute top-1/2 left-1/2 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
         aria-label={m.video_play_label()}
         tabindex="-1"
         onclick={(e) => {

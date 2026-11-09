@@ -110,7 +110,7 @@
         <button
           type="submit"
           disabled={sending || !message.trim()}
-          class="bg-accent text-cn-dark flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+          class="bg-accent text-on-accent flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
         >
           {#if sending}<LoaderCircle size={14} class="animate-spin" />{/if}
           {m.profile_correction_send()}

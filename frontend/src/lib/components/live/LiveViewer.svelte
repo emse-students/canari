@@ -431,7 +431,7 @@
           <p class="mt-1 text-sm opacity-90">{m.live_viewer_full_body()}</p>
           <button
             type="button"
-            class="bg-accent text-cn-ink mt-4 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
+            class="bg-accent text-on-accent mt-4 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
             bind:this={actionButton}
             onclick={() => player?.retry()}
             data-live-retry

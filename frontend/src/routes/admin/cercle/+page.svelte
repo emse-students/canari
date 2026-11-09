@@ -423,7 +423,7 @@
             <button
               type="submit"
               disabled={saving}
-              class="bg-accent text-cn-ink hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
+              class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
             >
               {saving
                 ? m.admin_cercle_saving()
@@ -443,7 +443,7 @@
 
       {#if webhookFailures.length > 0}
         <div class="border-cn-border bg-cn-surface space-y-3 rounded-2xl border p-6 shadow-sm">
-          <h3 class="text-amber-warn flex items-center gap-2 text-sm font-bold">
+          <h3 class="text-amber-warn-text flex items-center gap-2 text-sm font-bold">
             <TriangleAlert size={16} />
             {m.admin_cercle_webhook_failures_title({ count: webhookFailures.length })}
           </h3>
@@ -480,7 +480,9 @@
                     needs no decision, an exhausted one is the only kind that does.
                   -->
                   <p
-                    class="text-xs {delivery.nextAttemptAt ? 'text-text-muted' : 'text-amber-warn'}"
+                    class="text-xs {delivery.nextAttemptAt
+                      ? 'text-text-muted'
+                      : 'text-amber-warn-text'}"
                   >
                     {delivery.nextAttemptAt
                       ? m.admin_cercle_webhook_next_attempt({

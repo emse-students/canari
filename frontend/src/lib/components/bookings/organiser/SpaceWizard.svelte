@@ -314,7 +314,7 @@
       >
         <span
           class="grid size-6 place-items-center rounded-full text-xs font-bold {step === i + 1
-            ? 'bg-accent text-cn-ink'
+            ? 'bg-accent text-on-accent'
             : step > i + 1
               ? 'bg-green-ok/15 text-green-ok'
               : 'bg-control-fill'}"
@@ -610,7 +610,7 @@
         type="button"
         onclick={next}
         disabled={posterBusy}
-        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
       >
         {m.bookings_wizard_next()}
         <ArrowRight size={16} />
@@ -620,7 +620,7 @@
         type="button"
         onclick={create}
         disabled={creating || posterBusy}
-        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
       >
         <Check size={16} />
         {creating ? m.bookings_wizard_creating() : m.bookings_tab_create_button()}

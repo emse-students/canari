@@ -355,7 +355,7 @@
             {/if}
             <button
               type="button"
-              class="text-cn-ink bg-accent shadow-accent/20 hover:bg-accent-hover hover:shadow-accent/30 focus-visible:ring-accent/50 rounded-xl px-5 py-2.5 text-sm font-bold shadow-md transition-all outline-none hover:shadow-lg focus-visible:ring-4 active:scale-95 active:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:hover:shadow-md disabled:active:scale-100"
+              class="text-on-accent bg-accent shadow-accent/20 hover:bg-accent-hover hover:shadow-accent/30 focus-visible:ring-accent/50 rounded-xl px-5 py-2.5 text-sm font-bold shadow-md transition-all outline-none hover:shadow-lg focus-visible:ring-4 active:scale-95 active:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:hover:shadow-md disabled:active:scale-100"
               disabled={selectionIn(poll).length === 0}
               onclick={() => onSubmitVote(poll.id)}
             >

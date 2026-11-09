@@ -170,7 +170,7 @@
             {/if}
             <a
               href="/posts/{encodeURIComponent(request.subjectId)}"
-              class="text-amber-warn text-xs font-semibold hover:underline"
+              class="text-amber-warn-text text-xs font-semibold hover:underline"
             >
               {m.asso_republications_view_post()}
             </a>
@@ -188,7 +188,7 @@
             </button>
             <button
               type="button"
-              class="bg-accent text-cn-ink hover:bg-accent-hover rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
+              class="bg-accent text-on-accent hover:bg-accent-hover rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
               disabled={busy !== null || !request.details}
               onclick={() => answer(request, 'accept')}
             >

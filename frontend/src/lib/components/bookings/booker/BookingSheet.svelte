@@ -435,7 +435,7 @@
             <label
               class="has-[:focus-visible]:ring-accent-icon cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors has-[:focus-visible]:ring-2 {reminder ===
               option.value
-                ? 'bg-accent text-cn-ink border-accent-icon'
+                ? 'bg-accent text-on-accent border-accent-icon'
                 : 'border-cn-border text-text-main hover:bg-cn-border/30'}"
             >
               <input

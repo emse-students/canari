@@ -27,7 +27,7 @@
 >
   <div class="from-accent/20 absolute inset-0 bg-radial to-transparent to-70%"></div>
   <span
-    class="bg-accent text-cn-ink relative flex items-center justify-center rounded-full shadow-lg {compact
+    class="bg-accent text-on-accent relative flex items-center justify-center rounded-full shadow-lg {compact
       ? 'h-11 w-11'
       : 'h-14 w-14'}"
   >

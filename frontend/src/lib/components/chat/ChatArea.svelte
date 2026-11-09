@@ -1835,7 +1835,7 @@
         </span>
         {#if unreadBelowCount > 0}
           <span
-            class="text-cn-ink text-2xs bg-accent shadow-accent/30 pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 font-bold shadow-sm"
+            class="text-on-accent text-2xs bg-accent shadow-accent/30 pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 font-bold shadow-sm"
             aria-hidden="true"
           >
             {unreadBelowCount > 99 ? '99+' : unreadBelowCount}

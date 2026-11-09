@@ -204,7 +204,7 @@
          it is, and everything around it opens the viewer. The amber disc is `VideoPlayer`'s. -->
     <button
       type="button"
-      class="bg-accent text-cn-ink absolute top-1/2 left-1/2 flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
+      class="bg-accent text-on-accent absolute top-1/2 left-1/2 flex h-14 w-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-4 focus-visible:ring-white/60"
       aria-label={m.video_play_label()}
       onclick={playNow}
     >
@@ -219,7 +219,7 @@
       type="button"
       class="focus-visible:ring-accent-icon absolute right-2.5 bottom-2.5 inline-flex h-8 w-8 items-center justify-center rounded-full shadow-sm outline-none focus-visible:ring-2 {videoSound.muted
         ? 'bg-cn-scrim/90 text-accent'
-        : 'bg-accent text-cn-ink'}"
+        : 'bg-accent text-on-accent'}"
       aria-label={m.video_sound_label()}
       aria-pressed={!videoSound.muted}
       onclick={toggleSound}

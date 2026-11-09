@@ -176,7 +176,7 @@
 
   {#if tab === 'collisions' && counts.collisions > 0}
     <div
-      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn flex items-start gap-2 rounded-xl border px-4 py-3 text-sm"
+      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text flex items-start gap-2 rounded-xl border px-4 py-3 text-sm"
     >
       <TriangleAlert size={16} class="mt-0.5 shrink-0" />
       <span>{m.admin_legacy_collision_hint()}</span>

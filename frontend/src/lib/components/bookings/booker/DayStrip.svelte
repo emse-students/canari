@@ -90,7 +90,7 @@
         <span
           class="flex size-8 items-center justify-center rounded-full text-sm font-bold transition-colors {day.date ===
           date
-            ? 'bg-accent text-cn-ink'
+            ? 'bg-accent text-on-accent'
             : day.date === today
               ? 'border-accent-icon text-text-main border'
               : 'text-text-main'}"

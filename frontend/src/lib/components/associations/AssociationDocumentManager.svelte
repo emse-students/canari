@@ -551,7 +551,7 @@
             <div class="min-w-0 flex-1">
               <p class="text-text-main flex items-center gap-1.5 truncate text-sm font-semibold">
                 {#if isProtected(doc)}
-                  <Lock size={13} class="text-amber-warn shrink-0" />
+                  <Lock size={13} class="text-amber-warn-text shrink-0" />
                 {/if}
                 <span class="truncate">{doc.name}</span>
               </p>
@@ -663,7 +663,7 @@
 >
   {#if pwPromptDoc}
     <h3 id="pw-prompt-title" class="text-text-main flex items-center gap-2 text-lg font-bold">
-      <Lock size={18} class="text-amber-warn" />
+      <Lock size={18} class="text-amber-warn-text" />
       {m.asso_doc_protected_title()}
     </h3>
     <p class="text-text-muted truncate text-sm">{pwPromptDoc.name}</p>

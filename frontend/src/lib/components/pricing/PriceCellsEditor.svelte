@@ -427,7 +427,7 @@
   {#if guestCellLabel}
     <p
       role="status"
-      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn flex items-start gap-2 rounded-xl border-2 px-3 py-2 text-xs font-semibold"
+      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text flex items-start gap-2 rounded-xl border-2 px-3 py-2 text-xs font-semibold"
     >
       <TriangleAlert size={13} class="mt-0.5 shrink-0" />
       {m.form_grid_guest_free_status({ cell: guestCellLabel })}

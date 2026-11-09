@@ -1138,7 +1138,7 @@
             <button
               type="button"
               onclick={newGame}
-              class="bg-accent text-cn-ink hover:bg-accent-hover mt-1 flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-colors"
+              class="bg-accent text-on-accent hover:bg-accent-hover mt-1 flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-colors"
             >
               <RotateCcw size={15} strokeWidth={2.5} />
               {m.minesweeper_new_game()}
@@ -1203,7 +1203,7 @@
           onclick={openLeaderboard}
           aria-label={m.minesweeper_leaderboard()}
           title={m.minesweeper_leaderboard()}
-          class="ui-icon-button bg-accent text-cn-ink hover:bg-accent-hover pointer-events-auto rounded-full shadow-sm transition-colors"
+          class="ui-icon-button bg-accent text-on-accent hover:bg-accent-hover pointer-events-auto rounded-full shadow-sm transition-colors"
         >
           <Trophy size={20} strokeWidth={2.5} />
         </button>
@@ -1229,7 +1229,7 @@
         aria-pressed={flagPrimary}
         title={m.minesweeper_mode_hint()}
         class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-5 text-sm font-bold shadow-md backdrop-blur-sm transition-colors {flagPrimary
-          ? 'bg-accent text-cn-ink'
+          ? 'bg-accent text-on-accent'
           : 'ms-chip text-text-main'}"
       >
         {#if flagPrimary}
@@ -1247,7 +1247,7 @@
         aria-pressed={unranked}
         title={m.minesweeper_unranked_hint()}
         class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50 {unranked
-          ? 'bg-accent text-cn-ink'
+          ? 'bg-accent text-on-accent'
           : 'ms-chip text-text-main'}"
       >
         <Trophy size={18} strokeWidth={2.5} class={unranked ? 'opacity-40' : ''} />
@@ -1437,7 +1437,7 @@
             </span>
             <span
               class="shrink-0 rounded-full px-3 py-1 text-xs font-bold {settings.doubleTapZoom
-                ? 'bg-accent text-cn-ink'
+                ? 'bg-accent text-on-accent'
                 : 'bg-cn-surface text-text-muted'}"
             >
               {settings.doubleTapZoom ? m.minesweeper_setting_on() : m.minesweeper_setting_off()}
@@ -1456,7 +1456,7 @@
             </span>
             <span
               class="shrink-0 rounded-full px-3 py-1 text-xs font-bold {settings.haptics
-                ? 'bg-accent text-cn-ink'
+                ? 'bg-accent text-on-accent'
                 : 'bg-cn-surface text-text-muted'}"
             >
               {settings.haptics ? m.minesweeper_setting_on() : m.minesweeper_setting_off()}
@@ -1498,7 +1498,7 @@
                   onclick={() => updateSettings({ animations: speed })}
                   class="flex-1 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors {settings.animations ===
                   speed
-                    ? 'bg-accent text-cn-ink'
+                    ? 'bg-accent text-on-accent'
                     : 'text-text-muted hover:text-text-main'}"
                 >
                   {animationLabel(speed)}

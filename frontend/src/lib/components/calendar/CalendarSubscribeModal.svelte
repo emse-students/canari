@@ -108,7 +108,7 @@
         rel="noopener noreferrer"
         class="{isPhone
           ? 'border-cn-border text-text-main hover:bg-cn-bg border'
-          : 'bg-accent text-cn-ink hover:bg-accent-hover shadow-sm'} inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold transition-colors"
+          : 'bg-accent text-on-accent hover:bg-accent-hover shadow-sm'} inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold transition-colors"
       >
         {m.asso_calendar_google_add_button()}
       </a>
@@ -159,7 +159,7 @@
       <button
         type="button"
         onclick={openInCalendarApp}
-        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
       >
         {isPhone ? m.calendar_subscribe_app_button() : m.asso_calendar_apple_subscribe_button()}
       </button>

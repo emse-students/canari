@@ -277,7 +277,7 @@
       type="button"
       disabled={!canSave}
       onclick={save}
-      class="bg-accent text-cn-ink hover:bg-accent-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
+      class="bg-accent text-on-accent hover:bg-accent-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
     >
       {m.audience_save()}
     </button>

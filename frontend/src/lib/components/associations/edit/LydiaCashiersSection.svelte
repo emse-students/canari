@@ -204,7 +204,7 @@
             )}
           </p>
           {#if cashier.state === 'unconfirmed'}
-            <p class="text-amber-warn text-xs" role="status">
+            <p class="text-amber-warn-text text-xs" role="status">
               {m.asso_lydia_cashier_state_unconfirmed()}
             </p>
           {:else if cashier.state === 'revoke-unconfirmed'}

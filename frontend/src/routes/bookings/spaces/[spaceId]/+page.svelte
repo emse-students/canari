@@ -111,7 +111,7 @@
       <p class="text-text-main text-base">{m.bookings_space_unavailable()}</p>
       <a
         href={resolve('/bookings')}
-        class="bg-accent text-cn-dark rounded-xl px-4 py-2 text-sm font-semibold"
+        class="bg-accent text-on-accent rounded-xl px-4 py-2 text-sm font-semibold"
       >
         {m.bookings_space_unavailable_back()}
       </a>

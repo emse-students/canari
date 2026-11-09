@@ -100,7 +100,7 @@
         aria-pressed={selected}
         onclick={() => pickChip(cents)}
         class="min-h-11 rounded-full border px-4 text-sm font-semibold transition-colors {selected
-          ? 'bg-accent text-cn-ink border-transparent'
+          ? 'bg-accent text-on-accent border-transparent'
           : 'border-cn-border text-text-main hover:bg-cn-border/40'}"
       >
         {formatAmountCents(cents, currency, locale, true)}
@@ -111,7 +111,7 @@
       aria-pressed={keypadOpen}
       onclick={openKeypad}
       class="min-h-11 rounded-full border px-4 text-sm font-semibold transition-colors {keypadOpen
-        ? 'bg-accent text-cn-ink border-transparent'
+        ? 'bg-accent text-on-accent border-transparent'
         : 'border-cn-border text-text-main hover:bg-cn-border/40'}"
     >
       {m.shop_amount_other()}

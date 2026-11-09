@@ -869,7 +869,7 @@
                         state for as long as it existed, with no screen able to report it.
                       -->
                       {#if !product.isActive}
-                        <p class="text-amber-warn mt-1 text-xs font-semibold">
+                        <p class="text-amber-warn-text mt-1 text-xs font-semibold">
                           {product.activationWithheld
                             ? m.asso_cotisations_tier_withheld_hint()
                             : m.asso_cotisations_tier_off_sale_hint()}
@@ -1181,7 +1181,7 @@
                             onValueChange={(v) => void handleChangeTier(item, v)}
                             label={m.asso_cotisations_tier_change_label()}
                             disabled={switchingTagId !== null}
-                            triggerClass="border-amber-warn/40 bg-amber-warn/15 text-amber-warn flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
+                            triggerClass="border-amber-warn/40 bg-amber-warn/15 text-amber-warn-text flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
                           >
                             {#snippet trigger(selected)}
                               <span class="truncate">{selected?.label ?? item.tier}</span>
@@ -1190,7 +1190,7 @@
                           </Picker>
                         {:else if item.tier}
                           <span
-                            class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
+                            class="bg-amber-warn/15 text-amber-warn-text rounded-full px-2 py-0.5 text-xs font-semibold"
                           >
                             {item.tier}
                           </span>

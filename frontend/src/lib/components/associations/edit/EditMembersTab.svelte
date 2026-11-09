@@ -318,7 +318,7 @@
       <button
         type="submit"
         disabled={addingMember || !newMemberUserId.trim()}
-        class="bg-accent text-cn-ink hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
+        class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
       >
         {addingMember ? '…' : m.common_add_button()}
       </button>

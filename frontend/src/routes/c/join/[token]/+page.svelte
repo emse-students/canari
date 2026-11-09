@@ -184,7 +184,7 @@
         type="button"
         onclick={join}
         disabled={joining}
-        class="bg-accent text-cn-ink hover:bg-accent-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold transition-colors disabled:opacity-50"
+        class="bg-accent text-on-accent hover:bg-accent-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold transition-colors disabled:opacity-50"
       >
         {joining ? m.common_connecting_label() : m.community_join_btn()}
       </button>

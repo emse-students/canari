@@ -110,7 +110,7 @@
     {#if view !== 'loading'}
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
-        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
       >
         {#if view === 'paid' || view === 'overCapacity'}
           {m.form_success_back_to_form()}

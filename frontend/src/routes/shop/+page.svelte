@@ -209,7 +209,7 @@
         <p class="text-text-muted text-sm">{m.shop_login_required_desc()}</p>
         <a
           href={resolve('/login')}
-          class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-opacity"
+          class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-opacity"
         >
           {m.shop_login_button()}
         </a>

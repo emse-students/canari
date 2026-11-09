@@ -292,7 +292,7 @@
                 onclick={() => chooseCadence(opt.value)}
                 class="focus-visible:ring-accent-icon rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2 disabled:opacity-50
  {biometricCadence === opt.value
-                  ? 'bg-accent text-cn-ink shadow'
+                  ? 'bg-accent text-on-accent shadow'
                   : 'text-text-muted hover:text-text-main'}"
               >
                 {opt.label}

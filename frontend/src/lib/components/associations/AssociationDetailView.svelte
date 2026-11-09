@@ -507,7 +507,7 @@
               <a
                 href="{base}/{encodeURIComponent(slug)}/edit"
                 use:guideAnchor={'asso.manage'}
-                class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
+                class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
               >
                 <Settings size={16} />
                 {wordingFor(asso.type).manageButton()}

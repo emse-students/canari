@@ -154,7 +154,7 @@
               </p>
               {#if card.membersOnly}
                 <span
-                  class="bg-amber-warn/15 text-amber-warn text-2xs rounded-full px-2 py-0.5 font-bold uppercase"
+                  class="bg-amber-warn/15 text-amber-warn-text text-2xs rounded-full px-2 py-0.5 font-bold uppercase"
                 >
                   {m.shop_partnership_members_only_badge()}
                 </span>
@@ -231,7 +231,7 @@
                 type="button"
                 onclick={() => handleClaim(card)}
                 disabled={claiming === card.id}
-                class="bg-accent text-cn-ink hover:bg-accent-hover w-full rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50"
+                class="bg-accent text-on-accent hover:bg-accent-hover w-full rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50"
               >
                 {claiming === card.id
                   ? m.shop_partnership_claiming()

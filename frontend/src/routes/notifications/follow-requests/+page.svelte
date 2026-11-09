@@ -143,7 +143,7 @@
             </button>
             <button
               type="button"
-              class="bg-accent text-cn-ink hover:bg-accent-hover rounded-xl px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
+              class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
               disabled={busy !== null}
               onclick={() => answer(request, 'accept')}
             >

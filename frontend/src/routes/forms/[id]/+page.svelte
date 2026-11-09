@@ -776,8 +776,8 @@
             onclick={reminder.toggle}
             disabled={reminder.toggling}
             class="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-colors {reminder.subscribed
-              ? 'text-cn-ink bg-accent hover:bg-accent-hover'
-              : 'bg-amber-warn/20 text-amber-warn hover:bg-amber-warn/30'}"
+              ? 'text-on-accent bg-accent hover:bg-accent-hover'
+              : 'bg-amber-warn/20 text-amber-warn-text hover:bg-amber-warn/30'}"
           >
             {#if reminder.subscribed}
               <BellOff size={13} />{m.form_view_reminder_active()}
@@ -876,7 +876,7 @@
     <!-- ── Online payment paused: the organiser has no account to receive it right now ── -->
     {#if onlinePaymentPaused && !submitted}
       <div
-        class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn mt-4 rounded-2xl border px-4 py-3 text-sm"
+        class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text mt-4 rounded-2xl border px-4 py-3 text-sm"
         role="status"
       >
         <p class="font-semibold">{m.form_view_payments_paused_title()}</p>
@@ -982,11 +982,11 @@
     {/if}
 
     {#if paymentPending}
-      <p class="text-amber-warn mt-2 text-center text-sm font-medium">
+      <p class="text-amber-warn-text mt-2 text-center text-sm font-medium">
         {m.form_view_payment_pending_note()}
       </p>
     {:else if paymentRetry && !submitted}
-      <p class="text-amber-warn mt-2 text-center text-sm font-medium" role="status">
+      <p class="text-amber-warn-text mt-2 text-center text-sm font-medium" role="status">
         {paymentRetry === 'declined'
           ? m.form_view_payment_declined_note()
           : m.form_view_payment_ended_note()}

@@ -98,7 +98,7 @@
         </p>
         <a
           href={resolve('/chat')}
-          class="bg-accent text-cn-ink hover:bg-accent-hover mt-1 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
+          class="bg-accent text-on-accent hover:bg-accent-hover mt-1 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
         >
           {m.group_join_go_to_chat()}
         </a>
@@ -128,7 +128,7 @@
         type="button"
         onclick={join}
         disabled={joining}
-        class="bg-accent text-cn-ink hover:bg-accent-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold transition-colors disabled:opacity-50"
+        class="bg-accent text-on-accent hover:bg-accent-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold transition-colors disabled:opacity-50"
       >
         {joining ? m.common_sending_label() : m.group_join_btn()}
       </button>

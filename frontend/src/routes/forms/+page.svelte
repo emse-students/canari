@@ -180,7 +180,7 @@
     {#snippet actions()}
       <a
         href="/forms/create"
-        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
       >
         <Plus size={16} />
         {m.form_list_new_button()}
@@ -209,7 +209,7 @@
       </p>
       <a
         href="/forms/create"
-        class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
       >
         <Plus size={16} />
         {m.form_list_create_button()}
@@ -281,7 +281,7 @@
             >
               <a
                 href="/forms/{form.id}/edit"
-                class="ui-icon-button bg-accent text-cn-ink hover:bg-accent-hover rounded-xl transition-colors"
+                class="ui-icon-button bg-accent text-on-accent hover:bg-accent-hover rounded-xl transition-colors"
                 aria-label={m.form_list_edit_button()}
                 title={m.form_list_edit_button()}
               >

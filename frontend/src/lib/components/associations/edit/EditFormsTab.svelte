@@ -149,7 +149,7 @@
       href="/forms/create?association={encodeURIComponent(asso.id)}&returnTo={encodeURIComponent(
         editSectionHref(asso.slug, 'formulaires', asso.type === 'list' ? '/lists' : '/associations')
       )}"
-      class="bg-accent text-cn-ink hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
+      class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
     >
       <Plus size={16} />
       {m.asso_forms_new_form_button()}
@@ -158,7 +158,7 @@
 
   {#if hasPaidForms && !onlinePaymentsReady}
     <div
-      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm"
+      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text flex items-start gap-2.5 rounded-xl border px-4 py-3 text-sm"
     >
       <TriangleAlert size={15} class="mt-0.5 shrink-0" />
       <span>
@@ -231,7 +231,7 @@
                 {form.allowCashPayment ? ` · ${m.asso_forms_cash_accepted()}` : ''}
                 {#if form.basePrice > 0 && !onlinePaymentsReady}
                   <span
-                    class="text-amber-warn inline-flex items-center gap-1 font-medium"
+                    class="text-amber-warn-text inline-flex items-center gap-1 font-medium"
                     title={m.asso_forms_payments_not_configured_title()}
                   >
                     <TriangleAlert size={11} />
@@ -271,7 +271,7 @@
 
           {#if pendingCash[form.id]?.length}
             <div class="border-cn-border/50 space-y-2 border-t pt-3">
-              <p class="text-amber-warn flex items-center gap-1.5 text-xs font-bold">
+              <p class="text-amber-warn-text flex items-center gap-1.5 text-xs font-bold">
                 <TriangleAlert size={13} />
                 {m.asso_forms_pending_cash_label({ count: pendingCash[form.id].length })}
               </p>
