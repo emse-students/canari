@@ -22,12 +22,29 @@ const KEY = Symbol('video-viewer-chrome');
 export class ViewerChrome {
   /** The player's controls are faded: the viewer's bars follow. False with no video on screen. */
   videoControlsHidden = $state(false);
+  /** A video player is on screen: its controls, not the viewer's tap toggle, own the bars. */
+  present = $state(false);
   /** Bumped when the viewer wants the player's controls up (a mouse or focus on the header). */
   raised = $state(0);
+  /** The player that spoke last: only it may take its report back when it leaves. */
+  private owner: object | null = null;
 
-  /** Called by the player whenever its controls fade or come back, and with `false` as it leaves. */
-  report(hidden: boolean): void {
+  /** Called by a player (`owner`) whenever its controls fade or come back. */
+  report(owner: object, hidden: boolean): void {
+    this.owner = owner;
+    this.present = true;
     this.videoControlsHidden = hidden;
+  }
+
+  /**
+   * Called as a player leaves. A slide change may mount the next player BEFORE the previous one is
+   * torn down: the leaver only clears what is still its own, never the newcomer's report.
+   */
+  leave(owner: object): void {
+    if (this.owner !== owner) return;
+    this.owner = null;
+    this.present = false;
+    this.videoControlsHidden = false;
   }
 
   /** Asks the player to raise its controls. */

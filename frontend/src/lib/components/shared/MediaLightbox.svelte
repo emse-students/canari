@@ -170,6 +170,12 @@
    */
   const videoChrome = provideViewerChrome();
   const barsHidden = $derived(chromeHidden || videoChrome.videoControlsHidden);
+  // A tap toggled the bars on a PHOTO; swiping to a video must not carry that into it - a video's tap
+  // is its sound, so nothing there would bring the header back. Over a video the bars follow its
+  // controls alone: its controls being up clears the toggle.
+  $effect(() => {
+    if (videoChrome.present && !videoChrome.videoControlsHidden) chromeHidden = false;
+  });
   let infoOpen = $state(false);
 
   // ---- Swipes: where the picture sits while a finger drags it, and the snap after ----

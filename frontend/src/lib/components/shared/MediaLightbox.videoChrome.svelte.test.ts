@@ -134,6 +134,23 @@ describe('the header follows the video controls', () => {
   });
 });
 
+describe('a player that fails', () => {
+  it('brings the header back over its message, and does not fade it again', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    open();
+    startPlaying();
+    fade();
+    expect(headerShown()).toBe(false);
+
+    video().dispatchEvent(new Event('error'));
+    flushSync();
+    expect(document.querySelector('[role="status"]')).not.toBeNull();
+    expect(headerShown(), 'a faded header over an error nobody can dismiss').toBe(true);
+    fade();
+    expect(headerShown(), 'nothing left to fade with').toBe(true);
+  });
+});
+
 describe('the header is given back when the player leaves', () => {
   it('the next video of a gallery starts with its own controls up', () => {
     const props = open('video-a');
