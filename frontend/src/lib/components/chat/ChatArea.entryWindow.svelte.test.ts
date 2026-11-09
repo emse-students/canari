@@ -117,7 +117,7 @@ function mountArea(count: number) {
 }
 
 /** The same mount with a conversation the test can switch, as the parent page does. */
-function mountSwitchable(count: number) {
+function mountSwitchable(count: number, onLoadOlderMessages?: () => Promise<boolean>) {
   const target = document.createElement('div');
   document.body.appendChild(target);
   const props = $state({
@@ -127,6 +127,7 @@ function mountSwitchable(count: number) {
     bindDraftWriter: () => () => {},
     onSend: () => {},
     onInviteMembers: () => {},
+    onLoadOlderMessages,
   });
   const app = mount(ChatArea, { target, props });
   flushSync();
@@ -157,7 +158,7 @@ function rowsAtNextReveal(target: HTMLElement): { readonly rows: number | null; 
 
 /**
  * THE ENTRY'S CLOCK IS FAKE, SO THE TEST CHECKS ARITHMETIC AND NOT SPEED. The widen waits behind
- * `scrollToBottomSettled` (animation frames, 250 and 600 ms re-pins) and `yieldToMainThread`; on
+ * `scrollToBottomSettled` (animation frames) and `yieldToMainThread`; on
  * real timers a loaded runner starves them and the wait outlasts any timeout. Frames and timers are
  * advanced explicitly instead, so the result cannot depend on how busy the machine is.
  */
@@ -350,5 +351,33 @@ describe('ChatArea entry window (F6)', () => {
     await settleEntry();
     expect(entryLines()).toHaveLength(2);
     expect(entryLines()[1]).toMatch(/^\[CHAT_VIEW\] g2 entry settled: pinned=true /);
+  });
+
+  /**
+   * AN OLDER-HISTORY LOAD IN FLIGHT ACROSS A SWITCH (review of #3223). Its restore is computed from
+   * the conversation it started in; landing on the next one put that one at an arbitrary row, and
+   * the entry's 250 / 600 ms re-pins were what used to hide it.
+   */
+  it('a switch retires the older-history load in flight: its restore never lands on the next one', async () => {
+    modelGeometry();
+    let answer: (more: boolean) => void = () => {};
+    const load = vi.fn(() => new Promise<boolean>((resolve) => (answer = resolve)));
+    const { target, props } = mountSwitchable(25, load);
+    await settleEntry();
+    const scroller = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
+    // The reader reaches the top of g1: the window is whole, so the store is asked for more.
+    scroller.scrollTop = 0;
+    scroller.dispatchEvent(new Event('scroll'));
+    await vi.advanceTimersByTimeAsync(20);
+    expect(load).toHaveBeenCalledTimes(1);
+
+    props.conversation = conversationOf(THREAD, 'g2');
+    flushSync();
+    await settleEntry();
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
+
+    answer(true);
+    await settleEntry();
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight);
   });
 });

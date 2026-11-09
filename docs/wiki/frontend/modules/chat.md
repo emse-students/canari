@@ -5145,6 +5145,26 @@ gap - the write put the thread back to the previews alone. It re-reads the conve
 await (`useMessaging.upgradeSnapshot.svelte.test.ts`). **Owed: one notification-tap open on the
 Mi 9T with three pushed replies, and the `entry settled` line read from the exported log.**
 
+**What the timed re-pins were still covering, found in review (2026-11-09).** Three cases, each now
+closed at its cause rather than by a clock:
+
+- **A growth seen by the scroll measurement before the observer could follow it.** `measureScroll`
+  runs in an animation frame, and a frame runs those BEFORE it delivers `ResizeObserver` entries: a
+  medium decoding to its size (no DOM mutation) in the frame of a pending measurement - the reveal's
+  scroll, every widen step's - read "not at the bottom", dropped the flag, and the observer then
+  answered `keep-row`. `stickToBottomAfterScroll` (`threadAnchor.ts`): a reader leaves the bottom
+  only by moving UP out of the slack; a pane that did not move up keeps the flag, and the observer
+  follows. This also makes the smooth glide of fix 2 harmless in principle.
+- **An older-history load in flight across a switch.** `loadOlderGroups`' restore was computed from
+  the PREVIOUS conversation's offsets and landed on the new one, and its `isLoadingOlder` held the
+  new entry's growth to `keep-row`. A switch now retires it (`olderLoadToken`): no restore, and the
+  flag is the new entry's.
+- **The stored copy of the preview.** Re-reading the conversation after the await still wrote the
+  upgrade built from the SHOWN preview over whatever row the stored page had put there - a tombstone
+  came back as the body, a reaction the copy carried was dropped. The body now lands onto the
+  current row (`mergeMessageUpgrade`, the same pending mutations re-folded), and a row that is no
+  longer a preview is left as it is, like the store's compare-and-set does.
+
 ## Each conversation keeps its own draft (2026-10-27)
 
 The composer's text was ONE field of `MainChatPage` (`messageText`), cleared only when the route

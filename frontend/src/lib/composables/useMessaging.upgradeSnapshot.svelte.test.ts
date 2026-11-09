@@ -9,7 +9,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { IndexedDbStorage } from '$lib/db/indexeddb';
-import type { ChatMessage } from '$lib/types';
+import type { ChatMessage, MessageReaction } from '$lib/types';
 import { CONVO, makeDevice, freshStoreName } from './pendingMutations.test-helper';
 
 /** Same notification-name stub as `useMessaging.bulkIngest.svelte.test.ts`. */
@@ -91,5 +91,72 @@ describe('the live upgrade of a shown preview', () => {
     expect(shown.map((m) => m.id)).toEqual(['s1', 's2', 'p1']);
     expect(shown[2].isFcmPreview).toBeFalsy();
     expect(shown[2].content).toContain('the real body');
+  });
+
+  /** Replaces the conversation's rows while the upgrade waits on the store, as the stored page does. */
+  function landDuring(
+    storage: IndexedDbStorage,
+    d: ReturnType<typeof makeDevice>,
+    rows: (current: ChatMessage[]) => ChatMessage[]
+  ) {
+    const read = storage.getPendingMutations.bind(storage);
+    return vi.spyOn(storage, 'getPendingMutations').mockImplementationOnce(async (...args) => {
+      const current = d.conversations.get(CONVO)!;
+      d.conversations.set(CONVO, { ...current, messages: rows(current.messages) });
+      return read(...args);
+    });
+  }
+
+  it('lands the body ONTO the stored copy of the preview, keeping what that copy carried', async () => {
+    const storage = new IndexedDbStorage(freshStoreName());
+    await storage.init();
+    const d = makeDevice(useMessaging, storage);
+    d.conversations.set(CONVO, {
+      ...d.conversations.get(CONVO)!,
+      messages: [row('p1', 5_000, { content: 'caption', isFcmPreview: true })],
+    });
+    const reaction: MessageReaction = { emoji: 'plus-one', userId: 'someone', at: 4_000 };
+    const during = landDuring(storage, d, () => [
+      row('p1', 5_000, { content: 'caption', isFcmPreview: true, reactions: [reaction] }),
+    ]);
+
+    await d.messaging.addMessageToChat(
+      PEER,
+      '{"kind":"text","text":"the real body"}',
+      CONVO,
+      d.ctx,
+      { messageId: 'p1', serverTimestamp: 5_000 }
+    );
+
+    expect(during).toHaveBeenCalled();
+    const [shown] = d.shown();
+    expect(shown.isFcmPreview).toBeFalsy();
+    expect(shown.content).toContain('the real body');
+    expect(shown.reactions).toEqual([reaction]);
+  });
+
+  it('leaves a copy that is no longer a preview - a tombstone - as it is', async () => {
+    const storage = new IndexedDbStorage(freshStoreName());
+    await storage.init();
+    const d = makeDevice(useMessaging, storage);
+    d.conversations.set(CONVO, {
+      ...d.conversations.get(CONVO)!,
+      messages: [row('p1', 5_000, { content: 'caption', isFcmPreview: true })],
+    });
+    landDuring(storage, d, () => [
+      row('p1', 5_000, { content: 'deleted', isFcmPreview: true, isDeleted: true }),
+    ]);
+
+    await d.messaging.addMessageToChat(
+      PEER,
+      '{"kind":"text","text":"the real body"}',
+      CONVO,
+      d.ctx,
+      { messageId: 'p1', serverTimestamp: 5_000 }
+    );
+
+    const [shown] = d.shown();
+    expect(shown.isDeleted).toBe(true);
+    expect(shown.content).not.toContain('the real body');
   });
 });

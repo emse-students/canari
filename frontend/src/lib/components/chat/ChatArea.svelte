@@ -43,6 +43,7 @@
     chatViewEntryLine,
     isPinnedToBottom,
     respondToNewMessage,
+    stickToBottomAfterScroll,
     threadReach,
     keyboardChangeResponse,
     type NewMessageResponse,
@@ -448,6 +449,14 @@
   let hasMoreInDb = $state(true);
   let isLoadingOlder = $state(false);
   /**
+   * The older-history load in flight; a conversation switch retires it, so its late `scrollTop`
+   * restore - computed from the PREVIOUS conversation's offsets - never lands on the new one, and its
+   * `isLoadingOlder` does not hold the new entry's growth to `keep-row` (review of #3223).
+   */
+  let olderLoadToken = 0;
+  /** `scrollTop` at the last `measureScroll` of this conversation (`stickToBottomAfterScroll`). */
+  let lastMeasuredScrollTop: number | null = null;
+  /**
    * Where this conversation's scrollback stands - the ask made once the LOCAL store is exhausted
    * and only a peer can supply what is older.
    *
@@ -651,7 +660,15 @@
     if (!chatContainer) return;
     // THE ONLY WRITER of the thread's stick-to-bottom flag. A scroll is the only thing that can
     // express the reader's intent to leave the live end, so it is the only thing that revises it.
-    isNearBottom = isPinnedToBottom(chatContainer);
+    // Leaving the bottom takes a move UP: a growth seen here before the observer could follow it
+    // must not drop the flag the observer is about to read (`stickToBottomAfterScroll`).
+    isNearBottom = stickToBottomAfterScroll({
+      pinned: isPinnedToBottom(chatContainer),
+      scrollTop: chatContainer.scrollTop,
+      wasNearBottom: isNearBottom,
+      previousScrollTop: lastMeasuredScrollTop,
+    });
+    lastMeasuredScrollTop = chatContainer.scrollTop;
     lastVisibleAnchor = measureLastVisibleAnchor();
     updateStickyDateIndicator();
     if (chatContainer.scrollTop < OLDER_TRIGGER_PX) {
@@ -920,20 +937,25 @@
       return;
     }
     if (onLoadOlderMessages && hasMoreInDb && !isLoadingOlder) {
+      const token = ++olderLoadToken;
       isLoadingOlder = true;
       try {
         const prevScrollHeight = chatContainer?.scrollHeight ?? 0;
         const prevScrollTop = chatContainer?.scrollTop ?? 0;
         const hasMore = await onLoadOlderMessages();
+        if (token !== olderLoadToken) {
+          Log.d('ChatArea', 'older-history load retired by a conversation switch - no restore');
+          return;
+        }
         if (!hasMore) hasMoreInDb = false;
         // New messages were prepended - restore scroll position so the
         // viewport doesn't jump back to the top.
         await tick();
-        if (chatContainer) {
+        if (chatContainer && token === olderLoadToken) {
           chatContainer.scrollTop = prevScrollTop + (chatContainer.scrollHeight - prevScrollHeight);
         }
       } finally {
-        isLoadingOlder = false;
+        if (token === olderLoadToken) isLoadingOlder = false;
       }
       return;
     }
@@ -1183,6 +1205,10 @@
         switchTime = computeMessageListSwitchTime(c.messages);
         windowStart = entryWindowStart(messageGroups.length, ENTRY_FIRST_FRAME_GROUPS);
         hasMoreInDb = !isChannel;
+        // The previous conversation's older-history load and scroll offset are not this one's.
+        olderLoadToken++;
+        isLoadingOlder = false;
+        lastMeasuredScrollTop = null;
         scrollbackState = 'idle';
         scrollbackAskedAt = null;
         // Hold the list invisible until fillViewportThenPin() lands it at the bottom, so the

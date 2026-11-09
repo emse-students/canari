@@ -1149,14 +1149,36 @@ export function useMessaging() {
         // that gap (`renderStoredPage`): writing the old snapshot back put the thread back to the
         // preview rows alone (useMessaging.upgradeSnapshot.svelte.test.ts).
         const current = ctx.conversations.get(normalized);
+        // AND SO IS THE ROW. The stored page may have replaced the shown preview by its own copy in
+        // the same gap: a copy already a body or a tombstone is kept as it is (the store's write
+        // below is a compare-and-set that leaves it too), and a copy still a preview takes the body
+        // ONTO itself, so what it carried that the shown preview did not - a reaction - survives.
+        const currentRow = current?.messages.find((m) => m.id === newMsg.id);
+        let shownRow = upgraded;
+        if (currentRow && currentRow !== existing) {
+          if (!shouldUpgradeMessage(currentRow, content)) {
+            console.log(
+              `[ADD_MSG] ${newMsg.id.slice(0, 8)} is no longer a preview in memory - the arriving body leaves it as it is`
+            );
+            shownRow = currentRow;
+          } else {
+            // The SAME mutations folded onto the row as it stands, never the fields computed against
+            // the shown preview: those would replace the copy's reactions with the preview's.
+            const onto = mergeMessageUpgrade(currentRow, newMsg);
+            const refold =
+              settled.consumed.length > 0 ? settleAgainstPending(onto, settled.consumed) : null;
+            shownRow = refold?.fields ? settledChatMessage(onto, refold.fields) : onto;
+            if (refold?.fields?.reactions) messageReactions.set(onto.id, refold.fields.reactions);
+          }
+        }
         if (current) {
           ctx.conversations.set(normalized, {
             ...current,
             messages: insertMessageOrdered(
               current.messages.filter((m) => m.id !== newMsg.id),
-              upgraded
+              shownRow
             ),
-            lastMessageAt: advanceLastMessageAt(current.lastMessageAt, [upgraded]),
+            lastMessageAt: advanceLastMessageAt(current.lastMessageAt, [shownRow]),
           });
         } else {
           console.warn(
@@ -1197,7 +1219,7 @@ export function useMessaging() {
           publishTabMessageUpdate({
             type: 'message_added',
             conversationId: normalized,
-            message: upgraded,
+            message: shownRow,
             ...(updatedConvo.lastMessageAt !== undefined
               ? { lastMessageAt: updatedConvo.lastMessageAt }
               : {}),

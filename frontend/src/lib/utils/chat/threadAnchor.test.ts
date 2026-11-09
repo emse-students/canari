@@ -6,6 +6,7 @@ import {
   isPinnedToBottom,
   keyboardChangeResponse,
   respondToNewMessage,
+  stickToBottomAfterScroll,
   THREAD_BOTTOM_SLACK_PX,
   threadGrowthResponse,
   threadReach,
@@ -358,5 +359,34 @@ describe('chatViewEntryLine', () => {
     ).toBe(
       '01234567 entry settled: pinned=false isNearBottom=true newestVisible=false rows=60 fromBottom=180'
     );
+  });
+});
+
+describe('stickToBottomAfterScroll', () => {
+  const at = { pinned: false, scrollTop: 1000, wasNearBottom: true, previousScrollTop: 1000 };
+
+  it('is true whenever the pane is within the slack of its bottom', () => {
+    expect(stickToBottomAfterScroll({ ...at, pinned: true, wasNearBottom: false })).toBe(true);
+  });
+
+  /**
+   * THE FRAME RACE (review of #3223): a medium grew by 300 px in the frame of a pending scroll
+   * measurement, which runs before the `ResizeObserver` that follows it. The reader did not move.
+   */
+  it('keeps a reader at the bottom when the bottom moved away and the pane did not move up', () => {
+    expect(stickToBottomAfterScroll(at)).toBe(true);
+    expect(stickToBottomAfterScroll({ ...at, scrollTop: 1040 })).toBe(true);
+  });
+
+  it('lets a reader who moved up out of the slack leave the bottom', () => {
+    expect(stickToBottomAfterScroll({ ...at, scrollTop: 860 })).toBe(false);
+  });
+
+  it('never brings back a reader in history who is not in the slack', () => {
+    expect(stickToBottomAfterScroll({ ...at, wasNearBottom: false, scrollTop: 1400 })).toBe(false);
+  });
+
+  it('measures plainly when there is no previous offset to compare with', () => {
+    expect(stickToBottomAfterScroll({ ...at, previousScrollTop: null })).toBe(false);
   });
 });

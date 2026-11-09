@@ -130,6 +130,39 @@ export function isPinnedToBottom(metrics: ThreadScrollMetrics): boolean {
   return metrics.scrollHeight - (metrics.scrollTop + metrics.clientHeight) < THREAD_BOTTOM_SLACK_PX;
 }
 
+/** What one scroll measurement knows: the pane now, and the flag and offset it measured last. */
+export interface ScrollMeasurement {
+  /** {@link isPinnedToBottom} of the pane as it stands now. */
+  pinned: boolean;
+  scrollTop: number;
+  /** The stick-to-bottom flag before this measurement. */
+  wasNearBottom: boolean;
+  /** `scrollTop` at the previous measurement, or `null` when none was made in this conversation. */
+  previousScrollTop: number | null;
+}
+
+/**
+ * The stick-to-bottom flag after one scroll measurement: **A READER LEAVES THE BOTTOM BY MOVING UP,
+ * NEVER BECAUSE THE BOTTOM MOVED AWAY FROM THEM** (review of #3223, 2026-11-09).
+ *
+ * `measureScroll` runs in an animation frame, and a frame runs its animation callbacks BEFORE it
+ * delivers `ResizeObserver` entries. So a medium decoding to its size, a font swapping or a row
+ * re-laid out without a DOM mutation, in the same frame as a pending scroll measurement, is seen by
+ * the measurement first: the pane reads "not at the bottom" by the height of the growth, the flag
+ * falls, and the observer that runs next answers `keep-row` - the reader is left above the newest
+ * rows by exactly what grew, with nothing that will ever follow it. The entry's timed re-pins
+ * (removed by #3223) used to cover this window after an entry; the cause is here.
+ *
+ * A pane that did not move up (`scrollTop` unchanged or larger) keeps a `true` flag - the reach grew
+ * under it, which the observer follows. Moving up out of the slack is the only way to `false`, and
+ * reaching the slack again is the only way back to `true`.
+ */
+export function stickToBottomAfterScroll(m: ScrollMeasurement): boolean {
+  if (m.pinned) return true;
+  if (!m.wasNearBottom || m.previousScrollTop === null) return false;
+  return m.scrollTop >= m.previousScrollTop;
+}
+
 /** What a change of the soft keyboard may do to the thread (`keyboardChangeResponse`). */
 export interface KeyboardChange {
   wasOpen: boolean;
