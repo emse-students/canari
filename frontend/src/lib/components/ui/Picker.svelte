@@ -176,10 +176,7 @@
   >
     {#each groups as group, gi (gi)}
       {#if group.heading}
-        <div
-          role="presentation"
-          class="text-text-muted text-2xs px-3 pt-2.5 pb-1 font-bold tracking-wider uppercase"
-        >
+        <div role="presentation" class="text-text-muted text-2xs px-3 pt-2.5 pb-1 font-bold">
           {group.heading}
         </div>
       {/if}

@@ -94,10 +94,7 @@
       {/if}
       <section class="space-y-2" aria-labelledby={group.heading ? `group-${group.key}` : undefined}>
         {#if group.heading}
-          <h2
-            id="group-{group.key}"
-            class="text-text-muted scroll-mt-4 px-1 text-xs font-bold tracking-wide uppercase"
-          >
+          <h2 id="group-{group.key}" class="text-text-muted scroll-mt-4 px-1 text-xs font-bold">
             {group.label}
           </h2>
         {/if}

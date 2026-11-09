@@ -48,7 +48,7 @@
       onValueChange={(v) => (scale.min = Number(v))}
       triggerClass={scaleTriggerClass}
     />
-    <span class="text-text-muted text-xs font-bold uppercase">{m.form_builder_scale_to()}</span>
+    <span class="text-text-muted text-xs font-bold">{m.form_builder_scale_to()}</span>
     <Picker
       label={m.form_builder_scale_max_picker()}
       value={String(scale.max)}

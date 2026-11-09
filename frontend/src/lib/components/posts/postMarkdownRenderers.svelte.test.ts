@@ -8,10 +8,15 @@
  * post - rather than trusting that the key is spelled right. Code is the other half: it is quoted
  * text, rendered by `PostCodespan`, and must not turn into pictures.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { beforeAll, describe, it, expect, afterEach } from 'vitest';
+import { setEmojiStyle } from '$lib/utils/emojiStyle';
 import { flushSync, mount, unmount } from 'svelte';
 import SvelteMarkdown from '@humanspeak/svelte-markdown';
 import { POST_MARKDOWN_RENDERERS } from './postMarkdownRenderers';
+
+// These read the emoji PICTURE (`img.emoji`), so they run under the "Canari" emoji setting; both
+// modes are pinned in `EmojiText.svelte.test.ts`.
+beforeAll(() => setEmojiStyle('canari'));
 
 let mounted: Record<string, unknown> | null = null;
 afterEach(() => {

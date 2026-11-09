@@ -26,6 +26,10 @@ vi.mock('$lib/utils/chat/messageUtils', () => ({
 }));
 vi.mock('$lib/mls-client/incomingDelivery', () => ({ parseServerTimestampMs: vi.fn() }));
 vi.mock('$lib/mls-client/tabMessageSync', () => ({ publishTabMessageUpdate: vi.fn() }));
+const forgetDeliveredSalonSend = vi.fn();
+vi.mock('$lib/utils/chat/messaging', () => ({
+  forgetDeliveredSalonSend: (...a: unknown[]) => forgetDeliveredSalonSend(...a),
+}));
 
 const { handleChannelEvent } = await import('./channelEventHandler');
 const { applySalonEchoChange } = await import('$lib/utils/chat/salonEcho');
@@ -103,6 +107,13 @@ describe('channelEventHandler - the salon echo', () => {
     const { ctx, ids } = setup();
     await handleChannelEvent(frame('mallory'), ctx);
     expect(ids()).toEqual(['local-1']);
+    expect(forgetDeliveredSalonSend).not.toHaveBeenCalled();
+  });
+
+  it('the frame of its own send ENDS that send: no hold, ladder step or reconnect POSTs it again (review of #3189, D3)', async () => {
+    const { ctx } = setup();
+    await handleChannelEvent(frame('me'), ctx);
+    expect(forgetDeliveredSalonSend).toHaveBeenCalledWith('local-1', 'Me');
   });
 
   it('the frame settling a send whose POST reply was lost clears its unsent text', async () => {

@@ -26,6 +26,8 @@ WORKDIR /app
 COPY --from=builder /app/apps/core-service/dist ./dist
 COPY --from=builder /app/apps/core-service/node_modules ./node_modules
 COPY --from=builder /app/apps/core-service/package.json ./
+# Eight invented dev avatars: inert unless DEV_AVATAR_OVERRIDE_DIR is set, which only the dev compose does.
+COPY --from=builder /app/apps/core-service/dev-avatars ./dev-avatars
 
 EXPOSE 3013
 

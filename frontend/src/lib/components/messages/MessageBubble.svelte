@@ -20,6 +20,7 @@
     retryUpload,
     unsentReasonOf,
     uploadViewOf,
+    textWaitOf,
     uploadCancelOf,
     type UnsentReason,
     type UploadView,
@@ -774,6 +775,17 @@
   const queuedTextFailed = $derived(
     isOwn && !mediaRef && status === 'error' && uploadViewOf(messageId)?.phase === 'failed'
   );
+  /**
+   * What a pending TEXT of mine waits for (R05, 2026-11-09), as its sender wrote it (`textWaitOf`:
+   * the outbox for a DM, `messaging.ts` for a salon): the server that answered "not now", or the
+   * link. `null`: a plain "en attente".
+   */
+  const waitingOn = $derived.by((): 'network' | 'server' | null => {
+    if (!isOwn || mediaRef || status !== 'pending') return null;
+    // A device KNOWN offline waits for the link first, whatever the server said before it went.
+    if (connectivity.isOffline) return 'network';
+    return textWaitOf(messageId) ?? null;
+  });
   const upload = $derived.by((): UploadView | null => {
     if (!isOwn || !mediaRef || mediaRef.mediaId) return null;
     if (status !== 'pending' && status !== 'sending') return null;
@@ -1146,6 +1158,7 @@
               {isLastOwn}
               isReadReceiptAnchor={false}
               {status}
+              {waitingOn}
               {readBy}
               onRetry={onRetry ?? (queuedTextFailed ? () => retryUpload(messageId) : undefined)}
               {onDiscard}
