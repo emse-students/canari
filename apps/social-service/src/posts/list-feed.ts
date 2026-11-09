@@ -57,6 +57,8 @@ export interface ListPostsParams {
   multiMedia?: boolean;
   /** With `multiMedia`, a post with a link in its text comes too. */
   withLinks?: boolean;
+  /** A live replay comes too; never without it (docs/wiki/live-replays.md). */
+  withReplays?: boolean;
 }
 
 /** The kind a page is narrowed to: `reel` on the viewer's list whatever was asked, else the request's. */

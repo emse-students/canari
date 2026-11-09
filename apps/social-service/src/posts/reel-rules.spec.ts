@@ -7,7 +7,8 @@
  * carry - a poll on something that expires in a month, a schedule that would start the month before
  * anybody could see it.
  */
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, type Logger } from '@nestjs/common';
+import { assertNotReplay } from './republications.service';
 import { assertCreateKindShape, assertReelEditShape } from './reel-rules';
 import {
   CHAT_REEL_MAX_DURATION_MS,
@@ -145,5 +146,27 @@ describe('reelLimits - the numbers a client reads', () => {
   it('serves the target cap of one "Envoyer à..." press (15.2), so no client carries it', () => {
     expect(reelLimits().chatReelMaxTargets).toBe(CHAT_REEL_MAX_TARGETS);
     expect(CHAT_REEL_MAX_TARGETS).toBe(15);
+  });
+});
+
+describe('assertNotReplay - a live replay is never reposted (owner, 2026-11-09, D6)', () => {
+  const logger = { debug: jest.fn() } as unknown as Logger;
+
+  it('refuses a replay with the typed 403 POST_REPLAY_NOT_REPOSTABLE', () => {
+    let caught: unknown;
+    try {
+      assertNotReplay({ id: 'p1', kind: 'replay' }, logger);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ForbiddenException);
+    expect((caught as ForbiddenException).getResponse()).toMatchObject({
+      code: 'POST_REPLAY_NOT_REPOSTABLE',
+    });
+  });
+
+  it('lets a post and a reel through', () => {
+    expect(() => assertNotReplay({ id: 'p1', kind: 'post' }, logger)).not.toThrow();
+    expect(() => assertNotReplay({ id: 'p1', kind: 'reel' }, logger)).not.toThrow();
   });
 });

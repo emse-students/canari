@@ -117,8 +117,8 @@ served, pictures only** (`singleMediaModeOf`): an installed client keeps asking 
 `fullScreenPageOf` would draw a foreign video as a reel and log an accusation, so it must never
 receive one. The current client sends BOTH (`buildListPostsSearchParams`), so a server that does
 not know `singleMedia` still serves the pictures. The cache key carries `+photos` or `+media`.
-**A video post never expires**: only a `kind = 'reel'` row has an `expiresAt`, and the live-reel
-clause (`posts.kind <> 'reel' OR "expiresAt" > NOW()`) leaves a plain post alone; the viewer draws
+**A video post never expires**: only a `reel` (or a live `replay`) row has an `expiresAt`, and the
+live-row clause (`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`) leaves a plain post alone; the viewer draws
 it as a `reel` page (`fullScreenPageOf`), so the save button, the rail's reactions and the comments
 sheet read it like any post. Pagination order is unchanged (`publishedAt DESC, id DESC`). Pinned by
 `full-screen-post-sql.integration.spec.ts` (both clauses on a real PostgreSQL, a video with each
@@ -272,13 +272,14 @@ never get it deleted - the entry says whose it is.
 
 Hourly (`@Cron('23 * * * *')`). Everything it knows is in the database:
 
-1. **Select** reels with `kind = 'reel' AND "expiresAt" <= NOW()`, oldest first, in batches of 50.
+1. **Select** reels - and live replays past their three days ([live-replays](../live-replays.md)) -
+   with `kind IN ('reel', 'replay') AND "expiresAt" <= NOW()`, oldest first, in batches of 50.
    That predicate IS the state: a reel is due, or it is not, and a row that has been deleted is done.
    No timestamp of the last run, no marker.
 2. **Per reel, in isolation** (a `try` per item): list the blobs - the reel's own media and every
    comment's media with the comment's author as owner - call `reel-purge`, and **only if no blob
    came back `failed`**, delete the row and its `post_notifications`. The row delete is
-   `DELETE ... WHERE id = $1 AND kind = 'reel' AND "expiresAt" <= NOW()`, so **a non-reel post
+   `DELETE ... WHERE id = $1 AND kind IN ('reel', 'replay') AND "expiresAt" <= NOW()`, so **a plain post
    cannot be touched by this code path whatever id reaches it**.
 3. Comments, reactions and links are columns of the row: they go with it.
 4. **Idempotent by construction**: a crash after the blobs and before the row leaves a due row with

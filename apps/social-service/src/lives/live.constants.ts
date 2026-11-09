@@ -41,6 +41,51 @@ export const LIVE_MANIFEST_WINDOW = 10;
  */
 export const LIVE_RETAINED_SEGMENTS = 2 * LIVE_MANIFEST_WINDOW;
 
+/**
+ * THE LONGEST A REPLAY GOES BACK (owner, 2026-11-09, D1 of docs/wiki/live-replays.md): a live that
+ * keeps a replay keeps the segments whose `createdAt` is at most this far behind its NEWEST segment's,
+ * the database's own times - a 10-hour live keeps its last three hours. Never fewer than
+ * {@link LIVE_RETAINED_SEGMENTS}, which the viewers of the running live still need.
+ */
+export const LIVE_REPLAY_MAX_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * THE SHORTEST LIVE THAT BECOMES A REPLAY (owner, 2026-11-09, D4): `lastSegmentAt - startedAt`, the
+ * database's clock. A false start shows nothing.
+ */
+export const LIVE_REPLAY_MIN_MS = 30_000;
+
+/** How long a replay is kept after its live's END (owner, 2026-11-07): written once into `posts."expiresAt"`. */
+export const LIVE_REPLAY_RETENTION_DAYS = 3;
+
+/** How many segments one page of `GET /api/lives/:id/replay` lists; the client asks `from=nextFrom`. */
+export const LIVE_REPLAY_PAGE = 200;
+
+/**
+ * The replays' TOTAL cap by default, in GB of 10^9 bytes (owner, 2026-11-09, D5) - a config value:
+ * `LIVE_REPLAY_TOTAL_MAX_GB` overrides it ({@link liveReplayTotalMaxBytes}).
+ */
+export const LIVE_REPLAY_TOTAL_MAX_GB_DEFAULT = 20;
+
+/** How long a cap eviction stays on record for the admin storage panel, in days. */
+export const LIVE_REPLAY_EVICTION_KEEP_DAYS = 30;
+
+/**
+ * The replays' total cap in bytes, from `LIVE_REPLAY_TOTAL_MAX_GB` (a positive number of GB, a
+ * fraction allowed) or {@link LIVE_REPLAY_TOTAL_MAX_GB_DEFAULT}. THROWS on a value that is set and is
+ * not a positive number: a typo must stop the service at boot, never silently mean "no cap" or "0".
+ */
+export function liveReplayTotalMaxBytes(
+  raw: string | undefined = process.env.LIVE_REPLAY_TOTAL_MAX_GB
+): number {
+  if (raw === undefined || raw.trim() === '') return LIVE_REPLAY_TOTAL_MAX_GB_DEFAULT * 1e9;
+  const gb = Number(raw.trim());
+  if (!Number.isFinite(gb) || gb <= 0) {
+    throw new Error(`LIVE_REPLAY_TOTAL_MAX_GB must be a positive number of GB, got "${raw}"`);
+  }
+  return Math.round(gb * 1e9);
+}
+
 /** The most segments one trim pass deletes: bounds a pass that catches up after a media-service outage. */
 export const LIVE_TRIM_BATCH = 50;
 

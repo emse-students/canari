@@ -18,6 +18,8 @@ export interface OpenablePost {
   scheduledAt?: Date | string | null;
   kind?: StoredPostKind | null;
   expiresAt?: Date | string | null;
+  /** The live a `replay` names; read only for that kind. */
+  liveId?: string | null;
 }
 
 /**
@@ -79,6 +81,9 @@ export async function readPostOpenVerdict(
     [post.id, opts.viewerId ?? null]
   );
   if (rows[0]?.visible !== true) return refuse('not-found', 'outside its audience');
+  if (post.kind === 'replay' && (await removedFromReplayLive(manager, post, opts.viewerId))) {
+    return refuse('not-found', 'removed from the live by its broadcaster');
+  }
   if (
     intent === 'COMMENT' &&
     (await commentsWithheldPostIds(manager, [post.id], opts.viewerId)).has(post.id)
@@ -101,4 +106,25 @@ export async function readPostOpenVerdict(
     return refuse('not-found', 'a block stands between the reader and its author');
   }
   return { refusal: null, why: 'open', blockedIds };
+}
+
+/**
+ * A LIVE REPLAY IS NEVER SHOWN TO A VIEWER ITS BROADCASTER REMOVED FROM THE LIVE (lead decision,
+ * docs/wiki/live-replays.md section 4): a removal was the broadcaster's statement about that person,
+ * and a replay served to them would undo it. Read from `live_removed_viewers`, whose rows live as long
+ * as the live row - which the purge deletes only once the replay post is gone. Asked of a `replay`
+ * alone, after the audience term (so it confirms nothing to an outsider). The author is never removed.
+ */
+async function removedFromReplayLive(
+  manager: EntityManager,
+  post: OpenablePost,
+  viewerId: string | undefined
+): Promise<boolean> {
+  if (!viewerId || viewerId === post.authorId) return false;
+  const rows: unknown[] = await manager.query(
+    `SELECT 1 FROM live_removed_viewers rv JOIN posts p ON p."liveId" = rv."liveId"
+      WHERE p.id = $1 AND rv."viewerId" = $2`,
+    [post.id, viewerId]
+  );
+  return rows.length > 0;
 }

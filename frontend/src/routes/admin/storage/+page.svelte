@@ -390,6 +390,17 @@
         {:else}
           <p class="text-text-muted text-sm">{m.admin_storage_unavailable()}</p>
         {/if}
+        <!-- Live replays and the total cap (docs/wiki/live-replays.md, D5): the eviction count is
+             the admins' signal, shown at zero for the same reason as the reels' overdue count. -->
+        {#if usage.replays}
+          <p class="text-text-muted text-sm">
+            {m.admin_storage_replays({
+              live: usage.replays.live,
+              size: formatStorageBytes(usage.replays.bytes),
+              evictions: usage.replays.evictions,
+            })}
+          </p>
+        {/if}
       </div>
 
       <!-- The MLS half. Postgres and Redis are bare totals above; this says what they are MADE of,
