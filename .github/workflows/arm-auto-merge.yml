@@ -257,9 +257,9 @@ jobs:
           #   5. `CI passed` - not read here: auto-merge hands that to GitHub, as for everybody, and
           #      `dependency-ceiling` refuses a breaking or Tauri-runtime update on this branch there.
           # TIED TO ONE COMMIT: the event's head SHA must be the head the commit list ends on (the
-          # file list is read BEFORE it, so both describe that head), and the arming is made HERE
-          # with `--match-head-commit`, so GitHub refuses it if the head moved after the reads. The
-          # shared step below arms without that binding, so this path never hands it `armable=true`.
+          # file list is read BEFORE it, so both describe that head), and the shared step below arms
+          # (or merges an already-mergeable pull request) with `--match-head-commit` on that same
+          # event head, so GitHub refuses it if the head moved after the reads.
           # A REFUSAL DISARMS, AND SO DOES AN UNREADABLE ANSWER: a `synchronize` run that cannot
           # evaluate the new head must not leave the arming made for the old one standing. The
           # disarm is best effort and loud; the run then goes red. Threat model: docs/wiki/cicd.md.
@@ -371,22 +371,11 @@ jobs:
               refuse_app "$verdict"
             fi
             trap - ERR
-            echo "#$PR completes Dependabot's #$ORIG and changes nothing else - arming it on $HEAD_SHA only."
-            # The shared step below would arm without the head binding; this path arms itself.
-            echo "armable=false" >> "$GITHUB_OUTPUT"
-            if gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"; then
-              echo "Auto-merge armed on $HEAD_SHA. GitHub will squash-merge #$PR when CI passed goes green."
-              exit 0
-            fi
-            # Already armed is the ordinary `synchronize` case; a head that moved is refused by GitHub
-            # and the run for the new head decides. Anything else is loud.
-            armed_now="$(gh pr view "$PR" --repo "$REPO" --json autoMergeRequest --jq '.autoMergeRequest != null')" || armed_now=unknown
-            if [ "$armed_now" = 'true' ]; then
-              echo "Auto-merge was already armed on #$PR, and this run's evaluation of $HEAD_SHA holds."
-              exit 0
-            fi
-            echo "::error::#$PR: could not arm auto-merge on $HEAD_SHA (the head moved, or the App lacks Pull requests write)."
-            exit 1
+            echo "#$PR completes Dependabot's #$ORIG and changes nothing else - handing it to the arming step on $HEAD_SHA."
+            # ONE ARMING IMPLEMENTATION: the shared step below is bound to this same event head
+            # (`--match-head-commit`), arms it, and merges it at once if it is already mergeable.
+            echo "armable=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           # canari-only:end
 

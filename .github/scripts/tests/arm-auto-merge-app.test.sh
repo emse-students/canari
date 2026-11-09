@@ -149,7 +149,9 @@ run_case() {
 # Armed: by the shared step (`armable=true`), or - the App's path - by the step itself, bound to the
 # event's head commit.
 armed() { grep -qx 'armable=true' "$work/output" || grep -q -- '^pr merge 5 --auto' "$work/gh.log"; }
-app_armed_on_head() { grep -qxF "pr merge 5 --auto --squash --match-head-commit $M2 --repo o/r" "$work/gh.log" && ! grep -qx 'armable=true' "$work/output"; }
+# The App's refresh is handed to the ONE shared arming step (head-bound, B32; merges at once when
+# already mergeable, B33), so "armed on the head" is the guard's verdict and no arming call of its own.
+app_armed_on_head() { grep -qx 'armable=true' "$work/output" && ! grep -q -- '^pr merge' "$work/gh.log"; }
 not_armed() { # <name>
   if [ "$st" = 0 ] && ! armed; then pass "$1"; else fail "$1 (exit $st)" "$out"; fi
 }
@@ -546,6 +548,14 @@ for state in BLOCKED BEHIND DIRTY UNKNOWN; do
   merge_case "$state" 1
   if [ "$st" != 0 ] && ! merged_now; then pass "B33 a $state pull request is not merged now, and the step fails loudly"; else fail "B33 $state was merged or passed" "$out"; fi
 done
+
+# ── B34: ONE arming implementation - the guard step never arms or merges by itself ───────────────
+# shellcheck disable=SC2016 # the dollar sign is the workflow's own shell text, matched literally
+if ! grep -qE 'gh pr merge "\$PR" (--auto|--squash)' "$work/step.raw"; then
+  pass "B34 the guard step (the App's refresh path included) holds no arming or merge call: the shared step is the only one"
+else
+  fail "B34 the guard step arms or merges on its own - a second implementation to keep in step"
+fi
 
 # ── B20: `pull_request_target` runs with the base repository's secrets: it never checks out ───────
 if grep -qE '^\s*-?\s*uses:\s*actions/checkout' "$wf"; then
