@@ -49,3 +49,8 @@ or `STORE_SHOTS_FONT=<file.woff2>`. The browser tool refuses any site other than
 | Event covers | an event's poster shows only in its detail modal, which no shot opens; the three post photos were posted (fr) through the real composer by `post-seed.mjs` | not needed unless a shot opens an event |
 
 Done on dev (2026-11-09): the four demo seats were emptied through the product (every old group, DM and tombstone, ids recorded in the run's allowlist), then `chat-seed.mjs` (group), `dm-seed.mjs` (four DMs) and `comm-seed.mjs` (two communities) were run in French. The "Fictif" events and three fixture posts that showed in the demo accounts' lists were set aside by a reversible flag (`rejected`, `hiddenByModeration`), never deleted. The test-environment banner is closed before each capture and `verify` fails a shot that shows it.
+
+### iOS: two lessons from the first sign-in (2026-11-09)
+
+- **Submit the Authentik password with the keyboard's Return**, not by tapping the page's Continuer button: `bun ios-device/ios.mjs type - --submit` (the password on stdin) replaces the focused field, reads it back (24 characters for the bench accounts) and presses Return. The keyboard scrolls the sheet, so a tap at the button's pre-scroll position hits nothing and posts nothing; the keyboard's Passwords key sits just below it and opens an AutoFill sheet. Plain `type` replaces the field; `--keys` appends and left stale characters.
+- **The display name reverts to the identity provider's at every sign-in**, so `bun seed.mjs apply --lang fr` runs AFTER the sign-in, never before it.
