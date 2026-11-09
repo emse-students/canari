@@ -8,6 +8,17 @@ import { flushSync, mount, unmount } from 'svelte';
 import ChatArea from '$lib/components/chat/ChatArea.svelte';
 import HubScene from './HubScene.svelte';
 import type { ChatMessage, Conversation } from '$lib/types';
+import { seedUserDisplayName } from '$lib/utils/users/displayName';
+
+// The `mixed` shape's senders are KNOWN, as on a phone whose directory has met them: an unknown one
+// is looked up on the network (the real module's own fetch, which the stub cannot reach), and that
+// lookup answered the bench's 404 with a refresh attempt and an engine warning per open.
+for (const [id, name] of [
+  ['alice', 'Alice Banc'],
+  ['bob', 'Bob Banc'],
+]) {
+  seedUserDisplayName(id, name, name.split(' ')[0]);
+}
 
 /** What one open is asked to draw. */
 interface OpenOptions {
@@ -17,6 +28,11 @@ interface OpenOptions {
   shape: 'own' | 'mixed';
   /** How long to watch after the reveal, for the widen that follows it. */
   settleMs: number;
+  /**
+   * Calendar days the messages are spread over, ending today (1: a second apart, the bench
+   * seed's shape). A salon read for months has a day separator per day, each one named.
+   */
+  days: number;
 }
 
 /** What one open cost, in ms from the gesture (`performance.now()` clock). */
@@ -40,14 +56,19 @@ interface OpenReading {
 
 const ROW_SELECTOR = '[id^="msg-"]';
 
-/** A salon of `rows` short one-line messages, a second apart - the bench seed's shape. */
-function salonOf(rows: number, shape: OpenOptions['shape']): Conversation {
-  const base = Date.UTC(2026, 10, 2, 8, 0, 0);
+/**
+ * A salon of `rows` short one-line messages: a second apart (the bench seed's shape), or spread
+ * evenly over the last `days` days.
+ */
+function salonOf(rows: number, shape: OpenOptions['shape'], days: number): Conversation {
+  const DAY = 86_400_000;
+  const step = days > 1 ? ((days - 1) * DAY) / Math.max(1, rows - 1) : 1000;
+  const base = days > 1 ? Date.now() - (days - 1) * DAY : Date.UTC(2026, 10, 2, 8, 0, 0);
   const messages: ChatMessage[] = Array.from({ length: rows }, (_, i) => ({
     id: `m${String(i).padStart(4, '0')}`,
     senderId: shape === 'own' ? 'bench-reader' : i % 2 ? 'alice' : 'bob',
     content: `banc ouverture ${i}`,
-    timestamp: new Date(base + i * 1000),
+    timestamp: new Date(base + i * step),
     isOwn: shape === 'own',
   }));
   return {
@@ -143,7 +164,7 @@ function open(options: OpenOptions): Promise<OpenReading> {
     const app = mount(ChatArea, {
       target,
       props: {
-        conversation: salonOf(options.rows, options.shape),
+        conversation: salonOf(options.rows, options.shape, options.days),
         currentUserId: 'bench-reader',
         messageText: '',
         onMessageChange: () => {},
@@ -164,7 +185,11 @@ async function openFromHub(options: OpenOptions): Promise<OpenReading> {
   const target = document.getElementById('pane')!;
   const scene = mount(HubScene, {
     target,
-    props: { communities: 10, salons: 9, salon: salonOf(options.rows, options.shape) },
+    props: {
+      communities: 10,
+      salons: 9,
+      salon: salonOf(options.rows, options.shape, options.days),
+    },
   });
   flushSync();
   await frame();
