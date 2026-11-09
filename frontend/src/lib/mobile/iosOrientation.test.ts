@@ -61,6 +61,10 @@ describe('iOS screen orientation (anti-regression)', () => {
   it("publishes the notch's side to the page after every turn", () => {
     expect(iosMm).toContain("'--safe-area-inset-left'");
     expect(iosMm).toContain("'--safe-area-inset-right'");
-    expect(iosMm).toContain('forKeyPath:@"effectiveGeometry"');
+    // UIKit's own signal, called in the layout pass with the turned insets final - never a scene
+    // observer plus a hop to the next run-loop turn, which proved nothing about ordering.
+    expect(iosMm).toContain('@selector(viewSafeAreaInsetsDidChange), (IMP)CanariSafeAreaDidChange');
+    expect(iosMm).toMatch(/CanariOrigSafeAreaDidChange\(self, _cmd\);\s*UIEdgeInsets insets/);
+    expect(iosMm).not.toContain('forKeyPath:@"effectiveGeometry"');
   });
 });
