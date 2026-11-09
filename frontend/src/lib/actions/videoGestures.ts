@@ -153,10 +153,15 @@ export function videoGestures(node: HTMLElement, initial: VideoGestureParams) {
     if (e.detail === 0) return;
     if (swallowClick) {
       swallowClick = false;
+      e.stopPropagation();
       Log.d('videoGestures', 'the click of a hold - not a tap');
       return;
     }
     if (isControl(e.target)) return;
+    // THE PICTURE'S TAP IS THE PLAYER'S and goes no further: a message bubble around it would open
+    // its info panel, a card its page. A surface's double tap still sees it - `doubleTapLike`
+    // listens in the CAPTURE phase, before this.
+    e.stopPropagation();
     const waits = params.waitForDouble ?? node.closest(`[${DOUBLE_TAP_LIKES}]`) !== null;
     if (waits) {
       taps.tap({ x: e.clientX, y: e.clientY, t: e.timeStamp });

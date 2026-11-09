@@ -100,14 +100,19 @@
      */
     safeBottom?: boolean;
     /**
-     * THE REEL VIEWER'S PLAYER (user, 2026-10-23: *"les Reels d'instagram sont beaucoup plus epures,
-     * la barre de lecture est discrete et collee en bas, sans timecode"*): no control row, no
-     * timecode, no big play button. One thin progress line on the very bottom edge, ABOVE the
-     * caption's vignette (`z-40` over its `z-20`) so the scrim never dims it, thickening with a handle
-     * only while touched; a tap on the picture plays or pauses, with a centred glyph. Sound and save
-     * are the reel rail's (`ReelActionRail`), the sound through the same `videoSound` answer.
+     * WHICH SURFACE THIS PLAYER IS (owner, 2026-11-09: one player, a `variant` each):
+     *
+     * - `lightbox` (the default): the full-screen viewer's glass bar, disc and fade;
+     * - `reel`: THE REEL VIEWER'S PLAYER (user, 2026-10-23: *"les Reels d'instagram sont beaucoup plus
+     *   epures, la barre de lecture est discrete et collee en bas, sans timecode"*): no control row,
+     *   no timecode, no big play button except on an autoplay refusal. One thin progress line on the
+     *   very bottom edge, ABOVE the caption's vignette (`z-40` over its `z-20`) so the scrim never dims
+     *   it, thickening with a handle only while touched. Its speaker is the reel rail's
+     *   (`ReelActionRail`, the kit's `VideoSoundButton`), on the same `videoSound` answer.
+     *
+     * The gestures are the same on both (`videoGestures`): a tap is the sound, a hold pauses.
      */
-    minimal?: boolean;
+    variant?: 'lightbox' | 'reel';
     /**
      * A picture of the video's first frame, drawn in its place until the element holds that frame
      * (a reel's: `reelPosters.svelte.ts` or the publisher's ThumbHash). Given, it replaces Canari's
@@ -133,7 +138,7 @@
     videoClass = 'max-h-full max-w-full object-contain',
     soundScope = 'app',
     safeBottom = true,
-    minimal = false,
+    variant = 'lightbox',
     poster = null,
     onPlaybackBlocked,
   }: Props = $props();
@@ -158,6 +163,9 @@
       video.currentTime = at;
     }
   }
+
+  /** The reel's spare player: a line, no bar, its play disc only on a decided refusal. */
+  const minimal = $derived(variant === 'reel');
 
   let root: HTMLDivElement | null = $state(null);
   let video: HTMLVideoElement | null = $state(null);
@@ -358,17 +366,6 @@
     if (e.pointerType === 'mouse') showControls();
   }
 
-  /**
-   * THE MINIMAL (REEL) PLAYER'S TAP, until the reel moves to the shared gestures: a tap anywhere on
-   * it plays or pauses. The full player's tap is `videoGestures`' (the sound). Controls, the play
-   * button and the seek line stop their own clicks, so only a tap that is nobody else's gets here.
-   */
-  function onPictureTap(e: MouseEvent) {
-    if (!minimal) return;
-    e.stopPropagation();
-    togglePlay();
-  }
-
   /** A drag on the scrubber keeps the controls up; its end restarts the fade. */
   function onScrubbingChange(next: boolean) {
     scrubbing = next;
@@ -507,16 +504,10 @@
   aria-label={m.video_player_label()}
   tabindex="0"
   data-video-player
-  use:videoGestures={{
-    onTap: toggleMute,
-    onHoldStart,
-    onHoldEnd,
-    enabled: !minimal,
-  }}
+  use:videoGestures={{ onTap: toggleMute, onHoldStart, onHoldEnd }}
   onkeydown={onKeydown}
   onfocusin={onFocusIn}
   onpointermove={onPointerMove}
-  onclick={onPictureTap}
 >
   <!-- svelte-ignore a11y_media_has_caption -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->

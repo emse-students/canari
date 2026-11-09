@@ -77,6 +77,19 @@ describe('the speaker', () => {
     expect(button.hasAttribute('data-video-controls')).toBe(true);
   });
 
+  it("is the reel rail's speaker too: a bare glyph with a tooltip and the call site's marker", () => {
+    const target = render(VideoSoundButton, {
+      muted: true,
+      onToggle: vi.fn(),
+      rail: true,
+      'data-reel-rail-sound': true,
+    });
+    const button = target.querySelector('button')!;
+    expect(button.hasAttribute('data-reel-rail-sound')).toBe(true);
+    expect(button.getAttribute('title')).toBeTruthy();
+    expect(target.querySelector('.glass-video'), 'the rail draws no chip').toBeNull();
+  });
+
   it('draws its own glass chip alone, and no second blur inside a glass bar', () => {
     const alone = render(VideoSoundButton, { muted: true, onToggle: vi.fn() });
     expect(alone.querySelector('.glass-video')).not.toBeNull();

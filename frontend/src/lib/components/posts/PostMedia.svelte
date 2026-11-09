@@ -520,7 +520,7 @@
         src={playUrl!}
         disableRemotePlayback={streamManaged}
         class="h-full w-full"
-        minimal={minimalPlayer}
+        variant={minimalPlayer ? 'reel' : 'lightbox'}
         safeBottom={playerSafeBottom}
         {poster}
         {onPlaybackBlocked}

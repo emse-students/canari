@@ -425,7 +425,7 @@ function mountMinimal(
   document.body.appendChild(target);
   const component = mount(VideoPlayer, {
     target,
-    props: { src: 'blob:reel', minimal: true, safeBottom, poster, onPlaybackBlocked },
+    props: { src: 'blob:reel', variant: 'reel', safeBottom, poster, onPlaybackBlocked },
   });
   mounted.push(() => unmount(component));
   flushSync();
@@ -463,22 +463,49 @@ it('minimal: shows no glyph at load, at an engine pause, or at the end', () => {
   expect(target.querySelector('[data-video-glyph]')).toBeNull();
 });
 
-it('minimal: a tap plays or pauses and shows the glyph of what it did', () => {
+/**
+ * THE REEL'S GESTURES ARE EVERY PLAYER'S (owner, 2026-11-09): a tap is the sound - the app's one
+ * answer, remembered - with its glyph, and a press held pauses until released. Instagram's reel tap
+ * pauses; Canari's does not, by decision.
+ */
+it('minimal: a tap toggles the sound with its glyph, and plays or pauses nothing', () => {
   const { target, root, video } = mountMinimal();
   video.dispatchEvent(new Event('loadeddata'));
-  // The element is still paused under the test, so the load asked its autoplay: not the tap's.
+  startPlaying(video);
   vi.mocked(HTMLMediaElement.prototype.play).mockClear();
-  root.click();
+  tap(root);
+  video.dispatchEvent(new Event('volumechange'));
+  flushSync();
+  expect(video.muted).toBe(false);
+  expect(videoSound.muted).toBe(false);
+  expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
+    'sound-on'
+  );
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled();
+});
+
+it('minimal: a press held pauses the reel and the release resumes it', () => {
+  vi.useFakeTimers();
+  const { root, video } = mountMinimal();
+  video.dispatchEvent(new Event('loadeddata'));
+  startPlaying(video);
+  vi.mocked(HTMLMediaElement.prototype.play).mockClear();
+  root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0 }));
+  vi.advanceTimersByTime(HOLD_TO_PAUSE_MS);
+  expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
+  root.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+});
+
+it('minimal: the keyboard still plays and pauses, with the glyph of what it did', () => {
+  const { target, root, video } = mountMinimal();
+  video.dispatchEvent(new Event('loadeddata'));
+  vi.mocked(HTMLMediaElement.prototype.play).mockClear();
+  root.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
   flushSync();
   expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
   expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe('play');
-  startPlaying(video);
-  root.click();
-  flushSync();
-  expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
-  expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
-    'pause'
-  );
 });
 
 it('minimal: a loading reel shows its first frame picture, never a play glyph', () => {
@@ -586,7 +613,7 @@ it('minimal: an autoplay WITH SOUND that is refused keeps the sound and shows th
   // Lead decision 2026-11-04: the sound is the reader's explicit choice; a refusal never mutes.
   videoSound.setMuted(false);
   const blocked = vi.fn();
-  const { target, root, video } = mountMinimal(true, null, blocked);
+  const { target, video } = mountMinimal(true, null, blocked);
   expect(video.muted).toBe(false);
   const play = vi.mocked(HTMLMediaElement.prototype.play);
   play.mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'));
@@ -599,8 +626,8 @@ it('minimal: an autoplay WITH SOUND that is refused keeps the sound and shows th
   expect(playButton(target)).not.toBeNull();
   expect(blocked).toHaveBeenCalledWith('refused');
   expect(String(warn.mock.calls[0][0])).toContain('with sound');
-  // The reader's tap plays it as it is - with the sound they chose.
-  root.click();
+  // The reader's press on the play disc plays it as it is - with the sound they chose.
+  (playButton(target) as HTMLButtonElement).click();
   flushSync();
   expect(play).toHaveBeenCalledTimes(2);
   expect(video.muted).toBe(false);

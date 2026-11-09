@@ -13,8 +13,9 @@
    */
   import { tick, type Snippet } from 'svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
-  import { Heart, MessageCircle, Send, Volume2, VolumeX } from '@lucide/svelte';
+  import { Heart, MessageCircle, Send } from '@lucide/svelte';
   import { videoSound } from '$lib/stores/videoSound.svelte';
+  import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
   import { longPress } from '$lib/actions/longPress';
   import { getLocale } from '$lib/paraglide/runtime';
   import { m } from '$lib/paraglide/messages';
@@ -288,20 +289,12 @@
   {@render tools?.()}
 
   {#if sound}
-    <button
-      type="button"
-      class="ui-icon-button rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-      aria-label={m.video_sound_label()}
-      title={m.video_sound_label()}
-      aria-pressed={!videoSound.muted}
-      onclick={() => videoSound.toggle()}
+    <!-- The kit's speaker, drawn as a rail glyph: one sound button in the app, not a copy of it. -->
+    <VideoSoundButton
+      muted={videoSound.muted}
+      onToggle={() => videoSound.toggle()}
+      rail
       data-reel-rail-sound
-    >
-      {#if videoSound.muted}
-        <VolumeX size={26} strokeWidth={2} class="drop-shadow-md" aria-hidden="true" />
-      {:else}
-        <Volume2 size={26} strokeWidth={2} class="drop-shadow-md" aria-hidden="true" />
-      {/if}
-    </button>
+    />
   {/if}
 </div>
