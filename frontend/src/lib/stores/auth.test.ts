@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-import { NotFromApiError } from '$lib/utils/apiJson';
+import { flushMacrotask } from '../../test/flush';
+import { AnswerBodyLostError, NotFromApiError } from '$lib/utils/apiJson';
 import {
   isSessionQuestionOpen,
   isTransportFailure,
@@ -155,6 +156,46 @@ describe('the session-expired announcement', () => {
     expect(outcome).toBeInstanceOf(NotFromApiError);
     expect(isTransportFailure(outcome)).toBe(true);
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('reads a 200 whose body is lost on the way as NO answer, never a verdict', async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    fetchMock.mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.error(new TypeError('network error'));
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    );
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(AnswerBodyLostError);
+    expect(isTransportFailure(outcome)).toBe(true);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("carries the operator's maintenance text, and only the operator's", async () => {
+    fetchMock.mockResolvedValue(
+      Response.json(
+        { code: 'MAINTENANCE', message: 'Back at noon', maintenanceMessage: 'Back at noon' },
+        { status: 503 }
+      )
+    );
+    const withText = await refresh().catch((e: unknown) => e);
+    expect((withText as TransientAnswerError).maintenanceMessage).toBe('Back at noon');
+
+    fetchMock.mockResolvedValue(
+      Response.json(
+        { code: 'MAINTENANCE', message: 'Canari is under maintenance.', maintenanceMessage: null },
+        { status: 503 }
+      )
+    );
+    const without = await refresh().catch((e: unknown) => e);
+    expect((without as TransientAnswerError).maintenanceMessage).toBeNull();
   });
 
   it("stays silent on an edge's HTML 403 - a WAF or a portal says nothing about the cookie", async () => {
@@ -385,12 +426,12 @@ describe('the sign-out handler', () => {
     setToken(liveToken());
     fetchMock.mockResolvedValue(new Response('', { status: 200 }));
     const seen: { requests: number; socketCookie: boolean }[] = [];
-    setSignOutHandler(() =>
+    setSignOutHandler(() => {
       seen.push({
         requests: fetchMock.mock.calls.length,
         socketCookie: document.cookie.includes('canari_ws_token=h'),
-      })
-    );
+      });
+    });
 
     await clearAuth();
     setSignOutHandler(null);
@@ -398,6 +439,33 @@ describe('the sign-out handler', () => {
     // Once, with nothing torn down yet: the teardown deregisters the push token with that credential.
     expect(seen).toEqual([{ requests: 0, socketCookie: true }]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for the handlers own work (the push deregistration) before it revokes the session', async () => {
+    const { setSignOutHandler } = await import('$lib/stores/auth');
+    setToken(liveToken());
+    const order: string[] = [];
+    let release!: () => void;
+    const deregistration = new Promise<void>((resolve) => {
+      release = resolve;
+    }).then(() => {
+      order.push('push deregistered');
+    });
+    fetchMock.mockImplementation(async (url: unknown) => {
+      order.push(`fetch ${String(url)}`);
+      return new Response('', { status: 200 });
+    });
+    setSignOutHandler(() => deregistration);
+
+    const signingOut = clearAuth();
+    // The revocation must not have been sent while the deregistration is still pending.
+    await flushMacrotask();
+    expect(order).toEqual([]);
+    release();
+    await signingOut;
+    setSignOutHandler(null);
+
+    expect(order).toEqual(['push deregistered', expect.stringContaining('/api/auth/logout')]);
   });
 
   it('does not stop the sign-out when the handler throws', async () => {

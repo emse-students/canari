@@ -43,6 +43,7 @@ describe('FormsService - the price of a form of an entity that may not collect',
         })
       ),
       assertPaymentsReady: jest.fn(() => Promise.resolve()),
+      canTakePaymentsNow: jest.fn(() => Promise.resolve(true)),
       mayAct: jest.fn(() => Promise.resolve(true)),
     };
     const service = new FormsService(
@@ -51,6 +52,7 @@ describe('FormsService - the price of a form of an entity that may not collect',
       {} as any,
       { get: jest.fn() } as any,
       associations,
+      {} as any,
       {} as any,
       {} as any,
       {} as any,

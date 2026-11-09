@@ -16,7 +16,7 @@ import {
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { Throttle } from '@nestjs/throttler';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
-import { ChannelService } from './channel.service';
+import { ChannelService, roleLabelOfBody } from './channel.service';
 import {
   type AcceptWorkspaceInviteDto,
   type ChannelInviteDto,
@@ -40,7 +40,7 @@ import {
   CHANNEL_NOTIFICATION_LEVELS,
   CHANNEL_WRITE_POLICIES,
 } from './dto/channel.dto';
-import { type SetRolePermissionDto } from './dto/channel-permission.dto';
+import { type SetRoleLabelDto, type SetRolePermissionDto } from './dto/channel-permission.dto';
 import { LiveGraineSessionsDto } from './dto/live-graine-sessions.dto';
 import { CHANNEL_MESSAGE_RETENTION_DAYS } from './channel-retention.scheduler';
 
@@ -889,6 +889,24 @@ export class ChannelsController {
     return this.service
       .liveGraineSessions(xUserId.trim().toLowerCase(), body.sessionIds ?? [])
       .then((live) => ({ live, retentionDays: CHANNEL_MESSAGE_RETENTION_DAYS }));
+  }
+
+  /**
+   * Gives a role the community's own display name, or resets it (`label` null or blank).
+   * Administrators only; label only - the role's identity and permissions never change.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Patch('roles/:roleId/label')
+  setRoleLabel(
+    @Headers('x-user-id') xUserId: string,
+    @Param('roleId') roleId: string,
+    @Body() body: SetRoleLabelDto
+  ) {
+    return this.service.setRoleDisplayLabel(
+      roleId,
+      xUserId.trim().toLowerCase(),
+      roleLabelOfBody(body)
+    );
   }
 
   /**

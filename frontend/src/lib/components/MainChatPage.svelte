@@ -99,6 +99,9 @@
     MessageBatchOrigin,
   } from '$lib/types';
   import type { BulkIngestPhase } from '$lib/mls-client';
+  import { buildMentionRoster } from '$lib/utils/users/mentionRoster';
+  import { communityNicknameScope } from '$lib/utils/users/conversationNicknames.svelte';
+  import { loadCommunityNicknames } from '$lib/utils/chat/nicknameActions';
 
   interface Props {
     /** Controls whether the sidebar shows private chat conversations or community channels. */
@@ -130,6 +133,35 @@
       )?.viewerCanModerate ??
         false)
   );
+
+  /** The community (database id) the open salon belongs to; null outside a salon. */
+  const selectedChannelWorkspaceId = $derived(
+    isSelectedChannel
+      ? (channels.channelWorkspaces.find((ws) =>
+          ws.channels.some((ch) => ch.id === convs.selectedContact)
+        )?.workspaceDbId ?? null)
+      : null
+  );
+
+  // A COMMUNITY'S NICKNAMES ARE READ ONCE PER SOCKET, at the first salon of it opened; the live
+  // `workspace.updated` event keeps them current while the socket is up. When it drops, every read is
+  // forgotten - the events missed meanwhile are only in the list - so the open salon's community is
+  // read again as soon as it reconnects, and any other at its next opening. A failed read is forgotten
+  // too. The triggers are a connection and an opening, never a timer. A plain Set: the effect must not
+  // re-run on its own bookkeeping.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentional: see comment above
+  const nicknamesRead = new Set<string>();
+  $effect(() => {
+    if (!session.isWsConnected) nicknamesRead.clear();
+  });
+  $effect(() => {
+    const workspaceId = selectedChannelWorkspaceId;
+    if (!session.isWsConnected || !workspaceId || nicknamesRead.has(workspaceId)) return;
+    nicknamesRead.add(workspaceId);
+    void loadCommunityNicknames(workspaceId).then((ok) => {
+      if (!ok) nicknamesRead.delete(workspaceId);
+    });
+  });
 
   /**
    * Whether the viewer may POST in the open channel - the salon's `writePolicy` applied to their own
@@ -224,6 +256,17 @@
   const activeConversation = $derived(convs.currentConvo);
 
   /**
+   * THE ONE SCOPE A NICKNAME IS READ IN for the open conversation ("Modifier les pseudos"): a salon
+   * shows its COMMUNITY's register, an MLS room its own. Handed to the thread's name labels, and to
+   * nothing that leaves the conversation (a push, a profile).
+   */
+  const nicknameScope = $derived(
+    selectedChannelWorkspaceId
+      ? communityNicknameScope(selectedChannelWorkspaceId)
+      : (activeConversation?.id ?? null)
+  );
+
+  /**
    * The open conversation's presentation, resolved the SAME way the list and the thread header
    * resolve it - through `resolveConversationListPresentation`, not by reading fields off the
    * record. A DM's `name` is not the peer's name, so a second derivation here would put a different
@@ -282,13 +325,16 @@
   /** The conversation the panels describe: a channel's own id, or the selected group's. */
   const selectedConversationId = $derived(activeConversation?.id ?? '');
 
-  /** User IDs allowed in @mention suggestions for the active chat/channel, or undefined for unrestricted (e.g. posts). */
-  const composerAllowedUserIds = $derived(
-    isSelectedChannel
-      ? selectedChannelMemberIds
-      : convs.groupMembers.length > 0
-        ? convs.groupMembers
-        : undefined
+  /**
+   * The active group's or salon's members for the @mention picker, each stamped with when they last
+   * spoke here. Empty while the list loads, which makes the picker fall back to the server search.
+   */
+  // O(messages) per message change: one pass over an in-memory array, left as is on purpose.
+  const composerMentionRoster = $derived(
+    buildMentionRoster(
+      isSelectedChannel ? selectedChannelMemberIds : convs.groupMembers,
+      activeConversation?.messages ?? []
+    )
   );
 
   // Deep-link landing (notification tap, invite card, invite link) is owned by
@@ -713,7 +759,7 @@
     };
   });
 
-  // ─── Read watermark (debounced 2 s; delivered at once on leave or off-screen) ──
+  // ─── Read watermark (sent at once, then one trailing mark per 2 s window; delivered at once on leave or off-screen) ──
   /** The pending mark of the conversation being read (see `readMarkDebounce.ts`). */
   const readMarks = createReadMarkDebounce(2000);
 
@@ -805,7 +851,7 @@
     // transport differs - `advanceReadMark`, which the server stores and fans out as `channel.read`.
     const channelReceipt = isSelectedChannel;
 
-    // A SALON'S MARK IS WRITTEN DOWN BEFORE ANY NETWORK. The debounce below can be cut short (the
+    // A SALON'S MARK IS WRITTEN DOWN BEFORE ANY NETWORK. The throttle below can be cut short (the
     // reader leaves, the page reloads) and the POST can fail (a deploy, a dead link); the owed mark
     // survives both and is delivered by the next flush. See `salonReadMarkQueue.ts`.
     if (channelReceipt) {
@@ -1622,6 +1668,7 @@
           currentUserId={session.userId}
           conversation={activeConversation}
           localPreview={isLocalPreview}
+          {nicknameScope}
           heldNotice={heldCount > 0 ? m.chat_send_held({ count: heldCount }) : ''}
           {messageText}
           isChannel={isSelectedChannel ?? false}
@@ -1649,13 +1696,15 @@
           isCatchupAnnounced={messaging.isCatchupOverlayVisible}
           groupMembers={convs.groupMembers}
           pendingInvites={convs.pendingGroupInvites}
-          allowedUserIds={composerAllowedUserIds}
+          mentionRoster={composerMentionRoster}
           canWrite={canWriteToSelectedChannel}
           sendError={convs.sendError}
           onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
           onGroupSetImage={(mediaId) => void convs.handleSetGroupImage(mediaId, convCtx())}
           onGroupDelete={() => void convs.handleDeleteGroup(convCtx())}
           onGroupDeleteLocally={() => void convs.handleDeleteGroupLocally(convCtx())}
+          onStartAgainWithSamePeople={() => void convs.handleStartAgainWithSamePeople(convCtx())}
+          onHideUnopenable={() => convs.handleHideUnopenable(convCtx())}
           onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
           onGroupRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
           messageReactions={isSelectedChannel ? channelReactions : messaging.messageReactions}
@@ -1689,6 +1738,22 @@
                   channelsCtx()
                 )
             : (msgId) => void messaging.handleDeleteMessage(msgId, msgCtx())}
+          onDeleteReelEverywhere={isSelectedChannel
+            ? undefined
+            : (msgId) =>
+                void messaging.handleDeleteReelEverywhere(msgId, msgCtx()).then((run) => {
+                  // A second press while a run ends the same take, or conversations no longer on
+                  // this device: said, never silent (the hint promised every conversation).
+                  if (run.running) showToast(m.reel_sendto_everywhere_running(), 'info');
+                  else if (run.skipped > 0)
+                    showToast(
+                      m.reel_sendto_delete_everywhere_skipped({
+                        done: run.ended,
+                        skipped: run.skipped,
+                      }),
+                      'warning'
+                    );
+                })}
           onEdit={isSelectedChannel
             ? (msgId, text) =>
                 void channels.editChannelMessage(
@@ -1746,12 +1811,15 @@
           <ChannelMembersList
             currentUserId={session.userId}
             selectedChannelId={channels.selectedChannelConversationId}
+            workspaceId={selectedChannelWorkspaceId}
+            canModerate={canModerateSelectedChannel}
           />
         {:else if sidePanelKind === 'media' && selectedConversationId}
           <ConversationMediaPanel
             conversationId={selectedConversationId}
             authToken={session.authToken}
             {loadSharedContent}
+            {nicknameScope}
           />
         {:else if sidePanelKind === 'conversation'}
           <ChatGroupPanel
@@ -1770,6 +1838,8 @@
             onGroupDelete={() => void convs.handleDeleteGroup(convCtx())}
             onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
             onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
+            onSendNickname={(userId, nickname, at) =>
+              messaging.sendNickname(convs.selectedContact ?? '', userId, nickname, at, msgCtx())}
           />
         {:else if sidePanelKind === 'settings'}
           <ChannelSettingsPanel

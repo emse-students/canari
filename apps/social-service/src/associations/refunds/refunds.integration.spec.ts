@@ -438,6 +438,32 @@ maybe('Lydia refunds against PostgreSQL', () => {
     expect((await refundOf(record.id))[0].sideEffect).toBe('seat-freed');
   });
 
+  it('a TOTAL refund of a priced-grid order frees its seat and keeps the lines it was charged', async () => {
+    const { record, submission } = await formPayment(false, 5600);
+    const lines = [
+      {
+        itemId: 'q-grid',
+        rowId: 'vert',
+        colId: 'm',
+        quantity: 2,
+        unitCents: 2800,
+        lineCents: 5600,
+      },
+    ];
+    await ds.query(`UPDATE submissions SET answers = $2, lines = $3 WHERE id = $1`, [
+      submission.id,
+      JSON.stringify({ 'q-grid': { 'vert:m': 2 } }),
+      JSON.stringify(lines),
+    ]);
+    await service.refund(ASSO, record.id, MANAGER, total());
+    const [after] = await ds.query(`SELECT "paymentStatus", lines FROM submissions WHERE id = $1`, [
+      submission.id,
+    ]);
+    expect(after.paymentStatus).toBe('refunded');
+    expect(after.lines).toEqual(lines);
+    expect((await refundOf(record.id))[0].sideEffect).toBe('seat-freed');
+  });
+
   it('a TOTAL refund of a Cercle top-up gives the money back and touches no balance and no tier', async () => {
     const { record, buyer } = await boutiquePayment('balance_topup');
     const before = await tagsOf(buyer);

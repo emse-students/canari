@@ -6,8 +6,8 @@ import type { LoggerService } from '@nestjs/common';
  *
  * "Enfants directs. Et il ne peut y avoir que deux niveaux maximum. Un BDE n'est gere par personne.
  * Les associations/listes peuvent etre gerees par un BDE. Les institutions ne peuvent pas etre
- * gerees." The governing parent (`associations."parentAssociationId"`) is ADDITIVE in WP-D1: nothing
- * reads it for governance until WP-D2.
+ * gerees." The governing parent (`associations."parentAssociationId"`) IS governance since WP-D2:
+ * MANAGE_ASSO in its parent BDE (or itself when a BDE) - `holdsBdeFlagOverSql`.
  *
  * The same three rules are enforced by migration 131 (`canari_dependency_refusal` and its two
  * triggers), which makes a hand-written UPDATE unable to break them; the service asks THIS first so
@@ -39,8 +39,9 @@ export const SPACE_GOVERNOR_TYPE = 'SPACE_GOVERNOR_TYPE';
 
 /**
  * Why a dependency is shown as a MISMATCH on the Dependencies panel (reform 2.5: information, never
- * refused): the parent row is gone; the parent governs no space (the predicate of WP-D2 will treat
- * it as no parent); the entity reaches a space its parent does not govern; its parent governs none
+ * refused): the parent row is gone; the parent governs no space (the governance predicate of WP-D2,
+ * `holdsBdeFlagOverSql`, treats it as no parent); the entity reaches a space its parent does not
+ * govern; its parent governs none
  * of the spaces it reaches.
  */
 export type DependencyMismatch =

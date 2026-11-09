@@ -13,7 +13,11 @@ import {
   ruleInsideGovernedSpaces,
   type SpaceStanding,
 } from './audience-policy';
-import { BDE_SPACE_STANDINGS_SQL, HOLDS_BDE_FLAG_OVER_SQL } from './bde';
+import {
+  BDE_SPACE_STANDINGS_SQL,
+  ENTITY_GOVERNOR_SPACE_STANDINGS_SQL,
+  HOLDS_BDE_FLAG_OVER_SQL,
+} from './bde';
 import {
   DEPENDENCY_CHILD_IS_A_BDE,
   DEPENDENCY_LABEL_INVALID,
@@ -26,6 +30,19 @@ import {
 import type { DependencyMismatch } from './dependency-rules';
 import { writeDependencyJournal } from './dependency-journal';
 import type { AudienceRuleDto } from './dto/space.dto';
+
+/**
+ * The member rows of association `$1` held by users who hold flag `$3` (MANAGE_ASSO) in association
+ * `$2` - its FORMER parent. Answers `userId`, `permissions`. Read once a parent changes
+ * (`SpacesService.warnFormerParentSeats`), to name what the change did not revoke.
+ */
+export const FORMER_PARENT_SEATS_SQL = `SELECT seat."userId", seat.permissions
+  FROM association_members seat
+  WHERE seat."associationId" = $1
+    AND EXISTS (SELECT 1 FROM association_members officer
+      WHERE officer."associationId" = $2 AND officer."userId" = seat."userId"
+        AND (officer.permissions & $3) <> 0)
+  ORDER BY seat."userId"`;
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
 import type { SpaceCampus, SpaceFormation } from './space.entity';
 
@@ -55,11 +72,6 @@ export interface DependencyEntityView {
 /** Who made a dependency change: the platform admin's user id, journaled with it (2.7). */
 export interface DependencyActor {
   userId: string;
-}
-
-/** One audience rule of one association, as the admin grid reads them all at once. */
-export interface AssociationRule extends AudienceRule {
-  associationId: string;
 }
 
 /** A normalised audience rule: `null` is "any". */
@@ -183,16 +195,6 @@ export class SpacesService {
     });
   }
 
-  /** The audience rules of EVERY association, in one read: the grid needs them all to draw itself. */
-  async listAudiences(): Promise<AssociationRule[]> {
-    const rows = await this.audiences.find();
-    return rows.map((r) => ({
-      associationId: r.associationId,
-      formation: r.formation,
-      campus: r.campus,
-    }));
-  }
-
   /**
    * Designates the GOVERNOR of a space, or clears it with `null` (D22; reform 2.3). The governor is
    * an association (a BDE) or, since WP-D1, an INSTITUTION (owner D3: a formation with no BDE placed
@@ -257,8 +259,11 @@ export class SpacesService {
    * guarded by the controller), and optionally its G3 display label (`undefined` leaves the label as
    * it is). The rules are asked first (`dependencyRefusal`) so a refusal is a typed 409; a trigger
    * refusal from a racing write maps to the same code. A parent change writes a `dependency_journal`
-   * line in the same transaction; an unchanged value writes nothing. ADDITIVE in WP-D1: nothing
-   * reads the parent for governance yet.
+   * line in the same transaction; an unchanged value writes nothing. A PRIVILEGE CHANGE since WP-D2:
+   * the parent IS the governor (MANAGE_ASSO in its parent BDE, or itself when a BDE -
+   * `holdsBdeFlagOverSql`), so the new parent's officers gain the super-admin tier, moderation and
+   * deletion of the child, and the former parent's lose them - while member rows the former
+   * parent's officers wrote for themselves stay, and are named at WARN (`warnFormerParentSeats`).
    */
   async setParent(
     associationId: string,
@@ -341,6 +346,32 @@ export class SpacesService {
     );
     this.logger.log(
       `[DEPENDENCY] ${associationId}: parent ${child.parentAssociationId ?? 'none'} -> ${parentId ?? 'none'}${labelChanges ? `, label -> ${displayParentId ?? 'none'}` : ''} by ${actor.userId.slice(0, 8)}`
+    );
+    if (parentChanges && child.parentAssociationId !== null) {
+      await this.warnFormerParentSeats(associationId, child.parentAssociationId);
+    }
+  }
+
+  /**
+   * A parent change moves governance, but not the member rows the FORMER parent's officers may have
+   * written for themselves in the child while they governed it (a super-admin seats itself
+   * uncapped, `member-flag-ceiling.ts`). Revoking them is a decision, not a side effect of a
+   * dependency write - so they are NAMED at WARN for the platform admin to review, never removed.
+   * The same was true under the reach rule; WP-D2 makes the moment observable.
+   */
+  private async warnFormerParentSeats(childId: string, formerParentId: string): Promise<void> {
+    const seats = (await this.dataSource.query(FORMER_PARENT_SEATS_SQL, [
+      childId,
+      formerParentId,
+      AssociationPermissionFlag.MANAGE_ASSO,
+    ])) as { userId: string; permissions: number }[];
+    if (seats.length === 0) {
+      this.logger.debug(`[DEPENDENCY] ${childId}: no member row of the former parent's officers`);
+      return;
+    }
+    this.logger.warn(
+      `[DEPENDENCY] ${childId} left parent ${formerParentId}: ${seats.length} member row(s) held by its MANAGE_ASSO holders stay - review them: ` +
+        seats.map((s) => `${s.userId.slice(0, 8)}=${s.permissions}`).join(', ')
     );
   }
 
@@ -440,8 +471,9 @@ export class SpacesService {
   }
 
   /**
-   * The audience rules of an association, for a global admin or a BDE star of its campus, never on
-   * an institution ("Lire tout", owner 2026-11-03). Each rule says whether its reader may change it.
+   * The audience rules of an association, for a global admin, a BDE star of its campus or its
+   * parent, never on an institution ("Lire tout", owner 2026-11-03). Each rule says whether its
+   * reader may change it: only the entity's PARENT may (WP-D2), and only inside the parent's spaces.
    */
   async getAudiencesFor(
     associationId: string,
@@ -450,13 +482,19 @@ export class SpacesService {
     const association = await this.requireAssociation(associationId);
     const current = await this.getAudiences(associationId);
     if (actor.isGlobalAdmin) return current.map((r) => ({ ...r, editable: true }));
-    const spaces = await this.bdeSpaceStandings(actor.userId);
-    this.judged('read', associationId, () =>
-      assertBdeMayReadAudience(association.type, spaces, current)
+    const { readerSpaces, governorSpaces, governs } = await this.starBounds(
+      actor.userId,
+      associationId
     );
-    const view = current.map((r) => ({ ...r, editable: ruleInsideGovernedSpaces(r, spaces) }));
+    this.judged('read', associationId, () =>
+      assertBdeMayReadAudience(association.type, readerSpaces, current, governs)
+    );
+    const view = current.map((r) => ({
+      ...r,
+      editable: governs && ruleInsideGovernedSpaces(r, governorSpaces),
+    }));
     this.logger.debug(
-      `[spaces] audiences of ${associationId} read by a BDE star: ${view.filter((r) => !r.editable).length}/${view.length} rule(s) beyond its spaces`
+      `[spaces] audiences of ${associationId} read by a BDE star (${governs ? 'its parent' : 'not its parent'}): ${view.filter((r) => !r.editable).length}/${view.length} rule(s) read-only`
     );
     return view;
   }
@@ -494,22 +532,21 @@ export class SpacesService {
     this.judged('write', associationId, () =>
       assertAudienceAllowedForType(association.type, rules)
     );
-    let spaces: SpaceStanding[] | null = null;
+    let governedBy: SpaceStanding[] | null = null;
     if (!actor.isGlobalAdmin) {
-      spaces = await this.bdeSpaceStandings(actor.userId);
       const current = await this.getAudiences(associationId);
-      // Governing it already is what stops a star taking an entity over by adding its own space.
-      const [governs] = (await this.dataSource.query(HOLDS_BDE_FLAG_OVER_SQL, [
+      // Being its parent already is what stops a star taking an entity over by adding its own space.
+      const { readerSpaces, governorSpaces, governs } = await this.starBounds(
         actor.userId,
-        associationId,
-        AssociationPermissionFlag.MANAGE_ASSO,
-      ])) as { holds: boolean }[];
-      const standings = spaces;
+        associationId
+      );
+      governedBy = governorSpaces;
       this.judged('write', associationId, () =>
         assertBdeMayWriteAudience(
           association.type,
-          standings,
-          governs?.holds === true,
+          readerSpaces,
+          governorSpaces,
+          governs,
           current,
           rules
         )
@@ -529,10 +566,10 @@ export class SpacesService {
       return rules;
     });
     await this.invalidateFeedCache();
-    const governedBy = spaces;
+    const bound = governedBy;
     return stored.map((r) => ({
       ...r,
-      editable: governedBy === null || ruleInsideGovernedSpaces(r, governedBy),
+      editable: bound === null || ruleInsideGovernedSpaces(r, bound),
     }));
   }
 
@@ -556,18 +593,41 @@ export class SpacesService {
   }
 
   /**
-   * Every opened space and whether a BDE where `userId` holds MANAGE_ASSO governs it: the borders
-   * of a BDE star's audience powers, per space (`ruleInsideGovernedSpaces`).
+   * The three facts a BDE star's audience powers over association `associationId` are judged on,
+   * all at MANAGE_ASSO:
+   * - `readerSpaces`: every opened space, governed when ANY BDE where `userId` holds the flag
+   *   governs it - the READ bound ("Lire tout": its campus);
+   * - `governs`: `userId` governs the entity - MANAGE_ASSO in its PARENT (`holdsBdeFlagOverSql`,
+   *   WP-D2), never through reach;
+   * - `governorSpaces`: every opened space, governed when the entity's own governing BDE governs it
+   *   and `userId` holds the flag there - the WRITE bound (G8, D1), per space.
    */
-  private async bdeSpaceStandings(userId: string): Promise<SpaceStanding[]> {
-    const rows: SpaceStanding[] = await this.dataSource.query(BDE_SPACE_STANDINGS_SQL, [
-      userId,
-      AssociationPermissionFlag.MANAGE_ASSO,
+  private async starBounds(
+    userId: string,
+    associationId: string
+  ): Promise<{
+    readerSpaces: SpaceStanding[];
+    governorSpaces: SpaceStanding[];
+    governs: boolean;
+  }> {
+    const flag = AssociationPermissionFlag.MANAGE_ASSO;
+    const [readerSpaces, governorSpaces, holds] = await Promise.all([
+      this.dataSource.query(BDE_SPACE_STANDINGS_SQL, [userId, flag]) as Promise<SpaceStanding[]>,
+      this.dataSource.query(ENTITY_GOVERNOR_SPACE_STANDINGS_SQL, [
+        associationId,
+        userId,
+        flag,
+      ]) as Promise<SpaceStanding[]>,
+      this.dataSource.query(HOLDS_BDE_FLAG_OVER_SQL, [userId, associationId, flag]) as Promise<
+        { holds: boolean }[]
+      >,
     ]);
+    const governs = holds[0]?.holds === true;
     this.logger.debug(
-      `[spaces] BDE star standing: ${rows.filter((r) => r.governed).length}/${rows.length} spaces governed`
+      `[spaces] BDE star standing over ${associationId}: reads ${readerSpaces.filter((r) => r.governed).length}/${readerSpaces.length} spaces, ` +
+        `${governs ? `parent, writes ${governorSpaces.filter((r) => r.governed).length}` : 'not its parent, writes none'}`
     );
-    return rows;
+    return { readerSpaces, governorSpaces, governs };
   }
 
   private async requireAssociation(id: string): Promise<Association> {

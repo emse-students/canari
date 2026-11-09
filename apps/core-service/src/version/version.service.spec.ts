@@ -19,6 +19,7 @@ describe('VersionService', () => {
       maintenanceMessage: null,
       callsMode: 'audio',
       livesMode: 'on',
+      checkpointSkipMode: 'on',
     }),
   } as unknown as PlatformService;
 
@@ -40,6 +41,12 @@ describe('VersionService', () => {
     expect(out.lives).toEqual({ mode: 'on' });
   });
 
+  it('publishes the checkpoint-skip switch, which the client alone enforces on its own durability', async () => {
+    const out = await service.getVersion();
+
+    expect(out.checkpointSkip).toEqual({ mode: 'on' });
+  });
+
   it('says it forwards a PKCE verifier, so a client challenges only a server that will redeem it', async () => {
     const out = await service.getVersion();
 
@@ -56,6 +63,12 @@ describe('VersionService', () => {
     const out = await service.getVersion();
 
     expect(out.publishQueue).toBe(true);
+  });
+
+  it('says its estate builds forms as drafts, so a form editor uses drafts only when it does', async () => {
+    const out = await service.getVersion();
+
+    expect(out.formDrafts).toBe(true);
   });
 
   it('reports no build when the environment was not given one', async () => {

@@ -8,6 +8,7 @@
   import { onMount } from 'svelte';
   import { extractMentionUserIds } from '$lib/utils/mentions';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { visibleNickname } from '$lib/utils/users/conversationNicknames.svelte';
   import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
   import { m } from '$lib/paraglide/messages';
   import { canAnswerJoinRequests, pendingJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
@@ -94,13 +95,20 @@
   let isOnline = $derived(isDirect ? $presenceMap[contactName] || false : false);
   let resolvedDisplayName = $state('');
 
+  /**
+   * A DM is titled by its peer, and the peer may carry a nickname IN THIS conversation ("Modifier
+   * les pseudos"): the tile is that conversation's own row, so it names the peer as the thread does.
+   */
+  const peerNickname = $derived(isDirect ? visibleNickname(conversationId, contactName) : null);
+
   const effectiveDisplayName = $derived(
-    displayNameResolved &&
+    peerNickname ??
+      (displayNameResolved &&
       displayName &&
       displayName !== contactName &&
       !(isDirect && isCanonicalDirectKey(displayName))
-      ? displayName
-      : resolvedDisplayName
+        ? displayName
+        : resolvedDisplayName)
   );
 
   onMount(() => {

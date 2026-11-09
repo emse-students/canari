@@ -338,6 +338,22 @@ export class FollowerTabCommitError extends Error {
 }
 
 /**
+ * A key package was asked of a tab whose copy of the MLS state is not the leader's (a follower, or
+ * a leader promoted in place before its reload), and refused before anything was minted: a key
+ * package's private half would live only in that copy, so a peer's Welcome to it could never be
+ * opened by the state that is kept. Same fact as {@link FollowerTabCommitError} (`refusesCommitsHere`).
+ */
+export class FollowerTabKeyPackageError extends Error {
+  constructor() {
+    super(
+      'a key package was asked of a tab whose MLS copy is not the leader copy - only that copy may ' +
+        'mint one, so nothing was minted or published'
+    );
+    this.name = 'FollowerTabKeyPackageError';
+  }
+}
+
+/**
  * Whether a THROWN FIRST submission is a definitive refusal: the server answered with a 4xx, which
  * it sends only before the epoch gate is reached (a malformed commit, a committer not allowed, an
  * expired token, a rate limit) - so the commit did not land, and no earlier request of it exists.

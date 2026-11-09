@@ -21,6 +21,7 @@
  *    pinned Noto, or a well-formed but unassigned one, stays text rather than becoming a broken image.
  */
 import emojiSet from './emojiSvgNames.json';
+import { graphemes } from './emoji';
 
 const AVAILABLE: ReadonlySet<string> = new Set(emojiSet.names);
 
@@ -49,12 +50,6 @@ export type EmojiTextPart =
 
 /** Whole string made of ASCII: the one shape that cannot hold an emoji picture. */
 const ASCII_ONLY = /^[\t\n\r\u0020-\u007f]*$/;
-
-let segmenter: Intl.Segmenter | null = null;
-function graphemes(text: string): Iterable<string> {
-  segmenter ??= new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-  return Array.from(segmenter.segment(text), (s) => s.segment);
-}
 
 /**
  * The picture's file name for one grapheme: its code points in lower-case hex, padded to four

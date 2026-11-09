@@ -165,6 +165,10 @@ need(
   /@Get\(':id\/manifest'\)\s*@Header\('Cache-Control', 'no-store'\)/.test(LIVES_CONTROLLER),
   'the manifest is not no-store'
 );
+need(
+  /@Get\(\)\s*@Header\('Cache-Control', 'no-store'\)\s*list\(/.test(LIVES_CONTROLLER),
+  'the list of open lives is not no-store: it carries a preview key per reader'
+);
 
 // ── the viewer cap fits the host's connection budget ────────────────────────────────────────────
 const num = (name) => {
@@ -201,6 +205,60 @@ need(
   `one address may pull ${connN} x ${rateBps} b/s, over twice the live share (${cap} x ${viewerBps})`
 );
 
+// ── the preview image: its OWN location, zones and egress budget (review of #3135) ─────────────
+// A poster takes no seat, so it must never spend the segments' per-address quota. Its zones bound
+// ONE ADDRESS at LIVE_POSTER_EGRESS_PER_ADDRESS_BPS; nothing caps posters host-wide (the seat cap is
+// the segments' global bound, and a poster takes no seat - lives.md, "What the preview costs").
+const posterHead = `location ~ "^/api/media/public/live-poster/(${UUID})/(${UUID})\\\\z" {`;
+const posterAt = NGINX.indexOf(posterHead);
+need(posterAt >= 0, `the poster location is gone or no longer captures two lower-case uuids`);
+const posterBlock =
+  posterAt >= 0 ? NGINX.slice(posterAt, NGINX.indexOf('\n    }\\n\\', posterAt)) : '';
+for (const line of [
+  'limit_except GET { deny all; }',
+  'limit_req zone=lives_posters ',
+  'limit_conn_log_level warn;',
+  'limit_req_log_level warn;',
+  'set $live_poster_path /api/media/public/live/$1/$2;',
+  'proxy_cache live_segments;',
+  'proxy_cache_key $live_poster_path;',
+  'proxy_cache_lock on;',
+  'proxy_buffering on;',
+  'proxy_set_header Cookie "";',
+  'proxy_set_header Authorization "";',
+  'proxy_set_header X-User-Id "";',
+  'proxy_pass http://$upstream_media_live$live_poster_path;',
+  'add_header Cache-Control "private, max-age=120";',
+  'add_header X-Content-Type-Options "nosniff" always;',
+]) {
+  need(posterBlock.includes(line), `the poster location lacks: ${line}`);
+}
+need(!/auth_request/.test(posterBlock), 'the poster location must not call auth_request');
+need(
+  !/lives_segments/.test(posterBlock),
+  "the poster location spends the segments' quota: a card reader would 429 a seated viewer"
+);
+need(
+  /limit_req_zone \$binary_remote_addr zone=lives_posters:/.test(NGINX) &&
+    /limit_conn_zone \$binary_remote_addr zone=lives_posters_conn:/.test(NGINX),
+  'no lives_posters request and connection zones'
+);
+const posterConnN = Number(posterBlock.match(/limit_conn lives_posters_conn (\d+);/)?.[1]);
+const posterRateBps = Number(posterBlock.match(/limit_rate (\d+);/)?.[1]) * 8;
+const posterBudget = num('LIVE_POSTER_EGRESS_PER_ADDRESS_BPS');
+need(
+  Number.isInteger(posterConnN) && posterConnN > 0 && posterRateBps > 0,
+  'the poster location has no limit_conn or no limit_rate'
+);
+need(posterBudget > 0, 'live.constants.ts states no LIVE_POSTER_EGRESS_PER_ADDRESS_BPS');
+need(
+  posterConnN * posterRateBps <= posterBudget,
+  `one address may pull ${posterConnN} x ${posterRateBps} b/s of posters, over its per-address bound ${posterBudget}`
+);
+need(
+  num('LIVE_HOST_EGRESS_BPS') * num('LIVE_EGRESS_SHARE') + posterBudget <= num('LIVE_HOST_EGRESS_BPS'),
+  'the live share plus ONE address at its poster bound is over the host uplink'
+);
 // ── nginx's own location selection, over the parsed server block ────────────────────────────────
 /**
  * The locations of the `server` block, as a tree: `{ mod, arg, re, children, body }`. The conf is
@@ -337,6 +395,24 @@ for (const probe of [
     at === guard,
     `${JSON.stringify(probe)} is answered by \`location ${at?.mod ?? ''} ${at?.arg ?? '(none)'}\`, not the ^~ guard's 404`
   );
+}
+
+const POSTER_PREFIX = '/api/media/public/live-poster/';
+const posterGuard = server.children.find((l) => l.mod === '^~' && l.arg === POSTER_PREFIX);
+need(posterGuard, `no \`location ^~ ${POSTER_PREFIX}\``);
+const posterCanonical = findLocation(server, `${POSTER_PREFIX}${L1}/${S1}`).loc;
+need(
+  posterCanonical && posterCanonical.body.some((l) => l.startsWith('limit_req zone=lives_posters ')),
+  'the canonical poster path does not land in the poster location'
+);
+for (const probe of [
+  `${POSTER_PREFIX}${L1}/${S1}/`,
+  `${POSTER_PREFIX}${L1}/${S1}\n`,
+  `${POSTER_PREFIX}${L1.toUpperCase().replace(/^1/, 'A')}/${S1}`,
+  `${POSTER_PREFIX}${L1}`,
+]) {
+  const at = findLocation(server, probe).loc;
+  need(at === posterGuard, `${JSON.stringify(probe)} is not the poster guard's 404`);
 }
 
 if (failures.length > 0) {

@@ -596,7 +596,7 @@ Every strip that announces a transient app-wide fact goes through
 
 | Scale | Where | Who |
 | --- | --- | --- |
-| Window | `+layout.svelte`, one fixed flex column | maintenance, fatal MLS error, tab follower, offline |
+| Window | `+layout.svelte`, one fixed flex column | maintenance, fatal MLS error, offline (the tab-follower banner was removed 2026-11-08) |
 | Conversation | `ChatArea.svelte`, `absolute` over the message list | synchronisation |
 | Application | `MainChatPage.svelte` | **nothing, on purpose** |
 
@@ -797,6 +797,31 @@ check in the same file, which is also what catches a fourteenth builder.
   check` always has - it is not a step to remember. An Android or iOS build triggers this, because
   `beforeBuildCommand` is `bun run build`.
 
+### Two writers of `src/lib/paraglide`, ONE set of options (2026-11-06)
+
+The folder has two writers: the CLI (`bun run paraglide:compile`, run by `check`, `test`, `generate`,
+`prepare` and the pre-commit hook) and the vite plugin in `vite.config.js`. They used to carry
+different options (the plugin pinned a strategy and defaulted to `locale-modules` in dev, with its own
+`isServer`), so they emitted DIFFERENT files, and each CLI compile invalidated the plugin's cache in
+`project.inlang/cache/paraglide-js`: the next `vite dev` rewrote ~4,500 files before it listened and
+chokidar fired one event per file (222 s cold, 229 s after a CLI compile, 9 s when nothing had
+changed).
+
+**`project.inlang/paraglide.config.js` is the one source**: paraglide reads it from both writers, and
+the plugin call in `vite.config.js` passes only `project` and `outdir`. Add or change an option THERE,
+never as a flag or a plugin argument. Three traps, all read in `@inlang/paraglide-js` 2.29:
+
+- **The CLI forces `outputStructure` itself** (`message-modules` unless `--output-structure` is
+  given), so the config's value reaches the plugin only; it equals the CLI default, and
+  `paraglideOptions.test.ts` fails if it drifts. Pinning `outputStructure` alone is NOT enough: the
+  strategy and the server check changed the output too (122 s measured).
+- **`isServer` must be identical too**: the config carries the plugin's expression
+  (`import.meta.env?.SSR ?? typeof window === 'undefined'`), which wins over the CLI's default.
+- **The test compile (`paraglide:compile:test`, `.paraglide-test/`) re-states the old CLI defaults**
+  (`--strategy cookie globalVariable baseLocale`, `--is-server "typeof window === 'undefined'"`) so
+  the vitest suites keep resolving the locale as before. It writes another outdir, hence another
+  cache key, and never touches the app's folder.
+
 ## Mobile keyboard detection
 
 The root layout detects the virtual keyboard via `visualViewport`:
@@ -890,3 +915,12 @@ One pull request, because `adapter-node@6` requires `@sveltejs/kit@3` and `kit@3
 The vitest stub of `$app/paths` matches against `src/routes` for the same reason: a stub matching nothing would send every caller down the document branch and test nothing.
 
 **Still a fallback, and why it stays:** the checkout return in `hooks.client.ts` (`navigate`) catches any `goto` failure and assigns `window.location.href`. Its targets are `AppPath`, so a missing route is no longer what it catches; what is left is a navigation failing for another reason on the payment return, which nothing here has observed. It is filed in [backlog](../backlog.d/p3-sveltekit-3-what-the-audit-of-2613-left-open.md) rather than removed blind.
+
+## A draggable card never starts a drag from a field (2026-11-06)
+
+Reported by the owner: in the form editor, dragging across the question title to select text ghosted the whole card away. Cause: the card carried a static `draggable="true"`, and Chromium and WebKit take the drag source from the press itself, so a field inside is hijacked.
+
+- **The rule**, one place: `utils/dragExclusion.ts` (`isDragExcludedTarget`) - `input`, `textarea`, `select`, `button`, `a[href]`, `label`, `summary`, `[contenteditable]`, `[role=textbox]` and `[data-no-drag]` never start a drag; a `[data-drag-handle]` is the exception (a grip that is itself a button).
+- **The mechanism**: the action `actions/draggableCard.ts` sets `draggable` true, flips it to false at `pointerdown` on an excluded target and back on `pointerup`/`pointercancel`/`dragend`. Deciding at pointerdown is the only moment that works in every engine, and it also leaves the touch long-press text selection alone. Keyboard reordering (the move up/down buttons) is not a drag and is untouched.
+- **Surfaces using native HTML5 drag** (both fixed): `FormQuestionsSection` question cards, `EditMembersTab` member rows. The salon list in `Sidebar` uses `svelte-dnd-action` on rows that are buttons with no field inside; it is unchanged. Any new native-draggable card uses `use:draggableCard`, never a bare `draggable`.
+- Tests: `dragExclusion.test.ts`, `FormQuestionsSection.drag.svelte.test.ts`.

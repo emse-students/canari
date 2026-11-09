@@ -39,16 +39,17 @@ import {
   isLiveRefusal,
   LiveRefusalError,
   LiveSegmentUploader,
+  putLivePoster,
+  setLiveTitle,
   startLive,
   type LiveSegmentUploaderOptions,
 } from './api';
 import { sealLiveSegment } from './liveCrypto';
-import {
-  ScreenWakeLock,
-  createMixContext,
-  openLiveScreen,
-  screenShareAvailable,
-} from './liveDevice';
+import { LivePosterSender, posterEverySegments } from './livePoster';
+import { deriveLivePosterKey, sealLivePoster } from './livePosterCrypto';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { liveTitleToSend } from './liveTitle';
+import { createMixContext, openLiveScreen, screenShareAvailable } from './liveDevice';
 import {
   liveRecordingSupported,
   startLiveRecorder,
@@ -56,12 +57,19 @@ import {
   type LiveRecorderStarter,
 } from './liveRecorder';
 import { LiveSegmentPipeline } from './liveSegmentPipeline';
+import { screenAwakeHolder, type ScreenAwakeHolder } from '$lib/mobile/screenAwake';
 import {
   LIVE_BACKLOG_MARGIN_SEGMENTS,
   LIVE_RECORDER_STOP_BOUND_MS,
   LIVE_SEGMENT_MS,
 } from './constants';
-import type { LiveEndResult, LiveLimits, LiveRulesStatus, LiveView } from './types';
+import type {
+  LiveEndResult,
+  LiveLimits,
+  LiveRulesStatus,
+  LiveTitleResult,
+  LiveView,
+} from './types';
 
 /** What a live broadcasts: the camera, or - on a desktop browser - the screen. */
 export type LiveSource = 'camera' | 'screen';
@@ -77,6 +85,7 @@ export type LiveStartProblem =
   | 'withdrawn'
   | 'already-open'
   | 'association-forbidden'
+  | 'association-archived'
   | 'rate-limited'
   | 'disabled'
   | 'offline'
@@ -125,10 +134,25 @@ export interface LiveBroadcastDeps {
   startLive: (
     keyHex: string,
     associationId?: string,
-    acceptedRulesVersion?: number
+    acceptedRulesVersion?: number,
+    title?: string | null
   ) => Promise<LiveView>;
+  /** `PATCH /api/lives/:id`: the title edited on air (owner, 2026-11-07). */
+  setLiveTitle: (liveId: string, title: string | null) => Promise<LiveTitleResult>;
+  /** `PUT /api/lives/:id/poster`: one sealed preview image. */
+  putLivePoster: (liveId: string, sealed: Uint8Array<ArrayBuffer>) => Promise<unknown>;
+  /** The poster key of a live, from its live key (`livePosterCrypto.ts`, HKDF). */
+  derivePosterKey: (liveKeyHex: string, liveId: string) => Promise<string>;
+  /** Seals a preview image under the POSTER key (`livePosterCrypto.ts`), never the live key. */
+  sealPoster: (
+    posterKeyHex: string,
+    liveId: string,
+    plain: Uint8Array
+  ) => Promise<Uint8Array<ArrayBuffer>>;
   fetchLive: (liveId: string) => Promise<LiveView>;
   endLive: (liveId: string) => Promise<LiveEndResult>;
+  /** Subscribes to the link coming back (`connectivity.onReconnect`); returns the unsubscribe. */
+  onReconnect: (listener: () => void) => () => void;
   createUploader: (liveId: string, options: LiveSegmentUploaderOptions) => LiveUploaderLike;
   seal: (
     keyHex: string,
@@ -139,7 +163,8 @@ export interface LiveBroadcastDeps {
   generateKeyHex: () => Promise<string>;
   recordingSupported: () => boolean;
   startRecorder: LiveRecorderStarter;
-  wakeLock: { hold(): Promise<void>; release(): void };
+  /** The screen held on while on air, chosen by platform (`screenAwakeHolder`). */
+  wakeLock: ScreenAwakeHolder;
   /** A monotonic clock, in ms. */
   now: () => number;
   /** Resolves after `ms`: the BOUND on a wait that has no verdict of its own, never a decision. */
@@ -160,14 +185,19 @@ export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
     fetchLiveLimits,
     fetchLiveRules,
     startLive,
+    setLiveTitle,
+    putLivePoster,
+    derivePosterKey: deriveLivePosterKey,
+    sealPoster: sealLivePoster,
     fetchLive,
     endLive,
+    onReconnect: (listener) => connectivity.onReconnect(listener),
     createUploader: (liveId, options) => new LiveSegmentUploader(liveId, options),
     seal: sealLiveSegment,
     generateKeyHex: async () => (await generateMediaCek()).keyHex,
     recordingSupported: liveRecordingSupported,
     startRecorder: startLiveRecorder,
-    wakeLock: new ScreenWakeLock(),
+    wakeLock: screenAwakeHolder('live'),
     now: () => performance.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     isHidden: () => typeof document !== 'undefined' && document.visibilityState === 'hidden',
@@ -186,6 +216,7 @@ export function startProblemOf(error: unknown): LiveStartProblem {
     if (error.kind === 'withdrawn') return 'withdrawn';
     if (error.code === 'LIVE_ALREADY_OPEN') return 'already-open';
     if (error.code === 'LIVE_ASSOCIATION_FORBIDDEN') return 'association-forbidden';
+    if (error.code === 'LIVE_ASSOCIATION_ARCHIVED') return 'association-archived';
     if (error.kind === 'rate-limited') return 'rate-limited';
     if (error.kind === 'disabled') return 'disabled';
     return 'failed';
@@ -235,6 +266,18 @@ export class LiveBroadcast {
   #screenGoneWhileStarting = false;
   /** The camera's opener, kept while the screen's stands in for it. */
   #cameraOpener: CameraOpener | null = null;
+  /**
+   * The TITLE (owner, 2026-11-07): the draft typed on the launch screen, sent with the start; on
+   * air, the title the server last confirmed. Empty is "no title".
+   */
+  title = $state('');
+  /** True while an on-air title edit is with the server. */
+  titleSaving = $state(false);
+  /** Why the last on-air title edit was not taken, or null. */
+  titleProblem = $state<'invalid' | 'offline' | 'failed' | null>(null);
+  /** Grabs the frame the screen shows, for the preview image; set by the screen that owns the video. */
+  #posterCapture: (() => Promise<Uint8Array | null>) | null = null;
+  #posterSender: LivePosterSender | null = null;
 
   readonly #deps: LiveBroadcastDeps;
   #keyHex: string | null = null;
@@ -369,7 +412,8 @@ export class LiveBroadcast {
       live = await this.#deps.startLive(
         keyHex,
         this.associationId ?? undefined,
-        this.rulesAcceptedHere ? this.rules?.version : undefined
+        this.rulesAcceptedHere ? this.rules?.version : undefined,
+        liveTitleToSend(this.title)
       );
     } catch (e) {
       this.#screenGoneWhileStarting = false;
@@ -391,6 +435,8 @@ export class LiveBroadcast {
     }
     this.#keyHex = keyHex;
     this.liveId = live.id;
+    // What the server holds (an older server ignores the field and answers none).
+    this.title = live.title ?? '';
     this.#startedAt = this.#deps.now();
     this.#lastStoredAt = this.#startedAt;
     this.#uploader = this.#deps.createUploader(live.id, {
@@ -408,18 +454,102 @@ export class LiveBroadcast {
       onStopped: (error) => this.#uploaderStopped(error),
     });
     const limits = this.limits!;
+    this.#posterSender = this.#createPosterSender(live.id, keyHex, limits);
     this.#pipeline = new LiveSegmentPipeline({
       seal: (index, plain) => this.#deps.seal(this.#keyHex!, live.id, index, plain),
       nextIndex: () => this.#uploader!.nextIndex,
       enqueue: (index, sealed) => {
         this.#uploader!.enqueue(index, sealed);
         this.#noteBacklog();
+        // The preview rides the segment cadence (never awaited: the video does not wait for it).
+        void this.#posterSender?.onSegment(index);
       },
       maxSegmentBytes: limits.segmentMaxBytes,
       now: this.#deps.now,
       onBroken: (generation) => this.#pipelineBroken(generation),
     });
     this.#goOnAir();
+  }
+
+  /**
+   * The screen hands the machine what grabs its preview frame (the `<video>` is the screen's), or
+   * null when that element goes. Read at each poster turn, so a capture set after the start counts.
+   */
+  setPosterCapture(capture: (() => Promise<Uint8Array | null>) | null): void {
+    console.debug(`[LIVE-BROADCAST] preview capture ${capture ? 'set' : 'cleared'}`);
+    this.#posterCapture = capture;
+  }
+
+  /**
+   * The preview sender of a live just started, or null when the server serves no poster numbers (a
+   * server before them, which would 404 the route): then nothing is captured at all.
+   */
+  #createPosterSender(liveId: string, keyHex: string, limits: LiveLimits): LivePosterSender | null {
+    const period = limits.previewPeriodMs;
+    const maxBytes = limits.posterMaxBytes;
+    if (!period || !maxBytes) {
+      console.debug('[LIVE-BROADCAST] the server serves no poster numbers - no preview image');
+      return null;
+    }
+    // The server's ONE period, in this client's segments (2 s each): the card reads once per period.
+    const every = posterEverySegments(period);
+    console.debug(`[LIVE-BROADCAST] a preview every ${every} segment(s) (${period} ms)`);
+    // The preview is sealed under the DERIVED poster key - the one the list serves without a seat -
+    // never the live key. Derived once, at the first turn that needs it - and a derivation that
+    // FAILED is not kept: the promise is dropped so the next turn derives again, rather than every
+    // later turn re-throwing the one rejection for the rest of the live.
+    let posterKey: Promise<string> | null = null;
+    return new LivePosterSender({
+      capture: () => this.#posterCapture?.() ?? Promise.resolve(null),
+      seal: async (plain) => {
+        const derivation = (posterKey ??= this.#deps.derivePosterKey(keyHex, liveId));
+        let key: string;
+        try {
+          key = await derivation;
+        } catch (e) {
+          if (posterKey === derivation) posterKey = null;
+          console.warn(
+            `[LIVE-BROADCAST] the poster key did not derive (${String(e)}) - the next preview derives it again`
+          );
+          throw e;
+        }
+        return this.#deps.sealPoster(key, liveId, plain);
+      },
+      put: (sealed) => this.#deps.putLivePoster(liveId, sealed),
+      everySegments: every,
+      maxBytes,
+    });
+  }
+
+  /**
+   * The member edits the title ON AIR (owner, 2026-11-07): sent to the server, and `title` becomes
+   * what it confirmed. Answers whether it was taken; a refusal or no answer keeps the previous title
+   * and says why in {@link titleProblem}. An ended live is the uploader's verdict to hear, not this.
+   */
+  async saveTitle(draft: string): Promise<boolean> {
+    if ((this.phase !== 'live' && this.phase !== 'away') || !this.liveId || this.titleSaving) {
+      console.warn(`[LIVE-BROADCAST] title edit ignored in ${this.phase}`);
+      return false;
+    }
+    const next = liveTitleToSend(draft);
+    this.titleSaving = true;
+    this.titleProblem = null;
+    try {
+      const done = await this.#deps.setLiveTitle(this.liveId, next);
+      this.title = done.title ?? '';
+      console.log(`[LIVE-BROADCAST] title ${done.title === null ? 'cleared' : 'saved'}`);
+      return true;
+    } catch (e) {
+      this.titleProblem = isTransportFailure(e)
+        ? 'offline'
+        : e instanceof LiveRefusalError && e.code === 'LIVE_TITLE_INVALID'
+          ? 'invalid'
+          : 'failed';
+      console.warn(`[LIVE-BROADCAST] title not saved (${this.titleProblem})`, e);
+      return false;
+    } finally {
+      this.titleSaving = false;
+    }
   }
 
   /**
@@ -590,19 +720,9 @@ export class LiveBroadcast {
     if (this.#disposed) return;
     if (!drained) console.warn(`[LIVE-BROADCAST] ${liveId}: the queue is dropped unsent`);
     this.#release();
-    try {
-      await this.#deps.endLive(liveId);
-    } catch (e) {
-      if (isLiveCut(e)) {
-        console.warn('[LIVE-BROADCAST] the End was answered by a moderation cut');
-        this.#serverEndedWhileEnding = 'cut';
-      } else if (!isLiveRefusal(e, 'ended') && !isLiveRefusal(e, 'not-found')) {
-        console.warn(
-          '[LIVE-BROADCAST] the end was not confirmed - the server ends it by absence',
-          e
-        );
-      }
-    }
+    // THE MEMBER'S TAP IS THE DECISION: the screen settles now, behind no request. The end reaches the
+    // server durably instead (`#deliverEnd`: idempotent, retried until ANSWERED).
+    this.#deliverEnd(liveId);
     // A 410 heard while draining means the server had ended it first (the hour, a moderation cut).
     this.#settle(this.#serverEndedWhileEnding ?? 'broadcaster');
   }
@@ -869,20 +989,55 @@ export class LiveBroadcast {
     this.#trackWatch = null;
     this.#pipeline?.close();
     this.#uploader?.stop();
+    this.#posterSender?.stop();
     this.camera.stop();
     this.#deps.wakeLock.release();
   }
 
   #endBestEffort(liveId: string): void {
-    this.#deps.endLive(liveId).then(
-      (r) => console.debug(`[LIVE-BROADCAST] ${liveId} ended on leaving (${r.endReason})`),
-      (e: unknown) => {
-        if (isLiveRefusal(e, 'ended') || isLiveRefusal(e, 'not-found')) return;
-        console.warn(
-          `[LIVE-BROADCAST] ${liveId} not ended on leaving - the server ends it by absence`,
-          e
-        );
-      }
-    );
+    this.#deliverEnd(liveId);
+  }
+
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- an imperative dedupe guard, read only by `#deliverEnd`, never by a template or effect
+  #endsInFlight = new Set<string>();
+
+  /**
+   * Delivers the End to the server until it ANSWERS. `POST /lives/:id/end` is idempotent (a repeat is
+   * the same end, or `not-found` once purged), so a retry is always safe. A status code is an answer
+   * and stops the delivery (a moderation cut included, which the screen has already settled past);
+   * only a transport failure retries, and it retries on the link coming back (an event), never on a
+   * clock. Lost with the page, in which case the server ends the live by absence.
+   */
+  #deliverEnd(liveId: string): void {
+    if (this.#endsInFlight.has(liveId)) return;
+    this.#endsInFlight.add(liveId);
+    let unsubscribe: (() => void) | null = null;
+    const attempt = (): void => {
+      console.debug(`[LIVE-BROADCAST] delivering the end of ${liveId}`);
+      this.#deps.endLive(liveId).then(
+        (r) => {
+          console.debug(`[LIVE-BROADCAST] ${liveId} end answered (${r.endReason})`);
+          done();
+        },
+        (e: unknown) => {
+          if (e instanceof LiveRefusalError) {
+            console.debug(`[LIVE-BROADCAST] ${liveId} end answered with a refusal (${e.code})`);
+            done();
+            return;
+          }
+          console.warn(
+            `[LIVE-BROADCAST] the end of ${liveId} did not reach the server - retried when the link is back`,
+            e
+          );
+          unsubscribe ??= this.#deps.onReconnect(() => attempt());
+        }
+      );
+    };
+    const done = (): void => {
+      unsubscribe?.();
+      unsubscribe = null;
+      this.#endsInFlight.delete(liveId);
+    };
+    attempt();
   }
 }

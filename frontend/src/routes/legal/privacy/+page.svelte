@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="06/11/2026"
+  updated="09/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -81,7 +81,10 @@
           Chiffrés de bout en bout (protocole MLS, RFC 9420) sur votre appareil avant l'envoi. Le
           serveur ne détient que des contenus chiffrés qu'il ne peut pas lire. Il connaît en
           revanche, en clair : les membres de chaque conversation, le nom des groupes, l'expéditeur,
-          l'heure et la taille de chaque message.
+          l'heure et la taille de chaque message. Un pseudo donné à un membre dans une conversation
+          voyage chiffré comme un message et n'est jamais lu par le serveur : il est gardé sur les
+          appareils des membres, avec qui l'a défini et quand, effacé de l'appareil à la
+          déconnexion, et il n'apparaît jamais dans une notification.
         </dd>
       </div>
       <div>
@@ -91,7 +94,10 @@
           salons, leurs membres et les accusés de lecture affichés dans un salon sont connus du
           serveur. Quand un message de salon est supprimé, le serveur garde son auteur et son
           identifiant aléatoire pendant 30 jours, pour ne pas le republier si l'application renvoie
-          un envoi interrompu.
+          un envoi interrompu. Le pseudo qu'un modérateur donne à un membre dans une communauté est
+          connu du serveur, avec qui l'a défini et quand ; il peut être signalé, il disparaît quand
+          le membre quitte la communauté ou supprime son compte, et le nom de celui qui l'a défini
+          est effacé à la suppression de son compte.
         </dd>
       </div>
       <div>
@@ -142,19 +148,31 @@
           déchiffre un contenu de direct que pour vérifier un message du chat signalé (voir «
           Signalements, blocages et modération »). Le serveur connaît en clair : qui diffuse et au
           nom de quelle association, les heures de début et de fin du direct et la raison de sa fin,
+          le titre du direct si vous lui en donnez un (en clair, comme le texte d'une publication),
           la taille de chaque segment, les membres que vous retirez du direct, et, pour chaque
           spectateur, le fait qu'il regarde (son compte et l'heure de sa dernière lecture). Le
-          nombre de spectateurs est affiché à vous et à ceux qui regardent ; aucune fonction de
-          Canari ne montre leur liste, ni à vous ni à la modération. Les messages du chat sont
-          chiffrés avec la même clé ; leur auteur est connu du serveur et son nom est affiché aux
-          autres spectateurs. Les réactions (cœur, rire, bravo, feu, poussin) ne sont pas chiffrées
-          : le serveur enregistre qui réagit et compte les réactions. Un direct n'est pas enregistré
-          et n'a pas de rediffusion. Avant votre premier direct, vous acceptez les règles de
-          publication : la version acceptée et sa date sont conservées. Pour limiter les abus, le
-          serveur garde aussi l'heure de chacun de vos démarrages pendant une heure. Les journaux
-          techniques notent les débuts et fins de direct, les coupures et les retraits de
-          spectateurs, avec le début de l'identifiant du compte concerné, et, comme pour toute
-          requête, le serveur web journalise l'adresse IP de chaque lecture.
+          nombre de spectateurs est affiché à vous et à ceux qui regardent. Pendant le direct, votre
+          application envoie environ toutes les 16 secondes une image fixe de la vidéo, chiffrée
+          avec une clé dérivée de celle du direct qui n'ouvre que cette image, et qui remplace la
+          précédente (celle-ci est supprimée au remplacement suivant) : la carte du direct en haut
+          du fil la montre, avec le titre et le nombre de spectateurs, aux membres autorisés à
+          regarder, sans qu'ils rejoignent le direct. À votre arrivée sur un direct, le serveur
+          retient que vous êtes arrivé (votre compte, jusqu'à la suppression du direct, peu après sa
+          fin), et une ligne « X a rejoint », avec votre nom, apparaît dans le chat pour les autres
+          spectateurs et pour la personne qui diffuse, sauf pour un compte avec lequel un blocage
+          existe dans un sens ou dans l'autre, sauf pour les spectateurs que la personne qui diffuse
+          a retirés, et sauf si le chat vous est masqué ; au plus trois noms à la fois, le reste est
+          compté. Aucune fonction de Canari ne montre la liste de ceux qui regardent à un instant
+          donné. Les messages du chat sont chiffrés avec la même clé ; leur auteur est connu du
+          serveur et son nom est affiché aux autres spectateurs. Les réactions (cœur, rire, bravo,
+          feu, poussin) ne sont pas chiffrées : le serveur enregistre qui réagit et compte les
+          réactions. Un direct n'est pas enregistré et n'a pas de rediffusion. Avant votre premier
+          direct, vous acceptez les règles de publication : la version acceptée et sa date sont
+          conservées. Pour limiter les abus, le serveur garde aussi l'heure de chacun de vos
+          démarrages pendant une heure. Les journaux techniques notent les débuts et fins de direct,
+          les coupures et les retraits de spectateurs, avec le début de l'identifiant du compte
+          concerné, et, comme pour toute requête, le serveur web journalise l'adresse IP de chaque
+          lecture.
         </dd>
       </div>
       <div>
@@ -183,6 +201,32 @@
           nouvelles demandes par jour, le serveur garde aussi le fait qu'une demande (ou son
           acceptation) a déjà été notifiée entre deux comptes, et sa date, même après un retrait, un
           refus ou un blocage. Suivre une association ne demande rien à personne.
+        </dd>
+      </div>
+      <div>
+        <dt>Anniversaire</dt>
+        <dd>
+          Facultatif : le jour et le mois de votre anniversaire, jamais l'année, et aucun âge n'est
+          calculé ni affiché. Vous choisissez qui voit la date sur votre profil : toute l'école, vos
+          abonnés acceptés (le choix par défaut) ou personne ; une personne bloquée, dans un sens ou
+          dans l'autre, ne la voit jamais. Le jour venu (à l'heure de Paris ; un anniversaire du 29
+          février est fêté le 28 les années non bissextiles), un cercle festif entoure votre photo
+          partout dans l'application et votre profil indique que c'est votre anniversaire, pour tout
+          membre qui peut voir votre profil, quel que soit ce choix ; la date elle-même n'est pas
+          montrée à ceux qui ne peuvent pas la voir. Le matin du jour, vos abonnés acceptés qui
+          peuvent voir la date reçoivent une notification (« C'est l'anniversaire de ... ») ; ils
+          peuvent couper cette catégorie dans leurs réglages de notifications. Une date enregistrée
+          compte à partir du lendemain ; vos abonnés sont prévenus au plus une fois tous les 300
+          jours, et le serveur garde pour cela le dernier jour où ils l'ont été. Le cercle festif ne
+          s'affiche que les jours où cette notification a été ou peut être envoyée. Une nouvelle
+          date ne peut être enregistrée qu'une fois tous les 30 jours (la retirer puis la remettre
+          compte comme un changement ; une correction le jour même reste possible) : le serveur
+          garde à cette fin le moment où vous avez enregistré une date, sans la date elle-même. Si
+          vous retirez la date après que vos abonnés ont été prévenus, le serveur garde seulement
+          une date « pas de notification avant le » (le jour de cette notification plus 300 jours,
+          ce qui permet de situer approximativement votre dernier anniversaire) : aucune nouvelle
+          date n'est annoncée ni fêtée avant elle. Vous pouvez retirer la date à tout moment depuis
+          votre profil.
         </dd>
       </div>
       <div>
@@ -218,6 +262,31 @@
         </dd>
       </div>
       <div>
+        <dt>Lecteurs nommés (accès en lecture accordé à une personne)</dt>
+        <dd>
+          Un administrateur de la plateforme peut accorder à une personne nommée, par exemple un
+          responsable de l'École ou de la Maison des Élèves, un accès en lecture aux publications
+          des associations, des listes et des institutions d'un campus ou d'une formation. Cet accès
+          est nominatif : il ne vient ni de l'espace de la personne ni de son appartenance à une
+          association. Il donne à cette personne la lecture de ces publications et des directs de
+          ces associations, et la possibilité d'y réagir. Il n'ouvre jamais les publications
+          personnelles d'un membre ni une publication marquée « Entre étudiants », et il ne permet
+          ni de publier, ni de republier, ni de voter à un sondage ; une personne nommée n'est pas
+          notifiée des publications qu'elle lit ainsi. Par défaut, sur une publication que seul cet
+          accès lui ouvre, elle ne voit ni les commentaires des étudiants (elle ne peut ni en écrire
+          ni en aimer), ni qui a réagi ou voté quoi (seulement les totaux), ni le chat d'un direct
+          (elle regarde le direct et envoie des réactions flottantes, sans lire ni écrire de
+          message) ; un administrateur peut activer pour elle l'option « voit les commentaires »,
+          qui ouvre les commentaires et le chat. Une personne qui voit déjà une publication par ses
+          propres moyens (son espace, son association, une republication, un abonnement accepté)
+          garde tout ce que cela lui donne. Sont conservés : le compte de la personne nommée, le
+          campus et la formation concernés, l'administrateur qui a accordé l'accès, la date, et
+          l'état de l'option ; chaque octroi, retrait ou changement de l'option est inscrit dans un
+          journal consultable des seuls administrateurs. La personne nommée ne peut pas consulter
+          cette liste ; vous pouvez nous demander si vous y figurez.
+        </dd>
+      </div>
+      <div>
         <dt>Associations, cotisations, formulaires et paiements</dt>
         <dd>
           Vos adhésions et rôles, vos cotisations, vos réponses aux formulaires et vos achats
@@ -235,7 +304,9 @@
           le paiement avait apporté (la cotisation, la place du formulaire), sauf une recharge du
           Cercle, dont le solde ne change pas. Aucune donnée bancaire n'est reçue ni conservée par
           Canari. Les fichiers déposés dans un formulaire (par exemple un CV) sont lisibles par
-          l'association qui l'a créé.
+          l'association qui l'a créé. Une image ajoutée à une question par l'auteur d'un formulaire
+          est publique : quiconque a le lien du formulaire peut la voir, sans compte. Elle est
+          effacée quand plus aucun formulaire ne l'affiche.
         </dd>
       </div>
       <div>
@@ -264,15 +335,20 @@
         <dd>
           Une personne sans compte qui répond à un formulaire public laisse ses réponses, et, si le
           formulaire est payant, le montant, le statut du paiement et l'identifiant de la demande
-          chez Lydia. L'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas
-          conservée par Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de
-          retour (jamais le lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse
-          payante attend son paiement, elle porte une empreinte calculée avec une clé secrète (HMAC)
-          à partir du formulaire et du réseau de la connexion : l'adresse IPv4, ou le préfixe /64
-          d'une adresse IPv6. L'adresse elle-même n'est pas conservée. Cette empreinte sert
-          uniquement à limiter à trois les réponses en attente de paiement depuis un même réseau ;
-          elle est effacée par une tâche planifiée, dans les cinq minutes qui suivent le règlement,
-          l'annulation ou l'expiration de la réponse.
+          chez Lydia. Par défaut, rien ne lui est demandé sur son identité : l'auteur du formulaire
+          peut lui demander son nom, son prénom et son adresse e-mail (chacun séparément), qui sont
+          alors obligatoires, conservés avec la réponse et lus par ceux qui gèrent le formulaire
+          (liste des réponses et export) ; un membre connecté n'a jamais ces champs. Si l'adresse
+          e-mail est demandée, c'est elle qui est transmise à Lydia pour un paiement en ligne.
+          Sinon, l'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas conservée par
+          Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de retour (jamais le
+          lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse payante attend
+          son paiement, elle porte une empreinte calculée avec une clé secrète (HMAC) à partir du
+          formulaire et du réseau de la connexion : l'adresse IPv4, ou le préfixe /64 d'une adresse
+          IPv6. L'adresse elle-même n'est pas conservée. Cette empreinte sert uniquement à limiter à
+          trois les réponses en attente de paiement depuis un même réseau ; elle est effacée par une
+          tâche planifiée, dans les cinq minutes qui suivent le règlement, l'annulation ou
+          l'expiration de la réponse.
         </dd>
       </div>
       <div>
@@ -307,7 +383,12 @@
         <dd>
           Pour chaque appareil : un identifiant, son nom et son système, la version de
           l'application, ses clés publiques de chiffrement et le jeton de notification attribué par
-          Google (FCM) ou Apple (APNs), avec la langue de l'appareil.
+          Google (FCM) ou Apple (APNs), avec la langue de l'appareil. Si vous réglez la cloche d'un
+          compte - une association, ou une personne que vous suivez - sur « Lives seulement » ou «
+          Rien », le serveur garde ce choix (le compte concerné et le niveau) pour ne vous envoyer
+          que ce que vous avez choisi ; ce compte n'en est pas informé, et ses publications restent
+          dans votre fil et dans vos notifications. Suivre ce compte à nouveau rétablit «
+          Publications et lives ».
         </dd>
       </div>
       <div>
@@ -390,10 +471,13 @@
       <div>
         <dt>Aides déjà vues</dt>
         <dd>
-          Si vous avez déjà vu la visite guidée de bienvenue (son identifiant et la date),
-          enregistré sur votre compte pour qu'elle ne réapparaisse pas sur un autre appareil. Une
-          copie est gardée sur l'appareil jusqu'à la suppression du compte ou la réinitialisation de
-          l'appareil.
+          Les aides déjà vues (la visite guidée de bienvenue, les aides au premier usage, la carte
+          qui invite à ajouter une photo de profil et celle qui invite à indiquer son anniversaire),
+          chacune avec son identifiant et la date, enregistrées sur votre compte pour qu'elles ne
+          réapparaissent pas sur un autre appareil. La date de la première carte « photo de profil »
+          sert aussi à ne vous la rappeler qu'une seule fois, 30 jours plus tard, si vous n'avez
+          toujours pas de photo. Une copie est gardée sur l'appareil jusqu'à la suppression du
+          compte ou la réinitialisation de l'appareil.
         </dd>
       </div>
       <div>
@@ -447,10 +531,20 @@
           <tr>
             <td>Directs, chat et réactions</td>
             <td
-              >Diffuser un direct aux membres autorisés et prévenir vos abonnés ; conserver votre
-              acceptation des règles du direct, condition pour en lancer un</td
+              >Diffuser un direct aux membres autorisés et prévenir son public : pour le direct
+              d'une association, chaque membre que ses règles ou son adhésion atteignent ; pour le
+              direct d'un membre, ses abonnés acceptés ; conserver votre acceptation des règles du
+              direct, condition pour en lancer un</td
             >
             <td>Exécution du service (6.1.b)</td>
+          </tr>
+          <tr>
+            <td>Anniversaire</td>
+            <td
+              >Montrer la date à l'audience que vous avez choisie, marquer le jour d'un cercle
+              festif et en prévenir vos abonnés acceptés qui peuvent voir la date</td
+            >
+            <td>Exécution du service (6.1.b) ; facultatif, retirable à tout moment</td>
           </tr>
           <tr>
             <td>Appels audio</td>
@@ -533,11 +627,11 @@
           le jeton et le titre affiché (nom de l'expéditeur ou du groupe). Pour une activité sur le fil
           (commentaire, mention, événement), la notification contient aussi en clair le nom de l'auteur
           et le début du texte, 60 caractères au plus. Ce choix technique permet d'afficher une notification
-          lisible ; le contenu des messages privés n'y figure jamais en clair. Quand une personne ou une
-          association que vous suivez lance un direct, la notification contient en clair son nom et des
-          identifiants techniques (le direct, l'association, l'image affichée), sans autre texte ; un
-          avis de coupure, de suspension ou de retrait du droit de diffuser est une phrase fixe, sans
-          nom.
+          lisible ; le contenu des messages privés n'y figure jamais en clair. Quand une personne que
+          vous suivez, ou une association dont le public vous comprend, lance un direct, la notification
+          contient en clair son nom, des identifiants techniques (le direct, l'association, l'image affichée)
+          et le titre du direct s'il en a un, sans autre texte ; un avis de coupure, de suspension ou
+          de retrait du droit de diffuser est une phrase fixe, sans nom.
         </p>
       </li>
       <li>
@@ -641,7 +735,10 @@
             </td>
           </tr>
           <tr>
-            <td>Visite guidée de bienvenue déjà vue</td>
+            <td>
+              Aides déjà vues (visite guidée, aides au premier usage, cartes photo de profil et
+              anniversaire)
+            </td>
             <td>
               Tant que le compte existe ; supprimée à la suppression du compte. La copie sur
               l'appareil y reste jusqu'à la suppression du compte ou la réinitialisation de
@@ -688,10 +785,15 @@
             <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : 30 jours</td>
           </tr>
           <tr>
-            <td>Direct : vidéo chiffrée, chat, réactions, spectateurs retirés</td>
             <td>
-              Supprimés à la fin du direct (par vous, après 60 secondes sans vidéo, au bout d'une
-              heure, par une coupure de la modération ou à la suppression de votre compte). Après
+              Direct : vidéo chiffrée, image d'aperçu chiffrée, titre, chat, réactions, spectateurs
+              retirés
+            </td>
+            <td>
+              L'image d'aperçu est remplacée environ toutes les 16 secondes, et la précédente est
+              conservée jusqu'au remplacement suivant : une image d'aperçu vit donc environ 32
+              secondes. Tout est supprimé à la fin du direct (par vous, après 60 secondes sans
+              vidéo, par une coupure de la modération ou à la suppression de votre compte). Après
               une coupure, la vidéo est supprimée aussitôt ; après la suppression du compte, dans
               les 30 secondes ; à une autre fin, elle l'est une fois que les derniers spectateurs
               ont fini de la recevoir, en principe dans la minute. Une suppression qui échoue est
@@ -743,12 +845,32 @@
             </td>
           </tr>
           <tr>
+            <td>Anniversaire</td>
+            <td>
+              La date, qui la voit et le dernier jour où vos abonnés ont été prévenus : jusqu'à ce
+              que vous la retiriez (aussitôt supprimés) ou la suppression du compte ; le moment où
+              une date a été enregistrée (sans la date) : 30 jours ; après un retrait qui suit une
+              notification, la date « pas de notification avant le » : jusqu'à ce jour, au plus 300
+              jours après cette notification ; les deux sont supprimés à la suppression du compte
+            </td>
+          </tr>
+          <tr>
             <td>Republications par les membres</td>
             <td>
               Jusqu'à ce que vous la retiriez, que l'auteur retire son accord, que la publication
               soit masquée par la modération ou supprimée, qu'un blocage intervienne entre vous et
               l'auteur, ou que l'un des deux comptes soit supprimé ; le réglage d'accord : tant que
               le compte existe
+            </td>
+          </tr>
+          <tr>
+            <td>Lecteurs nommés</td>
+            <td>
+              L'accès : jusqu'à son retrait par un administrateur ou la suppression du compte de la
+              personne nommée (les lignes d'accès sont alors supprimées) ; le journal des octrois et
+              retraits : conservé sans limite de durée, sans le nom de la personne ni celui de
+              l'administrateur après la suppression de leur compte (restent le campus, la formation,
+              l'action et la date)
             </td>
           </tr>
           <tr>
@@ -766,7 +888,10 @@
             </td>
           </tr>
           <tr>
-            <td>Réponses aux formulaires</td>
+            <td>
+              Réponses aux formulaires, y compris le nom, le prénom et l'adresse e-mail qu'un
+              formulaire public a demandés à une personne sans compte
+            </td>
             <td>Aucune durée n'est encore fixée : elle est en cours de définition</td>
           </tr>
           <tr>
@@ -809,6 +934,14 @@
           <tr>
             <td>Notifications dans l'application</td>
             <td>90 jours</td>
+          </tr>
+          <tr>
+            <td>Réglage de la cloche d'un compte (« Lives seulement » ou « Rien »)</td>
+            <td>
+              Jusqu'à ce que vous le remettiez sur « Publications et lives », que vous suiviez à
+              nouveau ce compte, ou à la suppression de votre compte, de celui de la personne ou de
+              l'association
+            </td>
           </tr>
           <tr>
             <td>Signalements</td>
@@ -918,6 +1051,17 @@
               pas être retiré par l'application : il est désactivé, et c'est le lanceur qui décide
               s'il reste affiché</td
             >
+          </tr>
+          <tr>
+            <td>Suggestions de partage (application iPhone)</td>
+            <td>
+              Les noms de vos conversations récentes, et leur identifiant interne, sont confiés à
+              iOS pour les proposer dans son menu Partager - jamais le contenu d'un message. iOS
+              peut aussi afficher ces noms dans les suggestions de Siri : Spotlight, le widget de
+              suggestions et, selon vos réglages iOS, l'écran verrouillé. Activé par défaut,
+              désactivable dans Paramètres &gt; Préférences &gt; Suggestions dans le partage
+            </td>
+            <td>Effacés à la déconnexion et à la désactivation du réglage</td>
           </tr>
           <tr>
             <td>Identifiant aléatoire <code>klipy_cid</code></td>

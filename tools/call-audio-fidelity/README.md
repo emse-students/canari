@@ -99,7 +99,9 @@ the same two keys for its whole-frame experiment.
 
 ## The video rows (2026-10-20)
 
-`video`, `video-camera-late`, `video-switch` and `video-off-on` are GATED: both pages send Chrome's
+`video`, `video-camera-late`, `video-switch`, `video-off-on` and `video-webkit-metadata` (the
+caller's frame metadata stripped of its codec, as WebKit's is - `impair.worker.ts`, 2026-11-07) are
+GATED: both pages send Chrome's
 fake camera (`--use-fake-device-for-media-stream=fps=30`) through the app's own worker, with the
 app's `callVideoConstraints`, `applyCallVideoRung` and `preferVp8` IMPORTED from
 `frontend/src/lib/utils/callVideo.ts`. Each adds these checks (`videoChecks`, self-tested by

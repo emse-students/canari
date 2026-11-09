@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { assertWithinRequestBudget, uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import { onMount } from 'svelte';
   import {
@@ -460,14 +461,9 @@
         {:else if noteSaved}
           <span class="text-green-ok mr-auto text-xs">{m.asso_doc_saved_label()}</span>
         {/if}
-        <button
-          type="button"
-          onclick={saveNote}
-          disabled={noteSaving}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-        >
+        <Button onclick={saveNote} disabled={noteSaving}>
           {noteSaving ? m.common_saving_label() : m.common_save_button()}
-        </button>
+        </Button>
       </div>
     {/if}
   </div>
@@ -509,15 +505,10 @@
         class="border-amber-warn/40 bg-amber-warn/10 text-text-main flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 text-sm"
       >
         <p class="min-w-0 flex-1">{m.asso_doc_purged_notice({ name: purgedDoc.name })}</p>
-        <button
-          type="button"
-          onclick={() => fileInput?.click()}
-          disabled={uploading}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold disabled:opacity-50"
-        >
+        <Button size="compact" onclick={() => fileInput?.click()} disabled={uploading}>
           <FileUp size={14} />
           {m.asso_doc_purged_reupload_button()}
-        </button>
+        </Button>
       </div>
     {/if}
 
@@ -530,15 +521,10 @@
         onchange={handleFileChange}
         disabled={uploading}
       />
-      <button
-        type="button"
-        onclick={() => fileInput?.click()}
-        disabled={uploading}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
-      >
+      <Button onclick={() => fileInput?.click()} disabled={uploading}>
         <FileUp size={16} />
         {uploading ? m.asso_doc_upload_encrypting() : m.asso_doc_upload_button()}
-      </button>
+      </Button>
       {#if uploadError}
         <p class="text-red-err mt-2 text-sm">{uploadError}</p>
       {/if}
@@ -659,20 +645,12 @@
       </p>
     </div>
     <div class="flex flex-wrap justify-end gap-2 pt-1">
-      <button
-        type="button"
-        onclick={() => (uploadModalOpen = false)}
-        class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
-      >
+      <Button variant="secondary" onclick={() => (uploadModalOpen = false)}>
         {m.common_cancel_button()}
-      </button>
-      <button
-        type="button"
-        onclick={confirmUpload}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold"
-      >
+      </Button>
+      <Button onclick={confirmUpload}>
         {m.asso_doc_upload_confirm_button()}
-      </button>
+      </Button>
     </div>
   {/if}
 </ModalOverlay>
@@ -701,21 +679,12 @@
         <p class="text-red-err text-sm">{pwPromptError}</p>
       {/if}
       <div class="flex flex-wrap justify-end gap-2 pt-1">
-        <button
-          type="button"
-          onclick={() => (pwPromptDoc = null)}
-          disabled={pwPromptBusy}
-          class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
-        >
+        <Button variant="secondary" onclick={() => (pwPromptDoc = null)} disabled={pwPromptBusy}>
           {m.common_cancel_button()}
-        </button>
-        <button
-          type="submit"
-          disabled={pwPromptBusy || !pwPromptValue}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-        >
+        </Button>
+        <Button type="submit" disabled={pwPromptBusy || !pwPromptValue}>
           {pwPromptBusy ? m.asso_doc_decrypting() : m.asso_doc_open_button()}
-        </button>
+        </Button>
       </div>
     </form>
   {/if}
@@ -748,21 +717,12 @@
         <p class="text-red-err text-sm">{renameError}</p>
       {/if}
       <div class="flex flex-wrap justify-end gap-2 pt-1">
-        <button
-          type="button"
-          onclick={() => (renameDoc = null)}
-          disabled={renameBusy}
-          class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
-        >
+        <Button variant="secondary" onclick={() => (renameDoc = null)} disabled={renameBusy}>
           {m.common_cancel_button()}
-        </button>
-        <button
-          type="submit"
-          disabled={renameBusy || !renameValue.trim()}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-        >
+        </Button>
+        <Button type="submit" disabled={renameBusy || !renameValue.trim()}>
           {renameBusy ? m.common_saving_label() : m.common_save_button()}
-        </button>
+        </Button>
       </div>
     </form>
   {/if}

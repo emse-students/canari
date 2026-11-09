@@ -12,6 +12,8 @@
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
+    /** The conversation's nickname scope ("Modifier les pseudos"): names drawn here are read in it. */
+    nicknameScope?: string | null;
     /** Whether the tooltip is currently visible. */
     visible: boolean;
     /** Send time of the message. */
@@ -33,6 +35,7 @@
     readBy = [],
     isOwn = false,
     isEdited = false,
+    nicknameScope = null,
   }: Props = $props();
 
   let resolvedReadByNames = $state<Record<string, string>>({});
@@ -76,7 +79,11 @@
 
   let readByLabels = $derived(
     readBy.map((userId) =>
-      getUserFirstNameSync(userId, resolvedReadByNames[userId] || m.user_unknown_label())
+      getUserFirstNameSync(
+        userId,
+        resolvedReadByNames[userId] || m.user_unknown_label(),
+        nicknameScope ?? undefined
+      )
     )
   );
 </script>

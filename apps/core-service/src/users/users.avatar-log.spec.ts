@@ -240,6 +240,13 @@ describe('GET /users/:id/avatar logging', () => {
     expect(info).not.toHaveBeenCalled();
   });
 
+  it('known-down: still ONE line per request (the phase-2 measurement reads them), info, 502', async () => {
+    const res = await run(async () => ({ kind: 'unavailable', shortCircuited: true }));
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(String(info.mock.calls[0][0])).toContain('outcome=known-down status=502');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it('disabled: warn, 404', async () => {
     const res = await run(async () => ({ kind: 'disabled' }));
     expect(res.status).toHaveBeenCalledWith(404);

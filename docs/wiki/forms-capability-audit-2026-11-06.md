@@ -1,6 +1,6 @@
 # Forms - what associations need and cannot do yet (audit, 2026-11-06)
 
-**Status: AUDIT + DESIGN, nothing built; every product question decided by the owner 2026-11-06 (section 8); the ABSOLUTE PRIORITY, shipping in `1.6.6`.** Read on `main` at `e19c6443d2` (2026-11-06). Asked by the
+**Status (re-read 2026-11-09): sections 1 and 4 are BUILT** - the defects and the priced grid (WP-G0..G5) shipped from `1.6.6` on, and their mechanism is in [forms](frontend/modules/forms.md), the only copy; **section 5 from rank 3 (G-DUP) down is OPEN**, tracked by [its backlog entry](backlog.d/p2-forms-the-gaps-left-after-the-priced-grid.md). Written as an AUDIT + DESIGN, every product question decided by the owner 2026-11-06 (section 8). Read on `main` at `e19c6443d2` (2026-11-06). Asked by the
 owner the same day: *"Il faudrait faire aussi des grilles plus propres. Et pouvoir mettre un prix ? En
 fait il faut que tu fasses une passe globale pour regarder ce qui n'est pas faisable dans les
 formulaires actuellement, ce n'est pas normal."* The mechanism of what exists is in

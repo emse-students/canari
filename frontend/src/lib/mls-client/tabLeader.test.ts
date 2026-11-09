@@ -2,11 +2,9 @@
 import {
   initTabLeadershipAsync,
   getIsTabLeader,
-  releaseLeadership,
   resetTabLeaderStateForTests,
   getTabLeaderElectionIdForTests,
   getTabLeadership,
-  setTabLeaderPromotedHandler,
   setTabLeaderDemotedHandler,
   markPromotionReload,
   whenTabLeadershipDecided,
@@ -288,7 +286,7 @@ describe('tabLeader: every branch of the election decides', () => {
  * said *Hors-ligne*, and no community was ever listed - permanently, on a client with no other tab.
  *
  * "Prendre la main" cannot rescue it either, and that is not a second defect but the same one seen
- * from the other end: `requestLeadershipTakeover` posts `request_takeover` on a
+ * from the other end: `requestLeadershipTakeover` (removed 2026-11-08) posted `request_takeover` on a
  * `BroadcastChannel`, and a BroadcastChannel never delivers to the context that posted. The only
  * tab that could release the lock is the one asking for it.
  *
@@ -389,80 +387,6 @@ describe('tabLeader - the election runs once per document', () => {
       expect(getIsTabLeader()).toBe(true);
       expect(await whenTabLeadershipDecided()).toBe('leader');
     } finally {
-      locks.restore();
-    }
-  });
-
-  it('a tab that hands leadership over gets back in the queue', async () => {
-    // THE SAME END STATE FROM THE OTHER DIRECTION. `releaseLeadership` gave the lock away and
-    // asked for nothing back, so once the tab that took over closed, this one was never told - it
-    // stayed read-only and offline for the rest of its life, with the same banner and the same
-    // absence of any explanation.
-    const locks = stubRealLock();
-    try {
-      await initTabLeadershipAsync(log);
-      expect(getIsTabLeader()).toBe(true);
-      expect(locks.pending()).toBe(0);
-
-      releaseLeadership();
-
-      expect(getTabLeadership()).toBe('follower');
-      expect(locks.pending()).toBe(1);
-    } finally {
-      locks.restore();
-    }
-  });
-
-  it('and is promoted when that request is granted, rather than staying a follower', async () => {
-    const locks = stubRealLock();
-    let promoted = 0;
-    setTabLeaderPromotedHandler(() => {
-      promoted += 1;
-    });
-    try {
-      await initTabLeadershipAsync(log);
-      releaseLeadership();
-      locks.grantPending();
-      for (let i = 0; i < 10; i++) await Promise.resolve();
-
-      expect(getTabLeadership()).toBe('leader');
-      expect(promoted).toBe(1);
-    } finally {
-      setTabLeaderPromotedHandler(null);
-      locks.restore();
-    }
-  });
-
-  it('a tab whose demotion RELOADS it does not queue - the page it starts does', async () => {
-    // Production 2026-09-29: the yielding tab queued at once, was granted the lock back the moment
-    // the tab it yielded to reloaded, and the two traded the lead five times in two seconds.
-    const locks = stubRealLock();
-    setTabLeaderDemotedHandler(() => 'reloads');
-    try {
-      await initTabLeadershipAsync(log);
-
-      releaseLeadership();
-
-      expect(getTabLeadership()).toBe('follower');
-      expect(locks.pending()).toBe(0);
-    } finally {
-      setTabLeaderDemotedHandler(null);
-      locks.restore();
-    }
-  });
-
-  it('a hand-over clears a promotion mark, so the next page cannot steal with it', async () => {
-    const locks = stubRealLock();
-    setTabLeaderDemotedHandler(() => 'reloads');
-    try {
-      await initTabLeadershipAsync(log);
-      markPromotionReload();
-
-      releaseLeadership();
-
-      expect(sessionStorage.getItem('canari_tab_promotion_reload')).toBeNull();
-    } finally {
-      setTabLeaderDemotedHandler(null);
       locks.restore();
     }
   });
@@ -588,6 +512,45 @@ describe('tabLeader - a promotion reload reclaims the lock it was granted', () =
       expect(getTabLeadership()).toBe('follower');
       expect(demoted).toBe(1);
       expect(locks.requests.length).toBe(before + 1);
+    } finally {
+      setTabLeaderDemotedHandler(null);
+      locks.restore();
+    }
+  });
+
+  it('a leader whose demotion RELOADS it does not queue - the page it starts does', async () => {
+    // Production 2026-09-29: the yielding tab queued at once, was granted the lock back the moment
+    // the tab it yielded to reloaded, and the two traded the lead five times in two seconds.
+    const locks = stubHeldLock();
+    setTabLeaderDemotedHandler(() => 'reloads');
+    try {
+      markPromotionReload();
+      await initTabLeadershipAsync(log);
+      const before = locks.requests.length;
+
+      locks.stealFromHolder();
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+
+      expect(getTabLeadership()).toBe('follower');
+      expect(locks.requests.length).toBe(before);
+    } finally {
+      setTabLeaderDemotedHandler(null);
+      locks.restore();
+    }
+  });
+
+  it('a hand-over clears a promotion mark, so the next page cannot steal with it', async () => {
+    const locks = stubHeldLock();
+    setTabLeaderDemotedHandler(() => 'reloads');
+    try {
+      markPromotionReload();
+      await initTabLeadershipAsync(log);
+      markPromotionReload();
+
+      locks.stealFromHolder();
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+
+      expect(sessionStorage.getItem('canari_tab_promotion_reload')).toBeNull();
     } finally {
       setTabLeaderDemotedHandler(null);
       locks.restore();

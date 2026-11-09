@@ -16,7 +16,7 @@ import {
  *
  * THREE STANDINGS (owner, 2026-11-02):
  * - **the platform administrator**: no ceiling.
- * - **a BDE super-admin of this association** (`MANAGE_ASSO` in the BDE of a space it reaches): NO
+ * - **a BDE super-admin of this association** (`MANAGE_ASSO` in its parent BDE, WP-D2): NO
  *   CEILING EITHER on member writes - it may grant any flag, to anyone, itself included. A BDE
  *   officer is often also the president of another association and must be able to seat themself
  *   there with full rights. `SUPER_ADMIN_EXCLUDED_FLAGS` keeps its meaning, which is about
@@ -56,7 +56,7 @@ export interface MemberGranter {
 /** The three facts a ceiling is computed from, read by the service. */
 export interface GranterStanding {
   isGlobalAdmin: boolean;
-  /** `MANAGE_ASSO` in the BDE of a space this association reaches (`isAssociationSuperAdminOf`). */
+  /** `MANAGE_ASSO` in this association's parent BDE (`isAssociationSuperAdminOf`, WP-D2). */
   isSuperAdminOf: boolean;
   /** The granter's own bitmask in this association; 0 when not a member. */
   ownPermissions: number;

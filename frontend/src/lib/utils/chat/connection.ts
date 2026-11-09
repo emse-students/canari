@@ -9,7 +9,6 @@ export {
   getIsTabLeader,
   setTabLeaderPromotedHandler,
   setTabLeaderDemotedHandler,
-  requestLeadershipTakeover,
   markPromotionReload,
   type MessageHandlerDeps,
   type ConnectionDeps,

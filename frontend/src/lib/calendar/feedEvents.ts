@@ -262,6 +262,39 @@ export interface EventOwnerIdentity {
   /** Hex colour set on the association, or null → a stable one is derived from the id. */
   color: string | null;
   logoUrl: string | null;
+  /**
+   * The "Campus" label of a neutral event (owner, 2026-11-08): no association, so no page to link
+   * and no logo - drawn as a plain chip, never as an `<a href="/associations/...">`.
+   */
+  neutral?: boolean;
+}
+
+/**
+ * The key a neutral event's one identity carries, in place of an association id. Never an id the
+ * server issues (those are uuids), so it can neither collide with a real owner in a keyed `{#each}`
+ * nor be mistaken for one by an edit check.
+ */
+export const NEUTRAL_EVENT_OWNER_KEY = 'campus';
+
+/** Whether the event is presented as "Campus" rather than as its association. */
+export function isNeutralEvent(event: Pick<AssociationCalendarFeedEvent, 'presentation'>): boolean {
+  return event.presentation === 'neutral';
+}
+
+/**
+ * The ONE identity a neutral event shows, whoever reads it - a reader outside the BDE's agenda
+ * managers receives blanks in the owner fields anyway, and a manager is shown what everybody else
+ * sees. Its colour derives from the fixed key, so every neutral event wears the same accent.
+ */
+function neutralOwnerIdentity(): EventOwnerIdentity {
+  return {
+    associationId: NEUTRAL_EVENT_OWNER_KEY,
+    name: m.calendar_neutral_label(),
+    slug: '',
+    color: null,
+    logoUrl: null,
+    neutral: true,
+  };
 }
 
 /**
@@ -273,6 +306,7 @@ export interface EventOwnerIdentity {
  * second one.
  */
 export function eventOwners(event: AssociationCalendarFeedEvent): EventOwnerIdentity[] {
+  if (isNeutralEvent(event)) return [neutralOwnerIdentity()];
   return [
     {
       associationId: event.associationId,
@@ -395,7 +429,8 @@ export function splitOrganiserFaces(owners: EventOwnerIdentity[]): {
  * expression.
  */
 export function eventAccentColor(event: AssociationCalendarFeedEvent): string {
-  return associationAccentHex({ id: event.associationId, color: event.associationColor });
+  const [owner] = eventOwners(event);
+  return associationAccentHex({ id: owner.associationId, color: owner.color });
 }
 
 /**

@@ -211,7 +211,7 @@ describe('LiveBroadcaster', () => {
     expect(q('[data-live-rules]')).toBeNull();
     q<HTMLButtonElement>('[data-live-start]')!.click();
     await settle();
-    expect(f.deps.startLive).toHaveBeenCalledWith(expect.any(String), undefined, 1);
+    expect(f.deps.startLive).toHaveBeenCalledWith(expect.any(String), undefined, 1, null);
   });
 
   it('a rules refusal at the start shows the sheet again with its sentence', async () => {

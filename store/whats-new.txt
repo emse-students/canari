@@ -1,3 +1,3 @@
-version: 1.6.5
+version: 1.6.8
 
-Nouveau : un interrupteur « Entre étudiants » sur les publications des associations ; des aides au premier usage (conversations, CanaReels, associations, réservations) ; retaper l'onglet ouvert remonte en haut. Corrigé : les sons respectent le mode silencieux ; les CanaReels démarrent seules et montrent leur chargement ; des messages restaient illisibles après un retour dans l'app ; un fichier enregistré depuis l'app était vide.
+Nouveau : une cloche pour suivre de près une association ou une personne, des événements « Campus » dans l'agenda, des formulaires en brouillon enregistrés au fil de la frappe, une carte des associations par campus. Corrigé : la déconnexion, l'écran qui s'éteignait pendant un appel vidéo, la page d'un lieu à réserver qui débordait, et plusieurs rognages. Les salons déjà ouverts se rouvrent plus vite.

@@ -61,6 +61,7 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
     await ds.initialize();
     const associationsService: any = {
       assertPaymentsReady: async () => undefined,
+      canTakePaymentsNow: async () => true,
       getPaymentAccountId: async () => payee,
       getActivePaymentProvider: async () => 'lydia',
       mayAct: async () => false,
@@ -77,7 +78,8 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
       ds.getRepository(FormRespondent),
       {} as any,
       // FormOrganiserAlertService: switched off, as it ships.
-      { enabled: () => false } as any
+      { enabled: () => false } as any,
+      {} as any
     );
     jest.spyOn(axios, 'post').mockImplementation(async (url: string, body: any) => {
       if (url.endsWith('payments/cancel-request') || url.endsWith('payments/request-state')) {
@@ -254,4 +256,29 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
       payee = 'vendor';
     }
   );
+
+  // A create under a client idempotency key (owner, 2026-11-08): the server mints the id, and a
+  // second send of the same create - racing the first - stores nothing more.
+  it('stores a form once however often its create is sent, under an id the server minted', async () => {
+    const key = '00000000-0000-4000-8000-0000000d0146';
+    const input = () =>
+      ({
+        clientCreateId: key,
+        draft: true,
+        title: 'Gala',
+        basePrice: 0,
+        currency: 'eur',
+        items: [],
+        ownerId: 'owner',
+      }) as any;
+    const [first, second] = await Promise.all([service.create(input()), service.create(input())]);
+    expect(first.id).toBe(second.id);
+    expect(first.id).not.toBe(key);
+    expect(
+      await ds.query(`SELECT count(*)::int AS n FROM forms WHERE "clientCreateId" = $1`, [key])
+    ).toEqual([{ n: 1 }]);
+    // Another owner's create under the same key is its own form.
+    const other = await service.create({ ...input(), ownerId: 'someone-else' });
+    expect(other.id).not.toBe(first.id);
+  });
 });

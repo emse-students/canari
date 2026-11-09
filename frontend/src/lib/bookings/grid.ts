@@ -87,10 +87,12 @@ function wallTimeLabel(instantMs: number, zone: string): string {
   return wallTimeRepeats(instantMs, zone) ? `${time} (${offsetLabel(instantMs, zone)})` : time;
 }
 
+/** How an end at the following midnight reads (owner, 2026-11-08: never `24:00`, never `00:00`). */
+const END_OF_DAY_LABEL = '23:59';
+
 /**
- * "10:00 - 11:30" in the space's zone. An end at the next midnight reads `00:00`, never `24:00`
- * (owner, 2026-11-02: `24:00` does not exist for the reader; `24:00` stays only the STORED end of
- * a day, see availability.ts); an end later on the next day is marked "(lendemain)"; an end
+ * "10:00 - 11:30" in the space's zone. An end at the next midnight reads `23:59`, never `24:00`
+ * or `00:00` (owner, 2026-11-08: a label only, the end stays the midnight everything compares); an end later on the next day is marked "(lendemain)"; an end
  * further on names its day. A time of
  * a fall-back night's doubled hour carries its offset - "02:00 (UTC+2) - 02:00 (UTC+1)" - so two
  * different ranges never read the same.
@@ -111,7 +113,9 @@ export function formatTimeRangeParts(
   const endTime = wallTimeLabel(endMs, zone);
   const days = dayCount(startDay, endDay) - 1;
   let end = endTime;
-  if (days === 1 && endTime !== '00:00') end = `${endTime} ${m.bookings_time_next_day()}`;
+  // Display only: the range stays midnight-exclusive everywhere else (owner, 2026-11-08).
+  if (days === 1 && endTime === '00:00') end = END_OF_DAY_LABEL;
+  else if (days === 1) end = `${endTime} ${m.bookings_time_next_day()}`;
   else if (days > 1) end = `${formatShortDay(endDay)} ${endTime}`;
   return { start: wallTimeLabel(startMs, zone), end };
 }

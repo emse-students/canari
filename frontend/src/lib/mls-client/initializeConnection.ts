@@ -315,7 +315,11 @@ export async function syncConnectionAfterWsOpen(
   // the server so the host can invite it immediately after.
   let keyPackagePublished = false;
   try {
-    await mlsService.generateKeyPackage(deviceKeyB64);
+    // FRESH: a round already in flight was started before this socket opened - on a reconnect, it
+    // is often the login's round dying on the link that just died. Joining it would hand this sync
+    // that round's failure and defer every welcome_request below to a next connection that may
+    // never come. A fresh round queues behind it (no overlap) and runs on the link this open proved.
+    await mlsService.generateKeyPackage(deviceKeyB64, { fresh: true });
     log('KeyPackage published.');
     keyPackagePublished = true;
     // Proactive reconciliation (best-effort, background): purge orphaned one-time

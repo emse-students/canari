@@ -67,18 +67,37 @@ export type LivesMode = 'off' | 'on';
  */
 export const LIVES_MODES: readonly LivesMode[] = ['off', 'on'];
 
+/**
+ * The server's switch for WP-CHECKPOINT-SKIP (`platform_config.checkpoint_skip_mode`, published by
+ * `/api/version`): `off` - every drain ends with a full MLS checkpoint, as always; `on` - a live drain
+ * that only received application frames leaves it to the next existing trigger, up to the client's
+ * own count (`mls-client/receiveCheckpointSkip.ts`). Nothing on the server enforces it: it is this
+ * client's own durability, so the client is the only reader.
+ */
+export type CheckpointSkipMode = 'off' | 'on';
+
+/**
+ * Every value of {@link CheckpointSkipMode}. FOUR COPIES of these two strings exist (the SQL CHECK,
+ * core's entity, this, the admin page through this) and `checkpointSkipModesAgree.test.ts` fails the
+ * day one of them drifts.
+ */
+export const CHECKPOINT_SKIP_MODES: readonly CheckpointSkipMode[] = ['off', 'on'];
+
 export type ServerVersionInfo = {
   version: string;
   minClientVersion: string;
   maintenance: PlatformMaintenanceInfo;
   callsMode: CallsMode;
   livesMode: LivesMode;
+  checkpointSkipMode: CheckpointSkipMode;
   /** Whether this core-service redeems a code with a PKCE verifier - see {@link AppVersionCheckResult}. */
   oidcPkce: boolean;
   /** Whether this estate's gateway takes presence ids in a POST body - see {@link AppVersionCheckResult}. */
   presencePost: boolean;
   /** Whether this estate serves the background publish queue - see {@link AppVersionCheckResult}. */
   publishQueue: boolean;
+  /** Whether this estate builds forms as drafts - see {@link AppVersionCheckResult}. */
+  formDrafts: boolean;
 };
 
 export type AppVersionCheckResult = {
@@ -93,6 +112,8 @@ export type AppVersionCheckResult = {
   callsMode: CallsMode;
   /** Whether the server lets lives answer; `off` until a server has said otherwise. */
   livesMode: LivesMode;
+  /** Whether a receive-only drain may defer its MLS checkpoint; `off` until a server has said otherwise. */
+  checkpointSkipMode: CheckpointSkipMode;
   /**
    * A CAPABILITY of the server, not a switch: core-service forwards a PKCE `code_verifier` to
    * MiConnect. `startOidcLogin` sends a `code_challenge` only when this is true, because an older
@@ -115,6 +136,14 @@ export type AppVersionCheckResult = {
    * server older than the field.
    */
   publishQueue: boolean;
+  /**
+   * A CAPABILITY of the estate, not a switch: social-service creates a form as a draft, publishes it
+   * by its own route and keeps its unpublished revision. The form editors use drafts only when this
+   * is true, and otherwise save as before: an older server strips `draft` and publishes the form at
+   * once, and answers the revision routes `404` - and a store build reaches phones before production
+   * deploys. `false` for every server older than the field.
+   */
+  formDrafts: boolean;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -148,6 +177,16 @@ function normalizeLivesMode(raw: unknown): LivesMode {
   return LIVES_MODES.find((known) => known === mode) ?? 'off';
 }
 
+/**
+ * The checkpoint-skip mode a `/api/version` body carries. ABSENT OR UNKNOWN READS AS `off`: `off` is
+ * the behaviour every client has always had, so a server that does not publish the switch - or a
+ * value this client does not know - can only ever mean today's durability.
+ */
+function normalizeCheckpointSkipMode(raw: unknown): CheckpointSkipMode {
+  const mode = raw && typeof raw === 'object' ? (raw as { mode?: unknown }).mode : undefined;
+  return CHECKPOINT_SKIP_MODES.find((known) => known === mode) ?? 'off';
+}
+
 /** Parses `/api/version` JSON into a normalized {@link ServerVersionInfo}. */
 export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null {
   if (!data || typeof data !== 'object') return null;
@@ -157,9 +196,11 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     maintenance?: unknown;
     calls?: unknown;
     lives?: unknown;
+    checkpointSkip?: unknown;
     oidcPkce?: unknown;
     presencePost?: unknown;
     publishQueue?: unknown;
+    formDrafts?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -170,9 +211,11 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     maintenance: normalizeMaintenance(obj.maintenance),
     callsMode: normalizeCallsMode(obj.calls),
     livesMode: normalizeLivesMode(obj.lives),
+    checkpointSkipMode: normalizeCheckpointSkipMode(obj.checkpointSkip),
     oidcPkce: obj.oidcPkce === true,
     presencePost: obj.presencePost === true,
     publishQueue: obj.publishQueue === true,
+    formDrafts: obj.formDrafts === true,
   };
 }
 
@@ -188,9 +231,11 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   maintenance: PlatformMaintenanceInfo;
   calls: { mode: CallsMode };
   lives: { mode: LivesMode };
+  checkpointSkip: { mode: CheckpointSkipMode };
   oidcPkce: boolean;
   presencePost: boolean;
   publishQueue: boolean;
+  formDrafts: boolean;
 } {
   return {
     version: info.version,
@@ -198,9 +243,11 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     maintenance: info.maintenance,
     calls: { mode: info.callsMode },
     lives: { mode: info.livesMode },
+    checkpointSkip: { mode: info.checkpointSkipMode },
     oidcPkce: info.oidcPkce,
     presencePost: info.presencePost,
     publishQueue: info.publishQueue,
+    formDrafts: info.formDrafts,
   };
 }
 /**
@@ -365,9 +412,11 @@ export function buildAppVersionCheckResult(
     maintenance,
     callsMode: serverInfo?.callsMode ?? 'off',
     livesMode: serverInfo?.livesMode ?? 'off',
+    checkpointSkipMode: serverInfo?.checkpointSkipMode ?? 'off',
     oidcPkce: serverInfo?.oidcPkce ?? false,
     presencePost: serverInfo?.presencePost ?? false,
     publishQueue: serverInfo?.publishQueue ?? false,
+    formDrafts: serverInfo?.formDrafts ?? false,
   };
 }
 

@@ -137,6 +137,9 @@ describe('the sealed seed mirror is read by Rust alone', () => {
     expect(rawReads).toHaveLength(1);
     const reader = between(production, /pub\(crate\) fn read_graine_mirror\(/, /\n}\n/);
     expect(reader).toMatch(/fs::read\(data_dir\.join\("graine_seeds\.json"\)\)/);
+    // The iOS App Group copy reads the file as BYTES and never parses them (2026-11-07).
+    const copy = between(production, /pub\(crate\) fn sync_seed_mirror_copy\(/, /\n}\n/);
+    expect(copy).not.toMatch(/serde_json|open_file/);
   });
 
   it.each([

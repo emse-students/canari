@@ -183,6 +183,8 @@ describe('a group ends - one policy, three routes', () => {
               find: jest.fn().mockResolvedValue([]),
             };
           }),
+          // The account's push registrations, locked then deleted in their own transaction.
+          query: jest.fn().mockResolvedValue([{ n: 0 }]),
         };
         const out = await cb(transactional);
         if (tombstones) {

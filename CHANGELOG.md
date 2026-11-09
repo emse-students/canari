@@ -14,6 +14,420 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.8] - 2026-11-08
+
+### Added - a bell on an association and on a followed person: posts and lives, lives only, or nothing
+
+It replaces the association push mute, copied into it by the held migration 143 (an old build's mute keeps working), and a new follow resets it; the settings list every reduced bell ([engagement](docs/wiki/engagement.md#wp-3---the-bell-built)).
+
+### Added - a BDE can file a neutral "Campus" event on the agenda
+
+The people who file the BDE's events choose "au nom du BDE" or neutral; a neutral event reads
+"Campus" with no association name, logo or creator for anyone but its agenda managers (who see the
+owning association), and
+the BDE stays its owner for rights, validation and audience (migration 144,
+[calendar](docs/wiki/frontend/modules/calendar.md#neutral-campus-events-owner-2026-11-08)).
+
+### Fixed - on a phone, an association's "Formulaires" tab crushed each form's title to single letters beside its actions; the actions now go below the title on a narrow card, and a draft is marked there ([forms](docs/wiki/frontend/modules/forms.md#edits-are-saved-as-they-are-typed-and-published-together-owner-2026-11-08)).
+
+### Fixed - an association page's tab no longer shows its URL slug before the real name arrives: the baseline is the neutral word "Association" ([seo](docs/wiki/frontend/seo.md)).
+
+### Fixed - the page of a bookable space no longer spills past a phone's right edge, and a free day reads 00:00 - 23:59
+
+The booker's grid sized its single phone column by its widest unbreakable text (a truncated name in "Vos réservations ici"), so the whole week was wider than the screen; the column is now `minmax(0,1fr)`. An end at the following midnight is shown as 23:59, a label only ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Fixed - the minimised call bar keeps its camera button once the camera is off, so it turns the camera back on without going to full screen ([calls](docs/wiki/frontend/modules/calls.md)).
+
+### Changed - a carte de la vie asso belongs to one space, with its own zones and a switch per association
+
+A BDE's managers make and publish the maps of their own spaces, one live map per space, read by the portail with `?space=`; the global association category is replaced by each map's zones (held migration 147, [carte](docs/wiki/carte-vie-asso.md#a-carte-belongs-to-one-space)).
+
+### Changed - CI caches the pinned Trivy and ShellCheck archives instead of downloading them on every run
+
+A GitHub release-download outage failed every pull request on 2026-11-08; the digest is still checked on each run ([cicd](docs/wiki/cicd.md)).
+
+### Changed - the "Messagerie chiffrée active dans un autre onglet" banner and its "Prendre la main" button are gone: a second tab now hands creating a conversation, inviting, removing and entering a community or a salon to the main tab, which runs it once and answers, a main tab closed mid-way being reported and never run twice, and a main tab locked or signed out answering at once ([chat](docs/wiki/frontend/modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08)).
+
+### Added - a form's edits are saved as they are typed, into an unpublished revision (debounced, at once when the page is hidden, left or navigated away from), kept on the device until the server holds them and sent again after a restart, with "Enregistré / Enregistrement... / Non enregistré - hors ligne" under the editor, and published or discarded as one ([forms](docs/wiki/frontend/modules/forms.md#edits-are-saved-as-they-are-typed-and-published-together-owner-2026-11-08)).
+
+### Added - a form is a draft until "Publier": invisible to every respondent read, a paid form built and saved before its association's Lydia is ready, published once its respondents can pay (online ready, or cash accepted), online payment now the editor's choice, and "Voir le formulaire" opening the live page or a preview that sends nothing ([forms](docs/wiki/frontend/modules/forms.md#a-form-is-a-draft-until-it-is-published-owner-2026-11-08)).
+
+### Fixed - the iPhone keeps its screen on during a video call and while broadcasting a live: WKWebView refuses the Screen Wake Lock, so the iOS app disables the idle timer natively, one hold per owner so a call and a live can overlap ([calls](docs/wiki/frontend/modules/calls.md#the-screen-stays-on-during-an-iphone-video-call-2026-11-08)).
+
+### Fixed - a live card's preview no longer 404s when the broadcaster replaces the picture just after the list was read: the previous poster now survives one round (migration 141), and a poster that is really gone is logged at debug. See [lives](docs/wiki/services/lives.md#titles-and-the-preview-image-owner-2026-11-07).
+
+### Fixed - the forms list shared `/forms/<id>` for a public form, which sent a signed-out visitor to login; it now shares `/f/<id>`, and an old `/forms/<id>` link reaches the guest page when the form is public ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Added - "Annuler partout" / "Supprimer partout" on a reel sent to several conversations, and a notice naming the conversation a send failed in
+
+The last client pieces of "Envoyer à..." from the camera tab, still behind the chat reel writer switch (on in dev builds only); what stands between `main` and the production flip, and the bench readings it waits on, are in [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#21-what-stands-between-main-and-the-production-flip-2026-11-08).
+
+### Changed - the salon-mount bench counts the engine's layouts, style recalculations and error events
+
+With them, moving the salon mount's layout reads to a ResizeObserver was measured and refuted: no layout or style pass was removed, and the composer's height must be published before the entry fill measures ([community-open-budget](docs/wiki/frontend/community-open-budget.md#the-mounts-layout-reads-moved-and-measured-the-layout-is-paid-anyway-2026-11-08)).
+
+### Added - recent conversations suggested in the iPhone share sheet
+
+The twin of Android's sharing shortcuts: the same five conversations are donated as `INSendMessageIntent`s (a name and an id, never a message), the Share Extension carries the picked one to the picker as a hint, and a sign-out deletes them ([sharing](docs/wiki/frontend/sharing.md#share-suggestions-ios---lot-s5)).
+
+### Added - Canari's half of the one-time sign-in handoff to its MiConnect sites: core-service mints a 60-second ES256 token for a live session (`POST /api/auth/handoff`, public keys at `/api/auth/handoff/jwks`), and the launcher and the profile-photo buttons open sites through one opener; every site's flag ships OFF until its own redemption is live ([sessions](docs/wiki/sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08)).
+
+### Fixed - a sign-out now deregisters the push token before it revokes the session,
+
+The server's push deregistration raced the revocation and came back `HTTP 401` (Android, `1.6.7-alpha.3`); `clearAuth` now awaits it first, and a transport failure is a warning naming what stayed registered. A `Close` arriving while the socket is released no longer ends in a native disconnect on a closed connection ([sessions](docs/wiki/sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
+
+### Fixed - three WARN lines of the sign-out / sign-in path are gone at their cause: a pause no longer warns when the gateway closes the socket on our own disconnect frame, a sign-out no longer sends a recovery `refresh` that was bound to 401, and a remounted iOS tab bar no longer calls the plugin before it is configured ([sessions](docs/wiki/sessions.md)).
+
+### Fixed - the live picker only offers associations the server accepts, three iPhone clippings and a leftover screen-reader line
+
+The composer's live chip is offered only for an association where the member holds `POST_AS_ASSO` themselves (a global admin no longer gets a `403 LIVE_ASSOCIATION_FORBIDDEN`); the live viewer's name truncates before the report flag, the Formulaires actions wrap, the Settings device id breaks, and a dismissed guidance card no longer leaves "Étape 1 sur 1" in the accessibility tree ([readings](docs/wiki/backlog.d/what-the-readings-of-1-6-7-alpha-3-filed.md)).
+
+## [1.6.7] - 2026-11-08
+
+### Fixed - a guest's cash answer awaiting validation no longer turns an association's Formulaires section into a 500
+
+The pending-cash list named its rows by account id alone, and a guest has none; it now names them like the responses screen does ([forms](docs/wiki/frontend/modules/forms.md#a-guests-name-and-e-mail-when-the-form-asks-2026-11-06)).
+
+### Fixed - sharing a live's link "via Canari" opened the destination picker behind the live viewer
+
+The "Envoyer a..." picker of a share from another app sat on the modal rung, under the full-screen viewer, and was invisible until the live was closed. Its host now marks itself as a viewer-clearing layer, like the dialogs opened from inside a viewer ([live](docs/wiki/frontend/modules/live.md#the-viewer-as-built-2026-10-19)).
+
+### Changed - the admin Dependencies panel reads at a glance: one line per entity, a warning icon instead of a repeated sentence
+
+Each BDE sums its audience warnings and can filter to them, associations and lists sit in two sub-groups, and an archived name says so ([admin](docs/wiki/frontend/modules/admin.md)).
+
+### Fixed - the image scan allowlists two zlib advisories in authentik 2026.8.5 until an authentik release rebuilds it
+
+Debian ships the fix, only an authentik image can carry it, and 2026.8.5 is the latest; both entries retire themselves with the next upgrade ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - a saved `.txt` (the exported log) can be picked in Canari's attach-files picker on Android
+
+The "files" entry listed a few types and Android greyed out the rest; it now accepts any file ([mobile](docs/wiki/frontend/mobile.md)).
+
+### Changed - an association's live notifies everyone who can see it, as its posts do, at most once per 6 hours
+
+"X est en live" for a live broadcast as an association now reaches every reader its rules or membership reach, not only its followers, with at most one announced live per association every 6 hours, and an archived association can no longer go live; a member's live still reaches only their accepted followers. The first package of the engagement chantier, designed with the rest on [engagement](docs/wiki/engagement.md).
+
+### Fixed - a gallery known to be down is probed at spaced intervals of requests, not asked by every avatar
+
+During the five-hour gallery outage of 2026-11-05 every avatar request asked it again and logged again (2 000 `502`s an hour). core-service now remembers the outage, spaces its probes by a count of skipped requests, answers the rest without asking, and logs two lines: down, and back. The 25-minute tunnel outage of the same day is closed with no change: its cause was an independent problem outside the project (owner, 2026-11-07), and the `upstream` job's `tunnel-down` issue stays the watch. See [upstream-reachability](docs/wiki/infrastructure/upstream-reachability.md#the-app-does-not-keep-asking-a-gallery-known-to-be-down-2026-11-07).
+
+### Fixed - a video call between an iPhone and an Android phone carries a picture
+
+WebKit's encoded frames name no codec, so the E2E worker framed the iPhone's video whole while Chromium split off the clear VP8 header: every video frame failed to decrypt, both ways, and the call bar showed a black square. The worker now frames on the codec the page held the transceiver to, told to the transform when it is made, and a picture shows only once a frame is painted (the avatar until then). Accepted by the owner: an updated iPhone and an iPhone on an older version exchange no picture until both update (audio unaffected). See [calls](docs/wiki/frontend/modules/calls.md#the-iphone-and-android-framed-video-differently-production-2026-11-07).
+
+### Added - a call reports a video codec negotiated against its transform's
+
+WebKit's frames name no codec, so an engine ignoring `setCodecPreferences` would have carried H.264 framed as VP8 unseen; once negotiation settles, each video side's negotiated codec is now compared with its transform's and a mismatch is logged once, at ERROR (a report only). The iOS app also leaves the Media Session `hangup` alone when clearing, as CallKit owns it. See [calls](docs/wiki/frontend/modules/calls.md#the-iphone-and-android-framed-video-differently-production-2026-11-07).
+
+### Added - a server switch lets a drain that only received messages defer its MLS checkpoint, off everywhere
+
+`platform_config.checkpoint_skip_mode` (core migration 020, `/admin/platform`, published by `/api/version`) turns on WP-CHECKPOINT-SKIP on native phones only, with K = 100 deferred receive generations; it stays `off` until two dev readings pass on both bench phones ([the decision](docs/wiki/open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)).
+
+### Fixed - a reply to a reply now mentions the member it answers
+
+"Repondre" on a reply pre-filled the typed text `@First Last`, which is plain text everywhere (no chip, no profile link, no notification). It now pre-fills a real mention, and nothing for an anonymous or association comment. See [posts](docs/wiki/frontend/modules/posts.md#a-reply-to-a-reply-starts-with-a-mention-token-2026-11-07).
+
+### Added - the push envelope, the server half of content-free push past MLS frames (switch off)
+
+Salon, social, reaction and join-ask pushes can now be stored per device and replaced by a wake that
+names nothing, fetched back over our own TLS; inert until a client declares wake version 2, behind
+`push_mode`. Chat-delivery migration 046 adds `push_envelope` and `push_token.wakeVersion`
+([content-free-push](docs/wiki/protocols/content-free-push.md#32-everything-sent-through-sendpushtouser---no-durable-row-exists-so-one-is-written)).
+
+### Changed - every button, select and text field shares one 40 px box
+
+Button, Input and Select (Picker) now draw the same height, thin grey edge and corner; secondary buttons are the field edge on a neutral fill and the yellow is for the primary action only. A ratchet test fails a screen that hand-builds a control ([controls](docs/wiki/frontend/controls.md)).
+
+### Removed - `posts.pinned`, the retired global pin column (migration 134, held for the owner)
+
+A pin is a row of `post_space_pins` per space since WP-PIN, and migration 128 carried the last global
+pin; the column is dropped one release after it was unmapped ([spaces-and-audiences-reform](docs/wiki/spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)).
+
+### Changed - a member's further device lets itself in when no member device is online
+
+A member's new device still asks first, and will join by itself when the server says nobody can
+answer - held shut on the server until every member client reads it as an ordinary added device.
+Only a known device under a new key is still flagged and withheld history. A conversation that can
+never be opened on a device says so, decided only by server facts, with "Recommencer avec les mêmes
+personnes" ([mls-availability-no-holder](docs/wiki/protocols/mls-availability-no-holder.md#decisions-taken-2026-10-31)).
+
+### Changed - a BDE governs and moderates its children, never what its spaces merely reach
+
+`MANAGE_ASSO`, the moderation of an association's content and its deletion now follow the governing
+parent set by migration 130, not the audience: two BDEs sharing a campus no longer both govern the
+same association, and an association with no parent is the platform admin's alone
+([reform 2.4](docs/wiki/spaces-and-audiences-reform.md#24-who-governs-what-and-how-the-predicates-change)).
+
+### Changed - the price grid's exhaustive cent round trip runs in ten slices
+
+The test that sends every accepted amount (0 to 1 000 000 cents) through the euro input and back took about a second in one case, and timed out once on a loaded machine. It still checks every amount, now in ten cases of 100 000, each well under the per-test budget. See [forms](docs/wiki/frontend/modules/forms.md).
+
+### Changed - the iPhone readings owed by #3075 are rows of the device runbook
+
+The three iOS follow-ups of #3075 (Swift log lines in clear, `push_context.json` following an
+account switch, the uptime boot proof) are each owed one reading on the iPhone 12, now written as
+rows R1a-R3b with their PASS and FAIL lines ([device-verification](docs/wiki/device-verification.md#ios-3075-the-ios-follow-ups-of-3075---owed-on-the-iphone-12)).
+
+### Added - a live's chat shows "X a rejoint" when someone arrives (owner decision, 2026-11-07)
+
+Visible to every viewer and the broadcaster, at most three names per poll with the rest folded into "et N autres ont rejoint", never for an account blocked either way, a removed viewer, or a reader the chat is withheld from. This deliberately reverses the "a count, never an identity" rule of the lives design; the policy, the terms and the register say so ([lives](docs/wiki/services/lives.md#arrival-lines-owner-2026-11-07)).
+
+### Changed - the live chat reads better over the video and marks the host's lines
+
+A darker gradient under the chat block, medium-weight text with a double shadow, and a small "Host" pill after the broadcaster's name. The owner's "X a rejoint" lines (decided 2026-11-07) come in a separate pull request ([live](docs/wiki/frontend/modules/live.md#the-chat-readable-over-the-video-and-the-host-mark-2026-11-07)).
+
+### Fixed - the live preview's follow-ups after #3135
+
+A poster key that failed to derive is derived again at the next preview, and two cards asking for
+the same preview share one fetch; the preview's nginx bound is documented as per address, and the
+stale comments now name the poster key and route
+([lives](docs/wiki/services/lives.md#what-the-preview-costs)).
+
+### Added - a live has a title, and the feed card shows a preview of it
+
+A live may carry a title (80 characters, editable on air), the feed shows one large card or a
+carousel with a still of the stream sealed under a key derived from the live key that opens nothing else,
+taking no seat, and the follower
+push carries the title ([lives](docs/wiki/services/lives.md#titles-and-the-preview-image-owner-2026-11-07)).
+
+### Changed - the price grid of a form question is one compact, ruled table
+
+Row headers now have exactly the height of their row and column headers sit over their columns, with thin rules instead of floating boxes; cells are 2.5rem tall instead of 4.75rem, so far more rows fit on screen ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Changed - the privacy policy now describes named readers
+
+The policy (and its Art. 30 register row C5) say who may be given a nominative read access, what it opens and withholds, and how long the grant and its journal are kept ([register](docs/wiki/compliance/register-of-processing.md)).
+
+### Added - an account with no profile photo is invited to add one, once, with one reminder 30 days later
+
+A guided card (the same engine as the welcome tour and the first-time hints) whose button opens MiGallery's photo page; shown once, then once more if there is still no photo 30 days after the first showing, measured by the server, then never. See [guided-help](docs/wiki/frontend/guided-help.md#the-profile-photo-prompt-owner-2026-11-07).
+
+### Fixed - a phone that signed out and came back by fingerprint or Face ID showed only "Nouveau message de ..." for every push
+
+A sign-out strips `push_context.json` to its identity, and only a PIN sign-in wrote it back; every sign-in now writes it, and the Android readers say `absent` or `invalid: <field> missing` instead of one line for both ([content-free-push](docs/wiki/protocols/content-free-push.md#who-writes-push_contextjson-and-when-2026-11-07)).
+
+### Changed - a read mark leaves the moment the reading decides it, no longer 2 seconds later
+
+Marks decided inside the next 2 seconds coalesce into one trailing send ([read-receipt-privacy](docs/wiki/read-receipt-privacy.md)).
+
+### Fixed - two registrations of one device in the same millisecond no longer answer 500
+
+The server writes a device's key package row in one `INSERT ... ON CONFLICT DO UPDATE` instead of a read then an insert, and the client runs one key package round at a time, so a second caller joins the round in flight. See [chat-delivery](docs/wiki/services/chat-delivery.md#a-registration-writes-its-row-in-one-statement-and-the-client-sends-one-2026-11-07).
+
+### Fixed - opening a salon shows its last 20 messages first, and no longer floods the console
+
+The reveal mounted 60 rows in one task instead of 20, so the stepped widen never ran; and hiding
+the community rail during the open printed ~100 invalid-keyframe warnings. Reveal 340 -> 171 ms on
+the desktop bench at CPU x4 ([community-open-budget](docs/wiki/frontend/community-open-budget.md#why-2914-did-not-move-the-clock-and-the-two-cuts-after-it-2026-11-07)).
+
+### Fixed - one account's wipe now removes that account's Graine seeds from the push mirror, and only them
+
+Each `graine_seeds.json` entry names the accounts that wrote it, so the deleted-account and revoked-device wipes, a community leaving the device and the retention sweep drop exactly what that account alone wrote; an entry written before the label goes with the install's only account and is otherwise never attributed to anyone ([auth](docs/wiki/frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)).
+
+### Fixed - switching a priced grid's criterion asks before erasing the groups and prices entered
+
+Another "Selon", the registration grid's copy, or the switch turned off kept only the "Autres" prices without a word ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Fixed - the order bar of a public form rests on the bottom of the screen
+
+The shell reserved the bottom navigation's room as padding on every page, including the guest form that has no navigation, and a sticky bar stops at the padding edge: it floated high with the page showing under it. The padding now follows the navigation's own mount. See [forms](docs/wiki/frontend/modules/forms.md#the-order-bar-rests-on-the-bottom-of-the-screen-2026-11-07). On every other page the reserve was 1rem taller than the bar (still 4rem after #648 cut the bar to 3rem), so a form's order bar floated 1rem above the navigation; bar and reserve now read one height.
+
+## [1.6.6] - 2026-11-07
+
+### Added - a post of several photos and videos now appears in CanaReels, swiped left and right
+
+A feed post of two to ten photos and videos (no file, poll, form, linked event or link in its text) is a carousel page in the CanaReels viewer: up and down still change the post, left and right change the photo or video, dots show the position, and only the visible video plays. Installed apps keep their lists through a new switch (`multiMedia`). Decisions in [reels](docs/wiki/frontend/modules/reels.md#carousel-pages---a-post-of-several-photos-and-videos-owner-2026-11-06), the server rule in [services/reels](docs/wiki/services/reels.md#reading).
+
+### Fixed - the device list no longer leaves out a device that still holds fresh KeyPackages
+
+A roster read (`?peek=1`) judged a device on its static KeyPackage alone, so a device whose static row had expired but whose one-time packages were fresh vanished from the device panel and from the pre-claim. The peek now refuses exactly when a claim would, counting the pool without taking from it. Also: `sendWelcome` always names its device, and a seed bundle refuses (unacknowledged, redelivered) once the session it began for ends. See [key-package-pool](docs/wiki/protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06).
+
+### Fixed - selecting text in a field inside a reorderable card no longer drags the card
+
+In the form editor (question cards) and the association members list, pressing and dragging inside a text field dragged the whole card instead of selecting. A press on a field, button, link or editable area now never starts a drag; the grip and the inert parts of the card still do. One rule in [architecture](docs/wiki/frontend/architecture.md#a-draggable-card-never-starts-a-drag-from-a-field-2026-11-06).
+
+### Fixed - a form holding a grid question can be submitted again
+
+From 2026-06-01 every form with a visible grid (single or multiple choice per row) was refused at submit, member and guest alike, with an English error: the server's answer validator took no grid answer, and no test sent one through it. The server now accepts and checks grid answers, a required grid wants one answered row unless "every row" is asked, only answered questions are sent, a long text shows its 2000-character limit, duplicate grid labels are refused at save, and every submit refusal is worded in French from its code. Mechanism: [forms](docs/wiki/frontend/modules/forms.md#answers-grids-and-the-codes-a-submit-is-refused-with-2026-11-06).
+
+### Fixed - a form of several priced grids no longer forces one of every article
+
+A buyer orders from whichever grids they want; only the whole order must hold one article, and the
+fill page says so once for the form ([forms](docs/wiki/frontend/modules/forms.md#the-priced-grid-product_grid-wp-g1-2026-11-06)).
+
+### Added - a form question can show an image, on the create page too
+
+"Ajouter une image" now sits beside "Ajouter une description" on both form pages; the image is stored at 1600 px (not the 256 px logo bound), shown whole to respondents and guests, and deleted once no form cites it (migration 136). Design: [forms](docs/wiki/frontend/modules/forms.md#a-questions-image-2026-11-06).
+
+### Fixed - a maintenance no longer signs users out
+
+The refresh's maintenance 503 cleared the refresh cookie, so web and Android users met the sign-in page once a maintenance ended; it now leaves the cookie and the session alone. The launch screen shows the operator's maintenance text, a lost answer body reads as no answer rather than a sign-out, and only a refresh answer that is no verdict is retried. Mechanism in [offline and weak network](docs/wiki/frontend/offline-and-weak-network.md#first-paint-never-waits-on-the-network-the-boot-session-question-2026-11-05).
+
+### Changed - a post photo is sent at 1600 px, quality 0.85
+
+A post photo measured 436 KB at 2048 px and quality 0.92, about ten seconds on slow 3G, so the owner chose 1600 px at 0.85; chat and comment photos are unchanged ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md)).
+
+### Changed - a photo, video or carousel post with a link in its text now appears in CanaReels
+
+The link is tappable in the caption, through the same link handling as a post card. Installed apps keep their lists through a new switch (`withLinks`). Decisions in [reels](docs/wiki/frontend/modules/reels.md#a-post-with-a-link-in-its-text-owner-2026-11-06), the server rule in [services/reels](docs/wiki/services/reels.md#reading).
+
+### Added - a public form may ask guests their last name, first name and e-mail
+
+Off by default, three boxes under "Formulaire public"; each ticked one is required of a guest, members never see them, and an asked e-mail is the Lydia payer address (typed once). Guest rows show the name, the export has the columns; migration 138. Rules and data: [forms](docs/wiki/frontend/modules/forms.md#a-guests-name-and-e-mail-when-the-form-asks-2026-11-06), register row C8 and the privacy policy.
+
+### Fixed - asking about a device's KeyPackage no longer spends one
+
+Adding one device used to claim a one-time KeyPackage from every device of its account, and a device checking whether it was itself published claimed one of its own each time it asked. On 2026-11-06 this emptied five pools in two minutes (430 empty-pool serves in an hour). The adding paths now claim the one device they add, and the self-check reads with `?peek=1`. The first half takes effect once the ANSWERING devices (the ones adding) run this client; the self-check needs the joining device updated and the server deployed ([key-package-pool](docs/wiki/protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06)).
+
+### Added - a post of a single video now appears in CanaReels, like a single picture does
+
+A feed post whose only content is one video (not filmed with the Canari camera, no poll, form, linked event or link in its text) is drawn as a full-screen page in the CanaReels viewer and never expires. The list has its own switch (`singleMedia`), so installed apps keep receiving pictures only. The rule and its consequences are in [reels](docs/wiki/services/reels.md#reading).
+
+### Changed - adding a form question is a two-step wizard, and the two survey grids are one "Grille de choix"
+
+The type is chosen from a grouped list, then only its essentials are asked; the card's menus are
+sectioned and its rare settings fold under "Plus d'options"
+([forms](docs/wiki/frontend/modules/forms.md#adding-a-question-the-grille-de-choix-and-the-editors-menus-owner-2026-11-07)).
+
+### Changed - the admin connections page draws a line for every platform and every version, over 24 h, 7 d or 30 d
+
+The history no longer merges small cells (owner's decision of 2026-11-05): two line charts with a clickable legend and a hover tooltip replace the stacked area, a period selector adds 7 days and 30 days from a 5-minute peak series kept in Redis, and the live versions are broken down by platform. The reasoning, the Redis size arithmetic and what an admin can now read are in [chat-gateway](docs/wiki/services/chat-gateway.md#the-anonymous-census-and-its-24-hour-series-2026-11-02).
+
+### Fixed - a failing edge, server or portal no longer shows the sign-in page at launch
+
+When the first token refresh of a launch got a 5xx, a 408/429, an edge's HTML 403 or a captive portal's `200 text/html` instead of the app's answer, the app showed the sign-in page; it now keeps the session and says who failed - this network, the server, or a maintenance - and retries. Only the app's own 401/403 signs a user out. Mechanism in [offline and weak network](docs/wiki/frontend/offline-and-weak-network.md#first-paint-never-waits-on-the-network-the-boot-session-question-2026-11-05).
+
+### Added - a public name that stops answering opens an issue, once
+
+The gallery's five-hour outage and a tunnel connector's 25 minutes of 2026-11-05 reported nothing; the `upstream` job of `scheduled.yml` now probes the gallery, dev, the legacy name and production, suspects a first failure, opens one issue on the second consecutive one and closes it with the downtime ([upstream-reachability](docs/wiki/infrastructure/upstream-reachability.md)).
+
+### Fixed - a cold start no longer refuses its queued frames before the conversation rows exist
+
+The login now holds every socket frame and every mailbox pull (its own, an outbox flush's, a reconnect's) until the restore has seeded the conversation rows, so frames of conversations the device already had are no longer refused `absent-conversation` and fetched a second time ([auth](docs/wiki/frontend/modules/auth.md#and-since-2026-11-06-nothing-is-handled-before-the-conversation-rows-exist)).
+
+### Fixed - tapping "Aa" in the post composer no longer shifts the screen
+
+The formatting row replaced two or three rows of attachment chips, so the footer shrank and the text area under a selection jumped by up to 148 pt on an iPhone 12. The formatting actions are now labelled chips filling the same room. The readings (keyboard stays open through select, "Aa", Bold and handle drags on the iPhone 12 and the Mi 9T) and what is still owed on Gboard are in [posts](docs/wiki/frontend/modules/posts.md#the-formatting-row-keeps-the-keyboard-and-the-footers-height-2026-11-06).
+
+### Fixed - source-scan and stored-page tests no longer lose to a loaded machine
+
+`audioSession.captureSites` reads the run's shared source snapshot instead of walking the disk, and the salon stored-page tests wait for their events rather than a 1 s `vi.waitFor` ([test-suite-reform](docs/wiki/test-suite-reform.md#8-intermittent-local-failures-under-load-read-2026-10-30)). The sqlite and pending-mutation victims have no code cause (third reading there).
+
+### Fixed - reading the device list no longer spends one-time KeyPackages
+
+The settings device count, the device panel, the new-device notices and the Welcome fan-out read an account's device list with `?peek=1`, which claims nothing; only group creation and the Graine admission claim, and a claim is never shared between two callers. Mechanism: [key-package-pool](docs/wiki/protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06).
+
+### Changed - the wiki no longer says Lydia is not live in production
+
+The owner confirmed on 2026-11-06 that Lydia is active in production, and the production core's startup log reads `Lydia configured: yes (https://lydia-app.com)`. The notes that waited on it now name only what is still owed ([WP-LYDIA-1](docs/wiki/backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end)).
+
+### Fixed - a prepared video's sound no longer runs ahead of its picture
+
+Chrome's audio decoder closed the holes of a phone's audio track, so a re-encoded video's sound ran
+early by the sum of them, growing to the end; the holes are now restored as silence, and every video
+is also resampled to a constant 30 fps ([video-preparation](docs/wiki/frontend/video-preparation.md#constant-frame-rate-and-the-audio-holes-the-decoder-closes)).
+
+### Fixed - the app no longer sits on its splash from launch when the network hangs
+
+A first launch used to wait for the silent session refresh (up to about 40 s on a path that hangs) before drawing anything. The refresh now runs beside the page: a boot screen shows at once, and a network that cannot be reached is stated, with a retry, instead of being read as a signed-out user. The cause and the table of outcomes are in [offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#first-paint-never-waits-on-the-network-the-boot-session-question-2026-11-05).
+
+### Fixed - a form's options rule each other out the same way whatever the order of the clicks
+
+The editor and the server now read one shared rule for which options exclude each other, so switching "Formulaire public" on before or after another option gets the same answer, and the server refuses an incoherent form with a code. A public form may now carry a price grid by promo, formation or cotisation: a guest pays the "autres" tier. Rule table: [forms](docs/wiki/frontend/modules/forms.md#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06).
+
+### Added - forms: the priced grid can be written in the editor
+
+The "Grille d'articles" question is offered in the form builder: the table is the editor (rows, columns, a pasted list, reordering, closed cells), with one price, a price per row or per column, a tab per category, a cap per cell and a desktop/phone preview. Mechanism: [forms](docs/wiki/frontend/modules/forms.md#the-editor-wp-g3).
+
+### Added - forms: the priced grid can be filled in
+
+A member or a guest orders from a "Grille avec prix" question: a table of steppers on a computer, a card per row with size pills on a phone, struck-through cells for combinations that do not exist. A sticky bar totals the order across every grid, with a line-by-line recap, and the page names the price category the server applied. Mechanism: [forms](docs/wiki/frontend/modules/forms.md#the-fill-page-wp-g2).
+
+### Added - forms: the priced grid (`product_grid`), server side
+
+A new question type for orders (sizes x colours, a quantity per cell, a price per row, per column or for all, per category with guests paying "autres"). The server judges the grid at save, recomputes every amount at submit and hands Lydia that one total. Each answer keeps the lines it was charged for (migration 137), and the export gains "Articles" and "Totaux" sheets. Mechanism: [forms](docs/wiki/frontend/modules/forms.md#the-priced-grid-product_grid-wp-g1-2026-11-06).
+
+### Added - forms: the responses screen (summary cards, filters, totals, poll results, CSV exports)
+
+A form's responses open on summary cards and three tabs: the answers with search, payment filters, an "Invité" badge, "mark paid" and "refund"; a priced grid's totals with a switch for unpaid cash; and a bar per option, for managers only. The export menu adds the "Articles" and "Totaux" sheets as CSV. Mechanism: [forms](docs/wiki/frontend/modules/forms.md#the-responses-screen-client-half-of-wp-g4-2026-11-06).
+
+### Fixed - "@" in a group or salon proposes its members at once
+
+Typing "@M" in a group proposed nobody until several letters were typed: the suggestions came from the school-wide search (top 10) and were filtered to the members afterwards. A conversation now suggests from its own members locally: a bare "@" lists them, latest speakers first, each letter filters (accents ignored, any word of the name). Posts and comments keep the search. Mechanism in [chat](docs/wiki/frontend/modules/chat.md).
+
+### Fixed - a first-time hint's spotlight stays on its button when the page shifts under it
+
+The ring was measured on size changes and scrolls only, so content settling above a control left it drawn offset; an observer of the control's own box now re-measures on any move, and the ring's corners follow the control's ([guided help](docs/wiki/frontend/guided-help.md)).
+
+### Fixed - iOS: every Swift log line is readable on a store build, and the extension's push context follows every edit
+
+The keystore, button, custom-tabs and gallery lines moved from `NSLog` (`<private>` whole on a store build) to a `Logger`, and a test refuses a Swift `NSLog` anywhere; `push_context.json` is copied to the App Group at every edit, not only at activation; the extension's boot proof uses the continuous uptime its sandbox allows, and a frame ahead of the stored state is no longer called a failure ([mobile](docs/wiki/frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
+
+### Fixed - `**bold **` renders bold, and the composer's toolbar, preview and the published post read one markdown grammar
+
+A post containing `**TOP 5 MINIMOYS **` showed its asterisks: CommonMark refuses a closing marker after a space, and the toolbar wrote exactly that when a selection ended on a space. The toolbar now keeps edge whitespace outside its markers, toggles off, works line by line on headings, lists and quotes; the renderer tolerates the old text; the preview no longer shows `__x__` as an underline the post never draws. The cases table and the parity test are in [markdown-coherence](docs/wiki/frontend/markdown-coherence.md).
+
+### Fixed - the services no longer log `CORS DENIED` for `/api/public/*`, where nginx answers CORS with `*`
+
+A public read from `portail-etu.emse.fr` logged a refusal that never happened; the line is now skipped for the paths nginx owns and still fires on every credentialed route ([nginx](docs/wiki/infrastructure/nginx.md)).
+
+### Fixed - `vite dev` no longer takes minutes to listen after a Paraglide compile
+
+The CLI and the vite plugin wrote different Paraglide output into the same folder and invalidated each other's cache, so the next `vite dev` rewrote ~4,500 files first (222 s). Both now read `project.inlang/paraglide.config.js` ([architecture](docs/wiki/frontend/architecture.md#two-writers-of-srclibparaglide-one-set-of-options-2026-11-06)).
+
+### Changed - publishing a post closes the composer at once and the send resumes after a cut
+
+The post and its files are kept on the device and sent in the background one file at a time, in
+resumable parts, behind a progress line with Pause, Retry and Delete; a lost answer never makes a
+second post, a deleted one never comes back, and the next composer no longer brings back the photos
+just published
+([posts](docs/wiki/frontend/modules/posts.md#the-background-publish-queue)).
+
+### Fixed - a read receipt no longer sits one or two messages before the last one read
+
+A message received live kept its server time only on disk, so until a reload the reader's mark was taken on the author's clock and fell short of what it had read; the shown row now carries it ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed
+
+- Saving a reel no longer fails with "media is undefined" on a row the viewer plays: the save read `media[0]` alone, the viewer also reads `images` (an older server's name). Both now share `fullScreenMediaOf` ([saveReel](frontend/src/lib/reels/saveReel.ts)).
+
+### Fixed - a reply in a group no longer prints the sender's name twice
+
+Under the sender's name, the caption now reads "A répondu à <quoted author>" (or "A répondu à son message"); own messages and 1:1 keep the full form, and an unknown author gets a name-less form, never an id ([#3046](https://github.com/emse-students/canari/pull/3046), [chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a refused link-safety check is now reported as dead, not as a passing warning
+
+Google Safe Browsing refused production's lookups with `403` from an unknown date until the key was fixed on 2026-11-06, and the app logged each one as a transient warning, so every link read "not flagged" unnoticed. A `401` or `403` is now its own verdict, logged at ERROR with Google's own diagnosis (never the key), cached an hour, and counted in a daily `[SAFE_BROWSING] refusals=N` line; network errors and `5xx` still fail open as before ([chat-delivery](docs/wiki/services/chat-delivery.md#link-safety-is-its-own-endpoint-deliberately-not-a-field-on-the-preview-wp-safelink-1)).
+
+### Fixed - the salon stored-page test no longer races a 1 s `vi.waitFor` under load
+
+The two tests of `useConversations.salonStoredPage` now wait for the store to hold the drawn rows, queue position by queue position, instead of polling against a deadline ([testing-methodology](docs/wiki/testing-methodology.md)).
+
+### Added - the deploy log counts the connection resets a service logged during a release
+
+`rolling.sh` reads each retiring replica's log before removing it and, once the last service is replaced, every running container of the replaced services, then prints one `[TRANSPORT_RESETS]` line per container and a deploy-wide total; an unreadable log reads `unknown`, never zero. The proxy for service-to-service calls waits for these readings ([backlog](docs/wiki/backlog.d/p2-service-to-service-calls-bypass-the-rotation.md)).
+
+### Changed - the form editor shows one line per question, and a question can be duplicated
+
+A question that is not being edited is one line (number, title, type, asterisk if required); clicking it opens it, one at a time. The open card has the title, a compact type menu, and one icon row (required, conditions, duplicate, delete); the grey preview box and the field labels are gone. Duplicate is also one click on the collapsed row and Ctrl/Cmd+D. Decisions in [forms](docs/wiki/frontend/modules/forms.md#the-question-editor-is-one-line-per-question-owner-2026-11-06).
+
+### Fixed - the edge nginx pin moves to the rebuild that carries libexpat 2.10
+
+`CVE-2026-115506` (libexpat 2.9.0-r0) turned every pull request's container scan red. Upstream had just rebuilt nginx with libexpat 2.10.0, so the edge pin moved to that build and the three libexpat allowlist entries were deleted ([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Changed - the price grid of a form is a table: two criteria, rows by columns, and an empty price says "Gratuit"
+
+The "Prix d'inscription" editor (and the same grid on boutique products and cotisations) lays out at most two criteria as rows and columns, fills or closes a whole row or column from its header, can hide the unavailable rows, shows a card per row on a phone, and marks the free guest cell a public form would be refused for. Stored grids open unchanged. [forms](docs/wiki/frontend/modules/forms.md#the-price-table---two-criteria-rows-by-columns-owner-2026-11-06)
+
+### Fixed - the priced-grid editor reorders on a phone, and says where the server refused it
+
+On a phone the grid editor now fits the screen, with six sizes and wrapping row labels, and a wider grid scrolls inside its own box under sticky row labels. Rows and columns move with 44px arrow buttons on a touch screen or a phone-width page, and every small control of the grid editor reaches 44px on touch. Removing a row or column that would leave every cell closed is refused with a message, and "Plusieurs reponses" goes back off when the grid that switched it on is removed. A grid refused by the server alone (an unknown cotisation tier) is now drawn under that grid ([forms](docs/wiki/frontend/modules/forms.md#the-editor-wp-g3)).
+
+### Fixed - opening a CanaReel now stops the video playing behind it
+
+The feed's video kept playing (with sound if unmuted) until the reel's own player had loaded, and for good behind a photo page or a failed reel, because only a mounted player counted as an open viewer. The viewer now holds playback from its first line and releases it on close. Cause and mechanism: [reels](docs/wiki/frontend/modules/reels.md#what-plays-behind-the-viewer-stops-when-it-opens-owner-2026-11-06).
+
 ## [1.6.5] - 2026-11-05
 
 ### Fixed - the manager hint was never offered after an empty-shop hint, and a republisher's name was cut to "R..." beside the students-only chip
@@ -2612,7 +3026,7 @@ Off by default and unreachable on production; it only lets a development build b
 
 ### Documented - the Mi 9T crash measurement of the checkpoint-skip switch is read
 
-No frame was lost over six switch-ON kill-and-resume trials of up to 60 skipped frames; what it does not cover is named in [open-questions](docs/wiki/open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13).
+No frame was lost over six switch-ON kill-and-resume trials of up to 60 skipped frames; what it does not cover is named in [open-questions](docs/wiki/open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below).
 
 ### Fixed - ci: the compose-wiring self-test no longer reports a present key as missing
 
@@ -3957,7 +4371,7 @@ Today's day number no longer overruns its circle and "S'abonner au calendrier" s
 
 ### Changed - the per-drain checkpoint is measured on the phone, and skipping it is parked as a decision
 
-On the Mi 9T, a full checkpoint costs about 100 times the one decrypt it follows: 49 ms against 0.49 ms at 7.7 MB. New tests show that a state left behind by received frames re-reads them and loses none. Skipping the checkpoint still weakens durability, so it is recorded as a decision for the user and nothing is built ([open-questions](docs/wiki/open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)).
+On the Mi 9T, a full checkpoint costs about 100 times the one decrypt it follows: 49 ms against 0.49 ms at 7.7 MB. New tests show that a state left behind by received frames re-reads them and loses none. Skipping the checkpoint still weakens durability, so it is recorded as a decision for the user and nothing is built ([open-questions](docs/wiki/open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)).
 
 ### Fixed - a native checkpoint no longer freezes the screen of an Android phone
 
@@ -4630,7 +5044,7 @@ The deep-link plugin drops any `fr.emse.canari://<host>` the config does not lis
 
 ### Added - mute one association's push notifications
 
-A member can silence the push of ONE association from its page or from the notification settings; the post stays in the feed and "Suivre" keeps its meaning. Applied server-side, managers keep their operational notifications. See [social-service](docs/wiki/services/social-service.md#follow-mute-and-read-grants-three-different-facts-decided-by-the-user-2026-10-08).
+A member can silence the push of ONE association from its page or from the notification settings; the post stays in the feed and "Suivre" keeps its meaning. Applied server-side, managers keep their operational notifications. See [social-service](docs/wiki/services/social-service.md#follow-bell-and-read-grants-three-different-facts-decided-by-the-user-2026-10-08-the-mute-became-the-bell-engagement-wp-3-2026-11-08).
 
 ### Added - the audience of an association or list is chosen among presets
 

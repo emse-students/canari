@@ -57,7 +57,7 @@ export const settings = {
   },
 
   /**
-   * Whether Android's share sheet suggests this account's recent conversations (sharing lot S5).
+   * Whether the phone's share sheet suggests this account's recent conversations (sharing lot S5).
    * ON by default (user, 2026-10-22). Per device, like the two toggles above; the suggestions
    * themselves are erased at every sign-out whatever this says (`shareTargets.ts`).
    */

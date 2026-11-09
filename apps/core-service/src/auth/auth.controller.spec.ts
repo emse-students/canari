@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
@@ -90,6 +91,11 @@ function signAccess(sub: string, admin = false): string {
 
 describe('AuthController sessions', () => {
   let controller: AuthController;
+  /** The platform switch, kept so a case can turn maintenance on. */
+  let platform: {
+    getConfig: jest.Mock;
+    isAccessBlockedByMaintenance: jest.Mock;
+  };
   let sessions: jest.Mocked<
     Pick<
       AuthSessionsService,
@@ -130,7 +136,7 @@ describe('AuthController sessions', () => {
       findOne: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
       isUserAdmin: jest.fn().mockResolvedValue(false),
     };
-    const platform = {
+    platform = {
       getConfig: jest.fn().mockResolvedValue({}),
       isAccessBlockedByMaintenance: jest.fn().mockReturnValue(false),
     };
@@ -144,7 +150,8 @@ describe('AuthController sessions', () => {
         erasureState: jest.fn().mockResolvedValue('none'),
         confirmAfterSignIn: jest.fn().mockResolvedValue('none'),
       } as never,
-      {} as never // RestoreCredentialsService: no restore route here
+      {} as never, // RestoreCredentialsService: no restore route here
+      {} as never // HandoffService: no handoff route here
     );
   });
 
@@ -172,7 +179,8 @@ describe('AuthController sessions', () => {
           erasureState: jest.fn().mockResolvedValue('none'),
           confirmAfterSignIn: jest.fn().mockResolvedValue('none'),
         } as never,
-        {} as never // RestoreCredentialsService: no restore route here
+        {} as never, // RestoreCredentialsService: no restore route here
+        {} as never // HandoffService: no handoff route here
       );
 
     const cookieOptionsFor = async (origin: string): Promise<Record<string, unknown>> => {
@@ -314,6 +322,62 @@ describe('AuthController sessions', () => {
       } finally {
         delete process.env.AVATAR_TOKEN_SECRET;
       }
+    });
+
+    it('answers a maintenance 503 and leaves the cookie AND the session as they were', async () => {
+      // A temporary refusal: clearing the cookie sent every web and Android user to login once the
+      // maintenance ended, and left their session row behind with nobody able to present it.
+      platform.getConfig.mockResolvedValue({ maintenanceMessage: 'Back at noon' });
+      platform.isAccessBlockedByMaintenance.mockReturnValue(true);
+      const req = makeReq({
+        cookies: {
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-1',
+            jti: 'jti-1',
+          }),
+        },
+      });
+      const out = makeRes();
+
+      const outcome = await controller.refreshToken(req, out.res).catch((e: unknown) => e);
+
+      expect(outcome).toBeInstanceOf(ServiceUnavailableException);
+      expect((outcome as ServiceUnavailableException).getResponse()).toEqual({
+        code: 'MAINTENANCE',
+        message: 'Back at noon',
+        maintenanceMessage: 'Back at noon',
+      });
+      // No Set-Cookie of any kind: neither a clear nor a new credential.
+      expect(out.cleared).toEqual([]);
+      expect(out.cookies).toEqual({});
+      // The session row is untouched: not rotated, not revoked.
+      expect(sessions.rotate).not.toHaveBeenCalled();
+      expect(sessions.revoke).not.toHaveBeenCalled();
+      expect(sessions.revokeOwned).not.toHaveBeenCalled();
+      expect(sessions.revokeOthers).not.toHaveBeenCalled();
+    });
+
+    it('names no operator text when there is none, so the client words the default itself', async () => {
+      platform.getConfig.mockResolvedValue({ maintenanceMessage: null });
+      platform.isAccessBlockedByMaintenance.mockReturnValue(true);
+      const req = makeReq({
+        cookies: {
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-1',
+            jti: 'jti-1',
+          }),
+        },
+      });
+
+      const outcome = await controller.refreshToken(req, makeRes().res).catch((e: unknown) => e);
+
+      expect((outcome as ServiceUnavailableException).getResponse()).toEqual(
+        expect.objectContaining({ code: 'MAINTENANCE', maintenanceMessage: null })
+      );
     });
 
     it('refuses a replayed token and clears the cookie', async () => {
@@ -631,7 +695,8 @@ describe('AuthController sessions', () => {
             .mockResolvedValue(erasure.during ?? erasure.before),
           confirmAfterSignIn: jest.fn().mockResolvedValue(erasure.after),
         } as never,
-        {} as never // RestoreCredentialsService: no restore route here
+        {} as never, // RestoreCredentialsService: no restore route here
+        {} as never // HandoffService: no handoff route here
       );
     }
 

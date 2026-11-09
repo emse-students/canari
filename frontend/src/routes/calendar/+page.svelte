@@ -409,7 +409,18 @@
     // change `toUpdatePayload` would silently drop.
     canLinkForm:
       mayLinkFormOn(depositValues.targetAssociationId) && depositValues.writeSide === 'organiser',
+    // NEUTRAL ("Campus", owner 2026-11-08): the target is a BDE and the viewer manages its agenda -
+    // files its events or validates them - which is what the server checks (`event-presentation.ts`).
+    canSetPresentation: mayPresentNeutralOn(depositValues.targetAssociationId),
   });
+
+  /** Whether the viewer may file a neutral event on `associationId`: a BDE whose agenda they manage. */
+  function mayPresentNeutralOn(associationId: string): boolean {
+    if (!associationId) return false;
+    const target = associations.find((a) => a.id === associationId);
+    if (!target?.isBDE) return false;
+    return mayValidateFor(associationId) || proposeAssocIds.has(associationId);
+  }
 
   /** Whether the viewer may list - and therefore link - the forms of `associationId`. */
   function mayLinkFormOn(associationId: string): boolean {

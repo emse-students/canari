@@ -6,7 +6,8 @@ import {
 import { fetchJsonUnderProgressDeadline, type ProgressDeadlineResult } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
 import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
-import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
+import type { DeviceMembershipRow, DistributionSeat, GroupMeta, UserGroupRow } from './IMlsService';
+import { parseSeat } from '$lib/utils/chat/noHolder.svelte';
 import type { DatedKeyPackage } from './keyPackages';
 import type {
   DeviceKeyPackageAnswer,
@@ -936,8 +937,9 @@ export class DeliveryRefusedRenewedTokenError extends ApiRefusalError {
 }
 
 /**
- * The delivery service answered 401 and the RENEWAL that followed failed - a refresh answered 5xx
- * (`RefreshFailedError`) or one nobody answered (a transport failure, kept in `renewalFailure`).
+ * The delivery service answered 401 and the RENEWAL that followed failed - a refresh that answered
+ * with no token (`RefreshFailedError`: its no-verdict subclass `TransientAnswerError` AND the app's
+ * own 4xx) or one nobody answered (a transport failure), kept in `renewalFailure`.
  *
  * Typed HERE, where it is known that the server ANSWERED: the 401 came from the guard before any
  * handler, so the request did nothing. Rethrown as it came, a transport failure of the refresh read
@@ -963,9 +965,13 @@ export class DeliveryRenewalFailedError extends ApiRefusalError {
 
 /**
  * What a renewal failure after a delivery 401 becomes. An ALLOWLIST of the failures that say only
- * "no new token now": a refresh answered 5xx and a refresh nobody answered. Every other one is a
- * verdict the app routes on by its own type (a dead cookie, a sign-out under way, a split identity)
- * and passes as it came.
+ * "no new token now": a refresh that answered with no token (`RefreshFailedError`, the BASE - a
+ * `TransientAnswerError` and the app's own 4xx alike) and a refresh nobody answered. The BASE on
+ * purpose: the guard's 401 already proves the request did nothing, whatever made the renewal fail, and
+ * an app 4xx on the refresh left unwrapped is no refusal `isDefinitiveCommitRefusal` reads - the
+ * commit was resubmitted into the same refusal and its stage kept as unknown, blocking the group.
+ * Every other failure is a verdict on the SESSION and passes as it came: a dead cookie, a sign-out
+ * under way, a split identity.
  */
 function deliveryRenewalFailed(error: unknown, where: string): unknown {
   return error instanceof RefreshFailedError || isTransportFailure(error)
@@ -1960,10 +1966,17 @@ export class MlsDeliveryApi {
    * Every other non-2xx stays unclassified, because none of them says anything about membership.
    */
   async fetchGroupInfo(
-    groupId: string
-  ): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null> {
+    groupId: string,
+    deviceId?: string
+  ): Promise<{
+    groupInfo: string;
+    baseEpoch: number;
+    activeEpoch: number;
+    seat?: DistributionSeat;
+  } | null> {
+    const query = deviceId ? `?deviceId=${encodeURIComponent(deviceId)}` : '';
     const res = await this.f(
-      `${this.historyUrl}/api/mls/group-info/${encodeURIComponent(groupId)}`,
+      `${this.historyUrl}/api/mls/group-info/${encodeURIComponent(groupId)}${query}`,
       { headers: await this.auth() }
     );
     // ORIGIN FIRST: only the delivery service's JSON 403 says "not a member" (a caller retires the
@@ -1982,14 +1995,23 @@ export class MlsDeliveryApi {
     const data = (await readApiJson(
       res,
       `GET /api/mls/group-info (group ${groupId.slice(0, 8)})`
-    )) as { groupInfo?: unknown; baseEpoch: number; activeEpoch?: unknown } | null;
+    )) as {
+      groupInfo?: unknown;
+      baseEpoch: number;
+      activeEpoch?: unknown;
+      seat?: unknown;
+    } | null;
     if (!data || typeof data.groupInfo !== 'string') return null;
+    // The asking device's seat, read by the server after the base; absent from an older server or
+    // a request that named no device, which the caller reads as unknown.
+    const seat = parseSeat(data.seat);
     // `activeEpoch` defaults to the base, never to 0: an older server that does not send it must
     // read as "nothing known to be stale", where 0 would call every published base stale.
     return {
       groupInfo: data.groupInfo,
       baseEpoch: data.baseEpoch,
       activeEpoch: typeof data.activeEpoch === 'number' ? data.activeEpoch : data.baseEpoch,
+      ...(seat ? { seat } : {}),
     };
   }
 

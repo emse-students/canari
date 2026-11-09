@@ -14,6 +14,7 @@ import { Submission } from './entities/submission.entity';
 import { guestReference, hashGuestReceipt } from './guest-receipt';
 import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './guest-visitor';
 import { InternalFormsController } from '../internal/internal-forms.controller';
+import { PricingFactsService } from '../pricing/pricing-facts.service';
 import {
   PENDING_HOLD_CUTOFF_SQL,
   PAYMENT_REQUEST_LIFETIME_SECONDS,
@@ -77,6 +78,10 @@ describe('FormsService - the seat a pending payment holds', () => {
     allowCashPayment?: boolean;
     /** Default true: most rows here are members whose payment grants a cotisation. */
     grantsCotisation?: boolean;
+    /** The form's price grid; default none, so `basePrice` is the price. */
+    priceMatrix?: unknown;
+    /** The facts builder; default a stub that knows nobody's promo, formation or cotisation. */
+    pricingFacts?: unknown;
   }) {
     let now = T0;
     // A seeded row naming a request was issued to the form's Business ('vendor'), as `submit` writes.
@@ -93,7 +98,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       grantsCotisation: opts.grantsCotisation ?? true,
       cotisationVariantKey: null,
       basePrice: opts.basePrice ?? 0,
-      priceMatrix: null,
+      priceMatrix: opts.priceMatrix ?? null,
       submitCondition: null,
       anonymous: false,
       isPublic: opts.isPublic ?? false,
@@ -297,7 +302,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       },
     };
     const formRepo: any = { findOne: jest.fn(async () => ({ ...form })) };
-    const pricingFacts: any = {
+    const pricingFacts: any = opts.pricingFacts ?? {
       build: jest.fn(async (input: { answers?: Record<string, string[]> }) => ({
         promo: null,
         formation: null,
@@ -390,7 +395,8 @@ describe('FormsService - the seat a pending payment holds', () => {
       {} as any,
       // FormFilesService: these forms ask for no file, so nothing here reaches it.
       {} as any,
-      organiserAlert as any
+      organiserAlert as any,
+      {} as any
     );
     return {
       service,
@@ -2004,6 +2010,52 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows[0].guestReceiptHash).toBe(hashGuestReceipt(receipt));
       // Never the submission id: the receipt is the only key the page holds.
       expect(checkout.body.successUrl).not.toContain(rows[0].id);
+    });
+
+    // A GUEST PAYS THE "EVERYONE ELSE" TIER of a grid on who the person is (owner, 2026-11-06),
+    // computed here from facts the server builds - never from a price the page sends. The REAL
+    // facts builder runs, with a cotisation store and a profile fetch that fail the test if a guest
+    // ever reaches them. Control: a guest given `cotisationTiers: [null]` lands in "_others|c1" and
+    // the total reads 1200.
+    it('charges a guest the "everyone else" tier of a grid on promo and cotisation', async () => {
+      const userTags = {
+        listHeldCotisationTiers: jest.fn(() => {
+          throw new Error('a guest has no cotisation to read');
+        }),
+      };
+      const profileFetch = jest.spyOn(axios, 'get');
+      const { service, rows, core } = makeStore({
+        maxSubmissions: null,
+        rows: [],
+        provider: 'lydia',
+        isPublic: true,
+        allowMultipleSubmissions: true,
+        grantsCotisation: false,
+        priceMatrix: {
+          dimensions: [
+            { id: 'd1', kind: 'promo', buckets: [{ id: 'b1', label: '1A', values: [2026] }] },
+            { id: 'd2', kind: 'cotisation', buckets: [{ id: 'c1', label: 'BDE', anyTier: true }] },
+          ],
+          cells: {
+            'b1|c1': 800,
+            'b1|_others': 1000,
+            '_others|c1': 1200,
+            '_others|_others': 2500,
+          },
+        },
+        pricingFacts: new PricingFactsService(userTags as any),
+      });
+      await service.submit(
+        'f1',
+        // A price in the body is not read: the server computes the total.
+        { payerEmail: 'guest@example.org', answers: {}, totalPaid: 1 } as any,
+        'guest',
+        VISITOR
+      );
+      expect(rows[0]).toMatchObject({ userId: null, paymentStatus: 'pending', totalPaid: 2500 });
+      expect(core.calls[0].route).toBe('create-checkout-session');
+      expect(userTags.listHeldCotisationTiers).not.toHaveBeenCalled();
+      expect(profileFetch).not.toHaveBeenCalled();
     });
 
     it('mints a different receipt for every guest answer', async () => {

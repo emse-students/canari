@@ -42,7 +42,8 @@ export type BootUnreachableCause = 'network' | 'server' | 'maintenance';
 /** The cause of a failure {@link isSessionQuestionOpen} already accepted. */
 function unreachableCauseOf(error: unknown): BootUnreachableCause {
   if (!(error instanceof TransientAnswerError)) return 'network';
-  if (error.code === 'MAINTENANCE') return 'maintenance';
+  // A code alone proves nothing about the switch: only core-service's 503 carries it.
+  if (error.code === 'MAINTENANCE' && error.status === 503) return 'maintenance';
   if (error.status >= 500 || error.status === 408 || error.status === 429) return 'server';
   return 'network';
 }
@@ -61,6 +62,7 @@ export interface BootSessionDeps {
 
 let phase = $state<BootSessionPhase>('settled');
 let cause = $state<BootUnreachableCause>('network');
+let maintenanceText = $state<string | null>(null);
 let inFlight: Promise<void> | null = null;
 let lastDeps: BootSessionDeps | null = null;
 let removeOnline: (() => void) | null = null;
@@ -76,6 +78,11 @@ export function bootSessionPhase(): BootSessionPhase {
 /** Why the phase is `unreachable` (meaningless in the other phases). */
 export function bootUnreachableCause(): BootUnreachableCause {
   return cause;
+}
+
+/** The operator's maintenance text when the cause is `maintenance` and one was set, else null. */
+export function bootMaintenanceMessage(): string | null {
+  return maintenanceText;
 }
 
 /**
@@ -116,6 +123,10 @@ async function run(): Promise<void> {
         // A sign-in may have completed while the request was in flight: it answers the question.
         if (!deps().currentUserId() && isSessionQuestionOpen(e)) {
           cause = unreachableCauseOf(e);
+          maintenanceText =
+            cause === 'maintenance' && e instanceof TransientAnswerError
+              ? e.maintenanceMessage
+              : null;
           bwarn(`session question unanswered (cause ${cause}, no verdict): ${String(e)}`);
           phase = 'unreachable';
           if (typeof window !== 'undefined') {
@@ -184,6 +195,7 @@ export function resetBootSessionForTest(): void {
   dropOnlineListener();
   phase = 'settled';
   cause = 'network';
+  maintenanceText = null;
   inFlight = null;
   lastDeps = null;
 }

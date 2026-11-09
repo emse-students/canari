@@ -451,8 +451,7 @@ of the association its `vendor_token` names (read from social-service's internal
 fulfillment as a trigger, via an `order_ref` Canari encodes itself
 (`lydia-order-ref.ts`) - a form only: a `product:` confirm fulfils nothing until a boutique checkout
 is a stored row (lot B3); a confirm, a cancel and an expiry alike only make social-service read the row's own request at Lydia before anything moves, and a failure to apply a verified callback (that read included) is a retryable 503. The route is rate-limited at nginx (`lydia_callback`, 5 r/s burst 50 per address). **Still blocking an actual switch to Lydia** (tracked in
-[backlog](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end), harmless today
-since `payment_provider` defaults to `disabled`): nothing resolves the `payerRecipient` `request/do`
+[backlog](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end), owed before a GUEST can pay; Lydia itself is live in production since 2026-11-06): nothing resolves the `payerRecipient` `request/do`
 requires. The `business/create` webhook is described in
 [payments](../frontend/modules/payments.md).
 
@@ -507,7 +506,7 @@ PostgreSQL (`auth_db`). Main tables:
 | `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp`, `deviceId` |
 | `restore_credentials` | `id` (credential id), `userId` (FK CASCADE), `sessionId` (UNIQUE, FK `auth_sessions` CASCADE), `publicKey`, `counter`, `cloudBackup`, `createdAt` - [account-restore](../account-restore.md) |
 | `restore_challenges_spent` | `nonce`, `expiresAt` - written only after a verified assertion, swept hourly |
-| `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion`, `paymentProvider`, `callsMode` (`calls_mode`, migration 014: `off` / `audio` / `audio_video`, default `off`, enforced by chat-delivery-service on every call request), `livesMode` (`lives_mode`, migration 015: `off` / `on`, default `off`, enforced by social-service on every live route and relayed to media-service's segment routes - [lives](lives.md#the-two-switches-live_enabled-and-lives_mode)) |
+| `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion`, `paymentProvider`, `callsMode` (`calls_mode`, migration 014: `off` / `audio` / `audio_video`, default `off`, enforced by chat-delivery-service on every call request), `livesMode` (`lives_mode`, migration 015: `off` / `on`, default `off`, enforced by social-service on every live route and relayed to media-service's segment routes - [lives](lives.md#the-two-switches-live_enabled-and-lives_mode)), `checkpointSkipMode` (`checkpoint_skip_mode`, migration 020: `off` / `on`, default `off`, enforced by no service - published by `/api/version` as `checkpointSkip.mode` and obeyed by the client's MLS state persister, [the decision](../open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)) |
 | `platform_announcements` | `title_fr/en`, `body_fr/en`, `min_client_version`, `max_client_version`, `active`, `created_by` |
 | `platform_announcement_seen` | `announcement_id` (FK CASCADE), `user_id` — PK is the pair |
 | `help_seen` | `user_id` (varchar 255), `help_id` (one of `libs/contracts/help-ids.json`), `seen_at` — PK is the pair; migration 019, erased with the account |

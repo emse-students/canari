@@ -6,9 +6,10 @@ import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
 import { discardAppLog } from '$lib/utils/appLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
-import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
+import { keystoreAlias } from '$lib/utils/accountLocalKeys';
 import { wipeDeletedAccountLocalData } from '$lib/utils/accountLocalWipe';
 import { markDeletedAccountWipePending } from '$lib/utils/deletedAccountMarker';
+import { otherAccountOnInstall, recordedDeviceIds } from '$lib/utils/installAccounts';
 
 /**
  * Everything still on this device that a factory wipe was supposed to remove.
@@ -54,27 +55,6 @@ function recordedKeystoreAliases(): string[] {
 }
 
 /**
- * Every `[userId, deviceId]` this device recorded (`mls_device_id_<userId>`): the accounts that ever
- * signed in here and kept a device identity.
- */
-function recordedDeviceIds(): Array<[string, string]> {
-  const DEVICE_ID_PREFIX = ACCOUNT_KEY.deviceId('');
-  const pairs: Array<[string, string]> = [];
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key === null || !key.startsWith(DEVICE_ID_PREFIX)) continue;
-      const userId = key.slice(DEVICE_ID_PREFIX.length);
-      const deviceId = localStorage.getItem(key);
-      if (userId && deviceId) pairs.push([userId, deviceId]);
-    }
-  } catch (e) {
-    console.warn('[RESET] could not read the recorded device ids back:', e);
-  }
-  return pairs;
-}
-
-/**
  * What a revoked device's wipe may erase (round 6 of the review of #2919): the WHOLE INSTALL only
  * when no other account lives on it, otherwise THE REVOKED ACCOUNT ALONE.
  *
@@ -89,25 +69,9 @@ function recordedDeviceIds(): Array<[string, string]> {
  */
 export async function revokedWipeScope(userId: string): Promise<'install' | 'account'> {
   if (!isTauriRuntime()) return 'install';
-  const others = recordedDeviceIds().filter(([id]) => id !== userId);
-  if (others.length > 0) {
+  if (await otherAccountOnInstall(userId, '[RESET]')) {
     console.log(
-      `[RESET] ${others.length} other account(s) recorded on this install - only the revoked account is wiped`
-    );
-    return 'account';
-  }
-  try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    if (await invoke<boolean>('mls_other_accounts_present', { userId })) {
-      console.log(
-        "[RESET] another account's MLS state is on this install - only the revoked account is wiped"
-      );
-      return 'account';
-    }
-  } catch (e) {
-    console.error(
-      '[RESET] whether another account lives on this install could not be read - only the revoked account is wiped:',
-      e
+      '[RESET] another account lives on this install - only the revoked account is wiped'
     );
     return 'account';
   }
@@ -125,13 +89,17 @@ export async function revokedWipeScope(userId: string): Promise<'install' | 'acc
  *   residue (`delete_user_mls_state`), the native session ended first WITHOUT a sweep;
  * - the native message database, its push files (outbox, cached pushes, read marks, device notices,
  *   `push_context.json` when it names the account), its names copy and its waiting quick replies;
+ * - its entries of the Graine seed mirror (`graine_seeds.json`): those it alone wrote, by the label
+ *   each entry carries since 2026-11-07 - never another account's, nor one written before the
+ *   label (another account lives here, so it may be theirs);
  * - the WebView databases named by the account; its at-rest key marker and keystore entry; its
  *   session metadata, upload release marks, per-account local keys and its vault slot.
  *
  * LEFT, because nothing in them names an account and another account reads them: the in-app log,
  * the HTTP cache, the cached notification avatars, the device-wide FCM token and keystore alias
- * index, the share captured by the Share Extension, and the push service's sealed caches
- * (`graine_seeds.json`, `channel_keys.json`) - see auth.md, "A revoked device another account uses".
+ * index, and the share captured by the Share Extension - see auth.md, "A revoked device another
+ * account uses". (`channel_keys.json` no longer exists: every start deletes the one an older build
+ * left, `native_cache.rs`.)
  *
  * @returns the steps that failed, empty when everything of the account was removed
  */

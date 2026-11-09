@@ -97,6 +97,10 @@ export function notificationHref(
     // The person the reader asked accepted: their profile. `postId` is that person's id.
     case 'follow_accepted':
       return `/profile/${encodeURIComponent(notif.postId)}`;
+    // A followed person's birthday: their profile, where the reader can wish it. `postId` is that
+    // person's id (docs/wiki/birthdays.md).
+    case 'birthday':
+      return `/profile/${encodeURIComponent(notif.postId)}`;
     // The types whose `postId` IS a post.
     case 'comment':
     case 'reply':
@@ -168,6 +172,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'live_withdrawn',
   'follow_request',
   'follow_accepted',
+  'birthday',
   'booking_cancelled',
   'booking_withdrawn',
   'booking_added',

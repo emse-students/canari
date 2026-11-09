@@ -64,6 +64,12 @@ export interface GuideStep {
   /** An icon drawn in the bubble, which also names a target the halo can only approximate. */
   readonly icon?: Component<{ size?: number }>;
   readonly gesture?: GuideGesture;
+  /**
+   * A button that DOES something, in place of "Next" on this step (the profile-photo prompt's "open
+   * MiGallery"). Pressing it runs `run`, then ends the help like "Next" on a last step - so it is
+   * recorded as seen exactly as any other end. "Passer" stays beside it.
+   */
+  readonly action?: { readonly label: () => string; readonly run: () => void };
 }
 
 export interface GuideDefinition {

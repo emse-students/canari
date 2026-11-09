@@ -149,7 +149,7 @@ apps themselves (no WebView here), a real account, and the keyboard on a phone.
 | `MainChatPage.svelte` | Root chat page, orchestrates sidebar + chat area |
 | `ChatArea.svelte` | Header + message list + composer |
 | `MessageTextBody.svelte` | A message's text, its links, and the link card under it. **The card is capped at `max-w-sm` in a conversation** (2026-09-25): the bubble is `w-fit` with no width of its own, so a long title stretched the card across the thread - one line of title over a band of blurred poster. The title wraps to three lines (a post's is cut at 100 characters upstream). The feed's `PostContent` mounts the card uncapped, at the post's width. |
-| `ChatComposer.svelte` | Message input, media picker, reply preview. **The drop badge ends at the WINDOW, not the panel** (2026-09-25): a drop on the editor stops propagating (the file is attached once), and a cancelled drag's closing `dragleave` fires wherever the pointer was - so `drop` (capture), `dragleave` with no `relatedTarget` and `dragend` are read on `window`; `ChatComposer.dragBadge.svelte.test.ts`. **A drop carrying only a local file's ADDRESS is refused, not inserted** (2026-09-25): Firefox given a file by Nemo receives its `file:///` URI and path but no `File`, and the editor pasted the name. `localFileAddressesFromTransfer` (`composerTransfer.ts`) recognises it; the editor and the panel insert nothing and toast `composer_drop_file_unreadable` - a page cannot read a local file from its address, so the attachment button is the way. **On a phone the paperclip opens a menu** (2026-09-28, user: *"comme sur messenger"*) - since 2026-10-02 THE one menu, each entry going straight to its picker, and none on an iOS browser where WebKit's sheet is the menu ([below](#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). A picker is chosen by what the input ACCEPTS - one input taking images, videos, audio, PDFs and archives is a document request, which Android answers with the file browser - so the photos entry is a second input accepting `image/*,video/*` only: the system photo picker where the phone has one, the photo library on iOS, and no gallery permission (Google Play grants that only to apps built around photos, so an in-app Messenger-style grid was declined). A desktop keeps its single dialog. `ChatComposer.attachMenu.svelte.test.ts`; **which Android versions show the photo grid through the WebView's chooser is NOT measured - owed on a phone.** |
+| `ChatComposer.svelte` | Message input, media picker, reply preview. **One drop rule for every composer** (2026-11-08): `handleComposerDrop` (`utils/composerDrop.ts`) reads a drop as real files, then a withheld local address (toast), then a WEB IMAGE with no file (`webImageUrlsFromTransfer`, fetched by `fetchWebImageFile` - a host without CORS gives the toast `composer_drop_web_image_refused` and a `[COMPOSER]` warn naming the host and the typed cause), then text; the post sheet (`CreatePostForm`) is one zone through the `composerDropZone` action, and `dropEffectFor` follows the source's `effectAllowed` (forcing `copy` on a move-only web image made the browser refuse the drop). **The drop badge ends at the WINDOW, not the panel** (2026-09-25): a drop on the editor stops propagating (the file is attached once), and a cancelled drag's closing `dragleave` fires wherever the pointer was - so `drop` (capture), `dragleave` with no `relatedTarget` and `dragend` are read on `window`; `ChatComposer.dragBadge.svelte.test.ts`. **A drop carrying only a local file's ADDRESS is refused, not inserted** (2026-09-25): Firefox given a file by Nemo receives its `file:///` URI and path but no `File`, and the editor pasted the name. `localFileAddressesFromTransfer` (`composerTransfer.ts`) recognises it; the editor and the panel insert nothing and toast `composer_drop_file_unreadable` - a page cannot read a local file from its address, so the attachment button is the way. **On a phone the paperclip opens a menu** (2026-09-28, user: *"comme sur messenger"*) - since 2026-10-02 THE one menu, each entry going straight to its picker, and none on an iOS browser where WebKit's sheet is the menu ([below](#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). A picker is chosen by what the input ACCEPTS - one input taking images, videos, audio, PDFs and archives is a document request, which Android answers with the file browser - so the photos entry is a second input accepting `image/*,video/*` only: the system photo picker where the phone has one, the photo library on iOS, and no gallery permission (Google Play grants that only to apps built around photos, so an in-app Messenger-style grid was declined). A desktop keeps its single dialog. `ChatComposer.attachMenu.svelte.test.ts`; **which Android versions show the photo grid through the WebView's chooser is NOT measured - owed on a phone.** |
 | `ChatMessageGroups.svelte` | Groups messages by date, sticky date indicator |
 | `MessageBubble.svelte` | Renders a single message with reply, reactions, status |
 | `ConversationMediaPanel.svelte` | Side panel showing shared media for a conversation |
@@ -237,7 +237,7 @@ selection placed where the first run never put it: **on a page that does not dra
 
 | Action | Local count | Server read mark | `POST /read` (banner signal) |
 |---|---|---|---|
-| click a salon (`onSelectChannelConversation`) | cleared | after 2 s debounce, only if focused + visible + foreground | once, if the newest foreign message is new |
+| click a salon (`onSelectChannelConversation`) | cleared | at once, then one trailing mark per 2 s window, only if focused + visible + foreground | once, if the newest foreign message is new |
 | message arrives, salon selected | stays 0 | via the receipt effect, same guard | at arrival, once per message |
 | message arrives, salon NOT selected | +1 | none | none |
 | open via a notification tap (read in the code, not re-measured) | the tap selects it, which is a real open | only on a select | only on a select |
@@ -437,7 +437,7 @@ up for fifteen seconds, anchored to an input that was `display: none`.
 | runtime | Photothèque | camera | Tous les fichiers |
 | --- | --- | --- | --- |
 | iOS app | **native** `PHPickerViewController` (`tauri-plugin-dialog`, `pickerMode: 'media'`) | **in-app camera overlay** (photos only in a chat) | **native** document picker |
-| Android app, Android browser | input `image/*,video/*` | **in-app camera overlay** (photos only in a chat) | input, every type |
+| Android app, Android browser | input `image/*,video/*` | **in-app camera overlay** (photos only in a chat) | input, `accept="*/*"` (a type LIST greys out the rest in Android's picker: a saved `.txt` log was unselectable, 2026-11-07) |
 | iOS browser | **no Canari menu**: the paperclip is a `<label>` around one input, and WebKit's sheet is the only menu | - | - |
 | desktop | no menu: the paperclip opens the file dialog | - | - |
 
@@ -867,6 +867,18 @@ uses and which is case-insensitive on BOTH sides for reasons its own doc comment
 not agree about one input: an EMPTY `allowedUserIds` means "no restriction" here and "offer nobody"
 there, and the array is legitimately empty while a channel's member list is still loading. So it is
 passed only when non-empty, and a test pins that reading rather than leaving it to the helper's
+
+**A conversation with a roster suggests from it, locally (2026-11-06).** `allowedUserIds` filtered
+the server's answer, and that answer is the school's top 10 matches: with one letter a small group's
+members were rarely among them, so "@M" proposed nobody. `MainChatPage` now passes the group's or
+salon's members as `mentionRoster` (ids stamped with when each last spoke here,
+`buildMentionRoster`), and the composable filters them itself (`suggestFromRoster`): a bare `@`
+opens the list, a word of the name must start with the folded query, latest speakers first then
+alphabetical, six rows. No debounce and no search request. Names come from the display-name cache;
+the first open batch-resolves the missing ones and reads the reader's blocks, once per picker. The
+reader and the accounts the reader blocked are never offered (the server hides blocked accounts both
+ways from search; the client only knows its own blocks). An EMPTY roster, a list still loading,
+falls back to the server search, logged. Posts and comments pass no roster and keep the search.
 default.
 
 ### The composer's own emoji picker, and what it shares with the reaction one
@@ -1270,6 +1282,141 @@ now share one promise, `theElection`, created by whichever flush arrives first: 
 deferral line, one decision line. It is never reset because the election does not reopen - once
 decided, the `undecided` guard returns before the promise is read at all. Nothing about correctness
 changed here; every waiter always resumed. What twenty lines cost is the reader.
+
+### A follower tab's commits are run by the leader (2026-11-08)
+
+**Decided by the owner on 2026-11-08: the permanent "Messagerie chiffrée active dans un autre
+onglet." banner is gone, and every gesture a follower tab refused is possible from it.** A follower
+still never commits - its MLS state is a copy loaded once ([mls-protocol](../../protocols/mls-protocol.md#a-follower-tab-hands-its-commits-to-the-leader-2026-11-08))
+and `FollowerTabCommitError` stays at the service as the guard - but it no longer stops there: it
+HANDS THE GESTURE to the leader, exactly as it hands its sends (above). `tabCommitDelegation.ts`.
+
+| Gesture in a follower tab | Handed over as | Run by the leader as |
+| --- | --- | --- |
+| create a group | `create-group` | `createNewGroup`, saved to the store before answering |
+| start a direct conversation | `start-direct` | `startNewConversation` (silent), saved before answering |
+| invite into a group | `invite` | `inviteMembersToGroup` - the follower reports the `BulkAdditionOutcome` as its own |
+| remove a member | `remove` | `removeMemberAndBroadcast`, its thrown type turned into data (`recorded-not-committed`, `not-removed`) |
+| create a community, join a salon | `enter-community-key-group` | `ensureCommunityDistributionGroup` |
+| create or join a salon | `enter-salon-group` | `enterPrivateSalonGroup`, with access |
+
+**The role is read BEFORE anything is asked** (`getTabLeadership() === 'follower'` at the gesture),
+never learnt from a commit the service refuses - the refusal is still handled, for a tab demoted
+between that read and its commit, and says "do it from the other tab".
+
+**The transport is the outbox's: a durable record, and only a signal on the channel.** The follower
+takes the record's REQUESTER LOCK (a Web Lock it holds while it waits), writes the record as
+`pending` to its account's IndexedDB (`CanariDBTabCommit_<userId>`, `tabCommitStore.ts`), and posts
+`tab_commit_requested` only once that write has COMMITTED; the leader drains every record, decides
+each under its RUN LOCK (a Web Lock), marks it `running`, runs the executor, writes `done` with the
+outcome and posts `tab_commit_settled`; the follower reads the outcome and deletes the record. Every
+state change is a read-check-write in ONE IndexedDB transaction, re-read under the run lock: a
+`pending` is claimed once, a `done` is never overwritten. A signal lost to a tab not yet listening
+costs the next drain: the leader drains when its executors register, when its session leaves
+`starting` (`setDelegationReadiness`), and on every signal.
+
+**Why IndexedDB and not `localStorage`** (review of #3160): a `localStorage` write is not ordered with
+a `BroadcastChannel` message or a Web Lock across renderer processes, so the signal could beat the
+record, and a drain's read-then-write could overwrite a `done` another document had just written.
+**Private like the account's other data**: one database per account, listed in
+`accountIndexedDbNames` so the account wipe deletes it, and a sign-out ends this tab's requests and
+deletes their records (`abandonDelegatedCommits`, from `forgetAccount`). The account wipe closes the
+account's store first and marks it wiped for the document (`forgetTabCommitAccount`): a drain drops
+that account and its store refuses to open (`TabCommitAccountWipedError`), because an
+`indexedDB.open` would re-create the database the wipe just deleted; signed in here again (a revoked
+device's account still exists), it is readmitted. The records are NOT sealed
+under the device key, like the publish queue's: a record carries what the gesture carries - a group
+name, user ids - which the conversation rows of `CanariDB_<userId>` already hold in the clear, it
+lives only until the answer is read, and a seal would strand every request in flight across a PIN
+change.
+
+**Only a state LOADED as the leader runs a request** (`stateAuthority.ts`). A follower PROMOTED IN
+PLACE leads from that instant, but its copy is the one it loaded as a follower, behind everything the
+old leader committed, until its promotion reload. So the login notes the role the state is loaded
+with (`noteMlsStateLoaded`, right after the election in `sessionAuth`), and: a document runs a
+follower's request only if it leads AND loaded as the leader (`servesFollowerCommits`); a leader
+whose login has not loaded a state yet may only ANSWER one (a refusal, a death -
+`answersFollowerCommits`); a promoted-in-place document does neither, and its reloaded successor
+does both. The service guards read the same fact (`refusesCommitsHere`), so a promoted-in-place
+document refuses its OWN commits too until its reload - an external join built on a stale copy would
+leave a leaf on the server whose private state exists nowhere - and so does every key package
+(`generateKeyPackage`, `FollowerTabKeyPackageError`): its private half would live only in that copy.
+**A promotion DURING the login** (after the state was loaded as a follower, before `isLoggedIn`) is
+not lost to the promotion handler, which reloads only a live session: the login reads
+`promotedSinceLoad()` synchronously before going live and, when it holds, throws
+`LoginStoppedForPromotionError`, releases its client and reloads through the handler's own path
+(`reloadForPromotion`) - so no pull, ACK or key package ever runs on that copy, and the reloaded page
+serves (`signOutDuringLogin.test.ts`, "a tab promoted to leader during its login").
+
+**The leader closing mid-request cannot double-commit.** A record found `running` whose run lock is
+FREE was claimed by a document that ended without settling it: the browser releases a lock when its
+document goes, so the free lock is the proof of death, no heartbeat, no clock (the `salonUnsent.ts`
+rule). It is answered `leader-gone` and **never run again**: the dead leader may have reached the
+server - a removal recorded, an Add staged or sent - and its kept-commit machinery settles that at
+the next connection; running the gesture a second time is how a removal or an Add would be committed
+twice. The member is told the main tab closed and to check before retrying
+(`chat_error_main_tab_gone`). A record still `pending` - no leader started it - is run by whichever
+leader drains next, the one a handover elects included. A request whose run lock is HELD is waited
+for on the lock itself (a stolen lock's old leader still finishing), never judged.
+
+**A request is ANSWERED while its follower lives - and a request nobody waits for is never run.** The
+leader's readiness decides how. It is set by the ONE writer of the session's two flags
+(`useChatSession`'s `setIsLoggedIn` and both `setIsLoginInProgress` setters, through
+`sessionDelegationReadiness`), so it follows every login start and every end - success, early
+return, failure, sign-out - whoever flips the flag; a component effect could not, since
+`isLoginInProgress` is a plain boolean no effect re-runs on (`delegationReadinessWiring.test.ts`): `ready` (a live session) runs it; `unavailable` (the PIN keypad up, or nobody signed in) answers
+`leader-unavailable` at once and runs nothing (`chat_error_main_tab_unavailable`: unlock the main tab,
+or do it there); `starting` (a login actually running) keeps it `pending` until the login ends in one
+of the other two. Nothing waits on `whenMlsReady` any more, so no request blocks the drain behind it;
+instead the readiness, the load fact and the account are read AGAIN after the claim, right before the
+executor runs, so a sign-out landing between the decision and the run answers `leader-unavailable`
+and builds no MLS client for a session that is ending.
+A kind no executor in the leader runs is answered `not-delegable`. A `pending` record whose REQUESTER
+LOCK is free - its tab closed, or signed out - is deleted under the run lock and never run, with a
+line saying so: the gesture is nobody's any more, and a same-account sign-in afterwards never runs a
+previous session's request. **What this does not cover, honestly:** a leader tab that the browser has
+FROZEN in the background (Chrome's tab freezing, a discarded tab) runs no JavaScript, so it neither
+answers nor releases its locks while frozen; the follower's request waits until the browser thaws
+that tab or the member brings it forward, and no clock is added to cut the wait short - a timeout
+there would be a guess about a live document. **And right after a deploy**, a leader tab still
+running the build before #3160 does not listen for `tab_commit_requested` at all: a new follower's
+request waits until that tab reloads (and is then run, or deleted unrun if its follower has gone).
+
+**The other refusals, all typed and said with Paraglide.** `not-delegable`: the engine has no Web
+Locks, or the leader tab is signed in to ANOTHER account (the leader lock is per browser) - said with
+the old `chat_error_follower_tab` sentence, which is exactly the instruction left; a leader signed out
+answers `leader-unavailable`. `failed`: an executor threw instead of answering by value - the visible
+end of a defect, logged ONCE, at error, in the leader (`chat_error_main_tab_failed`). A creation says
+every one in its modal (`leader-gone` and `leader-unavailable` are `ConversationRefusal`s). A
+gesture with two entries (joining a salon: the community's key group, then the salon's) stops at the
+first refusal, so the member is told once.
+
+**Engines without Web Locks.** Every browser this app supports has them (Chrome 69, Firefox 96,
+Safari 15.4); the desktop and mobile shells are one document, always the leader, so they never
+delegate. An engine without them cannot prove a leader dead, so a follower there hands nothing over
+and answers `not-delegable` - and has no takeover either, since "Prendre la main" is gone. That is
+accepted: such an engine is a browser older than 2022, and its tab election falls back to the
+heartbeat path whose followers already could not commit.
+
+**"Prendre la main" is gone with the banner** (`requestLeadershipTakeover`, `requestTabTakeover`,
+`releaseLeadership` and the `request_takeover` listeners): nothing needs the lead taken by hand any
+more. A demotion still happens when a tab reloading after its promotion steals the lock
+(`onLeaderLockRejected`, unchanged).
+
+Guarded by `tabCommitDelegation.test.ts`, which models what the guarantees live in rather than
+stubbing it - per-account databases whose writes become visible to another document only once
+committed, turns later; locks owned by documents and released when a document dies; a channel that
+never delivers to its poster and delivers to the others a turn later: every gesture run once and
+answered; a repeated signal and concurrent drains run once; two documents that both believe they
+lead run once between them; a request asked before any leader is run by the one that comes; a
+promoted-in-place document runs nothing and its reloaded successor runs the request; a starting
+leader keeps it and runs it once ready; a locked or not-yet-loaded leader answers
+`leader-unavailable`; a leader killed mid-request answers `leader-gone` and runs nothing again; a
+request held by a live document is waited for; a pending request whose tab closed is deleted, not
+run; a signed-out session's request is never run for the next one; another account and a signed-out
+leader refuse; a throwing executor is said once, at error. `stateAuthority.test.ts` for the load
+fact, `followerTabKeyGroup.test.ts` for the key-group gestures.
+**Owed: the two-tab readings on dev** ([backlog](../../backlog.d/p2-follower-tab-commits-run-by-the-leader-readings-owed.md)).
 
 ### The flusher resolves its token, and does not run while offline
 
@@ -2211,6 +2358,19 @@ A purged community goes through `dropCommunityLocally` in `ChatBackgroundService
 `workspace.deleted`: it reads the doomed channel ids **before** the purge, because clearing the
 chat panel afterwards needs to know whether what was on screen belonged to the community that
 just vanished.
+
+### A community's own names for its three roles (owner, 2026-11-08)
+
+The "Roles" tab of the community settings (`SidebarCommunityAdminPanel`) opens with `CommunityRoleNames`,
+one field per role (admin, moderator, member), mounted only when the server said `viewerCanManage`.
+The default name is the placeholder; saving a blank field resets it. **Labels only**: the three roles,
+their permissions and their holders are untouched, and the stored role `name` stays the identity the
+client folds through `canonicalRoleOf` - a label is never read for a decision. Every place a role name
+is drawn (member badges, invite and role pickers, the permission grid headers) goes through the ONE
+resolver `resolveRoleLabel` (`utils/chat/communityRoleLabel.ts`), fed by `globalChannels.roleLabels`
+(by role id), which the listing fills and the `workspace.role.permissions` event (it carries `label`)
+keeps current for every member without a reload. Server side, column choice and refusals:
+[social-service](../../services/social-service.md#a-community-may-name-its-three-roles-owner-2026-11-08).
 
 ### Leaving: a private channel, or the whole community - never a public channel
 
@@ -3829,10 +3989,12 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
 - **Search**: in-chat search with prev/next navigation and highlight.
 - **Lightbox**: full-screen image/video with pinch-zoom and download.
 - **Radial menu** (mobile): long-press message -> circular action menu
-  (`MessageMobileActions.svelte`). The button row has no width cap of its own and an own message
-  shows one more button than a received one (Edit), which was enough to overflow a narrow phone
-  screen on your own messages specifically - fixed with `max-w-[calc(100vw-2rem)] flex-wrap`
-  instead of a fixed-width, single-line row.
+  (`MessageMobileActions.svelte`). The actions are ICONS ONLY on ONE row (owner, 2026-11-08), built
+  from one `actions` list (name = aria-label + title): 7 at most (own text message), each `flex-1`
+  and 44px tall, 48px wide from 360px and 42px at 320px - never wrapped, never scrolled. The text
+  nodes inside a bubble are `select-text` for a mouse but `pointer-coarse:select-none` (a child's
+  `select-text` beats the bubble's `select-none`, which let iOS select a word under the sheet);
+  "Copier" is the touch way to copy.
 - **Read receipts**: three states — sent / delivered / read — with distinct icons. In a DM the
   reader's head and a double check sit under the sender's own last read message. **In a group or a
   salon, each member's head sits under the LAST message THEY read, whoever wrote it** (user,
@@ -4275,7 +4437,11 @@ weekday alone up to six calendar days back ("Mercredi"), then day and month ("23
 year only when it is not the current one. `Intl` in the Paraglide locale, so English reads "Monday",
 "September 23", "May 5, 2025". A day in the future (a skewed clock) never gets a bare weekday. The
 floating pill reads its text off the separator's `data-chat-date-separator`, so the two cannot
-disagree. Days are counted by `calendarDay`, shared with the media viewer's title.
+disagree. Days are counted by `calendarDay`, shared with the media viewer's title. `groupMessages`
+names the days of a pass through ONE `dayLabeler` (one clock, one `Intl.DateTimeFormat` per label
+shape), and `calendarDay` answers the browser's own zone from the `Date` getters: the regrouping
+runs over the whole conversation on every change of it, and three `Intl` builds per day separator
+were most of its cost ([community-open-budget](../community-open-budget.md#per-bubble-and-per-day-work-cut-2026-11-08)).
 
 **The pill is the last row of `.chat-thread-banners`, not a box positioned over the panel.** It was
 `absolute; left: 50%; translateX(-50%)`: shrink-to-fit could only use the half of the panel right of
@@ -4884,3 +5050,144 @@ A user in the English app wanted a GROUP and created a COMMUNITY: the community 
 | The rail's dashed "+" (`SidebarNewCommunityModal`, `onCreateWorkspace`) | a community (workspace with channels) | title "Nouvelle communauté" / "New community", field "Nom de la communauté" / "Community name", button "Créer la communauté" / "Create community" |
 
 **English never says "club" for a community** (the `chat_*` strings about a community's settings, invitation and deletion now say "community"). "Club" stays where it names an ASSOCIATION (the `asso_*`, `admin_*`, `posts_*`, `payout_*` and `dependency_*` families): there it is the English word for the French "association", a different object from a community.
+
+## Per-conversation nicknames ("Modifier les pseudos", 2026-11-08)
+
+The user's Messenger screen (asked 2026-10-14, rules 2026-10-14 and 2026-10-18): every member listed,
+the name the conversation shows for them, a pencil, "Définir un pseudo". `NicknamesPanel.svelte`,
+opened from the conversation panel (`ChatGroupPanel`, a DM included: both people) and from a salon's
+member list (`ChannelMembersList`, the COMMUNITY's members). What the screen offers is
+`nicknamePermission.ts` (`mayNameMember`, modelled on `pinPermission.ts`); where a change goes and
+what it comes to is `nicknameActions.ts` (`saveNickname`, one typed outcome per sentence).
+
+**Two mechanisms, one register shape** (`conversationNicknames.svelte.ts`): per scope, per member,
+`{ nickname | null, setBy, at, verified }` merged by date - the later wins; on a tie a reset wins, then
+the larger `setBy + nickname`, so every device settles the same pair the same way. **An authenticated
+entry (`verified`: an MLS frame, the viewer's own change, the server's answer) always beats an
+unverified one, whatever the dates.** The register has a HARD cap of 500 entries
+(`MAX_NICKNAME_ENTRIES`), verified ones included, evicting a member no longer in the conversation
+first, then an unverified entry, then the oldest. A reset is DATED like a set, so
+a late statement cannot resurrect a cleared name. Nothing is keyed by the setter: a nickname stays when
+its setter leaves.
+
+| | DM / group (MLS room) | Community |
+|---|---|---|
+| Who may set | any member, any member (no ranks) | a moderator (`viewerCanModerate`); the target may only CLEAR their own |
+| Carried by | a silent `nickname` system frame, `{ userId, nickname, at }`, `DELIVERY.mutation` (`setConversationNickname`) | `channel_members.nickname`, `nicknameSetBy`, `nicknameSetAt` (migration 149), written by `PUT /api/channels/workspaces/:id/nicknames/:userId` |
+| Checked by | every reader: the setter is the MLS-authenticated sender, never a payload field; the value is held to the contract; the TARGET must be in the tree (`getGroupMemberIdentities`, `nicknameMembersOf`), with an unreadable tree refusing the frame (`applyNicknameFrame`). The setter is not checked against the current tree: decryption already proved they were in it at the frame's epoch, and a check against today's tree would make a device that reads the frame after a commit removing the setter disagree with one that read it before. Live and replay apply one rule | the server, on every write (`CommunityNicknamesService.set`, `memberCanModerate` read from the role rows) |
+| Reaches others | the group's shared log (live and replay) | `workspace.updated { workspaceId, nickname }` to every member, plus `GET .../nicknames` read once per session at the first salon opened and at each opening of the screen |
+| Kept | per device AND per account, `localStorage` `canari_nicknames:v1:<account>:<groupId>` (`ACCOUNT_KEY`; the 500-entry hard cap above), wiped at sign-out (`clearUserLocally`) and by the account deletion's sweep (`eraseAccountRecordsLocally`) | in memory; the server holds it |
+
+**The late joiner.** A member added after a `nickname` frame went out never receives it. The
+inviter's JOIN PUSH to the new device restates the register (`nicknames`, beside `pins`), even when
+every message is withheld, so a new member gets the names in the first bundle. That join push is the
+ONLY bundle a register is taken from (review of #3177). A broadcast or replayed bundle carries none,
+and an answer to a later ask carries none either. A bundle's entries are the relayer's word about what
+others did, so a relayer could forge a setter and pass the target's block check. So
+`mergeBundleNicknames` applies four limits:
+
+- it takes every entry UNVERIFIED;
+- it requires the TARGET to be a current member of the MLS tree (`getGroupMemberIdentities`). The
+  setter may have left since: a nickname stays when its setter leaves (owner, 2026-10-18);
+- it takes at most as many entries as the group has members;
+- it bounds each entry's date by the bundle's server time.
+
+An unverified entry naming the viewer never takes the "I set it myself" shortcut, and any frame
+supersedes it. The screen does not name its setter as a fact: it reads "Défini avant votre arrivée"
+(`chat_nicknames_set_before_you`) where an authenticated entry reads "Défini par X".
+
+**The sender's clock is bounded by the server's.** A frame's `at` is the sender's claim. Left
+unbounded, a date far in the future would freeze a nickname against every later change. Every path
+clamps it to the server time it already has plus 5 minutes (`boundedNicknameAt`,
+`NICKNAME_CLOCK_SKEW_MS`):
+
+- the live frame uses `deliveryMeta.queuedCreatedAt`;
+- the replay uses its log entry's timestamp;
+- a bundle uses its own `queuedCreatedAt`.
+
+The receiver's clock never stands in for the server's. Every copy carries a server time: a pulled copy
+has its queue row's `createdAt`, and a live copy has the same `createdAt`, which chat-delivery
+publishes and the gateway forwards (`live_mls_frame`). A frame without one is a defect upstream, and
+it is refused at error level.
+
+**A correction is dated to win.** `saveNickname` dates a group change
+`max(now, held.at + 1)`, where `held` is the entry being replaced, and bounds the local apply as a peer
+does. A peer uses its server time; this device uses its own clock at the send. The outcome then
+depends on what the device already holds:
+
+- If a held statement still outranks the change, nothing is sent, and the outcome is `superseded`
+  (`chat_nicknames_error_superseded`).
+- If a newer statement lands while the frame is being queued, the outcome is also `superseded`.
+
+In neither case does the screen say "saved".
+
+**Old clients.** An unknown system event is ACKed silently, so an older build ignores the frame. The
+community change rides `workspace.updated`, whose absent fields every build reads as "unchanged"; a new
+event type would have been logged as an error by every older one.
+
+**The name is resolved in ONE place.** `getUserDisplayNameSync` / `getUserFirstNameSync`
+(`displayName.ts`) and `userDisplayName` / `userDisplayNames` (`displayNames.svelte.ts`) take an
+optional `scope`; with it, `visibleNickname` overrides the profile name, without it nothing does. Every name drawn INSIDE a conversation passes the open conversation's scope (`MainChatPage`'s
+`nicknameScope`; a salon reads its COMMUNITY's register, `community:<id>`):
+
+- the thread: sender labels, the typing line, the reply caption and quote (`MessageBubble`), the reel
+  viewer's author (`MessageMediaRenderer`) and the "seen by" list (`MessageInfoTooltip`);
+- the composer's reply bar;
+- the DM header and the DM's sidebar tile (`ConversationTile`, scoped by its own id);
+- the member lists (`ChatGroupPanel`, `ChannelMembersList`);
+- the shared-media panel;
+- the call overlay's title (the call's group).
+
+Nothing else passes it. An admin access list and the OS's media session stay unscoped. The register's reactivity is ONE module-level revision every reader reads and every
+write bumps: a register first created inside a `$derived` would be a source of that derived, which
+Svelte does not track, and the screen kept the old name until that was found.
+
+**Push: a nickname never reaches a notification** (decided 2026-11-08). `notificationSenderName`,
+`resolveNotificationSenderName`, the native name mirror, the Rust scanner and the server's display-name
+copies call the resolver without a scope and name the profile. A lock screen is outside the
+conversation, a nickname somebody else set may be an insult, and the servers never see an MLS group's
+nicknames anyway - one rule for both kinds.
+
+**A block.** A blocked person cannot rename the blocker. In a community the server refuses
+(`403 USER_BLOCKED`, `isBlockedBetween`, either direction). In a group no server reads the frame and
+a block is private, so no third member can know of one: the SETTER's screen asks `block-status` before
+sending (and sends nothing when it cannot ask), and the TARGET's own devices show a nickname of
+themselves set by someone else only once `block-status` for that setter answered "clear". The answer
+is keyed by viewer and setter, and asked once. A failed ask is a state, `unknown`, which the read
+depends on. `connectivity.onReconnect` clears it, and the next read asks again: no timer, and no
+dependence on an unrelated re-render. **The remedy survives the hiding.** The screen reads the RAW
+entry, so a target who cannot see a nickname of themselves still sees "a nickname you cannot see is
+set" (`chat_nicknames_hidden_for_you`), with its reset. That notice appears only once the block is
+KNOWN (`nicknameHiddenByBlock`). While the question is pending or unanswerable, the row shows the
+plain name and nothing else, so no text appears that the answer could prove wrong.
+
+**Limits** are the profile's, in `libs/contracts/conversation-nickname.json`, walked by both
+`nicknameRules.contract.test.ts` and social-service's `community-nicknames.spec.ts`:
+
+- NFKC normalization;
+- control, format and line/paragraph separator characters dropped (`stripInvisible`), with two
+  exceptions that are writing, not hiding:
+  - judged per grapheme, as #3175's role labels are: U+200D inside a grapheme holding a pictographic,
+    never as its last code point (families, professions, the rainbow flag);
+  - the tag characters only in a tag flag: a grapheme starting with U+1F3F4 and ending with U+E007F
+    (the England flag);
+  - U+200C/U+200D between two letters or marks of a script that spells with them: Arabic (Persian),
+    Syriac and the Indic scripts. Never between Latin, Greek or Cyrillic letters, where a joiner only
+    splits a name that looks whole;
+- trimmed; empty means reset;
+- at most 100 code points (`nickname_too_long`).
+
+**The community list is a snapshot, and is read again.** `loadCommunityNicknames` runs once per
+connection: the read is cleared when the socket drops and re-runs on the reconnect. It drops any held
+entry the list no longer names (a member who left, a membership made afresh, whose `nicknameSetAt` is
+NULL), except an entry a live event changed while the list was in flight. Each read carries a
+sequence number per community, and an answer whose read is no longer the latest is dropped, so an
+older answer never overwrites a newer one.
+
+**Reports and reversal.** A community nickname is reportable (`contentType: 'nickname'`) by a member
+of that community; the subject is one VERSION, `<member row id>@<set-at ms>`, so a nickname changed
+since is no longer reportable and the next one is a new subject. The setter is read from the row. The
+admin queue shows its text while that version is shown, none once it changed
+([moderation-and-blocking](../../moderation-and-blocking.md)). A moderator reverses one by clearing it
+on the screen. An MLS group's nicknames reach no server, so they have no report: the target resets
+theirs, or blocks.

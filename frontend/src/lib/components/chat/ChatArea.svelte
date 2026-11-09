@@ -46,6 +46,7 @@
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
+  import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
   import { countUnreadBelow, readPointFor, seenByAnchors } from '$lib/utils/chat/readState';
   import {
@@ -70,12 +71,14 @@
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
+  import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
   import { scrollMessageIntoList } from '$lib/utils/chat/scrollToMessage';
   import { openSalonPolls, salonPolls } from '$lib/utils/chat/activePolls';
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { Log } from '$lib/utils/Log';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
+  import { isUnopenableHere } from '$lib/utils/chat/noHolder.svelte';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
   import {
     isNarrowChatLayout,
@@ -163,6 +166,10 @@
     onGroupDelete?: () => void;
     /** Callback to remove the conversation locally when it was deleted by another participant. */
     onGroupDeleteLocally?: () => void;
+    /** A conversation this device can no longer open (D5): a new group with the same people. */
+    onStartAgainWithSamePeople?: () => void;
+    /** A conversation this device can no longer open (D5): off this account's list, nothing deleted. */
+    onHideUnopenable?: () => void;
     /** Callback fired when the current user leaves the group. */
     onGroupLeave?: () => void;
     /** Callback to remove a specific member from the group. */
@@ -186,6 +193,8 @@
     onClosePoll?: (messageId: string) => void;
     /** Callback to delete a message by ID. */
     onDelete?: (messageId: string) => void;
+    /** "Annuler partout" / "Supprimer partout" on the sender's own chat reel (reels-in-chat 15.7). */
+    onDeleteReelEverywhere?: (messageId: string) => void;
     /** Re-sends a salon message whose send failed (WP-OFF-2); the row offers it on `error`. */
     onRetrySend?: (messageId: string) => void;
     /** Gives a failed salon message up: removes its row. */
@@ -194,6 +203,12 @@
     onTakeBackSend?: (messageId: string) => void;
     /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
     canModerate?: boolean;
+    /**
+     * The scope of this conversation's nickname register (`conversationNicknames.svelte.ts`): the MLS
+     * group id of a DM or group, the community's scope for a salon. Names drawn in the thread pass it
+     * to the resolver, so a nickname set here shows here and nowhere else.
+     */
+    nicknameScope?: string | null;
     /**
      * Callback to save an edited message by ID with its new text. The editing itself is done in the
      * composer (see {@link editing}); this is called once, on confirmation.
@@ -206,7 +221,7 @@
     /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
     onJoinChannel?: (channelId: string) => void;
     /** When set, only users whose IDs are in this list appear in @mention suggestions. */
-    allowedUserIds?: string[];
+    mentionRoster?: MentionRosterMember[];
     /**
      * Whether the viewer may POST in the open channel, per its `writePolicy` and the viewer's roles.
      *
@@ -290,13 +305,15 @@
     isHidden = false,
     groupMembers = [],
     pendingInvites = [],
-    allowedUserIds,
+    mentionRoster,
     canWrite = true,
     sendError = '',
     onGroupRename,
     onGroupSetImage,
     onGroupDelete,
     onGroupDeleteLocally,
+    onStartAgainWithSamePeople,
+    onHideUnopenable,
     onGroupLeave,
     onGroupRemoveMember,
     messageReactions,
@@ -306,10 +323,12 @@
     onNavigateToMessage,
     onReact,
     onDelete,
+    onDeleteReelEverywhere,
     onRetrySend,
     onDiscardSend,
     onTakeBackSend,
     canModerate = false,
+    nicknameScope = null,
     onEdit,
     onCancelReply,
     authToken = '',
@@ -340,6 +359,13 @@
   // person's invitation-link ask (`isNeverAdmitted`): a member answering it is shown a person.
   const waitingToBeAdded = $derived(
     conversation?.lifecycle === 'pending' && !isNeverAdmitted(conversation)
+  );
+  // ...UNLESS THE SERVER'S FACTS SAY NOTHING WILL EVER ADD IT (D5,
+  // docs/wiki/protocols/mls-availability-no-holder.md): no base it can use, nothing on its way, no
+  // member device online. Decided ONLY by `noHolder.svelte.ts` on one answer - never by a clock - so
+  // a slow Welcome or an Add in flight keeps the waiting text, and any later answer takes it back.
+  const unopenableHere = $derived(
+    waitingToBeAdded && !!conversation && isUnopenableHere(conversation.id)
   );
   // THE JOINER'S OWN ASK, opened: nothing in the thread was ever readable here, so say what it waits
   // for rather than leave an empty thread and a live composer with no explanation.
@@ -442,6 +468,16 @@
    * frame - the conversation appears already scrolled to the bottom.
    */
   let entering = $state(false);
+  /**
+   * True from the reveal until the widen after it has reached the full entry window. While set, the
+   * render window's floor stays the entry frame's (`ENTRY_FIRST_FRAME_GROUPS`): the full-window floor
+   * read as soon as `entering` fell CLAMPED the window to 60 groups in the reveal's own flush, so the
+   * 40 rows the stepped widen exists to spread out were mounted in ONE task before the reveal painted
+   * (measured on the salon-mount bench, 2026-11-07: 60 rows at the reveal, never 20).
+   */
+  let entryWidening = $state(false);
+  /** The touches on the thread, read by the widen so no step writes `scrollTop` under a finger. */
+  let threadTouch: TouchHold | null = null;
 
   function scrollToBottom(smooth = true) {
     if (!chatContainer) return;
@@ -504,6 +540,12 @@
     }
     if (epoch !== entryEpoch) return;
     scrollToBottomSettled(() => {
+      // A RETIRED ENTRY REVEALS NOTHING. The conversation may have been switched during this frame:
+      // dropping `entering` here would reveal the NEW one before its own fill, with both flags
+      // false - its floor at 60, so the 40 rows mounted in one flush.
+      if (epoch !== entryEpoch) return;
+      // In the SAME flush as the reveal, so the floor never rises between the two.
+      entryWidening = true;
       entering = false;
       void widenEntryWindow(epoch);
     });
@@ -518,28 +560,43 @@
    * lowers the start: a reader who has paginated further up keeps their wider window.
    */
   async function widenEntryWindow(epoch: number) {
-    await yieldToMainThread();
-    if (epoch !== entryEpoch) return;
-    const target = widenedEntryStart(
-      renderWindow.start,
-      messageGroups.length,
-      INITIAL_RENDER_GROUPS
-    );
-    if (target === null) return;
-    // ONE STEP PER TASK: the rows come ENTRY_WIDEN_STEP at a time with a yield between, so no task
-    // of the widen is longer than that many rows whatever the thread holds.
-    for (;;) {
-      if (epoch !== entryEpoch || !chatContainer) return;
-      const next = widenStepStart(renderWindow.start, target, ENTRY_WIDEN_STEP);
-      if (next === null) return;
-      const prevHeight = chatContainer.scrollHeight;
-      const prevTop = chatContainer.scrollTop;
-      Log.d('chat.entry', `widening window ${renderWindow.start} -> ${next} (target ${target})`);
-      windowStart = next;
-      await tick();
-      if (epoch !== entryEpoch || !chatContainer) return;
-      chatContainer.scrollTop = prevTop + (chatContainer.scrollHeight - prevHeight);
+    try {
       await yieldToMainThread();
+      if (epoch !== entryEpoch) return;
+      const target = widenedEntryStart(
+        renderWindow.start,
+        messageGroups.length,
+        INITIAL_RENDER_GROUPS
+      );
+      if (target === null) return;
+      // `target` IS COMPUTED ONCE: a message arriving during the widen moves the list's end, so the
+      // window ends a few groups wider than 60. Harmless - the window only ever grows - and cheaper
+      // than re-deriving the target at every step.
+      // ONE STEP PER TASK: the rows come ENTRY_WIDEN_STEP at a time with a yield between, so no
+      // task of the widen is longer than that many rows whatever the thread holds.
+      for (;;) {
+        if (epoch !== entryEpoch || !chatContainer) return;
+        // A FINGER ON THE PANE OWNS ITS SCROLL: the step's `scrollTop` write would fight the drag
+        // (on iOS WebKit it can cancel it), so the step waits for the release - an event, not a clock.
+        if (threadTouch?.held) {
+          Log.d('chat.entry', 'widen waits for the touch on the thread to end');
+          await threadTouch.whenReleased();
+          continue;
+        }
+        const next = widenStepStart(renderWindow.start, target, ENTRY_WIDEN_STEP);
+        if (next === null) return;
+        const prevHeight = chatContainer.scrollHeight;
+        const prevTop = chatContainer.scrollTop;
+        Log.d('chat.entry', `widening window ${renderWindow.start} -> ${next} (target ${target})`);
+        windowStart = next;
+        await tick();
+        if (epoch !== entryEpoch || !chatContainer) return;
+        chatContainer.scrollTop = prevTop + (chatContainer.scrollHeight - prevHeight);
+        await yieldToMainThread();
+      }
+    } finally {
+      // A retired widen leaves the flag to the entry that retired it, which resets it.
+      if (epoch === entryEpoch) entryWidening = false;
     }
   }
 
@@ -758,7 +815,7 @@
   const typingLabel = $derived.by(() => {
     const typers = typingUserIds;
     if (typers.length === 0) return '';
-    const names = typers.map((u) => getUserDisplayNameSync(u, u));
+    const names = typers.map((u) => getUserDisplayNameSync(u, u, nicknameScope ?? undefined));
     if (names.length === 1) return m.chat_typing_one_person({ names: names[0] });
     if (names.length === 2) return m.chat_typing_two_people({ name1: names[0], name2: names[1] });
     return m.chat_typing_multiple_people();
@@ -798,10 +855,10 @@
       : resolveRenderWindow(
           windowStart,
           messageGroups.length,
-          // The 20-group floor belongs to the entry frame alone: any other time a list replaced by a
-          // shorter one (WP-EMPTYVIEW-1) must settle on a full window, not on a first frame that
-          // nothing widens.
-          entering ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
+          // The 20-group floor belongs to the entry - its hidden frame and the widen after the
+          // reveal - alone: any other time a list replaced by a shorter one (WP-EMPTYVIEW-1) must
+          // settle on a full window, not on a first frame that nothing widens.
+          entering || entryWidening ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
         )
   );
   let windowEnd = $derived(renderWindow.end);
@@ -1130,6 +1187,7 @@
         // Hold the list invisible until fillViewportThenPin() lands it at the bottom, so the
         // entry never flashes the top of the conversation before teleporting down.
         entering = true;
+        entryWidening = false;
         // A new entry retires the previous one's fill and widen at once, not a tick later.
         entryEpoch++;
         tick().then(() => fillViewportThenPin());
@@ -1241,6 +1299,17 @@
    * `loadOlderGroups`, the sticky date walk and the toolbar's clipping maths - five mechanisms
    * rewritten to fix one, with no measurement saying the defect needed it.
    */
+  $effect(() => {
+    const el = chatContainer;
+    if (!el) return;
+    const hold = trackTouchHold(el);
+    threadTouch = hold;
+    return () => {
+      hold.dispose();
+      if (threadTouch === hold) threadTouch = null;
+    };
+  });
+
   $effect(() => {
     const el = chatContainer;
     if (!el) return;
@@ -1701,10 +1770,12 @@
             {onVotePoll}
             {onClosePoll}
             {onDelete}
+            {onDeleteReelEverywhere}
             {onRetrySend}
             {onDiscardSend}
             {onTakeBackSend}
             {canModerate}
+            {nicknameScope}
             onBeginEdit={onEdit ? editSession.begin : undefined}
             {onTogglePin}
             {onReelPurged}
@@ -1787,6 +1858,32 @@
           {m.chat_delete_locally_button()}
         </button>
       </div>
+    {:else if unopenableHere}
+      <div
+        class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 border-t border-black/8 bg-(--color-surface) px-4 py-3 dark:border-white/10"
+        role="status"
+        data-unopenable-here
+      >
+        <p class="text-center text-sm text-(--color-text-muted)">
+          {m.chat_unopenable_here()}
+        </p>
+        <div class="flex flex-wrap items-center justify-center gap-2">
+          {#if (conversation?.conversationType ?? 'group') === 'group'}
+            <button
+              onclick={() => onStartAgainWithSamePeople?.()}
+              class="rounded-lg bg-amber-500/15 px-4 py-1.5 text-sm font-medium transition-all hover:bg-amber-500/25 active:scale-95"
+            >
+              {m.chat_unopenable_start_again()}
+            </button>
+          {/if}
+          <button
+            onclick={() => onHideUnopenable?.()}
+            class="rounded-lg bg-black/5 px-4 py-1.5 text-sm font-medium text-(--color-text-muted) transition-all hover:bg-black/10 active:scale-95 dark:bg-white/10 dark:hover:bg-white/15"
+          >
+            {m.chat_unopenable_hide()}
+          </button>
+        </div>
+      </div>
     {:else if !canWrite}
       <!-- THE PRODUCT SAYS WHY INSTEAD OF OFFERING A CONTROL IT WILL REFUSE. `canWriteToChannel`
            refuses the post server-side, correctly, and until 2026-08-20 that was the whole feature:
@@ -1841,7 +1938,7 @@
              reconciliation probes on a server carrying no other traffic. -->
         <ChatComposer
           {messageText}
-          {allowedUserIds}
+          {mentionRoster}
           {onMessageChange}
           {onTyping}
           {onSendGif}
@@ -1850,6 +1947,7 @@
           {onSend}
           {replyingTo}
           {onCancelReply}
+          {nicknameScope}
           editingText={editSession.original}
           onCancelEdit={editSession.cancel}
           onConfirmEdit={editSession.confirm}

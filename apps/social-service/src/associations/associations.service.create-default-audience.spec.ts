@@ -10,6 +10,7 @@ import {
 import { SLUG_EXHAUSTED } from './association-slug.util';
 import { AssociationsService } from './associations.service';
 import { AssociationAudience } from '../spaces/association-audience.entity';
+import { ruleInsideGovernedSpaces } from '../spaces/audience-policy';
 import { READER_PROFILE_SQL } from '../spaces/reader-spaces';
 
 /**
@@ -205,6 +206,24 @@ describe('AssociationsService.create - the governing parent and its default audi
       { associationId: 'new-asso', formation: 'PDIS', campus: 'saint-etienne' },
       { associationId: 'new-asso', formation: 'Autre', campus: 'saint-etienne' },
     ]);
+  });
+
+  it('gives a default audience its PARENT may edit rule by rule, and nothing of the other BDE (WP-D2)', async () => {
+    // Since WP-D2 the parent governs the child and writes inside its own spaces only, so the default
+    // must lie inside them: every rule editable by the parent, none on the FSSS BDE's space.
+    const { service, manager } = withDependencies({ governing, mine: ['bde'] });
+
+    await service.create(dto, 'star-1', false);
+
+    const [, rules] = (manager.insert.mock.calls as unknown[][]).find(
+      (c) => c[0] === AssociationAudience
+    ) as [unknown, { formation: string; campus: string }[]];
+    const parentSpaces = ['ICM', 'ISMIN', 'PDIS', 'Autre', 'FSSS'].map((formation) => ({
+      ...SE(formation),
+      governed: formation !== 'FSSS',
+    }));
+    expect(rules.every((r) => ruleInsideGovernedSpaces(r, parentSpaces))).toBe(true);
+    expect(rules.some((r) => r.formation === 'FSSS')).toBe(false);
   });
 
   it('makes a creator managing two BDEs pick one, and holds the pick to its own BDEs', async () => {

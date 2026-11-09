@@ -10,6 +10,8 @@ import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { FormFile } from './entities/form-file.entity';
+import { FormItemImage } from './entities/form-item-image.entity';
+import { FormItemImagesService } from './form-item-images.service';
 import { FormFilesService } from './form-files.service';
 import { FormOrganiserAlertService } from './organiser-alert.service';
 import { FormFileRetentionScheduler } from './form-file-retention.scheduler';
@@ -32,6 +34,7 @@ import { LydiaReconciliationScheduler } from './lydia-reconciliation.scheduler';
       FormReminder,
       FormRespondent,
       FormFile,
+      FormItemImage,
       // The boutique attempts the Lydia reconciliation reads (`lydia-reconciliation.service.ts`).
       ProductCheckout,
     ]),
@@ -48,6 +51,7 @@ import { LydiaReconciliationScheduler } from './lydia-reconciliation.scheduler';
     FormsService,
     FormOrganiserAlertService,
     FormFilesService,
+    FormItemImagesService,
     FormReminderScheduler,
     FormFileRetentionScheduler,
     LydiaReconciliationService,

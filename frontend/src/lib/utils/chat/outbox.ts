@@ -384,6 +384,24 @@ export function buildOutboxProto(entry: OutboxEntry): Uint8Array | null {
 export type WithdrawReason = 'user' | 'superseded' | 'exit' | 'other-tab';
 
 /** Dependencies driving the outbox flusher. Built once per session and registered globally. */
+/**
+ * What {@link OutboxDeps.onReelSendFailed} is told: ONE send refused on its own (`send`), or a verdict
+ * on the take's file that ends every send still queued (`take`) - said once, never once per send.
+ */
+export type ReelSendFailure =
+  | { kind: 'send'; conversationId: string }
+  | { kind: 'take'; conversationIds: string[] };
+
+/** {@link OutboxController.reelTakeReachOf}: a take's sends still queued, and those that went and stand. */
+export interface ReelTakeReach {
+  /** The take's id: what a run that ends its sends holds, so a second press waits for none. */
+  takeId: string;
+  /** Sends whose row is still queued: "Annuler partout" withdraws them. */
+  queued: OutboxReelTakeSend[];
+  /** Sends that went and were not deleted for everyone since: "Supprimer partout" deletes them. */
+  standing: OutboxReelTakeSend[];
+}
+
 export interface OutboxDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
@@ -458,6 +476,15 @@ export interface OutboxDeps {
    * `refused` makes the take upload its own, `unanswered` holds the take for a retry. Never rejects.
    */
   holdChatReel?: (mediaId: string) => Promise<ChatReelHoldAnswer>;
+  /**
+   * SENDS OF A CHAT-REEL TAKE FAILED FOR GOOD (reels-in-chat 15.2): the member who pressed "Envoyer
+   * a..." on the camera tab is no longer in those threads to see their bubbles, so the session says
+   * it ONCE per cause: one send refused on its own names its conversation; a verdict on the take
+   * itself (its file refused, over today's budget, lost, expired) is said once for the whole take,
+   * with the conversations it reached (`conversationIds` empty when they are no longer known).
+   * Called after the threads' own lines; never rejects.
+   */
+  onReelSendFailed?: (failure: ReelSendFailure) => void;
   /**
    * Gives back the chat hold of a take's file (RC-13; `MediaService.releaseChatReel`): no send went,
    * or the last message that cited it was deleted for everyone. `answered` lets the take row go;
@@ -615,18 +642,14 @@ export interface OutboxController {
   /** The publish step of `takeId` ended (posted, failed or cancelled): the take stops waiting for it. */
   endPublishWait: (takeId: string) => void;
   /**
-   * "Annuler partout": withdraws every send of the take that `sendId` belongs to and is still queued.
-   * The last withdrawal releases the take (its upload session, its file). Returns how many went.
+   * How far the take naming `messageId` reaches - read from the take row or its SENT-TAKE RECORD
+   * (15.7) and the queue - for the bubble's "Annuler partout" / "Supprimer partout" (15.2, 15.7): its
+   * sends still QUEUED and its sends that went and still STAND. Each is then ended through the ONE
+   * message delete path (a queued one withdrawn, a sent one deleted for everyone), and the take
+   * settles from its rows as they go. `null` for a message no take names (any other message, an
+   * expired record) or a queue that cannot be read - an unknown is never drawn as "one conversation".
    */
-  cancelTakeEverywhere: (sendId: string) => Promise<number>;
-  /**
-   * The SENT-TAKE RECORD naming `messageId` (15.7): the take's id and its sends that went and were
-   * not deleted since - what "Supprimer partout" deletes. `null` for a message no take names (any
-   * other message, or a take whose record has expired).
-   */
-  sentTakeOf: (
-    messageId: string
-  ) => Promise<{ takeId: string; sends: OutboxReelTakeSend[] } | null>;
+  reelTakeReachOf: (messageId: string) => Promise<ReelTakeReach | null>;
   /**
    * D-delete-one: the sender deleted `messageId` for everyone. The take's record marks it, and when
    * no message citing the file is left (none queued, none sent and still standing), the file's chat
@@ -943,6 +966,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   const sendsOfTake = new Map<string, Set<string>>();
   const takeOfSend = new Map<string, string>();
+  /**
+   * Takes whose failure the member was told of in this page life: a take's own verdict ends each of
+   * its sends, and is said ONCE (`tellReelSendFailed`). A toast lives as long as the page, and so
+   * does this.
+   */
+  const takeFailureSaid = new Set<string>();
   const takeUploads = new Map<string, NonNullable<OutboxEntry['media']>>();
   const takeWithdrawn = new Set<string>();
   /**
@@ -1971,7 +2000,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       | 'take-lost'
       | 'over-budget',
     /** The thread line for `unpreparable`: the preparer's own Paraglide sentence. */
-    notice?: string
+    notice?: string,
+    /** The take's verdict tells the member once for all its sends (`failTakeSends`): none here. */
+    takeNoticeSaid = false
   ): Promise<FlushOutcome> {
     // THE KIND IS THE SEVERITY, and this line used to omit the one thing that decides it. A
     // `control` entry dying with its group is a read receipt or a reaction that lost a race to a
@@ -2071,6 +2102,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         });
       }
     }
+    // A SEND OF A TAKE: its row names the take, or - a LIGHT queue row, read without its payload by
+    // the take's own verdict (`failTakeSends`) - the take's in-memory view of its live sends does.
+    const takeId =
+      (entry.kind === 'media' ? entry.media?.takeId : undefined) ?? takeOfSend.get(entry.id);
+    if (takeId && !takeNoticeSaid) await tellReelSendFailed(takeId, entry, cause);
     await storage
       ?.deleteOutboxEntry(entry.id)
       .catch((e: unknown) =>
@@ -3842,6 +3878,42 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * fails for good, its sentence in its own thread, and the last one withdraws the take - the ONE
    * disposition both the take's upload and its chat hold reach.
    */
+  /**
+   * Tells the member about a take's send that failed for good, ONCE PER CAUSE: a refusal of THIS send
+   * (its group gone, the member removed) names its conversation; a cause that is the TAKE's (its
+   * hint passed, its file lost) ends every send of the take one lane after another, so it is said
+   * once per take in this page life, with the conversations its unsent sends name.
+   */
+  async function tellReelSendFailed(
+    takeId: string,
+    entry: OutboxEntry,
+    cause: string
+  ): Promise<void> {
+    const short = `${entry.id.slice(0, 8)}… of take ${takeId.slice(0, 8)}…`;
+    if (cause !== 'expired' && cause !== 'take-lost') {
+      log(`[OUTBOX] ${short} failed for good (${cause}) - the member is told which conversation`);
+      deps.onReelSendFailed?.({ kind: 'send', conversationId: entry.conversationId });
+      return;
+    }
+    if (takeFailureSaid.has(takeId)) {
+      log(`[OUTBOX] ${short} failed for good (${cause}) - the take's notice was already said`);
+      return;
+    }
+    takeFailureSaid.add(takeId);
+    let conversationIds: string[] = [];
+    try {
+      conversationIds = ((await readTake(takeId))?.take?.sends ?? [])
+        .filter((s) => !s.sent)
+        .map((s) => s.conversationId);
+    } catch (e) {
+      log(`[OUTBOX] ${short}: the take could not be read for its notice: ${String(e)}`);
+    }
+    log(
+      `[OUTBOX] ${short} failed for good (${cause}) - the member is told once for the take (${conversationIds.length} conversation(s) known)`
+    );
+    deps.onReelSendFailed?.({ kind: 'take', conversationIds });
+  }
+
   async function failTakeSends(
     take: OutboxEntry,
     queue: OutboxEntry[],
@@ -3854,7 +3926,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const line = `[OUTBOX] take ${take.id.slice(0, 8)}… ${cause} (${detail}) - each of its ${sends.length} queued send(s) fails for good`;
     console.error(line);
     log(line);
-    for (const send of sends) await failPermanently(send, send.conversationId, cause, notice);
+    for (const send of sends) await failPermanently(send, send.conversationId, cause, notice, true);
+    // ONE notice for the take's verdict, never one per send (up to `chatReelMaxTargets` toasts).
+    if (sends.length > 0 && !takeFailureSaid.has(take.id)) {
+      takeFailureSaid.add(take.id);
+      deps.onReelSendFailed?.({
+        kind: 'take',
+        conversationIds: sends.map((q) => q.conversationId),
+      });
+    }
   }
 
   /**
@@ -4680,28 +4760,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       runFlush();
     },
 
-    async cancelTakeEverywhere(sendId: string): Promise<number> {
-      const queue = await readQueue('cancel everywhere');
-      const take = queue.find(
-        (e) => e.kind === 'reel-take' && e.take?.sends.some((s) => s.id === sendId)
-      );
-      if (!take) return 0;
-      let withdrawn = 0;
-      for (const send of liveSendsOf(take, new Set(queue.map((e) => e.id)))) {
-        if ((await withdraw(send.id, 'user')).rowDeleted) withdrawn++;
-      }
-      log(
-        `[OUTBOX] take ${take.id.slice(0, 8)}… cancelled everywhere: ${withdrawn} send(s) withdrawn`
-      );
-      return withdrawn;
-    },
-
-    async sentTakeOf(
-      messageId: string
-    ): Promise<{ takeId: string; sends: OutboxReelTakeSend[] } | null> {
-      const take = await takeNaming(messageId, 'sent take');
+    async reelTakeReachOf(messageId: string): Promise<ReelTakeReach | null> {
+      const take = await takeNaming(messageId, 'take reach');
       if (!take?.take) return null;
-      return { takeId: take.id, sends: take.take.sends.filter((s) => s.sent && !s.deleted) };
+      const queue = await queueOrNull('take reach');
+      if (queue === null) return null;
+      const queued = liveSendsOf(take, new Set(queue.map((e) => e.id)));
+      const standing = take.take.sends.filter((s) => s.sent && !s.deleted);
+      log(
+        `[OUTBOX] take ${take.id.slice(0, 8)}… reach of ${messageId.slice(0, 8)}…: ${queued.length} queued, ${standing.length} standing`
+      );
+      return { takeId: take.id, queued, standing };
     },
 
     async reelSendDeleted(messageId: string): Promise<void> {
@@ -4946,17 +5015,9 @@ export function endOutboxPublishWait(takeId: string): void {
   active?.endPublishWait(takeId);
 }
 
-/** "Annuler partout" on the active controller (0 with none) - see {@link OutboxController.cancelTakeEverywhere}. */
-export function cancelOutboxTakeEverywhere(sendId: string): Promise<number> {
-  if (!active) return Promise.resolve(0);
-  return active.cancelTakeEverywhere(sendId).finally(bumpOutboxQueueVersion);
-}
-
-/** The sent-take record naming `messageId` (`null` with no controller) - see {@link OutboxController.sentTakeOf}. */
-export function sentOutboxTakeOf(
-  messageId: string
-): Promise<{ takeId: string; sends: OutboxReelTakeSend[] } | null> {
-  return active ? active.sentTakeOf(messageId) : Promise.resolve(null);
+/** The reach of the take naming `messageId` (`null` with no controller) - see {@link OutboxController.reelTakeReachOf}. */
+export function outboxReelTakeReachOf(messageId: string): Promise<ReelTakeReach | null> {
+  return active ? active.reelTakeReachOf(messageId) : Promise.resolve(null);
 }
 
 /**

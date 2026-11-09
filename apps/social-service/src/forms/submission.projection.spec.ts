@@ -66,7 +66,8 @@ describe('submission responses - nothing a client could pay or cancel with', () 
       {} as any,
       {} as any,
       // FormOrganiserAlertService: switched off, as it ships.
-      { enabled: () => false } as any
+      { enabled: () => false } as any,
+      {} as any
     );
     jest.spyOn(service, 'assertFormManager').mockResolvedValue({} as any);
     return service;

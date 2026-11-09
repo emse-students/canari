@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { draggableCard } from '$lib/actions/draggableCard';
   import { onMount } from 'svelte';
   import {
     addMember,
@@ -245,7 +246,7 @@
     {#each members as member, idx (member.id)}
       <div
         role="listitem"
-        draggable={true}
+        use:draggableCard
         ondragstart={() => onDragStart(idx)}
         ondragover={(e) => onDragOver(e, idx)}
         ondrop={() => onDrop(idx)}
@@ -257,6 +258,7 @@
         <button
           type="button"
           aria-label={m.asso_members_drag_label()}
+          data-drag-handle
           class="text-text-muted hover:text-text-main mt-3.5 shrink-0 cursor-grab touch-none transition-colors"
         >
           <GripVertical size={18} />
@@ -311,7 +313,6 @@
           onValueChange={(v) => (newMemberPermissions = Number(v))}
           label={m.asso_members_access_label()}
           variant="field"
-          density="compact"
         />
       </div>
       <button

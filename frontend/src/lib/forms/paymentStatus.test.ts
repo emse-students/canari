@@ -25,7 +25,14 @@ describe('payment status labels', () => {
     expect(statusClass('paid_over_capacity')).not.toBe(statusClass('paid'));
   });
 
+  // A refund from Canari writes `refunded` on the answer: the responses screen and the export name it.
+  it('names a refunded answer, in its own colour', () => {
+    expect(statusLabel('refunded')).toBe(m.form_status_refunded());
+    expect(statusLabels().refunded).toBe(m.form_status_refunded());
+    expect(statusClass('refunded')).not.toBe(statusClass('paid_over_capacity'));
+  });
+
   it('returns an unknown status as itself', () => {
-    expect(statusLabel('refunded')).toBe('refunded');
+    expect(statusLabel('chargeback')).toBe('chargeback');
   });
 });

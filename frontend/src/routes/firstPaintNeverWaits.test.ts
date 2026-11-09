@@ -192,6 +192,28 @@ describe('first paint never waits on the network', () => {
         'maintenance',
       ],
       [
+        "an edge's HTML 403 (a WAF ban page)",
+        () =>
+          new Response('<html>Access denied</html>', {
+            status: 403,
+            headers: { 'content-type': 'text/html' },
+          }),
+        'network',
+      ],
+      [
+        'a 200 whose body is lost on the way',
+        () =>
+          new Response(
+            new ReadableStream({
+              start(c) {
+                c.error(new TypeError('network error'));
+              },
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          ),
+        'network',
+      ],
+      [
         "a captive portal's 200 text/html",
         () =>
           new Response('<html>Hotel Wi-Fi</html>', {
@@ -213,6 +235,55 @@ describe('first paint never waits on the network', () => {
       expect(document.body.textContent).toContain(COPY[cause]());
       expect(hoisted.goto).not.toHaveBeenCalled();
     });
+
+    it("shows the operator's maintenance text, as the platform gate does", async () => {
+      fetchMock.mockImplementation(async () =>
+        Response.json(
+          { code: 'MAINTENANCE', message: 'Back at noon', maintenanceMessage: 'Back at noon' },
+          { status: 503 }
+        )
+      );
+      mountGate();
+
+      await load(event());
+      await vi.waitFor(() => expect(bootSessionPhase()).toBe('unreachable'));
+      flushSync();
+
+      expect(bootUnreachableCause()).toBe('maintenance');
+      expect(document.body.textContent).toContain('Back at noon');
+      expect(document.body.textContent).not.toContain(m.platform_gate_maintenance_default_msg());
+    });
+
+    it('words the default itself when the operator set no text (the body carries an English one)', async () => {
+      fetchMock.mockImplementation(async () =>
+        Response.json(
+          {
+            code: 'MAINTENANCE',
+            message: 'Canari is under maintenance.',
+            maintenanceMessage: null,
+          },
+          { status: 503 }
+        )
+      );
+      mountGate();
+
+      await load(event());
+      await vi.waitFor(() => expect(bootSessionPhase()).toBe('unreachable'));
+      flushSync();
+
+      expect(document.body.textContent).toContain(m.platform_gate_maintenance_default_msg());
+      expect(document.body.textContent).not.toContain('Canari is under maintenance.');
+    });
+  });
+
+  it('believes MAINTENANCE only on a 503', async () => {
+    hoisted.refresh = () => Promise.reject(new TransientAnswerError(502, 'MAINTENANCE'));
+    mountGate();
+
+    await load(event());
+    await settle();
+
+    expect(bootUnreachableCause()).toBe('server');
   });
 
   it('still routes an app 403 (a refusal the app itself answered) to the login screen', async () => {

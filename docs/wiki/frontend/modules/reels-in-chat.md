@@ -1,4 +1,4 @@
-# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09 and 2026-10-30; RC-1 to RC-5 and RC-7 merged, the writer OFF; "Envoyer à..." to several targets designed in section 15, not built)
+# CanaReels in a conversation - an ephemeral video message (DESIGN STUDY, decisions taken 2026-10-09 and 2026-10-30; RC-1 to RC-7 and RC-12 to RC-14 merged, the writer ON in dev builds only; what stands between `main` and the production flip is section 21)
 
 **Decided by the user, 2026-10-09** (French, relayed): generalise CanaReels *like Snapchat*, so a
 member can SEND a reel in a group, a DM or a community salon. **The chosen form is an EPHEMERAL VIDEO
@@ -514,7 +514,9 @@ two server/contract packages (RC-1, RC-2) first because everything else is blind
 pipeline (RC-5) before the UI polish because a reel that cannot survive a weak network is a feature
 that works in the office.
 
-**What must exist before `CHAT_REEL_WRITER_ENABLED` turns on (re-ordered 2026-10-30, re-read against
+**The list as it stands on 2026-11-08, item by item, with the readings the production flip waits on, is
+[section 21](#21-what-stands-between-main-and-the-production-flip-2026-11-08); the paragraph below is
+its history.** **What must exist before `CHAT_REEL_WRITER_ENABLED` turns on (re-ordered 2026-10-30, re-read against
 the owner's decisions of 2026-11-01, D-salons-later and D-sheet-after in 9.1).** Built and
 merged: RC-1 to RC-5, RC-7, and (1) RC-3's profile and 60 s cap wired into
 `prepareQueuedChatReel` and the chat camera (section 14, 2026-11-01), and (2) the session-leak P2 (the
@@ -906,7 +908,7 @@ upload runs in the WebView; a backgrounded iOS app pauses it, and the next foreg
 | A take prepared while the app is BACKGROUNDED, on Android | Mi 9T | hypothesis to refute: a WebView that reports the AVC/AAC encoder unavailable for a moment (backgrounded, the codec taken by another app) gets `unsupported`, which `isUnpreparableFault` treats as FINAL - the reel would fail for good where a later attempt would have worked. Look for `REFUSED by the preparer` with `unsupported` after a background/foreground cycle |
 | Cancel while offline, then online | any phone | `NOT released` logged; the session is the server sweep's, and a later reel still opens a session |
 
-## 15. Send to many - decided 2026-10-30 (designed, not built)
+## 15. Send to many - decided 2026-10-30 (built behind the writer switch, section 21)
 
 **Decided by the owner on 2026-10-30** (relayed in French; rows D-sendto and D-oneblob of 9.1):
 
@@ -927,7 +929,7 @@ upload runs in the WebView; a backgrounded iOS app pauses it, and the next foreg
   Every question of 15.9 is answered.
 
 **The server half (RC-14) is built** (2026-11-01, [section 16](#16-what-the-shared-file-server-package-rc-14-built-2026-11-01));
-the client halves are RC-13 (built, [section 17](#17-what-the-multi-target-outbox-rc-13-built-2026-11-01)), RC-12 (built behind the switch, [section 19](#19-what-the-send-to-sheet-rc-12-built-2026-11-02)) and the RC-6 amendment (not).
+the client halves are RC-13 (built, [section 17](#17-what-the-multi-target-outbox-rc-13-built-2026-11-01)), RC-12 (built behind the switch, [section 19](#19-what-the-send-to-sheet-rc-12-built-2026-11-02)) and the RC-6 amendment (built, [section 18](#18-what-the-tile-and-viewer-package-rc-6-built-2026-11-02)).
 
 **What this breaks in the sections above, on purpose.** Until now a reel message was filmed inside
 ONE conversation (section 1) and its blob served that conversation alone: 2.2 and media-service
@@ -1327,7 +1329,7 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
   An unreadable queue decides nothing (`queueOrNull`).
 - **A record is not queued work.** Its `conversationId` becomes `REEL_TAKE_RECORDS`, which
   `getOutboxQueue` leaves out on both engines (before anything is decrypted): no flush reads, drives or
-  counts it. `getReelTakeRecords` is its one reader (`sentTakeOf`, `reelSendDeleted`); an expired one
+  counts it. `getReelTakeRecords` is its one reader (`reelTakeReachOf`, `reelSendDeleted`); an expired one
   reads as no record. **The records are the leader's** (`maintainTakeRecords`, once per page life at
   the leader's first flush, never in a follower): the expired ones are deleted, and a send a record
   still counts as standing whose message is TOMBSTONED on this device (`isDeleted`) is marked deleted
@@ -1386,8 +1388,10 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
   account switch mid-drive never acts on the first account's files as the second.
 - **D-delete-one and "Supprimer partout".** `applyDeleteLocally` tells the outbox when a reel message
   is deleted for everyone (`reelSendDeleted`): the record marks it, and the file is released when no
-  message citing it stands. `handleDeleteReelEverywhere` deletes every standing send of the record
-  through the one delete path; `cancelTakeEverywhere` is "Annuler partout".
+  message citing it stands. `handleDeleteReelEverywhere` reads the take's reach once
+  (`reelTakeReachOf`: its sends still queued and its sends that went and stand) and ends each through
+  the one delete path - a queued one withdrawn, a sent one deleted for everyone - which is both
+  "Annuler partout" and "Supprimer partout" (section 21).
 
 **Tests**: `outbox.reelResume.test.ts` - RC-5's kill-at-each-stage suite run with ONE and THREE sends
 (19 cases each), plus the RC-13 cases: the take and its sends are one statement and a failed write
@@ -1404,9 +1408,9 @@ upload slot; the record out of the queue. `outboxPayloadPatch.test.ts` (both eng
 during the merge stays deleted), `outboxDepsOwner.test.ts`, `encoderLease.test.ts`,
 `chatReelTake.test.ts`.
 
-**Not built here, and why.** The bubble menu entries "Supprimer partout" and "Annuler partout": they
-are offered only for a take sent to two or more conversations, which nothing can create before the
-sheet, so they land with RC-12 over the controller and composable functions above. RC-12 also wires
+**Not built here, and why.** The bubble's "Supprimer partout" and "Annuler partout": they are offered
+only for a take sent to two or more conversations, which nothing can create before the sheet - built
+2026-11-08 (section 21). RC-12 also wires
 `onUploaded` / `endPublishWait` from the sheet's publish hand-over - **`endPublishWait` in a
 `finally`**, on every way the publish step ends (posted, refused, cancelled, thrown): a take whose
 publish wait is never ended waits for that page life - and posts the tab's `reel_sendto_failed_in`
@@ -1579,3 +1583,102 @@ the bench; its half is read on the server. Evidence: `<harness-dir>/a1-bench/r11
 **Still owed:** English for B-reel; the captioned reel (the chat camera offers no caption field, so
 the `🎬 CanaReel : <caption>` line has no writer yet); the salon rows (RC-8); a relaunch with the
 network cut on a `410` tombstone, which needs the tombstone first.
+
+## 21. What stands between `main` and the production flip (2026-11-08)
+
+**The owner's goal (2026-11-08):** "Envoyer à plusieurs" from the camera tab - one take, several
+conversations, one shared file - ships in `1.6.8`, i.e. the switch can be flipped once the phone
+readings below pass. **This replaces D-sheet-after** (9.1: the sheet one release after the writer):
+both reach production in the same flip, because they are ONE switch.
+
+### 21.1 The switch, and the flip PR
+
+- **There is ONE switch.** `CHAT_REEL_WRITER_ENABLED` (`frontend/src/lib/reels/chatReelWriter.ts`)
+  gates the chat camera's video (`chatReelAllowed`, `ChatComposer`) AND the RC-12 sheet
+  (`sendToOffered` in `ReelCapture` = the switch AND the server's `chatMaxDurationMs` AND a usable
+  `chatReelMaxTargets`, both served by `GET /api/posts/reel-limits` in the `1.6.7` stable). Since
+  #2913 it reads `deployEnvironment() === 'development'`: ON in every dev and pre-release build, OFF in
+  production web and every stable store build. **The production flip is that line becoming `true`**,
+  with `chatReelWriter.test.ts` pinning it, in its own pull request, cut into a stable after a
+  pre-release read on both phones. No server switch exists (the server mode of section 7 was not
+  chosen).
+- **#2861 is NOT the flip PR any more, and must be closed and rebuilt.** It was opened on 2026-11-01
+  before #2913: it stacks #2858 (the chat profile) and #2860 (the durable session release), both
+  merged since, and flips the switch to a bare `true` over a line that has been rewritten - its diff
+  no longer applies, and its reading list predates RC-12/13/14 and the `410` amendment. The new flip
+  PR is one line, its test and a changelog fragment.
+
+### 21.2 Between today's `main` and the flip, item by item
+
+| # | Item | State (2026-11-08) |
+| --- | --- | --- |
+| 1 | RC-1 reader, RC-2 `chat-reel` class, RC-7 push | in production since `v1.2.2` / `v1.3.1` |
+| 2 | RC-3 chat profile and 60 s cap wired into the queued take (#2858) | merged 2026-11-01 |
+| 3 | Durable release of a leaked upload session (#2860) | merged 2026-11-01 |
+| 4 | RC-14 server (holds, hold route, `reel-purge` reasons, salon declaration, `chatReelMaxTargets`) | in the `1.6.7` stable on both estates |
+| 5 | RC-13 multi-target outbox | merged, live in dev builds |
+| 6 | RC-6 `410` amendment ("CanaReel supprimé" recorded) | merged (#2911); its device reading is row 8 of 21.4 |
+| 7 | RC-12 sheet | merged (#2916), read on phone A (section 20) |
+| 8 | The readers at the `minClientVersion` floor | MET: both estates serve `minClientVersion` `1.6.2` (read 2026-11-08), above the reader's `v1.2.2` |
+| 9 | **"Annuler partout" / "Supprimer partout"** on the sender's bubble (15.2, 15.7) | **BUILT 2026-11-08** (21.3) |
+| 10 | **`reel_sendto_failed_in`** - a send failing for good names its conversation to a member no longer in it (15.2) | **BUILT 2026-11-08** (21.3) |
+| 11 | **`reel_sendto_same_as_post`** - the sheet says the chats get the published video itself when both are ticked (15.5 point 4) | **BUILT 2026-11-08** (21.3) |
+| 12 | RC-0 re-run at the chat profile | phone A measured (section 20: 7.3 MB in 24 s); phone B owed its split and output size (21.4, row 1) - a device measurement, nothing CI can run |
+| 13 | The bench readings | 21.4 |
+| - | **Not before the flip, said plainly** | **salons** (RC-8: the client salon send of a reel, D-salons-later) - the sheet lists no salon and the chat camera films in none, so no salon row can be read before RC-8; **a photo through the sheet** (D-photo: the take is video-only, a photo keeps "Suivant"); the caption on chat sends (none in v1, 15.1). None is a regression the flip creates |
+
+### 21.3 What was built on 2026-11-08 (the code items of 21.2)
+
+- **"Annuler partout" / "Supprimer partout".** The outbox answers `reelTakeReachOf(messageId)`: the
+  take's sends still QUEUED and its sends that went and still STAND, from the take row or its
+  sent-take record and the queue (`null` for any other message, an expired record, an unreadable
+  queue). The delete confirmation of MY OWN reel message asks it when it opens (an event, never
+  polled) and, when the take names two messages or more (`reelEverywhereActOf`), offers beside the
+  plain delete "Annuler partout" while none has gone, "Supprimer partout" once one has, with a line
+  saying how many conversations (no promise about the file: a take also published keeps it on its
+  post). Both run `handleDeleteReelEverywhere`: a sent message deleted for everyone through the one
+  delete path, a queued one withdrawn; **the reach is a snapshot**, so a queued send the queue no
+  longer holds is deleted only if the take now counts it as gone out, and skipped if it failed - a
+  delete would name a message no peer has. **One run per take at a time** (an in-flight set of take
+  ids; the confirm button is disabled once pressed), and a conversation no longer on this device is
+  skipped and said in a toast. The take settles from its rows - the last withdrawal releases its
+  session, the last deletion its file's hold. A sender's other device has no reach and offers neither
+  (15.7). This replaced the outbox's `cancelTakeEverywhere` and `sentTakeOf`, which nothing called.
+- **`reel_sendto_failed_in`, ONE notice per cause.** `OutboxDeps.onReelSendFailed` is told either
+  `{ kind: 'send' }` - one send refused on its own (its group gone, the member removed), which names
+  its conversation - or `{ kind: 'take' }` - a verdict on the take's file (refused, over today's
+  budget, unpreparable, lost, expired) that ends every send, said ONCE per take per page life with the
+  conversations it reached, never once per send. The session's toast is `reelSendFailedNotice`: the
+  name, "N conversations", or "the conversations you chose" - never a raw id.
+- **`reel_sendto_same_as_post`** under the chips when the feed row AND a chat are ticked.
+- **Tests**: `outbox.reelResume.test.ts` (the reach of a queued and of a sent take, the failed-in
+  conversations of a refused send and of a take over its budget),
+  `useMessaging.reelEverywhere.svelte.test.ts`, `MessageBubble.reel.svelte.test.ts` (both labels,
+  nothing for one message or another device, never asked for an ordinary video),
+  `ReelSendSheet.svelte.test.ts`, `chatReelTake.test.ts`, `reelSendTargets.test.ts`.
+
+### 21.4 The bench readings before the flip
+
+On a PRE-RELEASE carrying 21.3 (the switch is on there): phone A = the Mi 9T (console over CDP),
+phone B = the iPhone 12 (the in-app log, or `python -m pymobiledevice3 syslog live`), the rig's
+accounts, a group G with both phones and a third rig account, a DM A-B, a DM A-C. **Each row with
+each phone as the sender** unless it says otherwise; evidence in section 20's shape.
+
+| # | Row | Pass when |
+| --- | --- | --- |
+| 1 | **RC-0 on phone B**: a 55-60 s take from the tab to one DM | the log carries `[video-prep] start ...` and `done in N ms: raw -> prepared bytes`; prepared under 10 MB, preparation under 30 s, no WebView reload. Phone A's 24 s / 7.3 MB is the bar |
+| 2 | **One take to a DM, G and a second DM** from the tab | ONE `[video-prep]`, ONE upload (`take ... upload started for its 3 send(s)`), `every send settled, 3 of 3 went`; the tile plays on the other phone in the DM AND in G; the third DM read on the server |
+| 3 | **Feed AND chats** (CanaReels + G ticked) | the sheet shows `reel_sendto_same_as_post`; ONE upload (the publish step's), the chat hold logged before the first send; the post and G's tile play the same video |
+| 4 | **A refused target while the others go**: A offline, presses for G and the DM A-B; B removes A from G meanwhile; A back online | the DM send goes, G's bubble fails with its own sentence, ONE toast names G (`reel_sendto_failed_in`) |
+| 5 | **"Annuler partout"**: A offline, presses for 3 targets, then opens the delete of one bubble | the confirmation offers "Annuler partout" (3 conversations); pressed, the three bubbles go, and back online the session is released (`[UPLOAD-RELEASE]`) |
+| 6 | **"Supprimer partout"** after row 2 | offered from any of the three bubbles; pressed, the three read "Ce message a été supprimé" on the other phone and `chat reel ... released: HTTP 200`; a plain delete of ONE of them earlier left the other two and the file |
+| 7 | **The sender's other device** (A's web tab) | its delete offers neither "everywhere" act (no record), and deleting one message keeps the file |
+| 8 | **A moderator's purge, everywhere**: row 3's take, its feed post deleted by an ADMIN | the tile in G and the DM, tapped, reads "CanaReel supprimé", still so after a relaunch with the network cut - the RC-6 row section 20 could not produce (a feed moderation purges every hold, 15.4) |
+| 9 | **Weak network**: airplane toggles during "Envoi" of a 3-target take, then a kill mid-upload and a relaunch | each Retry resumes (`[UPLOAD-RESUME] ... the server holds k/n`), ONE object on the server, each send goes once |
+| 10 | **A kill during "Préparation NN %"**, relaunch | the take is prepared again, its sends wait, nothing is sent twice |
+| 11 | **The chat camera's single send** (in a DM, then in G) | unchanged: the ring stops at 60 s, one bubble, plays on the other phone |
+| 12 | **The lock screen** (B-reel) for a take sent to G, B's app killed | "CanaReel" in FR and EN, under G's title |
+| 13 | **No salon is offered** | no salon in the sheet; a salon's camera still takes photos only |
+
+**The salon rows (a salon target, a salon moderator's purge read as a tombstone in a DM) wait for
+RC-8** and are not preconditions of this flip (D-salons-later).

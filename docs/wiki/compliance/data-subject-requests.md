@@ -53,7 +53,7 @@ WHERE "lastName" ILIKE :'last' AND "firstName" ILIKE :'first';`
 | Messaging (metadata only; content is ciphertext) | `dm_group_members`, `dm_group_membership_intervals`, `dm_device_group_memberships`, `dm_user_dismissed_groups` (`userId`); `queued_message` (`senderId`, `recipientId`); group names via `dm_groups` joined on the person's memberships; the groups the person created via `dm_groups` (`createdBy`) |
 | Communities | `channel_members` (`userId`), `channel_messages` (`authorId`; content is ciphertext) |
 | Feed | `posts` (`authorId`; comments and reactions are JSON inside `posts` - search `comments`/`reactions` for the id), `post_notifications` (`recipientId`, `actorId`), `post_republications` |
-| Associations | `association_members`, `association_role_history`, `association_push_mutes`, `user_tags`, `document_reviewer_grants` (`userId`); `association_follows`, `user_follows` (`followerUserId`, `followedUserId`); `association_calendar_events` (`createdBy`) |
+| Associations | `association_members`, `association_role_history`, `association_push_mutes`, `account_bells` (`userId`, and `targetId` for a bell on a person), `user_tags`, `document_reviewer_grants` (`userId`); `association_follows`, `user_follows` (`followerUserId`, `followedUserId`); `association_calendar_events` (`createdBy`) |
 | Forms and payments | `submissions`, `form_respondents`, `form_reminders`, `purchase_records`, `webhook_deliveries`, `product_checkouts` (`userId`); `purchase_record_closings` (`closedByUserId`); `form_files` (`uploaderId`); `forms` (`ownerId`) |
 | Moderation | `content_reports` (`reporterId`, `reportedUserId`), `user_blocks` (`blockerId`, `blockedId`), `user_moderation` (`userId`) |
 | Legacy | `legacy_cotisations` (`claimedByUserId`, or the match key (last name, first name, promo) for a person with no account) |
@@ -63,6 +63,40 @@ WHERE "lastName" ILIKE :'last' AND "firstName" ILIKE :'first';`
 Check the column names against the entity before running: the entity files are under
 `apps/*/src/**/entities/`, and an unnamed `@Entity()` takes the snake_case of its class
 (`push_token`, `key_package`).
+
+#### A guest with no account (a public form's answer, register C8)
+
+A guest has no `users` row, so nothing above finds them, and no account's erasure reaches their
+answer. They are found only by what the form asked them (migration 138, [forms](../frontend/modules/forms.md#a-guests-name-and-e-mail-when-the-form-asks-2026-11-06)) -
+always with `"userId" IS NULL`, which is what makes the row a guest's:
+
+```sql
+SELECT id, "formId", "createdAt", "paymentStatus", "totalPaid",
+       "guestLastName", "guestFirstName", "guestEmail", answers
+  FROM submissions
+ WHERE "userId" IS NULL
+   AND ("guestEmail" ILIKE :'email'
+        OR ("guestLastName" ILIKE :'last' AND "guestFirstName" ILIKE :'first'));
+```
+
+A form that asked nothing holds no identity column: such a guest is found only by what they
+wrote in the answers (a reference they quote, `guestReference` = the first eight hex digits of
+`id`), and the requester proves the answer is theirs - say so in the reply rather than guess.
+
+**Erasure is an ANONYMISATION of the row, never its deletion** - the same choice the account
+erasure makes for a member's answer (`submissions`: `"userId"`, `email` NULL, `answers = '{}'`):
+
+```sql
+UPDATE submissions
+   SET "guestLastName" = NULL, "guestFirstName" = NULL, "guestEmail" = NULL, answers = '{}'::jsonb
+ WHERE id = ANY(:'ids'::uuid[]) AND "userId" IS NULL;
+```
+
+Why not `DELETE`: a paid row is the association's accounting record (amount, status, Lydia request
+ids, `lines`; basis 6.1.c in C8), its `purchase_records` row points at it, and a waiting row holds
+a seat - deleting it would erase a payment and free a seat that was sold. Anonymised, the row
+keeps what accounting needs and names nobody. The `AND "userId" IS NULL` guard keeps the statement
+off any member's row. Like every production write, it waits for the owner's yes.
 
 ### MiConnect (Authentik)
 

@@ -21,7 +21,12 @@ export interface CallMediaSessionParams {
   title: string;
   artist: string;
   muted: boolean;
-  onHangup: () => void;
+  /**
+   * The OS's hang-up, or `null` in the iOS app: CallKit owns hang-up there, so the Media Session's
+   * `hangup` is neither set nor cleared (`clearCallMediaSession`). Its WebKit also throws on the
+   * action (the iPhone 12 logged it on every call until 2026-11-07).
+   */
+  onHangup: (() => void) | null;
   onToggleMicrophone: () => void;
 }
 
@@ -75,11 +80,12 @@ export function applyCallMediaSession(
   } catch (e) {
     appendLog(`[Call] Media Session metadata refused: ${String(e)}`);
   }
-  const handlers: Record<CallAction, () => void> = {
+  const handlers: Record<CallAction, (() => void) | null> = {
     hangup: params.onHangup,
     togglemicrophone: params.onToggleMicrophone,
   };
-  for (const [action, handler] of Object.entries(handlers) as [CallAction, () => void][]) {
+  for (const [action, handler] of Object.entries(handlers) as [CallAction, (() => void) | null][]) {
+    if (!handler) continue; // an action the engine is known not to have (`onHangup`)
     try {
       session.setActionHandler(action as MediaSessionAction, handler);
     } catch (e) {
@@ -99,11 +105,16 @@ export function applyCallMediaSession(
   return true;
 }
 
-/** Takes the call off the OS media session (the call ended or the surface unmounted). */
-export function clearCallMediaSession(host: MediaSessionHost): void {
+/**
+ * Takes the call off the OS media session (the call ended or the surface unmounted). `withHangup`
+ * is false where `hangup` was never set - the iOS app, where CallKit owns hang-up
+ * (`CallMediaSessionParams.onHangup`) - so it is not cleared there either.
+ */
+export function clearCallMediaSession(host: MediaSessionHost, withHangup = true): void {
   const session = host.mediaSession;
   if (!session) return;
-  for (const action of ['hangup', 'togglemicrophone'] as CallAction[]) {
+  const actions: CallAction[] = withHangup ? ['hangup', 'togglemicrophone'] : ['togglemicrophone'];
+  for (const action of actions) {
     try {
       session.setActionHandler(action as MediaSessionAction, null);
     } catch {

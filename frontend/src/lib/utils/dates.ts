@@ -61,8 +61,18 @@ const MS_PER_DAY = 86_400_000;
 /**
  * Days since the Unix epoch of the calendar day `instant` falls on IN `timeZone` (default: the
  * browser's). Two of these subtract to a whole number of days, whatever DST did in the zone.
+ *
+ * THE BROWSER'S OWN ZONE NEEDS NO `Intl`: the `Date` getters already answer in it, and building an
+ * `Intl.DateTimeFormat` per call was most of what a conversation's day separators cost
+ * (`groupMessages` names every day of the conversation on every change of it; community-open-budget,
+ * 2026-11-08). A named zone still goes through `Intl`, the only API that knows it.
  */
 export function calendarDay(instant: Date, timeZone?: string): number {
+  if (timeZone === undefined) {
+    return Math.round(
+      Date.UTC(instant.getFullYear(), instant.getMonth(), instant.getDate()) / MS_PER_DAY
+    );
+  }
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone,
     year: 'numeric',
@@ -102,19 +112,42 @@ export function formatDayLabel(
   labels: RelativeDayLabels,
   now: Date = new Date()
 ): string {
-  const daysAgo = calendarDay(now) - calendarDay(date);
-  if (daysAgo === 0) return labels.today;
-  if (daysAgo === 1) return labels.yesterday;
-  const options: Intl.DateTimeFormatOptions =
-    daysAgo > 1 && daysAgo <= WEEKDAY_ONLY_MAX_DAYS
-      ? { weekday: 'long' }
-      : {
-          day: 'numeric',
-          month: 'long',
-          year: date.getFullYear() === now.getFullYear() ? undefined : 'numeric',
-        };
-  const text = new Intl.DateTimeFormat(locale, options).format(date);
-  return text.charAt(0).toLocaleUpperCase(locale) + text.slice(1);
+  return dayLabeler(locale, labels, now)(date);
+}
+
+/**
+ * {@link formatDayLabel} for MANY days against one clock: "today" is computed once and each
+ * `Intl.DateTimeFormat` built once per shape (weekday; day and month; with the year), where the
+ * one-shot form builds them per day. `groupMessages` names every day of a conversation with one
+ * labeler per pass, so a conversation spanning months costs three formatters, not three per day.
+ * Made for one synchronous pass: the formatters keep the zone they were built in.
+ */
+export function dayLabeler(
+  locale: string,
+  labels: RelativeDayLabels,
+  now: Date = new Date()
+): (date: Date) => string {
+  const today = calendarDay(now);
+  const formatters = new Map<string, Intl.DateTimeFormat>();
+  const formatter = (shape: string, options: Intl.DateTimeFormatOptions) => {
+    let f = formatters.get(shape);
+    if (!f) formatters.set(shape, (f = new Intl.DateTimeFormat(locale, options)));
+    return f;
+  };
+  return (date) => {
+    const daysAgo = today - calendarDay(date);
+    if (daysAgo === 0) return labels.today;
+    if (daysAgo === 1) return labels.yesterday;
+    const text =
+      daysAgo > 1 && daysAgo <= WEEKDAY_ONLY_MAX_DAYS
+        ? formatter('weekday', { weekday: 'long' }).format(date)
+        : date.getFullYear() === now.getFullYear()
+          ? formatter('day-month', { day: 'numeric', month: 'long' }).format(date)
+          : formatter('day-month-year', { day: 'numeric', month: 'long', year: 'numeric' }).format(
+              date
+            );
+    return text.charAt(0).toLocaleUpperCase(locale) + text.slice(1);
+  };
 }
 
 /**

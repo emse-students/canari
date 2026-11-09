@@ -345,7 +345,7 @@
                         <span
                           class="text-2xs absolute flex items-center justify-center rounded-full font-bold opacity-15"
                           style="height:62%;aspect-ratio:1;max-height:52px;background:rgba(255,255,255,0.2);color:{fg};left:50%;top:50%;transform:translate(-50%,-50%);"
-                          >{getInitials(ev.associationName)}</span
+                          >{getInitials(logos[0].name)}</span
                         >
                       {/if}
                     {:else}

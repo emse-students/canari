@@ -260,7 +260,7 @@ export async function sealChannelMessage(
     // This device's own sessions are mirrored too: a push echoing our own salon message to our
     // OTHER devices carries the same session, and those devices mirror it on receipt - but the
     // sending device is also a receiving one for everything that follows in the salon.
-    await mirrorGraineSeed(slot.session);
+    await mirrorGraineSeed(slot.session, userId);
   }
 
   // GUARANTEED BY THE ROTATION, NOT HOPED FOR: `graineOutboundVerdict` mints a new session for
