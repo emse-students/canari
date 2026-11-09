@@ -7,7 +7,7 @@ import { Log } from '$lib/utils/Log';
  * The inline video and the viewer's player are two `<video>` elements, so the viewer started at 0 -
  * a clip watched to 0:12 in the conversation began again from its first frame. Several places open
  * the viewer from an inline video (a chat bubble, a post, a post's gallery, a reel), so the position
- * does not travel as a prop through each of them: `InlineVideo` writes it here at the moment of
+ * does not travel as a prop through each of them: the inline `VideoPlayer` (`feed`, `chat`) writes it here at the moment of
  * opening, and the viewer's `VideoPlayer` reads it when it mounts. THE KEY IS THE MEDIA URL - both
  * are handed the same decrypted blob URL - and a position is TAKEN, not read: once the viewer has it,
  * it is gone, so a later open of the same file from somewhere that never played it starts at 0.

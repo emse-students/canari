@@ -1009,11 +1009,6 @@
     "select": 0,
     "input": 0
   },
-  "src/lib/components/shared/InlineVideo.svelte": {
-    "button": 3,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/shared/MarkdownComposerToolbar.svelte": {
     "button": 2,
     "select": 0,

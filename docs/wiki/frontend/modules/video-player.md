@@ -210,6 +210,37 @@ conversation media panel:
 - **A surface that likes on double tap** (`doubleTapLike` on, `data-double-tap-likes`) makes the
   player's single tap wait for the double-tap window - so on a reel the like never flips the sound.
 
+## The feed and a conversation, on the kit (step D)
+
+`InlineVideo` is DELETED: the feed's and a conversation's inline video are `VideoPlayer` variants,
+so every video in the app but the live one (step E) is one component. The variant picks, once at
+mount, how the element takes turns - `feed` `playWhileVisible`, `chat` `arbitratePlayback`, a viewer
+`followVideoSound` - and nothing else differs in kind: the gestures, the glyph, the keyboard map, the
+poster and the unplayable notice are the same code.
+
+- **`feed`** (`PostMedia`, a post card, a reel card, a post page): plays muted while on screen and
+  loops, `#t=0.1` on a decrypted file (never on a stream), the blurred first-frame `backdrop` in the
+  contained bands. **The kit's speaker chip bottom-right, always drawn** (28 px glass in a 44 px
+  target), **the expand chip top-right** (`VideoExpandButton`, the caller's `openLabel`). No bar, no
+  play disc - it plays by being on screen, as Instagram's does. **A tap is the app's sound**,
+  remembered (`videoSound.setMuted`); inside a post card that likes on double tap it waits for the
+  window. `f` opens the viewer, the inline video's only full screen.
+- **`chat`** (`MessageMediaRenderer`): played when asked, never looped, **its sound its own**
+  (`local`: audible from the start, neither reading nor writing the app's answer). **The glass play
+  disc** until it is started, and again on a pause or at its end; **once started, its speaker and the
+  `line` scrubber stay**. The expand chip opens the viewer, which resumes where it was
+  (`videoResume`).
+- **What the expand chip changed**: the whole picture was the viewer's button
+  (`data-double-tap-defers`, the click held for the double-tap window). The picture's tap is now the
+  sound, which waits by itself where a like exists; the chip is a button and opens at once.
+- **Two things for the readings, decided by the code as it stands, not by the owner** (the lead's
+  call to keep or change):
+  - **A hold on a chat video also raises the bubble's long-press action sheet**: `videoGestures` does
+    not stop `pointerdown`, so the bubble's own long press fires too. The pause is right; whether the
+    sheet should be suppressed over a video is the question.
+  - **A tap on a chat video that has not started toggles its sound but does not play it**: only the
+    disc plays (the tap is the sound everywhere). Its glyph says what it did.
+
 ## Where the migration stands
 
 | Step | Surface | State |
@@ -217,5 +248,5 @@ conversation media panel:
 | A | tokens, fallback, the kit, the gestures, the remembered sound | built |
 | B | lightbox (`VideoPlayer` full mode) on the kit; the measurement protocol | built - readings owed ([the glass budget](#the-glass-budget)) |
 | C | CanaReels (`variant="reel"`): tap = sound, hold = pause, the rail's speaker is the kit's | built - readings owed (a reel tap, a hold, a double-tap like on both phones) |
-| D | feed and chat (`InlineVideo`, deleted) | next |
-| E | the live viewer | |
+| D | feed (`variant="feed"`) and chat (`variant="chat"`); `InlineVideo` deleted | built - readings owed (a feed tap and the expand chip, a chat disc, hold and the action sheet) |
+| E | the live viewer | next |
