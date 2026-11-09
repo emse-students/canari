@@ -53,6 +53,7 @@ vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
 vi.mock('$lib/posts/postIdentity', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/postIdentity')>()),
   listPostAsAssociations: () => Promise.resolve([]),
+  listLiveAssociations: () => Promise.resolve([]),
 }));
 vi.mock('$lib/moderation/muteCheck', () => ({
   MutedError: class MutedError extends Error {},

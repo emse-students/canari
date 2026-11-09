@@ -1,5 +1,7 @@
 <script lang="ts">
   import ModalOverlay from './ModalOverlay.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
   import { m } from '$lib/paraglide/messages';
   import { confirmStore, resolveConfirm } from '$lib/stores/confirm.svelte';
 
@@ -47,36 +49,27 @@
               the dialog focuses its first focusable child, and in DOM order that is this input; a
               programmatic focus is never blocked, so the attribute added a warning and nothing else.
             -->
-        <input
-          type="text"
+        <Input
           bind:value={typed}
           autocomplete="off"
           autocapitalize="off"
           spellcheck="false"
           aria-label={m.confirm_type_to_continue()}
           placeholder={m.confirm_type_placeholder()}
-          class="bg-cn-border/30 border-cn-border text-text-main placeholder:text-text-muted w-full rounded-xl border px-3 py-2 text-sm transition-colors focus:border-red-500 focus:outline-none"
         />
       </div>
     {/if}
     <div class="flex justify-end gap-2">
-      <button
-        onclick={() => resolveConfirm(false)}
-        class="text-text-muted hover:bg-cn-border/40 rounded-xl px-4 py-2 text-sm font-semibold transition-colors"
-      >
+      <Button variant="secondary" onclick={() => resolveConfirm(false)}>
         {pending.cancelLabel}
-      </button>
-      <button
+      </Button>
+      <Button
+        variant={pending.danger ? 'danger' : 'primary'}
         onclick={() => resolveConfirm(true)}
         disabled={!canConfirm}
-        class="rounded-xl px-4 py-2 text-sm font-bold transition-colors
- disabled:cursor-not-allowed disabled:opacity-40
- {pending.danger
-          ? 'bg-red-500 text-white hover:bg-red-600'
-          : 'bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink'}"
       >
         {pending.confirmLabel}
-      </button>
+      </Button>
     </div>
   {/if}
 </ModalOverlay>

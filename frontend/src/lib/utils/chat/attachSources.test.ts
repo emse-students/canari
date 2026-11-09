@@ -54,7 +54,8 @@ describe('the one menu', () => {
 describe('the inputs', () => {
   it('asks for media only on the library entry - which is what picks the picker', () => {
     expect(acceptFor('library')).toBe('image/*,video/*');
-    expect(acceptFor('files')).toContain('application/pdf');
+    // A list greyed out a saved .txt log in Android's picker: the files entry takes anything.
+    expect(acceptFor('files')).toBe('*/*');
   });
 
   it('opens the in-app camera, not an input, for the camera entry only', () => {

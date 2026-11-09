@@ -62,7 +62,7 @@ function bubble(overrides: Partial<PositionedBubble> = {}): PositionedBubble {
 
 function model(bubbles: PosterBubble[]): PosterModel {
   return {
-    zones: [{ categoryId: 'c1', label: 'Culture, Arts', bubbles }],
+    zones: [{ zoneId: 'c1', label: 'Culture, Arts', bubbles }],
     totalAssos: bubbles.length,
   };
 }

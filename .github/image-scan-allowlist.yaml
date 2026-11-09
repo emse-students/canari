@@ -295,3 +295,10 @@ vulnerabilities:
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
   - id: GHSA-6v7p-g79w-8964
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
+  # Published 2026-11-07, Debian zlib1g 1:1.3.dfsg+really1.3.1-1+b1 in the image's base, fixed by
+  # Debian's +deb13u1 - which only an authentik image rebuild can carry (2026.8.5 is the latest
+  # release; none newer exists that day). The same two ids, so they retire with the next upgrade.
+  - id: CVE-2026-85091
+    statement: "zlib1g in authentik server 2026.8.5's Debian base, fixed by Debian +deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-07). Upstream image."
+  - id: CVE-2026-76844
+    statement: "zlib1g in authentik server 2026.8.5's Debian base, fixed by Debian +deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-07). Upstream image."

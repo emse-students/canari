@@ -55,6 +55,7 @@ import {
   type OutboxDeps,
   UPLOAD_STALL_HINT_MS,
   type PreparedOutboxMedia,
+  type ReelSendFailure,
 } from './outbox';
 import { clearAllUploads, uploadViewOf } from './uploadProgress.svelte';
 import { uploadCaption } from './uploadLabel';
@@ -237,6 +238,8 @@ function life(w: World, opts: LifeOptions = {}) {
   const port = w.server.port();
   /** The system lines this life posted into the thread. */
   const notices: string[] = [];
+  /** What the session is told of a take's sends failing for good (15.2): one notice per cause. */
+  const failedIn: ReelSendFailure[] = [];
   const mls = {
     getLocalGroups: vi.fn(() => []),
     getGroupMeta: vi.fn(async (id: string) => ({
@@ -348,6 +351,9 @@ function life(w: World, opts: LifeOptions = {}) {
     addMessageToChat: async (_sender, content) => {
       notices.push(content);
     },
+    onReelSendFailed: (failure) => {
+      failedIn.push(failure);
+    },
     holdChatReel: (mediaId) =>
       live(async () => {
         w.events.push(`hold ${mediaId}`);
@@ -364,6 +370,7 @@ function life(w: World, opts: LifeOptions = {}) {
     mls,
     conversations,
     notices,
+    failedIn,
     kill() {
       alive = false;
       openLives.delete(handle);
@@ -1006,6 +1013,8 @@ describe('one take, several conversations (RC-13)', () => {
     // THE RECORD IS NO QUEUED WORK: no flush reads, drives or counts it.
     expect(await w.storage.getOutboxQueue(KEY)).toEqual([]);
     expect((await w.storage.getReelTakeRecords(KEY)).map((r) => r.id)).toEqual([ID]);
+    // THE MEMBER IS TOLD WHICH CONVERSATION, once, and only the refused one (reel_sendto_failed_in).
+    expect(l.failedIn).toEqual([{ kind: 'send', conversationId: 'g2' }]);
   });
 
   it('a cancel of ONE send keeps the take: the encoder runs on, and the file goes to the other two', async () => {
@@ -1039,7 +1048,7 @@ describe('one take, several conversations (RC-13)', () => {
     expect(await sentIds(w)).toEqual([SEND_IDS[0], SEND_IDS[2]]);
   });
 
-  it('"Annuler partout" withdraws every queued send, and the last withdrawal releases the take', async () => {
+  it('"Annuler partout": the reach lists every queued send, each withdrawn, and the last withdrawal releases the take', async () => {
     const w = world();
     let aborted = false;
     const l = life(w, {
@@ -1053,7 +1062,10 @@ describe('one take, several conversations (RC-13)', () => {
     });
     await enqueueTake(l, 3);
     await waitForEvent(() => expect(w.prepares).toHaveLength(1));
-    expect(await l.outbox.cancelTakeEverywhere(SEND_IDS[2])).toBe(3);
+    const reach = await l.outbox.reelTakeReachOf(SEND_IDS[2]);
+    expect(reach?.queued.map((s) => s.id)).toEqual(SEND_IDS);
+    expect(reach?.standing).toEqual([]);
+    for (const send of reach!.queued) expect(await l.outbox.cancelPending(send.id)).toBe(true);
     await waitForEvent(() => expect(aborted).toBe(true));
     // KEPT `releasing` while its transfer ran, deleted once it ended with no file.
     await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
@@ -1156,15 +1168,52 @@ describe('one take, several conversations (RC-13)', () => {
     await enqueueTake(l, 3);
     await expectDeliveredOnce(w, l, 3);
     const { media } = await sentReel(w, l);
-    expect((await l.outbox.sentTakeOf(SEND_IDS[1]))?.sends.map((s) => s.id)).toEqual(SEND_IDS);
+    expect((await l.outbox.reelTakeReachOf(SEND_IDS[1]))?.standing.map((s) => s.id)).toEqual(
+      SEND_IDS
+    );
+    expect((await l.outbox.reelTakeReachOf(SEND_IDS[1]))?.queued).toEqual([]);
     await l.outbox.reelSendDeleted(SEND_IDS[0]);
     await l.outbox.reelSendDeleted(SEND_IDS[1]);
-    expect((await l.outbox.sentTakeOf(SEND_IDS[2]))?.sends.map((s) => s.id)).toEqual([SEND_IDS[2]]);
+    expect((await l.outbox.reelTakeReachOf(SEND_IDS[2]))?.standing.map((s) => s.id)).toEqual([
+      SEND_IDS[2],
+    ]);
     expect(w.events.some((e) => e.startsWith('release'))).toBe(false);
     await l.outbox.reelSendDeleted(SEND_IDS[2]);
     expect(w.events).toContain(`release ${media.mediaId}`);
     expect(w.sql.rows.size).toBe(0);
-    expect(await l.outbox.sentTakeOf(SEND_IDS[2])).toBeNull();
+    expect(await l.outbox.reelTakeReachOf(SEND_IDS[2])).toBeNull();
+  });
+
+  it("the reach names only its own take: another take's send in the same conversation, and an ordinary message, read null or their own", async () => {
+    const w = world();
+    const l = life(w, { prepare: () => NEVER() });
+    await enqueueTake(l, 2);
+    const OTHER_TAKE = '99999999-2222-4333-8444-555555555555';
+    const OTHER_SEND = 'bbbbbbbb-2222-4333-8444-555555555551';
+    const other = buildChatReelTake({
+      takeId: OTHER_TAKE,
+      sentAt: 200,
+      senderId: 'u',
+      bytes: RAW,
+      mimeType: 'video/webm',
+      fileName: 'take2.webm',
+      targets: [{ messageId: OTHER_SEND, groupId: 'g1', conversationKey: 'g1' }],
+    });
+    await l.outbox.enqueueTake(other.take, other.sends);
+    const mine = await l.outbox.reelTakeReachOf(SEND_IDS[0]);
+    expect(mine?.takeId).toBe(ID);
+    expect(mine?.queued.map((s) => s.id)).toEqual(SEND_IDS.slice(0, 2));
+    const theirs = await l.outbox.reelTakeReachOf(OTHER_SEND);
+    expect(theirs?.takeId).toBe(OTHER_TAKE);
+    expect(theirs?.queued.map((s) => s.id)).toEqual([OTHER_SEND]);
+    // An ordinary message of mine in the same conversation, queued or not: no take names it.
+    const TEXT = 'cccccccc-2222-4333-8444-555555555551';
+    await w.storage.saveOutboxEntry(
+      { id: TEXT, conversationId: 'g1', sentAt: 300, kind: 'text', text: 'hi' } as OutboxEntry,
+      KEY
+    );
+    expect(await l.outbox.reelTakeReachOf(TEXT)).toBeNull();
+    expect(await l.outbox.reelTakeReachOf('dddddddd-2222-4333-8444-555555555551')).toBeNull();
   });
 
   it("OVER TODAY'S BUDGET at the take's upload: media-service's own 429 fails each send for good, its sentence in each thread, never retried", async () => {
@@ -1181,6 +1230,11 @@ describe('one take, several conversations (RC-13)', () => {
     await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
     expect(l.notices).toEqual(Array(3).fill(m.outbox_reel_over_budget()));
     expect(w.server.sent.filter((r) => r.method === 'POST' && r.path === '')).toHaveLength(1);
+    // ONE notice for the take's verdict, never one per send.
+    expect(l.failedIn).toHaveLength(1);
+    const [told] = l.failedIn;
+    expect(told.kind).toBe('take');
+    expect(told.kind === 'take' ? [...told.conversationIds].sort() : null).toEqual(GROUPS);
     expect(sends(l)).toBe(0);
   });
 

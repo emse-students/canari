@@ -21,9 +21,18 @@
      * click does nothing - never `disabled`, which would drop focus out of a dialog's focus trap.
      */
     busy?: boolean;
+    /** Called with the new state after the user flips the switch (for a write that is not a bind). */
+    onchange?: (checked: boolean) => void;
   }
 
-  let { checked = $bindable(), label, hint, disabled = false, busy = false }: Props = $props();
+  let {
+    checked = $bindable(),
+    label,
+    hint,
+    disabled = false,
+    busy = false,
+    onchange,
+  }: Props = $props();
 </script>
 
 <label
@@ -44,6 +53,7 @@
         // A click while the last write is still saving is not a change: the box stays as drawn.
         if (busy) e.preventDefault();
       }}
+      onchange={() => onchange?.(checked)}
       class="peer sr-only"
     />
     <div

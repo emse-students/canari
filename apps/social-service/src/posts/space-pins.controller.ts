@@ -17,8 +17,7 @@ import { SpacePinsService, type PinActor } from './space-pins.service';
  * under the same `posts` prefix: no route of `PostsController` has a second segment these two-segment
  * paths could match, and the pin is no longer moderation, so it no longer sits beside hide/unmask.
  *
- * Every refusal is typed (`space-pins.ts`): `space_required` / `space_pin_limit` /
- * `post_not_in_space` 409, `space_pin_forbidden` 403, `space_not_found` 404.
+ * Every refusal is typed (`space-pins.ts`): `space_pin_limit` / `post_not_in_space` 409, `space_pin_forbidden` 403, `space_not_found` 404.
  */
 @Controller('posts')
 export class SpacePinsController {
@@ -38,31 +37,28 @@ export class SpacePinsController {
     return this.pins.listForSpace(spaceId, actorOf(xUserId, xGlobalAdmin));
   }
 
-  /**
-   * Pins a post in ONE space (`spaceId`), for that space's readers only. With no body (an older
-   * client), pins in the one space where the caller may pin it, or answers `space_required`.
-   */
+  /** Pins a post in ONE space (`spaceId`, required), for that space's readers only. */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/pin')
   pinPost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string,
-    @Body() body: PinPostDto | undefined
+    @Body() body: PinPostDto
   ) {
-    return this.pins.pin(postId, actorOf(xUserId, xGlobalAdmin), body?.spaceId);
+    return this.pins.pin(postId, actorOf(xUserId, xGlobalAdmin), body.spaceId);
   }
 
-  /** Unpins a post from ONE space. With no body, from the one space where it is pinned and governed. */
+  /** Unpins a post from ONE space (`spaceId`, required). */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/unpin')
   unpinPost(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string,
-    @Body() body: PinPostDto | undefined
+    @Body() body: PinPostDto
   ) {
-    return this.pins.unpin(postId, actorOf(xUserId, xGlobalAdmin), body?.spaceId);
+    return this.pins.unpin(postId, actorOf(xUserId, xGlobalAdmin), body.spaceId);
   }
 }
 

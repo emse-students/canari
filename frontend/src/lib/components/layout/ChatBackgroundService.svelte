@@ -162,6 +162,7 @@
   import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
   import { mergeFcmMessagesAndAnnounce } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
+  import { serveDelegatedCommits } from '$lib/utils/chat/tabCommitDelegation';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
   import { mergeAnnouncedMessage } from '$lib/utils/chat/salonEcho';
@@ -817,9 +818,11 @@
    * four minutes, and only a relaunch recovered. Ending the session here removes the race; releasing
    * the latch here is what lets the next sign-in start, whatever ended the previous one.
    */
-  function handleSignedOut() {
+  function handleSignedOut(): Promise<void> {
     noteUnlockNeedsMember();
-    globalSession.endSession(sessionCb());
+    // Resolves when the server's push deregistration has answered: `clearAuth` awaits it before it
+    // revokes the session.
+    const pushDeregistered = globalSession.endSession(sessionCb());
     // After the teardown, and whether or not there was a live session to tear down: the community
     // list of the leaving account goes, and a listing started on its token stops (F1/F2).
     globalChannels.forgetAccount(appendLog);
@@ -834,6 +837,7 @@
     // ...and the removals this device deferred to an actor, which a release is matched against.
     forgetDeferredRemovals();
     _loginInProgress = false;
+    return pushDeregistered;
   }
 
   /**
@@ -1281,10 +1285,17 @@
           showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
         }
       },
-      onRolePermissionsChanged: (event: { roleId: string; permissions: string[] }) => {
+      onRolePermissionsChanged: (event: {
+        roleId: string;
+        permissions: string[];
+        label?: string | null;
+      }) => {
         globalChannels.handleRolePermissionsChanged(event);
+        // A rename carries `label`, a permission edit does not: the line says which one happened.
         appendLog(
-          `[ROLE] ${event.roleId.slice(0, 8)} now grants ${event.permissions.length} permission(s)`
+          event.label !== undefined
+            ? `[ROLE] ${event.roleId.slice(0, 8)} renamed (${event.label === null ? 'default name' : 'custom name'})`
+            : `[ROLE] ${event.roleId.slice(0, 8)} now grants ${event.permissions.length} permission(s)`
         );
       },
       onChannelUpdated: (event: { channelId: string; name?: string; viewerCanWrite?: boolean }) => {
@@ -2040,6 +2051,14 @@
     const stopNativeQuickReply = isIosTauriRuntime() ? listenForNativeQuickReplies() : () => {};
 
     const unsubscribeTabMessages = subscribeTabMessageUpdates(applyTabMessageEvent);
+    // THE LEADER HALF OF A FOLLOWER TAB'S COMMITS (`tabCommitDelegation.ts`): registered in every tab,
+    // run only by the one that leads. The contexts are read at each execution, not here.
+    const stopServingConversationCommits = serveDelegatedCommits(
+      globalConvs.delegatedCommitExecutors(convCtx)
+    );
+    const stopServingKeyGroupCommits = serveDelegatedCommits(
+      globalChannels.delegatedKeyGroupExecutors(channelsCtx)
+    );
 
     // ── FCM cache polling (Tauri/Android only) ────────────────────────────
     // Messages received via FCM while the app is in the foreground are written
@@ -2079,6 +2098,8 @@
       stopNativeCallAccept();
       stopNativeQuickReply();
       unsubscribeTabMessages();
+      stopServingConversationCommits();
+      stopServingKeyGroupCommits();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);
       stopForegroundHeartbeat?.();

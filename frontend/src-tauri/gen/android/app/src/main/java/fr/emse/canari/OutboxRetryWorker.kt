@@ -99,9 +99,10 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
             return Result.retry()
         }
 
-        val ctx = MlsContextLoader.loadPushContext(applicationContext)
+        val ctxRead = MlsContextLoader.readPushContext(applicationContext)
+        val ctx = ctxRead.context
         if (ctx == null) {
-            Log.e(TAG, "doWork: push_context.json missing — permanent failure")
+            Log.e(TAG, "doWork: push_context.json ${ctxRead.verdict.describe()} — permanent failure")
             forgetAttempts()
             return Result.failure()
         }

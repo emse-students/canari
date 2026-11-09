@@ -74,6 +74,7 @@ vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
 vi.mock('$lib/posts/postIdentity', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/postIdentity')>()),
   listPostAsAssociations: () => Promise.resolve([]),
+  listLiveAssociations: () => Promise.resolve([]),
 }));
 vi.mock('$lib/components/shared/VideoPlayer.svelte', async () => ({
   default: (await import('./VideoPlayerStub.test-helper.svelte')).default,

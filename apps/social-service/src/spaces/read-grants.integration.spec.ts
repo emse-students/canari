@@ -193,6 +193,8 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
       '074_coorganise.sql',
       '078_read_grants.sql',
       '121_member_reposts.sql',
+      // The bell re-reads a birthday notice against its date (`birthdayRowShownSql`).
+      '148_profile_birthdays.sql',
     ]) {
       await client.query(migration(name));
     }

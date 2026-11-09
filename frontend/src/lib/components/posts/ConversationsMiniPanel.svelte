@@ -16,6 +16,7 @@
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import { isHiddenFromList, loadHiddenUnopenable } from '$lib/utils/chat/noHolder.svelte';
   import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
   import { previewContentOf } from '$lib/utils/chat/listPreview';
   import { m } from '$lib/paraglide/messages';
@@ -162,8 +163,10 @@
       // backends, and `db/conversationOrder.test.ts` pins it. This panel used to re-sort because the
       // web backend did not keep that promise - which is fixed at the store, so the compensation
       // went with it rather than being left as a second copy of the ordering rule.
+      loadHiddenUnopenable(uid);
       idbItems = convos
         .filter((meta) => !isChannelConversationId(meta.id))
+        .filter((meta) => !isHiddenFromList(meta.id, meta.lifecycle))
         .slice(0, 20)
         .map((meta) => buildItemFromMeta(meta, uid));
       // IT DOES NOT CLOSE, DELIBERATELY, AND ADDING A `close()` HERE WOULD BREAK THE LIVE SESSION.

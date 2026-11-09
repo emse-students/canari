@@ -906,7 +906,7 @@
     <PageHeader title={m.posts_page_title()}>
       {#snippet actions()}
         <span class="inline-flex" use:guideAnchor={'posts.compose'}>
-          <Button onclick={() => (showCreateModal = true)} class="rounded-xl! px-4! py-2! text-sm!">
+          <Button onclick={() => (showCreateModal = true)}>
             <SquarePen size={16} class="mr-1" />
             {m.posts_publish_button()}
           </Button>

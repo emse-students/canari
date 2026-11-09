@@ -17,14 +17,22 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
  */
 
 /**
- * Mirrors one session's seed natively. Tauri only; a no-op on web.
+ * Mirrors one session's seed natively, labelled with the account it was stored for. Tauri only; a
+ * no-op on web.
+ *
+ * THE LABEL is what lets the wipe of ONE account (`forget_account_graine_seeds`, called by
+ * `accountLocalWipe.ts`) remove exactly that account's seeds from a file every account of the install
+ * shares: an entry keeps the label of every account that wrote it, and goes only with the last.
  *
  * **Best-effort, and that is a real answer rather than a swallowed one:** a seed too old to be
  * mirrored, or a mirror that failed to write, costs a richer notification and nothing else - the
  * banner degrades to "new message in #salon", which is the existing behaviour for an oversized
  * ciphertext. It never costs a message: the WebView reads the durable store, not this file.
  */
-export async function mirrorGraineSeed(session: StoredGraineSession): Promise<void> {
+export async function mirrorGraineSeed(
+  session: StoredGraineSession,
+  accountId: string
+): Promise<void> {
   if (!isTauriRuntime()) return;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -39,6 +47,7 @@ export async function mirrorGraineSeed(session: StoredGraineSession): Promise<vo
         firstIndex: session.firstIndex,
         minterUserId: session.v2 ? session.senderId : null,
         signingPublicKeyB64: session.v2?.signingPublicKeyB64 ?? null,
+        accountId,
       },
     });
   } catch (e) {
@@ -47,18 +56,23 @@ export async function mirrorGraineSeed(session: StoredGraineSession): Promise<vo
 }
 
 /**
- * Drops every mirrored seed of one channel. Tauri only; a no-op on web.
+ * Drops THIS ACCOUNT's mirrored seeds of one channel - an entry another account of the install also
+ * wrote keeps that writer, who still reads the salon (`forget_graine_channel`). Tauri only; a no-op
+ * on web.
  *
  * Called when a community leaves the device, alongside the durable purge. Best-effort like the
  * write: a mirror that refuses to shrink costs stale seeds in a sealed app-private file, which is
  * worth a warning and not worth failing a purge over - and the durable rows, the ones that decide
  * what the app can READ, are gone regardless.
  */
-export async function forgetGraineChannelMirror(channelId: string): Promise<void> {
+export async function forgetGraineChannelMirror(
+  channelId: string,
+  accountId: string
+): Promise<void> {
   if (!isTauriRuntime()) return;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('forget_graine_channel', { channelId });
+    await invoke('forget_graine_channel', { channelId, userId: accountId });
   } catch (e) {
     console.warn(
       `[GRAINE_MIRROR] forget failed for channel ${channelId.slice(0, 8)}: ${String(e)}`
@@ -67,7 +81,8 @@ export async function forgetGraineChannelMirror(channelId: string): Promise<void
 }
 
 /**
- * Drops the named seeds from the mirror, wherever they sit. Tauri only; a no-op on web.
+ * Drops THIS ACCOUNT's label from the named seeds, wherever they sit, and each seed it was the last
+ * writer of (`forget_graine_sessions`). Tauri only; a no-op on web.
  *
  * Called by the retention sweep, which works one SESSION at a time in channels the device still
  * belongs to - {@link forgetGraineChannelMirror} is the wrong scope there, and the mirror's own
@@ -80,11 +95,14 @@ export async function forgetGraineChannelMirror(channelId: string): Promise<void
  *
  * @param sessionIds Sessions whose seeds must leave the native file.
  */
-export async function forgetGraineMirroredSessions(sessionIds: readonly string[]): Promise<void> {
+export async function forgetGraineMirroredSessions(
+  sessionIds: readonly string[],
+  accountId: string
+): Promise<void> {
   if (!isTauriRuntime() || sessionIds.length === 0) return;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('forget_graine_sessions', { sessionIds });
+    await invoke('forget_graine_sessions', { sessionIds, userId: accountId });
   } catch (e) {
     console.warn(
       `[GRAINE_MIRROR] forget failed for ${sessionIds.length} expired session(s): ${String(e)}`

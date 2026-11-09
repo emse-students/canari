@@ -7,7 +7,12 @@
  * written inline in `CreatePostForm`, and a reel is published "with the same audience as posts
  * have" (R3), so the camera reads the same two answers rather than a second spelling of them.
  */
-import { AssociationPermissionFlag, type Association } from '$lib/associations/api';
+import {
+  AssociationPermissionFlag,
+  hasPermissionFlag,
+  listMyAssociations,
+  type Association,
+} from '$lib/associations/api';
 import { listActableAssociations } from '$lib/associations/actable';
 import { ANONYMOUS_POST_IDENTITY } from './postComposerDraft';
 import type { CreatePostPayload } from './api';
@@ -19,6 +24,19 @@ import type { CreatePostPayload } from './api';
  */
 export function listPostAsAssociations(): Promise<Association[]> {
   return listActableAssociations(AssociationPermissionFlag.POST_AS_ASSO);
+}
+
+/**
+ * The associations a LIVE may be started as - the answer `POST /api/lives` gives, which is narrower
+ * than {@link listPostAsAssociations}: the server asks `mayAct(POST_AS_ASSO)` WITHOUT the global
+ * admin tier, so only `POST_AS_ASSO` held in the member's own bitmask counts (a global admin who is
+ * no member got `403 LIVE_ASSOCIATION_FORBIDDEN` for every association it was offered).
+ */
+export async function listLiveAssociations(): Promise<Association[]> {
+  const mine = await listMyAssociations();
+  return mine.filter((a) =>
+    hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.POST_AS_ASSO)
+  );
 }
 
 /** The payload fields an identity choice adds: an association, anonymity, or nothing (the member). */

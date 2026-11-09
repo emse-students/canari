@@ -6,7 +6,7 @@ import { COARSE_POINTER_QUERY } from './pointerDevice';
  * FOUR DIFFERENT ANSWERS WERE IN THE TREE, and no two of them agreed:
  *
  *   `(max-width: 768px), (pointer: coarse)`    ChatArea, ChatComposer
- *   `(max-width: 767px)`                       TabFollowerBanner
+ *   `(max-width: 767px)`                       TabFollowerBanner (removed 2026-11-08)
  *   `(max-width: 1279px)`                      historyOverlayStack
  *   `(max-width: 1279px), (pointer: coarse)`   swipeNavigation
  *

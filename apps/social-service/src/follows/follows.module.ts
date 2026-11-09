@@ -4,8 +4,9 @@ import { AssociationFollow } from './entities/association-follow.entity';
 import { UserFollow } from './entities/user-follow.entity';
 import { UserFollowNotice } from './entities/user-follow-notice.entity';
 import { Association } from '../associations/entities/association.entity';
-import { AssociationPushMute } from './entities/association-push-mute.entity';
-import { AssociationPushMutesService } from './association-push-mutes.service';
+import { AccountBell } from './entities/account-bell.entity';
+import { AccountBellsService } from './account-bells.service';
+import { AccountBellsController } from './account-bells.controller';
 import { FollowsService } from './follows.service';
 
 @Module({
@@ -14,11 +15,12 @@ import { FollowsService } from './follows.service';
       AssociationFollow,
       UserFollow,
       UserFollowNotice,
-      AssociationPushMute,
+      AccountBell,
       Association,
     ]),
   ],
-  providers: [FollowsService, AssociationPushMutesService],
-  exports: [FollowsService, AssociationPushMutesService],
+  controllers: [AccountBellsController],
+  providers: [FollowsService, AccountBellsService],
+  exports: [FollowsService, AccountBellsService],
 })
 export class FollowsModule {}

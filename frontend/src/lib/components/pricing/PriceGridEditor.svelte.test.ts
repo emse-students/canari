@@ -104,6 +104,18 @@ describe('PriceGridEditor', () => {
     expect(cell(target, 'a1|icm').querySelector('input')!.value).toBe('15');
   });
 
+  it('is ONE rectangular table: a row header and as many cells as column headers, in every row', () => {
+    const { target } = render(stored());
+    const columns = table(target).querySelectorAll('thead th[scope="col"]').length;
+    const rows = table(target).querySelectorAll('tbody tr');
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      // The header and its cells are siblings of one row, so they share its height by construction.
+      expect(row.querySelectorAll(':scope > th[scope="row"]')).toHaveLength(1);
+      expect(row.querySelectorAll(':scope > td')).toHaveLength(columns - 1);
+    }
+  });
+
   it('says "Gratuit" for an empty cell, and leaves the box empty', () => {
     const { target } = render(stored());
     const free = cell(target, `a1|${O}`);

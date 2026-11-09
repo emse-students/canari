@@ -120,6 +120,11 @@ export interface CreateFormPayload {
   /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   allowCashPayment?: boolean;
   /**
+   * Whether online payment is accepted (owner, 2026-11-08); absent keeps the stored value, true for
+   * a new form. Off with cash on is a cash-only form.
+   */
+  allowOnlinePayment?: boolean;
+  /**
    * True when the form charges and its organiser cannot collect right now - a list whose delegation
    * was revoked, or whose receiver lost its Lydia (owner, 2026-11-02). DERIVED by the server on every
    * read, never stored: it resumes by itself on a new accepted delegation.
@@ -150,7 +155,21 @@ export interface CreateFormPayload {
   grantsCotisation?: boolean;
   /** Which tier `grantsCotisation` grants; null = the base tier. */
   cotisationVariantKey?: string | null;
+  /**
+   * CREATE ONLY: `true` stores the form as a DRAFT, seen by its managers alone until
+   * {@link publishFormDraft}. The server refuses it on an edit.
+   */
+  draft?: boolean;
+  /**
+   * CREATE ONLY: the create's idempotency key, minted here so that a create whose answer was lost is
+   * sent again as the same create (the server answers the form it stored). Never the form's id: the
+   * server mints that. Refused on an edit.
+   */
+  clientCreateId?: string;
 }
+
+/** A form's life (`form-status.ts` on the server): `draft` until published, then for good. */
+export type FormStatus = 'draft' | 'published';
 
 export interface Form extends CreateFormPayload {
   id: string;
@@ -168,6 +187,30 @@ export interface Form extends CreateFormPayload {
   imageUrl?: string | null;
   /** Answers holding a place (`GET /forms/:id` only): the editor warns before removing an ordered row. */
   submissionCount?: number;
+  /** `draft` until a manager publishes it; absent on a server before drafts, which is `published`. */
+  status?: FormStatus;
+  /**
+   * Whether an unpublished revision holds edits (the managers' list only, migration 146): the row
+   * says so, and its "Voir le formulaire" opens the preview of those edits.
+   */
+  hasUnpublishedChanges?: boolean;
+}
+
+/**
+ * The unpublished revision of a form (owner, 2026-11-08): the editor's whole payload as last saved,
+ * and its compare-and-set number. Revision 0 and no document: nothing was ever saved.
+ */
+export interface FormDraft {
+  revision: number;
+  document: CreateFormPayload | null;
+  savedAt: string | null;
+  /** The client id of the save that wrote this revision: a device copy naming it has landed. */
+  saveId?: string | null;
+  /**
+   * The last save ids that wrote the revision, kept across a publication or a discard: a device copy
+   * whose own save is among them landed, whatever another writer built on it since.
+   */
+  recentSaveIds?: string[];
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
@@ -179,6 +222,7 @@ import { amountBoundsOf, SocialApiError } from '$lib/associations/api';
 import { Log } from '$lib/utils/Log';
 import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 import { prepareQuestionImage } from './questionImage';
+import { FORM_DRAFT_CONFLICT, FormDraftConflictError } from './draftConflict';
 
 /**
  * A refused call, typed at the THROW: the status always, the server's stable `code` when the body
@@ -254,6 +298,102 @@ export async function updateForm(id: string, payload: CreateFormPayload): Promis
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw await refusal(res, 'Failed to update form');
+  return res.json();
+}
+
+/** Reads the unpublished revision of a form (managers only). */
+export async function getFormDraft(id: string): Promise<FormDraft> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/draft`);
+  if (!res.ok) throw await refusal(res, 'Failed to read the form revision');
+  return res.json();
+}
+
+/**
+ * The largest body sent with `keepalive` (the page is being left): engines cap the bodies of all
+ * keepalive requests in flight at 64 KiB together. A larger revision is not lost - the device copy
+ * holds it until the next send (`draftCopies.ts`).
+ */
+export const KEEPALIVE_BODY_MAX = 60_000;
+
+/**
+ * The autosave: stores `document` as the revision after `baseRevision`, under the client's `saveId`.
+ * Refused {@link FormDraftConflictError} when another tab, a publication or a discard moved it first;
+ * a transport failure throws what `fetch` threw (no status: nobody answered). `leaving`: the page is
+ * being hidden or left, so the request is asked to outlive it (`keepalive`) when its body fits.
+ */
+export async function saveFormDraft(
+  id: string,
+  baseRevision: number,
+  document: CreateFormPayload,
+  saveId: string,
+  opts: { leaving?: boolean } = {}
+): Promise<{ revision: number; savedAt: string }> {
+  const body = JSON.stringify({ baseRevision, document, saveId });
+  const keepalive = opts.leaving === true && body.length <= KEEPALIVE_BODY_MAX;
+  if (opts.leaving && !keepalive) {
+    Log.d(
+      'FORMS',
+      `revision of ${id} too large to outlive the page (${body.length}); the device copy holds it`
+    );
+  }
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/draft`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    ...(keepalive ? { keepalive } : {}),
+  });
+  if (res.status === 409) {
+    const answer = await res.json().catch(() => ({}));
+    if (answer.code === FORM_DRAFT_CONFLICT && typeof answer.revision === 'number') {
+      Log.i('FORMS', `revision save of ${id} refused: it is at ${answer.revision}`);
+      throw new FormDraftConflictError(
+        answer.revision,
+        typeof answer.saveId === 'string' ? answer.saveId : null,
+        Array.isArray(answer.recentSaveIds)
+          ? answer.recentSaveIds.filter((id: unknown): id is string => typeof id === 'string')
+          : []
+      );
+    }
+    Log.i('FORMS', `revision save of ${id}: refused status=409 code=${answer.code ?? 'none'}`);
+    throw new SocialApiError(
+      `Failed to save the form revision (409)`,
+      typeof answer.code === 'string' ? answer.code : null,
+      409
+    );
+  }
+  if (!res.ok) throw await refusal(res, 'Failed to save the form revision');
+  return res.json();
+}
+
+/**
+ * "Publier les modifications" (and "Publier" for a draft form): applies revision `revision` with the
+ * edit's own rules, in one transaction. The edit route's refusals come back unchanged.
+ */
+export async function publishFormDraft(
+  id: string,
+  revision: number,
+  overwrite = false
+): Promise<{ id: string; status: FormStatus; revision: number }> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/draft/publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(overwrite ? { revision, overwrite } : { revision }),
+  });
+  if (!res.ok) throw await refusal(res, 'Failed to publish the form changes');
+  return res.json();
+}
+
+/** "Abandonner les modifications": empties revision `revision`; the form stays as published. */
+export async function discardFormDraft(
+  id: string,
+  revision: number
+): Promise<{ revision: number }> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/draft/discard`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ revision }),
+  });
+  if (!res.ok) throw await refusal(res, 'Failed to discard the form changes');
   return res.json();
 }
 
@@ -641,8 +781,15 @@ export async function exportSubmissions(
 export interface PendingCashSubmission {
   id: string;
   formId: string;
-  userId: string;
+  /** Null on a GUEST's answer, from a public form's link: there is no account to name. */
+  userId: string | null;
   email: string | null;
+  /** The reference a paying guest was given; null on a member's row. */
+  reference?: string | null;
+  /** What a guest typed when the public form asked for it (migration 138); null otherwise. */
+  guestLastName?: string | null;
+  guestFirstName?: string | null;
+  guestEmail?: string | null;
   answers: Record<string, unknown>;
   totalPaid: number;
   paymentStatus: string;

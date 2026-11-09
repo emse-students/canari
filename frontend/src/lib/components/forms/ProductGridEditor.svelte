@@ -41,6 +41,7 @@
     setPrice,
     setPriceMode,
     setTiers,
+    tierSwitchLosesInput,
     syncTierLists,
     toggleClosedCell,
     type EditorProductGrid,
@@ -202,19 +203,44 @@
   const tiered = $derived(grid.pricing.tiers !== null);
   const cotisationAvailable = $derived(tiers.length > 0);
 
+  /**
+   * Runs `leave` - a switch of criterion, the registration grid's copy, or one price for everybody -
+   * once the manager agrees to lose the groups or prices they entered (owner, 2026-11-07: "il
+   * faudrait m'avertir que tout ce que j'ai rentre va etre efface"). A criterion still as it
+   * started loses nothing: it is left at once, with no question.
+   */
+  function leaveTiers(leave: () => void) {
+    if (!tierSwitchLosesInput(grid)) {
+      leave();
+      return;
+    }
+    Log.d(TAG, 'leaving the criterion would erase entered groups or prices: asking first');
+    void showConfirm(m.form_pgrid_tiers_switch_confirm(), {
+      danger: true,
+      confirmLabel: m.form_pgrid_tiers_switch_confirm_button(),
+    }).then((ok) => {
+      if (ok) leave();
+      else Log.d(TAG, 'criterion switch cancelled: the entered groups and prices stay');
+    });
+  }
+
   function startTiers(kind: 'cotisation' | 'promo' | 'formation') {
-    const dimension = newDimension(kind) as ProductGridTierDimension;
-    setTiers(grid, dimension);
+    leaveTiers(() => setTiers(grid, newDimension(kind) as ProductGridTierDimension));
   }
 
   function copyFormTiers() {
-    if (!formTiers) return;
-    setTiers(grid, JSON.parse(JSON.stringify(formTiers)) as ProductGridTierDimension);
+    const source = formTiers;
+    if (!source) return;
+    leaveTiers(() =>
+      setTiers(grid, JSON.parse(JSON.stringify(source)) as ProductGridTierDimension)
+    );
   }
 
   function stopTiers() {
-    setTiers(grid, null);
-    selectedTier = PRODUCT_GRID_ALL_TIER;
+    leaveTiers(() => {
+      setTiers(grid, null);
+      selectedTier = PRODUCT_GRID_ALL_TIER;
+    });
   }
 
   function addBucket(bucket: Bucket) {

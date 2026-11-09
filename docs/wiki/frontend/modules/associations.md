@@ -309,7 +309,7 @@ Permissions are checked at the component level using the `X-Global-Admin` header
 - `MANAGE_MEMBERS` — add/remove members, edit roles
 - `EDIT_PROFILE` — edit the profile and the logos (`editRights().profile`, read from the per-field
   table `updateFields.ts`); archiving is `MANAGE_MEMBERS` (`editRights().archive`)
-- `MANAGE_ASSO` — BDE only: the super-admin tier over the associations its spaces reach
+- `MANAGE_ASSO` — BDE only: the super-admin tier over its children (`parentAssociationId`, WP-D2)
 - Global admin — can do everything
 
 The full table is [association-permissions](../../association-permissions.md).

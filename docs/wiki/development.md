@@ -543,6 +543,14 @@ toujours bun"* (2026-09-04), which covers the `.mjs` tooling as well.
 - **Formatting and linting are `oxfmt` + `oxlint`, never prettier.** A bare `npx prettier --write`
   finds no config here, silently applies its own defaults and rewrites whole files - it did, and
   shipped. Use each package's own `format` / `lint` script.
+- **A `vite dev` left running in a checkout rewrites `src/lib/paraglide/` under every gate run in
+  it (2026-11-07).** Its Paraglide plugin recompiles the ~5000 generated message modules whenever
+  a watched file moves, so `bun run lint` warned `"<key>" not found in imported namespace` and
+  `bun run check` refused `m.<key>` - a DIFFERENT, present key on each run. Six dev servers, left
+  by agent sessions on random ports, were found doing it. The rule was right to complain (it was
+  turned off by #3104 on the wrong diagnosis, and turned back on): stop every `vite` running from
+  the checkout before believing a gate there, and start a dev server only in a worktree of its
+  own.
 
 ## shellcheck
 

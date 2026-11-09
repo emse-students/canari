@@ -40,7 +40,7 @@
   {#if session.myDeviceId}
     <button
       type="button"
-      class="text-text-muted/40 text-2xs block w-full cursor-default pt-2 text-center font-mono select-none"
+      class="text-text-muted/40 text-2xs block w-full cursor-default px-2 pt-2 text-center font-mono break-all select-none"
       onclick={onDeviceIdTap}
       aria-label={m.settings_device_id_label({ id: session.myDeviceId })}
     >

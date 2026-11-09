@@ -44,7 +44,7 @@ import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
 import { assertInternalSecret } from '../internal/internal-secret.util';
 import { FollowsService } from '../follows/follows.service';
-import { AssociationPushMutesService } from '../follows/association-push-mutes.service';
+import { AccountBellsService } from '../follows/account-bells.service';
 import {
   AddMemberDto,
   CreateAssociationDto,
@@ -80,7 +80,6 @@ import { sanitizeLog } from '../common/log.utils';
 import {
   ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY,
   ASSOCIATION_FIELD_RIGHT_MISSING,
-  dropUnchangedPlatformFields,
   rightsAskedBy,
 } from './association-update-rights';
 import { wholeCentsOf } from '../common/core-payment-error';
@@ -125,7 +124,7 @@ export class AssociationsController {
     private readonly followsService: FollowsService,
     private readonly userTagService: UserTagService,
     private readonly userProfileService: UserProfileService,
-    private readonly pushMutes: AssociationPushMutesService,
+    private readonly pushMutes: AccountBellsService,
     private readonly spaces: SpacesService
   ) {}
 
@@ -270,7 +269,10 @@ export class AssociationsController {
     return this.followsService.listFollowedAssociations(userId);
   }
 
-  /** The associations the calling user muted (push only) - the notification settings list. */
+  /**
+   * LEGACY (engagement WP-3, L8): the associations whose bell the caller set to `none`, read from
+   * `account_bells`. Kept for builds older than the bell control - docs/wiki/legacy-compatibility.md.
+   */
   @UseGuards(NginxAuthGuard)
   @Get('me/push-mutes')
   myPushMutes(@Headers('x-user-id') userId: string) {
@@ -685,7 +687,10 @@ export class AssociationsController {
     return this.service.getCalendarLinkCandidates(id);
   }
 
-  /** Whether the calling user muted this association's push notifications. */
+  /**
+   * LEGACY (engagement WP-3, L8): whether the caller's bell on this association is at `none`. A
+   * build older than the bell control asks it - docs/wiki/legacy-compatibility.md.
+   */
   @UseGuards(NginxAuthGuard)
   @Get(':id/push-mute')
   async pushMuteStatus(
@@ -695,7 +700,10 @@ export class AssociationsController {
     return { muted: await this.pushMutes.isMuted(userId, id) };
   }
 
-  /** Silences this association's PUSH for the caller only; the feed is untouched. Idempotent. */
+  /**
+   * LEGACY (engagement WP-3, L8): sets the caller's bell on this association to `none`; the feed is
+   * untouched. Idempotent. Kept for builds older than the bell control.
+   */
   @UseGuards(NginxAuthGuard)
   @Put(':id/push-mute')
   muteAssociationPush(
@@ -705,7 +713,10 @@ export class AssociationsController {
     return this.pushMutes.mute(userId, id);
   }
 
-  /** Lifts the caller's mute of this association. Idempotent. */
+  /**
+   * LEGACY (engagement WP-3, L8): back to posts and lives (the bell row deleted). Idempotent. Kept for
+   * builds older than the bell control.
+   */
   @UseGuards(NginxAuthGuard)
   @Delete(':id/push-mute')
   unmuteAssociationPush(
@@ -784,8 +795,10 @@ export class AssociationsController {
    * that does not come back, which is why the caller reaches `remove` rather than the service
    * being trusted to identify them.
    *
-   * SCOPED SINCE WP6c STEP 2: the BDE must GOVERN this association (`isAssociationSuperAdminOf`, a
-   * space it reaches); `MANAGE_ASSO` in the BDE of another space no longer ends it.
+   * SCOPED TO THE PARENT SINCE WP-D2 (E3, owner 2026-11-02): the BDE must GOVERN this association
+   * (`isAssociationSuperAdminOf`: `MANAGE_ASSO` in its parent BDE); another BDE, whatever spaces the
+   * association's audience reaches, does not end it, and an association with no parent is the
+   * platform admin's to delete.
    *
    * AN INSTITUTION IS THE GLOBAL ADMIN'S TO DELETE (owner, 2026-11-02), as it is theirs to create
    * (D20): a BDE that governs one is refused 403 `INSTITUTION_DELETE_ADMIN_ONLY`, and keeps
@@ -804,7 +817,7 @@ export class AssociationsController {
           `[PERM] delete association refused: no BDE MANAGE_ASSO over ${sanitizeLog(id)}`
         );
         throw new ForbiddenException(
-          "Global admin or MANAGE_ASSO in the BDE of the association's space required"
+          "Global admin or MANAGE_ASSO in the association's parent BDE required"
         );
       }
       const target = await this.service.findById(id);
@@ -843,17 +856,6 @@ export class AssociationsController {
   ) {
     let patch = { ...dto };
     const isGlobalAdmin = ga === 'true';
-    if (!isGlobalAdmin && rightsAskedBy(patch).platformAdmin.length > 0) {
-      // LEGACY SHIM until 2027-05-03: an old list form resends its parent unchanged on every save.
-      const stored = (await this.service.findById(id)) as unknown as Record<string, unknown>;
-      const unchanged = dropUnchangedPlatformFields(patch, stored);
-      patch = unchanged.patch;
-      if (unchanged.dropped.length > 0) {
-        this.logger.log(
-          `[LEGACY] update ${sanitizeLog(id)}: unchanged ${unchanged.dropped.join(',')} dropped (old client resend)`
-        );
-      }
-    }
     const asked = rightsAskedBy(patch);
     this.logger.debug(
       `[ASSO] update ${sanitizeLog(id)} fields=${Object.keys(patch).join(',') || '(none)'}`

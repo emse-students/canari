@@ -7,6 +7,10 @@ import type { ReadWatermarks } from '$lib/types';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { pinEntries } from '$lib/stores/pinStore.svelte';
+import {
+  nicknameEntries,
+  type NicknameWireEntry,
+} from '$lib/utils/users/conversationNicknames.svelte';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 import { dropGroupState } from './dropGroupState';
 import { forgetGroupReconciliation } from './historyReconcile';
@@ -33,7 +37,7 @@ import {
 } from '$lib/mls-client/commitSubmission';
 import { readConfirmedTree } from './confirmedTree';
 import { anyHistoryWithheldIn, historyWithheldFrom } from './historyWithheld';
-import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
 
 /**
@@ -424,7 +428,7 @@ export async function removeMemberAndBroadcast(params: {
     );
 
   // 0. Known from leadership, a fact here - never learnt from a commit refused after the record.
-  if (getTabLeadership() === 'follower') {
+  if (refusesCommitsHere()) {
     console.warn(`[REMOVE_MEMBER] ${short}… removal asked of a follower tab - nothing recorded`);
     throw new FollowerTabCommitError(groupId);
   }
@@ -849,6 +853,10 @@ function bundleFrame(
         // would make it depend on which chunk survived. Merged per entry on `at`, so repeating it
         // is free in exactly the way a `max` is.
         ...(state?.pins?.length ? { pins: state.pins } : {}),
+        // The nickname register rides the JOIN PUSH only - the one bundle a reader takes it from
+        // (`mergeBundleNicknames`): in a broadcast it would be a relayer's word nobody believes.
+        // An older reader ignores the field.
+        ...(answer?.join && state?.nicknames?.length ? { nicknames: state.nicknames } : {}),
       })
     )
   );
@@ -878,6 +886,13 @@ type ConversationHistoryState = {
    * `unpin` is precisely the entry its snapshot omits, so there would be nothing to beat it with.
    */
   pins?: Array<{ id: string; pinned: boolean; at: number }>;
+  /**
+   * The nickname register ("Modifier les pseudos"), resets included, for the pin register's reason:
+   * the `nickname` frame that set a name ages out of the log, and a member admitted after it went out
+   * was never sent it. THIS is how a late joiner learns the names - the inviter's join push carries
+   * it even when every message is withheld - by a merge that converges, never by a re-announcement.
+   */
+  nicknames?: NicknameWireEntry[];
 };
 
 /**
@@ -898,11 +913,14 @@ async function storedConversationState(
     // The pin register is not on the row: it is device-local state keyed by the same group id,
     // which is precisely why it needed carrying at all.
     const pins = pinEntries(groupId);
+    // Device-local and keyed by the group id, like the pins - see `conversationNicknames.svelte.ts`.
+    const nicknames = nicknameEntries(groupId);
     return {
       readWatermarks: row?.readWatermarks,
       serverReadWatermarks: row?.serverReadWatermarks,
       historyFloor: row?.historyFloor,
       ...(pins.length > 0 ? { pins } : {}),
+      ...(nicknames.length > 0 ? { nicknames } : {}),
     };
   } catch (e) {
     // The empty state is deliberate (see the docstring) but it must not be SILENT: an unreadable row

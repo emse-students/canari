@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthController } from './auth.controller';
 import { InternalSessionsController } from './internal-sessions.controller';
 import { AdminerAccessService } from './adminer-access.service';
+import { HandoffService } from './handoff/handoff.service';
 import { SessionsModule } from './sessions.module';
 import { AuthSession } from './entities/auth-session.entity';
 import { RestoreChallengeSpent, RestoreCredential } from './restore/restore-credential.entity';
@@ -20,7 +21,7 @@ import { AccountErasureModule } from '../account-erasure/account-erasure.module'
     AccountErasureModule,
   ],
   controllers: [AuthController, InternalSessionsController],
-  providers: [AdminerAccessService, RestoreCredentialsService],
+  providers: [AdminerAccessService, RestoreCredentialsService, HandoffService],
   exports: [SessionsModule],
 })
 export class AuthModule {}

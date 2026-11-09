@@ -147,7 +147,6 @@
 ## P2 - A deleted account's community keys stay on the phone in per-install files with no owner (found 2026-10-18, fourth review of #2023)
 ## P3 - The case-collision refusal keeps the deletion marker for ever (found 2026-10-18, fourth review of #2023)
 ## P3 - Four things the offline cold start fix left open (Mi 9T, `v1.2.9-alpha.1`, 2026-10-15)
-## P3 - Asked by the USER on 2026-10-14 - "Modifier les pseudos" for a group and a community, design questions answered, not built
 ## Group notification levels (all / mentions only / none) - SHIPPED in `1.2.8` (#1874), nothing owed here
 ## P2 - The tab swipe is lost on a slow start: the 12 px lock sits past Chrome's 8 dp slop (Mi 9T, 2026-10-21)
 ## Android back-gesture zone on the right edge (own bubbles) - DECIDED by the user 2026-10-14, MERGED as #1883, owed a reading

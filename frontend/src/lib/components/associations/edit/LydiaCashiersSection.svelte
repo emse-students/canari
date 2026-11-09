@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import {
     addLydiaCashier,
     changeLydiaCashierRole,
@@ -233,60 +234,59 @@
                 {/each}
               </select>
               <div class="flex flex-wrap gap-2">
-                <button
-                  type="button"
+                <Button
+                  size="compact"
                   onclick={() => void submitRole(cashier)}
                   disabled={busy || newRole === cashier.role}
-                  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50"
                 >
                   {busy
                     ? m.asso_lydia_cashier_working()
                     : m.asso_lydia_cashier_change_role_submit()}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="compact"
                   onclick={() => (roleFor = null)}
                   disabled={busy}
-                  class="border-cn-border text-text-main hover:bg-cn-bg rounded-lg border px-3 py-1.5 text-xs font-semibold"
                 >
                   {m.asso_lydia_cashier_cancel()}
-                </button>
+                </Button>
               </div>
             </div>
           {:else}
             <div class="flex flex-wrap gap-2">
               {#if row.canChangeRole}
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="compact"
                   onclick={() => {
                     roleFor = cashier.id;
                     newRole = cashier.role === 'tresorier' ? 'tresorier' : 'vendeur';
                   }}
                   disabled={busy}
-                  class="border-cn-border text-text-main hover:bg-cn-bg rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                 >
                   {m.asso_lydia_cashier_change_role_button()}
-                </button>
+                </Button>
               {/if}
               {#if row.canRevokeCurrent}
-                <button
-                  type="button"
+                <Button
+                  variant="danger-outline"
+                  size="compact"
                   onclick={() => void revoke(cashier, 'current')}
                   disabled={busy}
-                  class="border-red-err/30 text-red-err hover:bg-red-err/10 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                 >
                   {m.asso_lydia_cashier_revoke_button()}
-                </button>
+                </Button>
               {/if}
               {#if row.canRevokePrevious}
-                <button
-                  type="button"
+                <Button
+                  variant="danger-outline"
+                  size="compact"
                   onclick={() => void revoke(cashier, 'previous')}
                   disabled={busy}
-                  class="border-red-err/30 text-red-err hover:bg-red-err/10 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                 >
                   {m.asso_lydia_cashier_revoke_previous_button()}
-                </button>
+                </Button>
               {/if}
             </div>
           {/if}
@@ -344,33 +344,21 @@
             disabled={busy}
           />
           <div class="flex flex-wrap gap-2">
-            <button
-              type="button"
+            <Button
               onclick={() => void submitAdd()}
               disabled={busy || !addPhone.trim() || !addUserId}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
             >
               {busy ? m.asso_lydia_cashier_working() : m.asso_lydia_cashier_add_submit()}
-            </button>
-            <button
-              type="button"
-              onclick={() => (adding = false)}
-              disabled={busy}
-              class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2.5 text-sm font-semibold"
-            >
+            </Button>
+            <Button variant="secondary" onclick={() => (adding = false)} disabled={busy}>
               {m.asso_lydia_cashier_cancel()}
-            </button>
+            </Button>
           </div>
         </div>
       {:else}
-        <button
-          type="button"
-          onclick={openAdd}
-          disabled={busy}
-          class="border-cn-border text-text-main hover:bg-cn-bg rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
-        >
+        <Button variant="secondary" size="compact" onclick={openAdd} disabled={busy}>
           {m.asso_lydia_cashier_add_button()}
-        </button>
+        </Button>
       {/if}
     {/if}
 

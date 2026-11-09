@@ -12,19 +12,17 @@ Nothing told anyone. The owner heard it from users.
 
 **Built 2026-11-06:** the report. The `upstream` job of `scheduled.yml` asks the gallery's health route from
 outside and opens one issue per outage, naming the class, the status and since when
-([upstream-reachability](../infrastructure/upstream-reachability.md)). It also covers the tunnel entry
-([tunnel](p2-the-tunnel-connector-lost-every-connection-for-25-minutes.md)).
+([upstream-reachability](../infrastructure/upstream-reachability.md)). It also covers a tunnel with no
+connector (a `tunnel-down` class).
+
+**Built 2026-11-07, Canari side:** no asking of a dependency known to be down. Durable state set by the failure
+that proves it and cleared by the first answer, one probe at a time, one log line per transition
+([upstream-reachability](../infrastructure/upstream-reachability.md#the-app-does-not-keep-asking-a-gallery-known-to-be-down-2026-11-07)).
 
 **Owed (this entry closes when both are shipped):**
 
-1. **No asking of a dependency already known to be down.** Today every avatar request goes to the gallery
-   and logs again. The fix is not a timeout. The fix is durable state that says the gallery is down,
-   written by the failure that proves it and cleared by the first success:
-   - while that state is set, one probe at a time asks the gallery, and every other request answers
-     from the state;
-   - the log line becomes one transition ("down since", "back after") and no longer one line per
-     avatar.
-
-   Le Cercle's `[MIGALLERY]` fetch needs the same treatment, in its own repository.
+1. **Le Cercle's `[MIGALLERY]` photo fetch: the same mechanism is built as a draft merge request in its own
+   repository (rootz/le-cercle !33, 2026-11-07); owed its merge and release.** Keep its `upstream-health.ts` in
+   step with Canari's.
 2. **One reading of the report on a real failure**, or the drill the wiki page describes, to see an issue open
-   and close.
+   and close; and one reading of core-service's `is DOWN` / `is back` lines on a real outage.

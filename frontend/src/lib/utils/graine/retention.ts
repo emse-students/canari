@@ -95,7 +95,7 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
     console.warn('[GRAINE] retention sweep skipped - no Graine runtime is wired');
     return 0;
   }
-  const { storage } = requireGraineRuntime('sweepExpiredGraineSeeds');
+  const { storage, userId } = requireGraineRuntime('sweepExpiredGraineSeeds');
 
   // Read the ENCRYPTED rows: this needs the session id and the creation date, never the seed, so
   // an undecryptable row is swept like any other rather than being the one thing that survives.
@@ -154,7 +154,7 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
 
   forgetGraineSeedCache(sessionIds);
   for (const sessionId of sessionIds) forgetAskedSession(sessionId);
-  await forgetGraineMirroredSessions(sessionIds);
+  await forgetGraineMirroredSessions(sessionIds, userId);
 
   console.info(
     `[GRAINE] retention sweep dropped ${dropped} seed(s) older than ${windowDays} days whose messages are gone (held=${held.length}, live=${live.size})`

@@ -9,8 +9,14 @@ import type { DataSource, Repository } from 'typeorm';
 import type { Association } from '../associations/entities/association.entity';
 import { AssociationAudience } from './association-audience.entity';
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
-import { SpacesService, normaliseRules, ruleReachesSpace, smallestRules } from './spaces.service';
-import { HOLDS_BDE_FLAG_OVER_SQL } from './bde';
+import {
+  FORMER_PARENT_SEATS_SQL,
+  SpacesService,
+  normaliseRules,
+  ruleReachesSpace,
+  smallestRules,
+} from './spaces.service';
+import { ENTITY_GOVERNOR_SPACE_STANDINGS_SQL, HOLDS_BDE_FLAG_OVER_SQL } from './bde';
 import {
   DEPENDENCY_CHILD_IS_A_BDE,
   DEPENDENCY_INSTITUTION,
@@ -102,6 +108,15 @@ describe('SpacesService', () => {
     governed?: Partial<Space>[];
     /** The campuses whose every space a BDE where the caller holds MANAGE_ASSO governs. */
     bdeCampuses?: string[];
+    /**
+     * Whether the caller holds MANAGE_ASSO in the entity's PARENT (WP-D2). By default: the entity has
+     * a rule on one of `bdeCampuses`, the shape of the fixtures written before the parent existed.
+     */
+    governs?: boolean;
+    /** The campuses whose every space the entity's PARENT governs; by default `bdeCampuses`. */
+    parentCampuses?: string[];
+    /** What `FORMER_PARENT_SEATS_SQL` answers: the child's rows held by the former parent's officers. */
+    formerParentSeats?: { userId: string; permissions: number }[];
     /** Associations by id, when a test needs more than one (`setParent`). */
     byId?: Record<string, Partial<Association>>;
     /** What `spaces.count` answers: the spaces a former governor still governs. */
@@ -153,23 +168,31 @@ describe('SpacesService', () => {
       // Every opened space of the two campuses; the star's BDE governs all of `bdeCampuses`. The
       // management predicate (does the star govern THIS entity) answers from the same campuses: a
       // rule of the entity on one of them reaches a governed space.
-      query: jest.fn().mockImplementation(async (sql: string) =>
-        sql === HOLDS_BDE_FLAG_OVER_SQL
-          ? [
-              {
-                holds: (opts.rules ?? []).some(
+      query: jest.fn().mockImplementation(async (sql: string) => {
+        if (sql === FORMER_PARENT_SEATS_SQL) return opts.formerParentSeats ?? [];
+        if (sql === HOLDS_BDE_FLAG_OVER_SQL) {
+          return [
+            {
+              holds:
+                opts.governs ??
+                (opts.rules ?? []).some(
                   (r) => r.campus != null && (opts.bdeCampuses ?? []).includes(r.campus)
                 ),
-              },
-            ]
-          : SPACE_CAMPUSES.flatMap((campus) =>
-              SPACE_FORMATIONS.map((formation) => ({
-                formation,
-                campus,
-                governed: (opts.bdeCampuses ?? []).includes(campus),
-              }))
-            )
-      ),
+            },
+          ];
+        }
+        const campuses =
+          sql === ENTITY_GOVERNOR_SPACE_STANDINGS_SQL
+            ? (opts.parentCampuses ?? opts.bdeCampuses ?? [])
+            : (opts.bdeCampuses ?? []);
+        return SPACE_CAMPUSES.flatMap((campus) =>
+          SPACE_FORMATIONS.map((formation) => ({
+            formation,
+            campus,
+            governed: campuses.includes(campus),
+          }))
+        );
+      }),
     } as unknown as DataSource;
     const redis = {
       incr: jest.fn().mockResolvedValue(1),
@@ -346,6 +369,37 @@ describe('SpacesService', () => {
       ]);
     });
 
+    it("names at WARN the child's rows the FORMER parent's officers hold, and revokes none (WP-D2)", async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      try {
+        const other = { id: 'other', type: 'association' as const, parentAssociationId: null };
+        const moved = withParents(
+          { bde: BDE, other, club: { ...CLUB, parentAssociationId: 'bde' } },
+          ['bde', 'other'],
+          { formerParentSeats: [{ userId: 'officer-of-bde-1', permissions: 255 }] }
+        );
+        await moved.service.setParent('club', 'other', ACTOR);
+        const query = (moved.service as unknown as { dataSource: { query: jest.Mock } }).dataSource
+          .query;
+        expect(query).toHaveBeenCalledWith(FORMER_PARENT_SEATS_SQL, ['club', 'bde', 1 << 6]);
+        expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+          '[DEPENDENCY] club left parent bde: 1 member row(s) held by its MANAGE_ASSO holders stay - review them: officer-=255',
+        ]);
+        // Nothing is deleted: the only writes are the parent and its journal line.
+        expect(moved.manager.delete).not.toHaveBeenCalled();
+
+        // A first parent (none before) has no former officers to name.
+        warn.mockClear();
+        const first = withParents({ bde: BDE, club: CLUB }, ['bde'], {
+          formerParentSeats: [{ userId: 'x', permissions: 1 }],
+        });
+        await first.service.setParent('club', 'bde', ACTOR);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     it.each([
       [
         'an institution as child',
@@ -479,19 +533,6 @@ describe('SpacesService', () => {
     const spaces = await service.list();
     expect(spaces.map((s) => s.id)).toEqual(['s1', 's2', 's3']);
     expect(spaces[2].bde).toBeNull();
-  });
-
-  it('lists the rules of every association', async () => {
-    const { service } = make({
-      rules: [
-        { associationId: 'a', formation: 'ICM', campus: 'saint-etienne' },
-        { associationId: 'b', formation: null, campus: 'saint-etienne' },
-      ],
-    });
-    expect(await service.listAudiences()).toEqual([
-      { associationId: 'a', formation: 'ICM', campus: 'saint-etienne' },
-      { associationId: 'b', formation: null, campus: 'saint-etienne' },
-    ]);
   });
 
   it('replaces the rules in one transaction, de-duplicated', async () => {
@@ -714,6 +755,67 @@ describe('SpacesService', () => {
         ).toBe('AUDIENCE_INSTITUTION_ADMIN_ONLY');
         expect(await code(read({ ...base, bdeCampuses: [] }))).toBe(
           'AUDIENCE_ADMIN_OR_BDE_REQUIRED'
+        );
+      });
+    });
+
+    describe('governance by PARENT (WP-D2, G8)', () => {
+      const wide: Partial<AssociationAudience>[] = [
+        { associationId: 'a', formation: null, campus: 'gardanne' },
+      ];
+
+      it('refuses a BDE whose spaces the entity reaches but which is not its parent, and shows it read-only', async () => {
+        // The shared-campus case: the star governs gardanne, the entity reaches it, its parent is
+        // another BDE - read, never written.
+        const o = {
+          association: { id: 'a', type: 'association' as const },
+          rules: wide,
+          bdeCampuses: ['gardanne'],
+          governs: false,
+        };
+        expect(await code(make(o).service.setAudiences('a', [{ campus: 'gardanne' }], STAR))).toBe(
+          'AUDIENCE_OUTSIDE_BDE_CAMPUS'
+        );
+        await expect(make(o).service.getAudiencesFor('a', STAR)).resolves.toEqual([
+          { formation: null, campus: 'gardanne', editable: false },
+        ]);
+      });
+
+      it("writes inside the PARENT's spaces only, though the star manages a BDE elsewhere too", async () => {
+        const o = {
+          association: { id: 'a', type: 'list' as const },
+          rules: wide,
+          bdeCampuses: ['gardanne', 'saint-etienne'],
+          parentCampuses: ['gardanne'],
+          governs: true,
+        };
+        const { service, manager } = make(o);
+        expect(
+          await code(
+            service.setAudiences('a', [{ campus: 'gardanne' }, { campus: 'saint-etienne' }], STAR)
+          )
+        ).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
+        expect(manager.insert).not.toHaveBeenCalled();
+        await expect(
+          make(o).service.setAudiences('a', [{ formation: 'ICM', campus: 'gardanne' }], STAR)
+        ).resolves.toEqual([{ formation: 'ICM', campus: 'gardanne', editable: true }]);
+      });
+
+      it('lets a parent read its child reaching outside its campus, and leaves the rule outside it to the admin', async () => {
+        const o = {
+          association: { id: 'a', type: 'association' as const },
+          rules: [
+            { associationId: 'a', formation: 'ICM' as const, campus: 'saint-etienne' as const },
+          ],
+          bdeCampuses: ['gardanne'],
+          governs: true,
+        };
+        await expect(make(o).service.getAudiencesFor('a', STAR)).resolves.toEqual([
+          { formation: 'ICM', campus: 'saint-etienne', editable: false },
+        ]);
+        // Removing that rule is beyond its spaces: the platform admin's.
+        expect(await code(make(o).service.setAudiences('a', [], STAR))).toBe(
+          'AUDIENCE_RULE_BEYOND_BDE_SPACES'
         );
       });
     });

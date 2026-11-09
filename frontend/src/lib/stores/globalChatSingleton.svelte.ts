@@ -16,6 +16,7 @@ import { useChannelWorkspaces } from '$lib/composables/useChannelWorkspaces.svel
 import { useNotifications } from '$lib/composables/useNotifications.svelte';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { appendLog } from '$lib/utils/sessionLog';
+import { setSelectionProvider } from '$lib/utils/chat/selectionAcrossReload';
 
 // ── Singleton composable instances ───────────────────────────────────────────
 // Called once at module level - the $state / $derived variables inside live
@@ -25,6 +26,11 @@ export const globalConvs = useConversations();
 export const globalMessaging = useMessaging();
 export const globalChannels = useChannelWorkspaces();
 export const globalNotifs = useNotifications();
+
+// A leadership reload keeps the open conversation (selectionAcrossReload.ts).
+setSelectionProvider(
+  () => globalChannels.selectedChannelConversationId || globalConvs.selectedContact || ''
+);
 
 // LEAVING A THREAD ENDS THE SALON SELECTION, whichever exit is taken (the in-app back, Android's
 // Back, the iOS edge swipe): otherwise the salon row stays highlighted (`aria-current`) after a Back.

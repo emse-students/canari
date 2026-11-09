@@ -361,7 +361,15 @@
   }
 </script>
 
-<div class={mode === 'book' ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start' : ''}>
+<!-- The track is `minmax(0,1fr)`, never the implicit `auto` one: an auto track grows to the widest
+     unbreakable text of its items (a `truncate` line counts at its full length), which pushed the
+     whole week and the aside past a phone's right edge (owner, 2026-11-08). -->
+<div
+  class={mode === 'book'
+    ? 'grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start'
+    : ''}
+  data-week-layout
+>
   <div class="min-w-0 space-y-4">
     {#if space.resources.length > 1 && resource}
       <div use:guideAnchorWhen={mode === 'book' && loaded ? 'bookings.column' : undefined}>
@@ -449,7 +457,7 @@
     {/if}
   </div>
   {#if mode === 'book'}
-    <aside class="space-y-3">
+    <aside class="min-w-0 space-y-3">
       <MineHereCard bookings={mineRows} />
       {@render aside?.()}
     </aside>

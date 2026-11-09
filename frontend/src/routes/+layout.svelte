@@ -2,6 +2,8 @@
   import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import '../app.css';
+  import { pageScrollPaddingClass } from '$lib/components/layout/pageScrollPadding';
+  import { retryFailedMyAssociationsProbe } from '$lib/associations/api';
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
@@ -9,7 +11,6 @@
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import CallBanner from '$lib/components/layout/CallBanner.svelte';
-  import TabFollowerBanner from '$lib/components/chat/TabFollowerBanner.svelte';
   import Navbar from '$lib/components/navigation/Navbar.svelte';
   import MobileHeader from '$lib/components/navigation/MobileHeader.svelte';
   import AppSidebar from '$lib/components/navigation/AppSidebar.svelte';
@@ -25,6 +26,7 @@
   } from '$lib/mobile/androidCallService';
   import { showToast } from '$lib/stores/toast.svelte';
   import { releaseIosProximityOfPreviousPage } from '$lib/mobile/iosCallProximity';
+  import { releaseIosIdleTimerOfPreviousPage } from '$lib/mobile/screenAwake';
   import {
     clearEdgeExclusionsForNewDocument,
     excludeLeftEdgeOver,
@@ -43,6 +45,7 @@
     refreshAppVersionCheck,
     getAppVersionCheck,
     isBelowMinClientVersion,
+    serverFormDrafts,
   } from '$lib/stores/appVersionCheck.svelte';
   import BootGate from '$lib/components/layout/BootGate.svelte';
   import { bootSessionBlocks } from '$lib/stores/bootSession.svelte';
@@ -57,6 +60,8 @@
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
   import PublishQueueBanner from '$lib/components/posts/PublishQueueBanner.svelte';
   import { startPublishQueue, stopPublishQueue } from '$lib/posts/publishQueue/publishQueue.svelte';
+  import { followBirthdaysToday } from '$lib/birthdays/birthdaysToday.svelte';
+  import { startFormDraftResend, stopFormDraftResend } from '$lib/forms/draftResend';
   import SlowLinkAnnouncer from '$lib/components/shared/SlowLinkAnnouncer.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
@@ -144,6 +149,8 @@
     // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
     // change on the same page: not a page the hook is about.
     if (shallow && type === 'goto') return;
+    // A membership probe that failed is owed one retry on the next navigation (never a timer).
+    void retryFailedMyAssociationsProbe();
     drainHistoryOverlayStack();
     const fromPath = from?.url.pathname ?? '';
     const toPath = to?.url.pathname ?? '';
@@ -165,8 +172,10 @@
     if (isAndroidTauriRuntime()) {
       releaseCallServiceOfPreviousPage(window);
     }
-    // Its iOS twin: the proximity sensor a reloaded page may have left armed.
+    // Its iOS twins: the proximity sensor and the idle timer (a call's or a live's) a reloaded page
+    // may have left set.
     if (isIosTauriRuntime()) releaseIosProximityOfPreviousPage();
+    if (isIosTauriRuntime()) releaseIosIdleTimerOfPreviousPage();
     themeStore.init();
     startTabIndicator();
     publishTextZoom();
@@ -280,6 +289,21 @@
     const userId = globalSession.isLoggedIn ? globalSession.userId : null;
     if (userId) startPublishQueue(userId);
     else stopPublishQueue();
+  });
+
+  // -- Today's birthdays: the ring every avatar draws (docs/wiki/birthdays.md) -----------------
+  // Asked once the session is up and on every return to the foreground; forgotten at sign-out.
+  $effect(() => {
+    const userId = globalSession.isLoggedIn ? globalSession.userId : null;
+    if (userId) return followBirthdaysToday(userId);
+  });
+
+  // -- The forms' device copies: edits a closed editor left unsent reach the server -------------
+  // Once the session is up AND the estate says it stores revisions; again at each `online`.
+  $effect(() => {
+    const userId = globalSession.isLoggedIn ? globalSession.userId : null;
+    if (userId && serverFormDrafts() === true) startFormDraftResend(userId);
+    else stopFormDraftResend();
   });
 
   // -- The banner column's height, published so the floating cards can follow it ------------
@@ -741,16 +765,11 @@
          call in progress is what the reader is doing, and its hang-up must stay at the top of the
          screen, the one edge no native chrome is drawn over (CallBanner). -->
     <CallBanner />
-    <!-- THE LAST TWO JOINED THE COLUMN ON 2026-09-22, and they are the reason it publishes its
-         height. Both were rendered inside the CONTENT column instead, under a comment claiming
-         "pleine largeur, jamais dans la rangee sidebar" - which is the one thing that placement
-         cannot give them, because that column reserves the rail's 6rem gutter. Measured locally in
-         a second tab of one account: the follower banner sat 108px from the left edge and 12px
-         from the right, and it displaced the brand bar 50px down INTO the rail, which is fixed to
-         the window and does not move - so the bar's subtitle was clipped by the rail's card.
-         Strong first, then the two subtle ones: an interrupting fact is never pushed off by a
-         transient. -->
-    <TabFollowerBanner />
+    <!-- THE OFFLINE BANNER JOINED THE COLUMN ON 2026-09-22, and it is the reason the column publishes
+         its height: rendered inside the CONTENT column instead, a banner sits inside the rail's 6rem
+         gutter and displaces the brand bar down INTO the rail, which is fixed to the window (measured
+         then with the follower-tab banner, removed 2026-11-08). Strong first, then the subtle one: an
+         interrupting fact is never pushed off by a transient. -->
     <OfflineBanner />
     <!-- A post being sent in the background (owner, 2026-11-06): one discreet row per queued post. -->
     <PublishQueueBanner />
@@ -793,7 +812,9 @@
       <main id="main-content" class="relative flex-1 overflow-hidden">
         <div
           bind:this={pageScrollWrap}
-          class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-(--bottom-nav-reserve) md:pb-0"
+          class="page-scroll-wrap absolute inset-0 overflow-y-auto {pageScrollPaddingClass(
+            !isLoginPage
+          )}"
         >
           <!-- NO BOUNDARY HERE: SvelteKit 3 wraps every route node in its own, closer to the page,
                armed with `+error.svelte` and reported through `handleClientError` - one held here

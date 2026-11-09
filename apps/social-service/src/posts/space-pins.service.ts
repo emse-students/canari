@@ -11,7 +11,6 @@ import { RedisService } from '../common/redis/redis.service';
 import { Post } from './entities/post.entity';
 import { invalidatePostListCache } from './post-list-cache';
 import {
-  GOVERNS_ANY_SPACE_SQL,
   MAY_PIN_IN_SPACE_SQL,
   PIN_SPACES_FOR_VIEWER_SQL,
   PIN_STANDING_IN_SPACE_SQL,
@@ -23,7 +22,6 @@ import {
   SPACE_PIN_LIMIT,
   SPACE_PIN_LIMIT_CODE,
   SPACE_PIN_LIST_SQL,
-  SPACE_REQUIRED,
   pinStateOf,
   type PinSpace,
   type PinState,
@@ -103,19 +101,15 @@ export class SpacePinsService {
   }
 
   /**
-   * Pins `postId` in `spaceId` - or, with no space (an older client), in the ONE space where the
-   * actor may pin it; zero or several is a typed `space_required` 409.
+   * Pins `postId` in `spaceId`, the space the client named.
    *
    * THE CAP HOLDS UNDER CONCURRENCY BY SERIALISING ON THE SPACE: the transaction takes an advisory
    * lock keyed on the space, THEN reads the rank and the shown count, then inserts - so two pins at
    * 2 of 3 leave exactly 3. Already shown there: answered as done, nothing written. A 4th is refused
    * with `space_pin_limit`, "en attente" pins or not: only the shown ones are counted.
    */
-  async pin(postId: string, actor: PinActor, spaceId: string | undefined): Promise<PinResult> {
-    this.logger.debug(
-      `[PIN] pin post=${postId} space=${spaceId ?? '(none)'} admin=${actor.isGlobalAdmin}`
-    );
-    const target = spaceId ?? (await this.onlySpace(postId, actor, 'pin'));
+  async pin(postId: string, actor: PinActor, target: string): Promise<PinResult> {
+    this.logger.debug(`[PIN] pin post=${postId} space=${target} admin=${actor.isGlobalAdmin}`);
     const result = await this.postRepo.manager.transaction(async (m) => {
       await this.assertMayPin(m, actor, target);
       await this.lockSpace(m, target);
@@ -161,15 +155,12 @@ export class SpacePinsService {
   }
 
   /**
-   * Unpins `postId` from `spaceId` - or, with no space, from the ONE space where it is pinned and the
-   * actor may pin; zero or several is `space_required`. Unpinning what is not pinned is answered as
-   * done. An "en attente" pin of that space is promoted by the shared rank, with nothing to write.
+   * Unpins `postId` from `spaceId`, the space the client named. Unpinning what is not pinned is
+   * answered as done. An "en attente" pin of that space is promoted by the shared rank, with nothing
+   * to write.
    */
-  async unpin(postId: string, actor: PinActor, spaceId: string | undefined): Promise<PinResult> {
-    this.logger.debug(
-      `[PIN] unpin post=${postId} space=${spaceId ?? '(none)'} admin=${actor.isGlobalAdmin}`
-    );
-    const target = spaceId ?? (await this.onlySpace(postId, actor, 'unpin'));
+  async unpin(postId: string, actor: PinActor, target: string): Promise<PinResult> {
+    this.logger.debug(`[PIN] unpin post=${postId} space=${target} admin=${actor.isGlobalAdmin}`);
     await this.postRepo.manager.transaction(async (m) => {
       await this.assertMayPin(m, actor, target);
       await this.lockSpace(m, target);
@@ -198,38 +189,6 @@ export class SpacePinsService {
       pinnedAt: r.pinnedAt,
       state: pinStateOf(r.rank) ?? 'pending',
     }));
-  }
-
-  /**
-   * The ONE space a body-less request means (an older client): for `pin`, every space where the
-   * actor may pin the post; for `unpin`, those where it is pinned. Exactly one, or `space_required`.
-   * AUTHORISED FIRST: a caller who governs no space is told 403 before the post is looked at, so
-   * neither answer says whether the post exists; then a missing post is a typed 404.
-   */
-  private async onlySpace(postId: string, actor: PinActor, act: 'pin' | 'unpin'): Promise<string> {
-    if (!actor.isGlobalAdmin) {
-      const [{ governs }] = (await this.postRepo.manager.query(GOVERNS_ANY_SPACE_SQL, [
-        actor.userId,
-      ])) as { governs: boolean }[];
-      if (!governs) {
-        this.logger.log(`[PIN] refused: ${actor.userId} governs no space (body-less ${act})`);
-        throw this.forbidden();
-      }
-    }
-    await this.assertPostExists(this.postRepo.manager, postId);
-    const spaces = (await this.pinSpacesFor([postId], actor)).get(postId) ?? [];
-    const fits = act === 'pin' ? spaces : spaces.filter((s) => s.state !== null);
-    if (fits.length !== 1) {
-      this.logger.log(
-        `[PIN] refused: body-less ${act} of post ${postId} fits ${fits.length} space(s)`
-      );
-      throw new ConflictException({
-        code: SPACE_REQUIRED,
-        candidates: fits.length,
-        message: 'Name the space (spaceId): this post fits zero or several',
-      });
-    }
-    return fits[0].spaceId;
   }
 
   /**

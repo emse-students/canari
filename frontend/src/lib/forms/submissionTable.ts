@@ -144,8 +144,8 @@ export function guestShownName(sub: {
  * about somebody else.
  */
 export function submitterName(sub: {
-  firstName: string | null;
-  lastName: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
   userId: string | null;
   reference?: string | null;
   guestFirstName?: string | null;

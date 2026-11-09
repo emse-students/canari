@@ -35,6 +35,10 @@ const MLS_CONTEXT_LOADER_KT = resolve(
   here,
   '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/MlsContextLoader.kt'
 );
+const PUSH_CONTEXT_VERDICT_KT = resolve(
+  here,
+  '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/push/PushContextVerdict.kt'
+);
 const CANARI_APPLICATION_KT = resolve(
   here,
   '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariApplication.kt'
@@ -78,6 +82,7 @@ describe('push_context.json contract (Rust writer vs 3 native readers)', () => {
   const iosAppSource = readFileSync(CANARI_IOS_MM, 'utf8');
   const swiftSource = readFileSync(NOTIF_SERVICE_SWIFT, 'utf8');
   const kotlinSource = readFileSync(MLS_CONTEXT_LOADER_KT, 'utf8');
+  const kotlinVerdictSource = readFileSync(PUSH_CONTEXT_VERDICT_KT, 'utf8');
   const kotlinAppSource = readFileSync(CANARI_APPLICATION_KT, 'utf8');
 
   // Keys written by store_push_context, through its file half `write_session_push_context`.
@@ -97,10 +102,20 @@ describe('push_context.json contract (Rust writer vs 3 native readers)', () => {
     functionBody(swiftSource, /private func loadPushContext\(\)/, /\n  }/),
     /json\["(\w+)"\]/g
   );
-  const kotlinKeys = extractKeys(
-    functionBody(kotlinSource, /fun loadPushContext\(context: Context\)/, /\n    }/),
-    /\.optString\("(\w+)"/g
-  );
+  // Kotlin reads the fields it keeps in `readPushContext`, and checks the REQUIRED ones through
+  // `PushContextVerdict` (pure Kotlin, so the classifier is unit-tested in `android-tests`).
+  const kotlinKeys = [
+    ...new Set([
+      ...extractKeys(
+        functionBody(kotlinSource, /fun readPushContext\(context: Context\)/, /\n    }/),
+        /\.optString\("(\w+)"/g
+      ),
+      ...extractKeys(
+        functionBody(kotlinVerdictSource, /val REQUIRED_PUSH_CONTEXT_FIELDS/, /\n/),
+        /"(\w+)"/g
+      ),
+    ]),
+  ].sort();
 
   it('writes the fields it is expected to write', () => {
     // `locale` is the app's OWN Français/English choice, not the phone's language. It is here

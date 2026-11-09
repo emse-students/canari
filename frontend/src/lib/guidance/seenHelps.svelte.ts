@@ -1,4 +1,4 @@
-import { SvelteSet } from 'svelte/reactivity';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
@@ -68,6 +68,8 @@ function readLocal(userId: string): { seen: HelpId[]; owed: HelpId[] } {
 export class SeenHelps {
   #account: string | null = null;
   #seen = new SvelteSet<HelpId>();
+  /** Seconds since the SERVER recorded each help, as of the last answer - never computed here. */
+  #ageSeconds = new SvelteMap<HelpId, number>();
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- nothing renders what is owed
   #owed = new Set<HelpId>();
   #ready = $state(false);
@@ -85,6 +87,15 @@ export class SeenHelps {
   /** Whether the current account has seen `id` (server or local copy). Reactive. */
   has(id: HelpId): boolean {
     return this.#seen.has(id);
+  }
+
+  /**
+   * How long ago the SERVER recorded `id`, in seconds, as of its last answer - `null` when it has not
+   * said (not seen, or recorded on this device and still owed). A rule measured from a first showing
+   * ("30 days later") reads this, never its own clock. Reactive.
+   */
+  ageSeconds(id: HelpId): number | null {
+    return this.#ageSeconds.get(id) ?? null;
   }
 
   /** The ids not yet acknowledged by the server, for the tests and the log. */
@@ -126,10 +137,15 @@ export class SeenHelps {
         console.error(`[seenHelps] the seen-help route refused: HTTP ${res.status}`);
         return;
       }
-      const body = (await res.json()) as { seen?: unknown } | null;
+      const body = (await res.json()) as { seen?: unknown; ageSeconds?: unknown } | null;
       if (generation !== this.#generation) return;
       const server = Array.isArray(body?.seen) ? body.seen.filter(isHelpId) : [];
+      const ages = (body?.ageSeconds ?? {}) as Record<string, unknown>;
       for (const id of server) {
+        const age = ages[id];
+        if (typeof age === 'number' && Number.isFinite(age) && age >= 0) {
+          this.#ageSeconds.set(id, age);
+        }
         this.#seen.add(id);
         // The server holds it already: whatever this device owed for it is settled.
         this.#owed.delete(id);
@@ -239,6 +255,7 @@ export class SeenHelps {
     this.#generation++;
     this.#account = null;
     this.#seen.clear();
+    this.#ageSeconds.clear();
     this.#owed.clear();
     this.#ready = false;
     this.#loading = null;

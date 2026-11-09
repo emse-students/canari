@@ -64,6 +64,13 @@ vi.mock('$lib/utils/deviceKeyVault', async (importOriginal) => ({
   saveDeviceKey: vi.fn(async () => {}),
 }));
 
+// The election, as the load fact reads it (`stateAuthority.ts`): undecided unless a case says so.
+const leadership = vi.hoisted(() => ({ role: 'undecided' as 'leader' | 'follower' | 'undecided' }));
+vi.mock('$lib/mls-client/tabLeader', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/tabLeader')>()),
+  getTabLeadership: () => leadership.role,
+}));
+
 /** A step the test holds; `resolve` lets it go. */
 function deferred<T = void>() {
   let resolve!: (v: T) => void;
@@ -104,6 +111,8 @@ const { loginImpl, endSessionImpl, endLostSessionImpl, recoverPinImpl } =
 const { loadMlsState } = await import('$lib/utils/hex');
 const { LoginStoppedBySignOutError } = await import('./loginErrors');
 const { createMlsHolder } = await import('./mlsHolder');
+const { initTabLeadershipAsync } = await import('$lib/utils/chat/connection');
+const { resetStateAuthorityForTests } = await import('$lib/mls-client/stateAuthority');
 
 type Held = { promise: Promise<void> } | null;
 
@@ -260,6 +269,8 @@ beforeEach(() => {
   syncConnectionAfterWsOpen.mockClear();
   clearDeviceKey.mockClear();
   wipeDeviceToFactory.mockClear();
+  leadership.role = 'undecided';
+  resetStateAuthorityForTests();
 });
 
 afterEach(() => {
@@ -600,5 +611,48 @@ describe('a login whose native sign-in is refused', () => {
     expect(s.cb.onLoginFailed).toHaveBeenCalled();
     expect(s.ctx.isLoggedIn()).toBe(false);
     expect(s.endNative).toHaveBeenCalledWith('client reset');
+  });
+});
+
+/**
+ * A FOLLOWER PROMOTED DURING ITS OWN LOGIN - after it loaded the state as a follower, before it went
+ * live. The promotion handler reloads only a live session, so the login reads the fact itself right
+ * before going live and reloads instead (round 2 of the review of #3160): no pull, no ACK, no key
+ * package on the copy it loaded as a follower.
+ */
+describe('a tab promoted to leader during its login', () => {
+  it('never goes live on its follower copy: it reloads, through the promotion path', async () => {
+    const initHeld = deferred();
+    const a = fakeClient({ init: initHeld });
+    const s = session([a.client]);
+    // The election answers "follower": the state is read as a follower's copy.
+    vi.mocked(initTabLeadershipAsync).mockResolvedValueOnce(false);
+    leadership.role = 'follower';
+
+    const login = loginImpl(s.ctx, s.cb);
+    await a.initReached.promise;
+    // The leader tab closes during the decrypt: this one is promoted in place.
+    leadership.role = 'leader';
+    initHeld.resolve();
+    await login;
+
+    expect(s.wentLive()).not.toHaveBeenCalledWith(true);
+    expect(s.ctx.isLoggedIn()).toBe(false);
+    expect(s.ctx.reloadForPromotion).toHaveBeenCalledTimes(1);
+    expect(s.cb.onLoginFailed).not.toHaveBeenCalled();
+    expect(s.shownErrors()).toEqual([]);
+    expect(logs(s.cb)).toContain('reloading before going live');
+  });
+
+  it('a follower NOT promoted goes live as the follower it loaded as, with no reload', async () => {
+    const a = fakeClient();
+    const s = session([a.client]);
+    vi.mocked(initTabLeadershipAsync).mockResolvedValueOnce(false);
+    leadership.role = 'follower';
+
+    await loginImpl(s.ctx, s.cb);
+
+    expect(s.wentLive()).toHaveBeenCalledWith(true);
+    expect(s.ctx.reloadForPromotion).not.toHaveBeenCalled();
   });
 });
