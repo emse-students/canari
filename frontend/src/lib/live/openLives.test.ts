@@ -1,11 +1,6 @@
 /** The card's list: the reader's own live left out, a lost answer kept, a refusal hidden. */
-import { beforeEach, describe, it, expect, vi } from 'vitest';
-import {
-  formatLiveElapsed,
-  livesForFeed,
-  loadOpenLivesForFeed,
-  resetLivesDisabledForTests,
-} from './openLives';
+import { describe, it, expect, vi } from 'vitest';
+import { formatLiveElapsed, livesForFeed, loadOpenLivesForFeed } from './openLives';
 import { LiveRefusalError } from './api';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import type { LiveListItem } from './types';
@@ -26,8 +21,6 @@ describe('livesForFeed', () => {
 });
 
 describe('loadOpenLivesForFeed', () => {
-  beforeEach(() => resetLivesDisabledForTests());
-
   it('answers the filtered list', async () => {
     const out = await loadOpenLivesForFeed(
       'me',
@@ -61,24 +54,19 @@ describe('loadOpenLivesForFeed', () => {
   });
 });
 
-describe('a switched-off estate is learned once per session', () => {
-  beforeEach(() => resetLivesDisabledForTests());
-
-  it('asks the server once, then answers hidden without asking again', async () => {
-    const list = vi.fn(async () => {
-      throw new LiveRefusalError(404, null, 'x', 'disabled', null, null, null);
+describe('a switched-off estate', () => {
+  it('is asked again on the next load, so a kill switch reopened later shows its lives', async () => {
+    let off = true;
+    const list = vi.fn(async (): Promise<LiveListItem[]> => {
+      if (off) throw new LiveRefusalError(404, null, 'x', 'disabled', null, null, null);
+      return [item('a', 'u1')];
     });
     expect(await loadOpenLivesForFeed('me', list)).toEqual({ kind: 'hidden' });
-    expect(await loadOpenLivesForFeed('me', list)).toEqual({ kind: 'hidden' });
-    expect(list).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps asking after a refusal that is not the switch', async () => {
-    const list = vi.fn(async () => {
-      throw new LiveRefusalError(400, 'X', 'x', 'refused', null, null, null);
+    off = false;
+    expect(await loadOpenLivesForFeed('me', list)).toEqual({
+      kind: 'answered',
+      lives: [item('a', 'u1')],
     });
-    await loadOpenLivesForFeed('me', list);
-    await loadOpenLivesForFeed('me', list);
     expect(list).toHaveBeenCalledTimes(2);
   });
 });

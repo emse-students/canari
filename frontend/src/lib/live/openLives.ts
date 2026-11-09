@@ -21,19 +21,6 @@ export type OpenLivesOutcome =
   /** The server said no (the switch off, or a refusal): the card shows nothing. */
   | { kind: 'hidden' };
 
-/**
- * Whether this session already learned that lives are switched off on the estate. DURABLE STATE, not
- * a timer: the answer is the estate's switch, so asking again on every foreground (51 warnings in a
- * week of one phone's log, 1.6.8) learns nothing. It is memory only - a reload asks again, which is
- * how a switch turned on later is noticed.
- */
-let livesDisabledThisSession = false;
-
-/** Forgets what the session learned (tests only). */
-export function resetLivesDisabledForTests(): void {
-  livesDisabledThisSession = false;
-}
-
 /** The lives a reader's card lists: the server's order (newest first), the reader's own left out. */
 export function livesForFeed(lives: LiveListItem[], viewerId: string | null): LiveListItem[] {
   return viewerId ? lives.filter((l) => l.broadcasterId !== viewerId) : lives;
@@ -44,7 +31,6 @@ export async function loadOpenLivesForFeed(
   viewerId: string | null,
   list: () => Promise<LiveListItem[]> = listOpenLives
 ): Promise<OpenLivesOutcome> {
-  if (livesDisabledThisSession) return { kind: 'hidden' };
   try {
     const lives = livesForFeed(await list(), viewerId);
     console.debug(`[LIVE] feed card: ${lives.length} open live(s)`);
@@ -54,11 +40,12 @@ export async function loadOpenLivesForFeed(
       console.log('[LIVE] feed card: no answer from the server - the card keeps what it shows');
       return { kind: 'kept' };
     }
+    // ASKED AGAIN ON EVERY LOAD, NEVER LATCHED: `disabled` is the runtime kill switch
+    // (`platform_config.lives_mode`, flipped at /admin/platform and read per request), so a "switched
+    // off" learned once would hide lives reopened later for the rest of a phone's process. The
+    // answer is an expected one (`listOpenLives` declares it), so it costs debug lines, no warning.
     if (isLiveRefusal(e, 'disabled')) {
-      livesDisabledThisSession = true;
-      console.debug(
-        '[LIVE] feed card: lives are switched off on this estate - not asked again this session'
-      );
+      console.debug('[LIVE] feed card: lives are switched off on this estate');
       return { kind: 'hidden' };
     }
     console.warn(`[LIVE] feed card: the list was refused (${String(e)}) - no card`);
