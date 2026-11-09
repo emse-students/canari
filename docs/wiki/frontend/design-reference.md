@@ -1748,6 +1748,21 @@ end per-page widths and paddings. The gain is 32px of text width; the cost is re
 what that component exists to prevent. Not a close call, and not to be re-opened without a reason
 better than "Facebook does it".
 
+**MEDIA IN THE CARD, MEASURED 2026-11-09 (design audit S3), AND WHY NOTHING WAS CHANGED.** Dev held no post with a photo or a video, so three fictional ones were posted from a test account (a 4:3 photo, a 3:4 photo, a 16:9 clip) and read on `dev.canari-emse.fr` at 390 x 844 (dark, headless Chrome, secondary to the app) against the Facebook feed read the same day on the Mi 9T (a photo edge to edge, the action bar directly under it):
+
+| part | Canari | Facebook |
+| --- | --- | --- |
+| media box width | 332 of 390 (85 %), inset 13 from the card edge | 390 (100 %), no inset |
+| media corners | 8 | 0 |
+| text to media | 16 (`pb-3` + `mt-1`) | about 0 |
+| media to the action bar | 4 | 0 |
+| 4:3 / 3:4 / 16:9 box | 332 x 249 / 332 x 443 / 332 x 187 | 390 x 292 / 390 x 520 / - |
+| card chrome around the media (header, line of text, bar) | 164 | 110 |
+
+The inset and the corner are NOT defects: they are the user's decision of 2026-10-01 on the Mi 9T (a full-bleed picture cut across the card's 18 px corners; `PostContent`'s `px-3` + `rounded-lg` is the concentric pair), and the 20 px gap beside the text is the same card padding Q1 of the audit narrows. The `--media-max-height: 60svh` ceiling (506 at 844) never binds a 3:4 picture at 332 wide (443); only a 9:16 clip meets it, and it is letterboxed, not cropped. Re-open the inset only with a reason better than the Facebook number.
+
+**THE DARK POST CARD HAS NO HAIRLINE (design audit S4, 2026-11-09).** `dark:border-white/15` sat on top of the 18-point lightness step between `--cn-surface` (#121212) and the true-black ground; Facebook's dark feed separates its cards by lightness alone. The border is now `dark:border-transparent` (the box keeps its size); light keeps its shadow. Measured on the dev feed: the card edge column read 53 / 53 / 18 before and 18 / 18 / 18 after, and the card still reads as a card on the OLED ground. This revises, for dark only, the 2026-10-01 "edge 10 % to 15 %" request - read it on the Mi 9T before the stable; `postCardDarkEdge.test.ts` keeps the hairline from coming back unnoticed. The other bordered cards (association, calendar, settings lists) still carry `--cn-border`; they move with the sweep section 9 asks for, not here.
+
 **HOW THE FACEBOOK SIDE WAS TAKEN, for anyone repeating it.** `uiautomator` cannot dump a locked
 screen. MSYS rewrites an absolute POSIX path handed to `adb shell` (`/sdcard/x` becomes
 `C:/Program Files/Git/sdcard/x`), so the dump needs `MSYS_NO_PATHCONV=1`, and `adb pull` needs a
