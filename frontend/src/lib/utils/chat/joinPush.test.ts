@@ -18,6 +18,7 @@ import {
   nicknameEntry,
 } from '$lib/utils/users/conversationNicknames.svelte';
 import { digestIdentity } from './historyDigestRendezvous';
+import { AddressedUnsupportedError, type SentFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { installJoinPush, queueJoinPush, type JoinPushDeps } from './joinPush';
 
 const GROUP = 'g1';
@@ -50,12 +51,11 @@ function inviter() {
     getConversation: vi.fn(async () => null),
   } as unknown as IStorage;
   const deps: JoinPushDeps = {
-    account: () => 'alice',
-    storage: () => storage,
-    deviceKeyB64: () => 'k',
+    session: () => ({ account: 'alice', storage, deviceKeyB64: 'k' }),
+    isCurrent: () => true,
     log: vi.fn(),
   };
-  return { mlsService, deps };
+  return { mlsService, storage, deps };
 }
 
 /** Every `history_bundle` the inviter sent, with how it was routed. */
@@ -157,5 +157,98 @@ describe('the join push of a delivered Welcome', () => {
     expect(vi.mocked(deps.log).mock.calls.some(([l]) => String(l).includes('send error'))).toBe(
       true
     );
+  });
+
+  it('runs a push queued before an account switch with the account that delivered it, or not at all', async () => {
+    const { mlsService, deps } = inviter();
+    // Account A's client delivers two Welcomes; the first push is still running when the switch lands.
+    let release: () => void = () => {};
+    vi.mocked(mlsService.sendMessage).mockImplementationOnce(
+      () =>
+        new Promise(
+          (resolve) =>
+            (release = () =>
+              resolve({ sealed: new Uint8Array(), receivedAt: ARRIVAL } as SentFrame))
+        )
+    );
+    let current = true;
+    let session = deps.session();
+    const switching: JoinPushDeps = {
+      session: () => session,
+      isCurrent: () => current,
+      log: deps.log,
+    };
+    const first = queueJoinPush(mlsService, DELIVERED, switching);
+    const second = queueJoinPush(
+      mlsService,
+      { ...DELIVERED, deviceId: 'beta-dev-2', welcome: new Uint8Array([7]) },
+      switching
+    );
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+
+    // The switch: A's client is retired, and the session now names account B's store and key.
+    current = false;
+    const storageOfB = { getMessages: vi.fn(), getConversation: vi.fn() } as unknown as IStorage;
+    session = { account: 'bob', storage: storageOfB, deviceKeyB64: 'kb' };
+    release();
+    await Promise.all([first, second]);
+
+    // The queued second push never ran: nothing more sent, B's store never read, B's ledger untouched.
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(storageOfB.getMessages).not.toHaveBeenCalled();
+    expect(localStorage.getItem('mls_join_pushes_sent:v1:bob')).toBeNull();
+    expect(
+      vi
+        .mocked(deps.log)
+        .mock.calls.some(([l]) => String(l).includes('was retired before its turn'))
+    ).toBe(true);
+
+    // And a delivery announced by the retired client pushes nothing either.
+    await queueJoinPush(mlsService, { ...DELIVERED, welcome: new Uint8Array([8]) }, switching);
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the session at the announcement, not at the turn: a push queued behind a slow one keeps its account', async () => {
+    const { mlsService, storage, deps } = inviter();
+    let release: () => void = () => {};
+    vi.mocked(mlsService.sendMessage).mockImplementationOnce(
+      () =>
+        new Promise(
+          (resolve) =>
+            (release = () =>
+              resolve({ sealed: new Uint8Array(), receivedAt: ARRIVAL } as SentFrame))
+        )
+    );
+    let account = 'alice';
+    const reading: JoinPushDeps = {
+      session: () => ({ account, storage, deviceKeyB64: 'k' }),
+      isCurrent: () => true,
+      log: deps.log,
+    };
+    const first = queueJoinPush(mlsService, DELIVERED, reading);
+    const second = queueJoinPush(mlsService, { ...DELIVERED, deviceId: 'beta-dev-2' }, reading);
+    account = 'someone-else';
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+    release();
+    await Promise.all([first, second]);
+
+    const ledger = JSON.parse(localStorage.getItem('mls_join_pushes_sent:v1:alice') ?? '[]');
+    expect(ledger).toHaveLength(2);
+    expect(localStorage.getItem('mls_join_pushes_sent:v1:someone-else')).toBeNull();
+  });
+
+  it('says at warn when the newcomer could not be addressed - offline at the push, the known limit', async () => {
+    const { mlsService, deps } = inviter();
+    vi.mocked(mlsService.sendMessage).mockRejectedValueOnce(
+      new AddressedUnsupportedError(GROUP, ['beta:beta-dev'])
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await queueJoinPush(mlsService, DELIVERED, deps);
+
+    expect(
+      warn.mock.calls.some(([l]) => String(l).includes('[JOIN_PUSH] g1... NOT DELIVERED'))
+    ).toBe(true);
+    warn.mockRestore();
   });
 });

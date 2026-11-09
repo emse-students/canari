@@ -5097,7 +5097,27 @@ concurrent send of the same bytes awaits the first), and `joinPush.ts`, installe
   holding the group, would refuse it as answering no ask). A re-add is a new Welcome and is pushed for;
 - **off the gesture**: queued synchronously at the delivery and run one at a time, never awaited by the
   Add, so "added" shows at once; each push caught and logged on its own (`[JOIN_PUSH]`);
-- **never into a key group** (`isDistributionGroup`).
+- **never into a key group** (`isDistributionGroup`);
+- **for the session that delivered it**: the account, the store and the device key are read when the
+  delivery is announced, and a job whose client the session holder let go of (a sign-out, an account
+  switch) is dropped at its turn (`isCurrent`, `MlsHolder.current`), so a queued push never runs with
+  the next account's data through the previous account's MLS client.
+
+**The limit it keeps: online only.** The push is an ADDRESSED frame, and an addressed frame is
+transport-only - the server publishes it to a device all of whose live sessions declared the capability
+and refuses it otherwise (`addressed_unsupported`); it is never queued. A newcomer whose device is not
+connected when its Welcome is delivered gets no push, and nothing retries it. That outcome is returned
+(`sendFullHistoryBundle` -> `unaddressable`) and said at warn (`[JOIN_PUSH] NOT DELIVERED`), never
+swallowed. **The fix is the newcomer asking, not the inviter retrying**, and the reasoning is the
+choice: an inviter retry "when the device becomes present" rests on two things nobody holds durably -
+the newcomer's `join` ask lives in memory (`noteJoinSolicited`), so a reload between the Welcome and the
+retried push refuses it, and the inviter's own device has to come back while the newcomer is online.
+The newcomer, by contrast, is online by construction when it asks, already runs a reconciliation on
+every connection whose deferral waits for a member to return, and can keep a durable "register owed"
+marker until an answer clears it. So the register will ride the existing digest ask (`register: true`)
+and its elected answer, under the same four limits below - designed in
+[its entry](../../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md), not built in #3185 because
+it changes the reconciliation's wire and deserves its own review.
 
 Before #3185 only the pending invitation and the welcome_request answer pushed, each by an explicit
 call: a newcomer added by "Ajouter", or whose Welcome came from the drain, saw no nickname at all

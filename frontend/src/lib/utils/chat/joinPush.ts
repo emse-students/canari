@@ -21,6 +21,18 @@
  * - **Never awaited by the gesture.** Started on the delivery, synchronously queued, run one at a time
  *   (each decrypts the whole store), each caught and said on its own.
  * - **Not for a key group.** A community's Graine key group carries no conversation and no history.
+ * - **For the session that delivered it.** The account, the store and the device key are read when
+ *   the delivery is ANNOUNCED, and the job is dropped at its turn if the service that delivered it is
+ *   no longer the session's client: a push queued before an account switch never runs with the next
+ *   account's data through the previous account's MLS client (the queue is module-level).
+ *
+ * **ONLINE ONLY, AND SAID SO.** The push is an addressed frame, and an addressed frame is
+ * transport-only: the server refuses it for a device that is not connected when it leaves
+ * (`addressed_unsupported`). A newcomer offline at the delivery of its Welcome therefore receives no
+ * push, and nothing here retries it - the ledger entry is written before the push starts. That outcome
+ * is returned by `sendFullHistoryBundle` and reported here at warn (`[JOIN_PUSH] NOT DELIVERED`), so
+ * its rate can be counted; the deterministic fix (the newcomer asks for the register on its own
+ * reconciliation) is designed in `docs/wiki/backlog.d/p2-an-offline-newcomer-receives-no-join-push.md`.
  */
 import type { IStorage } from '$lib/db';
 import type { DeliveredWelcome } from '$lib/mls-client/IMlsService';
@@ -32,11 +44,22 @@ import { digestIdentity } from './historyDigestRendezvous';
 /** How many pushed Welcomes the ledger remembers - a bounded FIFO, state and never a clock. */
 export const JOIN_PUSH_LEDGER_SIZE = 512;
 
-/** What a push needs, read at the moment it runs: the session may have moved since the install. */
+/** The session a delivery belongs to, read when the delivery is announced. */
+export type JoinPushSession = {
+  account: string;
+  storage: IStorage | null;
+  deviceKeyB64: string;
+};
+
+/** What the join push reads from the session that installed it. */
 export type JoinPushDeps = {
-  account: () => string;
-  storage: () => IStorage | null;
-  deviceKeyB64: () => string;
+  /** The signed-in session as it stands NOW - read once, at the announcement of a delivery. */
+  session: () => JoinPushSession;
+  /**
+   * Whether the service the push was installed on is still the session's MLS client - read at the
+   * announcement AND when the job's turn comes. False once a sign-out or an account switch retired it.
+   */
+  isCurrent: () => boolean;
   log: (msg: string) => void;
 };
 
@@ -92,21 +115,28 @@ function claim(account: string, delivered: DeliveredWelcome): boolean {
 let queue: Promise<void> = Promise.resolve();
 
 /**
- * The push owed for one delivered Welcome. Resolves when it is done; never throws - every branch that
- * sends nothing says why.
+ * The push owed for one delivered Welcome, with the session captured at its announcement. Resolves
+ * when it is done; never throws - every branch that sends nothing says why.
  */
 export async function pushForDeliveredWelcome(
   mls: IMlsService,
   delivered: DeliveredWelcome,
+  session: JoinPushSession,
   deps: JoinPushDeps
 ): Promise<void> {
   const { groupId, userId, deviceId } = delivered;
   const short = groupId.slice(0, 8);
+  if (!deps.isCurrent()) {
+    deps.log(
+      `[JOIN_PUSH] ${short}... the client that delivered the Welcome to ${deviceId} was retired before its turn (a sign-out or an account switch) - no join push`
+    );
+    return;
+  }
   if (mls.isDistributionGroup(groupId)) {
     deps.log(`[JOIN_PUSH] ${short}... is a key group - no join push to ${deviceId}`);
     return;
   }
-  const account = deps.account();
+  const { account, storage, deviceKeyB64 } = session;
   if (!account) {
     console.error(
       `[JOIN_PUSH] ${short}... Welcome delivered to ${deviceId} with no signed-in account - no join push`
@@ -121,13 +151,20 @@ export async function pushForDeliveredWelcome(
   }
   deps.log(`[JOIN_PUSH] ${short}... join push -> ${userId}:${deviceId}`);
   try {
-    await sendFullHistoryBundle(groupId, {
-      storage: deps.storage(),
-      deviceKeyB64: deps.deviceKeyB64(),
+    const outcome = await sendFullHistoryBundle(groupId, {
+      storage,
+      deviceKeyB64,
       mlsService: mls,
       log: deps.log,
       to: digestIdentity(userId, deviceId),
     });
+    if (outcome === 'unaddressable') {
+      // THE KNOWN LIMIT, COUNTED: the device was not connected (or a session of it predates
+      // addressed answers), and nothing retries - see the module docstring.
+      console.warn(
+        `[JOIN_PUSH] ${short}... NOT DELIVERED to ${userId}:${deviceId} - the server could not address it (offline at the push, or an older session); it gets no register until the newcomer-asks step ships`
+      );
+    }
   } catch (e) {
     console.error(
       `[JOIN_PUSH] ${short}... the join push to ${userId}:${deviceId} failed: ${String(e).slice(0, 120)}`
@@ -137,14 +174,22 @@ export async function pushForDeliveredWelcome(
 
 /**
  * Queues the push owed for `delivered` behind the ones already started, and returns the promise of
- * this one (the tests await it; the delivery never does).
+ * this one (the tests await it; the delivery never does). The session is read HERE, at the
+ * announcement - never later, when the job's turn comes and the session may be another account's.
  */
 export function queueJoinPush(
   mls: IMlsService,
   delivered: DeliveredWelcome,
   deps: JoinPushDeps
 ): Promise<void> {
-  const run = queue.then(() => pushForDeliveredWelcome(mls, delivered, deps));
+  if (!deps.isCurrent()) {
+    deps.log(
+      `[JOIN_PUSH] ${delivered.groupId.slice(0, 8)}... Welcome delivered to ${delivered.deviceId} by a retired client - no join push`
+    );
+    return Promise.resolve();
+  }
+  const session = deps.session();
+  const run = queue.then(() => pushForDeliveredWelcome(mls, delivered, session, deps));
   queue = run;
   return run;
 }

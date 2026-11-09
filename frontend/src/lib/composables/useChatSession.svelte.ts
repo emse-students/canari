@@ -98,11 +98,12 @@ export function useChatSession() {
       if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
       const svc = createMlsService();
       // INSTALLED WITH THE SERVICE, so no Welcome it delivers - an Add, or the owed-Welcome drain of
-      // a resume or the first connection - can precede it (`joinPush.ts`).
+      // a resume or the first connection - can precede it (`joinPush.ts`). The session is read at
+      // each delivery's announcement, and a delivery of a client the holder let go of (a sign-out,
+      // an account switch) pushes nothing.
       installJoinPush(svc, {
-        account: () => userId,
-        storage: () => storage,
-        deviceKeyB64: () => deviceKeyB64,
+        session: () => ({ account: userId, storage, deviceKeyB64 }),
+        isCurrent: () => mlsHolder.current() === svc,
         log: appendLog,
       });
       return svc;

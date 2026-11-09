@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { IMlsService } from '$lib/mls-client';
+import type { DeliveredWelcome } from '$lib/mls-client/IMlsService';
 import type { MlsStatePersister } from '$lib/mls-client/mlsStatePersister';
 import type { ChatSessionCallbacks, SessionContext } from './sessionTypes';
 import { flushMacrotask } from '../../../test/flush';
@@ -30,6 +31,8 @@ type FakeClient = {
   destroy: ReturnType<typeof vi.fn>;
   /** The join push is installed with every client the session builds (`joinPush.ts`). */
   onWelcomeDelivered: ReturnType<typeof vi.fn>;
+  /** The first thing a push that RUNS asks of its client - so a call is a push started. */
+  isDistributionGroup: ReturnType<typeof vi.fn>;
 };
 const made: FakeClient[] = [];
 vi.mock('$lib/mlsService', () => ({
@@ -39,6 +42,7 @@ vi.mock('$lib/mlsService', () => ({
       isWsOpen: () => false,
       destroy: vi.fn(),
       onWelcomeDelivered: vi.fn(),
+      isDistributionGroup: vi.fn(() => true),
     };
     made.push(client);
     return client;
@@ -203,5 +207,49 @@ describe("A signs out with its final write held, B signs in, A's write lands lat
     // Nobody registered since: the persister goes, and the encrypt worker with it.
     expect(activeMlsStatePersister()).toBeNull();
     expect(disposeMlsEncryptWorker).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** The listener the session installed on `client`, which its `onWelcomeDelivered` was handed. */
+function deliveryListenerOf(client: FakeClient): (d: DeliveredWelcome) => void {
+  expect(client.onWelcomeDelivered).toHaveBeenCalledTimes(1);
+  return client.onWelcomeDelivered.mock.calls[0][0];
+}
+
+const WELCOME: DeliveredWelcome = {
+  groupId: 'group-1',
+  userId: 'newcomer',
+  deviceId: 'newcomer-dev',
+  welcome: new Uint8Array([1]),
+};
+
+describe('the join push is wired into every client the session builds', () => {
+  it("installs it on A's client and B's, and a delivery of A's retired client pushes nothing", async () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const { session, clientA, a } = signedInAsA();
+
+    // DELETING THE `installJoinPush` WIRING FAILS HERE: the session handed A's client a listener.
+    const listenerA = deliveryListenerOf(clientA);
+    listenerA({ ...WELCOME, welcome: new Uint8Array([2]) });
+    await vi.waitFor(() => expect(clientA.isDistributionGroup).toHaveBeenCalledWith('group-1'));
+
+    // A signs out, B signs in on the same process.
+    await clearAuth();
+    session.initServices(() => {});
+    const clientB = made[1];
+    expect(session.ensureMls()).toBe(clientB);
+    const listenerB = deliveryListenerOf(clientB);
+
+    // A's retired client announces a delivery late: no push starts through it.
+    clientA.isDistributionGroup.mockClear();
+    listenerA({ ...WELCOME, welcome: new Uint8Array([3]) });
+    await settle();
+    expect(clientA.isDistributionGroup).not.toHaveBeenCalled();
+
+    // B's own delivery does.
+    listenerB({ ...WELCOME, welcome: new Uint8Array([4]) });
+    await vi.waitFor(() => expect(clientB.isDistributionGroup).toHaveBeenCalledWith('group-1'));
+    a.land();
+    await settle();
   });
 });

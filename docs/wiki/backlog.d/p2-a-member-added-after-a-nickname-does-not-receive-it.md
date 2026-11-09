@@ -50,7 +50,14 @@ avant votre arrivee", at once, and `localStorage` holds `canari_nicknames:v1:<ne
 inviter's exported log carries `[JOIN_PUSH] <group>... join push -> <account>:<device>` then either `Empty
 bundle sent ... addressed to ...` or `Full history sent: k of N` with `k` counting only what was sent
 since the Add (the inviter's own notice); the web console of the new member `[HISTORY_BUNDLE] 1 nickname(s) taken
-(unverified)`. Remove the account added by the first reading first (or use another one): its device
+(unverified)`.
+
+**2b - the offline newcomer, expected to FAIL until [its own entry](p2-an-offline-newcomer-receives-no-join-push.md) ships.**
+The same gesture with the new member's device NOT connected (the app killed, or the browser tab closed)
+when "Ajouter" is pressed, then opened a minute later: today the inviter's log reads
+`[JOIN_PUSH] <group>... NOT DELIVERED to <account>:<device>` at warn and the new member shows no
+nickname. **The join push of #3185 reaches only a device connected when its Welcome is delivered** - an
+addressed frame is transport-only and is never queued - and that limit is the next entry, not this one. Remove the account added by the first reading first (or use another one): its device
 already holds a leaf, and a fresh add is what is being read. This entry is deleted the day the fix
 ships to production.
 

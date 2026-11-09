@@ -546,7 +546,6 @@ export function makeWelcomeRequestContext(
 ): WelcomeRequestContext {
   return {
     mlsService: ctx.ensureMls(),
-    storage: ctx.getStorage(),
     userId: ctx.getUserId(),
     deviceKeyB64: ctx.getDeviceKey(),
     conversations: cb.conversations,
