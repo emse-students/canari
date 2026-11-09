@@ -83,6 +83,9 @@ button for the glass pill), all built by `profileHref` (`utils/users/profileHref
 - **A direct header**: desktop - the peer's avatar and name are links, the gear stays. Phone glass - the
   centre pill opens the profile; **settings stay one tap away in the "..." menu** (they already had an
   entry there, so nothing became unreachable). A group or salon pill still opens its settings.
+  **The pill takes all the free width** (`w-full`, 2026-11-09): its web rect IS the native pill, and a
+  pill hugging the web text was narrower than the native system font needs, cutting a name at 186 pt
+  with 70 pt of bar empty.
 - **A deleted or erased account gets no link**, and a pill with no page behind it falls back to settings:
   `isAbsentUser` (`displayName.ts`) is a reactive set filled when the server answers 404/deleted, so a
   link drawn before the answer is withdrawn when it lands. `false` means "not known gone". The profile
