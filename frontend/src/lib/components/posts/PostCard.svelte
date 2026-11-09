@@ -759,7 +759,9 @@
         {showReactionPicker}
         reactionList={REACTIONS}
         commentCount={commentCountOf(localPost) || undefined}
-        onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
+        onQuickReact={() => void handleReaction(userReaction ?? DOUBLE_TAP_REACTION)}
+        onOpenReactionPicker={() => (showReactionPicker = true)}
+        onCloseReactionPicker={() => (showReactionPicker = false)}
         onReactionSelect={handleReaction}
         onCommentClick={canSeeComments
           ? () => openCommentsSheet({ write: comments.length === 0 })

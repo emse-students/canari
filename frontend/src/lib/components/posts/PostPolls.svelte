@@ -230,6 +230,7 @@
                   : ''}"
                 onclick={() => onVoteClick(poll, option.id)}
                 aria-pressed={isSelected}
+                data-poll-option
                 aria-disabled={refuses}
               >
                 <!-- Visual vote progress bar in the background. -->

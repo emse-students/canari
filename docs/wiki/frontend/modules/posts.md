@@ -2443,3 +2443,24 @@ WebDriverAgent's synthetic touches (a real long press and real handle drags), an
 (Chrome Android, Safari iOS), where the overlay's `top 180ms` transition follows a visual-viewport pan
 and was not measured. If the keyboard still drops there, the first thing to log is `focusout` on the
 editor and the `visualViewport` height around it.
+
+## One tap likes, a hold chooses (2026-11-09)
+
+Owner decision (design audit S2, Facebook's rule): the reaction button of a post's action bar (`PostActions`) no
+longer opens the picker on a tap.
+
+- **Tap** = `onQuickReact` -> `PostCard.handleReaction(userReaction ?? DOUBLE_TAP_REACTION)`: "J'aime" when the
+  reader has no reaction, and the same call with their own reaction type takes it back (`toggledReactions`). The
+  optimistic update, mute refusal and rollback are the picker's own path, as for the double tap.
+- **Hold** = the picker (`longPress`, 450 ms, 10 px slop): a press that travels is a scroll and opens nothing, and the
+  click ending a hold is swallowed so opening never also likes. A hold while reacted opens the picker to change it.
+- **No gesture needed**: the context menu (Menu key, Shift+F10, right click), ArrowUp on the button, and a
+  `sr-only` button named "Add reaction" (`data-post-react-picker-open`). The button carries `aria-haspopup`; its name
+  is the reader's reaction (or "React") and its `title` states the tap/hold rule. It has no `aria-pressed` on purpose
+  (the poll tests and the card read `button[aria-pressed]` as poll options).
+- The open picker closes on Escape (focus back on the button) or a tap elsewhere (`clickOutside`, the button
+  ignored: a tap there likes and `handleReaction` closes it). The reactor list, the counts and the server API are
+  untouched; the double-tap like on media posts is unchanged.
+- Pinned by `PostActions.oneTap.svelte.test.ts` (fake timers) and `PostCard.doubleTap.svelte.test.ts`.
+- **Owed**: a phone reading of the hold while scrolling the feed (no accidental picker, no accidental like) and of
+  the picker's clearance above the bar.
