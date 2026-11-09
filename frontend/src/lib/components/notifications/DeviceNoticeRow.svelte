@@ -61,29 +61,31 @@
     <MonitorSmartphone size={24} />
   </span>
   <div class="min-w-0 flex-1">
-    <p class="text-sm leading-snug {unread ? 'text-text-main' : 'text-text-muted'}">
-      <span class="font-semibold">{m.device_notice_title()}</span>
+    <p class="text-sm font-semibold {unread ? 'text-text-main' : 'text-text-muted'}">
+      {m.device_notice_title()}
+    </p>
+    <p class="text-text-muted mt-0.5 text-sm leading-snug">
       {notice.label
         ? m.device_notice_body_named({ label: notice.label, when })
         : m.device_notice_body({ when })}
       {m.device_notice_hint()}
     </p>
-    <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+    <div class="mt-2 flex flex-wrap items-center gap-2 text-sm">
       <a
         href={resolve('/settings/[section]', { section: 'security' })}
-        class="text-text-main font-semibold underline"
+        class="bg-cn-border/60 text-text-main hover:bg-cn-border rounded-full px-3 py-1.5 font-semibold"
         onclick={() => dismissDeviceNotice(notice.key)}>{m.device_notice_view()}</a
       >
       <button
         type="button"
-        class="text-text-main font-semibold"
+        class="bg-cn-border/60 text-text-main hover:bg-cn-border rounded-full px-3 py-1.5 font-semibold disabled:opacity-50"
         disabled={revoking}
         data-device-notice-not-me
         onclick={notMe}>{m.device_notice_not_me()}</button
       >
       <button
         type="button"
-        class="text-text-muted font-semibold"
+        class="text-text-muted rounded-full px-3 py-1.5 font-semibold"
         data-device-notice-dismiss
         onclick={() => dismissDeviceNotice(notice.key)}>{m.device_notice_dismiss()}</button
       >

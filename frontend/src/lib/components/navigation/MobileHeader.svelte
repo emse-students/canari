@@ -112,7 +112,7 @@
           data-slow-link={slowLink.active || undefined}
           class="ui-icon-button rounded-2xl ring-3 transition-all duration-200 {slowLink.active
             ? 'ring-amber-warn'
-            : 'ring-transparent hover:ring-amber-400'}"
+            : 'ring-transparent [@media(hover:hover)_and_(pointer:fine)]:hover:ring-amber-400'}"
         >
           <Avatar userId={globalSession.userId} size="md" />
         </button>

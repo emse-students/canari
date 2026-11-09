@@ -1,0 +1,1 @@
+The "new device" notification row has a bold title, a muted body and one row of three consistent buttons, the type badge on a notification avatar is 20 px so it no longer hides the initials, the comment preview's media thumbnail is 96 px, and the profile avatar's hover ring only shows on a fine pointer ([design-reference](docs/wiki/frontend/design-reference.md)).
