@@ -176,6 +176,45 @@ function appendSegment(buffer: SourceBuffer, bytes: ArrayBuffer): Promise<void> 
   });
 }
 
+/** Seconds kept behind the playhead when a full buffer is trimmed to take the next segment. */
+const QUOTA_KEEP_BEHIND_SECONDS = 10;
+
+/** Waits for a `SourceBuffer` to finish what it is doing (`remove` is asynchronous). */
+function settled(buffer: SourceBuffer): Promise<void> {
+  if (!buffer.updating) return Promise.resolve();
+  return new Promise((resolve) =>
+    buffer.addEventListener('updateend', () => resolve(), { once: true })
+  );
+}
+
+/**
+ * Appends a segment; when the engine's buffer is full (`QuotaExceededError`: nothing evicts behind
+ * the playhead on a long video, and the card and the viewer each hold a buffer) the already-played
+ * part is removed and the append retried ONCE. The whole file is built from the segment Blobs, never
+ * from this buffer, so trimming costs only a seek back into the removed part - which beats a
+ * `decode` error that ends the video.
+ */
+async function appendSegmentEvicting(
+  buffer: SourceBuffer,
+  bytes: ArrayBuffer,
+  element: () => PacingElement | null,
+  mediaId: string
+): Promise<void> {
+  try {
+    await appendSegment(buffer, bytes);
+  } catch (err) {
+    const el = element();
+    const isQuota = err instanceof DOMException && err.name === 'QuotaExceededError';
+    const cut = (el?.currentTime ?? 0) - QUOTA_KEEP_BEHIND_SECONDS;
+    if (!isQuota || !el || cut <= 0) throw err;
+    console.warn(`[media-seg] stream ${mediaId}: buffer full, trimming before ${cut.toFixed(1)} s`);
+    await settled(buffer);
+    buffer.remove(0, cut);
+    await settled(buffer);
+    await appendSegment(buffer, bytes);
+  }
+}
+
 /** Seconds buffered past the element's playhead - 0 when the playhead is in no buffered range. */
 export function bufferedAhead(element: Pick<PacingElement, 'currentTime' | 'buffered'>): number {
   const t = element.currentTime;
@@ -209,8 +248,23 @@ interface SegmentFeed {
 /** A feed over `ref`; every read is aborted with `signal` (the root stream's close). */
 function createSegmentFeed(ref: MediaRef, baseUrl: string, signal: AbortSignal): SegmentFeed {
   let reader: ReturnType<typeof openSegmentedMedia> | null = null;
-  const open = () =>
-    (reader ??= openSegmentedMedia(httpRangeSource(baseUrl, ref.mediaId), ref.key, ref.iv, signal));
+  // A FAILURE IS NOT MEMOISED: a transient range error on the card's read must not be handed to the
+  // viewer forever - the next consumer asks again (a closed root rejects them all anyway).
+  const open = () => {
+    if (!reader) {
+      const opening = openSegmentedMedia(
+        httpRangeSource(baseUrl, ref.mediaId),
+        ref.key,
+        ref.iv,
+        signal
+      );
+      reader = opening;
+      opening.catch(() => {
+        if (reader === opening) reader = null;
+      });
+    }
+    return reader;
+  };
   const segments = new Map<number, Promise<Blob>>();
   return {
     count: async () => (await open()).segmentCount,
@@ -222,6 +276,10 @@ function createSegmentFeed(ref: MediaRef, baseUrl: string, signal: AbortSignal):
         // store instead of the JS heap, beside the MSE buffer.
         pending = open().then(async (r) => new Blob([await r.readSegment(index, signal)]));
         segments.set(index, pending);
+        const asked = pending;
+        asked.catch(() => {
+          if (segments.get(index) === asked) segments.delete(index);
+        });
       }
       return pending;
     },
@@ -295,7 +353,10 @@ function openConsumer(
   function wanted(index: number): boolean {
     if (!paced || !pacing || index < pacing.headSegments) return true;
     if (playback.managed && managedSource.streaming === false) return false;
-    if (!element || element.paused) return false;
+    if (!element) return false;
+    // A seek past what is buffered on a PAUSED element is a demand too: without it the picture
+    // stays black until the reader presses play (`seeking` is true until the data is in).
+    if (element.paused && !(element as { seeking?: boolean }).seeking) return false;
     return bufferedAhead(element) < pacing.aheadSeconds;
   }
 
@@ -323,7 +384,7 @@ function openConsumer(
       await demand(i);
       const part = await feed.segment(i);
       if (closed) throw new DOMException('stream closed', 'AbortError');
-      await appendSegment(buffer, await part.arrayBuffer());
+      await appendSegmentEvicting(buffer, await part.arrayBuffer(), () => element, ref.mediaId);
       parts.push(part);
     }
     if (source.readyState === 'open') source.endOfStream();

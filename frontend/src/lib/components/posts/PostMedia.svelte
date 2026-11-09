@@ -469,6 +469,9 @@
         if (gone) return;
         const cause = mediaFailureCause(err);
         logMediaFailure('PostMedia.viewer', cause, media.mediaId, err);
+        // A viewer whose stream broke would sit on a frozen frame with nothing to retry: it closes,
+        // and the next tap forks again (a failed segment is not memoised by the feed).
+        lightboxOpen = false;
       });
     return () => {
       gone = true;

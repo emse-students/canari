@@ -13,7 +13,7 @@ import { flushMacrotask } from '../../test/flush';
 
 vi.mock('$lib/stores/auth', () => ({ getToken: () => Promise.resolve('token') }));
 
-const { chooseSegmentedPlayback, openSegmentedStream, FEED_STREAM_PACING } =
+const { chooseSegmentedPlayback, openSegmentedStream, FEED_STREAM_PACING, VIEWER_STREAM_PACING } =
   await import('./segmentedMediaStream');
 
 const WEBM = 'video/webm;codecs=vp9,opus';
@@ -395,6 +395,55 @@ describe('openSegmentedStream', () => {
     await settle();
     card.close();
     expect(await failed).toBe('AbortError');
+  });
+
+  it('a seek on a PAUSED element is a demand: the viewer fills the gap without a press on play', async () => {
+    const { ref, requests } = await servedVideo(8);
+    const viewer = openSegmentedStream(
+      ref('v'),
+      'https://media.test',
+      STREAM,
+      VIEWER_STREAM_PACING
+    );
+    const element = Object.assign(new FakeElement(), { seeking: false });
+    viewer.attach(element);
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    await settle();
+    expect(requests).toHaveLength(2);
+
+    // Paused and seeking past the buffer: segments come, still in order, until the data is in.
+    element.seeking = true;
+    element.dispatchEvent(new Event('seeking'));
+    await vi.waitFor(() => expect(requests.length).toBeGreaterThan(2));
+    viewer.close();
+  });
+
+  it('a full buffer is trimmed behind the playhead and the segment appended again, once', async () => {
+    const { ref } = await servedVideo(3);
+    const card = openSegmentedStream(ref('v'), 'https://media.test', STREAM, VIEWER_STREAM_PACING);
+    const buffer = FakeMediaSource.last!.buffer as FakeSourceBuffer & {
+      remove?: (a: number, b: number) => void;
+    };
+    const removed: Array<[number, number]> = [];
+    buffer.remove = (a, b) => removed.push([a, b]);
+    let appends = 0;
+    const real = buffer.appendBuffer.bind(buffer);
+    buffer.appendBuffer = (bytes: ArrayBuffer) => {
+      appends++;
+      if (appends === 2) throw new DOMException('full', 'QuotaExceededError');
+      real(bytes);
+    };
+    const element = new FakeElement();
+    element.currentTime = 42;
+    element.paused = false;
+    element.bufferedEnd = 5;
+    card.attach(element);
+    const blob = await card.done;
+    expect(removed).toEqual([[0, 32]]);
+    // Three segments, the second appended twice (the first refusal, then the retry).
+    expect(appends).toBe(4);
+    expect(blob.size).toBe(3 * SEGMENTED_MEDIA_SEGMENT_BYTES);
+    card.close();
   });
 
   it('stops for good when closed - the segment in flight is aborted and nothing more is asked', async () => {

@@ -549,7 +549,7 @@ if the card leaves the band. The gallery viewer (`galleryMode`, opened through `
 `PostMedia` and still opens its own paced stream: a second head fetch, not a whole-file wait. On an iPhone the pacing also honours
 `ManagedMediaSource.streaming` (`startstreaming`/`endstreaming`); a range the engine EVICTS is not
 fetched again (no time-to-segment index yet), and nothing is trimmed behind the playhead because a
-feed video loops from its own buffer. The decrypted pool is capped by BYTES (64 MiB,
+feed video loops from its own buffer - EXCEPT when the engine says the buffer is full (`QuotaExceededError`: the card and the viewer each hold one): the played part is removed (10 s kept) and the segment appended once more, which beats the `decode` error that ended the video; a segment or a reader open that FAILED is not memoised by the shared feed, so a second consumer asks again; a seek on a PAUSED fork is a demand (`seeking`), so the picture fills without a press on play. The decrypted pool is capped by BYTES (64 MiB,
 `BLOB_URL_POOL_MAX_BYTES`) as well as entries, SOFTLY: when a new blob takes it past the cap, the
 least recently used IDLE blob is revoked, a held one - the video playing - never, and a release
 alone evicts nothing, so a page torn down by a tab swipe keeps its grace. Pinned by `segmentedMediaStream.test.ts` (ten unplayed cards fetch 20
