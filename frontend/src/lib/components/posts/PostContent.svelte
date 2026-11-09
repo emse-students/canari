@@ -74,6 +74,9 @@
     return type === 'image' || type === 'video';
   }
 
+  /** Media follows the text, so the text hands over 8 px instead of the 12 it keeps before the action bar. */
+  const hasMedia = $derived(postMedia.length > 0 && Boolean(authToken));
+
   // Compacted on purpose: a document is skipped. The gallery's cells are drawn FROM this array, so
   // a cell's position IS its lightbox index - a document can never renumber the pictures after it.
   const lightboxMedia = $derived<PostMediaRef[]>(postMedia.filter(isLightboxable));
@@ -151,7 +154,7 @@
 </script>
 
 {#if post.markdown}
-  <div class="px-4 pb-3">
+  <div class="px-4 {hasMedia ? 'pb-2' : 'pb-3'}">
     <div class="text-text-main text-sm wrap-break-word">
       <PostMarkdown
         markdown={post.markdown}
@@ -175,7 +178,9 @@
 {/if}
 
 {#if postMedia.length > 0 && authToken}
-  <div class="mt-1 mb-1 w-full px-3">
+  <div
+    class="w-full overflow-hidden first:rounded-t-2xl last:rounded-b-2xl {post.markdown ? '' : 'mt-2'}"
+  >
     {#if reel}
       {@render singleMedia(postMedia[0], true)}
       {#if reelViewerOpen}
@@ -203,7 +208,7 @@
              `aspect-square`: its height then comes from its width and never from the picture inside
              it, which would otherwise stretch the rows it spans. -->
         <div
-          class="grid gap-0.5 overflow-hidden rounded-lg {gallery.shape === 'feature'
+          class="grid gap-0.5 overflow-hidden {gallery.shape === 'feature'
             ? 'grid-cols-3 grid-rows-2'
             : 'grid-cols-2'}"
           data-post-gallery={gallery.shape}
@@ -268,17 +273,15 @@
   {@const reserved = reservesAspectRatio(resolveMediaType(media))}
   {@const isVideo = resolveMediaType(media) === 'video'}
   <div use:nearViewport={watchNear(media)}>
-    <!-- A PICTURE IS INSET AND ROUNDED, NO LONGER FULL-BLEED (user, 2026-10-01, Mi 9T): run
-         edge to edge, its square corners cut across the card's 18 px ones. The block's `px-3` +
-         `rounded-lg` is the concentric pair - 18 px outside, 12 px in, 8 px left, which is also
-         the scale's card corner. The inset is PADDING on the block, never a margin on the box:
-         the box is sized by `aspect-ratio` under a `max-height`, so without `w-full` a tall
-         video shrinks its width to fit the ceiling instead of being cropped by it. A document
-         card adds `px-1`, which lands it on the post text's 16 px. -->
+    <!-- A PICTURE IS FULL-BLEED WITHIN THE CARD (owner, 2026-11-09; the inset and rounding of 2026-10-01
+         existed because edge-to-edge corners cut across the card's corner, which the block above now
+         clips to when it is the card's first or last block). The box is sized by `aspect-ratio` under
+         a `max-height`, so it keeps `w-full`: without it a tall video shrinks its width to fit the
+         ceiling instead of being cropped by it. A document card keeps `px-4`, the post text's inset. -->
     <div
       class="relative overflow-hidden {reserved
-        ? `w-full rounded-lg ${isVideo ? 'bg-cn-surface' : 'bg-black/5 dark:bg-white/5'}`
-        : 'w-full px-1 pb-1'}"
+        ? `w-full ${isVideo ? 'bg-cn-card' : 'bg-black/5 dark:bg-white/5'}`
+        : 'w-full px-4 pb-1'}"
       style={reserved ? mediaAspectStyle(media.width, media.height, videoFallback(asReel)) : ''}
       data-reel-card={asReel ? '' : undefined}
       data-video-box={isVideo ? '' : undefined}
@@ -295,7 +298,7 @@
       />
     </div>
     {#if media.caption && !asReel}
-      <p class="text-text-muted px-2 pt-2 pb-1 text-xs italic">{media.caption}</p>
+      <p class="text-text-muted px-4 pt-2 pb-1 text-xs italic">{media.caption}</p>
     {/if}
   </div>
 {/snippet}

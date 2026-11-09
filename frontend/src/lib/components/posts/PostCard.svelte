@@ -649,7 +649,7 @@
        and Facebook's dark feed separates by lightness alone. The border stays as a TRANSPARENT one so
        the box does not change size. -->
   <Card
-    class="group/card bg-cn-surface border border-black/5 p-0! shadow-md shadow-black/8 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-transparent dark:shadow-none"
+    class="group/card bg-cn-card border border-black/5 p-0! shadow-md shadow-black/8 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-transparent dark:shadow-none"
   >
     <!--
       THE MENU SHARES THE HEADER'S LINE; FIVE BUTTONS USED TO FLOAT OVER IT.

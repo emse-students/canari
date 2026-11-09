@@ -1748,20 +1748,27 @@ end per-page widths and paddings. The gain is 32px of text width; the cost is re
 what that component exists to prevent. Not a close call, and not to be re-opened without a reason
 better than "Facebook does it".
 
-**MEDIA IN THE CARD, MEASURED 2026-11-09 (design audit S3), AND WHY NOTHING WAS CHANGED.** Dev held no post with a photo or a video, so three fictional ones were posted from a test account (a 4:3 photo, a 3:4 photo, a 16:9 clip) and read on `dev.canari-emse.fr` at 390 x 844 (dark, headless Chrome, secondary to the app) against the Facebook feed read the same day on the Mi 9T (a photo edge to edge, the action bar directly under it):
+**MEDIA IN THE CARD IS FULL-BLEED, AND THE 2026-10-01 INSET IS REVISED (design audit S3, 2026-11-09).** Dev held no post with a photo or a video, so three fictional ones were posted from a test account (a 4:3 photo, a 3:4 photo, a 16:9 clip) and read on `dev.canari-emse.fr` at 390 x 844 (dark, headless Chrome, secondary to the app) against the Facebook feed read the same day on the Mi 9T (a photo edge to edge, the action bar directly under it). "Before" is the dev build; "after" is the same page with the change's geometry applied live to the DOM (the box's corner, the wrapper's padding and margin, the text's bottom padding), so the numbers are the arithmetic of the classes and the Mi 9T reading stays owed:
 
-| part | Canari | Facebook |
+| part | before (dev) | after | Facebook |
+| --- | --- | --- | --- |
+| media box width (card is 358) | 332, inset 13 | **356, the card's padding box** | 390, no inset (the page has no gutter there) |
+| media corners | 8 | **0** (the card's radius only if first or last block) | 0 |
+| text to media | 16 (`pb-3` + `mt-1`) | **8** (`pb-2`, no `mt`) | about 0-8 |
+| media to the action bar | 4 | **0** | 0 |
+| 4:3 / 3:4 / 16:9 box | 332 x 249 / 332 x 443 / 332 x 187 | **356 x 267 / 356 x 475 / 356 x 200** | 390 x 292 / 390 x 520 / - |
+
+**WHY THE DECISION OF 2026-10-01 IS REVISITED.** It inset and rounded the media because a full-bleed picture was cut across the card's 18 px corners. Two things changed: the owner chose Instagram and Facebook as the feed's references (media edge to edge, square corners), and the card's corner is now 12 px and the media is never the first or last block of a post card (a header above, the action bar below), so nothing is cut: the block clips to the card's radius (`first:rounded-t-2xl last:rounded-b-2xl`) only for a card that one day starts or ends with media. The inset was the cost of a corner the card no longer has. The `--media-max-height: 60svh` ceiling (506 at 844) is unchanged and still binds only a 9:16 clip, letterboxed not cropped; a multi-image grid and a document row keep their own shapes (the grid loses its rounding, a document row keeps the text's 16 px inset). `PostContent.mediaBleed.test.ts` pins the geometry.
+
+**THE DARK POST CARD HAS NO HAIRLINE, AND IS A STEP LIGHTER THAN THE PAGE (design audit S4, 2026-11-09).** The owner asked on 2026-10-01 that the dark card stand off more on the Mi 9T (10 % hairline to 15 %); the audit finds an outline is noise where the reference separates by tone. Revisited: `dark:border-white/15` is now `dark:border-transparent` (the box keeps its size), and the card's fill is a NEW token, `--cn-surface-card` (`bg-cn-card`): `--cn-surface` in light (unchanged), `#1c1c1c` in dark instead of `#121212`, the Facebook dark step (page `#18191a`, card `#242526`) transposed onto true black. Only the post card (and its video letterbox) takes it; every other panel keeps `--cn-surface`. Measured on the dev feed, 390 x 844, dark, computed fill of the card against the page (`#000000`):
+
+| | before | after |
 | --- | --- | --- |
-| media box width | 332 of 390 (85 %), inset 13 from the card edge | 390 (100 %), no inset |
-| media corners | 8 | 0 |
-| text to media | 16 (`pb-3` + `mt-1`) | about 0 |
-| media to the action bar | 4 | 0 |
-| 4:3 / 3:4 / 16:9 box | 332 x 249 / 332 x 443 / 332 x 187 | 390 x 292 / 390 x 520 / - |
-| card chrome around the media (header, line of text, bar) | 164 | 110 |
+| card fill | `#121212` (18) | `#1c1c1c` (28) |
+| step over the page | 18 / 255, WCAG contrast 1.12 | **28 / 255, contrast 1.23** |
+| outline | 2 px white at 15 % (read 53 against 18 at the edge) | none |
 
-The inset and the corner are NOT defects: they are the user's decision of 2026-10-01 on the Mi 9T (a full-bleed picture cut across the card's 18 px corners; `PostContent`'s `px-3` + `rounded-lg` is the concentric pair), and the 20 px gap beside the text is the same card padding Q1 of the audit narrows. The `--media-max-height: 60svh` ceiling (506 at 844) never binds a 3:4 picture at 332 wide (443); only a 9:16 clip meets it, and it is letterboxed, not cropped. Re-open the inset only with a reason better than the Facebook number.
-
-**THE DARK POST CARD HAS NO HAIRLINE (design audit S4, 2026-11-09).** `dark:border-white/15` sat on top of the 18-point lightness step between `--cn-surface` (#121212) and the true-black ground; Facebook's dark feed separates its cards by lightness alone. The border is now `dark:border-transparent` (the box keeps its size); light keeps its shadow. Measured on the dev feed: the card edge column read 53 / 53 / 18 before and 18 / 18 / 18 after, and the card still reads as a card on the OLED ground. This revises, for dark only, the 2026-10-01 "edge 10 % to 15 %" request - read it on the Mi 9T before the stable; `postCardDarkEdge.test.ts` keeps the hairline from coming back unnoticed. The other bordered cards (association, calendar, settings lists) still carry `--cn-border`; they move with the sweep section 9 asks for, not here.
+The dev build predates the token, so "after" is the fill applied to the live card; the PIN overlay of the shared test session covered the viewport in later screenshots, so the step is read from computed colours and the edge column read of the first pass, not from a second pixel capture. Read it on the Mi 9T before the stable: if 28 is still faint on that panel the token is the one number to raise, the hairline does not come back. `postCardDarkEdge.test.ts` keeps both from changing unnoticed. The other bordered cards (association, calendar, settings lists) still carry `--cn-border`; they move with the sweep section 9 asks for.
 
 **HOW THE FACEBOOK SIDE WAS TAKEN, for anyone repeating it.** `uiautomator` cannot dump a locked
 screen. MSYS rewrites an absolute POSIX path handed to `adb shell` (`/sdcard/x` becomes
