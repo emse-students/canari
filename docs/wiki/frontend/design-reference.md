@@ -237,6 +237,21 @@ stays).
 **`letter-spacing: normal` everywhere**, including the `0.5px` and the `0.04em`. **Weights 400 / 500
 / 600 / 700 only.**
 
+**Families and heading letter-spacing (owner, 2026-11-09, audit findings S1 and Q11).** Facebook and
+Messenger use ONE family throughout; Canari keeps two, the second as the exception.
+`--font-body` (Nunito, the `body` family) carries every `h2..h6`, section and list heading
+("Aujourd'hui", "Cette semaine", settings sections, sheet titles) at bold. `--font-display`
+(Fredoka) carries only the page title (`h1`), a NAME (association tile, community title, contact
+name in the chat header, profile name) via the `font-display` utility, and the wordmark
+(`font-brand`, `CanariBrand` and the login title). An `h1` that is really a tab or sheet title opts
+out with `font-body` - which works only because the `h1` rule is in `@layer base` (`appDisplayFaceLayer.test.ts`); unlayered it beat the utility. **No heading carries `tracking-tight`** (it was -0.5 to -0.7px on every `h1`
+and section title against the reference's `normal`); the wordmark keeps its own `tracking-wide`,
+it is identity. Eyebrow labels (`uppercase tracking-wide`) are not headings and are untouched.
+
+**Settings sections** (finding Q12): the breadcrumb already names the section, so the card does not
+say it again and carries no icon tile; the section heading stays as an `sr-only` `h2` for the
+outline and the screen reader, and the description and the rows use the full card width.
+
 **Spacing**: 2, 4, 6, 8, 12, 16, 24. The reference's 6px icon-button padding is adopted; Canari's
 current 10px and 32px are not in the reference and go.
 
@@ -571,8 +586,8 @@ moving between two tabs of the same app moves the text under the reader.
 
 Two findings the sweep produced that the eye could not:
 
-- **`font-brand` on the Feed's title is a no-op.** `app.css:319` already gives `h1..h6` the Fredoka
-  face, so the class made one page look deliberate and the other 33 look accidental while changing
+- **`font-brand` on the Feed's title is a no-op.** `app.css` gave `h1..h6` the Fredoka
+  face (since 2026-11-09 only `h1` and `font-display`), so the class made one page look deliberate and the other 33 look accidental while changing
   nothing. It is not set in the shared heading.
 - **Three routes nested a `<main>` inside the shell's own `<main id="main-content">`** - a landmark
   inside itself, so a screen reader had two "main" regions to choose between. The shared container is
@@ -1754,6 +1769,25 @@ screen. MSYS rewrites an absolute POSIX path handed to `adb shell` (`/sdcard/x` 
 Windows-style destination. A first dump caught only the composer, the stories bar and one header -
 the action bar was below the fold - so the feed has to be scrolled until a bar is fully on screen
 before the dump is worth anything.
+
+### The feed card brought to the reference (2026-11-09)
+
+The owner's *"C'est beaucoup moins beau que Facebook"* sent an audit of the app on both bench phones (Mi 9T at `font_scale` 0.85, dp = CSS px). The post card's numbers, before and after this change (the "after" column is the class arithmetic, to be read on the phones):
+
+| part | before | after | Facebook |
+| --- | --- | --- | --- |
+| post header | 68 | 60 (`py-2.5` + a 40 tile) | 64 |
+| header avatar | 32 | **40** (`h-10 w-10`, `PostAuthorAvatar fill`) | 40 |
+| text inset from the screen edge | 37 (16 + `px-5`) | **32** (16 + `px-4`, header, body, preview, action bar) | 12 (full-bleed, not copied) |
+| body line pitch | 20.7 (`leading-relaxed`) | 17 (the token's 15/20 at 0.85) | 17.8 |
+| body colour | `opacity-90` | full `--text-main` | full |
+| card gap | 24 (`mb-6`) | **12** (`mb-3`) | 2-8 |
+| card corner | 18 (`rounded-3xl`, the bubble tier) | **12** (`rounded-2xl`, the larger card) | 8 |
+| pinned marker | amber-500 uppercase sticker over the edge | muted `Pin` + word on the time line | a muted word |
+| time line | clock glyph + time | time only | time only |
+| band between top bar and the feed tabs (phone) | 32 (`--page-column-top` 24 + `pt-2`) | 8 (`-mt-6` on the sticky wrapper, below `md`) | 0 |
+
+`ui/Card` (also the calendar's panels) takes the 12 px corner with the post card. `PostCornerBadge` stays for the feed's "new" chip only.
 
 ## 23. The two bars - Instagram measured on the same phone, and the size that became the reference
 
@@ -3333,3 +3367,7 @@ No key fingerprint or technical id on a normal screen: the waiting device's own 
 - `CommentMedia compact` (the card's comment preview) is `max-w-24` (96 px), the sheet's stays full width.
 - M10 (corrected): the first change here, `[@media(hover:hover)_and_(pointer:fine)]:hover:`, was a NO-OP - Tailwind 4's `hover:` already compiles to `@media (hover: hover)`, and an iPhone WebView reports `hover: none`, so the hover ring was never sticky. The profile button has `outline: none` and no `:focus` ring, so the ring seen after a tap is `ring-amber-warn`: since the corner badge went, the avatar ring IS the slow-link hint (`slowLink.active`, `connectivity.slow`), which a navigation on a slow link turns on and which looks like a focus ring. Fixed at the cause by naming each state apart: the hover ring is `hover:ring-cn-yellow` (token, no raw amber), keyboard focus is `focus-visible:ring-cn-yellow` (never after a tap), and the slow-link ring stays the only amber-warn one. Not read on a device: the cause is by elimination of the CSS, an iPhone reading with `[CONNECTIVITY] slow link` in the log is owed.
 - `DeviceNoticeRow` pills: `min-h-11` (44 px hit area) on a `bg-cn-surface-alt` fill (a step in lightness; `cn-border` is 10 % alpha and read as no fill).
+
+## Small labels are sentence case, with no letter-spacing (2026-11-09, audit item M3)
+
+Section labels, badges, table headers and profile chips were set in capitals with `tracking-wide` to `tracking-widest` (132 `uppercase` and about 130 wide trackings across 76 components). Facebook and Messenger give such labels size, weight and colour and nothing else, so the sweep removed `uppercase` and `tracking-wide|wider|widest` from every one; `src/lib/styles/uppercaseTracking.test.ts` fails on a new use. Kept, by file and count in the test: the code-block language tag and the FR / EN locale switch (abbreviations read as codes). `first-letter:uppercase` (capitalising a French weekday) is not counted, `tracking-tight` on page titles belongs to the heading scale, and the PIN fields keep their arbitrary digit spacing. Locale strings were already written in sentence case, since CSS did the shouting.

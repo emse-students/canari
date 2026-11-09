@@ -174,16 +174,12 @@
             </h4>
             <div class="mt-1.5 flex flex-wrap items-center gap-2">
               {#if poll.multipleChoice}
-                <span
-                  class="text-text-muted text-2xs font-bold tracking-wider uppercase opacity-80"
-                >
+                <span class="text-text-muted text-2xs font-bold opacity-80">
                   {m.post_poll_multiple_choice_label()}
                 </span>
                 {#if poll.maxSelections}
                   <!-- A cap the voter cannot see is a button that stops working for no reason. -->
-                  <span
-                    class="text-text-muted text-2xs font-bold tracking-wider uppercase opacity-80"
-                  >
+                  <span class="text-text-muted text-2xs font-bold opacity-80">
                     {m.post_poll_max_selections_badge({ count: poll.maxSelections })}
                   </span>
                 {/if}
@@ -195,7 +191,7 @@
               {/if}
               {#if poll.anonymous}
                 <span
-                  class="text-text-muted text-2xs font-bold tracking-wider uppercase opacity-80"
+                  class="text-text-muted text-2xs font-bold opacity-80"
                   title={m.post_poll_anonymous_final_hint()}
                 >
                   {m.post_poll_anonymous_badge()}
@@ -382,7 +378,7 @@
     )}px;"
     role="tooltip"
   >
-    <p class="text-2xs mb-1 font-bold tracking-wide text-white/60 uppercase">
+    <p class="text-2xs mb-1 font-bold text-white/60">
       {m.post_poll_voters_label()}
     </p>
     {#if names}

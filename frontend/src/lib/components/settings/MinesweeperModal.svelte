@@ -1370,7 +1370,7 @@
               </p>
             {/if}
             {#if bans.length > 0}
-              <h3 class="text-text-muted text-2xs mt-4 mb-1.5 font-bold tracking-wider uppercase">
+              <h3 class="text-text-muted text-2xs mt-4 mb-1.5 font-bold">
                 {m.minesweeper_admin_bans_title()}
               </h3>
               <ul class="space-y-1.5">
@@ -1555,7 +1555,7 @@
     {#if stats.recent.length === 0}
       <p class="text-text-muted mt-4 text-sm">{m.minesweeper_stats_empty()}</p>
     {:else}
-      <h3 class="text-text-muted text-2xs mt-4 mb-1.5 font-bold tracking-wider uppercase">
+      <h3 class="text-text-muted text-2xs mt-4 mb-1.5 font-bold">
         {m.minesweeper_stats_recent()}
       </h3>
       <div

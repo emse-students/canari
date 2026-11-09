@@ -64,13 +64,13 @@ it('a queued (non-orphan) row still shows the spinner', () => {
 
 it('an own file card with no bubble behind it carries no amber-bubble ink', () => {
   render({ isOwn: true, onBubble: false });
-  const card = document.querySelector('.rounded-3xl.border') as HTMLElement;
+  const card = document.querySelector('.group\\/file') as HTMLElement;
   expect(card.className).not.toContain('text-cn-ink');
   expect(card.className).toContain('dark:bg-white/10');
 });
 
 it('an own file card on the amber bubble keeps its ink', () => {
   render({ isOwn: true, onBubble: true });
-  const card = document.querySelector('.rounded-3xl.border') as HTMLElement;
+  const card = document.querySelector('.group\\/file') as HTMLElement;
   expect(card.className).toContain('text-cn-ink');
 });

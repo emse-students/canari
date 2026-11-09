@@ -151,12 +151,12 @@
 </script>
 
 {#if post.markdown}
-  <div class="px-5 pb-3">
-    <div class="text-text-main text-sm leading-relaxed wrap-break-word">
+  <div class="px-4 pb-3">
+    <div class="text-text-main text-sm wrap-break-word">
       <PostMarkdown
         markdown={post.markdown}
         bind:element={markdownEl}
-        class="opacity-90 {clamped ? 'line-clamp-8' : ''}"
+        class={clamped ? 'line-clamp-8' : ''}
       />
       {#if !fullContent && (overflows || expanded)}
         <button
@@ -274,11 +274,11 @@
          the scale's card corner. The inset is PADDING on the block, never a margin on the box:
          the box is sized by `aspect-ratio` under a `max-height`, so without `w-full` a tall
          video shrinks its width to fit the ceiling instead of being cropped by it. A document
-         card adds `px-2`, which lands it on the post text's 20 px. -->
+         card adds `px-1`, which lands it on the post text's 16 px. -->
     <div
       class="relative overflow-hidden {reserved
         ? `w-full rounded-lg ${isVideo ? 'bg-cn-surface' : 'bg-black/5 dark:bg-white/5'}`
-        : 'w-full px-2 pb-1'}"
+        : 'w-full px-1 pb-1'}"
       style={reserved ? mediaAspectStyle(media.width, media.height, videoFallback(asReel)) : ''}
       data-reel-card={asReel ? '' : undefined}
       data-video-box={isVideo ? '' : undefined}
