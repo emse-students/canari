@@ -1,4 +1,4 @@
--- Migration 151: a step space may have NO longest booking (owner, 2026-11-09: a new space is
+-- Migration 153: a step space may have NO longest booking (owner, 2026-11-09: a new space is
 -- limitless until its organiser sets "Durée maximale d'une réservation" in the booking rules).
 --
 -- `booking_spaces."maxSteps"` NULL on a 'step' space now means "no limit". The CHECK

@@ -52,7 +52,7 @@ export const NUMBER_BOUNDS: Record<NumberField, { min: number; max: number }> = 
 /** What the editor binds. */
 export interface SettingsDraft extends Record<NumberField, string> {
   /**
-   * The longest single booking of a step space, in minutes; `''` = no limit (migration 151). Stored
+   * The longest single booking of a step space, in minutes; `''` = no limit (migration 153). Stored
    * as `maxSteps` = minutes / step, so it must be a multiple of the step.
    */
   maxMinutes: string;

@@ -533,7 +533,7 @@ wizard is ONE call and a space is never half made.
 - **Only what the steps asked is sent** (`wizardPayload`, `lib/bookings/wizard.ts`): everything
   else keeps the SERVER's default (no rule, answers kept 7 days). The defaults drawn are the
   mockup's: a working week 8h-20h, up to 2 h by 30 min, everybody, names hidden, listed.
-- **A new space has NO longest booking** (owner, 2026-11-09, migration 151): `create` stores
+- **A new space has NO longest booking** (owner, 2026-11-09, migration 153): `create` stores
   `maxSteps` NULL, and `booking_spaces_step_shape` accepts NULL on a step space (a non-NULL value is
   still >= 1). The organiser sets "Duree maximale d'une reservation" (minutes, a multiple of the step,
   at most 96 steps) in "Regles de reservation"; empty = no limit, and the live line under it says

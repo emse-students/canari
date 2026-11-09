@@ -359,7 +359,7 @@ export class BookingSpacesService {
       ...owner,
       slotMode: 'step',
       stepMinutes: 30,
-      // No longest booking until the organiser sets one (migration 151).
+      // No longest booking until the organiser sets one (migration 153).
       maxSteps: null,
       slotMinutes: null,
     });

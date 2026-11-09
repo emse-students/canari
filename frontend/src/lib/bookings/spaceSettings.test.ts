@@ -152,7 +152,7 @@ describe('timeZoneChoices', () => {
   });
 });
 
-describe('the longest single booking, in minutes, empty = no limit (migration 151)', () => {
+describe('the longest single booking, in minutes, empty = no limit (migration 153)', () => {
   const step = (over: Partial<ReturnType<typeof draftFromSpace>>) => ({
     ...draftFromSpace(SPACE),
     ...over,

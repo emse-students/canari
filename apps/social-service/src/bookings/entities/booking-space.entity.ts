@@ -111,7 +111,7 @@ export class BookingSpace {
   @Column({ type: 'int', nullable: true })
   stepMinutes: number | null;
 
-  /** At most this many consecutive steps in one booking; NULL on a step space = no limit (migration 151). */
+  /** At most this many consecutive steps in one booking; NULL on a step space = no limit (migration 153). */
   @Column({ type: 'int', nullable: true })
   maxSteps: number | null;
 
