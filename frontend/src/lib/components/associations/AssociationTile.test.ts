@@ -67,6 +67,7 @@ describe("CardTile's no-image case is a deliberate placeholder", () => {
 
   it('tints the fallback frame with the accent and leads the row when there is no badge', () => {
     expect(card).toContain('bg-(--tile-accent)/15');
-    expect(card).toMatch(/trimmedBadge \? 'ml-auto' : ''/);
+    // Only the fallback glyph leads a badgeless row; an uploaded logo keeps its side.
+    expect(card).toMatch(/trimmedBadge \|\| resolvedIconUrl \? 'ml-auto' : ''/);
   });
 });
