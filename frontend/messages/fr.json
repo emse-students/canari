@@ -786,6 +786,7 @@
   "report_user_dialog_title": "Signaler cette personne",
   "profile_report_btn": "Signaler",
   "profile_block_btn": "Bloquer",
+  "profile_more_actions": "Plus d'actions sur ce profil",
   "profile_unblock_btn": "Débloquer",
   "profile_block_confirm": "Bloquer {name} ? Vous ne vous trouverez plus dans la recherche, et aucun de vous deux ne pourra ouvrir une discussion avec l'autre ni l'inviter dans un groupe ou un salon. Vos conversations, groupes et communautés existants ne changent pas. La personne n'en est pas informée.",
   "profile_block_done": "Personne bloquée.",

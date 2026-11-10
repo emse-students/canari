@@ -29,7 +29,9 @@
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Log } from '$lib/utils/Log';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
+  import ProfileHeader from '$lib/components/profile/ProfileHeader.svelte';
+  import ProfileOverflowMenu from '$lib/components/profile/ProfileOverflowMenu.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import {
     GraduationCap,
     CalendarDays,
@@ -40,8 +42,6 @@
     UserCheck,
     UserRoundCheck,
     Users,
-    Flag,
-    Ban,
   } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -327,94 +327,65 @@
       </div>
     {:else if profile}
       <!--
-        Public profile header. SAME SHAPE AS `/profile`, DELIBERATELY - a column on a phone, a row
-        from `sm`, and the stacked column centred. Someone else's profile and your own are the same
-        screen with different buttons, and centring only one of them would have made them two.
+        Public profile header: `ProfileHeader` is the layout of this page and of `/profile` both
+        (someone else's profile and your own are the same screen with different actions). Report and
+        block are two separate gestures, deliberately - a block is private and stays between the two
+        people, a report asks a moderator to look - so they stay two entries of the "..." menu and
+        never one control: one control would have made every block a moderation event.
       -->
-      <div
-        class="animate-in fade-in slide-in-from-bottom-4 flex flex-col items-center gap-5 duration-500 sm:flex-row sm:items-center sm:gap-6"
-      >
-        <div
-          class="relative h-24 w-24 shrink-0 overflow-hidden rounded-full shadow-lg ring-4 ring-white/50 dark:ring-black/20"
-        >
-          <Avatar userId={profile.id} fill shape="circle" />
-        </div>
-
-        <div class="min-w-0 flex-1 text-center sm:text-left">
-          <h1 class="text-text-main mb-1 text-2xl font-bold sm:text-3xl">
-            {displayFallbackName}
-          </h1>
-          <ProfileMinesweeperBadge userId={profile.id} />
-          <ProfileChips {profile} />
-          <ProfileBirthdayLine userId={profile.id} />
-        </div>
-
-        <!-- Actions -->
-        <div class="mt-2 flex w-full shrink-0 flex-col gap-2 sm:mt-0 sm:w-auto sm:flex-row">
-          <button
+      {@const p = profile}
+      <ProfileHeader userId={p.id} name={displayFallbackName}>
+        {#snippet details()}
+          <ProfileMinesweeperBadge userId={p.id} />
+          <ProfileChips profile={p} />
+          <ProfileBirthdayLine userId={p.id} />
+        {/snippet}
+        {#snippet actions()}
+          <!-- ONE accent button: "Suivre" until the reader follows, then "Message". -->
+          <Button
+            variant={followStatus ? 'secondary' : 'primary'}
+            class="min-h-11 flex-1 sm:flex-none"
             onclick={handleFollowToggle}
             disabled={followLoading}
             data-follow-status={followStatus ?? 'none'}
-            class="focus-visible:ring-accent/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-60 {followStatus
-              ? 'text-text-main bg-cn-surface border border-black/10 hover:border-red-500/20 hover:bg-red-500/10 hover:text-red-600 dark:border-white/10 '
-              : 'bg-accent/10 border-accent/20 dark:text-accent-text hover:bg-accent/20 text-accent-text border'}"
           >
             {#if followStatus === 'accepted'}
-              <UserCheck size={18} strokeWidth={2.5} />
+              <UserCheck size={16} class="shrink-0" />
             {:else if followStatus === 'pending'}
-              <UserRoundCheck size={18} strokeWidth={2.5} />
+              <UserRoundCheck size={16} class="shrink-0" />
             {:else}
-              <UserPlus size={18} strokeWidth={2.5} />
+              <UserPlus size={16} class="shrink-0" />
             {/if}
-            {followLabel(followStatus)}
-          </button>
+            <span class="whitespace-nowrap">{followLabel(followStatus)}</span>
+          </Button>
+          <Button
+            variant={followStatus ? 'primary' : 'secondary'}
+            class="min-h-11 flex-1 sm:flex-none"
+            onclick={handleSendMessage}
+          >
+            <MessageCircle size={16} class="shrink-0" />
+            <span class="whitespace-nowrap">{m.profile_public_message_btn()}</span>
+          </Button>
           <!--
             THE BELL (engagement WP-3, L7): offered once the reader FOLLOWS this person (accepted) -
             a bell on someone whose posts the reader is not told of would be a second, silent follow.
+            A glyph of the level, opening the level menu: a select would not fit the row.
           -->
           {#if followStatus === 'accepted'}
-            <AccountBell kind="user" targetId={profile.id} />
+            <AccountBell kind="user" targetId={p.id} iconOnly />
           {/if}
-          <button
-            onclick={handleSendMessage}
-            class="bg-accent text-on-accent hover:bg-accent-hover shadow-accent/20 focus-visible:ring-accent/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95"
-          >
-            <MessageCircle size={18} strokeWidth={2.5} />
-            {m.profile_public_message_btn()}
-          </button>
-        </div>
-      </div>
+          <ProfileOverflowMenu
+            {blocked}
+            busy={blockLoading}
+            onReport={() => (reportOpen = true)}
+            onBlockToggle={handleBlockToggle}
+          />
+        {/snippet}
+      </ProfileHeader>
 
-      <!--
-      Reporting and blocking are two separate gestures, deliberately. A block is private and stays
-      between the two people; a report asks a moderator to look. Offering them as one control would
-      have made every block a moderation event, which is the opposite of the intent.
-    -->
-      <div class="flex flex-wrap items-center justify-end gap-2">
-        {#if actionMessage}
-          <span class="text-text-muted mr-auto text-xs font-medium">{actionMessage}</span>
-        {/if}
-        <button
-          type="button"
-          onclick={() => (reportOpen = true)}
-          class="text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-        >
-          <Flag size={14} strokeWidth={2.5} />
-          {m.profile_report_btn()}
-        </button>
-        <button
-          type="button"
-          onclick={handleBlockToggle}
-          disabled={blockLoading}
-          class="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50
- {blocked
-            ? 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5'
-            : 'text-red-600 hover:bg-red-500/10 dark:text-red-400'}"
-        >
-          <Ban size={14} strokeWidth={2.5} />
-          {blocked ? m.profile_unblock_btn() : m.profile_block_btn()}
-        </button>
-      </div>
+      {#if actionMessage}
+        <p class="text-text-muted text-xs font-medium" role="status">{actionMessage}</p>
+      {/if}
 
       {#if blocked}
         <p

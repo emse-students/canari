@@ -745,6 +745,7 @@
   "report_user_dialog_title": "Report this person",
   "profile_report_btn": "Report",
   "profile_block_btn": "Block",
+  "profile_more_actions": "More actions on this profile",
   "profile_unblock_btn": "Unblock",
   "profile_block_confirm": "Block {name}? You will no longer find each other in search, and neither of you will be able to start a conversation with the other or invite them to a group or a salon. Your existing conversations, groups and communities are unchanged. They are not told about it.",
   "profile_block_done": "Person blocked.",
