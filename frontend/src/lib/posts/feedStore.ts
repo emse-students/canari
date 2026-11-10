@@ -37,6 +37,12 @@ interface StoredFeedPage {
   epoch: string;
   key: string;
   posts: PostEntity[];
+  /**
+   * `'followed'` when a Pour toi page was stored in the older shape because the estate SAID it serves
+   * no ranked list. Durable, so a cold start (where the capability is unknown again) still knows the
+   * copy is that estate's own page and not an alpha.6 leftover. Absent otherwise.
+   */
+  shape?: 'followed';
 }
 
 /** What may decide whether the stored feed is readable now - every value the page already holds. */
@@ -194,7 +200,12 @@ export async function readStoredFeedPage(
     await deleteAllPages(storage, 'foreign or malformed page');
     return null;
   }
-  if (!rowsInListShape(params.feed, payload.posts as PostEntity[], serverRankedFeeds() !== false)) {
+  // A page marked `followed` is judged by what the estate is KNOWN to be: drawable while the
+  // capability is unknown (cold start) or false, deleted only once the estate is known ranked.
+  // An unmarked page keeps the rule of an unknown estate counting as ranked (alpha.6 leftovers).
+  const known = serverRankedFeeds();
+  const rankedEstate = payload.shape === 'followed' ? known === true : known !== false;
+  if (!rowsInListShape(params.feed, payload.posts as PostEntity[], rankedEstate)) {
     // Another list's rows kept under this key (alpha.6 stored the old `followed` rows as Pour toi,
     // on an estate that serves `foryou`): ONLY this page goes, the other tabs' copies are sound.
     console.warn(`[FEED-STORE] the stored ${key} page holds another list's rows - deleted`);
@@ -267,6 +278,11 @@ export async function writeStoredFeedPage(
     epoch: epoch.epoch,
     key,
     posts: posts.map(storableFeedRow),
+    ...(params.feed === 'foryou' &&
+    serverRankedFeeds() === false &&
+    !posts.every((r) => typeof r.feedAsOf === 'string')
+      ? { shape: 'followed' as const }
+      : {}),
   };
   await storage.saveFeedPage(key, page, access.deviceKeyB64);
 }
