@@ -62,7 +62,7 @@ export function pullToRefresh(node: HTMLElement, options: PullToRefreshOptions) 
     Object.assign(spinner.style, {
       width: '20px',
       height: '20px',
-      border: '2px solid #f59e0b',
+      border: '2px solid var(--accent-icon)',
       borderTopColor: 'transparent',
       borderRadius: '50%',
       animation: 'ptr-spin 0.6s linear infinite',

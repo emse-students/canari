@@ -471,7 +471,7 @@
   {#if loading}
     <div class="flex justify-center py-10">
       <div
-        class="border-cn-yellow h-7 w-7 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-7 w-7 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error}
@@ -491,8 +491,8 @@
  {stats.usedBytes / stats.quotaBytes > 0.9
             ? 'bg-red-500'
             : stats.usedBytes / stats.quotaBytes > 0.75
-              ? 'bg-amber-500'
-              : 'bg-cn-yellow'}"
+              ? 'bg-accent'
+              : 'bg-accent'}"
           style="width: {Math.min(100, (stats.usedBytes / stats.quotaBytes) * 100).toFixed(1)}%"
         ></div>
       </div>
@@ -551,7 +551,7 @@
             <div class="min-w-0 flex-1">
               <p class="text-text-main flex items-center gap-1.5 truncate text-sm font-semibold">
                 {#if isProtected(doc)}
-                  <Lock size={13} class="text-amber-warn shrink-0" />
+                  <Lock size={13} class="text-amber-warn-text shrink-0" />
                 {/if}
                 <span class="truncate">{doc.name}</span>
               </p>
@@ -600,7 +600,7 @@
               >
                 {#if downloadingId === doc.id}
                   <div
-                    class="border-cn-yellow h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
+                    class="border-accent-icon h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
                   ></div>
                 {:else}
                   <Download size={15} />
@@ -663,7 +663,7 @@
 >
   {#if pwPromptDoc}
     <h3 id="pw-prompt-title" class="text-text-main flex items-center gap-2 text-lg font-bold">
-      <Lock size={18} class="text-amber-warn" />
+      <Lock size={18} class="text-amber-warn-text" />
       {m.asso_doc_protected_title()}
     </h3>
     <p class="text-text-muted truncate text-sm">{pwPromptDoc.name}</p>

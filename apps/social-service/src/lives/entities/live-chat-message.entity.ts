@@ -55,4 +55,11 @@ export class LiveChatMessage {
 
   @Column({ type: 'timestamptz', nullable: true })
   hiddenAt: Date | null;
+
+  /**
+   * The accounts this line told of a mention (migration 154): the declared candidates narrowed to
+   * those who may see the live. The per-person window and the one-time fan-out read it.
+   */
+  @Column({ type: 'text', array: true, default: () => "'{}'" })
+  mentionedUserIds: string[];
 }

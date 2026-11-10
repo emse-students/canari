@@ -377,7 +377,7 @@
                around a 20 pt picture and a 23 pt name). -->
           <a
             href={authorHref}
-            class="pointer-events-auto flex min-h-11 min-w-0 items-center gap-2 rounded-full pr-2 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            class="focus-visible:ring-accent-icon pointer-events-auto flex min-h-11 min-w-0 items-center gap-2 rounded-full pr-2 outline-none focus-visible:ring-2"
             aria-label={postAuthorLinkLabel(post)}
             data-reel-author
           >
@@ -508,7 +508,7 @@
       {#if visibleIndex > 0}
         <button
           type="button"
-          class="ui-icon-button absolute top-1/2 left-3 z-30 hidden -translate-y-1/2 rounded-full bg-white/15 text-white outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 md:flex"
+          class="ui-icon-button focus-visible:ring-accent-icon absolute top-1/2 left-3 z-30 hidden -translate-y-1/2 rounded-full bg-white/15 text-white outline-none hover:bg-white/25 focus-visible:ring-2 md:flex"
           aria-label={m.reels_carousel_prev()}
           title={m.reels_carousel_prev()}
           onclick={() => onMediaStep('media-prev')}
@@ -520,7 +520,7 @@
       {#if visibleIndex < panes.length - 1}
         <button
           type="button"
-          class="ui-icon-button absolute top-1/2 right-16 z-30 hidden -translate-y-1/2 rounded-full bg-white/15 text-white outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 md:flex"
+          class="ui-icon-button focus-visible:ring-accent-icon absolute top-1/2 right-16 z-30 hidden -translate-y-1/2 rounded-full bg-white/15 text-white outline-none hover:bg-white/25 focus-visible:ring-2 md:flex"
           aria-label={m.reels_carousel_next()}
           title={m.reels_carousel_next()}
           onclick={() => onMediaStep('media-next')}

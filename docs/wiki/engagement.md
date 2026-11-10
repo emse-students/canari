@@ -6,7 +6,7 @@ design that answers each one, what each surface reveals and to whom, and the wor
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
-(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); everything else DESIGNED, not built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
+(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); WP-6 BUILT (the surfaces, 2026-11-09, [below](#wp-6---the-surfaces-built)); everything else DESIGNED, not built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
 
 Context it must respect, and which nothing here changes:
 
@@ -493,6 +493,43 @@ Paraglide from the first draft (`suggestions_common_count` "{count} en commun", 
 uses the existing calls (`askToFollow`, the association follow) and therefore the existing limits; on
 a person it becomes "Demandé", as on the profile.
 
+### WP-6 - the surfaces (BUILT)
+
+Built 2026-11-09 to the table above. The client is `follows/suggestions.svelte.ts` (the shared,
+per-reader state), `components/suggestions/` (`SuggestionCard`, `SuggestionCarousel`,
+`FeedSuggestions`, `FollowAlsoSuggestions`) and the two calls in `follows/api.ts`.
+
+- **ONE read per reader** of `me/suggestions` for the carousel, the empty Suivis feed and the banner,
+  asked when Mon espace or Suivis opens; a failed read is a `console.warn` and is not asked again in
+  the session (the carousel is a bonus: a retry on every mount would be traffic with no event behind
+  it). A per-reader cache, forgotten on sign-out and account switch; an answer for the previous
+  reader is dropped.
+- **ONE placement rule** (`feedSuggestionPlacement`), one place at a time, so the same cards are never
+  twice on one screen: only Mon espace and Suivis, only while a card is open; an EMPTY Suivis feed -
+  the carousel is the page body, under the existing empty message; fewer than 5 follows (L12, read
+  from the answer's `followingCount`: accepted person follows plus entity follows, one server count) -
+  the banner at the top; otherwise once, after the third post.
+- **The cards.** A person: photo, name, "N en commun" with up to three faces (only when N > 0 - never
+  "0 en commun"), the WP-2 `FollowChip` (a request turns it "Demande envoyée" and the card stays); an
+  entity: logo, name, the chip (it follows at once and the card leaves). An X on each, dismissing for
+  good (`POST me/suggestions/dismiss`) - optimistic, back with a toast on a refusal - and the row
+  disappears once no card is left OPEN (every one followed, requested or dismissed). No reason line
+  (L11).
+- **"Suivez aussi..."** after a follow or a request made on a person's profile, and after a follow on
+  an association's page: its own read, `limit=5&exclude=<that account>`, people only (L15), nothing
+  when empty or failed.
+- **Server**: `me/suggestions` also answers `followingCount` (`FOLLOWING_COUNT_SQL`), proven in
+  `follows/suggestions.integration.spec.ts`.
+- **Proof**: `follows/suggestions.svelte.test.ts` (the placement rule, each branch, and the
+  interleaving), `components/suggestions/SuggestionCarousel.svelte.test.ts` (cards, count and faces,
+  no "0 en commun", the X and its refused rollback, a request keeping its card, a followed entity
+  leaving, the row hiding when nothing is open; "Suivez aussi..." asking `limit 5` minus the followed
+  account, people only, nothing on a failed read).
+- **Owed on the phones** (Mi 9T and iPhone 12, after a pre-release on dev): a fresh account sees the
+  banner; Mon espace shows the row after the third post; an empty Suivis shows it as the body; a
+  follow request from a card reads "Demande envoyée"; an X removes the card and it does not come
+  back after a reload; "Suivez aussi..." after a follow on a profile.
+
 ## The bell - data model, and how it combines with categories and mutes
 
 ```sql
@@ -881,7 +918,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-3** (BUILT, [below](#wp-3---the-bell-built)) | The bell (decisions 3d, 5a, 10): `account_bells` (`lives` and `none` only, L3), the HELD copy of `association_push_mutes`, the old mute endpoints writing `account_bells` (L8), a follow deleting the row in the creating statement, the seam in `fanOutPush`, the profile control, the association mute UI moved onto it | `follows/association-push-mutes.service.ts` | integration spec of the level table above; a new follow resets a reduced bell and a RETRIED follow does not; following a muted association again unmutes it; a mute set through the old endpoint after the copy is honoured; the existing mute specs still green against the new store |
 | **WP-4** (BUILT, [below](#wp-4---openings-for-followers-built)) | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; never capped | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
 | **WP-5** (BUILT, [above](#wp-5---the-suggestion-query-built)) | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
-| **WP-6** | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
+| **WP-6** (BUILT, [above](#wp-6---the-surfaces-built)) | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
 | **WP-7** | Suggested posts (decision 8), through the feed's own block filter (`PostsService.blockedAuthorSql`) as every feed row | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door, and never by an author blocked either way |
 | **WP-8** | The daily cap (decisions 6 and 11): `engagement_push_days`, `ENGAGEMENT_PUSH_TYPES` holding ONLY the new kinds, the statement in `fanOutPush` | `posts/post-notifications.service.ts` | [R2](#r2---the-cap-check) read and written back; integration spec: the 6th capped push of a day is a bell row with no push, two concurrent fan-outs never exceed 5, and an association post, a live, an opening and a mention on the same day are never counted |
 | **WP-9** | Friends' activity (5b) with the ledger `post_engagement_notices` and the activity setting (decision 9: `user_activity_settings`, no row = ON, the Settings switch) | `posts/comment-write.ts`, the reaction write | integration spec, one case per rule of the disclosure list, rule 0 included, and for rule 8 one case EACH: an `anonymous` comment, a comment written as an association, and a `removedByModeration` comment, none of which notifies |
@@ -959,6 +996,14 @@ asker untouched), `follow-requests.controller.spec.ts` (cap, typed 400s), and th
 reconnect, an account switch mid-flight, the withdraw races, double taps, member and archived
 hidden, the aria-label of a pending request naming the person and containing the visible text, with
 a nameless fallback).
+
+**"Suivre en retour" (owner's request, 2026-11-09).** On `/notifications/follow-requests`, an accepted
+request keeps its row and the Accepter/Refuser pair becomes `FollowBackButton`, which reuses this
+ledger (`personChipState`, `tapPerson`: a REQUEST, every personal account being private). Its states
+are `followBackView` (`followButton.ts`): offered when the reader has no row; "Demande envoyee" (a tap
+withdraws) or "Abonne" only once the offer was drawn; nothing for a pair already pending or following
+on arrival, a blocked account, or the reader. No server change. The notification rows add nothing:
+`follow_request` leads to this inbox, and `follow_accepted` means the reader already follows.
 
 ### Which migrations are held
 

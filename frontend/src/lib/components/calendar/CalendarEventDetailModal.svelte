@@ -238,7 +238,7 @@
       {#if event.linkedFormId}
         <a
           href="/forms/{encodeURIComponent(event.linkedFormId)}"
-          class="border-cn-border bg-cn-bg text-text-main hover:border-cn-yellow/50 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
+          class="border-cn-border bg-cn-bg text-text-main hover:border-accent/50 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
         >
           <ClipboardList size={14} />
           {m.calendar_event_linked_form()}
@@ -248,7 +248,7 @@
       {#if linkedPost}
         <a
           href="/posts/{encodeURIComponent(linkedPost.id)}"
-          class="border-cn-border bg-cn-bg text-text-main hover:border-cn-yellow/50 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
+          class="border-cn-border bg-cn-bg text-text-main hover:border-accent/50 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors"
         >
           <Newspaper size={14} />
           {m.calendar_event_linked_post()}

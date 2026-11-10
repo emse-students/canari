@@ -26,8 +26,8 @@
 
   const box =
     'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors';
-  const on = 'border-cn-yellow bg-cn-yellow/20 text-cn-dark';
-  const half = 'border-cn-yellow/60 text-cn-dark';
+  const on = 'border-accent-icon bg-accent/20 text-cn-dark';
+  const half = 'border-accent/60 text-cn-dark';
   const off = 'border-cn-border text-transparent';
 </script>
 

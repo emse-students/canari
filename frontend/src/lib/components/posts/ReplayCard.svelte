@@ -21,6 +21,7 @@
   import type { loadLivePoster } from '$lib/live/livePosterView';
   import { postAuthorName } from '$lib/posts/postAuthorName';
   import { m } from '$lib/paraglide/messages';
+  import Button from '$lib/components/ui/Button.svelte';
 
   interface Props {
     post: PostEntity;
@@ -46,9 +47,10 @@
 </script>
 
 <div class="w-full px-4 pb-3 {post.markdown ? '' : 'pt-2'}">
-  <button
+  <Button
     type="button"
-    class="relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-2xl bg-black text-white outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+    variant="ghost"
+    class="focus-visible:ring-accent relative aspect-video h-auto min-h-0 w-full overflow-hidden rounded-2xl border-0 bg-black p-0 text-white outline-none hover:bg-black hover:text-white focus-visible:ring-2"
     aria-label={m.replay_card_open()}
     onclick={() => {
       console.debug(`[LIVE_REPLAY] card ${post.id} opened`);
@@ -94,5 +96,5 @@
         data-replay-card-duration>{duration}</span
       >
     {/if}
-  </button>
+  </Button>
 </div>

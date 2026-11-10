@@ -366,6 +366,12 @@ export interface ReelLimits {
    * it to what one take may carry on this client.
    */
   chatReelMaxTargets?: number;
+  /**
+   * The widest frame a reel may have, `width / height` after rotation (4:5, owner 2026-11-09: every
+   * VERTICAL video of 90 s or less is a CanaReel), served since that change and absent from an older
+   * server - read through `reelRuleOf` (`reels/reelRule.ts`), the one classifier.
+   */
+  maxAspectRatio?: number;
   retentionDays: number;
   warningWindowDays: number;
 }

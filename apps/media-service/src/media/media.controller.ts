@@ -703,6 +703,26 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
+  // POST /media/internal/owned - which of these objects did this member upload (read-only)
+  // ---------------------------------------------------------------------------
+  /**
+   * Sole consumer: social-service, before a comment or a post stores the ids it cites. Changes
+   * nothing - the rule is {@link MediaService.ownedBy}.
+   */
+  @Post('internal/owned')
+  owned(
+    @Body() body: { mediaIds?: unknown; ownerId?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): { owned: string[]; refused: string[] } {
+    assertInternalSecret(internalSecret);
+    const ids = this.boundedIds(body?.mediaIds, 'mediaIds');
+    if (typeof body?.ownerId !== 'string' || body.ownerId.length === 0) {
+      throw new BadRequestException('ownerId must be a non-empty string');
+    }
+    return this.mediaService.ownedBy(ids, body.ownerId);
+  }
+
+  // ---------------------------------------------------------------------------
   // POST /media/internal/reel-claim - a reel's blob is claimed for its author
   // ---------------------------------------------------------------------------
   /**

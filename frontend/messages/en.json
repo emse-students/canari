@@ -745,6 +745,7 @@
   "report_user_dialog_title": "Report this person",
   "profile_report_btn": "Report",
   "profile_block_btn": "Block",
+  "profile_more_actions": "More actions on this profile",
   "profile_unblock_btn": "Unblock",
   "profile_block_confirm": "Block {name}? You will no longer find each other in search, and neither of you will be able to start a conversation with the other or invite them to a group or a salon. Your existing conversations, groups and communities are unchanged. They are not told about it.",
   "profile_block_done": "Person blocked.",
@@ -875,6 +876,7 @@
   "post_comments_sheet_title": "Comments",
   "post_comment_load_older_label": "View older comments",
   "post_comment_as_association_caption": "Comment on behalf of {name}",
+  "post_comment_add_image_label": "Add an image",
   "post_comment_media_error": "Could not attach that media to the comment.",
   "post_media_expired_label": "Media expired.",
   "post_image_alt": "Post image",
@@ -4481,6 +4483,13 @@
   "link_label_generic": "Link",
   "link_preview_open_in_canari": "Open in Canari",
   "link_preview_unavailable": "Content unavailable or access restricted",
+  "shared_post_unavailable_title": "Post unavailable",
+  "shared_post_unavailable_hint": "It was deleted, has expired or is not visible to you.",
+  "shared_post_reel_chip": "CanaReel",
+  "shared_post_open_label": "Open the post by {author}",
+  "shared_post_open_reel_label": "Open the CanaReel by {author}",
+  "shared_post_failed_hint": "Preview not loaded. Tap to open the post.",
+  "shared_post_no_text": "Post without text",
   "link_preview_profile_member": "Canari member",
   "link_preview_join_community": "Join the community",
   "link_preview_join_conversation": "Join the conversation",
@@ -4710,6 +4719,8 @@
   "reels_camera_retry": "Try again",
   "reels_camera_close": "Close the camera",
   "reels_camera_switch": "Switch camera",
+  "screen_rotate_landscape": "Rotate to landscape",
+  "screen_rotate_portrait": "Back to portrait",
   "reels_camera_torch_on": "Turn the flash on",
   "reels_camera_torch_off": "Turn the flash off",
   "reels_shutter_capture": "Photo (tap) or video (hold)",
@@ -4720,6 +4731,7 @@
   "reels_capture_photo_error": "The photo failed. Try again.",
   "reels_capture_not_a_video": "This file is not a video.",
   "reels_capture_too_long": "A CanaReel lasts {seconds} seconds at most.",
+  "reels_capture_not_vertical": "A CanaReel is a vertical video. Publish it as a post, from \"New post\".",
   "reels_capture_take_refused": "This take could not be kept. Try again.",
   "reels_capture_pick_before_limits": "The longest a CanaReel may be has not been read yet. Try again in a moment.",
   "reels_capture_limits_error": "Canari cannot be reached - tap to try again",
@@ -4838,9 +4850,28 @@
   "reels_publish_uploading": "Uploading...",
   "reels_publish_done": "CanaReel published",
   "reels_publish_error": "The CanaReel could not be published. Try again.",
-  "reels_publish_expiry_note": "Visible for {days} days, then deleted automatically. You can save it to your gallery before then.",
-  "reels_publish_from_composer_notice": "CanaReel: deleted after {days} days. To keep the video, keep it as a post.",
-  "reels_publish_keep_as_post": "Keep as a post",
+  "reels_publish_expiry_note": "Visible for {lifetime}, then deleted automatically. You can save it to your gallery before then.",
+  "reels_lifetime_years": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} year",
+        "countPlural=other": "{count} years"
+      }
+    }
+  ],
+  "reels_lifetime_days": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} day",
+        "countPlural=other": "{count} days"
+      }
+    }
+  ],
+  "reels_publish_from_composer_notice": "A vertical video of {seconds} seconds or less is a CanaReel: deleted after {lifetime}.",
   "reels_viewer_label": "CanaReels",
   "reels_viewer_close": "Close CanaReels",
   "reels_viewer_prev": "Previous CanaReel",
@@ -5865,6 +5896,8 @@
   "follow_requests_accept": "Accept",
   "follow_requests_refuse": "Refuse",
   "follow_requests_accepted": "Request accepted",
+  "follow_back_btn": "Follow back",
+  "follow_back_named": "Follow {name} back",
   "follow_requests_refused": "Request refused",
   "follow_requests_gone": "This request was already answered or withdrawn.",
   "follow_requests_answer_error": "Could not save the answer. Try again.",
@@ -6124,6 +6157,14 @@
   "follow_chip_follow_named": "Follow {name}",
   "follow_chip_withdraw_named": "Request sent - withdraw the follow request to {name}",
   "follow_chip_withdraw": "Request sent - withdraw the follow request",
+  "suggestions_title": "Suggested for you",
+  "suggestions_common_count": "{count} in common",
+  "suggestions_dismiss_named": "Hide the suggestion {name}",
+  "suggestions_dismiss_failed": "The suggestion could not be hidden.",
+  "suggestions_also_title": "You might also follow...",
+  "suggestions_onboarding_title": "Follow accounts to fill your feed",
+  "suggestions_onboarding_hint": "People and associations you may know.",
+  "suggestions_empty_followed_hint": "Follow people and associations to see their posts here.",
   "chat_role_names_title": "Role names",
   "chat_role_names_description": "Give each role the name your community uses. Only the name changes: what each role may do stays the same. Leave it empty to use the default name.",
   "chat_role_name_input_label": "Name of the {role} role",

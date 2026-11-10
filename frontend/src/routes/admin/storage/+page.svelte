@@ -117,7 +117,7 @@
       type="button"
       onclick={() => void load()}
       disabled={loading}
-      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-bold transition-all disabled:opacity-50"
+      class="border-cn-border text-text-main hover:border-accent/40 inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-bold transition-all disabled:opacity-50"
     >
       <RefreshCw size={14} class={loading ? 'animate-spin' : ''} />
       {m.common_refresh_button()}
@@ -127,7 +127,7 @@
   {#if loading && !usage}
     <div class="flex justify-center py-16">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error}
@@ -142,7 +142,7 @@
       <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-5">
         <div class="flex items-center gap-2.5">
           <span
-            class="bg-cn-yellow/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
+            class="bg-accent/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
           >
             <HardDrive size={18} />
           </span>
@@ -150,7 +150,7 @@
         </div>
         {#if usage.diskTotalBytes !== null && usage.diskUsedBytes !== null}
           <div class="bg-cn-border h-2 overflow-hidden rounded-full">
-            <div class="bg-cn-yellow h-full" style="width: {diskUsedPercent}%"></div>
+            <div class="bg-accent h-full" style="width: {diskUsedPercent}%"></div>
           </div>
           <p class="text-text-muted text-sm">
             {m.admin_storage_disk_used({
@@ -167,7 +167,7 @@
       <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-5">
         <div class="flex items-center gap-2.5">
           <span
-            class="bg-cn-yellow/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
+            class="bg-accent/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
           >
             <Database size={18} />
           </span>
@@ -185,7 +185,7 @@
       <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-5">
         <div class="flex items-center gap-2.5">
           <span
-            class="bg-cn-yellow/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
+            class="bg-accent/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
           >
             <HardDrive size={18} />
           </span>
@@ -207,7 +207,7 @@
       >
         <div class="flex items-center gap-2.5">
           <span
-            class="bg-cn-yellow/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
+            class="bg-accent/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
           >
             <Server size={18} />
           </span>
@@ -235,7 +235,7 @@
                     {formatStorageBytes(bar.bytes)}
                   </span>
                   <div
-                    class="bg-cn-yellow/70 w-full rounded-t-lg"
+                    class="bg-accent/70 w-full rounded-t-lg"
                     style="height: {bar.percent}%"
                   ></div>
                   <span class="text-text-muted text-2xs text-center">
@@ -412,7 +412,7 @@
       >
         <div class="flex items-center gap-2.5">
           <span
-            class="bg-cn-yellow/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
+            class="bg-accent/10 text-cn-dark flex h-9 w-9 items-center justify-center rounded-xl"
           >
             <Database size={18} />
           </span>
@@ -446,11 +446,11 @@
                   <!-- Pale fill: what the table occupies. Solid fill: what is actually in it. -->
                   <div class="bg-cn-border/40 relative h-1.5 w-full rounded-full">
                     <div
-                      class="bg-cn-yellow/30 absolute inset-y-0 left-0 rounded-full"
+                      class="bg-accent/30 absolute inset-y-0 left-0 rounded-full"
                       style="width: {row.percent}%"
                     ></div>
                     <div
-                      class="bg-cn-yellow/80 absolute inset-y-0 left-0 rounded-full"
+                      class="bg-accent/80 absolute inset-y-0 left-0 rounded-full"
                       style="width: {row.livePercent}%"
                     ></div>
                   </div>
@@ -494,7 +494,7 @@
                   <div class="flex h-full flex-1 flex-col items-center justify-end gap-1.5">
                     <span class="text-text-main text-2xs font-bold">{bar.rows}</span>
                     <div
-                      class="bg-cn-yellow/70 w-full rounded-t-lg"
+                      class="bg-accent/70 w-full rounded-t-lg"
                       style="height: {bar.percent}%"
                     ></div>
                     <span class="text-text-muted text-2xs text-center">

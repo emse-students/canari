@@ -49,8 +49,8 @@
       data-template={tpl.key}
       aria-pressed={selected === undefined ? undefined : lit}
       onclick={() => onPick(tpl.key)}
-      class="hover:border-cn-yellow/60 flex min-h-11 flex-col items-stretch gap-2 rounded-xl border p-3 text-left transition-colors {lit
-        ? 'border-cn-yellow bg-cn-yellow/10'
+      class="hover:border-accent/60 flex min-h-11 flex-col items-stretch gap-2 rounded-xl border p-3 text-left transition-colors {lit
+        ? 'border-accent-icon bg-accent/10'
         : 'border-cn-border bg-cn-surface'}"
     >
       <span class="grid h-9 grid-cols-7 gap-0.5" aria-hidden="true">
@@ -58,7 +58,7 @@
           <span class="bg-control-fill relative overflow-hidden rounded-xs">
             {#each templatePreview(tpl.key).filter((b) => b.day === day) as bar (bar.from)}
               <span
-                class="bg-cn-yellow absolute inset-x-0"
+                class="bg-accent absolute inset-x-0"
                 style:top="{bar.from * 100}%"
                 style:height="{(bar.to - bar.from) * 100}%"
               ></span>

@@ -157,7 +157,7 @@
     <label class="mx-auto flex h-11 w-11 cursor-pointer items-center justify-center">
       <input
         type="checkbox"
-        class="accent-cn-yellow h-5 w-5"
+        class="accent-accent h-5 w-5"
         checked={qty > 0}
         aria-label={name}
         {disabled}
@@ -181,7 +181,7 @@
       role="group"
       aria-label={name}
       data-cell-stepper
-      class="border-cn-yellow bg-cn-yellow/20 text-text-main mx-auto flex w-fit items-center rounded-full border"
+      class="border-accent-icon bg-accent/20 text-text-main mx-auto flex w-fit items-center rounded-full border"
     >
       <button
         type="button"
@@ -226,7 +226,7 @@
       data-cell-pill
       class="flex h-11 min-w-12 items-center justify-center gap-1.5 rounded-full border px-3 font-bold transition-colors disabled:opacity-50 {qty >
       0
-        ? 'border-cn-yellow bg-cn-yellow/20 text-text-main'
+        ? 'border-accent-icon bg-accent/20 text-text-main'
         : 'border-cn-border text-text-main bg-(--cn-surface)'}"
       aria-label={checkbox ? name : m.form_grid_add_cell({ name })}
       aria-pressed={checkbox ? qty > 0 : undefined}
@@ -244,7 +244,7 @@
       role="group"
       aria-label={name}
       data-cell-stepper
-      class="border-cn-yellow bg-cn-yellow/20 text-text-main flex h-11 items-center rounded-full border"
+      class="border-accent-icon bg-accent/20 text-text-main flex h-11 items-center rounded-full border"
     >
       <button
         type="button"

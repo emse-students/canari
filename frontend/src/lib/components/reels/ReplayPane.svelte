@@ -20,6 +20,7 @@
    */
   import { untrack } from 'svelte';
   import { CircleAlert, History, LoaderCircle } from '@lucide/svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import VideoPlayer from '$lib/components/shared/VideoPlayer.svelte';
   import type { PostEntity } from '$lib/posts/api';
   import {
@@ -238,14 +239,9 @@
     >
       <CircleAlert size={26} strokeWidth={2} class="opacity-70" />
       <span class="text-sm font-semibold">{m.replay_unavailable()}</span>
-      <button
-        type="button"
-        class="rounded-full bg-white/15 px-4 py-2 text-sm font-semibold text-white outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500"
-        onclick={() => player?.retry()}
-        data-replay-retry
-      >
+      <Button type="button" variant="secondary" onclick={() => player?.retry()} data-replay-retry>
         {m.replay_retry()}
-      </button>
+      </Button>
     </div>
   {/if}
 

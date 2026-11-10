@@ -145,7 +145,7 @@
       aria-label={m.common_loading()}
     >
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if !loading && items.length === 0 && !error}
@@ -172,7 +172,7 @@
                     )}
                     {#if underWay}
                       <span
-                        class="bg-cn-yellow/25 text-text-main ms-1 rounded-full px-2 py-0.5 text-xs font-bold"
+                        class="bg-accent/25 text-text-main ms-1 rounded-full px-2 py-0.5 text-xs font-bold"
                       >
                         {m.bookings_upcoming_under_way()}
                       </span>
@@ -240,7 +240,7 @@
                         confirming = null;
                         message = '';
                       }}
-                      class="border-cn-border text-text-main hover:border-cn-yellow/40 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-40"
+                      class="border-cn-border text-text-main hover:border-accent/40 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-40"
                     >
                       {m.bookings_cancel_keep()}
                     </button>
@@ -266,7 +266,7 @@
           type="button"
           disabled={loading}
           onclick={() => void more()}
-          class="border-cn-border text-text-main hover:border-cn-yellow/40 rounded-lg border px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
+          class="border-cn-border text-text-main hover:border-accent/40 rounded-lg border px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
         >
           {m.bookings_upcoming_more()}
         </button>

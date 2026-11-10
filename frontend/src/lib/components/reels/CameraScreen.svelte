@@ -36,6 +36,10 @@
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
   import { previewDoubleTap } from '$lib/reels/previewDoubleTap';
+  import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
+  import { useScreenOrientation, viewportOrientation } from '$lib/mobile/screenOrientation.svelte';
+  import { sideSafePadding } from '$lib/utils/sideSafeArea';
+  import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
   import ReelFrame from './ReelFrame.svelte';
 
   interface Props {
@@ -117,6 +121,24 @@
   }: Props = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
+
+  /**
+   * THE CAMERA TURNS WITH THE PHONE (owner, 2026-11-09; screen-orientation.md): auto under the
+   * rotation lock while mounted, the rotate button for landscape with the lock on, and portrait again
+   * at unmount. A take FREEZES the orientation it started in: `FramedStream` records through a canvas
+   * of one size, and a turn mid-take would draw a landscape crop into a portrait canvas.
+   */
+  const orientation = useScreenOrientation('camera');
+  $effect(() => orientation.hold(recording));
+
+  /**
+   * The frame follows the screen: the reel's 9:16 upright, its 16:9 turned. Every capture is the
+   * preview's crop (`previewBox`), so a photo or a take made turned is a 16:9 file, and the review,
+   * the editor and the reel slide take the MEDIA's own ratio (a landscape reel is letterboxed).
+   */
+  const frameRatio = $derived(
+    viewportOrientation.landscape ? 1 / REEL_FRAME_RATIO : REEL_FRAME_RATIO
+  );
 
   /**
    * The element holds a decoded frame of the CURRENT stream. `live` only says a track is in hand: from
@@ -359,7 +381,7 @@
        `object-fit: cover` - any style change healed it, a fresh element never had it (iPhone 12,
        2026-10-02, reproduced 5 of 5 on a home-and-return, 0 of 40 without). One element per stream
        is the state the engine gets right. -->
-  <ReelFrame>
+  <ReelFrame ratio={frameRatio}>
     {#key session.stream}
       <video
         bind:this={video}
@@ -404,7 +426,7 @@
     <div class="absolute inset-0 flex items-center justify-center">
       <button
         type="button"
-        class="inline-flex flex-col items-center gap-3 rounded-lg px-6 py-4 text-sm font-semibold text-white/90 outline-none hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="focus-visible:ring-accent-icon inline-flex flex-col items-center gap-3 rounded-lg px-6 py-4 text-sm font-semibold text-white/90 outline-none hover:bg-white/10 focus-visible:ring-2"
         data-camera-reopen
         onclick={reopen}
       >
@@ -425,7 +447,7 @@
       <p class="text-sm text-white/70">{text.body()}</p>
       <button
         type="button"
-        class="mt-2 inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="focus-visible:ring-accent-icon mt-2 inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2"
         onclick={() => void session.start()}
       >
         <RefreshCcw size={16} strokeWidth={2.5} />
@@ -434,7 +456,7 @@
       {#if session.fault === 'denied' && canOpenSettings}
         <button
           type="button"
-          class="text-cn-ink inline-flex items-center gap-2 rounded-full bg-amber-500 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white"
+          class="text-on-accent bg-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white"
           onclick={() => void openSettings()}
           data-camera-open-settings
         >
@@ -453,13 +475,14 @@
        not leave the tab - the shutter and Back are what end it. -->
   <div
     class="absolute inset-x-0 top-0 flex items-start justify-between p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
+    style={sideSafePadding('0.75rem')}
   >
     {#if recording}
       <span></span>
     {:else}
       <button
         type="button"
-        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
         aria-label={m.reels_camera_close()}
         title={m.reels_camera_close()}
         onclick={close}
@@ -473,7 +496,7 @@
         {#if session.canSwitch}
           <button
             type="button"
-            class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+            class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 disabled:opacity-40"
             aria-label={m.reels_camera_switch()}
             title={m.reels_camera_switch()}
             disabled={session.flipping || !flipAllowed}
@@ -485,18 +508,22 @@
         {#if session.torchAvailable}
           <button
             type="button"
-            class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+            class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
             aria-label={session.torchOn ? m.reels_camera_torch_off() : m.reels_camera_torch_on()}
             aria-pressed={session.torchOn}
             title={session.torchOn ? m.reels_camera_torch_off() : m.reels_camera_torch_on()}
             onclick={() => void session.toggleTorch()}
           >
             {#if session.torchOn}
-              <Zap size={22} strokeWidth={2.25} class="text-amber-400" />
+              <Zap size={22} strokeWidth={2.25} class="text-accent-text" />
             {:else}
               <ZapOff size={22} strokeWidth={2.25} />
             {/if}
           </button>
+        {/if}
+        {#if orientation.canRotate}
+          <!-- Stands down during a take: the take holds the orientation it started in. -->
+          <RotateButton onrotate={orientation.rotate} disabled={recording} />
         {/if}
       </div>
     {/if}
@@ -507,6 +534,7 @@
          down here for the whole take. -->
     <div
       class="absolute inset-x-0 bottom-0 pb-[calc(var(--safe-area-inset-bottom,0px)+1.5rem)]"
+      style={sideSafePadding()}
       data-no-double-tap
     >
       {@render controls()}

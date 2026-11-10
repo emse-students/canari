@@ -58,8 +58,22 @@ is `matchMedia('(orientation: landscape)')`, reactive; layouts use Tailwind's `l
 `portrait:` variants. **The safe area of the SIDES**: Android's WebView answers
 `env(safe-area-inset-left/right)`; on iOS WebKit answers 0 for every `env()` in this WebView
 ([mobile](mobile.md)), so `canari_ios.mm` publishes `--safe-area-inset-left/right` beside the top and
-bottom ones, again after every turn of the scene. A turned screen therefore pads with
-`var(--safe-area-inset-left, env(safe-area-inset-left, 0px))` - the notch's side in landscape.
+bottom ones, again at every change of the root controller's safe area. A turned screen therefore pads
+with `var(--safe-area-inset-left, env(safe-area-inset-left, 0px))` - the notch's side in landscape.
+
+### Who pads a full-screen place
+
+**One rule: on a full-screen place (`isFullScreenPlace`, today `/camera`), the shell pads NO side and
+the page pads its own controls; everywhere else the shell pads and the page does not.** The camera's
+preview is the page and runs under the status bar and, turned, under the notch; its controls carry
+the inset themselves (`CameraScreen`, `ReelReview`, `ReelPublishSheet`). The overlays (the composers'
+camera, the live broadcaster) are portalled and `fixed`, outside the shell, so they are the same case.
+In `app.css`, `.fullscreen-place-open .app-shell` gives back the top AND the two sides (the sides added
+2026-11-09: the shell's `env()` side padding was a strip beside the turned preview and doubled the
+controls' `sideSafePadding` on Android). The one exception is a minimised call: the bar must clear the
+notch, so the shell pads the top again (`--app-status-top`, resolved on the root) and zeroes
+`--safe-area-inset-top` for its subtree, so the controls below the bar do not add the status bar a
+second time. Pinned by `callBarLayer.test.ts`.
 
 ## Android
 
@@ -128,6 +142,10 @@ posts nothing and logs nothing.
 
 ## What a turn does to each screen
 
+The rotate button is the kit's `ui/player/RotateButton.svelte` (a `VideoChipButton`, 44 px target,
+its label from Paraglide `screen_rotate_landscape` / `screen_rotate_portrait`), and a row of controls
+pads its sides with `utils/sideSafeArea.ts`.
+
 - **The camera** (`CameraScreen`, the reel tab and both composers' overlays): the frame follows the
   screen - 9:16 upright, 16:9 turned (`ReelFrame`'s `ratio`) - so a capture is cropped to what the
   preview showed in either orientation (`framedCapture.ts` already sizes the output from the box). The
@@ -137,7 +155,10 @@ posts nothing and logs nothing.
 - **The live broadcaster**: the recorder records the camera track as it comes (no 9:16 canvas, no
   rotation metadata), so a live filmed in landscape IS a 16:9 stream; the viewer's player already
   takes a new initialization segment whose resolution differs ([live](modules/live.md)). The
-  orientation is chosen in the preview and frozen from `starting` to the end.
+  orientation is chosen in the preview and frozen from `starting` to the end. The pre-live sheet takes
+  the left side when turned (`landscape:max-w-md`), the on-air chat a column (`landscape:max-w-sm`).
+  A double tap on the preview switches the lens (owner, 2026-11-09), exactly where the lens button is
+  offered - the sheet and the chat are out of it (`data-no-double-tap`).
 - **The full-screen viewer and the live viewer**: owed, written in the backlog entry (their files are
   being rewritten by the video-player stack).
 
