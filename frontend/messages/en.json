@@ -875,6 +875,7 @@
   "post_comments_sheet_title": "Comments",
   "post_comment_load_older_label": "View older comments",
   "post_comment_as_association_caption": "Comment on behalf of {name}",
+  "post_comment_add_image_label": "Add an image",
   "post_comment_media_error": "Could not attach that media to the comment.",
   "post_media_expired_label": "Media expired.",
   "post_image_alt": "Post image",

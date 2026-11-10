@@ -181,6 +181,15 @@ export class PostInteractionsService {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post || isExpiredPost(post)) throw new NotFoundException('Post not found');
 
+    // The picture must be the writer's own upload: deleting this comment releases the blob it names.
+    if (data.media?.mediaId) {
+      await this.mediaRetention.assertOwnMedia(
+        data.userId,
+        [String(data.media.mediaId)],
+        'comment'
+      );
+    }
+
     const { anonymous, associationId } = commentIdentityOf(data);
     const masked = anonymous || !!associationId;
 

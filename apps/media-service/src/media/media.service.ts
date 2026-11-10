@@ -1135,6 +1135,37 @@ export class MediaService {
   }
 
   /**
+   * Which of `mediaIds` were uploaded by `ownerId`, read-only (no claim, no class change).
+   *
+   * A post or a comment names its pictures by id, ids are not secrets, and what a citing row's
+   * delete does to the blob (`release`) is destructive: a member who cites SOMEBODY ELSE'S blob
+   * must be refused at the write. Same refusals as {@link claimReels}: a public asset, a form file,
+   * a purged entry, an unknown id and an object stored before ownership was recorded.
+   *
+   * @returns the ids `ownerId` uploaded and the ids refused.
+   */
+  ownedBy(mediaIds: string[], ownerId: string): { owned: string[]; refused: string[] } {
+    const owned: string[] = [];
+    const refused: string[] = [];
+    for (const mediaId of new Set(mediaIds)) {
+      const entry = UUID_REGEX.test(mediaId) ? this.meta.items[mediaId] : undefined;
+      if (
+        !entry ||
+        entry.purgedAt ||
+        this.isPublicAssetEntry(entry) ||
+        isServerReadOnly(entry) ||
+        !entry.ownerId ||
+        entry.ownerId !== ownerId
+      ) {
+        refused.push(mediaId);
+      } else {
+        owned.push(mediaId);
+      }
+    }
+    return { owned, refused };
+  }
+
+  /**
    * Claims objects for CanaReels: sets class `reel` on every one that is the named owner's.
    *
    * The claim is what makes the later purge safe. A reel's row names its blob by id, ids are not
