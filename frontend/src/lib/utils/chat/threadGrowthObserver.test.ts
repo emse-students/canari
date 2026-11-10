@@ -135,3 +135,49 @@ describe('observeThreadGrowth - a reader in history', () => {
     stop();
   });
 });
+
+describe('observeThreadGrowth - a conversation being entered', () => {
+  /**
+   * THE NOTIFICATION-TAP OPEN (owner's Android 1.6.8 reading, 2026-11-09). The entry pins to the
+   * bottom, then - before the conversation is settled - the push previews are upgraded in place
+   * (same count, taller reply bubbles) and the early-drawn rows above the fresh page are withdrawn.
+   * Every one of those changes must leave the newest row in view; while `entering` held, the
+   * observer answered `keep-row` and the anchor compensated nothing, so the growth was simply
+   * dropped and the new rows sat below the fold.
+   */
+  it('keeps the newest row in view through same-count upgrades and a withdrawal at the top', () => {
+    const heights = Array.from({ length: 40 }, () => 60);
+    const { scroller, layout, relayout, reach } = makeThread(heights, 711);
+    scroller.scrollTop = reach();
+    // `isNearBottom` as a scroll measured during the hidden entry may leave it: the entry owns
+    // the position, and its position is the bottom whatever the flag says.
+    const stop = observeThreadGrowth(scroller, () => ({
+      wasNearBottom: false,
+      isLoadingOlder: false,
+      isEntering: true,
+    }));
+    const newestVisible = () => {
+      const newest = layout.rows.at(-1)!;
+      return newest.getBoundingClientRect().bottom <= scroller.clientHeight;
+    };
+
+    // Two previews become reply bubbles: the count does not move, the rows grow.
+    layout.heights[38] += 90;
+    relayout();
+    layout.heights[39] += 90;
+    relayout();
+    expect(scroller.scrollTop).toBe(reach());
+    expect(newestVisible()).toBe(true);
+
+    // `[HISTORY] 3 early-drawn row(s) below the fresh page withdrawn`: the oldest rows go.
+    for (const i of [0, 1, 2]) {
+      layout.heights[i] = 0;
+      layout.rows[i].remove();
+    }
+    relayout();
+    expect(scroller.scrollTop).toBe(reach());
+    expect(isPinnedToBottom(scroller)).toBe(true);
+    expect(newestVisible()).toBe(true);
+    stop();
+  });
+});

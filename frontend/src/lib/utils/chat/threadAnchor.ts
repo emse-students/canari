@@ -29,7 +29,7 @@ export interface ThreadGrowth {
   wasNearBottom: boolean;
   /** Older messages are being prepended - `loadOlderGroups` restores the position itself. */
   isLoadingOlder: boolean;
-  /** The conversation is still being entered - `fillViewportThenPin` owns the position until it is not. */
+  /** The conversation is still being entered - its position is the bottom, whatever moves under it. */
   isEntering: boolean;
 }
 
@@ -73,14 +73,22 @@ export type ThreadGrowthResponse = 'follow-bottom' | 'hold-bottom' | 'keep-row';
  * scroll-down arrow appeared. A text-only thread has no viewport-relative row and never showed it.
  *
  * For a reader at the bottom the bottom IS the anchor: any change of reach is followed.
+ *
+ * **AN ENTRY IS AT THE BOTTOM BY DEFINITION** (owner's Android 1.6.8, 2026-11-09: messages received
+ * as notifications appeared only at the SECOND open of the conversation). Entering answered
+ * `keep-row`, and {@link anchorShift} compensates nothing while entering - so every change during
+ * the entry was dropped: at a notification-tap open the push previews are upgraded in place (same
+ * count, taller reply bubbles) and the early-drawn rows above the fresh page withdrawn while the
+ * entry is still running, and the newest rows ended below the fold. An entry lands on the bottom
+ * (`fillViewportThenPin`), so whatever moves the reach during it is followed - whatever
+ * `wasNearBottom` says, since a scroll measured while the list is hidden is not the reader's.
  */
 export function threadGrowthResponse(growth: ThreadGrowth): ThreadGrowthResponse {
   // PREPENDING IS GROWTH THAT MEANS THE OPPOSITE. `loadOlderGroups` adds height ABOVE the reader and
   // restores `scrollTop` by exactly that much; following the bottom here would throw away the
   // history it had just fetched and land them where they already were.
   if (growth.isLoadingOlder) return 'keep-row';
-  if (growth.isEntering) return 'keep-row';
-  if (!growth.wasNearBottom) return 'keep-row';
+  if (!growth.wasNearBottom && !growth.isEntering) return 'keep-row';
   return growth.currentReach === growth.previousReach ? 'hold-bottom' : 'follow-bottom';
 }
 
@@ -120,6 +128,39 @@ export interface ThreadScrollMetrics {
  */
 export function isPinnedToBottom(metrics: ThreadScrollMetrics): boolean {
   return metrics.scrollHeight - (metrics.scrollTop + metrics.clientHeight) < THREAD_BOTTOM_SLACK_PX;
+}
+
+/** What one scroll measurement knows: the pane now, and the flag and offset it measured last. */
+export interface ScrollMeasurement {
+  /** {@link isPinnedToBottom} of the pane as it stands now. */
+  pinned: boolean;
+  scrollTop: number;
+  /** The stick-to-bottom flag before this measurement. */
+  wasNearBottom: boolean;
+  /** `scrollTop` at the previous measurement, or `null` when none was made in this conversation. */
+  previousScrollTop: number | null;
+}
+
+/**
+ * The stick-to-bottom flag after one scroll measurement: **A READER LEAVES THE BOTTOM BY MOVING UP,
+ * NEVER BECAUSE THE BOTTOM MOVED AWAY FROM THEM** (review of #3223, 2026-11-09).
+ *
+ * `measureScroll` runs in an animation frame, and a frame runs its animation callbacks BEFORE it
+ * delivers `ResizeObserver` entries. So a medium decoding to its size, a font swapping or a row
+ * re-laid out without a DOM mutation, in the same frame as a pending scroll measurement, is seen by
+ * the measurement first: the pane reads "not at the bottom" by the height of the growth, the flag
+ * falls, and the observer that runs next answers `keep-row` - the reader is left above the newest
+ * rows by exactly what grew, with nothing that will ever follow it. The entry's timed re-pins
+ * (removed by #3223) used to cover this window after an entry; the cause is here.
+ *
+ * A pane that did not move up (`scrollTop` unchanged or larger) keeps a `true` flag - the reach grew
+ * under it, which the observer follows. Moving up out of the slack is the only way to `false`, and
+ * reaching the slack again is the only way back to `true`.
+ */
+export function stickToBottomAfterScroll(m: ScrollMeasurement): boolean {
+  if (m.pinned) return true;
+  if (!m.wasNearBottom || m.previousScrollTop === null) return false;
+  return m.scrollTop >= m.previousScrollTop;
 }
 
 /** What a change of the soft keyboard may do to the thread (`keyboardChangeResponse`). */
@@ -267,4 +308,29 @@ export function chatViewCountLine(
 ): string | null {
   if (count === previousCount) return null;
   return `${conversationId.slice(0, 8)} messages ${count} (hasNewMessage=${count > previousCount}, response=${response ?? 'n/a'})`;
+}
+
+/** Where an entry left the pane, measured once its conversation has settled. */
+export interface EntryPinOutcome {
+  /** {@link isPinnedToBottom} of the pane, measured now. */
+  pinned: boolean;
+  /** The stick-to-bottom flag as `measureScroll` last wrote it - the one the observers read. */
+  isNearBottom: boolean;
+  /** The conversation's newest row is the last row in view (`measureLastVisibleAnchor`). */
+  newestVisible: boolean;
+  /** The conversation's rows, to pair the line with `[HISTORY]` and `[ADD_MSG]`. */
+  rows: number;
+  /** How far the pane is from its bottom, in px, rounded. */
+  fromBottom: number;
+}
+
+/**
+ * The `[CHAT_VIEW]` line for ONE conversation entry: where the pane stands once the entry is
+ * revealed and its catch-up has ended. INFO, so it reaches the exported log (`appLog.ts` records no
+ * debug) - the count line above is debug and never did, which is why the owner's 1.6.8 log could
+ * show the rows arriving and nothing of where the pane put them (2026-11-09). One line per entry,
+ * never per frame.
+ */
+export function chatViewEntryLine(conversationId: string, outcome: EntryPinOutcome): string {
+  return `${conversationId.slice(0, 8)} entry settled: pinned=${outcome.pinned} isNearBottom=${outcome.isNearBottom} newestVisible=${outcome.newestVisible} rows=${outcome.rows} fromBottom=${outcome.fromBottom}`;
 }

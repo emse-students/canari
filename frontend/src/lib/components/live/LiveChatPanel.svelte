@@ -12,12 +12,15 @@
   import { untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { ArrowDown, EyeOff, Flag, RotateCcw, SendHorizontal, Trash2 } from '@lucide/svelte';
-  import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { isAtBottom, onLinesAdded } from '$lib/live/chatScroll';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import type { LiveChatLine, LiveChatSendFailure } from '$lib/live/liveChat';
   import { m } from '$lib/paraglide/messages';
+  import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
+  import LiveChatLineText from './LiveChatLineText.svelte';
+  import { liveAudienceFilter, liveMentionRoster, mentionsViewer } from '$lib/live/liveMention';
+  import { currentUserId } from '$lib/stores/userState.svelte';
 
   interface Props {
     lines: readonly LiveChatLine[];
@@ -35,6 +38,11 @@
     hide(messageId: string): void;
     /** Report one line of someone else's (a viewer's flag); absent where reporting is not offered. */
     report?(line: LiveChatLine): void;
+    /**
+     * Which of these accounts a mention in this live may reach (the server's audience). Absent: the
+     * `@` picker suggests only the people the chat has shown.
+     */
+    audienceOf?(ids: string[]): Promise<string[]>;
   }
 
   let {
@@ -48,6 +56,7 @@
     discard,
     hide,
     report,
+    audienceOf,
   }: Props = $props();
 
   let draft = $state('');
@@ -76,6 +85,10 @@
   let unseen = $state(0);
   /** The line whose actions are open (a tap on a line), or null. */
   let openKey = $state<string | null>(null);
+
+  /** `@` suggests, first, the people the chat has shown (owner, 2026-11-09). */
+  const mentionRoster = $derived(liveMentionRoster(lines, hostId));
+  const audienceFilter = $derived(audienceOf ? liveAudienceFilter(audienceOf) : undefined);
 
   const lineKey = (l: LiveChatLine) => `${l.authorId}:${l.clientId}`;
 
@@ -141,6 +154,17 @@
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
+    await sendDraft();
+  }
+
+  /** Enter sends, as the plain field it replaced did; a composing IME's Enter and Shift+Enter do not. */
+  function onComposerKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    e.preventDefault();
+    if (draft.trim() !== '') void sendDraft();
+  }
+
+  async function sendDraft() {
     const text = draft;
     composerError = null;
     // The reader's own line is always shown: sending is the one thing that returns to the bottom.
@@ -153,6 +177,9 @@
       composerError = failureText(failure);
     }
   }
+
+  /** The signed-in account, read at each draw: a line that mentions it is highlighted. */
+  const viewerId = $derived(currentUserId());
 
   function nameOf(line: LiveChatLine): string {
     if (line.mine) return m.live_chat_you();
@@ -206,6 +233,7 @@
         {@const hasActions = canReport || canHide}
         <li
           class="live-chat-line text-sm text-white"
+          class:live-chat-line-mentioned={mentionsViewer(line.text, viewerId)}
           class:opacity-60={line.status === 'pending'}
           data-live-chat-line={line.id ?? 'pending'}
           data-live-chat-status={line.status}
@@ -219,7 +247,8 @@
               {#if hostId !== null && line.authorId === hostId.toLowerCase()}
                 <span class="live-chat-host" data-live-chat-host>{m.live_chat_host()}</span>
               {/if}
-              <bdi class="whitespace-pre-wrap" dir="auto"><EmojiText text={line.text} /></bdi>
+              <bdi class="whitespace-pre-wrap" dir="auto"><LiveChatLineText text={line.text} /></bdi
+              >
               {#if line.status === 'pending'}
                 <span class="sr-only">{m.live_chat_pending()}</span>
               {/if}
@@ -332,19 +361,28 @@
       onsubmit={submit}
       data-live-chat-composer
     >
-      <input
-        type="text"
-        class="min-h-10 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/70"
-        placeholder={m.live_chat_placeholder()}
+      <!-- One line, with the shared `@` picker (owner, 2026-11-09): the people the chat has shown
+           first, then anyone the live's audience holds. The typed `@[id]` token is the text's. -->
+      <div
+        class="live-chat-field relative min-w-0 flex-1"
+        role="group"
         aria-label={m.live_chat_input_label()}
-        aria-invalid={composerError !== null}
         aria-describedby={composerError !== null ? 'live-chat-composer-error' : undefined}
-        maxlength={maxChars ?? undefined}
-        enterkeyhint="send"
-        autocomplete="off"
-        bind:value={draft}
         data-live-chat-input
-      />
+      >
+        <MentionComposerInput
+          bind:value={draft}
+          singleLine
+          maxlength={maxChars ?? undefined}
+          placeholder={m.live_chat_placeholder()}
+          {mentionRoster}
+          mentionAudienceFilter={audienceFilter}
+          class="min-w-0"
+          editorClass="py-2.5 text-sm text-white"
+          minHeight="2.5rem"
+          onkeydown={onComposerKeydown}
+        />
+      </div>
       <button
         type="submit"
         class="ui-icon-button bg-cn-yellow text-cn-ink shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
@@ -377,6 +415,18 @@
     text-shadow:
       0 0.0625rem 0.125rem color-mix(in srgb, var(--color-cn-scrim) 90%, transparent),
       0 0 0.5rem color-mix(in srgb, var(--color-cn-scrim) 70%, transparent);
+  }
+  /* A line that mentions the viewer is lifted (owner, 2026-11-09): a tint and an edge, so it is found
+     again when the chat scrolls - no motion, nothing that needs a reduced-motion rule. */
+  .live-chat-line-mentioned {
+    border-radius: 0.5rem;
+    background: color-mix(in srgb, var(--color-cn-yellow) 18%, transparent);
+    box-shadow: inset 0.1875rem 0 0 var(--color-cn-yellow);
+    padding-inline-start: 0.375rem;
+  }
+  /* The picker's editor is a contenteditable: its placeholder is the field's, light on the glass. */
+  .live-chat-field :global(.mention-composer-placeholder) {
+    color: color-mix(in srgb, white 70%, transparent);
   }
   /* An arrival is quieter than a message: smaller (`text-xs` in markup) and a little dimmer. */
   .live-chat-arrival {

@@ -9,7 +9,11 @@ import {
   channelInviteMessageId,
 } from '$lib/envelope';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
-import { receivedNoticeTime, renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
+import {
+  memberLeftContent,
+  receivedNoticeTime,
+  visibleNoticeContent,
+} from '$lib/utils/chat/visibleNotices';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { clearMessageControlRefusals } from '$lib/utils/chat/controlRefusals.svelte';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
@@ -1045,7 +1049,7 @@ export async function handleSystemEvent(
   if (event === 'groupRenamed' && data.newName) {
     conversations.set(convoKey, { ...convo, name: data.newName });
     if (storage) await saveConversation(convoKey);
-    const text = await renderVisibleNotice('groupRenamed', data, senderNorm);
+    const text = await visibleNoticeContent('groupRenamed', data, senderNorm);
     if (text) await writeNotice(text, messageId);
     log(`📝 Group renamed by ${senderNorm}`);
     return true;
@@ -1056,7 +1060,7 @@ export async function handleSystemEvent(
       typeof data.imageMediaId === 'string' && data.imageMediaId ? data.imageMediaId : null;
     conversations.set(convoKey, { ...convo, imageMediaId });
     if (storage) await saveConversation(convoKey);
-    const text = await renderVisibleNotice('groupImageChanged', data, senderNorm);
+    const text = await visibleNoticeContent('groupImageChanged', data, senderNorm);
     if (text) await writeNotice(text, messageId);
     log(`🖼️ Group photo changed by ${senderNorm} (media=${imageMediaId ?? 'null'})`);
     return true;
@@ -1093,7 +1097,7 @@ export async function handleSystemEvent(
       });
       log(`[INFO] Excluded from group "${convoKey}" by ${senderNorm} - marked removed`);
     } else {
-      const text = await renderVisibleNotice('memberRemoved', data, senderNorm);
+      const text = await visibleNoticeContent('memberRemoved', data, senderNorm);
       if (text) await writeNotice(text, messageId);
     }
     return true;
@@ -1131,8 +1135,7 @@ export async function handleSystemEvent(
       return true;
     }
 
-    const getName = await resolveDisplayNames([leaver]);
-    await writeNotice(m.chat_system_member_left({ user: getName(leaver) }), messageId);
+    await writeNotice(await memberLeftContent(leaver), messageId);
     log(`[INFO] ${leaver} left group "${convoKey}"`);
     return true;
   }
@@ -1140,7 +1143,7 @@ export async function handleSystemEvent(
   if (event === 'memberAdded') {
     // The ONE rendering (`visibleNotices.ts`): the adder's device writes the same row under the
     // same id itself, since MLS never hands it this frame.
-    const text = await renderVisibleNotice('memberAdded', data, senderNorm);
+    const text = await visibleNoticeContent('memberAdded', data, senderNorm);
     if (text) await writeNotice(text, messageId);
     return true;
   }
