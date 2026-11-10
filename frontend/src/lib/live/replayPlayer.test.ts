@@ -152,6 +152,7 @@ let video: {
   paused: boolean;
   seeking: boolean;
   readyState: number;
+  playbackRate: number;
   play: () => Promise<void>;
   pause: () => void;
 };
@@ -187,6 +188,7 @@ beforeEach(() => {
     paused: true,
     seeking: false,
     readyState: 4,
+    playbackRate: 1,
     play: vi.fn(async () => {
       video.paused = false;
     }),

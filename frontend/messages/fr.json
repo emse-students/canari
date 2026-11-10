@@ -6151,6 +6151,7 @@
   "replay_card_open": "Regarder la rediffusion",
   "replay_card_default_title": "Rediffusion du direct de {name}",
   "replay_card_duration_label": "Durée de la rediffusion",
+  "replay_cover_alt": "Image du direct de {name}",
   "replay_save_confirm": "Enregistrer la rediffusion ? Environ {megabytes} Mo seront écrits sur cet appareil.",
   "replay_save_confirm_button": "Enregistrer",
   "replay_save_cancel_button": "Annuler",

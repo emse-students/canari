@@ -5,23 +5,36 @@
    * plays NOTHING inline: a replay is minutes long and its player needs a MediaSource, so a tap opens
    * the CanaReels viewer on it (`onOpen`), where it plays like a reel.
    *
-   * There is no cover picture yet: the live's last preview is not part of what the server serves with
-   * a replay (owed), so the card is the dark box a reel waits in, never a guessed image. The time left
-   * is NOT drawn here: the feed rows carry no server clock and the phone's would be a guess - the
-   * viewer draws it from the replay route's own pair of database times.
+   * THE COVER is the live's own last preview image (`poster`, served on the row with the key that
+   * opens it and nothing else), loaded like the live's card loaded it (`LivePosterImage`); a live that
+   * stored none keeps the dark box a reel waits in, never a guessed image. THE TIME LEFT ("encore
+   * 2 j", D3) is computed from the row's own pair of database times (`expiresAt`, `serverNow`) by the
+   * viewer's one implementation (`replayTimeLeft`), never from this phone's clock; a row without
+   * the server's clock shows none.
    */
   import { History, Play } from '@lucide/svelte';
   import type { PostEntity } from '$lib/posts/api';
+  import LivePosterImage from '$lib/components/live/LivePosterImage.svelte';
   import { formatLiveElapsed } from '$lib/live/openLives';
+  import { replayCoverOf, replayTimeLeft } from '$lib/live/replayTimeline';
+  import { replayTimeLeftText } from '$lib/live/replayLabels';
+  import type { loadLivePoster } from '$lib/live/livePosterView';
   import { postAuthorName } from '$lib/posts/postAuthorName';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
     post: PostEntity;
     onOpen: () => void;
+    /** The cover's loader; the real one unless a test hands its own. */
+    loadCover?: typeof loadLivePoster;
   }
 
-  let { post, onOpen }: Props = $props();
+  let { post, onOpen, loadCover }: Props = $props();
+
+  const cover = $derived(replayCoverOf(post));
+  const timeLeft = $derived(
+    post.expiresAt && post.serverNow ? replayTimeLeft(post.expiresAt, post.serverNow) : null
+  );
 
   const duration = $derived(
     post.durationMs && post.durationMs > 0 ? formatLiveElapsed(post.durationMs) : null
@@ -43,14 +56,29 @@
     }}
     data-replay-card
   >
+    {#if cover}
+      <span class="absolute inset-0" data-replay-card-cover>
+        <LivePosterImage
+          live={cover}
+          alt={m.replay_cover_alt({ name: postAuthorName(post) })}
+          load={loadCover}
+          placeholder={false}
+        />
+      </span>
+    {/if}
     <span
-      class="absolute top-2 left-2 inline-flex items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-xs font-bold"
+      class="absolute top-2 left-2 inline-flex items-center gap-1.5 rounded-full bg-black/55 px-2.5 py-1 text-xs font-bold"
       data-replay-card-badge
     >
       <History size={13} strokeWidth={2.5} aria-hidden="true" />
       {m.replay_badge()}
+      {#if timeLeft}
+        <span class="font-medium opacity-80" data-replay-card-time-left
+          >&middot; {replayTimeLeftText(timeLeft)}</span
+        >
+      {/if}
     </span>
-    <span class="flex size-14 items-center justify-center rounded-full bg-white/20">
+    <span class="relative flex size-14 items-center justify-center rounded-full bg-white/20">
       <Play size={28} strokeWidth={2.25} class="translate-x-0.5 fill-white" aria-hidden="true" />
     </span>
     {#if fallbackTitle}

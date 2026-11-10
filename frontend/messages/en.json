@@ -6142,6 +6142,7 @@
   "replay_card_open": "Watch the replay",
   "replay_card_default_title": "Replay of {name}'s live",
   "replay_card_duration_label": "Replay length",
+  "replay_cover_alt": "Picture from {name}'s live",
   "replay_save_confirm": "Save the replay? About {megabytes} MB will be written to this device.",
   "replay_save_confirm_button": "Save",
   "replay_save_cancel_button": "Cancel",

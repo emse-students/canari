@@ -51,6 +51,18 @@ export function replayTimeLeft(expiresAt: string, serverNow: string): ReplayTime
   return { unit: 'minute', count: Math.max(1, Math.floor(left / MINUTE_MS)) };
 }
 
+/**
+ * A replay row's COVER as the preview loader takes it (`loadLivePoster`): its live's last preview,
+ * keyed by the LIVE's id - the memo the live's own card used - or null when the row names none
+ * (the live stored no preview, or a server older than covers). The server serves it on the row.
+ */
+export function replayCoverOf(
+  post: Pick<PostEntity, 'liveId' | 'poster' | 'posterKey'>
+): { id: string; poster: { name: string; ageMs: number }; posterKey: string } | null {
+  if (!post.liveId || !post.poster || !post.posterKey) return null;
+  return { id: post.liveId, poster: post.poster, posterKey: post.posterKey };
+}
+
 /** What a save will write, said BEFORE it starts (20 minutes is about 300 MB): the segments' bytes, in whole MB. */
 export function replaySaveMegabytes(segments: readonly Pick<LiveReplaySegment, 'bytes'>[]): number {
   const bytes = segments.reduce((n, s) => n + s.bytes, 0);

@@ -56,6 +56,7 @@ import { STUDENTS_ONLY_NOT_OFFERED, assertStudentsOnlyOffered } from './students
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { readPostOpenVerdict } from './post-openable';
+import { readReplayRowFacts } from '../lives/replay-row-facts';
 import { pageComments, type CommentOrder } from './comment-page';
 import { CommentIdentityService } from './comment-identity';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
@@ -1576,7 +1577,7 @@ export class PostsService {
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
          posts."linkedCalendarEventId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts."scheduledAt",
-         posts.kind, posts."durationMs", posts."expiresAt", posts."studentsOnly",
+         posts.kind, posts."durationMs", posts."expiresAt", posts."liveId", posts."studentsOnly",
          ${commentCount} AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
@@ -1674,7 +1675,7 @@ export class PostsService {
       ])) as { page: unknown; stamp: string };
       stamp = cached.stamp;
       // The stored page is what this method returned before, parsed: as untyped as JSON.parse was.
-      if (cached.page !== undefined) return cached.page as any;
+      if (cached.page !== undefined) return await this.withReplayRowFacts(cached.page as any);
     } catch {
       // Redis miss or error - fall through to DB
     }
@@ -1759,7 +1760,31 @@ export class PostsService {
       }
     }
 
-    return safe;
+    // AFTER the page is stored: a replay's cover key and the server's clock are read per serve.
+    return await this.withReplayRowFacts(safe);
+  }
+
+  /**
+   * A LIVE REPLAY'S ROW, AS SERVED (docs/wiki/live-replays.md, WP-R4): its live's last preview as the
+   * cover (`poster`, `posterKey`) and the database's clock (`serverNow`) beside its `expiresAt`, so
+   * the feed card draws the time left without the phone's clock (`readReplayRowFacts`). Added at
+   * serve time on the cached and the computed page alike, never stored with the page. A page with no
+   * replay - every page while `live_replays_mode` is off - reads nothing and is returned as it is.
+   */
+  private async withReplayRowFacts<T>(page: T): Promise<T> {
+    if (!Array.isArray(page)) return page;
+    const liveIds = page
+      .filter((p: any) => p?.kind === 'replay' && typeof p.liveId === 'string')
+      .map((p: any) => p.liveId as string);
+    if (liveIds.length === 0) return page;
+    const facts = await readReplayRowFacts(this.postRepo.manager, liveIds);
+    return page.map((p: any) => {
+      const f = p?.kind === 'replay' ? facts.get(p.liveId) : undefined;
+      if (p?.kind === 'replay' && !f) {
+        this.logger.warn(`[LIVE_REPLAY] row ${p.id} served without its facts (live ${p.liveId})`);
+      }
+      return f ? { ...p, ...f } : p;
+    }) as T;
   }
 
   /**
@@ -2223,6 +2248,8 @@ export class PostsService {
         shaped.authorLastName = rows[0].lastName;
       }
     }
+    // A live replay's cover and the server's clock, as on a list row.
+    if (shaped.kind === 'replay') return (await this.withReplayRowFacts([shaped]))[0];
     return shaped;
   }
 

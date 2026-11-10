@@ -14,7 +14,9 @@
  * name already RUNNING is joined, not doubled: two cards mounting at once (the large card giving way
  * to the carousel) share one fetch. A joiner whose own signal is live, left holding a load the first
  * caller aborted, starts its own. The card drops the entries of the lives no longer listed
- * ({@link forgetLivePostersExcept}), so this holds one image per live on air at most. Never logs the
+ * ({@link forgetLivePostersExcept}), so this holds one image per live on air at most - plus the
+ * covers of the live replays drawn since that list's last refresh, which reuse this loader under their
+ * live's id (docs/wiki/live-replays.md) and are dropped by the same call. Never logs the
  * key or the bytes, lengths only.
  */
 import { fetchLivePoster, isLiveRefusal } from './api';

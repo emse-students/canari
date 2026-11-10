@@ -318,6 +318,19 @@ export interface PostEntity {
   durationMs?: number | null;
   /** When the server deletes a reel (`createdAt` + 30 days, set once); `null` on a post. */
   expiresAt?: string | null;
+  /**
+   * A REPLAY'S COVER: its live's last preview image, the one the live's card showed - opened with
+   * `posterKey` (it opens that image and nothing else). Served on a `'replay'` row only, and null
+   * when the live stored none.
+   */
+  poster?: { name: string; ageMs: number } | null;
+  /** The key of `poster`; null whenever `poster` is. */
+  posterKey?: string | null;
+  /**
+   * The server's clock when it served a `'replay'` row (the database's, the one that wrote
+   * `expiresAt`): the time left is computed from the two, never from the phone's clock.
+   */
+  serverNow?: string;
 }
 
 /** What a feed row is. A reel is a post of kind `'reel'`: same feed, comments, reactions, reports. */

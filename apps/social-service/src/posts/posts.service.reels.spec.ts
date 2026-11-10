@@ -33,6 +33,7 @@ import {
   SINGLE_PHOTO_POST_SQL,
 } from './full-screen-post-sql';
 import { republishedFeedAtSql } from './republished-feed-sql';
+import { derivePosterKey } from '../lives/live-poster-key';
 
 const NOW = Date.parse('2026-11-01T12:00:00Z');
 const BLOB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -491,6 +492,103 @@ describe('reads exclude a reel past its month', () => {
       kind: 'reel',
       durationMs: 5000,
     });
+  });
+});
+
+describe('a live replay row, as served: its cover and the server clock (docs/wiki/live-replays.md)', () => {
+  const LIVE = '11111111-1111-4111-8111-111111111111';
+  const KEY = 'ab'.repeat(32);
+  const SERVER_NOW = new Date('2026-11-01T12:00:05Z');
+  /** The facts read: the live's poster and its key (the previous, plaintext format opens as-is). */
+  const answerFacts = (posterName: string | null) =>
+    jest.fn((sql: string) => {
+      if (sql.includes('unnest($1::uuid[])')) {
+        return Promise.resolve([
+          {
+            liveId: LIVE,
+            serverNow: SERVER_NOW,
+            posterName,
+            posterAgeMs: 1234,
+            liveKey: KEY,
+            liveKeyCiphertext: null,
+            liveKeyVersion: null,
+          },
+        ]);
+      }
+      if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
+      return Promise.resolve([]);
+    });
+  const replay = {
+    id: 'r1',
+    authorId: 'alice',
+    kind: 'replay',
+    durationMs: 60_000,
+    expiresAt: new Date(NOW + DAY_MS),
+    liveId: LIVE,
+    associationId: null,
+    hiddenByModeration: false,
+    scheduledAt: null,
+  } as unknown as Post;
+
+  it('serves the live last preview, its POSTER key (never the live key) and serverNow by id', async () => {
+    const { service, postRepo } = makeService({ existing: replay });
+    postRepo.manager.query = answerFacts('poster-1');
+    const served = await service.getById('r1', { viewerId: 'bob', withReplays: true });
+    expect(served).toMatchObject({
+      kind: 'replay',
+      poster: { name: 'poster-1', ageMs: 1234 },
+      posterKey: derivePosterKey(KEY, LIVE),
+      serverNow: SERVER_NOW,
+    });
+    expect(JSON.stringify(served)).not.toContain(KEY);
+  });
+
+  it('serves no cover for a live that stored no preview, and still the clock', async () => {
+    const { service, postRepo } = makeService({ existing: replay });
+    postRepo.manager.query = answerFacts(null);
+    await expect(
+      service.getById('r1', { viewerId: 'bob', withReplays: true })
+    ).resolves.toMatchObject({ poster: null, posterKey: null, serverNow: SERVER_NOW });
+  });
+
+  it('adds the facts to a listed replay AFTER the page is cached, and reads nothing for a page without one', async () => {
+    const { service, postRepo, queries } = makeService({});
+    const facts = answerFacts('poster-1');
+    postRepo.manager.query = jest.fn((sql: string, params: unknown[] = []) => {
+      queries.push({ sql, params });
+      if (sql.includes('posts."liveId", posts."studentsOnly"')) {
+        return Promise.resolve([
+          { id: 'r1', kind: 'replay', liveId: LIVE, authorId: 'alice', mentions: '' },
+          { id: 'p2', kind: 'post', liveId: null, authorId: 'alice', mentions: '' },
+        ]);
+      }
+      return facts(sql);
+    });
+    const page = await service.listPosts({
+      limit: 10,
+      offset: 0,
+      feed: 'all',
+      viewerUserId: 'bob',
+      withReplays: true,
+    });
+    expect(page[0]).toMatchObject({
+      liveId: LIVE,
+      posterKey: derivePosterKey(KEY, LIVE),
+      serverNow: SERVER_NOW,
+    });
+    expect(page[1]).not.toHaveProperty('serverNow');
+    expect(page[1]).not.toHaveProperty('posterKey');
+
+    const { service: plain, postRepo: plainRepo, queries: plainQueries } = makeService({});
+    plainRepo.manager.query = jest.fn((sql: string, params: unknown[] = []) => {
+      plainQueries.push({ sql, params });
+      if (sql.includes('posts."liveId", posts."studentsOnly"')) {
+        return Promise.resolve([{ id: 'p2', kind: 'post', liveId: null, mentions: '' }]);
+      }
+      return Promise.resolve([]);
+    });
+    await plain.listPosts({ limit: 10, offset: 0, feed: 'all', viewerUserId: 'bob' });
+    expect(plainQueries.some((q) => q.sql.includes('unnest($1::uuid[])'))).toBe(false);
   });
 });
 

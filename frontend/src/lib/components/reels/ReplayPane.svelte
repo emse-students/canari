@@ -9,7 +9,10 @@
    * playback. The player's whole lifetime is one `$effect` on `active`: leaving the page stops it and
    * gives the buffers back. The TIME LEFT is drawn on a replay and on nothing else (owner,
    * 2026-11-09): a reel's month surprises nobody, a replay's three days do. It comes from the replay
-   * route's own pair of database times (`replayTimeLeft`), never from this phone's clock.
+   * route's own pair of database times (`replayTimeLeft`), never from this phone's clock. THE COVER
+   * (its live's last preview, served on the post row) stands over the page until the picture plays,
+   * on a neighbour page too, and gives way to any screen the player itself must show (a blocked
+   * autoplay's button, a failure).
    *
    * Every way the replay can fail has a screen and no other: `gone` (expired, deleted, a block, a
    * removal: the same neutral line, by the server's design), `unavailable` (this engine cannot play
@@ -26,7 +29,10 @@
     type ReplayState,
   } from '$lib/live/replayPlayer';
   import type { LiveVideoLike } from '$lib/live/livePlayer';
-  import { replayTimeLeft } from '$lib/live/replayTimeline';
+  import LivePosterImage from '$lib/components/live/LivePosterImage.svelte';
+  import { replayCoverOf, replayTimeLeft } from '$lib/live/replayTimeline';
+  import type { loadLivePoster } from '$lib/live/livePosterView';
+  import { postAuthorName } from '$lib/posts/postAuthorName';
   import { replayTimeLeftText } from '$lib/live/replayLabels';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { m } from '$lib/paraglide/messages';
@@ -41,9 +47,13 @@
     onReady?: () => void;
     /** Replaces the player's outside world - for tests. */
     deps?: Partial<Omit<ReplayPlayerDeps, 'attach'>>;
+    /** The cover's loader; the real one unless a test hands its own. */
+    loadCover?: typeof loadLivePoster;
   }
 
-  let { post, active, playerSafeBottom, onReady, deps }: Props = $props();
+  let { post, active, playerSafeBottom, onReady, deps, loadCover }: Props = $props();
+
+  const cover = $derived(replayCoverOf(post));
 
   /** The MediaSource's object URL once the player made one; the shared player mounts on it. */
   let src = $state<string | null>(null);
@@ -77,6 +87,13 @@
     },
     get readyState() {
       return videoEl?.readyState ?? 0;
+    },
+    // A replay plays at its own pace: nothing here moves the rate, the shared shape asks for it.
+    get playbackRate() {
+      return videoEl?.playbackRate ?? 1;
+    },
+    set playbackRate(rate: number) {
+      if (videoEl) videoEl.playbackRate = rate;
     },
     async play() {
       await videoEl?.play();
@@ -172,6 +189,17 @@
         blocked = cause;
       }}
     />
+  {/if}
+
+  {#if cover && !playing && !blocked && !isTerminalReplayState(replayState)}
+    <div class="pointer-events-none absolute inset-0" data-replay-cover>
+      <LivePosterImage
+        live={cover}
+        alt={m.replay_cover_alt({ name: postAuthorName(post) })}
+        load={loadCover}
+        placeholder={false}
+      />
+    </div>
   {/if}
 
   {#if replayState.kind === 'connecting'}

@@ -3,6 +3,7 @@ import {
   isReplay,
   replayFileName,
   replaySaveMegabytes,
+  replayCoverOf,
   replayTimeLeft,
   segmentPositionAt,
 } from './replayTimeline';
@@ -63,5 +64,19 @@ describe('save helpers', () => {
     expect(isReplay({ kind: 'replay' })).toBe(true);
     expect(isReplay({ kind: 'reel' })).toBe(false);
     expect(isReplay({})).toBe(false);
+  });
+});
+
+describe('replayCoverOf', () => {
+  it('keys the cover by the LIVE, and is null without a poster, its key or a live', () => {
+    const poster = { name: 'n', ageMs: 0 };
+    expect(replayCoverOf({ liveId: 'l1', poster, posterKey: 'k' })).toEqual({
+      id: 'l1',
+      poster,
+      posterKey: 'k',
+    });
+    expect(replayCoverOf({ liveId: 'l1', poster: null, posterKey: null })).toBeNull();
+    expect(replayCoverOf({ liveId: 'l1', poster, posterKey: null })).toBeNull();
+    expect(replayCoverOf({ liveId: null, poster, posterKey: 'k' })).toBeNull();
   });
 });

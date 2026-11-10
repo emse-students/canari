@@ -76,7 +76,8 @@ function render(
     name: 'MediaSource',
     create: () => new FakeSource(),
     isTypeSupported: () => true,
-  })
+  }),
+  extra: { post?: PostEntity; loadCover?: unknown } = {}
 ) {
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -85,7 +86,8 @@ function render(
   const instance = mount(ReplayPane, {
     target,
     props: {
-      post,
+      post: extra.post ?? post,
+      loadCover: extra.loadCover as never,
       active,
       playerSafeBottom: true,
       onReady,
@@ -146,5 +148,49 @@ describe('ReplayPane', () => {
     await settle();
     expect(target.querySelector('[data-replay-unavailable="unsupported"]')).not.toBeNull();
     expect(target.querySelector('[data-replay-retry]')).not.toBeNull();
+  });
+
+  it('stands the live cover over the page until the picture plays, on a neighbour page too', async () => {
+    const withCover = {
+      ...post,
+      poster: { name: 'poster-1', ageMs: 0 },
+      posterKey: 'pk',
+    } as PostEntity;
+    const loadCover = vi.fn(async () => ({ kind: 'shown' as const, image: new Blob(['x']) }));
+    const idle = render(
+      false,
+      vi.fn(async () => page()),
+      vi.fn(),
+      undefined,
+      {
+        post: withCover,
+        loadCover,
+      }
+    );
+    await settle();
+    expect(idle.target.querySelector('[data-replay-cover]')).not.toBeNull();
+    expect(loadCover).toHaveBeenCalledWith(
+      { id: 'live-1', poster: { name: 'poster-1', ageMs: 0 }, posterKey: 'pk' },
+      expect.anything()
+    );
+    // The active page while its replay is still being listed: the cover, under the spinner.
+    const { target } = render(true, () => new Promise(() => {}), vi.fn(), undefined, {
+      post: withCover,
+      loadCover,
+    });
+    await settle();
+    expect(target.querySelector('[data-replay-cover]')).not.toBeNull();
+    target.querySelector('[data-replay-pane]')!.dispatchEvent(new Event('playing'));
+    flushSync();
+    expect(target.querySelector('[data-replay-cover]')).toBeNull();
+  });
+
+  it('draws no cover for a live that stored none', async () => {
+    const { target } = render(
+      false,
+      vi.fn(async () => page())
+    );
+    await settle();
+    expect(target.querySelector('[data-replay-cover]')).toBeNull();
   });
 });
