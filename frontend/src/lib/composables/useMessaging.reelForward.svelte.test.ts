@@ -94,6 +94,30 @@ describe('forwardMessage refuses a reel message', () => {
     expect(ctx.conversations.get(DM)!.messages.map((row) => row.id)).toContain(sentId);
   });
 
+  it('a "maybe sent" forward whose row fails to draw is still "maybe sent", never a failure to retry', async () => {
+    // Fifth review of #3326: the drawing's throw reached the generic "forward failed".
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const { DelegatedSendOutcomeUnknownError } = await import('$lib/mls-client/commitSubmission');
+    const { m } = await import('$lib/paraglide/messages');
+    const { ctx, ensureMls } = ctxFor();
+    const dm = ctx.conversations.get(DM)!;
+    ctx.conversations.set(DM, { ...dm, lifecycle: 'active' } as never);
+    ensureMls.mockReturnValue({
+      sendMessage: vi.fn(async (groupId: string) => {
+        // The conversation store breaks under the drawing.
+        ctx.conversations.set = () => {
+          throw new Error('draw failed');
+        };
+        throw new DelegatedSendOutcomeUnknownError(groupId);
+      }),
+    });
+
+    const result = await useMessaging().forwardMessage(media(), DM, ctx);
+
+    expect(result).toEqual({ success: false, error: m.chat_forward_maybe_sent() });
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('maybe-sent row'));
+  });
+
   it('does not refuse an ordinary video (control): it proceeds to the transport', async () => {
     const { useMessaging } = await import('./useMessaging.svelte');
     const { ctx, ensureMls } = ctxFor();

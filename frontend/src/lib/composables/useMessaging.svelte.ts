@@ -3550,7 +3550,14 @@ export function useMessaging() {
           // conversation rather than being invited to forward it a second time - and is told
           // "maybe sent" (a frame that did leave arrives under that same id everywhere).
           ctx.log(`[FORWARD] MLS forward to "${targetName}": outcome unknown - ${String(e)}`);
-          await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });
+          // The answer is "maybe sent" whatever the drawing does: a row that failed to draw does
+          // not make the frame unsent, and the generic failure would invite a second forward.
+          await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId }).catch(
+            (drawn: unknown) =>
+              ctx.log(
+                `[FORWARD] WARN the maybe-sent row to "${targetName}" was not drawn - ${String(drawn)}`
+              )
+          );
           return { success: false, error: m.chat_forward_maybe_sent() };
         }
         await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });

@@ -3277,11 +3277,17 @@ promoted in place whose reload is owed.
   every commit since its load, so a key exported there matched no member's. Exported by the leader,
   it is the key a call placed from the leader tab would have: the callee derives at its own current
   epoch, exactly as for any call - the guarantee is the leader's, not a stronger one. **The epoch is
-  held where commits are made**: a `ready` preflight leaves the group's periodic leaf refresh held IN
-  THE LEADER (`holdLeafRefresh`) until a Web Lock the follower took before asking is free - released
-  by its hang-up (`syncLeafRefreshHold`), or by the browser when the follower dies. A hold in the
-  follower's own document held nothing: the leader's refresh between its export and the callee's
-  would have keyed the ends from two epochs.
+  held where commits are made**: before its preflight - placing a call (`startCall`) or answering one
+  (`acceptCall`, before its `keys` step) - the follower takes a Web Lock
+  `canari.call-leaf-hold.<groupId>.<uuid>` (`callHoldLockName`) and keeps it for the call's life. Every
+  leaf refresh reads the browser's lock table (`callHoldLockHeld`, `LockManager.query`) and skips a
+  group a lock names, so the hold binds WHICHEVER tab leads - the one asked, or one elected after a
+  handover - with nothing copied into any leader's memory. It ends with the lock: the hang-up
+  (`syncLeafRefreshHold`), or the browser when the follower dies. A hold in the follower's own document
+  held nothing (the leader's refresh between its export and the other end's keyed them from two
+  epochs), and a hold in the asked leader's memory died with that leader (fifth review of #3326).
+  Incoming calls ring in the leader tab only: a follower opens no socket and decrypts nothing, so an
+  invite never reaches it; the answer path is held all the same.
 - **`FollowerTabSendError` is left for the cases that PROVE nothing ran** (`NoLeaderReason`): a
   document leading on a copy it loaded as a follower (`no-leader`, refused before any hand-over), no
   device key to seal with, the delegation's refusals other than `leader-gone`, and `lead-lost` - the

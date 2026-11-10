@@ -3,6 +3,8 @@ import type { Mock } from 'vitest';
 import {
   LEAF_REFRESH_INTERVAL_MS,
   LEAF_REFRESH_LEDGER_MAX_GROUPS,
+  callHoldLockHeld,
+  callHoldLockName,
   decideLeafRefresh,
   holdLeafRefresh,
   leafRefreshHold,
@@ -61,6 +63,7 @@ function deps(over: Partial<LeafRefreshDeps> = {}): LeafRefreshDeps {
     deviceId: D,
     isDistributionGroup: () => false,
     isInEpochGap: () => false,
+    heldByAnotherTabsCall: async () => false,
     isGroupActive: async () => true,
     getEpoch: () => epoch,
     ownLeafMintedAt: async () => null,
@@ -504,6 +507,25 @@ describe('refreshLeafIfDue', () => {
     release();
     expect(leafRefreshHold(G)).toBeNull();
     expect(await refreshLeafIfDue(d, G)).toBe('refreshed');
+  });
+
+  it("a call in ANOTHER tab holds this tab's refresh for as long as its lock is held", async () => {
+    // Fifth review of #3326: the hold is the follower's lock in the browser's table, so a leader
+    // elected after a handover honours it without having been asked.
+    const held: Array<{ name: string }> = [
+      { name: callHoldLockName('g-other') },
+      { name: callHoldLockName(G) },
+    ];
+    const table = { query: async () => ({ held }) };
+    const d = dueAdmitted({ heldByAnotherTabsCall: (g) => callHoldLockHeld(g, table) });
+    expect(await refreshLeafIfDue(d, G)).toBe('held');
+    expect(refreshOwnLeaf).not.toHaveBeenCalled();
+    expect(lines.join(' | ')).toContain('a call in another tab');
+
+    // The follower hangs up (or its document dies): the browser drops the lock, the hold is gone.
+    held.pop();
+    expect(await refreshLeafIfDue(d, G)).toBe('refreshed');
+    expect(await callHoldLockHeld(G, null)).toBe(false);
   });
 
   it('a release is idempotent and lifts only its own hold', () => {

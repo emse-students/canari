@@ -36,7 +36,7 @@ import {
   FollowerTabSendError,
 } from '$lib/mls-client/commitSubmission';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
-import { holdLeafRefresh } from '$lib/mls-client/leafRefresh';
+import { callHoldLockName } from '$lib/mls-client/leafRefresh';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -237,17 +237,19 @@ export async function exportSecretThroughLeaderTab(
 export interface CallPreflight {
   answer: 'ready' | 'no-leader' | 'leader-unavailable' | 'not-delegable' | 'failed';
   /**
-   * Lifts the leader's hold on the group's leaf refresh (idempotent): called at the call's end. A
-   * document that dies without calling it releases it all the same - its lock goes with it.
+   * Lifts the hold on the group's leaf refresh (idempotent): called at the call's end. A document
+   * that dies without calling it releases it all the same - its lock goes with it.
    */
   releaseHold(): void;
 }
 
 /**
  * Asks the leader tab whether it can carry a call's frames NOW (its session up, this account),
- * before anything is created or rung - and, on `ready`, leaves the group's leaf refresh HELD in the
- * leader for the call's life. The hold must be the leader's: it is the leader that commits, so a
- * refresh there between its export and the callee's would key the two ends from different epochs.
+ * before anything is created, rung or keyed - and, on `ready`, leaves the group's leaf refresh HELD
+ * for the call's life. The hold is a Web Lock THIS document holds, taken before the question, which
+ * every leaf refresh reads in the browser's lock table (`callHoldLockHeld`): it binds the leader
+ * that commits - the one asked, or any elected after a handover - so a refresh between this call's
+ * export and the other end's never keys the two ends from different epochs.
  */
 export async function callPreflightThroughLeaderTab(
   groupId: string,
@@ -257,11 +259,7 @@ export async function callPreflightThroughLeaderTab(
   if (deps.leadership() !== 'follower') return { answer: 'no-leader', releaseHold: none };
   if (!deps.locks) return { answer: 'not-delegable', releaseHold: none };
   const hold = await takeHoldLock(groupId, deps.locks);
-  const answer = await deps.delegate<'call-preflight'>({
-    kind: 'call-preflight',
-    groupId,
-    holdLock: hold.name,
-  });
+  const answer = await deps.delegate<'call-preflight'>({ kind: 'call-preflight', groupId });
   if (answer.status === 'done') return { answer: 'ready', releaseHold: hold.release };
   hold.release();
   return { answer: answer.reason === 'leader-gone' ? 'failed' : answer.reason, releaseHold: none };
@@ -305,8 +303,7 @@ function failed(
  */
 export function delegatedSendExecutors(
   mls: () => Promise<LeaderMls>,
-  deviceKey: () => string | null,
-  locks: DelegationLocks | null = browserLocks()
+  deviceKey: () => string | null
 ): Pick<DelegatedCommitExecutors, 'send' | 'export-secret' | 'call-preflight'> {
   const open = async <T>(
     sealed: SealedTabPayload | undefined
@@ -346,52 +343,24 @@ export function delegatedSendExecutors(
       }
     },
     // Reached only through the delegation's own gates: this leader serves (a live session, this
-    // account, a state it loaded as leader). That IS the answer - and from it, the call's epoch is
-    // THIS document's to keep: its leaf refresh is held until the asker's hold lock is free.
-    'call-preflight': async ({ groupId, holdLock }) => {
-      if (holdLock) holdForTheAsker(groupId, holdLock, locks);
-      return 'ready';
-    },
+    // account, a state it loaded as leader). That IS the answer. The call's epoch is held by the
+    // asker's own lock, which every leaf refresh reads in the browser's lock table
+    // (`callHoldLockHeld`) - here, and in whichever document leads after a handover.
+    'call-preflight': async () => 'ready',
   };
 }
 
 /**
- * The leader's half of a follower's call hold: `groupId`'s periodic leaf refresh is held HERE, where
- * commits are made, until the asking document's lock is free - released by its hang-up, or by the
- * browser when that document dies. Termination is the lock's, never a clock.
+ * The call's hold: a Web Lock held until `release`, resolved once GRANTED - so it is in the lock
+ * table before the leader is asked, and no refresh decided after the `ready` can miss it.
  */
-function holdForTheAsker(groupId: string, holdLock: string, locks: DelegationLocks | null): void {
-  if (!locks) {
-    // Unreachable through the delegation, which refuses without Web Locks: said, never assumed.
-    console.warn(`[TAB-SEND] call hold on ${groupId.slice(0, 8)}... not taken - no Web Locks here`);
-    return;
-  }
-  const release = holdLeafRefresh(groupId, 'a call placed from a follower tab');
-  void locks
-    .request(holdLock, {}, () => undefined)
-    .then(release, (e: unknown) => {
-      console.warn(
-        `[TAB-SEND] the wait on a follower's call hold failed - released now: ${String(e).slice(0, 120)}`
-      );
-      release();
-    });
-}
-
-/**
- * The asking document's half: a Web Lock held until `release`, resolved once GRANTED - so the
- * leader, asked after, can never take it first and drop its hold at once.
- */
-function takeHoldLock(
-  groupId: string,
-  locks: DelegationLocks
-): Promise<{ name: string; release: () => void }> {
-  const name = `canari.call-leaf-hold.${groupId}.${crypto.randomUUID()}`;
+function takeHoldLock(groupId: string, locks: DelegationLocks): Promise<{ release: () => void }> {
   return new Promise((granted, refused) => {
     let release = () => {};
     const held = new Promise<void>((r) => (release = r));
     locks
-      .request(name, {}, () => {
-        granted({ name, release });
+      .request(callHoldLockName(groupId), {}, () => {
+        granted({ release });
         return held;
       })
       .catch(refused);

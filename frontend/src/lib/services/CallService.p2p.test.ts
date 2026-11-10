@@ -61,6 +61,8 @@ const tabRole = vi.hoisted(() => ({
   preflight: 'ready' as string,
   preflightAsked: 0,
   holdReleased: 0,
+  /** When set, the preflight answers only once it resolves. */
+  preflightGate: null as Promise<void> | null,
 }));
 vi.mock('$lib/mls-client/stateAuthority', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/mls-client/stateAuthority')>()),
@@ -71,6 +73,7 @@ vi.mock('$lib/utils/chat/tabSendDelegation', async (importOriginal) => ({
   leaderTabCarriesSends: () => tabRole.leaderCarries,
   callPreflightThroughLeaderTab: async () => {
     tabRole.preflightAsked += 1;
+    if (tabRole.preflightGate) await tabRole.preflightGate;
     return { answer: tabRole.preflight, releaseHold: () => (tabRole.holdReleased += 1) };
   },
 }));
@@ -755,6 +758,7 @@ describe('a peer-to-peer call, client side', () => {
       tabRole.preflight = 'ready';
       tabRole.preflightAsked = 0;
       tabRole.holdReleased = 0;
+      tabRole.preflightGate = null;
     });
 
     it('a leader that cannot carry it (its PIN gate, another account) refuses it before any request: nothing rings', async () => {
@@ -816,6 +820,58 @@ describe('a peer-to-peer call, client side', () => {
       expect(tabRole.holdReleased).toBe(0);
       service.endCall();
       expect(tabRole.holdReleased).toBe(1);
+    });
+
+    /**
+     * Fifth review of #3326: the callee's keys are the LEADER's export too, so its epoch is held
+     * BEFORE they are read - or a refresh there between the caller's export (epoch N) and the
+     * callee's keys the callee at N+1, and the call never decrypts.
+     */
+    it("a follower answering a call holds the leader's epoch before its keys are read, until it hangs up", async () => {
+      const service = new CallService(fakeMls);
+      await ringingCallee(service);
+      tabRole.refuses = true;
+      tabRole.leaderCarries = true;
+      let answer!: () => void;
+      tabRole.preflightGate = new Promise((r) => (answer = r));
+      vi.mocked(fakeMls.exportSecret).mockClear();
+
+      const accepted = service.acceptCall('group-1', 'room-1');
+      await settle();
+      expect(tabRole.preflightAsked).toBe(1);
+      // No key is read before the leader has answered - and so before the hold is in place.
+      expect(fakeMls.exportSecret).not.toHaveBeenCalled();
+
+      answer();
+      await settle();
+      expect(fakeMls.exportSecret).toHaveBeenCalled();
+      const ws = FakeSocket.instances[0];
+      ws.open();
+      ws.deliver({ type: 'Joined', room_id: 'room-1' });
+      await accepted;
+      expect(get(service.callState)).toBe('incall');
+
+      expect(tabRole.holdReleased).toBe(0);
+      service.endCall();
+      expect(tabRole.holdReleased).toBe(1);
+    });
+
+    it('a follower answering a call its leader cannot carry reads no key and ends the call, said', async () => {
+      const service = new CallService(fakeMls);
+      await ringingCallee(service);
+      tabRole.refuses = true;
+      tabRole.leaderCarries = true;
+      tabRole.preflight = 'leader-unavailable';
+      vi.mocked(fakeMls.exportSecret).mockClear();
+      const { showToast } = await import('$lib/stores/toast.svelte');
+      vi.mocked(showToast).mockClear();
+
+      await service.acceptCall('group-1', 'room-1');
+
+      expect(fakeMls.exportSecret).not.toHaveBeenCalled();
+      expect(showToast).toHaveBeenCalledWith(m.call_no_leader_tab(), 'warning');
+      expect(get(service.callState)).not.toBe('incall');
+      expect(tabRole.holdReleased).toBe(0);
     });
   });
 

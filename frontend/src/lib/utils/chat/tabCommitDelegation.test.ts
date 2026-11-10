@@ -29,7 +29,7 @@ import {
   FollowerTabSendError,
 } from '$lib/mls-client/commitSubmission';
 import { toBase64 } from '$lib/utils/hex';
-import { leafRefreshHold } from '$lib/mls-client/leafRefresh';
+import { callHoldLockHeld } from '$lib/mls-client/leafRefresh';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
@@ -149,6 +149,8 @@ function lockManager() {
   return {
     forDocument,
     held: (name: string) => holders.has(name),
+    /** `LockManager.query`: the origin's held locks, whichever document holds them. */
+    query: async () => ({ held: [...holders.keys()].map((name) => ({ name })) }),
     /** The document goes away: every lock it holds is released, by the browser. */
     kill(doc: string) {
       for (const done of releasers.get(doc) ?? []) done();
@@ -483,8 +485,7 @@ describe('a follower tab hands its sends to the leader tab', () => {
           sendMessage: mls.sendMessage ?? vi.fn(),
           exportSecret: mls.exportSecret ?? noExport,
         }),
-        () => key,
-        leader.env.locks
+        () => key
       )
     );
     return leader;
@@ -699,15 +700,15 @@ describe('a follower tab hands its sends to the leader tab', () => {
     const refused = tab('F', locked, { leader: false });
     const no = await callPreflightThroughLeaderTab('g-locked', fromFollower(refused));
     expect(no.answer).toBe('leader-unavailable');
-    // A refused call holds nothing in the leader.
+    // A refused call leaves no hold in the lock table.
     await settle();
-    expect(leafRefreshHold('g-locked')).toBeNull();
+    expect(await callHoldLockHeld('g-locked', locked.locks)).toBe(false);
   });
 
   /**
    * Fourth review of #3326: the leader exports a follower's call key at epoch N; a leaf refresh THERE
    * while the call rings moves the group to N+1, and the callee keys at N+1 - an undecryptable call.
-   * The hold is the leader's, from the preflight to the hang-up.
+   * The hold is the follower's lock, read by the leader's refresh, from the preflight to the hang-up.
    */
   it("a follower's call holds the LEADER's leaf refresh until it hangs up", async () => {
     const w = makeWorld();
@@ -716,11 +717,12 @@ describe('a follower tab hands its sends to the leader tab', () => {
 
     const preflight = await callPreflightThroughLeaderTab('g-call', fromFollower(follower));
     await settle();
-    expect(leafRefreshHold('g-call')).not.toBeNull();
+    expect(await callHoldLockHeld('g-call', w.locks)).toBe(true);
+    expect(await callHoldLockHeld('g-other', w.locks)).toBe(false);
 
     preflight.releaseHold();
     await settle();
-    expect(leafRefreshHold('g-call')).toBeNull();
+    expect(await callHoldLockHeld('g-call', w.locks)).toBe(false);
   });
 
   it('the hold ends with the follower document - its lock released by the browser, no clock', async () => {
@@ -730,12 +732,34 @@ describe('a follower tab hands its sends to the leader tab', () => {
 
     await callPreflightThroughLeaderTab('g-dies', fromFollower(follower));
     await settle();
-    expect(leafRefreshHold('g-dies')).not.toBeNull();
+    expect(await callHoldLockHeld('g-dies', w.locks)).toBe(true);
 
     // The follower closes mid-call without hanging up.
     follower.kill();
     await settle();
-    expect(leafRefreshHold('g-dies')).toBeNull();
+    expect(await callHoldLockHeld('g-dies', w.locks)).toBe(false);
+  });
+
+  /**
+   * Fifth review of #3326: a hold kept in the asked leader's memory died with it, and the leader
+   * elected after the handover refreshed under the call. The hold is the follower's lock, so the new
+   * leader reads it without having been asked - and it still ends only with the follower's lock.
+   */
+  it('a leader elected after a handover honours a hold it was never asked for', async () => {
+    const w = makeWorld();
+    const oldLeader = sendingLeader('L1', w, {});
+    const follower = tab('F', w, { leader: false });
+    const preflight = await callPreflightThroughLeaderTab('g-handover', fromFollower(follower));
+    expect(preflight.answer).toBe('ready');
+
+    oldLeader.kill();
+    sendingLeader('L2', w, {});
+    await settle();
+    expect(await callHoldLockHeld('g-handover', w.locks)).toBe(true);
+
+    preflight.releaseHold();
+    await settle();
+    expect(await callHoldLockHeld('g-handover', w.locks)).toBe(false);
   });
 });
 

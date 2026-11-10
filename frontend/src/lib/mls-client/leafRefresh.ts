@@ -339,6 +339,39 @@ export function leafRefreshHold(groupId: string): string | null {
   return holds.values().next().value ?? null;
 }
 
+/**
+ * The prefix of the Web Lock a FOLLOWER tab holds for the life of a call it is in
+ * (`tabSendDelegation.ts`): its media keys are exported by the leader tab, so the group's epoch must
+ * stay put in the LEADER - whichever document leads, before or after a handover. The hold is the
+ * lock itself, read from the browser's lock table at the decision, never a copy kept in one
+ * document's memory: it ends exactly when the follower hangs up or its document dies.
+ */
+const CALL_HOLD_LOCK_PREFIX = 'canari.call-leaf-hold.';
+
+/** A fresh name for one call's hold on `groupId` - one per call, so two calls never share a release. */
+export function callHoldLockName(groupId: string): string {
+  return `${CALL_HOLD_LOCK_PREFIX}${groupId}.${crypto.randomUUID()}`;
+}
+
+/** The subset of `LockManager.query` the hold reads. */
+export interface HeldLocksQuery {
+  query(): Promise<{ held?: Array<{ name?: string }> }>;
+}
+
+/**
+ * Whether a document of this origin holds a call hold on `groupId` right now. `null` locks (an engine
+ * without Web Locks) hold nothing: no follower there can take one, since it delegates nothing.
+ */
+export async function callHoldLockHeld(
+  groupId: string,
+  locks: HeldLocksQuery | null
+): Promise<boolean> {
+  if (!locks) return false;
+  const prefix = `${CALL_HOLD_LOCK_PREFIX}${groupId}.`;
+  const { held = [] } = await locks.query();
+  return held.some((lock) => lock.name?.startsWith(prefix) === true);
+}
+
 /** What one {@link refreshLeafIfDue} call did. */
 export type LeafRefreshOutcome =
   | 'key-group'
@@ -364,6 +397,8 @@ export interface LeafRefreshDeps {
   isInEpochGap(groupId: string): boolean;
   isGroupActive(groupId: string): Promise<boolean>;
   getEpoch(groupId: string): number;
+  /** Whether another tab holds a call on `groupId` whose keys this one exports ({@link callHoldLockHeld}). */
+  heldByAnotherTabsCall(groupId: string): Promise<boolean>;
   /** `own_leaf_minted_at`: Unix seconds for a KeyPackage-dated leaf, `null` for a refreshed one. */
   ownLeafMintedAt(groupId: string): Promise<number | null>;
   /** `own_leaf_encryption_key` as hex - what names the current leaf - or `null` with no own leaf. */
@@ -474,6 +509,13 @@ export async function refreshLeafIfDue(
     deps.log(
       `[LEAF_REFRESH] ${short}... due (${ageDays} d, ${decision.basis}) but held (${hold}) - ` +
         'asked again at the next send after the hold is released'
+    );
+    return 'held';
+  }
+  if (await deps.heldByAnotherTabsCall(groupId)) {
+    deps.log(
+      `[LEAF_REFRESH] ${short}... due (${ageDays} d, ${decision.basis}) but held (a call in another tab) - ` +
+        'asked again at the next send after that tab hangs up'
     );
     return 'held';
   }

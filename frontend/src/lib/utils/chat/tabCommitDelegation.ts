@@ -83,11 +83,10 @@ export type DelegatedCommitOp =
   /** One MLS exporter secret of `groupId` at the leader's epoch (a call's media keys); sealed. */
   | { kind: 'export-secret'; groupId: string; payload?: SealedTabPayload }
   /**
-   * Whether the leader can carry a call's frames right now - asked before anything rings. `holdLock`
-   * names a Web Lock the asking document holds for the call's life: the leader holds `groupId`'s
-   * leaf refresh until that lock is free (`tabSendDelegation.ts`).
+   * Whether the leader can carry a call's frames right now - asked before anything rings. The
+   * asker already holds the call's hold lock, which every leaf refresh reads (`callHoldLockHeld`).
    */
-  | { kind: 'call-preflight'; groupId: string; holdLock?: string };
+  | { kind: 'call-preflight'; groupId: string };
 
 /**
  * A request's or an answer's secret part, AES-256-GCM under the device key (`encryptData`, the

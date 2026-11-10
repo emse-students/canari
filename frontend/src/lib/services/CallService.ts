@@ -660,8 +660,8 @@ export class CallService {
   /** Releases the leaf-refresh hold this service took on its call's group, when it holds one. */
   private releaseLeafRefreshHold: (() => void) | null = null;
   /**
-   * The LEADER tab's hold on the group's leaf refresh, for a call placed from this follower tab
-   * (`callPreflightThroughLeaderTab`): lifted when the call leaves its live states.
+   * The hold on the group's leaf refresh in WHICHEVER tab leads, for a call placed or answered from
+   * this follower tab (`callPreflightThroughLeaderTab`): lifted when the call leaves its live states.
    */
   private releaseLeaderLeafRefreshHold: (() => void) | null = null;
   /** The group {@link releaseLeafRefreshHold} is for. */
@@ -736,6 +736,25 @@ export class CallService {
       this.pageRingingCall = null;
       reportPageRingingCall(this.pageRingHolder, null);
     }
+  }
+
+  /**
+   * From a FOLLOWER tab, asks the leader whether it can carry this call and, on `ready`, returns the
+   * release of the hold that keeps the group's epoch put in whichever tab leads (`tabSendDelegation.ts`)
+   * - the caller stores it or releases it. In a tab that commits for itself: `null`, nothing to hold
+   * beyond this service's own hold. Throws {@link CallNoLeaderTabError} on any other answer.
+   */
+  private async holdTheLeadersEpoch(
+    groupId: string,
+    step: 'startCall' | 'acceptCall'
+  ): Promise<(() => void) | null> {
+    if (!refusesCommitsHere()) return null;
+    const preflight = await callPreflightThroughLeaderTab(groupId);
+    if (preflight.answer !== 'ready') {
+      appendLog(`[Call] ${step} refused - the leader tab cannot carry it (${preflight.answer})`);
+      throw new CallNoLeaderTabError(preflight.answer);
+    }
+    return preflight.releaseHold;
   }
 
   /** Takes, moves or releases the leaf-refresh hold to follow the call's state and group. */
@@ -1110,22 +1129,14 @@ export class CallService {
     // another account holds the lock but cannot carry the call, and a call it cannot carry would
     // ring the callee into a ghost missed call. Asked once, on the delegation channel; the call
     // stays `idle` until the answer, so a refusal leaves nothing to end.
-    // Its `ready` also leaves the group's leaf refresh held IN THE LEADER, which is where commits
-    // are made, until this call ends (`syncLeafRefreshHold`) or this document dies.
-    if (refusesCommitsHere()) {
-      const preflight = await callPreflightThroughLeaderTab(groupId);
-      if (preflight.answer !== 'ready') {
-        appendLog(
-          `[Call] startCall refused - the leader tab cannot carry it (${preflight.answer})`
-        );
-        throw new CallNoLeaderTabError(preflight.answer);
-      }
+    const releaseHold = await this.holdTheLeadersEpoch(groupId, 'startCall');
+    if (releaseHold) {
       // A second tap answered while this one waited: that call is the one placed.
       if (get(this.callState) !== 'idle') {
-        preflight.releaseHold();
+        releaseHold();
         return;
       }
-      this.releaseLeaderLeafRefreshHold = preflight.releaseHold;
+      this.releaseLeaderLeafRefreshHold = releaseHold;
     }
 
     this.currentGroupId = groupId;
@@ -1321,7 +1332,21 @@ export class CallService {
         token,
         this.timedStep('ice-servers', () => this.fetchIceServers(groupId, callId)),
         this.timedStep('media', () => this.setupMedia(useVideo, seq)),
-        this.timedStep('keys', () => this.setupEncryption(groupId, callId, 'callee', seq)),
+        // From a follower tab, the keys are the LEADER's export: its epoch is held before it is
+        // read, as on the caller's side, or a refresh there between the two ends' exports keys them
+        // from different epochs.
+        this.timedStep('keys', async () => {
+          const releaseHold = await this.holdTheLeadersEpoch(groupId, 'acceptCall');
+          if (releaseHold) {
+            if (!this.setupLive(seq)) {
+              // Ended while the leader answered: `syncLeafRefreshHold` already ran for it.
+              releaseHold();
+              this.assertSetupLive(seq, 'after the leader preflight');
+            }
+            this.releaseLeaderLeafRefreshHold = releaseHold;
+          }
+          await this.setupEncryption(groupId, callId, 'callee', seq);
+        }),
       ]);
       this.assertSetupLive(seq, 'after the parallel setup');
       this.adoptIceServers(ice);

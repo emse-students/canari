@@ -70,7 +70,11 @@ import {
 } from '$lib/mls-client/sendRatchetLedger';
 import { sealedFrameEpoch } from '$lib/mls-client/sealedFrameEpoch';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
-import { noteOwnLeafRefreshed, refreshLeafIfDue } from '$lib/mls-client/leafRefresh';
+import {
+  callHoldLockHeld,
+  noteOwnLeafRefreshed,
+  refreshLeafIfDue,
+} from '$lib/mls-client/leafRefresh';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import {
   MlsStateUnreadableNowError,
@@ -8575,6 +8579,11 @@ export abstract class BaseMlsService implements IMlsService {
         isInEpochGap,
         isGroupActive: (g) => this.isGroupActive(g),
         getEpoch: (g) => this.getEpoch(g),
+        heldByAnotherTabsCall: (g) =>
+          callHoldLockHeld(
+            g,
+            typeof navigator !== 'undefined' && navigator.locks ? navigator.locks : null
+          ),
         ownLeafMintedAt: (g) => this.ownLeafMintedAt(g),
         ownLeafKey: (g) => this.ownLeafKey(g),
         refreshOwnLeaf: (g) => this.refreshOwnLeaf(g),
