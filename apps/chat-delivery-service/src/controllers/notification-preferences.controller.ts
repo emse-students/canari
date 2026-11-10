@@ -16,7 +16,12 @@ import { Repository } from 'typeorm';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { NotificationPreference } from '../entities/notification-preference.entity';
 import { sanitizeQueryValue } from '../utils/sanitize';
-import { isNotificationCategory, NOTIFICATION_CATEGORIES } from '../services/push-category';
+import {
+  categoriesNameableBy,
+  isNotificationCategory,
+  NOTIFICATION_CATEGORIES,
+} from '../services/push-category';
+import { CLIENT_VERSION_HEADER } from '../utils/app-version';
 import {
   readDisabledCategoriesStrict,
   readGroupCallPermissionsStrict,
@@ -134,12 +139,18 @@ export class NotificationPreferencesController {
     return { groupId, level };
   }
 
-  /** Replaces the disabled set. Unknown ids are refused: a typo must not read as "saved". */
+  /**
+   * Replaces the disabled set for the categories the CALLER'S BUILD names
+   * (`X-Canari-Client-Version`, none = a build up to 1.6.9), and keeps the stored choice for every
+   * other one: a build that draws no switch for a category made no choice about it. Unknown ids are
+   * refused: a typo must not read as "saved". Answers the set now stored.
+   */
   @UseGuards(HeaderAuthGuard)
   @Put('mls/notification-preferences')
   async put(
     @Headers('x-user-id') userIdRaw: string,
-    @Body() body: { disabled?: unknown }
+    @Body() body: { disabled?: unknown },
+    @Headers(CLIENT_VERSION_HEADER) clientVersion?: string
   ): Promise<{ disabled: string[] }> {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     if (!Array.isArray(body?.disabled)) {
@@ -152,8 +163,13 @@ export class NotificationPreferencesController {
         `unknown category; expected a subset of ${NOTIFICATION_CATEGORIES.join(', ')}`
       );
     }
-    await writeDisabledCategories(this.prefRepo.manager, userId, disabled);
-    this.logger.log(`[NOTIF_PREF] user=${userId} disabled=[${disabled.join(',')}]`);
-    return { disabled };
+    const nameable = new Set(categoriesNameableBy(clientVersion));
+    const keep = NOTIFICATION_CATEGORIES.filter((category) => !nameable.has(category));
+    const stored = await writeDisabledCategories(this.prefRepo.manager, userId, disabled, keep);
+    this.logger.log(
+      `[NOTIF_PREF] user=${userId} disabled=[${stored.join(',')}]` +
+        (keep.length ? ` kept-unnamed=[${keep.join(',')}] client=${clientVersion ?? 'none'}` : '')
+    );
+    return { disabled: stored };
   }
 }

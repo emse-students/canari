@@ -35,8 +35,13 @@
 "notif.social.friend_reaction.body" = "Voir la publication";
 "notif.social.friend_comment.title" = "%@ a commenté une publication";
 "notif.social.friend_comment.body" = "Voir la publication";
-"notif.social.campus_trend.title" = "Une publication fait réagir votre espace";
-"notif.social.campus_trend.body" = "Voir la publication";
+"notif.social.campus_trend.title" = "Suggestion : %@";
+"notif.social.campus_trend.body" = "Une publication qui fait réagir votre espace";
+"notif.social.campus_trend.untitled" = "Suggestion : une publication";
+"notif.social.campus_trend_photo.title" = "Suggestion : une photo";
+"notif.social.campus_trend_photo.body" = "Une publication qui fait réagir votre espace";
+"notif.social.campus_trend_video.title" = "Suggestion : une vidéo";
+"notif.social.campus_trend_video.body" = "Une publication qui fait réagir votre espace";
 "notif.social.repost_proposed.title" = "%@ propose de relayer une publication";
 "notif.social.repost_proposed.body" = "Publication à relayer";
 "notif.social.repost_personal_requested.title" = "%@ demande à relayer votre publication";

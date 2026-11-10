@@ -1561,7 +1561,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           actorName: 'Alice',
           text: '',
           associationLogoMediaId: null,
-          pushData: { liveId: live.id, minAppVersion: '1.5.4' },
+          pushData: { liveId: live.id },
         },
       ]);
 
@@ -1647,7 +1647,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         text: '',
         associationId: ASSO,
         associationLogoMediaId: 'logo1',
-        pushData: { liveId: live.id, associationId: ASSO, minAppVersion: '1.5.4' },
+        pushData: { liveId: live.id, associationId: ASSO },
       });
 
       // A MEMBER outside the rules' spaces sees the association, so is in its audience - the post

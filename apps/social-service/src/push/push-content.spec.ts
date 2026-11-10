@@ -424,7 +424,10 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_member_repost', memberRepostContent(ACTOR, '')],
     ['social_friend_reaction', friendReactionContent(ACTOR, '')],
     ['social_friend_comment', friendCommentContent(ACTOR, '')],
-    ['social_campus_trend', campusTrendContent('')],
+    // The title names the post's opening ("Suggestion : %1$s"); the body is a fixed sentence.
+    ['social_campus_trend', campusTrendContent(ARG)],
+    ['social_campus_trend_photo', campusTrendContent('', 'photo')],
+    ['social_campus_trend_video', campusTrendContent('', 'video')],
     ['social_repost_proposed', repostProposedContent(ACTOR, '')],
     ['social_repost_personal_requested', repostPersonalRequestedContent(ACTOR, '')],
     ['social_coorganise_proposed', coorganiseProposedContent(ACTOR, '')],

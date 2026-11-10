@@ -33,6 +33,8 @@ export type PushContentKey =
   | 'social_friend_reaction'
   | 'social_friend_comment'
   | 'social_campus_trend'
+  | 'social_campus_trend_photo'
+  | 'social_campus_trend_video'
   | 'social_repost_proposed'
   | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
@@ -137,6 +139,9 @@ export type PushContent = {
    * - `social_mention` / `social_reply` / `social_comment`: the text the author typed
    * - `social_reaction`: the reaction itself (an emoji)
    * - `social_association_post` / `social_followed_post`: the opening of the post's own text
+   * - `social_campus_trend`: the opening of the post's own text, EMPTY for a post with no text and
+   *   no picture or video (the device then words it "une publication"); `social_campus_trend_photo`
+   *   / `_video`: nothing, always empty
    * - `social_live_started`: nothing, always empty
    * - `social_live_mention`: the live's title, empty when it has none
    * - the three live moderation keys (`social_live_cut`, `_suspended`, `_withdrawn`): nothing, always
@@ -716,18 +721,44 @@ export function friendCommentContent(
   };
 }
 
+/** What a campus trend's post shows when it has no text: its first picture or video, or neither. */
+export type TrendMedia = 'photo' | 'video' | null;
+
 /**
- * A post of the recipient's space took off (engagement WP-10, campus trends): nobody acted in the
- * notice's name, so `actorName` is empty - an anonymous post stays anonymous; `arg` is the opening
- * of the post's own text.
+ * A post of the recipient's space took off (engagement WP-10, campus trends), told as a SUGGESTION
+ * (owner, 2026-11-10): the title is "Suggestion : " followed by the post's opening, and the body a
+ * fixed sentence. Nobody acted in the notice's name, so `actorName` is empty - an anonymous post
+ * stays anonymous. A post with no text never reads as a colon followed by nothing: its first picture
+ * or video names it (`social_campus_trend_photo` / `_video`, one fixed sentence per key, as every
+ * native table states), and a post with neither text nor either - a poll, a file - takes the base
+ * key with an empty `arg`, which the device words "Suggestion : une publication".
  */
-export function campusTrendContent(preview: string): PushContent {
+export function campusTrendContent(preview: string, media: TrendMedia = null): PushContent {
+  const body = 'Une publication qui fait réagir votre espace';
+  if (!preview && media === 'photo') {
+    return {
+      key: 'social_campus_trend_photo',
+      actorName: '',
+      arg: '',
+      legacyTitle: 'Suggestion : une photo',
+      legacyBody: body,
+    };
+  }
+  if (!preview && media === 'video') {
+    return {
+      key: 'social_campus_trend_video',
+      actorName: '',
+      arg: '',
+      legacyTitle: 'Suggestion : une vidéo',
+      legacyBody: body,
+    };
+  }
   return {
     key: 'social_campus_trend',
     actorName: '',
     arg: preview,
-    legacyTitle: 'Une publication fait réagir votre espace',
-    legacyBody: preview || 'Voir la publication',
+    legacyTitle: `Suggestion : ${preview || 'une publication'}`,
+    legacyBody: body,
   };
 }
 

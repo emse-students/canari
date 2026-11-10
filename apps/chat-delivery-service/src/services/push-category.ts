@@ -1,3 +1,5 @@
+import { keysKnownBy } from '../utils/app-version';
+
 /**
  * THE CATEGORIES A USER MAY SWITCH OFF, AND WHICH PUSH BELONGS TO WHICH - the one place either is written.
  *
@@ -39,9 +41,46 @@ export const NOTIFICATION_CATEGORIES = [
    * off on its own. Off, the bell still lists it - only the push is not sent.
    */
   'birthdays',
+  /**
+   * A post of the reader's space that takes off - a campus trend, told as a SUGGESTION (owner,
+   * 2026-11-10, docs/wiki/engagement.md WP-10): its own switch, on by default, independent of
+   * `posts`, because it is news about accounts the reader does not follow. Off, the bell still lists
+   * it - only the push is not sent. A build older than the switch draws none for it; it is also too
+   * old to be sent a trend at all (social-service's client floor).
+   */
+  'suggestions',
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+
+/**
+ * THE FIRST BUILD WHOSE SETTINGS SCREEN NAMES EACH CATEGORY (`null` = every admitted build), read
+ * from the release tags (`frontend/src/lib/notifications/categories.ts` at each tag). A build below a
+ * category's floor cannot draw its switch, so its save cannot be a choice about it: the PUT keeps
+ * what is stored for every category the caller cannot name (`categoriesNameableBy`). A NEW CATEGORY
+ * TAKES THE VERSION OF THE RELEASE THAT ADDS ITS SWITCH - the record type makes a missing one a
+ * compile error. Twin rule of social-service's `notification-client-floor.ts` (docs/wiki/
+ * legacy-compatibility.md, "The client floor of every notification type").
+ */
+export const CATEGORY_MIN_CLIENT: Readonly<Record<NotificationCategory, string | null>> = {
+  messages: null,
+  channels: null,
+  posts: null,
+  comments: null,
+  mentions: null,
+  reactions: null,
+  events: null,
+  forms: null,
+  follows: '1.5.1',
+  bookings: '1.5.1',
+  birthdays: '1.6.9',
+  suggestions: '1.6.10',
+};
+
+/** The categories a caller running `clientVersion` can name (undefined = a build up to 1.6.9). */
+export function categoriesNameableBy(clientVersion: string | undefined): NotificationCategory[] {
+  return keysKnownBy(CATEGORY_MIN_CLIENT, clientVersion);
+}
 
 /** True when `value` is one of the closed set - the only thing a write may name. */
 export function isNotificationCategory(value: unknown): value is NotificationCategory {
@@ -73,13 +112,15 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // posts, so the switch that silences those posts silences its lives too.
   social_live_started: 'posts',
   // Engagement (docs/wiki/engagement.md, L30): an account the reader follows reacted to or commented
-  // on a post (WP-9), and a post of the reader's space took off (WP-10) - news about somebody else's
-  // post, so the switch that silences posts silences them. social-service's `CAPPED_PUSH_TYPES`
-  // reads the same category before it counts the daily cap (campus trends only since 2026-11-10);
-  // its contract spec pins the two.
+  // on a post (WP-9) - news about somebody else's post, so the switch that silences posts silences it.
   social_friend_reaction: 'posts',
   social_friend_comment: 'posts',
-  social_campus_trend: 'posts',
+  // A post of the reader's space took off (WP-10): a SUGGESTION, its own switch since 2026-11-10
+  // (owner). social-service's `CAPPED_PUSH_TYPES` reads the same category before it counts the daily
+  // cap; its contract spec pins the three keys.
+  social_campus_trend: 'suggestions',
+  social_campus_trend_photo: 'suggestions',
+  social_campus_trend_video: 'suggestions',
   social_live_mention: 'mentions',
   // A follow request and its acceptance (WP-F4): a category of their own, which the settings screen
   // draws a switch for. Off, the request still waits in the inbox - only the push is not sent.

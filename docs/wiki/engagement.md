@@ -23,9 +23,11 @@ popularity, the suggested posts of people merged into it with no quota) and "Mon
 **Campus** (chronological, nothing inserted) - every decision, the score, the bands and the paging are
 in [posts](frontend/modules/posts.md#the-owners-decisions-of-2026-11-10). What that changed on this
 page: WP-6's carousel lives in Pour toi only and offers people only; WP-7's posts are placed by the
-server's ranking, not by `placeSuggestedPosts` (deleted), so L13 no longer applies to Pour toi; WP-10's
-campus-trend notifications are UNCHANGED (on by default, at most 5 a day, switched off under
-Publications in the settings).
+server's ranking, not by `placeSuggestedPosts` (deleted), so L13 no longer applies to Pour toi. WP-10's
+campus-trend notifications were reshaped the same day after the deploy of 1.6.9 announced a backlog
+([below](#the-deploy-of-2026-11-10-and-what-it-changed)): at most ONE a day per reader, a post past
+the threshold before it was first evaluated never announced, "Suggestion :" wording, their own
+**Suggestions** switch (on by default), and never sent to a build too old to draw them.
 
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
 (the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); WP-6 BUILT (the surfaces, 2026-11-09, [below](#wp-6---the-surfaces-built)); WP-7 BUILT (suggested posts, 2026-11-09, [below](#wp-7---suggested-posts-built)); WP-8 BUILT (the daily cap, 2026-11-09, [below](#wp-8---the-daily-cap-built)); WP-9 BUILT (friends' activity, 2026-11-09, [below](#wp-9---friends-activity-built)); WP-10 BUILT (campus trends, 2026-11-09, [below](#wp-10---campus-trends-built)) - every work package is built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
@@ -768,14 +770,17 @@ write, under the post row's lock, against the database's `now()`:
   author when P names it (rule 4 of (b)), minus the ledger and `post_notifications` (L14). Never through a follower door or a read
   grant: decision 5(c) says "from your space".
 - **`TREND_THRESHOLD` is a MEASUREMENT owed before WP-10 merges**, not a guess: the smallest integer
-  at which **at most one post per campus per day** would have crossed, over the last 90 days. That
+  at which **at most one post per campus per day** would have crossed, over the last 90 days -
+  amended 2026-11-10 by the lead to **at most one per three days per campus**, burst days left to
+  the per-reader daily cap ([R1](#r1---the-trend-threshold): `10`). That
   target rate is the explanation the rule carries: a trend is rare by construction, and the number
   is re-derived from the same query if the population changes. The query is
   [R1 below](#r1---the-trend-threshold). Until it is read, WP-10 does not merge.
 
 ### WP-10 - campus trends (BUILT)
 
-Built 2026-11-09 to the rule above, with `TREND_THRESHOLD = 4` as R1 read it. Migration **160**
+Built 2026-11-09 to the rule above, with `TREND_THRESHOLD = 4` as R1 read it then (**10 since
+2026-11-10**, [R1](#r1---the-trend-threshold)). Migration **160**
 (`posts."trendAnnouncedAt"`, a nullable column, no backfill, plain); `posts/campus-trend.ts`.
 
 - **The crossing, stamped once** (`STAMP_TREND_SQL`): after every new reaction and every comment,
@@ -806,8 +811,91 @@ Built 2026-11-09 to the rule above, with `TREND_THRESHOLD = 4` as R1 read it. Mi
   six concurrent writers over the crossing stamping once and telling each reader once; an anonymous
   post told to a reader its hidden writer blocked; a ledger that cannot be written leaving the post
   unstamped.
-- **Owed**: a dev pass and a phone reading (a post of the bench account's space reaching four
-  engaged accounts within a day pushes "Une publication fait réagir votre espace" once).
+- **Owed**: a dev pass and a phone reading (a post of the bench account's space reaching ten
+  engaged accounts within a day pushes "Suggestion : <its opening>" once, and a second post crossing
+  the same day pushes nothing to the same reader).
+
+#### The deploy of 2026-11-10, and what it changed
+
+**What happened.** The 1.6.9 deploy started evaluating trends on posts already in the 24-hour window.
+Five of them were past `TREND_THRESHOLD` = 4 already, so the next reaction or comment on each
+"crossed" it: within 8 minutes `campus_trend` wrote 2,483 notifications to 498 readers. A 1.6.8
+build drew each row as "Une notification que cette version de l'application ne peut pas afficher";
+1.6.9 drew "Quelqu'un", an initials disc and nothing after "fait réagir :" for a post with no text.
+**The 2,483 rows are left as they are**: deleting production rows needs the owner's yes. The owner's
+decisions of 2026-11-10, as built:
+
+- **A crossing is a crossing, read from durable state, never a clock** (migration **161**, plain:
+  `posts."trendEngagedSeen"`, `ADD COLUMN`, then `SET DEFAULT 0`, no backfill). Every evaluation
+  (`EVALUATE_TREND_SQL`) records the engaged count it read, and keeps two answers apart (review of
+  #3312, H1 and H2): **the STAMP** (`trendAnnouncedAt`) is written at the first evaluation that finds
+  the count at or above the threshold - a level, a hidden post included - and a stamped post is never
+  evaluated again; **the ANNOUNCEMENT** is made only when that stamp is a crossing observed: the count
+  recorded before this write (`RETURNING old."trendEngagedSeen"`, PostgreSQL 18, the row version the
+  UPDATE replaced under its lock) was below the threshold, and the post is not hidden. A post created
+  after 161 is born at 0, a fact (nobody has engaged yet), so its crossing is announced as before. A
+  post from before 161 has NULL - "never evaluated": past the threshold at its first evaluation, it is
+  stamped SILENTLY; below it, it records a count and a later real crossing announces. So no deploy
+  can announce a backlog. **A post that takes off while hidden is stamped silently**, so a
+  moderator's restore cannot announce it on a level read; a post restored below the threshold is
+  announced at its real crossing after the restore. **A changed `TREND_THRESHOLD` is handled the same
+  way**: raising it only makes crossings rarer; lowering it to `t` stamps silently a post whose
+  recorded count is already at or above `t` - only a post whose next write takes it from below `t`
+  to `t` is announced. The write is skipped when the count did not change (`IS DISTINCT FROM`), so an
+  unchanged reaction set costs no row version. A silent stamp logs `[TREND] ... stamped without an
+  announcement`.
+- **A rollback to `1.6.9` must run ONE statement first.** `1.6.9` announces on a LEVEL any unstamped
+  post within 24 hours, so a rollback would announce every post that is past the threshold and was
+  never evaluated since `1.6.10` (its stamp is written only by an evaluation). Before the rollback,
+  in its own transaction, on the estate rolled back:
+
+  ```sql
+  UPDATE posts SET "trendAnnouncedAt" = now()
+   WHERE "trendAnnouncedAt" IS NULL AND "publishedAt" > now() - interval '24 hours';
+  ```
+
+  It stamps every post of the window, announced or not, so `1.6.9` announces nothing it did not see
+  cross; the price is that no post of those 24 hours can trend after the rollback. Written in
+  `CHANGELOG.md` with the rollback, as every rollback is.
+  **Run once on production, 2026-11-10, about 19:45 Paris time, under the owner's explicit yes**,
+  with a 7-day window instead of 24 hours, to stop 1.6.9's level-based bursts (three more after
+  17:00, about 500 recipients a post): 75 posts stamped, no row deleted.
+- **ONE trend per reader per Paris day** (161: `post_engagement_notices."trendDay"` and the partial
+  unique index `UQ_post_engagement_notices_trend_day` on `("recipientId", "trendDay")`). The ledger
+  insert writes the Paris date of the database's `now()` and `ON CONFLICT DO NOTHING` with no target,
+  so it yields to BOTH the per-post key and the per-day index: a reader told of one trend today is not
+  told of a second, inbox row AND push, whatever the order or the concurrency (two posts crossing at
+  once tell each reader exactly one). The second post is stamped all the same - it took off, and is
+  never announced later. The ledger IS the daily counter; nothing resets anything, a new day is a new
+  date.
+- **Wording.** Inbox row and push title read **"Suggestion :"** and the post's opening; a post with no
+  text says what it shows - "une photo", "une vidéo", else "une publication" - never a colon followed
+  by nothing. The row carries `meta.media` (`trendMediaOf`, the post's first image or video); the
+  push uses three keys, `social_campus_trend` ("Suggestion : %1$s", body "Une publication qui fait
+  réagir votre espace"), `social_campus_trend_photo` and `social_campus_trend_video`, in the Android
+  and iOS tables (app and NSE).
+- **The row is not a person**: no actor name, no initials disc. `CampusTrendThumb.svelte` draws the
+  post's first picture (read once the row is near the viewport, through the shared-post preview
+  cache) or a video's ThumbHash, else lucide `TrendingUp`; the badge is `TrendingUp` too.
+- **Its own switch, "Suggestions"** ("Une publication qui fait réagir votre espace, une fois par jour
+  au plus"), on by default, independent of "Publications": a new member of chat-delivery's closed set
+  `NOTIFICATION_CATEGORIES`, which stores only the DISABLED categories, so no migration and on for
+  everyone. The three keys are filed under `suggestions`, and so is `campus_trend` in
+  `CAPPED_PUSH_TYPES`. **A reader who switched "Publications" off to silence trends hears them again
+  until they switch "Suggestions" off** - the price of separating the two. **Measured on production
+  2026-11-10 (the lead, read-only): exactly 1 account has "Publications" off, of 4
+  `notification_preference` rows**, so no backfill copies that choice into "Suggestions".
+- **Never to a build too old to draw it**: the rule is general and lives in
+  [legacy-compatibility](legacy-compatibility.md#the-client-floor-of-every-notification-type-owner-2026-11-10);
+  `campus_trend` and its three keys have the floor `1.6.10`.
+- **Proof**: `campus-trend.integration.spec.ts` on PostgreSQL adds the deploy case (an unrecorded post
+  past the threshold stamped silently and never announced, an unrecorded one below it announced at its
+  later crossing), a recorded count at the threshold stamped silently, a post that took off while
+  hidden never announced once restored, a post restored below the threshold announced at its later
+  crossing, the recorded count and the skipped write (`xmin` unchanged), one
+  trend per day, the next Paris day, two posts crossing at once, and a photo post's row and push key;
+  `bell-page.integration.spec.ts` the floor filter; `notification-client-floor.spec.ts` the tables;
+  `NotificationRow.svelte.test.ts` the row.
 
 ### (d) openings for followers - one notice, never two
 
@@ -897,7 +985,8 @@ A new day is a new row: nothing resets anything. The daily GC that already prune
   friends' activity (since 2026-11-10),
   follow requests and acceptances, bookings, events, forms and money notices, moderation notices.
 - **Why 5 to start.** (Written when friends' activity was capped; since 2026-11-10 the cap guards
-  campus trends alone, which are at most one per campus per day, so it is a guard for kinds yet to
+  campus trends alone, which are at most one per READER per day since 2026-11-10 by their own
+  ledger, so it is a guard for kinds yet to
   come rather than a bound that binds today.) The cap guarded only what is new and what the reader did not ask for: an
   account's activity on someone else's post, and a post that took off. Trends are at most one per
   campus per day by construction (R1), so friends' activity is what can grow: it scales with
@@ -913,7 +1002,8 @@ A new day is a new row: nothing resets anything. The daily GC that already prune
 
 Built 2026-11-09 to the design above, with the cap at 5 as R2 read it. Migration **157**
 (`engagement_push_days`, plain); `posts/engagement-push-cap.ts` holds the constant, the allowlist
-`CAPPED_PUSH_TYPES` (`campus_trend` alone, filed under `posts`, L30; `friend_reaction` and
+`CAPPED_PUSH_TYPES` (`campus_trend` alone, filed under `suggestions` since 2026-11-10 - under
+`posts` before, L30; `friend_reaction` and
 `friend_comment` were in it from WP-9 until the owner's amendment of decision 11 on 2026-11-10), the
 one claim statement and the GC statement.
 
@@ -924,8 +1014,9 @@ one claim statement and the GC statement.
   does: nobody is pushed, an error names the type, and the error reaches the caller.
 - **The table the category is read from** is chat-delivery's `notification_preference` (singular,
   its migration 028; the design text above said `notification_preferences`).
-- **chat-delivery** files `social_friend_reaction`, `social_friend_comment` and `social_campus_trend` under `posts` now, so
-  the switch governs all three, capped or not; `engagement-push-cap.spec.ts`
+- **chat-delivery** files `social_friend_reaction` and `social_friend_comment` under `posts`, and the
+  three trend keys under `suggestions` (2026-11-10), so each switch governs its own, capped or not;
+  `engagement-push-cap.spec.ts`
   reads chat-delivery's `CATEGORY_BY_CONTENT_KEY` and pins every capped type's category against it.
 - **The GC**: `FormReminderScheduler.purgeEngagementPushDays`, daily at 03:05, rows older than 7
   days. **The erasure**: the recipient's rows (`account-erasure.ts`).
@@ -986,15 +1077,84 @@ GROUP BY campus, t ORDER BY campus, t;
 the LARGEST of those per-campus values (one constant, so no campus exceeds the rate). Written back
 here with the date, the row counts and the distribution's tail.
 
-**Read on production 2026-11-09** (the lead, with the owner's yes - decision 14), 90 days:
+**Superseded on 2026-11-10 by the per-DAY reading below.** An average of 1.00 a day still allows five
+on one busy day, which is what the owner rules out: "at most one trend a day" is a bound on the
+BUSIEST day, so the reading groups by the Paris date of `publishedAt` and takes the maximum. Reels
+are left out, as the rule leaves them out. `TREND_THRESHOLD` in `posts/campus-trend.ts` is a
+one-line change, and a raise or a lowering announces no backlog
+([the crossing rule](#the-deploy-of-2026-11-10-and-what-it-changed)). Read on production the same
+day - the table and the decision follow the query.
+
+```sql
+BEGIN TRANSACTION READ ONLY;
+SET LOCAL statement_timeout = '60s';
+WITH engaged AS MATERIALIZED (
+  SELECT u.campus,
+         (p."publishedAt" AT TIME ZONE 'Europe/Paris')::date AS day,
+         (SELECT count(DISTINCT x) FROM (
+             SELECT jsonb_object_keys(p.reactions) AS x
+             UNION
+             SELECT c->>'userId' FROM jsonb_array_elements(p.comments) c
+              WHERE (c->>'createdAt')::timestamptz < p."publishedAt" + interval '24 hours'
+           ) s
+          WHERE x IS NOT NULL AND x <> p."authorId") AS n
+  FROM posts p JOIN users u ON u.id = p."authorId"
+  WHERE p."publishedAt" > now() - interval '90 days'
+    AND p.kind = 'post'
+    AND NOT p."hiddenByModeration" AND u.campus IS NOT NULL
+),
+per_day AS (
+  SELECT campus, t, day, count(*) FILTER (WHERE n >= t) AS crossing
+  FROM engaged CROSS JOIN generate_series(3, 60) t
+  GROUP BY campus, t, day
+)
+SELECT campus, t AS threshold,
+       sum(crossing) AS posts_crossing,
+       count(*) FILTER (WHERE crossing > 1) AS days_over_one,
+       max(crossing) AS max_in_a_day
+FROM per_day GROUP BY campus, t ORDER BY campus, t;
+ROLLBACK;
+```
+
+**Read on production 2026-11-10** (the lead, read-only), 90 days, Saint-Etienne:
+
+| `t` | posts crossing | days with more than one | max in a day |
+| --- | --- | --- | --- |
+| 4 | 90 | 21 | 12 |
+| 6 | 55 | 10 | 11 |
+| 8 | 37 | 5 | 10 |
+| **10** | **28** | **5** | **10** |
+| 12 | 20 | 4 | 9 |
+| 15 | 15 | 3 | 8 |
+| 20 | 9 | 2 | 5 |
+| 22 | 5 | 1 | 3 |
+| 25 | 3 | 0 | 1 |
+
+Gardanne: 0 posts crossing at every `t`, so it constrains nothing.
+
+**Why "max in a day at most 1" was NOT the rule kept.** The busiest day stays high because of a few
+burst days (one day carried up to 12 posts over the threshold at 4); bounding it at 1 forces `t = 25`,
+three trends in 90 days - too rare to be a feature.
+
+**The decision rule (lead, 2026-11-10): `TREND_THRESHOLD` is the smallest `t` at which the posts
+crossing over 90 days are at most one per three days per campus (at most 30 in 90 days); the
+per-reader daily cap absorbs burst days.** That is **`TREND_THRESHOLD = 10`** (28 posts in 90 days,
+about one every three days; 8 gives 37). On a burst day several posts may still be stamped, but the
+ledger's per-day index (`trendDay`, migration 161) tells each reader of one at most - the threshold
+decides how many posts are STAMPED, the index how many a reader hears of. Re-read with the same query
+when the population changes; the largest per-campus value wins, a campus with no row constrains
+nothing.
+
+**Read on production 2026-11-09** (the lead, with the owner's yes - decision 14), 90 days, by the
+AVERAGE rule above (superseded 2026-11-10):
 
 | Campus | t = 3 | t = 4 | t = 5 | t = 10 |
 | --- | --- | --- | --- | --- |
 | saint-etienne | 106 posts (1.18/day) | at most 1.00/day - the smallest `t` meeting the rate | 60 (0.67/day) | 21 (0.23/day) |
 | gardanne | 0 | 0 | 0 | 0 |
 
-Gardanne has no post crossing at any threshold from 3, so it constrains nothing. **`TREND_THRESHOLD =
-4`**, Saint-Etienne's value.
+Gardanne has no post crossing at any threshold from 3, so it constrains nothing. `TREND_THRESHOLD =
+4` was Saint-Etienne's value by that rule, until the per-day reading above set it to 10.
 
 **When no threshold up to 60 gets a campus to 1 per day or below** (more than 90 posts in 90 days
 reached 60 engaged accounts), the reading does NOT pick 60: it is re-run with the upper end of
@@ -1213,6 +1373,7 @@ AND copies rows into it ships TWO files: the `CREATE TABLE` (plain) and the copy
 | `engagement_push_days` | WP-8 | no | `CREATE TABLE` |
 | `user_activity_settings`, `post_engagement_notices` | WP-9 | no | `CREATE TABLE` |
 | `posts."trendAnnouncedAt"` | WP-10 | no | `ADD COLUMN`, no backfill |
+| `posts."trendEngagedSeen"`, `post_engagement_notices."trendDay"` and its partial unique index (161) | WP-10 reshape, 2026-11-10 | no | `ADD COLUMN` (NULL for existing rows), `SET DEFAULT`, `CREATE UNIQUE INDEX` on a column every existing row has NULL in |
 | drop of `association_push_mutes` | after WP-3 has served one stable and the floor passed it | **yes** (a `DROP`) | destructive |
 | drop of `form_reminders` | after WP-4 has served one stable | **yes** (a `DROP`) | destructive; it must also `DROP FUNCTION canari_form_reminder_to_opening()` and unmap `FormReminder` |
 

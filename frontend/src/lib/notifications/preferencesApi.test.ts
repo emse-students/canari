@@ -9,10 +9,12 @@ vi.mock('$lib/utils/apiFetch', () => ({
 vi.mock('$lib/services/ChannelService', () => ({ channelService: {} }));
 
 import {
+  fetchNotificationPreferences,
   saveDisabledCategories,
   saveGroupCallsAllowed,
   saveGroupNotificationLevel,
 } from './preferencesApi';
+import { CLIENT_VERSION_HEADER, getClientAppVersion } from '$lib/utils/appVersion';
 
 const G = '11111111-2222-3333-4444-555555555555';
 
@@ -54,5 +56,31 @@ describe('a notification preference is saved only on the delivery service answer
   it.each(WRITES)("%s: the service's JSON 200 is saved", async (_n, save, answer) => {
     apiFetch.mockResolvedValueOnce(answer());
     await expect(save()).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * A SAVE NEVER SWITCHES BACK ON WHAT THIS BUILD CANNOT DRAW (review of #3312, D1): a category added
+ * after this build is kept as read and sent back, and the request names the build so the server
+ * keeps the stored choice of whatever it cannot name.
+ */
+describe('the categories this build does not know', () => {
+  beforeEach(() => apiFetch.mockReset());
+
+  it('are kept from the read, apart from the ones it draws, and anything malformed is dropped', async () => {
+    apiFetch.mockResolvedValueOnce(
+      Response.json({ disabled: ['posts', 'a_later_one', 42, 'Not An Id', ''] })
+    );
+    const snapshot = await fetchNotificationPreferences();
+    expect(snapshot.disabled).toEqual(['posts']);
+    expect(snapshot.unknownDisabled).toEqual(['a_later_one']);
+  });
+
+  it('go back on the save, which names this build', async () => {
+    apiFetch.mockResolvedValueOnce(Response.json({ disabled: [] }));
+    await saveDisabledCategories(['forms'], ['a_later_one']);
+    const init = apiFetch.mock.calls[0][1] as RequestInit & { headers: Record<string, string> };
+    expect(JSON.parse(String(init.body))).toEqual({ disabled: ['forms', 'a_later_one'] });
+    expect(init.headers[CLIENT_VERSION_HEADER]).toBe(getClientAppVersion());
   });
 });

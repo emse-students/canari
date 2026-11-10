@@ -5,7 +5,6 @@ import { acceptedFollowSql } from '../follows/follow-status';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { liveVisibleToUserSql } from '../spaces/reader-spaces';
 import { isLiveEnabled } from './live-enabled.guard';
-import { LIVE_MIN_CLIENT_VERSION } from './live-client-version';
 import { short } from './live-log';
 
 /** Short form of an id for a log line. */
@@ -164,11 +163,10 @@ export class LiveAnnouncer {
       text: title,
       ...(asAssociation ? { associationId: live.associationId as string } : {}),
       associationLogoMediaId,
+      // The lives floor (a build below it answers every /lives call with a 404) is the push key's own
+      // floor, written by `PushService.notifyContent` (`notification-client-floor.ts`).
       pushData: {
         liveId,
-        // The lives floor (a build below it answers every /lives call with a 404): chat-delivery
-        // skips a device KNOWN to run an older build, and strips this key before sending.
-        minAppVersion: LIVE_MIN_CLIENT_VERSION,
         ...(asAssociation ? { associationId: live.associationId as string } : {}),
       },
     });

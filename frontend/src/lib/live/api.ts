@@ -16,7 +16,7 @@
 
 import { apiFetch, type ApiFetchOptions } from '$lib/utils/apiFetch';
 import { mediaUrl, socialUrl } from '$lib/utils/apiUrl';
-import { getClientAppVersion } from '$lib/utils/appVersion';
+import { CLIENT_VERSION_HEADER, withClientVersionHeader } from '$lib/utils/appVersion';
 import { ApiRefusalError, refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { responseOrigin } from '$lib/utils/apiRefusal';
 import { trackedFetch } from '$lib/utils/trackedFetch';
@@ -210,14 +210,11 @@ function livePath(liveId: string): string {
  * switched-off estate (`LiveEnabledGuard`, docs/wiki/legacy-compatibility.md). Absent on a build
  * that predates it - which is the evidence the server reads.
  */
-export const LIVE_CLIENT_VERSION_HEADER = 'X-Canari-Client-Version';
+export const LIVE_CLIENT_VERSION_HEADER = CLIENT_VERSION_HEADER;
 
 /** `init` with the client-version header added. */
 function withClientVersion(init: ApiFetchOptions = {}): ApiFetchOptions {
-  return {
-    ...init,
-    headers: { ...init.headers, [LIVE_CLIENT_VERSION_HEADER]: getClientAppVersion() },
-  };
+  return { ...init, headers: withClientVersionHeader(init.headers) };
 }
 
 /** Runs one authenticated lives call and returns its JSON, or throws the typed refusal. */

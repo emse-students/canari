@@ -12,6 +12,7 @@ import {
   serverRankedFeeds,
 } from '$lib/stores/appVersionCheck.svelte';
 import { Log } from '$lib/utils/Log';
+import { withClientVersionHeader } from '$lib/utils/appVersion';
 
 export type PostMediaRef = MediaRef & { caption?: string };
 
@@ -1020,8 +1021,15 @@ export interface PostNotification {
   createdAt: string;
 }
 
+/**
+ * The reader's bell. The read NAMES THIS BUILD (`X-Canari-Client-Version`): the server serves only
+ * the types this build draws, so a type added after it never reaches it as an unknown row
+ * (social-service `notification-client-floor.ts`, owner 2026-11-10).
+ */
 export async function getPostNotifications(limit = 30): Promise<PostNotification[]> {
-  return request<PostNotification[]>(`/api/posts/notifications?limit=${limit}`);
+  return request<PostNotification[]>(`/api/posts/notifications?limit=${limit}`, {
+    headers: withClientVersionHeader(),
+  });
 }
 
 export async function markPostNotificationsRead(): Promise<{ ok: boolean }> {
