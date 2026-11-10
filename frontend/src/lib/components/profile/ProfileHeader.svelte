@@ -43,7 +43,8 @@
     data-profile-identity
     class="flex min-w-0 flex-col items-center gap-5 sm:flex-1 sm:basis-[26rem] sm:flex-row sm:gap-6"
   >
-    <div class="relative h-24 w-24 shrink-0 sm:h-28 sm:w-28">
+    <!-- `isolate`: the avatar's own layers (the gradient story ring) stack inside this box, and the badge (`z-10`) always sits above them. -->
+    <div class="relative isolate h-24 w-24 shrink-0 sm:h-28 sm:w-28">
       <div
         class="h-full w-full overflow-hidden rounded-full shadow-lg ring-4 ring-white/50 dark:ring-black/20"
       >
