@@ -54,31 +54,36 @@ function namedSpaces(spaces: readonly AgendaSpace[]): { campus: Campus; formatio
 }
 
 /**
- * Whether the filter is worth drawing: only a reader whose agenda reaches MORE THAN ONE space has
- * anything to narrow (a student with one space would be offered a choice that changes nothing).
+ * Whether the filter is worth drawing: the reader's agenda reaches several spaces AND at least two
+ * distinct choices narrow it (see {@link agendaSpaceOptions}).
  */
 export function hasSeveralSpaces(spaces: readonly AgendaSpace[]): boolean {
-  return namedSpaces(spaces).length > 1;
+  return agendaSpaceOptions(spaces).length > 0;
 }
 
 /**
  * The filter's options: "all spaces", then the campuses the reader reaches, then their formations.
- * Only what the reader's spaces name is listed. Empty when {@link hasSeveralSpaces} is false.
+ *
+ * AN AXIS WITH ONE VALUE IS NOT OFFERED: with [ICM-SE, ISMIN-SE] "Saint-Etienne" keeps everything,
+ * with [ICM-SE, ICM-GA] so does "ICM" - an option equivalent to "all" is a control that changes
+ * nothing. Empty (the filter hidden) when fewer than two such choices remain.
  */
 export function agendaSpaceOptions(spaces: readonly AgendaSpace[]): PickerOption[] {
   const named = namedSpaces(spaces);
-  if (named.length < 2) return [];
   const campuses = CAMPUSES.filter((c) => named.some((s) => s.campus === c));
   const formations = FORMATIONS.filter((f) => named.some((s) => s.formation === f));
+  const offeredCampuses = campuses.length > 1 ? campuses : [];
+  const offeredFormations = formations.length > 1 ? formations : [];
+  if (offeredCampuses.length + offeredFormations.length < 2) return [];
   const options: PickerOption[] = [{ value: ALL_SPACES, label: m.calendar_space_filter_all() }];
-  for (const c of campuses) {
+  for (const c of offeredCampuses) {
     options.push({
       value: CAMPUS_PREFIX + c,
       label: campusLabel(c),
       group: m.calendar_space_filter_campuses(),
     });
   }
-  for (const f of formations) {
+  for (const f of offeredFormations) {
     options.push({
       value: FORMATION_PREFIX + f,
       label: formationLabel(f),

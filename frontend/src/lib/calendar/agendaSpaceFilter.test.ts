@@ -31,6 +31,22 @@ describe('the options come from the spaces the reader reaches', () => {
     expect(values).not.toContain('formation:FSSS');
   });
 
+  it('drops an option equivalent to "all": a campus when every space is on it', () => {
+    expect(agendaSpaceOptions([icmSe, ismSe]).map((o) => o.value)).toEqual([
+      '',
+      'formation:ICM',
+      'formation:ISMIN',
+    ]);
+  });
+
+  it('drops an option equivalent to "all": a formation when every space is that one', () => {
+    expect(agendaSpaceOptions([icmSe, icmGa]).map((o) => o.value)).toEqual([
+      '',
+      'campus:saint-etienne',
+      'campus:gardanne',
+    ]);
+  });
+
   it('drops a space this client cannot name', () => {
     const options = agendaSpaceOptions([icmSe, { formation: 'ICM', campus: 'mars' }]);
     expect(options).toEqual([]);

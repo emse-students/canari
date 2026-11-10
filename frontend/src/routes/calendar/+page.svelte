@@ -105,7 +105,8 @@
    */
   const agenda = createAgendaMonth({
     load: ({ from, to }) => {
-      const { campus, formation } = narrowingOf(spaceValue);
+      // A deep-linked association is asked for whole: the remembered space is ignored meanwhile.
+      const { campus, formation } = narrowingOf(filterAssociationId ? '' : spaceValue);
       return listAggregatedCalendarFeed({
         from,
         to,
@@ -147,6 +148,9 @@
   /** Leaves a deep-linked association: back to the whole agenda (the space filter still applies). */
   function clearAssociationFilter() {
     filterAssociationId = '';
+    // Both reset: back to the whole agenda, the remembered space forgotten too.
+    spaceValue = '';
+    rememberSpaceValue(getSavedUserId(), '');
     agenda.selectedDay = null;
     void goto(resolve('/calendar'), { replace: true, reset: false });
     void agenda.reload();
@@ -666,7 +670,7 @@
          nothing. A deep-linked association (`?association=`) has no select any more, so it gets a
          way out instead. -->
     {#snippet agendaFilters()}
-      {#if spaceOptions.length > 0}
+      {#if spaceOptions.length > 0 && !filterAssociationId}
         <div class="text-text-muted flex flex-col gap-1 text-xs font-semibold sm:min-w-56">
           <label for="calendar-space-filter">{m.calendar_space_filter_label()}</label>
           <Picker
