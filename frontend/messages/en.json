@@ -4709,6 +4709,8 @@
   "reels_camera_retry": "Try again",
   "reels_camera_close": "Close the camera",
   "reels_camera_switch": "Switch camera",
+  "screen_rotate_landscape": "Rotate to landscape",
+  "screen_rotate_portrait": "Back to portrait",
   "reels_camera_torch_on": "Turn the flash on",
   "reels_camera_torch_off": "Turn the flash off",
   "reels_shutter_capture": "Photo (tap) or video (hold)",

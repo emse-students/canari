@@ -343,12 +343,15 @@ export function manifestQuery(from?: number, chat?: LiveChatQuery): string {
 export async function postLiveMessage(
   liveId: string,
   clientId: string,
-  sealed: string
+  sealed: string,
+  mentions: readonly string[] = []
 ): Promise<LiveChatMessageWire | LiveChatTombstoneWire> {
   console.debug(`[LIVE_CHAT] send ${clientId} on ${liveId}: ${sealed.length} b64 chars`);
   return liveJson(`${livePath(liveId)}/messages`, 'Live message', {
     method: 'POST',
-    body: JSON.stringify({ clientId, sealed }),
+    // `mentions` are CANDIDATES (the `@[id]` tokens of the text): the server narrows them to the live's
+    // audience and tells those people, once. Omitted when there are none, as an older server expects.
+    body: JSON.stringify({ clientId, sealed, ...(mentions.length > 0 ? { mentions } : {}) }),
   });
 }
 
@@ -379,6 +382,25 @@ export async function hideLiveMessage(liveId: string, messageId: string): Promis
     'Live hide message',
     { method: 'POST' }
   );
+}
+
+/**
+ * `POST /api/lives/:id/mention-audience` - which of `ids` the `@` picker of the live's chat may
+ * suggest (owner, 2026-11-09): the ones who can see the live, with no block either way. The picker
+ * asks it of the accounts a name search found, so it never offers someone a mention would not reach.
+ */
+export async function fetchLiveMentionAudience(
+  liveId: string,
+  ids: readonly string[]
+): Promise<string[]> {
+  if (ids.length === 0) return [];
+  console.debug(`[LIVE_CHAT] mention audience of ${liveId}: ${ids.length} candidate(s)`);
+  const body = await liveJson<{ ids: string[] }>(
+    `${livePath(liveId)}/mention-audience`,
+    'Live mention audience',
+    { method: 'POST', body: JSON.stringify({ ids }) }
+  );
+  return body.ids;
 }
 
 /**
