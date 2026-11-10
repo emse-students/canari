@@ -6,7 +6,11 @@ import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
 import type { Campus, Formation } from '$lib/profile/miconnectProfile';
 import { nextPostSequence, stampServed } from '$lib/posts/postCardSync';
-import { serverLiveReplaysMode, serverRankedFeeds } from '$lib/stores/appVersionCheck.svelte';
+import {
+  refreshAppVersionCheck,
+  serverLiveReplaysMode,
+  serverRankedFeeds,
+} from '$lib/stores/appVersionCheck.svelte';
 import { Log } from '$lib/utils/Log';
 
 export type PostMediaRef = MediaRef & { caption?: string };
@@ -651,13 +655,46 @@ export async function withdrawPost(
 }
 
 /** @param limitOrOptions Pass a number for backward compatibility (`limit` only) or query options. */
+/**
+ * Whether to ask a list in its ranked shape, from the estate's ANSWER, never from its absence.
+ *
+ * The capability lives in `sessionStorage`, so on every cold start it is UNKNOWN (`null`) until the
+ * root layout's `GET /api/version` answers - and the feed's first page is asked before that. Read
+ * as "no", it sent Pour toi as the old `followed` list (associations included) to a server that
+ * serves `foryou`, and that answer was drawn and stored as Pour toi (alpha.6 on both phones,
+ * 2026-11-10). So a RANKED list with the capability unknown waits for the version check (the
+ * same request the layout issued: `refreshAppVersionCheck` dedupes it) and decides on its answer.
+ * THE CHECK MAY END WITH NO ANSWER (its whole retry ladder failed, nothing cached): the capability
+ * is then still unknown, and unknown is NOT "no" - Pour toi is asked as `foryou` anyway. An older
+ * estate refuses it (400), which the feed shows as an error, never as another list's rows; only an
+ * explicit `rankedFeeds: false` falls back to `followed`. The wait is the check's own ladder: the
+ * API holds no shorter bound that shares the layout's request, and a timer here would be a
+ * clock-based fallback.
+ * Every other list, and a known capability, decides at once.
+ */
+async function rankedFeedsKnown(opts: ListPostsOptions): Promise<boolean> {
+  if (opts.feed !== 'foryou' && !opts.ranked) return serverRankedFeeds() === true;
+  if (serverRankedFeeds() === null) {
+    Log.d('POSTS', `${opts.feed}: the estate's ranked lists are not known yet - asked first`);
+    await refreshAppVersionCheck();
+    if (serverRankedFeeds() === null) {
+      Log.w(
+        'POSTS',
+        `${opts.feed}: the check left the estate unknown - asked ranked, not as followed`
+      );
+      return true;
+    }
+  }
+  return serverRankedFeeds() === true;
+}
+
 export async function listPosts(
   limitOrOptions: number | ListPostsOptions = 30
 ): Promise<PostEntity[]> {
   const opts: ListPostsOptions =
     typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
   const withReplays = opts.withReplays ?? serverLiveReplaysMode() === 'on';
-  const rankedFeeds = opts.rankedFeeds ?? serverRankedFeeds() === true;
+  const rankedFeeds = opts.rankedFeeds ?? (await rankedFeedsKnown(opts));
   if (!rankedFeeds && (opts.feed === 'foryou' || opts.ranked)) {
     Log.d('POSTS', `this estate serves no ranked list - ${opts.feed} asked in its older shape`);
   }

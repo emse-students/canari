@@ -1156,6 +1156,8 @@ export interface IStorage {
   getFeedPage(key: string, deviceKeyB64: string): Promise<unknown>;
   /** Delete every stored feed page, returning how many went. Needs no key. */
   deleteFeedPages(): Promise<number>;
+  /** Delete the one stored feed page `key`, returning how many went (0 or 1). Needs no key. */
+  deleteFeedPage(key: string): Promise<number>;
 
   /**
    * Wipe all conversations, messages, outbox entries, Graine sessions and stored feed pages (tests /

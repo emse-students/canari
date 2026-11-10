@@ -33,6 +33,12 @@ import { currentFeedEpoch, forgetStoredFeeds } from './feedStoreEpoch';
 import { getStorage } from '$lib/db';
 import type { IStorage } from '$lib/db/types';
 
+// The estate's answer on ranked lists: unknown (`null`) unless a test says the estate serves none.
+const estate = vi.hoisted(() => ({ rankedFeeds: null as boolean | null }));
+vi.mock('$lib/stores/appVersionCheck.svelte', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/appVersionCheck.svelte')>()),
+  serverRankedFeeds: () => estate.rankedFeeds,
+}));
 vi.mock('$lib/posts/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/posts/api')>()),
   fetchFeedAudience: vi.fn(),
@@ -59,6 +65,7 @@ const OTHER_KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=';
 const ALICE: FeedStoreAccess = { userId: 'alice', deviceKeyB64: KEY };
 const ALL = { feed: 'all' as const };
 const FOLLOWED = { feed: 'foryou' as const };
+const AS_OF = '2026-11-10T12:00:00.000000Z';
 let n = 0;
 
 function post(id: string, extra: Partial<PostEntity> = {}): PostEntity {
@@ -84,6 +91,7 @@ async function openStore(): Promise<IndexedDbStorage> {
 }
 
 beforeEach(() => {
+  estate.rankedFeeds = null;
   localStorage.clear();
   localStorage.setItem('canari_saved_user', 'alice');
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -273,6 +281,65 @@ describe('the server page is authoritative for everything it could have returned
   });
 });
 
+describe("a list never holds another list's rows (alpha.6, 2026-11-10)", () => {
+  const ranked = (id: string, position: number) =>
+    post(id, { feedAsOf: AS_OF, feedPosition: position });
+
+  it('keeps Pour toi in its own shape, and never the old Suivis rows asked in its place', async () => {
+    const storage = await openStore();
+    await writeStoredFeedPage(storage, ALICE, FOLLOWED, [ranked('f1', 0)]);
+    expect((await readStoredFeedPage(storage, ALICE, FOLLOWED))?.map((p) => p.id)).toEqual(['f1']);
+    // The `followed` answer (an association's post included) asked while the estate was unknown.
+    await writeStoredFeedPage(storage, ALICE, FOLLOWED, [post('club-randonnee')]);
+    expect((await readStoredFeedPage(storage, ALICE, FOLLOWED))?.map((p) => p.id)).toEqual(['f1']);
+  });
+
+  it('a Pour toi copy an earlier build stored from the old list is not drawn, and is deleted', async () => {
+    const storage = await openStore();
+    const epoch = feedWriteEpoch(ALICE.userId, storedFeedKey(FOLLOWED)!)!;
+    await writePage(storage, ALICE, ALL, [post('a1')], epoch);
+    // What alpha.6 wrote: the old rows under Pour toi's key, bypassing today's write guard.
+    await storage.saveFeedPage(
+      storedFeedKey(FOLLOWED)!,
+      {
+        owner: 'alice',
+        epoch: currentFeedEpoch('alice'),
+        key: storedFeedKey(FOLLOWED),
+        posts: [post('club-randonnee')],
+      },
+      KEY
+    );
+    expect(await readStoredFeedPage(storage, ALICE, FOLLOWED)).toBeNull();
+    expect(await storage.getFeedPage(storedFeedKey(FOLLOWED)!, KEY)).toBeNull();
+    // ONLY Pour toi's copy went: the other tab's stored page is sound and stays.
+    expect((await readStoredFeedPage(storage, ALICE, ALL))?.map((p) => p.id)).toEqual(['a1']);
+  });
+
+  it('on an estate with no ranked list, the older rows ARE its Pour toi page: stored and read back', async () => {
+    estate.rankedFeeds = false;
+    const storage = await openStore();
+    await writeStoredFeedPage(storage, ALICE, FOLLOWED, [post('club-randonnee')]);
+    expect((await readStoredFeedPage(storage, ALICE, FOLLOWED))?.map((p) => p.id)).toEqual([
+      'club-randonnee',
+    ]);
+    // The same copy on an estate that serves ranked lists is another list's: refused and deleted.
+    estate.rankedFeeds = true;
+    expect(await readStoredFeedPage(storage, ALICE, FOLLOWED)).toBeNull();
+    expect(await storage.getFeedPage(storedFeedKey(FOLLOWED)!, KEY)).toBeNull();
+  });
+
+  it('an empty Pour toi answer replaces its stored rows, on the screen and on the device', async () => {
+    const storage = await openStore();
+    await writeStoredFeedPage(storage, ALICE, FOLLOWED, [ranked('f1', 0)]);
+    const copy = await readStoredFeedPage(storage, ALICE, FOLLOWED);
+    expect(
+      listAfterFirstPage({ answer: [], onScreen: copy, painted: null, fromStore: true })
+    ).toEqual([]);
+    await writeStoredFeedPage(storage, ALICE, FOLLOWED, []);
+    expect(await readStoredFeedPage(storage, ALICE, FOLLOWED)).toEqual([]);
+  });
+});
+
 describe('ended by what the device learns, and never revived by a write already waiting', () => {
   it('an audience verdict of false ends the copy', async () => {
     const storage = await openStore();
@@ -332,7 +399,7 @@ describe('ended by what the device learns, and never revived by a write already 
     const stale = saveStoredFeed(ALICE, ALL, [post('p-stale')]);
     // ...a refusal ends that epoch, and the next answer is stored under a new one...
     firstPageFailure(new ApiRefusalError(403, null, 'post-service 403'), true);
-    await saveStoredFeed(ALICE, FOLLOWED, [post('p-new')]);
+    await saveStoredFeed(ALICE, FOLLOWED, [post('p-new', { feedAsOf: AS_OF, feedPosition: 0 })]);
     // ...then the stale write gets its store.
     opening.resolve(storage);
     await stale;
