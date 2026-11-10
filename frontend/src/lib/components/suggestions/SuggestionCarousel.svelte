@@ -41,7 +41,7 @@
         <p class="text-text-muted text-xs">{hint}</p>
       {/if}
     </div>
-    <ul class="mt-2 flex snap-x gap-3 overflow-x-auto px-4 pb-1">
+    <ul class="mt-2 flex snap-x scroll-px-4 gap-3 overflow-x-auto px-4 pb-1">
       {#each drawn as card (`${card.kind}:${card.id}`)}
         <SuggestionCard {card} onDismiss={(c) => void dismissSuggestion(c.kind, c.id)} />
       {/each}

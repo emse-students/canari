@@ -3,6 +3,7 @@ import {
   computeSnapshot,
   hasVirtualKeyboard,
   isDoubleReport,
+  keyboardInsetBottom,
   keyboardSafeAreaBottomOverride,
   overlaySettledAroundFocus,
   pinSafeAreaBottom,
@@ -366,5 +367,31 @@ describe('the reveal of a focused field (iPhone 12, v1.2.9-alpha.4)', () => {
     expect(rule, 'the overlay field rule is gone from app.css').not.toBeNull();
     expect(rule![1]).toContain('input');
     expect(rule![2]).toMatch(/scroll-margin-block-end:\s*6\.5rem/);
+  });
+});
+
+describe('keyboardInsetBottom', () => {
+  // Mi 9T, 2026-11-10: baseline 945, a 357 px keyboard; the visual viewport moves first.
+  const m = (winH: number, vvHeight: number, offsetTop = 0, scale = 1): ViewportMeasurement => ({
+    winH,
+    vvHeight,
+    offsetTop,
+    scale,
+  });
+
+  it('is the band the keyboard covers while the layout viewport has not caught up', () => {
+    expect(keyboardInsetBottom(m(945, 588), 945)).toBe(357);
+  });
+
+  it('is zero for the double report, whose visual viewport counts the keyboard twice', () => {
+    expect(keyboardInsetBottom(m(588, 230.3, 15.35), 945)).toBe(0);
+  });
+
+  it('is zero once the layout viewport has given the keyboard its room', () => {
+    expect(keyboardInsetBottom(m(588, 588), 945)).toBe(0);
+  });
+
+  it('is zero when pinch-zoomed, which shrinks the visual viewport with no keyboard', () => {
+    expect(keyboardInsetBottom(m(945, 400, 0, 2), 945)).toBe(0);
   });
 });

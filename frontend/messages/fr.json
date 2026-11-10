@@ -4266,6 +4266,7 @@
   "posts_empty_title": "Aucun post",
   "posts_empty_followed": "Suivez des associations ou des personnes pour voir leurs publications ici, ou passez sur",
   "posts_badge_new": "Nouveau",
+  "suggestion_post_badge": "Suggestion",
   "posts_all_loaded": "Vous avez tout vu !",
   "posts_card_render_failed": "Cette publication n'a pas pu s'afficher.",
   "posts_stored_refreshing": "Fil enregistré sur l'appareil, mise à jour…",

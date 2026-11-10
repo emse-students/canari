@@ -54,7 +54,8 @@ import {
 } from './post-list-cache';
 import { STUDENTS_ONLY_NOT_OFFERED, assertStudentsOnlyOffered } from './students-only';
 import { promoCutoffFor } from '../common/promo-visibility';
-import { blockedUserIdsFor } from '../common/blocked-user-ids';
+import { blockedAuthorSql, blockedUserIdsFor } from '../common/blocked-user-ids';
+import { SUGGESTED_POSTS_MAX, suggestedPostIds } from './suggested-posts';
 import { readPostOpenVerdict } from './post-openable';
 import { readReplayRowFacts, type ReplayRowFacts } from '../lives/replay-row-facts';
 import { pageComments, type CommentOrder } from './comment-page';
@@ -1605,34 +1606,15 @@ export class PostsService {
   }
 
   /**
-   * The clause that keeps a blocked account's posts out of one viewer's feed.
-   *
-   * IT COVERS ONLY A POST WHOSE AUTHOR THAT VIEWER COULD ALREADY SEE, and the exemption is the
-   * whole point rather than an oversight. An association post hides its publisher from everyone
-   * unconditionally, an anonymous one from everyone but a moderator; filtering either on `authorId`
-   * would turn a block into a DE-ANONYMISATION ORACLE - block a suspect, watch whether the post
-   * leaves the feed, unblock. Nobody is notified of a block, no administrator sees one and lifting
-   * it costs a click, so that probe would be repeatable until it named the author of every
-   * anonymous post on the platform. `listPosts`'s `followed` arm already excludes anonymous posts
-   * for the neighbouring reason: presence in a feed is itself an answer about authorship.
-   *
-   * A LIVE REPLAY of an association is the one association post filtered: the live named its
-   * broadcaster to every viewer and hid itself from a block either way, so the replay keeps that
-   * rule and the block reveals nothing the live had not (docs/wiki/live-replays.md section 4).
-   *
-   * It is applied to the `followed` feed too, where severing the two follows has usually removed
-   * these posts already - `UserBlocksService.severFollows` is a cross-service call that is
-   * BEST-EFFORT by design and logs rather than fails, so "usually" is exactly what it is.
+   * The clause that keeps a blocked account's posts out of one viewer's feed - the shared
+   * `blockedAuthorSql` (`common/blocked-user-ids.ts`), whose note says why an association post and
+   * an anonymous one are exempt. It is applied to the `followed` feed too, where severing the two
+   * follows has usually removed these posts already - `UserBlocksService.severFollows` is a
+   * cross-service call that is BEST-EFFORT by design and logs rather than fails, so "usually" is
+   * exactly what it is.
    */
   private blockedAuthorSql(blockedParam: number | null): string {
-    if (blockedParam === null) return '';
-    // A LIVE REPLAY keeps its live's block rule, either way whoever it was broadcast for
-    // (docs/wiki/live-replays.md section 4): its author is the broadcaster on screen.
-    return `AND (
-           (posts."associationId" IS NOT NULL AND posts.kind <> 'replay')
-           OR COALESCE(posts.anonymous, false)
-           OR posts."authorId" <> ALL($${blockedParam}::text[])
-         )`;
+    return blockedAuthorSql(blockedParam);
   }
 
   /**
@@ -1691,7 +1673,60 @@ export class PostsService {
     if (cachedPage !== undefined) return await this.withReplayRowFacts(cachedPage as any);
 
     const rawPosts = await this.listPostRows(params);
+    const safe = await this.decorateListRows(rawPosts, viewerUserId, isAdmin === true);
 
+    if (stamp !== null) {
+      try {
+        await writePostListPage(this.redis, cacheKey, stamp, safe, PostsService.LIST_CACHE_TTL);
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    // AFTER the page is stored: a replay's cover key and the server's clock are read per serve.
+    return await this.withReplayRowFacts(safe);
+  }
+
+  /**
+   * THE VIEWER'S SUGGESTED POSTS (engagement WP-7, decision 8), decorated like every feed row: the
+   * ids come from `suggestedPostIds` (the space rule, the feed's block filter, popularity - its note
+   * holds every rule), the rows from the feed's own select, in that order. Not cached: one read per
+   * Mon espace opening, bounded at {@link SUGGESTED_POSTS_MAX}.
+   */
+  async listSuggestedPosts(viewerUserId: string, isAdmin: boolean): Promise<any> {
+    const ids = await suggestedPostIds(
+      this.postRepo.manager,
+      viewerUserId,
+      isAdmin,
+      SUGGESTED_POSTS_MAX
+    );
+    this.logger.debug(`[SUGGESTED_POSTS] ${viewerUserId.slice(0, 8)} ${ids.length} post(s)`);
+    if (ids.length === 0) return [];
+    const blockedIds = await blockedUserIdsFor(this.postRepo.manager, viewerUserId);
+    const bp = blockedIds.length > 0 ? 2 : null;
+    const rows: any[] = await this.postRepo.manager.query(
+      `SELECT ${this.postSelectBody(bp)}
+       FROM posts
+       LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       WHERE posts.id = ANY($1::uuid[])`,
+      [ids, ...(blockedIds.length > 0 ? [blockedIds] : [])]
+    );
+    const rank = new Map(ids.map((id, i) => [id, i]));
+    rows.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+    return this.decorateListRows(rows, viewerUserId, isAdmin);
+  }
+
+  /**
+   * A page of raw list rows made into what the client draws: mentions parsed, the authors' names,
+   * the republishers, the viewer's context, the comment identities, the linked events, then
+   * `shapeListRow` - the decoration of every feed page, and of the suggested posts (WP-7), which are
+   * feed rows like any other.
+   */
+  private async decorateListRows(
+    rawPosts: any[],
+    viewerUserId: string | undefined,
+    isAdmin: boolean
+  ): Promise<any> {
     for (const post of rawPosts) {
       if (typeof post.mentions === 'string') {
         post.mentions = post.mentions ? post.mentions.split(',').filter(Boolean) : [];
@@ -1730,7 +1765,7 @@ export class PostsService {
     }
 
     await this.attachRepublishers(rawPosts);
-    const viewerCtx = await this.viewerContext(rawPosts, viewerUserId, isAdmin === true);
+    const viewerCtx = await this.viewerContext(rawPosts, viewerUserId, isAdmin);
     const linkedEvents = await this.batchLoadLinkedCalendarEvents(rawPosts);
 
     await this.commentIdentity.serveRows(rawPosts, {
@@ -1760,18 +1795,7 @@ export class PostsService {
       return this.shapeListRow(row, viewerCtx);
     });
 
-    const safe = this.stripBigIntForJson(result);
-
-    if (stamp !== null) {
-      try {
-        await writePostListPage(this.redis, cacheKey, stamp, safe, PostsService.LIST_CACHE_TTL);
-      } catch {
-        // Non-fatal
-      }
-    }
-
-    // AFTER the page is stored: a replay's cover key and the server's clock are read per serve.
-    return await this.withReplayRowFacts(safe);
+    return this.stripBigIntForJson(result);
   }
 
   /**

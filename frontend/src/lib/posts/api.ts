@@ -609,6 +609,15 @@ export async function listPosts(
 }
 
 /**
+ * The reader's SUGGESTED POSTS (engagement WP-7, decision 8): popular posts of their space from
+ * accounts they do not follow, best first - feed rows like any other, which Mon espace places among
+ * its own (`suggestedPosts.svelte.ts`).
+ */
+export async function listSuggestedPosts(): Promise<PostEntity[]> {
+  return readPosts<PostEntity[]>('/api/posts/me/suggested-posts');
+}
+
+/**
  * Whether the signed-in reader may use the feed at all - the very SQL `FeedAudienceGuard` refuses
  * with (WP6b). Read through `$lib/posts/feedAudience`, never directly.
  */
