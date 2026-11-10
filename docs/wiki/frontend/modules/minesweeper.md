@@ -121,8 +121,10 @@ and **per promo**. Moderation of scores stays in the game's own sheet; the page 
 - **Client**: the promo tab opens on the reader's own promo when it has a ranking, else the newest; a
   fresh load drops the answer of a tab or promo left behind (`generation`). The profile's
   "Demineur #16" badge links here, the time being only its tooltip.
-- Proofs: `minesweeper.promo.spec.ts` (the SQL's shape and parameters; PostgreSQL itself is not available
-  to the unit suite), `routes/games/page.svelte.test.ts`, `ProfileMinesweeperBadge.svelte.test.ts`.
+- Proofs: `minesweeper.promo.integration.spec.ts` (REAL PostgreSQL, gated on `SOCIAL_IT_DATABASE_URL`:
+  ranks counted inside a promo, a player without a promo absent, `mine`, the promo list with player
+  counts, a banned player and a removed score excluded as in the global ranking), `minesweeper.promo.spec.ts`
+  (the SQL's shape and parameters), `routes/games/page.svelte.test.ts`, `ProfileMinesweeperBadge.svelte.test.ts`.
 - **Owed**: one read of the page on a phone with real scores in two promos.
 
 ## Moderation: remove a score, ban a player (2026-10-02)
