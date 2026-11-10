@@ -15,8 +15,8 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MANIFEST = join(HERE, 'photos.manifest.json');
-/** Licences that allow reuse in a store listing with attribution; anything else is refused. */
-export const ALLOWED = ['Public domain', 'CC0', 'CC BY 2.0', 'CC BY 3.0', 'CC BY 4.0', 'CC BY-SA 2.0', 'CC BY-SA 3.0', 'CC BY-SA 4.0'];
+/** Licences that need no attribution and no share-alike: the owner replaced the two CC BY-SA photos by CC0 ones (2026-11-10), so only these pass. */
+export const ALLOWED = ['Public domain', 'CC0'];
 const UA = { 'user-agent': 'canari-store-shots/1.0 (https://github.com/emse-students/canari)' };
 const strip = (h) => (h ?? '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 
