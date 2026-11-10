@@ -12,7 +12,7 @@
   import { onMount } from 'svelte';
   import LiveChatPanel from './LiveChatPanel.svelte';
   import LiveReactionsLayer from './LiveReactionsLayer.svelte';
-  import { fetchLiveLimits, type LiveRefusalError } from '$lib/live/api';
+  import { fetchLiveLimits, fetchLiveMentionAudience, type LiveRefusalError } from '$lib/live/api';
   import {
     LiveBroadcasterChatPoller,
     LiveChatSession,
@@ -123,6 +123,7 @@
       retry={(id) => void session?.retry(id)}
       discard={(id) => session?.discard(id)}
       hide={(id) => void session?.hide(id)}
+      audienceOf={(ids) => fetchLiveMentionAudience(liveId, ids)}
     />
   {/if}
 </div>

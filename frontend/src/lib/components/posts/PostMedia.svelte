@@ -21,6 +21,7 @@
   import {
     chooseSegmentedPlayback,
     FEED_STREAM_PACING,
+    VIEWER_STREAM_PACING,
     openSegmentedStream,
     type SegmentedStreamHandle,
   } from '$lib/utils/segmentedMediaStream';
@@ -184,6 +185,8 @@
   let streamUrl = $state<string | null>(null);
   /** Whether that stream runs through Safari's `ManagedMediaSource`. */
   let streamManaged = $state(false);
+  /** Hands a finished stream's whole file to the pool - set by the download effect while it runs. */
+  let adoptStreamed: ((blob: Blob) => void) | null = null;
   /**
    * The stream itself while there is one. Outside the viewer it is PACED (`FEED_STREAM_PACING`):
    * the head, then what the inline element is about to play - a card scrolled past without being
@@ -301,33 +304,36 @@
     // blob included - takes the whole-blob path below, which reads both formats.
     const playback = mediaType === 'video' ? chooseSegmentedPlayback(mediaRef) : null;
     if (playback?.kind === 'stream') {
-      // The viewer (`galleryMode`) wants the whole file: the reader opened that video.
+      // The viewer (`galleryMode`) is paced too, further ahead: it starts on its head and never
+      // waits for the whole file (a 33 MB video took 26 s to start, production 1.6.8).
       const opened = openSegmentedStream(
         mediaRef,
         mediaUrl(),
         playback,
-        galleryMode ? undefined : FEED_STREAM_PACING
+        galleryMode ? VIEWER_STREAM_PACING : FEED_STREAM_PACING
       );
       stream = opened;
       streamUrl = opened.url;
       streamManaged = playback.managed;
       loading = false;
-      opened.done
-        .then((blob) => {
-          if (destroyed) return;
-          blobUrl = adoptDecryptedMediaBlob(mediaRef, blob);
-          acquired = true;
-        })
-        .catch((err) => {
-          if (destroyed) return;
-          streamUrl = null;
-          // The same vocabulary as the whole-blob path: a segment refused for what it holds is
-          // `corrupt`, a range that never arrived is `unreachable` - typed at the throw.
-          failure = mediaFailureCause(err);
-          logMediaFailure('PostMedia', failure, media.mediaId, err);
-        });
+      /** The whole file, from whichever stream finished it first: the card's or the viewer's fork. */
+      const adopt = (blob: Blob) => {
+        if (destroyed || acquired) return;
+        blobUrl = adoptDecryptedMediaBlob(mediaRef, blob);
+        acquired = true;
+      };
+      adoptStreamed = adopt;
+      opened.done.then(adopt).catch((err) => {
+        if (destroyed) return;
+        streamUrl = null;
+        // The same vocabulary as the whole-blob path: a segment refused for what it holds is
+        // `corrupt`, a range that never arrived is `unreachable` - typed at the throw.
+        failure = mediaFailureCause(err);
+        logMediaFailure('PostMedia', failure, media.mediaId, err);
+      });
       return () => {
         destroyed = true;
+        adoptStreamed = null;
         opened.close();
         if (acquired) releaseDecryptedMediaBlobUrl(mediaRef);
         acquired = false;
@@ -439,11 +445,39 @@
   let lightboxOpen = $state(false);
   let pdfViewerOpen = $state(false);
 
-  // The lightbox waits for the WHOLE file (`blobUrl`), which a paced stream builds only once every
-  // segment is in - and the inline element it paces is paused under the viewer. Opening it is the
-  // reader asking for that video, so the pacing is lifted.
+  /**
+   * THE VIEWER OF A STREAMING VIDEO IS A FORK OF ITS STREAM, NOT A WAIT FOR THE FILE (owner,
+   * 2026-11-09: 26 s before the viewer of a 33 MB video played, with the head already appended and
+   * the card playing). An MSE URL feeds one element, so the viewer gets its own - over the SAME
+   * segment feed, so what the card fetched is not fetched again and what the viewer fetches is the
+   * card's too. It plays once ITS head is in, paced like the card but further ahead. Closing the
+   * viewer closes the fork only. A whole file that arrives meanwhile (from either stream) does not
+   * swap the viewer's source: the video would restart at 0.
+   */
+  let viewerStream = $state.raw<SegmentedStreamHandle | null>(null);
+  const attachViewer = $derived(
+    viewerStream ? (video: HTMLVideoElement) => viewerStream?.attach(video) : undefined
+  );
   $effect(() => {
-    if (lightboxOpen && stream) stream.fetchAll();
+    if (!lightboxOpen || !stream || untrack(() => blobUrl)) return;
+    const fork = stream.fork();
+    viewerStream = fork;
+    let gone = false;
+    fork.done
+      .then((blob) => adoptStreamed?.(blob))
+      .catch((err) => {
+        if (gone) return;
+        const cause = mediaFailureCause(err);
+        logMediaFailure('PostMedia.viewer', cause, media.mediaId, err);
+        // A viewer whose stream broke would sit on a frozen frame with nothing to retry: it closes,
+        // and the next tap forks again (a failed segment is not memoised by the feed).
+        lightboxOpen = false;
+      });
+    return () => {
+      gone = true;
+      fork.close();
+      viewerStream = null;
+    };
   });
 
   function handleClick(e: MouseEvent) {
@@ -518,6 +552,8 @@
       <VideoPlayer
         src={playUrl!}
         disableRemotePlayback={streamManaged}
+        streamed={streamUrl !== null}
+        onVideo={attachStream}
         class="h-full w-full"
         variant={minimalPlayer ? 'reel' : 'lightbox'}
         safeBottom={playerSafeBottom}
@@ -680,9 +716,10 @@
   {/if}
 
   <!-- Lightbox for image/video -->
-  <!-- A STREAMED video's viewer opens AT THE TAP, on the poster, and fills when the whole file is in
-       (`fetchAll` above): waiting for `blobUrl` here made a tap on a paced feed video do nothing
-       until the last segment, then pop the viewer up unasked (review of #1744). -->
+  <!-- A STREAMED video's viewer opens AT THE TAP, on the poster, and plays from its own fork of the
+       stream (`viewerStream` above) as soon as its head is in: waiting for `blobUrl` here made a tap
+       on a paced feed video do nothing until the last segment, then pop the viewer up unasked
+       (review of #1744), and waiting for the file kept a 33 MB video from starting for 26 s. -->
   {#if lightboxOpen && (blobUrl || streamUrl) && (mediaType === 'image' || mediaType === 'video')}
     <MediaLightbox
       open={lightboxOpen}
@@ -710,9 +747,17 @@
         />
       {:else}
         <!-- Canari's player, never the engine's `controls` (`VideoPlayer`). Opened from a video
-             that is still STREAMING, the viewer has no `blobUrl` yet - the MSE URL feeds the one
-             inline element only - so it shows the poster until the last segment fills it. -->
-        {#if blobUrl}
+             that is still STREAMING, the MSE URL feeds the one inline element only, so the viewer
+             plays its own fork of the stream; the poster shows only until the fork exists. -->
+        {#if viewerStream}
+          <VideoPlayer
+            src={viewerStream.url}
+            streamed
+            disableRemotePlayback={streamManaged}
+            onVideo={attachViewer}
+            class="h-full w-full"
+          />
+        {:else if blobUrl}
           <VideoPlayer src={blobUrl} class="h-full w-full" />
         {:else}
           <div class="relative h-full w-full"><VideoPoster /></div>

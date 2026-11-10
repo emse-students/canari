@@ -162,6 +162,7 @@ describe('LiveChatController', () => {
   const post = jest.fn().mockResolvedValue({ id: 'm' });
   const react = jest.fn().mockResolvedValue({ seq: 1 });
   const hide = jest.fn().mockResolvedValue({ hidden: true });
+  const mentionAudience = jest.fn().mockResolvedValue(['b'.repeat(64)]);
   /**
    * The scoped live predicate, faked: a global admin, or the BDE moderator `m...` - whose governed
    * spaces hold `LIVE` and not `OTHER_LIVE` (owner, 2026-11-02).
@@ -173,7 +174,7 @@ describe('LiveChatController', () => {
   );
   const controller = new LiveChatController(
     { mayWatch, mayChat } as unknown as LivesService,
-    { post, react, hide } as unknown as LiveChatService,
+    { post, react, hide, mentionAudience } as unknown as LiveChatService,
     { mayModerateLive } as unknown as AssociationsService
   );
 
@@ -202,6 +203,18 @@ describe('LiveChatController', () => {
       burstId: UUID,
       counts: { like: 1 },
     });
+  });
+
+  it('answers the mention picker after the chat gate, the caller and the live in lower case', async () => {
+    const out = await controller.mentionAudience(LIVE.toUpperCase(), 'A'.repeat(64), {
+      ids: ['b'.repeat(64)],
+    });
+    expect(mayChat).toHaveBeenCalledWith('a'.repeat(64), LIVE.toUpperCase());
+    expect(mentionAudience).toHaveBeenCalledWith('a'.repeat(64), LIVE, ['b'.repeat(64)]);
+    expect(out).toEqual({ ids: ['b'.repeat(64)] });
+    mayChat.mockRejectedValue(new Error('refused'));
+    await expect(controller.mentionAudience(LIVE, 'a'.repeat(64), {})).rejects.toThrow('refused');
+    expect(mentionAudience).toHaveBeenCalledTimes(1);
   });
 
   it('writes nothing for a viewer the watch rule refuses', async () => {

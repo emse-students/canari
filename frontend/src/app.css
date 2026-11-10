@@ -2033,9 +2033,14 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    preview, which reached the bottom edge but not the top). The shell pads its top by the safe-area
    inset for every ordinary page; here that padding is the strip, so it is given back and the screen
    paints from y = 0. The CONTROLS carry the inset themselves (`CameraScreen`, `ReelReview`,
-   `ReelPublishSheet`), which is the half that must not slide under the notch. */
+   `ReelPublishSheet`), which is the half that must not slide under the notch.
+   THE SIDES THE SAME WAY (screen-orientation.md, "Who pads a full-screen place"): the camera turns
+   since 2026-11-09, and in landscape the notch is on a side - the shell's `env()` padding there was a
+   strip beside the preview AND doubled the controls' own side inset (`sideSafePadding`). */
 .fullscreen-place-open .app-shell {
   padding-top: 0;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 /* A MINIMISED CALL IS ABOVE EVERY LAYER (CALL-BAR-COVERED, Mi 9T and iPhone, 2026-10-19). With the
@@ -2049,10 +2054,17 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
       band, as the in-call status bar is on a phone. `--app-cover-top` is resolved HERE, on the root,
       so the surface's redefinition of `--safe-area-inset-top` cannot read itself;
    3. the camera tab, which gives its shell padding back to run under the status bar, takes it again:
-      without it the bar would sit under the notch.
+      without it the bar would sit under the notch. Everything under that padding is then below the
+      status bar already, so the shell zeroes `--safe-area-inset-top` for its subtree - the camera's
+      controls would otherwise add the inset a second time. The padding reads `--app-status-top`,
+      resolved on the root, because the shell's own redefinition cannot be read by the shell itself.
    Pinned by `callBarLayer.test.ts`; the rule is in calls.md. */
 :root {
   --app-cover-top: calc(var(--safe-area-inset-top, 0px) + var(--app-banner-height, 0px));
+}
+
+:root {
+  --app-status-top: var(--safe-area-inset-top, 0px);
 }
 
 :root[data-call-bar] .app-banner-column {
@@ -2064,7 +2076,8 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 }
 
 :root.fullscreen-place-open[data-call-bar] .app-shell {
-  padding-top: var(--safe-area-inset-top, 0px);
+  padding-top: var(--app-status-top);
+  --safe-area-inset-top: 0px;
 }
 
 /* A GLYPH CONFINED TO A FIXED BOX DOES NOT GROW WITH THE SYSTEM TEXT SIZE. Android's WebView
