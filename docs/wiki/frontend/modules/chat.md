@@ -84,9 +84,10 @@ button for the glass pill), all built by `profileHref` (`utils/users/profileHref
 - **A direct header**: desktop - the peer's avatar and name are links, the gear stays. Phone glass - the
   centre pill opens the profile; **settings stay one tap away in the "..." menu** (they already had an
   entry there, so nothing became unreachable). A group or salon pill still opens its settings.
-  **The pill takes all the free width** (`w-full`, 2026-11-09): its web rect IS the native pill, and a
-  pill hugging the web text was narrower than the native system font needs, cutting a name at 186 pt
-  with 70 pt of bar empty.
+  **The pill fits its content and is centred** (owner, 2026-11-10: the full-width pill of 1.6.9 was
+  reverted); a long name truncates. **This reintroduces design-audit M5 as a cost the owner accepted**:
+  the native glass pill is drawn at the web button's rect, and its (wider) native system font clipped
+  "Canari Test Alpha" at 186 pt with 70 pt of the bar empty. Owed: one iPhone reading of a long name.
 - **A deleted or erased account gets no link**, and a pill with no page behind it falls back to settings:
   `isAbsentUser` (`displayName.ts`) is a reactive set filled when the server answers 404/deleted, so a
   link drawn before the answer is withdrawn when it lands. `false` means "not known gone". The profile
@@ -1294,6 +1295,16 @@ onglet." banner is gone, and every gesture a follower tab refused is possible fr
 still never commits - its MLS state is a copy loaded once ([mls-protocol](../../protocols/mls-protocol.md#a-follower-tab-hands-its-commits-to-the-leader-2026-11-08))
 and `FollowerTabCommitError` stays at the service as the guard - but it no longer stops there: it
 HANDS THE GESTURE to the leader, exactly as it hands its sends (above). `tabCommitDelegation.ts`.
+
+**The follower's connection pill (`tabLeaderLink.svelte.ts`, fixed 2026-11-10).** A follower holds no
+socket, so its pill reads the leader's, which the leader publishes on the tab-messages channel. Every
+event is stamped with the account and a receiver drops another account's. The follower's query used to
+go out once at module start with `currentUserId() ?? ''`, before the user id was known: the leader dropped
+it as another account's and the second tab read "Hors-ligne" while the account was online. Now nothing is
+sent before the account is known, and `announce()` runs when the account becomes known AND when the
+election is decided, in either order: a follower asks, a leader republishes its socket (so a follower whose
+query the leader could not answer still hears it). A promotion reloads the page, which runs it again.
+Pinned in `tabLeaderLink.svelte.test.ts` by the boot order (no account, then the account).
 
 | Gesture in a follower tab | Handed over as | Run by the leader as |
 | --- | --- | --- |

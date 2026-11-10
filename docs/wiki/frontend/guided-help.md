@@ -449,14 +449,15 @@ visit after the update, ahead of the contextual hints (one help per visit, so th
 
 ## The birthday prompt (2026-11-09)
 
-`prompt-birthday` (`guides/birthdayPrompt.ts`) is the same shape as the photo card: ONE centred
-step on `/posts`, declared after the two photo helps (an account missing both meets the photo first,
-the birthday on a later visit), its button opening Profile > Anniversaire. **Shown once, with NO
-reminder** - a birthday is personal data the member may not want to give; the reasoning is on
-[birthdays](../birthdays.md#the-entry-point-and-the-prompt-card). `eligible` reads
-`ownBirthday.hasBirthday` (`birthdays/birthdaysToday.svelte.ts`, loaded by `GuideOverlay.svelte`
-beside the photo fact, set by the settings section on load and save): `null` shows nothing. Pinned
-by `guides/birthdayPrompt.test.ts`.
+`prompt-birthday` is **no longer a guide** (owner, 2026-11-10: the self-opening modal was too
+aggressive and its button overflowed a phone). It is a small dismissible card at the top of the feed,
+`components/posts/BirthdayFeedCard.svelte`, that still records itself under the help id
+`prompt-birthday` in `seenHelps`: the cross and "Ajouter" both mark it seen, so it never returns.
+**Shown once, with NO reminder** - a birthday is personal data the member may not want to give; the
+reasoning is on [birthdays](../birthdays.md#the-entry-point-and-the-prompt-card). It reads
+`ownBirthday.hasBirthday` (`birthdays/birthdaysToday.svelte.ts`, still loaded by `GuideOverlay.svelte`
+beside the photo fact, set by the settings section on load and save): `null` shows nothing. Pinned by
+`BirthdayFeedCard.svelte.test.ts`.
 
 ## The server store
 
