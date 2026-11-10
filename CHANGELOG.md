@@ -188,7 +188,7 @@ rest stay in the in-app notifications. Nothing that exists today is counted. Eng
 
 When someone you follow reacts to or comments on a post you already see, you are told once ("X a
 réagi à une publication"), within the daily cap; "Partager mon activité" in Settings turns yours off.
-Engagement WP-9 ([engagement](docs/wiki/engagement.md#wp-9---friends-activity-built)).
+Engagement WP-9 ([engagement](docs/wiki/engagement.md#wp-9---friends-activity-built-retired-2026-11-10)).
 
 ### Changed - every vertical video of 90 s or less is a CanaReel, and a CanaReel lives a year
 
