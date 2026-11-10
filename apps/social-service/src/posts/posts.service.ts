@@ -64,12 +64,71 @@ import { isAnonymousPoll, servePolls } from './anonymous-poll';
 import {
   inAssociationsFeedSql,
   republishedFeedAtSql,
-  followedRepostLateralSql,
-  FOLLOWED_REPOST_AT,
-  MEMBER_REPOSTED_BY_FOLLOWED_SQL,
-  republishedForViewerSql,
+  followedFeedSql,
+  forYouFollowedSql,
 } from './republished-feed-sql';
 import { listKind, type ListPostsParams } from './list-feed';
+import { engagedAccountsSql } from './engagement-sql';
+import {
+  FOR_YOU_WINDOW_DAYS,
+  FOR_YOU_WINDOW_MAX,
+  forYouBandSql,
+  forYouInstantTextSql,
+  forYouScoreSql,
+  forYouSlice,
+  forYouSnapshotOf,
+  readRankedSnapshot,
+  writeRankedSnapshot,
+  forYouCursorOf,
+  parseForYouCursor,
+  RANKING_GONE,
+  RANKING_PAGE_INVALID,
+  RANKING_UNAVAILABLE,
+  type ForYouRankedRow,
+  type RankedSnapshot,
+} from './for-you-feed';
+
+/** Binds one value as the next placeholder of a query being built, and returns its `$n`. */
+type Bind = (value: unknown) => string;
+
+/** A query's placeholders, numbered in the order the SQL text binds them. */
+function sqlBinder(): { bind: Bind; params: unknown[] } {
+  const params: unknown[] = [];
+  return {
+    params,
+    bind: (value) => {
+      params.push(value);
+      return `$${params.length}`;
+    },
+  };
+}
+
+/** The number of a `$n` placeholder. */
+function placeholderIndex(placeholder: string): number {
+  return Number(placeholder.slice(1));
+}
+
+/**
+ * A list ranked by `forYouScoreSql` with a snapshot (`for-you-feed.ts`): Pour toi, and the CanaReels
+ * viewer asked `ranked`.
+ */
+interface RankedArm {
+  /** Names the list in the snapshot's key and the logs. */
+  list: string;
+  /**
+   * The joins after `FROM posts LEFT JOIN associations assoc`, the admission, the placement, as of
+   * `asOf` (a `timestamptz` SQL expression: the ranking's instant).
+   */
+  candidates: (bind: Bind, asOf: string) => { join: string; admitted: string; at: string };
+  /** Every filter a served row passes, on every page. */
+  filters: (bind: Bind) => string;
+  /** The reader's blocked accounts, for the select's comment filter. */
+  blockedIds: string[];
+  /** Posts merged into the window from outside the candidates (Pour toi's suggestions). */
+  suggestedIds: () => Promise<string[]>;
+  /** Pour toi: the bands (`forYouBandSql`) come before the score; CanaReels has none. */
+  banded: boolean;
+}
 import {
   commentsWithheldFromViewerSql,
   postVisibleToViewerSql,
@@ -314,9 +373,15 @@ export class PostsService {
     offset: number,
     kind: PostKind | undefined,
     singleMedia: SingleMediaMode | undefined,
-    withReplays: boolean
+    withReplays: boolean,
+    ranked: boolean,
+    asOf: string | undefined,
+    cursor?: string
   ) {
     return postListCacheKey({
+      ranked,
+      asOf,
+      cursor,
       feed,
       viewerUserId,
       promo,
@@ -1649,23 +1714,35 @@ export class PostsService {
       offset,
       kind,
       singleMedia,
-      params.withReplays === true
+      params.withReplays === true,
+      feed === 'reels' && params.ranked === true,
+      params.asOf,
+      params.cursor
     );
 
     // The stamp is read BEFORE the page is computed, so a page computed across an invalidation is
     // stored under the generation it started in and never served (`readPostListPage`). No stamp
     // (Redis unreachable) means no page is stored either.
+    // A RANKED FIRST PAGE IS NEVER CACHED: writing its snapshot IS the request. A cached one would
+    // name a snapshot the trim may already have pushed out (`RANKED_SNAPSHOTS_KEPT`), and the
+    // client's re-rank after a 410 would be handed that dead ranking again.
+    const rankedFirstPage =
+      !params.asOf && (feed === 'foryou' || (feed === 'reels' && params.ranked === true));
     let stamp: string | null = null;
     let cachedPage: unknown = undefined;
-    try {
-      const cached = (await Promise.race([
-        readPostListPage(this.redis, cacheKey, viewerUserId),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 100)),
-      ])) as { page: unknown; stamp: string };
-      stamp = cached.stamp;
-      cachedPage = cached.page;
-    } catch {
-      // Redis miss or error - fall through to DB
+    if (rankedFirstPage) {
+      this.logger.debug(`[RANKED] ${feed} first page: ranked now, never read from the list cache`);
+    } else {
+      try {
+        const cached = (await Promise.race([
+          readPostListPage(this.redis, cacheKey, viewerUserId),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 100)),
+        ])) as { page: unknown; stamp: string };
+        stamp = cached.stamp;
+        cachedPage = cached.page;
+      } catch {
+        // Redis miss or error - fall through to DB
+      }
     }
     // OUTSIDE the cache's try: only a Redis failure falls through to the database, never a failure
     // of what is served on top of the page. The stored page is what this method returned before,
@@ -1675,7 +1752,7 @@ export class PostsService {
     const rawPosts = await this.listPostRows(params);
     const safe = await this.decorateListRows(rawPosts, viewerUserId, isAdmin === true);
 
-    if (stamp !== null) {
+    if (stamp !== null && !rankedFirstPage) {
       try {
         await writePostListPage(this.redis, cacheKey, stamp, safe, PostsService.LIST_CACHE_TTL);
       } catch {
@@ -1868,12 +1945,13 @@ export class PostsService {
 
     let followedAssocIds: string[] | undefined;
     let followedUserIds: string[] | undefined;
-    if (feed === 'followed') {
+    if (feed === 'followed' || feed === 'foryou') {
       [followedAssocIds, followedUserIds] = await Promise.all([
         this.followsService.getFollowedAssociationIdsForUser(viewerUserId),
         this.followsService.getFollowedUserIdsForUser(viewerUserId),
       ]);
-      if (followedAssocIds.length === 0 && followedUserIds.length === 0) {
+      // Pour toi is not empty without a follow: it still holds the suggested posts.
+      if (feed === 'followed' && followedAssocIds.length === 0 && followedUserIds.length === 0) {
         return [];
       }
     }
@@ -1903,6 +1981,54 @@ export class PostsService {
     // they follow reposted it is not in this feed.
     const associationsVisibleAt = (index: number) =>
       `AND ${postVisibleToViewerSql('posts', `$${index}`, { memberReposts: false })} ${this.replayNotRemovedSql(withReplays, `$${index}`)}`;
+
+    if (feed === 'foryou' || (feed === 'reels' && params.ranked === true)) {
+      // THE RANKED LISTS (`for-you-feed.ts`): every filter of the arms above, bound per query.
+      const filters = (bind: Bind) => {
+        const viewer = bind(viewerParam);
+        const blocked = blockedIds.length > 0 ? placeholderIndex(bind(blockedIds)) : null;
+        const cutoff = promoCutoff
+          ? `AND posts."publishedAt" >= ${bind(promoCutoff)}::timestamptz`
+          : '';
+        return `${hiddenFilter}
+         ${reelFilters}
+         ${serviceAccountFilter}
+         ${this.blockedAuthorSql(blocked)}
+         ${cutoff}
+         AND ${postVisibleToViewerSql('posts', viewer)} ${this.replayNotRemovedSql(withReplays, viewer)}`;
+      };
+      // Everything that changes the candidates names the snapshot: two lists never share one.
+      const rankedList = `${feed}:${kind ?? '-'}${singleMedia ? `+${singleMedia}` : ''}${withReplays ? '+replays' : ''}`;
+      const arm: RankedArm =
+        feed === 'foryou'
+          ? {
+              // Pour toi: what PEOPLE the reader follows write or repost (owner, 2026-11-10).
+              list: rankedList,
+              candidates: (bind, asOf) =>
+                forYouFollowedSql(bind(followedUserIds ?? []), bind(viewerParam), asOf),
+              filters,
+              blockedIds,
+              suggestedIds: () =>
+                suggestedPostIds(
+                  this.postRepo.manager,
+                  viewerUserId,
+                  isAdmin === true,
+                  SUGGESTED_POSTS_MAX,
+                  { peopleOnly: true }
+                ),
+              banded: true,
+            }
+          : {
+              // CanaReels: every reel the reader may see (the `reels` arm's set), ranked.
+              list: rankedList,
+              candidates: () => ({ join: '', admitted: 'TRUE', at: 'posts."publishedAt"' }),
+              filters,
+              blockedIds,
+              suggestedIds: () => Promise.resolve([]),
+              banded: false,
+            };
+      return this.listRankedRows(params, arm);
+    }
 
     if (feed === 'associations') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
@@ -1958,25 +2084,13 @@ export class PostsService {
       // $1=limit, $2=offset, $3=followedAssocIds, $4=followedUserIds, $5=promoCutoff (optional),
       // $6=blockedIds (optional)
       const bp = blockedAt(promoCutoff ? 6 : 5);
+      const followed = followedFeedSql('$3', '$4', `$${5 + tail.length}`);
       rawPosts = await this.postRepo.manager.query(
         `SELECT ${this.postSelectBody(bp)}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
-       ${followedRepostLateralSql('$4', `$${5 + tail.length}`)}
-       WHERE (
-         (posts."associationId" IS NOT NULL AND posts."associationId" = ANY($3::uuid[]))
-         -- Never an anonymous post: appearing in THIS feed at all already says "written by
-         -- someone in the small, known set you follow" - a leak no amount of masking the
-         -- author's name removes, because the leak is membership, not the name.
-         OR (posts."associationId" IS NULL AND posts."authorId" = ANY($4::text[])
-             AND NOT posts.anonymous)
-         -- What a followed association REPUBLISHED (republished-feed-sql.ts), never anonymous.
-         OR (NOT COALESCE(posts.anonymous, false)
-             AND ${republishedForViewerSql(`$${5 + tail.length}`, '$3')})
-         -- What a followed PERSON reposted (WP-F6), never anonymous: the lateral above, read once
-         -- for admission and once for placement.
-         OR ${MEMBER_REPOSTED_BY_FOLLOWED_SQL}
-       )
+       ${followed.join}
+       WHERE ${followed.admitted}
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${hiddenFilter}
          ${reelFilters}
@@ -1984,7 +2098,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ${this.listOrderSql(kind, `$${5 + tail.length}`, republishedFeedAtSql(`$${5 + tail.length}`, '$3', FOLLOWED_REPOST_AT))}
+       ${this.listOrderSql(kind, `$${5 + tail.length}`, followed.at)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );
@@ -2014,6 +2128,235 @@ export class PostsService {
     }
 
     return rawPosts;
+  }
+
+  /**
+   * ONE PAGE OF A RANKED LIST - Pour toi, or the CanaReels viewer asked `ranked` (`for-you-feed.ts`
+   * holds the design): without `asOf`, the window is ranked now, kept as a snapshot and its first
+   * slice served; with it, a slice of that snapshot, then of the tail below `cursor`. Every row
+   * carries `feedAsOf`, `feedPosition`, for a suggestion `feedSuggested`, for a tail row
+   * `feedCursor`.
+   *
+   * The arm's filters apply to every row served, on every page: a post deleted, hidden, blocked or
+   * no longer readable since the ranking is not served, and takes no position from the rows after
+   * it. A snapshot that is gone is a 410, a Redis that does not answer a 503 - never an empty page.
+   */
+  private async listRankedRows(params: ListPostsParams, arm: RankedArm): Promise<any[]> {
+    const viewerKey = params.viewerUserId ?? 'anon';
+    const limit = Number(params.limit);
+    const offset = Number(params.offset);
+    const manager = this.postRepo.manager;
+
+    if (!params.asOf && (offset > 0 || params.cursor)) {
+      // A later page names its ranking: one asked without is a client that mixed two shapes of
+      // one list (a first page in the older shape, then a ranked one) - refused, never re-ranked.
+      this.logger.warn(
+        `[RANKED] ${arm.list}: a page at offset ${offset} without the asOf of its ranking - refused`
+      );
+      throw new BadRequestException({
+        code: RANKING_PAGE_INVALID,
+        message: 'A later page of a ranked list names the asOf of its first page',
+      });
+    }
+
+    let snapshot: RankedSnapshot | null;
+    if (params.asOf) {
+      try {
+        snapshot = await readRankedSnapshot(this.redis, arm.list, viewerKey, params.asOf);
+      } catch (e) {
+        this.logger.error(
+          `[RANKED] ${arm.list}: the ranking of ${params.asOf} could not be read - 503: ${e instanceof Error ? e.message : String(e)}`
+        );
+        throw new ServiceUnavailableException({
+          code: RANKING_UNAVAILABLE,
+          message: 'The ranking could not be read',
+        });
+      }
+      if (!snapshot) {
+        // Expected after RANKED_SNAPSHOT_TTL_SECONDS without a page, or once RANKED_SNAPSHOTS_KEPT
+        // newer rankings pushed it out: the client ranks anew.
+        this.logger.log(
+          `[RANKED] ${arm.list}: the ranking of ${params.asOf} is gone (offset ${offset}) - 410`
+        );
+        throw new GoneException({ code: RANKING_GONE, message: 'The ranking is gone' });
+      }
+    } else {
+      snapshot = await this.rankWindow(arm);
+      try {
+        const dropped = await writeRankedSnapshot(this.redis, arm.list, viewerKey, snapshot);
+        if (dropped > 0) {
+          this.logger.debug(
+            `[RANKED] ${arm.list} ${viewerKey.slice(0, 8)}: ${dropped} older ranking(s) dropped`
+          );
+        }
+      } catch (e) {
+        // Never a first page whose page 2 would have nothing to be a slice of.
+        this.logger.error(
+          `[RANKED] ${arm.list}: the ranking of ${snapshot.asOf} could not be kept - 503: ${e instanceof Error ? e.message : String(e)}`
+        );
+        throw new ServiceUnavailableException({
+          code: RANKING_UNAVAILABLE,
+          message: 'The ranking could not be kept',
+        });
+      }
+    }
+    const kept = snapshot;
+    const { asOf } = kept;
+    if (params.cursor ? offset < kept.ids.length : offset > kept.ids.length) {
+      // A cursor names a tail row, so it follows the window; past the window, the tail is read
+      // below the cursor and never from an offset (which a withdrawn row would shift).
+      this.logger.warn(
+        `[RANKED] ${arm.list}: offset ${offset} ${params.cursor ? 'with' : 'without'} a tail cursor, window of ${kept.ids.length} - refused`
+      );
+      throw new BadRequestException({
+        code: RANKING_PAGE_INVALID,
+        message: 'A tail page names the cursor of the last tail row, and only past the window',
+      });
+    }
+
+    const out: any[] = [];
+    let tailLimit: number | null = limit;
+    if (offset < kept.ids.length) {
+      // The slice, in two reads: which of the ids left still pass the filters (ids only), then the
+      // full rows of the first `limit` of those - never the full rows of the whole window left.
+      const remaining = kept.ids.slice(offset);
+      const passing = await (async () => {
+        const { bind, params: values } = sqlBinder();
+        const rows: { id: string }[] = await manager.query(
+          `SELECT posts.id::text AS id
+         FROM posts
+         LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+         WHERE posts.id = ANY(${bind(remaining)}::uuid[])
+           AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+           ${arm.filters(bind)}`,
+          values
+        );
+        return new Set(rows.map((r) => r.id));
+      })();
+      const slice = forYouSlice({ ids: kept.ids, offset, limit, served: passing });
+      tailLimit = slice.tail;
+      if (slice.picks.length > 0) {
+        const { bind, params: values } = sqlBinder();
+        const bp = arm.blockedIds.length > 0 ? placeholderIndex(bind(arm.blockedIds)) : null;
+        const rows: any[] = await manager.query(
+          `SELECT ${this.postSelectBody(bp)}
+         FROM posts
+         LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+         WHERE posts.id = ANY(${bind(slice.picks.map((p) => p.id))}::uuid[])
+           AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+           ${arm.filters(bind)}`,
+          values
+        );
+        const byId = new Map(rows.map((r) => [String(r.id), r]));
+        const suggested = new Set(kept.suggested);
+        for (const { id, position } of slice.picks) {
+          const row = byId.get(id);
+          if (!row) continue; // withdrawn between the two reads: it takes no place
+          out.push({
+            ...row,
+            feedAsOf: asOf,
+            feedPosition: position,
+            ...(suggested.has(id) ? { feedSuggested: true } : {}),
+          });
+        }
+      }
+    }
+
+    if (tailLimit !== null) {
+      // THE TAIL: the candidates placed below the window's boundary - or below the last tail row
+      // served (`cursor`, a keyset) - newest first, as of the ranking (reposts after `asOf` do not
+      // count), never a post of the snapshot.
+      const below = params.cursor ? parseForYouCursor(params.cursor) : kept.tailBefore;
+      const firstPosition = params.cursor ? offset : kept.ids.length;
+      const { bind, params: values } = sqlBinder();
+      const bp = arm.blockedIds.length > 0 ? placeholderIndex(bind(arm.blockedIds)) : null;
+      const asOfSql = `${bind(asOf)}::timestamptz`;
+      const c = arm.candidates(bind, asOfSql);
+      const rows: any[] = await manager.query(
+        `SELECT ${this.postSelectBody(bp)}, ${forYouInstantTextSql(c.at)} AS "rankedAt"
+       FROM posts
+       LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+       ${c.join}
+       WHERE ${c.admitted}
+         AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+         AND posts."publishedAt" <= ${asOfSql}
+         AND (${c.at}, posts.id) < (${bind(below.at)}::timestamptz, ${bind(below.id)}::uuid)
+         AND posts.id <> ALL(${bind(kept.ids)}::uuid[])
+         ${arm.filters(bind)}
+       ORDER BY ${c.at} DESC, posts.id DESC
+       LIMIT ${bind(tailLimit)}`,
+        values
+      );
+      rows.forEach(({ rankedAt, ...row }, i) =>
+        out.push({
+          ...row,
+          feedAsOf: asOf,
+          feedPosition: firstPosition + i,
+          feedCursor: forYouCursorOf(rankedAt, String(row.id)),
+        })
+      );
+    }
+    this.logger.debug(
+      `[RANKED] ${arm.list} ${viewerKey.slice(0, 8)} as of ${asOf}: offset ${offset}${params.cursor ? ' (tail cursor)' : ''}, ${out.length} row(s), window ${kept.ids.length} (${kept.suggested.length} suggested)`
+    );
+    return out;
+  }
+
+  /**
+   * How many candidates a ranked window holds at most ({@link FOR_YOU_WINDOW_MAX}). A field so an
+   * integration spec can prove the cut and the tail below it with a handful of rows.
+   */
+  rankedWindowMax = FOR_YOU_WINDOW_MAX;
+
+  /**
+   * RANKS A LIST NOW: the arm's candidates placed in the window, and the arm's suggestions (Pour
+   * toi's, WP-7's rules unchanged), ordered by ONE score (`forYouScoreSql`) with no quota (owner,
+   * 2026-11-10) - in Pour toi, within its bands (`forYouBandSql`: the followed posts of the last 48 h,
+   * then the suggestions, then the rest) - as a snapshot. ONE ROW PER POST: the candidates are one
+   * row per post (the repost lateral aggregates), and a post both a candidate and a suggestion is the
+   * candidate.
+   */
+  private async rankWindow(arm: RankedArm): Promise<RankedSnapshot> {
+    const manager = this.postRepo.manager;
+    const windowMax = this.rankedWindowMax;
+    const [clock]: { asOf: string; windowStart: string }[] = await manager.query(
+      `SELECT ${forYouInstantTextSql('now()')} AS "asOf",
+              ${forYouInstantTextSql(`now() - make_interval(days => ${FOR_YOU_WINDOW_DAYS})`)} AS "windowStart"`
+    );
+    const suggestedIds = await arm.suggestedIds();
+    const { bind, params: values } = sqlBinder();
+    const asOf = `${bind(clock.asOf)}::timestamptz`;
+    const c = arm.candidates(bind, asOf);
+    const engaged = engagedAccountsSql('posts');
+    const ranked: ForYouRankedRow[] = await manager.query(
+      `WITH fw AS (
+         SELECT posts.id, ${c.at} AS at, ${engaged} AS engaged
+           FROM posts
+           LEFT JOIN associations assoc ON assoc.id = posts."associationId"
+           ${c.join}
+          WHERE ${c.admitted}
+            AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= ${asOf})
+            AND posts."publishedAt" <= ${asOf}
+            AND ${c.at} >= ${asOf} - make_interval(days => ${FOR_YOU_WINDOW_DAYS})
+            ${arm.filters(bind)}
+          ORDER BY at DESC, posts.id DESC
+          LIMIT ${bind(windowMax)}
+       ), sg AS (
+         SELECT posts.id, posts."publishedAt" AS at, ${engaged} AS engaged
+           FROM posts
+          WHERE posts.id = ANY(${bind(suggestedIds)}::uuid[]) AND posts.id NOT IN (SELECT fw.id FROM fw)
+       ), ranked AS (
+         SELECT id, at, engaged, false AS suggested FROM fw
+         UNION ALL
+         SELECT id, at, engaged, true AS suggested FROM sg
+       )
+       SELECT ranked.id::text AS id, ${forYouInstantTextSql('ranked.at')} AS at, ranked.suggested
+         FROM ranked
+        ORDER BY ${arm.banded ? `${forYouBandSql('ranked.suggested', 'ranked.at', asOf)},` : ''}
+                 ${forYouScoreSql('ranked.engaged', 'ranked.at', asOf)} DESC, ranked.at DESC, ranked.id DESC`,
+      values
+    );
+    return forYouSnapshotOf(clock.asOf, clock.windowStart, ranked, windowMax);
   }
 
   /**

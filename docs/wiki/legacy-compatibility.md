@@ -518,6 +518,42 @@ notification extension), the client row, `KNOWN_NOTIFICATION_TYPES`, and the des
 `/account/purchases`, where the payment reads `Remboursé`). The type name is shared through the same
 contract file (`refund.notificationTypes`).
 
+### No date yet - a feed client newer than its server - `rankedFeeds` (2026-11-10)
+
+**Site:** `serverRankedFeeds()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read by
+`listPosts` and applied by `wireFeed` in `buildListPostsSearchParams` (`frontend/src/lib/posts/api.ts`);
+the server half is `rankedFeeds: true` in core-service's `GET /api/version`.
+**Why.** The 1.6.9 client's Pour toi is `feed=foryou` and its CanaReels viewer `feed=reels&ranked=true`,
+paged with `asOf`. A stable ships both stores before production deploys, and an older social-service
+refuses `feed=foryou` `400` (`@IsIn`) - the tab would be empty for those days.
+**What the client does.** On an estate that says `rankedFeeds: true` it asks the ranked lists; otherwise
+- an older server, or no answer yet - it asks Pour toi as `feed=followed` (the chronological Suivis,
+entities included) and the CanaReels list in its older shape (`feed=all&kind=reel`, newest first),
+with neither `ranked` nor `asOf`; the rows carry no `feedAsOf`, so `nextListPage` pages by the count
+as before. A `Log.d` names the downgrade. **A list keeps the shape its first page was served in**
+until a refresh: `nextListPage` returns `rankedFeeds: false` for rows served without ranking facts,
+so a first launch that asked before `/api/version` answered never asks a ranked page 2 of an
+unranked page 1 - which the server would refuse `400 RANKING_PAGE_INVALID` (a later ranked page
+without `asOf`).
+**Removal condition:** when no estate older than the release carrying `rankedFeeds` is served (both
+estates deployed past 1.6.9), the client branch for `false` may go; the field stays, always `true`.
+
+### No date yet - Suivis (`feed=followed`) and the client-placed suggested posts, for installed clients older than 1.6.9 (2026-11-10)
+
+**Site:** the `followed` arm of `PostsService.listPostRows` (`followedFeedSql` in
+`apps/social-service/src/posts/republished-feed-sql.ts`) and `GET /posts/me/suggested-posts`
+(`PostsController.listSuggestedPosts`), both UNCHANGED.
+**What it humours.** Up to 1.6.8 the client draws a Suivis tab (`feed=followed`: followed associations
+AND people, chronological, pins on top) and interleaves `me/suggested-posts` in its Mon espace
+(`feed=all`) one in eight. The 1.6.9 client asks neither: Pour toi is `feed=foryou`, Campus is the
+unchanged `all`, and a remembered `followed` or a `?feed=followed` link opens Pour toi
+(`parsePostFeed`). Nothing in either answer changed (`for-you-feed.integration.spec.ts` pins both).
+**Removal** (once `minClientVersion` is 1.6.9 or later on both estates): delete the `followed` value
+of `LIST_POST_FEEDS`, its arm and `followedFeedSql`, the `me/suggested-posts` route and
+`PostsService.listSuggestedPosts`; the client's `RETIRED_FOLLOWED_FEED` mapping may go one floor later
+(a preference stored before 1.6.9 then falls back to the default tab).
+**Cost while it stands:** none - one arm nobody new asks, one route.
+
 ### No date yet - a form editor newer than its server (2026-11-08)
 
 **Site:** `serverFormDrafts()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read by the

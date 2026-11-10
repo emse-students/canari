@@ -91,7 +91,7 @@ export async function writePostListPage(
 
 /** What one cached feed page is keyed by. */
 export interface PostListCacheKeyParts {
-  /** `all`, `followed`, `custom`, `associations` or `reels` - validated by the DTO, never a colon. */
+  /** One of `LIST_POST_FEEDS` (`list-feed.ts`) - validated by the DTO, never a colon. */
   feed: string;
   viewerUserId: string | undefined;
   promo: number | undefined;
@@ -103,6 +103,12 @@ export interface PostListCacheKeyParts {
   singleMedia: SingleMediaMode | undefined;
   /** Whether live replays are in the page: a page with them is never served to a client without. */
   withReplays?: boolean;
+  /** The CanaReels list ranked rather than newest first (`for-you-feed.ts`). */
+  ranked?: boolean;
+  /** A ranked list's ranking a later page is a slice of (`for-you-feed.ts`): two rankings, two pages. */
+  asOf?: string;
+  /** A ranked list's tail cursor (`for-you-feed.ts`): two cursors, two pages. */
+  cursor?: string;
 }
 
 /**
@@ -111,7 +117,7 @@ export interface PostListCacheKeyParts {
  * is why the builder and that reader live side by side.
  */
 export function postListCacheKey(p: PostListCacheKeyParts): string {
-  return `${POST_LIST_CACHE_PREFIX}${p.feed}:${p.viewerUserId ?? 'anon'}:${p.promo ?? '-'}:${p.formation ?? '-'}:${p.limit}:${p.offset}:${p.kind ?? '-'}${p.singleMedia ? `+${p.singleMedia}` : ''}${p.withReplays ? '+replays' : ''}`;
+  return `${POST_LIST_CACHE_PREFIX}${p.feed}:${p.viewerUserId ?? 'anon'}:${p.promo ?? '-'}:${p.formation ?? '-'}:${p.limit}:${p.offset}:${p.kind ?? '-'}${p.singleMedia ? `+${p.singleMedia}` : ''}${p.withReplays ? '+replays' : ''}${p.ranked ? '+ranked' : ''}${p.asOf ? `@${p.asOf}` : ''}${p.cursor ? `<${p.cursor}` : ''}`;
 }
 
 /** The viewer field of a key {@link postListCacheKey} built (`anon` for a signed-out page). */

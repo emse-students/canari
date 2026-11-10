@@ -67,12 +67,7 @@
     feedSuggestionPlacement,
     suggestionsFollowingCount,
   } from '$lib/follows/suggestions.svelte';
-  import {
-    ensureSuggestedPosts,
-    forgetSuggestedPost,
-    placeSuggestedPosts,
-    suggestedPosts,
-  } from '$lib/posts/suggestedPosts.svelte';
+  import { readNextPage, type ListPage } from '$lib/posts/rankedFeeds';
   import { initialScrollDirection, nextScrollDirection } from '$lib/utils/scrollDirection';
   import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
   import LiveViewer from '$lib/components/live/LiveViewer.svelte';
@@ -234,6 +229,8 @@
   let loading = $state(false);
   let loadingMore = $state(false);
   let hasMore = $state(true);
+  /** The last next-page read failed (a 503, the network): a retry is offered, the list is not ended. */
+  let loadMoreFailed = $state(false);
 
   /**
    * THE FIRST SCREEN MOUNTS FIRST, THE REST A FRAME AT A TIME (`progressiveCount`). Mounting every
@@ -483,25 +480,12 @@
    */
   const activeFeed = $derived(data.feedParams.feed);
 
-  // FOLLOW SUGGESTIONS (engagement WP-6): read once per reader, and only once a feed that draws
-  // them is open - Mon espace or Suivis (`feedSuggestionPlacement`).
+  // FOLLOW SUGGESTIONS (engagement WP-6): read once per reader, and only once the feed that draws
+  // them is open - Pour toi alone (owner, 2026-11-10: Campus and Associations are pure lists).
+  // The SUGGESTED POSTS are in Pour toi's own rows, merged by the server (`feedSuggested`).
   $effect(() => {
-    if (activeFeed === 'all' || activeFeed === 'followed') ensureFeedSuggestions();
+    if (activeFeed === 'foryou') ensureFeedSuggestions();
   });
-
-  // SUGGESTED POSTS (engagement WP-7, L13): Mon espace only - read once per reader when it opens.
-  $effect(() => {
-    if (activeFeed === 'all') ensureSuggestedPosts();
-  });
-
-  /** Which suggested post follows which feed index, for the posts mounted so far; none off Mon espace. */
-  function suggestedPlacement(shown: PostEntity[]): Record<number, PostEntity> | null {
-    if (activeFeed !== 'all') return null;
-    return placeSuggestedPosts(
-      shown.map((p) => p.id),
-      suggestedPosts()
-    );
-  }
 
   /** Where this feed draws its suggestions for `postCount` posts: one place, or none. */
   function suggestionPlacement(postCount: number) {
@@ -551,6 +535,7 @@
     const painted = untrack(() => postsOverride);
     initialPostsResolved = stale;
     hasMore = cached?.hasMore ?? true;
+    loadMoreFailed = false;
     fromStore = false;
     storedRefreshFailed = false;
     firstPage = 'pending';
@@ -651,11 +636,13 @@
    * This used to re-parse `feed`, `promo` and `formation` off the URL - a third copy of `load`'s
    * parsing, complete with its own `parseInt` and its own default - so page 2 could be fetched
    * from a different feed than page 1 whenever the two disagreed. `load` publishes what it
-   * resolved; the only thing that changes between pages is the offset. The caller passes the tab's
+   * resolved; the only thing that changes between pages is where the next one starts. The caller passes the tab's
    * params as it took them BEFORE its await, never `data.feedParams` read after it.
    */
-  function buildListOptions(params: FeedCacheParams, offset: number) {
-    return { limit: FEED_PAGE_SIZE, offset, ...params };
+  function buildListOptions(params: FeedCacheParams, page: ListPage & { limit: number }) {
+    // A ranked tab (Pour toi) is paged by its snapshot, after the last place served, in the shape
+    // its first page was served in (`rankedFeeds.ts`); a chronological one by the count on screen.
+    return { ...page, ...params };
   }
 
   /**
@@ -688,6 +675,7 @@
     loading = true;
     errorMessage = '';
     hasMore = true;
+    loadMoreFailed = false;
     const outcome = await refreshFirstPage({
       params: data.feedParams,
       // The SAME first page the cold start asks and stores - never a scroll page (Mi 9T, alpha.3).
@@ -730,20 +718,26 @@
     const issuedFor = tabLoad;
     const params = data.feedParams;
     loadingMore = true;
+    loadMoreFailed = false;
     try {
-      const more = await listPosts(buildListOptions(params, currentPosts.length));
+      // `readNextPage`: a ranked tab whose ranking expired is ranked anew, and a row already on
+      // screen is never appended twice.
+      const next = await readNextPage({
+        shown: currentPosts,
+        limit: FEED_PAGE_SIZE,
+        read: (page) => listPosts(buildListOptions(params, page)),
+      });
       if (issuedFor !== tabLoad) {
         Log.d('POSTS', 'a next page answered for a tab the reader has left - dropped');
         return;
       }
-      if (more.length === 0 || more.length < FEED_PAGE_SIZE) hasMore = false;
-      // Deduplicate in case new posts were inserted between page fetches.
-      const existingIds = new Set(currentPosts.map((p) => p.id));
-      const newPosts = more.filter((p) => !existingIds.has(p.id));
-      postsOverride = [...currentPosts, ...newPosts];
+      if (next.ended) hasMore = false;
+      postsOverride = next.rows;
       writeFeedCache(feedCacheKey(params), { posts: postsOverride, hasMore });
-    } catch {
-      // silent - user can scroll back up and retry
+    } catch (err) {
+      // Not the end of the list: the line under the posts says so, and offers the retry.
+      console.warn('[POSTS] the next page could not be read', err);
+      if (issuedFor === tabLoad) loadMoreFailed = true;
     } finally {
       if (issuedFor === tabLoad) loadingMore = false;
     }
@@ -1180,7 +1174,6 @@
 
       {#snippet feedList(resolvedPosts: PostEntity[])}
         {@const placement = suggestionPlacement(resolvedPosts.length)}
-        {@const suggestedAt = suggestedPlacement(resolvedPosts.slice(0, mounted.count))}
         <!-- A REFRESH DOES NOT BLANK A FEED THAT IS ALREADY ON SCREEN. This was `{#if loading}`,
              so a pull-to-refresh at post #30 collapsed the list to four skeletons, shrank the
              document and lost the reader's place - for posts still held in `postsOverride`. Same
@@ -1200,13 +1193,13 @@
               <p class="text-text-muted text-sm">
                 {m.posts_no_results_asso()}
               </p>
-            {:else if activeFeed === 'followed'}
+            {:else if activeFeed === 'foryou'}
               <p class="text-text-muted text-sm">
-                {m.posts_empty_followed()}
+                {m.posts_empty_foryou()}
                 <button
                   type="button"
                   class="tap-target font-medium underline"
-                  onclick={() => navigateFeed('all')}>{m.posts_tab_all()}</button
+                  onclick={() => navigateFeed('all')}>{m.posts_tab_campus()}</button
                 >.
               </p>
             {:else}
@@ -1223,8 +1216,14 @@
             <FeedSuggestions placement="banner" />
           {/if}
           {#each resolvedPosts.slice(0, mounted.count) as post, i (post.id)}
-            <div class="relative" use:markPostSeen={post}>
-              {#if isNew(post)}
+            <div
+              class="relative"
+              use:markPostSeen={post}
+              data-suggested-post={post.feedSuggested ? post.id : undefined}
+            >
+              {#if post.feedSuggested}
+                <PostCornerBadge label={m.suggestion_post_badge()} />
+              {:else if isNew(post)}
                 <PostCornerBadge label={m.posts_badge_new()} />
               {/if}
               {@render guardedCard(post, () => {
@@ -1240,13 +1239,6 @@
             {#if placement === 'inline' && i === FEED_CAROUSEL_AFTER_POSTS - 1}
               <FeedSuggestions placement="inline" />
             {/if}
-            {@const suggested = suggestedAt?.[i]}
-            {#if suggested}
-              <div class="relative" data-suggested-post={suggested.id}>
-                <PostCornerBadge label={m.suggestion_post_badge()} />
-                {@render guardedCard(suggested, () => forgetSuggestedPost(suggested.id))}
-              </div>
-            {/if}
           {/each}
 
           <!-- Infinite-scroll sentinel - only once every card is mounted: under the third card it
@@ -1258,6 +1250,16 @@
           {#if loadingMore}
             <div class="flex justify-center py-4">
               <RefreshCw size={20} class="text-text-muted animate-spin opacity-50" />
+            </div>
+          {:else if loadMoreFailed}
+            <div class="flex items-center justify-center gap-2 py-4" data-load-more-failed>
+              <p class="text-text-muted text-xs">{m.posts_load_more_error()}</p>
+              <Button
+                variant="secondary"
+                size="compact"
+                onclick={() => void loadMorePosts(resolvedPosts)}
+                >{m.posts_load_more_retry()}</Button
+              >
             </div>
           {:else if !hasMore && !fromStore && resolvedPosts.length >= FEED_PAGE_SIZE}
             <p class="text-text-muted text-2xs py-4 text-center opacity-50">

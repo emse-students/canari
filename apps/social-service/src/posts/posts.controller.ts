@@ -186,8 +186,8 @@ export class PostsController {
         '[LEGACY] list: kind=reel on feed=all read as feed=reels (an installed client)'
       );
     }
-    if (feed === 'followed' && !xUserId) {
-      throw new UnauthorizedException('Authentication required for followed feed');
+    if ((feed === 'followed' || feed === 'foryou') && !xUserId) {
+      throw new UnauthorizedException(`Authentication required for ${feed} feed`);
     }
     return this.service.listPosts({
       limit: query.limit ?? 30,
@@ -203,6 +203,10 @@ export class PostsController {
       multiMedia: query.multiMedia === true,
       withLinks: query.withLinks === true,
       withReplays: query.withReplays === true,
+      ranked: feed === 'reels' && query.ranked === true,
+      ...(feed === 'foryou' || (feed === 'reels' && query.ranked === true)
+        ? { asOf: query.asOf, cursor: query.cursor }
+        : {}),
     });
   }
 

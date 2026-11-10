@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * A ROW OF FOLLOW SUGGESTIONS (engagement WP-6): the one component behind the feed carousel, the
-   * empty Suivis feed, the onboarding banner and "Suivez aussi...". It draws the cards still drawn
+   * empty Pour toi, the onboarding banner and "Suivez aussi...". It draws the cards still drawn
    * (`cardDrawn`: not dismissed, not followed) and nothing at all once no card is left OPEN - every
    * one followed, requested or dismissed (the design's "hidden once every card is followed or
    * dismissed").

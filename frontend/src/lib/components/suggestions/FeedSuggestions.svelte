@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * THE FEED'S SUGGESTIONS (engagement WP-6, decisions 3 and 7) at the place the feed hands it:
-   * `banner` (the reader follows almost nobody, L12), `page` (an empty Suivis feed) or `inline`
+   * `banner` (the reader follows almost nobody, L12), `page` (an empty Pour toi) or `inline`
    * (once, after the third post). The place is decided by `feedSuggestionPlacement`; this component
    * only draws the shared cards with that place's words.
    */
@@ -23,7 +23,7 @@
     placement === 'banner'
       ? m.suggestions_onboarding_hint()
       : placement === 'page'
-        ? m.suggestions_empty_followed_hint()
+        ? m.suggestions_empty_foryou_hint()
         : undefined
   );
 </script>

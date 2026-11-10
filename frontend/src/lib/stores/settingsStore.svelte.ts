@@ -1,7 +1,13 @@
 /**
  * Persistent user preferences store, backed by localStorage.
  * Defaults to enabled for all settings if no saved value exists.
+ *
+ * EVERY STORAGE ACCESS IS GUARDED: a private window, blocked site data or a full quota makes
+ * `localStorage` THROW, and a preference that cannot be read or kept must never break the page
+ * that reads it - the default is used, the session keeps the choice in memory, and a warning says
+ * which key was lost.
  */
+import { Log } from '$lib/utils/Log';
 
 const SOUNDS_KEY = 'canari_sounds_enabled';
 const VIBRATIONS_KEY = 'canari_vibrations_enabled';
@@ -10,8 +16,7 @@ const SHARE_SUGGESTIONS_KEY = 'canari_share_suggestions_enabled';
 const EMOJI_STYLE_KEY = 'canari_emoji_style';
 
 function readBool(key: string): boolean {
-  if (typeof localStorage === 'undefined') return true;
-  return localStorage.getItem(key) !== 'false';
+  return readString(key) !== 'false';
 }
 
 /**
@@ -24,7 +29,12 @@ function readBool(key: string): boolean {
  */
 function readString(key: string): string | null {
   if (typeof localStorage === 'undefined') return null;
-  return localStorage.getItem(key);
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    Log.w('SETTINGS', `${key} could not be read - the default is used: ${String(e)}`);
+    return null;
+  }
 }
 
 let soundsEnabled = $state(readBool(SOUNDS_KEY));
@@ -34,8 +44,11 @@ let shareSuggestionsEnabled = $state(readBool(SHARE_SUGGESTIONS_KEY));
 let emojiStyle = $state(readString(EMOJI_STYLE_KEY));
 
 function persist(key: string, value: boolean | string): void {
-  if (typeof localStorage !== 'undefined') {
+  if (typeof localStorage === 'undefined') return;
+  try {
     localStorage.setItem(key, String(value));
+  } catch (e) {
+    Log.w('SETTINGS', `${key} could not be kept - this session only: ${String(e)}`);
   }
 }
 

@@ -114,6 +114,8 @@ export type ServerVersionInfo = {
   publishQueue: boolean;
   /** Whether this estate builds forms as drafts - see {@link AppVersionCheckResult}. */
   formDrafts: boolean;
+  /** Whether this estate serves the ranked lists - see {@link AppVersionCheckResult}. */
+  rankedFeeds: boolean;
 };
 
 export type AppVersionCheckResult = {
@@ -162,6 +164,13 @@ export type AppVersionCheckResult = {
    * deploys. `false` for every server older than the field.
    */
   formDrafts: boolean;
+  /**
+   * Whether this estate's social-service serves the RANKED lists (`rankedFeeds`): Pour toi
+   * (`feed=foryou`) and the CanaReels viewer asked `ranked=true`, with their `asOf` pages. An older
+   * one refuses `feed=foryou` `400` and drops `ranked` - and a store build reaches phones before
+   * production deploys. `false` for every server older than the field.
+   */
+  rankedFeeds: boolean;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -230,6 +239,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     presencePost?: unknown;
     publishQueue?: unknown;
     formDrafts?: unknown;
+    rankedFeeds?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -246,6 +256,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     presencePost: obj.presencePost === true,
     publishQueue: obj.publishQueue === true,
     formDrafts: obj.formDrafts === true,
+    rankedFeeds: obj.rankedFeeds === true,
   };
 }
 
@@ -267,6 +278,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   presencePost: boolean;
   publishQueue: boolean;
   formDrafts: boolean;
+  rankedFeeds: boolean;
 } {
   return {
     version: info.version,
@@ -280,6 +292,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     presencePost: info.presencePost,
     publishQueue: info.publishQueue,
     formDrafts: info.formDrafts,
+    rankedFeeds: info.rankedFeeds,
   };
 }
 /**
@@ -450,6 +463,7 @@ export function buildAppVersionCheckResult(
     presencePost: serverInfo?.presencePost ?? false,
     publishQueue: serverInfo?.publishQueue ?? false,
     formDrafts: serverInfo?.formDrafts ?? false,
+    rankedFeeds: serverInfo?.rankedFeeds ?? false,
   };
 }
 

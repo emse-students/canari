@@ -156,7 +156,7 @@ it('never draws an ink label on the glass: not before the pill is measured, not 
   // A new selection slides the pill: the leaving label goes muted, the arriving one waits.
   left.mockReturnValue(0);
   width.mockReturnValue(100);
-  props.feed = 'all' === props.feed ? 'followed' : 'all';
+  props.feed = 'all' === props.feed ? 'foryou' : 'all';
   flushSync();
   const arriving = label(props.feed);
   expect(label('all').classList.contains('text-on-accent')).toBe(false);
