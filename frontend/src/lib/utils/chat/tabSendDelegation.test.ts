@@ -19,6 +19,7 @@ import {
   type DelegationRecord,
 } from './tabCommitDelegation';
 import { IdbTabCommitStore, tabCommitDbName } from './tabCommitStore';
+import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 import { delegatedSendExecutors, sealTabPayload, sendThroughLeaderTab } from './tabSendDelegation';
 
 const PLAINTEXT = 'the-media-key-and-a-message-nobody-may-read-at-rest';
@@ -123,10 +124,10 @@ describe('a send handed to the leader tab, at rest', () => {
     const follower = createDelegationClient(w.env('ready', false));
 
     // No leader drains yet: the request rests in the store.
-    void sendThroughLeaderTab('g1', plaintextBytes, DELIVERY.visible, deviceKey, {
+    const waiting = sendThroughLeaderTab('g1', plaintextBytes, DELIVERY.visible, deviceKey, {
       leadership: () => 'follower',
       delegate: follower.delegate,
-    });
+    }).catch((e: unknown) => e);
     let rows: unknown[] = [];
     for (let i = 0; i < 50 && rows.length === 0; i++) {
       await new Promise((r) => setTimeout(r, 0));
@@ -137,7 +138,11 @@ describe('a send handed to the leader tab, at rest', () => {
     expect(rows[0]).toMatchObject({ state: 'pending', op: { kind: 'send', groupId: 'g1' } });
     expect((rows[0] as DelegationRecord & { op: { payload?: unknown } }).op.payload).toBeDefined();
     expect(exposes(rows)).toBe(false);
+    // The sign-out that ends the test ends the wait, typed: nothing was sent.
     follower.abandon('test over');
+    const ended = await waiting;
+    expect(ended).toBeInstanceOf(FollowerTabSendError);
+    expect((ended as FollowerTabSendError).reason).toBe('leader-unavailable');
   });
 
   it('the claim drops the sealed payload: while the leader runs it, the record holds none', async () => {

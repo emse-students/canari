@@ -20,8 +20,11 @@
  * read. Sealing it would make a PIN change strand every record in flight. A SECRET a request carries
  * (a send's plaintext, an exporter read and its answer: `tabSendDelegation.ts`) is the exception: it
  * is its own `payload` field, sealed under the device key, and the delegation drops it from the
- * record the moment a leader claims it - an answered record never holds one. A PIN change between
- * the two only makes that one request answer `unreadable`.
+ * record the moment a leader claims it - an answered record never holds the REQUEST's payload. An
+ * `export-secret` ANSWER is the one secret a record does hold: its `outcome` carries the exported
+ * secret, sealed the same way, from the leader's settle until the asking document reads and deletes
+ * the record (or, that document gone, until the leader's next drain removes it). A PIN change
+ * between seal and open only makes that one request answer `unreadable`.
  */
 import { idbCommitted, idbRequest } from '$lib/db/outboxBlob';
 

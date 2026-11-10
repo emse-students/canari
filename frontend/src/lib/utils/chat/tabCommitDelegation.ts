@@ -82,14 +82,19 @@ export type DelegatedCommitOp =
   | { kind: 'send'; groupId: string; payload?: SealedTabPayload }
   /** One MLS exporter secret of `groupId` at the leader's epoch (a call's media keys); sealed. */
   | { kind: 'export-secret'; groupId: string; payload?: SealedTabPayload }
-  /** Whether the leader can carry a call's frames right now - asked before anything rings. */
-  | { kind: 'call-preflight'; groupId: string };
+  /**
+   * Whether the leader can carry a call's frames right now - asked before anything rings. `holdLock`
+   * names a Web Lock the asking document holds for the call's life: the leader holds `groupId`'s
+   * leaf refresh until that lock is free (`tabSendDelegation.ts`).
+   */
+  | { kind: 'call-preflight'; groupId: string; holdLock?: string };
 
 /**
  * A request's or an answer's secret part, AES-256-GCM under the device key (`encryptData`, the
  * cipher every encrypted row of this device uses), base64 so a record stays plain data. It is
- * DROPPED from the record the moment a leader claims the request, and never written into an
- * answered one ({@link withoutPayload}): the store holds it only while it waits.
+ * DROPPED from the record the moment a leader claims the request, and an answered record never
+ * keeps the request's ({@link withoutPayload}). An `export-secret` answer carries its secret sealed
+ * the same way in `outcome`, until the asker reads and deletes the record.
  */
 export interface SealedTabPayload {
   iv: string;

@@ -3540,8 +3540,19 @@ export function useMessaging() {
           messageId,
           sentAt: Date.now(),
         });
-        await mlsService.sendMessage(convo.id, protoBytes, messageId);
         const payload = serializeEnvelope(mkMediaEnvelope({ ...media }, env.caption));
+        try {
+          await mlsService.sendMessage(convo.id, protoBytes, messageId);
+        } catch (e) {
+          if (!(e instanceof DelegatedSendOutcomeUnknownError)) throw e;
+          // HANDED TO A LEADER TAB THAT DIED WHILE SENDING IT: it may have left. The row is drawn
+          // under the frame's own id, as a notice or a salon card is, so the member sees it in the
+          // conversation rather than being invited to forward it a second time - and is told
+          // "maybe sent" (a frame that did leave arrives under that same id everywhere).
+          ctx.log(`[FORWARD] MLS forward to "${targetName}": outcome unknown - ${String(e)}`);
+          await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });
+          return { success: false, error: m.chat_forward_maybe_sent() };
+        }
         await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });
         return { success: true };
       }
@@ -3550,12 +3561,6 @@ export function useMessaging() {
       if (!text) return { success: false, error: m.chat_forward_error_nothing_to_forward() };
       return await sendChatMessage(text, targetName, null, makeSendDeps(ctx, convo));
     } catch (e) {
-      // A FORWARD HANDED TO A LEADER TAB THAT DIED WHILE SENDING IT may have left: never offered
-      // as "failed, try again" - a blind retry would deliver it twice. Said as "maybe sent".
-      if (e instanceof DelegatedSendOutcomeUnknownError) {
-        ctx.log(`[FORWARD] MLS forward to "${targetName}": outcome unknown - ${String(e)}`);
-        return { success: false, error: m.chat_forward_maybe_sent() };
-      }
       // Same as the channel branch above, and for the same reason.
       ctx.log(`[FORWARD] MLS forward failed for "${targetName}": ${String(e)}`);
       return { success: false, error: m.chat_forward_error_fallback() };

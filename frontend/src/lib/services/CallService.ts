@@ -659,6 +659,11 @@ export class CallService {
 
   /** Releases the leaf-refresh hold this service took on its call's group, when it holds one. */
   private releaseLeafRefreshHold: (() => void) | null = null;
+  /**
+   * The LEADER tab's hold on the group's leaf refresh, for a call placed from this follower tab
+   * (`callPreflightThroughLeaderTab`): lifted when the call leaves its live states.
+   */
+  private releaseLeaderLeafRefreshHold: (() => void) | null = null;
   /** The group {@link releaseLeafRefreshHold} is for. */
   private leafRefreshHeldGroup: string | null = null;
 
@@ -736,6 +741,11 @@ export class CallService {
   /** Takes, moves or releases the leaf-refresh hold to follow the call's state and group. */
   private syncLeafRefreshHold(state: CallState): void {
     const groupId = state === 'idle' || state === 'ended' ? null : this.currentGroupId;
+    if (groupId === null) {
+      // The leader's hold of a call placed from this follower tab ends with the call.
+      this.releaseLeaderLeafRefreshHold?.();
+      this.releaseLeaderLeafRefreshHold = null;
+    }
     if (groupId === this.leafRefreshHeldGroup) return;
     this.releaseLeafRefreshHold?.();
     this.releaseLeafRefreshHold = groupId ? holdLeafRefresh(groupId, 'call') : null;
@@ -1100,14 +1110,22 @@ export class CallService {
     // another account holds the lock but cannot carry the call, and a call it cannot carry would
     // ring the callee into a ghost missed call. Asked once, on the delegation channel; the call
     // stays `idle` until the answer, so a refusal leaves nothing to end.
+    // Its `ready` also leaves the group's leaf refresh held IN THE LEADER, which is where commits
+    // are made, until this call ends (`syncLeafRefreshHold`) or this document dies.
     if (refusesCommitsHere()) {
       const preflight = await callPreflightThroughLeaderTab(groupId);
-      if (preflight !== 'ready') {
-        appendLog(`[Call] startCall refused - the leader tab cannot carry it (${preflight})`);
-        throw new CallNoLeaderTabError(preflight);
+      if (preflight.answer !== 'ready') {
+        appendLog(
+          `[Call] startCall refused - the leader tab cannot carry it (${preflight.answer})`
+        );
+        throw new CallNoLeaderTabError(preflight.answer);
       }
       // A second tap answered while this one waited: that call is the one placed.
-      if (get(this.callState) !== 'idle') return;
+      if (get(this.callState) !== 'idle') {
+        preflight.releaseHold();
+        return;
+      }
+      this.releaseLeaderLeafRefreshHold = preflight.releaseHold;
     }
 
     this.currentGroupId = groupId;

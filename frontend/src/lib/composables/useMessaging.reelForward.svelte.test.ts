@@ -71,6 +71,29 @@ describe('forwardMessage refuses a reel message', () => {
     });
   }
 
+  it('a forward whose leader tab died mid-send is drawn under its id and said "maybe sent"', async () => {
+    // Fourth review of #3326: returning before the row invited a blind second forward.
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const { DelegatedSendOutcomeUnknownError } = await import('$lib/mls-client/commitSubmission');
+    const { m } = await import('$lib/paraglide/messages');
+    const { ctx, ensureMls } = ctxFor();
+    const dm = ctx.conversations.get(DM)!;
+    ctx.conversations.set(DM, { ...dm, lifecycle: 'active' } as never);
+    let sentId: string | undefined;
+    ensureMls.mockReturnValue({
+      sendMessage: vi.fn(async (groupId: string, _bytes: Uint8Array, id: string) => {
+        sentId = id;
+        throw new DelegatedSendOutcomeUnknownError(groupId);
+      }),
+    });
+
+    const result = await useMessaging().forwardMessage(media(), DM, ctx);
+
+    expect(result).toEqual({ success: false, error: m.chat_forward_maybe_sent() });
+    expect(sentId).toBeDefined();
+    expect(ctx.conversations.get(DM)!.messages.map((row) => row.id)).toContain(sentId);
+  });
+
   it('does not refuse an ordinary video (control): it proceeds to the transport', async () => {
     const { useMessaging } = await import('./useMessaging.svelte');
     const { ctx, ensureMls } = ctxFor();

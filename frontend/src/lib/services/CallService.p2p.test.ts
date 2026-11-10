@@ -60,6 +60,7 @@ const tabRole = vi.hoisted(() => ({
   leaderCarries: false,
   preflight: 'ready' as string,
   preflightAsked: 0,
+  holdReleased: 0,
 }));
 vi.mock('$lib/mls-client/stateAuthority', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/mls-client/stateAuthority')>()),
@@ -70,7 +71,7 @@ vi.mock('$lib/utils/chat/tabSendDelegation', async (importOriginal) => ({
   leaderTabCarriesSends: () => tabRole.leaderCarries,
   callPreflightThroughLeaderTab: async () => {
     tabRole.preflightAsked += 1;
-    return tabRole.preflight;
+    return { answer: tabRole.preflight, releaseHold: () => (tabRole.holdReleased += 1) };
   },
 }));
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
@@ -753,6 +754,7 @@ describe('a peer-to-peer call, client side', () => {
       tabRole.leaderCarries = false;
       tabRole.preflight = 'ready';
       tabRole.preflightAsked = 0;
+      tabRole.holdReleased = 0;
     });
 
     it('a leader that cannot carry it (its PIN gate, another account) refuses it before any request: nothing rings', async () => {
@@ -810,6 +812,10 @@ describe('a peer-to-peer call, client side', () => {
         .mock.calls.map((c) => decodeAppMessage((c as unknown as [string, Uint8Array])[1])?.call)
         .filter((c) => c?.callId === 'room-1');
       expect(invites).toHaveLength(1);
+      // The leader's hold on the group's leaf refresh lasts exactly the call.
+      expect(tabRole.holdReleased).toBe(0);
+      service.endCall();
+      expect(tabRole.holdReleased).toBe(1);
     });
   });
 

@@ -3257,7 +3257,9 @@ promoted in place whose reload is owed.
   material, its delivery, an exporter label and context - is its own `payload`, sealed under the
   device key with `encryptData` (the cipher of every encrypted row). The claim DROPS the payload
   from the record in the same transaction (it lives in the leader's memory for the run), and no
-  answered record keeps one, a refusal of a pending request included (`withoutPayload`). A payload
+  answered record keeps the request's, a refusal of a pending request included (`withoutPayload`).
+  The one secret an answered record holds is an `export-secret` answer's, sealed the same way, until
+  the asker reads and deletes it (or the leader's next drain removes it, the asker gone). A payload
   sealed under another key (a PIN change in between) is answered `unreadable`. Pinned against the
   RAW IndexedDB records in `tabSendDelegation.test.ts`.
 - **Termination is the delegation's, never a clock**: a serving leader answers, a leader at its PIN
@@ -3274,7 +3276,12 @@ promoted in place whose reload is owed.
   else it reads `exportSecretHere`, the platform's. The follower's frozen copy holds an epoch behind
   every commit since its load, so a key exported there matched no member's. Exported by the leader,
   it is the key a call placed from the leader tab would have: the callee derives at its own current
-  epoch, exactly as for any call - the guarantee is the leader's, not a stronger one.
+  epoch, exactly as for any call - the guarantee is the leader's, not a stronger one. **The epoch is
+  held where commits are made**: a `ready` preflight leaves the group's periodic leaf refresh held IN
+  THE LEADER (`holdLeafRefresh`) until a Web Lock the follower took before asking is free - released
+  by its hang-up (`syncLeafRefreshHold`), or by the browser when the follower dies. A hold in the
+  follower's own document held nothing: the leader's refresh between its export and the callee's
+  would have keyed the ends from two epochs.
 - **`FollowerTabSendError` is left for the cases that PROVE nothing ran** (`NoLeaderReason`): a
   document leading on a copy it loaded as a follower (`no-leader`, refused before any hand-over), no
   device key to seal with, the delegation's refusals other than `leader-gone`, and `lead-lost` - the

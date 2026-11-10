@@ -36,6 +36,7 @@ import {
   FollowerTabSendError,
 } from '$lib/mls-client/commitSubmission';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { holdLeafRefresh } from '$lib/mls-client/leafRefresh';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -46,6 +47,7 @@ import {
   type DelegatedCommitOp,
   type DelegatedErrorClass,
   type DelegatedOutcome,
+  type DelegationLocks,
   type SealedTabPayload,
 } from './tabCommitDelegation';
 
@@ -135,11 +137,21 @@ export interface ThroughLeaderDeps {
   delegate<K extends DelegatedCommitKind>(
     op: Extract<DelegatedCommitOp, { kind: K }>
   ): Promise<DelegatedOutcome<K>>;
+  /** This document's Web Locks; null in an engine without them. */
+  locks?: DelegationLocks | null;
+}
+
+/** The browser's Web Locks, or null where the engine has none. */
+function browserLocks(): DelegationLocks | null {
+  return typeof navigator !== 'undefined' && navigator.locks ? navigator.locks : null;
 }
 
 const productionDeps: ThroughLeaderDeps = {
   leadership: getTabLeadership,
   delegate: (op) => delegateCommitToLeader(op),
+  get locks() {
+    return browserLocks();
+  },
 };
 
 /** The no-hand-over refusals, before anything is sealed or stored. */
@@ -221,18 +233,38 @@ export async function exportSecretThroughLeaderTab(
   return fromBase64(await openTabPayload<string>(result.secret, deviceKeyB64));
 }
 
+/** What a call preflight came to, and the hold it leaves for the call's life. */
+export interface CallPreflight {
+  answer: 'ready' | 'no-leader' | 'leader-unavailable' | 'not-delegable' | 'failed';
+  /**
+   * Lifts the leader's hold on the group's leaf refresh (idempotent): called at the call's end. A
+   * document that dies without calling it releases it all the same - its lock goes with it.
+   */
+  releaseHold(): void;
+}
+
 /**
  * Asks the leader tab whether it can carry a call's frames NOW (its session up, this account),
- * before anything is created or rung. `ready`, or the reason it cannot.
+ * before anything is created or rung - and, on `ready`, leaves the group's leaf refresh HELD in the
+ * leader for the call's life. The hold must be the leader's: it is the leader that commits, so a
+ * refresh there between its export and the callee's would key the two ends from different epochs.
  */
 export async function callPreflightThroughLeaderTab(
   groupId: string,
   deps: ThroughLeaderDeps = productionDeps
-): Promise<'ready' | 'no-leader' | 'leader-unavailable' | 'not-delegable' | 'failed'> {
-  if (deps.leadership() !== 'follower') return 'no-leader';
-  const answer = await deps.delegate<'call-preflight'>({ kind: 'call-preflight', groupId });
-  if (answer.status === 'done') return 'ready';
-  return answer.reason === 'leader-gone' ? 'failed' : answer.reason;
+): Promise<CallPreflight> {
+  const none = () => {};
+  if (deps.leadership() !== 'follower') return { answer: 'no-leader', releaseHold: none };
+  if (!deps.locks) return { answer: 'not-delegable', releaseHold: none };
+  const hold = await takeHoldLock(groupId, deps.locks);
+  const answer = await deps.delegate<'call-preflight'>({
+    kind: 'call-preflight',
+    groupId,
+    holdLock: hold.name,
+  });
+  if (answer.status === 'done') return { answer: 'ready', releaseHold: hold.release };
+  hold.release();
+  return { answer: answer.reason === 'leader-gone' ? 'failed' : answer.reason, releaseHold: none };
 }
 
 /** The two methods the leader half needs of its MLS client. */
@@ -261,7 +293,8 @@ function failed(
   console.warn(
     `[TAB-SEND] a follower's ${what} in ${groupId.slice(0, 8)}... failed in the leader tab (${errorClass}): ${String(e).slice(0, 200)}`
   );
-  return { status: 'failed', errorClass, message: e instanceof Error ? e.message : String(e) };
+  // The message is for the LOG only (the class is what a caller reads), so it is the raw string.
+  return { status: 'failed', errorClass, message: String(e).slice(0, 300) };
 }
 
 /**
@@ -272,7 +305,8 @@ function failed(
  */
 export function delegatedSendExecutors(
   mls: () => Promise<LeaderMls>,
-  deviceKey: () => string | null
+  deviceKey: () => string | null,
+  locks: DelegationLocks | null = browserLocks()
 ): Pick<DelegatedCommitExecutors, 'send' | 'export-secret' | 'call-preflight'> {
   const open = async <T>(
     sealed: SealedTabPayload | undefined
@@ -312,7 +346,54 @@ export function delegatedSendExecutors(
       }
     },
     // Reached only through the delegation's own gates: this leader serves (a live session, this
-    // account, a state it loaded as leader). That IS the answer.
-    'call-preflight': async () => 'ready',
+    // account, a state it loaded as leader). That IS the answer - and from it, the call's epoch is
+    // THIS document's to keep: its leaf refresh is held until the asker's hold lock is free.
+    'call-preflight': async ({ groupId, holdLock }) => {
+      if (holdLock) holdForTheAsker(groupId, holdLock, locks);
+      return 'ready';
+    },
   };
+}
+
+/**
+ * The leader's half of a follower's call hold: `groupId`'s periodic leaf refresh is held HERE, where
+ * commits are made, until the asking document's lock is free - released by its hang-up, or by the
+ * browser when that document dies. Termination is the lock's, never a clock.
+ */
+function holdForTheAsker(groupId: string, holdLock: string, locks: DelegationLocks | null): void {
+  if (!locks) {
+    // Unreachable through the delegation, which refuses without Web Locks: said, never assumed.
+    console.warn(`[TAB-SEND] call hold on ${groupId.slice(0, 8)}... not taken - no Web Locks here`);
+    return;
+  }
+  const release = holdLeafRefresh(groupId, 'a call placed from a follower tab');
+  void locks
+    .request(holdLock, {}, () => undefined)
+    .then(release, (e: unknown) => {
+      console.warn(
+        `[TAB-SEND] the wait on a follower's call hold failed - released now: ${String(e).slice(0, 120)}`
+      );
+      release();
+    });
+}
+
+/**
+ * The asking document's half: a Web Lock held until `release`, resolved once GRANTED - so the
+ * leader, asked after, can never take it first and drop its hold at once.
+ */
+function takeHoldLock(
+  groupId: string,
+  locks: DelegationLocks
+): Promise<{ name: string; release: () => void }> {
+  const name = `canari.call-leaf-hold.${groupId}.${crypto.randomUUID()}`;
+  return new Promise((granted, refused) => {
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    locks
+      .request(name, {}, () => {
+        granted({ name, release });
+        return held;
+      })
+      .catch(refused);
+  });
 }
