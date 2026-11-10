@@ -3,6 +3,12 @@ import { clearFeedCache, feedCacheKey, readFeedCache, writeFeedCache } from './f
 import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import type { PostEntity } from '$lib/posts/api';
 
+const estate = vi.hoisted(() => ({ rankedFeeds: null as boolean | null }));
+vi.mock('$lib/stores/appVersionCheck.svelte', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/appVersionCheck.svelte')>()),
+  serverRankedFeeds: () => estate.rankedFeeds,
+}));
+
 /**
  * WHAT THE TAB CACHE MUST NOT DO, which is the only part of it worth a test.
  *
@@ -15,6 +21,7 @@ const post = (id: string) => ({ id }) as PostEntity;
 describe('the feed tab cache', () => {
   beforeEach(() => {
     clearFeedCache();
+    estate.rankedFeeds = null;
     setCurrentUserId('alice');
   });
 
@@ -53,6 +60,17 @@ describe('the feed tab cache', () => {
 });
 
 describe('a tab never holds another list', () => {
+  beforeEach(() => {
+    estate.rankedFeeds = null;
+  });
+
+  it('on an estate that says it serves no ranked list, the older rows are its Pour toi and are kept', () => {
+    estate.rankedFeeds = false;
+    const key = feedCacheKey({ feed: 'foryou' });
+    writeFeedCache(key, { posts: [{ id: 'club-randonnee' } as PostEntity], hasMore: false });
+    expect(readFeedCache(key)?.posts.map((p) => p.id)).toEqual(['club-randonnee']);
+  });
+
   it('keeps Pour toi rows, and never the old Suivis rows asked in its place', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const key = feedCacheKey({ feed: 'foryou' });

@@ -1,6 +1,7 @@
 import type { PostEntity } from '$lib/posts/api';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { rowsInListShape } from '$lib/posts/rankedFeeds';
+import { serverRankedFeeds } from '$lib/stores/appVersionCheck.svelte';
 import type { PostFeed } from '$lib/posts/api';
 
 /**
@@ -57,7 +58,7 @@ export function writeFeedCache(key: string, entry: FeedCacheEntry): void {
   // Never another list's rows under this tab's key (Pour toi asked in the old `followed` shape):
   // the tab is then read from the server again, never painted from them.
   const feed = key.split('|')[1] ?? '';
-  if (!rowsInListShape(feed, entry.posts)) {
+  if (!rowsInListShape(feed, entry.posts, serverRankedFeeds() !== false)) {
     console.warn(`[FEED-CACHE] ${feed} not kept - its rows were served in another list's shape`);
     return;
   }

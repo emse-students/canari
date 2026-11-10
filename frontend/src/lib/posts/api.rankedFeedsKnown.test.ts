@@ -5,7 +5,10 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const capability = vi.hoisted(() => ({ value: null as boolean | null, afterCheck: true }));
+const capability = vi.hoisted(() => ({
+  value: null as boolean | null,
+  afterCheck: true as boolean | null,
+}));
 const refresh = vi.hoisted(() => vi.fn());
 const calls = vi.hoisted(() => ({ urls: [] as string[] }));
 vi.mock('$lib/stores/appVersionCheck.svelte', () => ({
@@ -42,10 +45,19 @@ describe('a ranked list on an estate not known yet', () => {
     expect(calls.urls[0]).not.toContain('followed');
   });
 
-  it('asks the older shape only when the estate SAYS it serves no ranked list', async () => {
+  it('the older estate (rankedFeeds: false) is the ONLY case asked as followed - the estate SAYS it serves no ranked list', async () => {
     capability.afterCheck = false;
     await listPosts({ feed: 'foryou', limit: 20 });
     expect(calls.urls[0]).toContain('feed=followed');
+  });
+
+  it('a check that ends with no answer leaves the estate unknown: Pour toi is still asked as foryou', async () => {
+    // The whole ladder failed with nothing cached: the capability is `null` after the wait.
+    capability.afterCheck = null;
+    await listPosts({ feed: 'foryou', limit: 20 });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(calls.urls[0]).toContain('feed=foryou');
+    expect(calls.urls[0]).not.toContain('followed');
   });
 
   it('a known capability and an unranked list ask at once', async () => {

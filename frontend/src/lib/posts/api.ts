@@ -664,6 +664,12 @@ export async function withdrawPost(
  * serves `foryou`, and that answer was drawn and stored as Pour toi (alpha.6 on both phones,
  * 2026-11-10). So a RANKED list with the capability unknown waits for the version check (the
  * same request the layout issued: `refreshAppVersionCheck` dedupes it) and decides on its answer.
+ * THE CHECK MAY END WITH NO ANSWER (its whole retry ladder failed, nothing cached): the capability
+ * is then still unknown, and unknown is NOT "no" - Pour toi is asked as `foryou` anyway. An older
+ * estate refuses it (400), which the feed shows as an error, never as another list's rows; only an
+ * explicit `rankedFeeds: false` falls back to `followed`. The wait is the check's own ladder: the
+ * API holds no shorter bound that shares the layout's request, and a timer here would be a
+ * clock-based fallback.
  * Every other list, and a known capability, decides at once.
  */
 async function rankedFeedsKnown(opts: ListPostsOptions): Promise<boolean> {
@@ -671,6 +677,13 @@ async function rankedFeedsKnown(opts: ListPostsOptions): Promise<boolean> {
   if (serverRankedFeeds() === null) {
     Log.d('POSTS', `${opts.feed}: the estate's ranked lists are not known yet - asked first`);
     await refreshAppVersionCheck();
+    if (serverRankedFeeds() === null) {
+      Log.w(
+        'POSTS',
+        `${opts.feed}: the check left the estate unknown - asked ranked, not as followed`
+      );
+      return true;
+    }
   }
   return serverRankedFeeds() === true;
 }

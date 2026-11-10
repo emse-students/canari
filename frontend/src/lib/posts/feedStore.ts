@@ -5,6 +5,7 @@ import type { FeedCacheParams } from '$lib/posts/feedCache';
 import { rowsInListShape } from '$lib/posts/rankedFeeds';
 import { currentFeedEpoch, ensureFeedEpoch, forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
 import { getSavedUserId } from '$lib/stores/user';
+import { serverRankedFeeds } from '$lib/stores/appVersionCheck.svelte';
 import { refusalStatus } from '$lib/utils/apiRefusal';
 
 /**
@@ -131,6 +132,16 @@ export function listAfterFirstPage(input: {
   return input.onScreen === input.painted ? input.answer : null;
 }
 
+/** Deletes one stored page, logging rather than throwing: it runs on a read path. */
+async function deleteOnePage(storage: IStorage, key: string, why: string): Promise<void> {
+  try {
+    const deleted = await storage.deleteFeedPage(key);
+    console.log(`[FEED-STORE] ${deleted} stored page(s) deleted under ${key} (${why})`);
+  } catch (error) {
+    console.warn(`[FEED-STORE] ${key} could not be deleted (${why}): ${String(error)}`);
+  }
+}
+
 /** Deletes every stored page, logging rather than throwing: it runs on a read or write path. */
 async function deleteAllPages(storage: IStorage, why: string): Promise<void> {
   try {
@@ -175,15 +186,19 @@ export async function readStoredFeedPage(
     payload.key === key &&
     typeof payload.epoch === 'string' &&
     Array.isArray(payload.posts) &&
-    payload.posts.every(isStoredPost) &&
-    // A copy of another list kept under this key (alpha.6 stored the old `followed` rows as Pour
-    // toi): deleted like any page this build would not write.
-    rowsInListShape(params.feed, payload.posts as PostEntity[]);
+    payload.posts.every(isStoredPost);
   if (!valid) {
     console.warn(
       `[FEED-STORE] the stored ${key} page is not one this build wrote for this account - every stored page deleted`
     );
     await deleteAllPages(storage, 'foreign or malformed page');
+    return null;
+  }
+  if (!rowsInListShape(params.feed, payload.posts as PostEntity[], serverRankedFeeds() !== false)) {
+    // Another list's rows kept under this key (alpha.6 stored the old `followed` rows as Pour toi,
+    // on an estate that serves `foryou`): ONLY this page goes, the other tabs' copies are sound.
+    console.warn(`[FEED-STORE] the stored ${key} page holds another list's rows - deleted`);
+    await deleteOnePage(storage, key, 'another list');
     return null;
   }
   if (payload.epoch !== currentFeedEpoch(access.userId)) {
@@ -237,7 +252,7 @@ export async function writeStoredFeedPage(
 ): Promise<void> {
   const key = storedFeedKey(params);
   if (!key) return;
-  if (!rowsInListShape(params.feed, posts)) {
+  if (!rowsInListShape(params.feed, posts, serverRankedFeeds() !== false)) {
     // Another list's rows (Pour toi asked in the old `followed` shape): never kept under this key.
     console.warn(`[FEED-STORE] ${key} not stored - its rows were served in another list's shape`);
     return;

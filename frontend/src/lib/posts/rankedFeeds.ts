@@ -15,10 +15,17 @@ import { Log } from '$lib/utils/Log';
  * Whether `rows` were served in the shape of the list `feed` names: a page of Pour toi carries the
  * ranking facts on every row (`feedAsOf`); one without them was the old `followed` list - another
  * list, associations included - and must never be kept or drawn as Pour toi (alpha.6, 2026-11-10).
- * Every other list has one shape. An empty page holds no other list's rows.
+ * THE SHAPE FOLLOWS THE ESTATE: `rankedEstate` is `false` only when the estate SAYS it serves no
+ * ranked list (`rankedFeeds: false`), and there the `followed` rows are the documented fallback
+ * page, kept as served. Unknown counts as ranked (Pour toi is then asked as `foryou`). Every other
+ * list has one shape. An empty page holds no other list's rows.
  */
-export function rowsInListShape(feed: string, rows: readonly PostEntity[]): boolean {
-  if (feed !== 'foryou') return true;
+export function rowsInListShape(
+  feed: string,
+  rows: readonly PostEntity[],
+  rankedEstate: boolean
+): boolean {
+  if (feed !== 'foryou' || !rankedEstate) return true;
   return rows.every((r) => typeof r.feedAsOf === 'string');
 }
 

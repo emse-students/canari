@@ -2092,6 +2092,16 @@ export class SqliteStorage implements IStorage {
     return Number(rows[0]?.n ?? 0);
   }
 
+  /** Delete one stored feed page. See {@link IStorage.deleteFeedPage}. */
+  async deleteFeedPage(key: string): Promise<number> {
+    const rows: Array<{ n: number | string }> = await this.db.select(
+      'SELECT COUNT(*) AS n FROM feed_pages WHERE feed_key = $1',
+      [key]
+    );
+    await this.db.execute('DELETE FROM feed_pages WHERE feed_key = $1', [key]);
+    return Number(rows[0]?.n ?? 0);
+  }
+
   // -- Misc ----------------------------------------------------------------
 
   /**

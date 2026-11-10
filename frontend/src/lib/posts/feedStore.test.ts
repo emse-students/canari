@@ -33,6 +33,12 @@ import { currentFeedEpoch, forgetStoredFeeds } from './feedStoreEpoch';
 import { getStorage } from '$lib/db';
 import type { IStorage } from '$lib/db/types';
 
+// The estate's answer on ranked lists: unknown (`null`) unless a test says the estate serves none.
+const estate = vi.hoisted(() => ({ rankedFeeds: null as boolean | null }));
+vi.mock('$lib/stores/appVersionCheck.svelte', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/appVersionCheck.svelte')>()),
+  serverRankedFeeds: () => estate.rankedFeeds,
+}));
 vi.mock('$lib/posts/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/posts/api')>()),
   fetchFeedAudience: vi.fn(),
@@ -85,6 +91,7 @@ async function openStore(): Promise<IndexedDbStorage> {
 }
 
 beforeEach(() => {
+  estate.rankedFeeds = null;
   localStorage.clear();
   localStorage.setItem('canari_saved_user', 'alice');
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -302,6 +309,21 @@ describe("a list never holds another list's rows (alpha.6, 2026-11-10)", () => {
       },
       KEY
     );
+    expect(await readStoredFeedPage(storage, ALICE, FOLLOWED)).toBeNull();
+    expect(await storage.getFeedPage(storedFeedKey(FOLLOWED)!, KEY)).toBeNull();
+    // ONLY Pour toi's copy went: the other tab's stored page is sound and stays.
+    expect((await readStoredFeedPage(storage, ALICE, ALL))?.map((p) => p.id)).toEqual(['a1']);
+  });
+
+  it('on an estate with no ranked list, the older rows ARE its Pour toi page: stored and read back', async () => {
+    estate.rankedFeeds = false;
+    const storage = await openStore();
+    await writeStoredFeedPage(storage, ALICE, FOLLOWED, [post('club-randonnee')]);
+    expect((await readStoredFeedPage(storage, ALICE, FOLLOWED))?.map((p) => p.id)).toEqual([
+      'club-randonnee',
+    ]);
+    // The same copy on an estate that serves ranked lists is another list's: refused and deleted.
+    estate.rankedFeeds = true;
     expect(await readStoredFeedPage(storage, ALICE, FOLLOWED)).toBeNull();
     expect(await storage.getFeedPage(storedFeedKey(FOLLOWED)!, KEY)).toBeNull();
   });
