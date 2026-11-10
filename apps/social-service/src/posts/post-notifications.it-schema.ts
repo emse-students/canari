@@ -37,7 +37,7 @@ export async function createPostNotificationsTable(
 
 /**
  * Builds what the DAILY PUSH CAP reads (engagement WP-8): `engagement_push_days` (migration 157),
- * the weekly trend counters its GC also prunes (migration 162), chat-delivery's
+ * the weekly trend counters its GC also prunes (migration 163), chat-delivery's
  * `notification_preference` (its migration 028, the same database on every estate) - all read from
  * the files the estates ran - and the two chat-delivery tables the claim's device floor reads,
  * `push_token` and `key_package`, which no migration creates (TypeORM did): only the columns the
@@ -49,7 +49,7 @@ export async function createPostNotificationsTable(
 export async function createEngagementPushCapTables(
   q: (sql: string) => Promise<unknown>
 ): Promise<void> {
-  for (const file of ['157_engagement_push_days.sql', '162_campus_trend_weeks.sql']) {
+  for (const file of ['157_engagement_push_days.sql', '163_campus_trend_weeks.sql']) {
     await q(readFileSync(join(__dirname, '..', 'migrations', file), 'utf8'));
   }
   await q(

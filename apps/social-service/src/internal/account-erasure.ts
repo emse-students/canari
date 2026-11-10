@@ -598,7 +598,7 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     label: 'engagement_push_days',
     sql: `DELETE FROM engagement_push_days WHERE "userId" = $1`,
   },
-  // The weekly campus-trend counters (migration 162): the reader's own rows.
+  // The weekly campus-trend counters (migration 163): the reader's own rows.
   {
     label: 'campus_trend_weeks',
     sql: `DELETE FROM campus_trend_weeks WHERE "userId" = $1`,

@@ -85,7 +85,7 @@ of its adversarial review.
      group of readers who read the same sentence, each group's failure caught and logged on its own;
      `[TREND] ... told N` closes the announcement.
 2. **At most TWO trends a week per reader**, on top of one a day: a Monday-to-Sunday week on the
-   Paris calendar, counted in ONE row per reader and week (`campus_trend_weeks`, migration 162,
+   Paris calendar, counted in ONE row per reader and week (`campus_trend_weeks`, migration 163,
    plain): `told` the week's count, `"lastDay"` the day of the latest trend. The trend's statement
    upserts it under its row lock and takes the reader only while both bounds hold
    (`campusTrendWeekClaimSql`), so two posts crossing at once for one reader are ordered by the
@@ -1491,7 +1491,7 @@ AND copies rows into it ships TWO files: the `CREATE TABLE` (plain) and the copy
 | `user_activity_settings`, `post_engagement_notices` | WP-9 | no | `CREATE TABLE` |
 | `posts."trendAnnouncedAt"` | WP-10 | no | `ADD COLUMN`, no backfill |
 | `posts."trendEngagedSeen"`, `post_engagement_notices."trendDay"` and its partial unique index (161) | WP-10 reshape, 2026-11-10 | no | `ADD COLUMN` (NULL for existing rows), `SET DEFAULT`, `CREATE UNIQUE INDEX` on a column every existing row has NULL in |
-| `campus_trend_weeks` (162) | the quieter batch, 2026-11-10 | no | `CREATE TABLE` |
+| `campus_trend_weeks` (163) | the quieter batch, 2026-11-10 | no | `CREATE TABLE` |
 | drop of `association_push_mutes` | after WP-3 has served one stable and the floor passed it | **yes** (a `DROP`) | destructive |
 | drop of `form_reminders` | after WP-4 has served one stable | **yes** (a `DROP`) | destructive; it must also `DROP FUNCTION canari_form_reminder_to_opening()` and unmap `FormReminder` |
 

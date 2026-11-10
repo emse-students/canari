@@ -204,7 +204,7 @@ RETURNING "userId"`;
 
 /**
  * The daily GC's statement, counted: the daily push counters older than
- * {@link ENGAGEMENT_PUSH_DAYS_KEPT} days, and the weekly campus-trend counters (migration 162) of a
+ * {@link ENGAGEMENT_PUSH_DAYS_KEPT} days, and the weekly campus-trend counters (migration 163) of a
  * week that started more than two weeks ago - the trend's week claim reads only the current week.
  */
 export const PRUNE_ENGAGEMENT_PUSH_DAYS_SQL = `WITH gone AS (

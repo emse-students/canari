@@ -1,4 +1,4 @@
--- Migration 162 : one counter row per reader per Paris week of campus trends (owner, 2026-11-10).
+-- Migration 163 : one counter row per reader per Paris week of campus trends (owner, 2026-11-10).
 --
 -- docs/wiki/engagement.md, "The owner's decisions of 2026-11-10 - quieter (1.6.10)". A reader is told
 -- of at most ONE campus trend a Paris day and TWO a Paris week (Monday to Sunday). Both bounds are

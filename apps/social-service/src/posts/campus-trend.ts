@@ -47,7 +47,7 @@ export const TREND_THRESHOLD = 10;
 /**
  * HOW MANY TRENDS ONE READER IS TOLD OF PER WEEK (owner, 2026-11-10: "on y est allés un peu fort"),
  * on top of one per day: a Monday-to-Sunday week on the Paris calendar, counted in the reader's
- * `campus_trend_weeks` row (migration 162) - durable state, no clock heuristic.
+ * `campus_trend_weeks` row (migration 163) - durable state, no clock heuristic.
  */
 export const TREND_WEEKLY_CAP = 2;
 
@@ -144,14 +144,14 @@ export function campusTrendCandidatesSql(): string {
 /**
  * THE READERS WHOSE DAY AND WEEK STILL HAVE ROOM, claimed (owner, 2026-11-10): ONE TREND PER READER
  * PER PARIS DAY AND {@link TREND_WEEKLY_CAP} PER PARIS WEEK, both read from the reader's
- * `campus_trend_weeks` row (migration 162) under its own row lock - `told` the week's count,
+ * `campus_trend_weeks` row (migration 163) under its own row lock - `told` the week's count,
  * `"lastDay"` the day of its latest trend. The upsert takes the row only while both hold, so two
  * posts crossing at once for one reader are ordered by the lock and the second finds no room; the
  * bound is exact. The row names no post, so deleting a post frees nothing. One lock order
  * (`ORDER BY`), as the daily push cap's.
  *
  * A reader the ledger already shows told of a trend TODAY is skipped first: the rows a build before
- * migration 162 wrote on its deploy day, which its counter row does not know of.
+ * migration 163 wrote on its deploy day, which its counter row does not know of.
  */
 export function campusTrendWeekClaimSql(): string {
   return `INSERT INTO campus_trend_weeks ("userId", week, told, "lastDay")
