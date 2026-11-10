@@ -29,5 +29,5 @@
   class="from-cn-ink to-cn-scrim pointer-events-none absolute inset-0 flex items-center justify-center bg-linear-to-br"
   aria-hidden="true"
 >
-  <VideoGlassGlyph kind="play" size={compact ? 44 : 64} />
+  <VideoGlassGlyph kind="play" size={compact ? 36 : 48} />
 </div>
