@@ -7,7 +7,7 @@ import { PushService } from '../push/push.service';
 import { AccountBellsService, bellTargetOf } from '../follows/account-bells.service';
 import {
   CAMPUS_TREND_NOTIFICATION,
-  ENGAGEMENT_PUSH_TYPES,
+  CAPPED_PUSH_TYPES,
   FRIEND_COMMENT_NOTIFICATION,
   FRIEND_REACTION_NOTIFICATION,
   claimEngagementPushes,
@@ -815,11 +815,11 @@ export class PostNotificationsService {
       }
     }
     // THE DAILY CAP (engagement WP-8, decisions 6 and 11), after the bell so a reader the bell
-    // already silenced never spends a unit: only a type of `ENGAGEMENT_PUSH_TYPES` (an allowlist of
-    // the NEW kinds) is counted, every other push goes out exactly as before. Beyond the cap the
+    // already silenced never spends a unit: only a type of `CAPPED_PUSH_TYPES` (an allowlist of the
+    // kinds about an account the reader does not follow - a campus trend) is counted, every other push goes out exactly as before. Beyond the cap the
     // reader keeps the in-app row and gets no push. FAIL CLOSED, LOUDLY, as the bell: a failed claim
     // pushes nobody (pushing everyone would ignore the cap) and the error reaches the caller.
-    const capped = ENGAGEMENT_PUSH_TYPES.get(data.type);
+    const capped = CAPPED_PUSH_TYPES.get(data.type);
     if (capped && pushRecipients.length > 0) {
       const allowed = await claimEngagementPushes(
         this.notifRepo.manager,

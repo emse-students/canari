@@ -14,7 +14,9 @@ import { join } from 'path';
 import { Logger } from '@nestjs/common';
 import { Client, Pool } from 'pg';
 import {
+  CAMPUS_TREND_NOTIFICATION,
   ENGAGEMENT_DAILY_PUSH_CAP,
+  FRIEND_COMMENT_NOTIFICATION,
   FRIEND_REACTION_NOTIFICATION,
   claimEngagementPushes,
   pruneEngagementPushDays,
@@ -166,7 +168,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     it('the 6th capped push of a day reaches the bell only, not the phone', async () => {
       const svc = service();
       for (let i = 0; i < 6; i++) {
-        await svc.pushNotice(notice(FRIEND_REACTION_NOTIFICATION, ['r']));
+        await svc.pushNotice(notice(CAMPUS_TREND_NOTIFICATION, ['r']));
       }
       await settle();
       expect(pushed).toEqual(['r', 'r', 'r', 'r', 'r']);
@@ -175,7 +177,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
 
     it('an association post, a live, an opening and a mention on the same day are never counted', async () => {
       const svc = service();
-      for (let i = 0; i < 5; i++) await svc.pushNotice(notice(FRIEND_REACTION_NOTIFICATION, ['r']));
+      for (let i = 0; i < 5; i++) await svc.pushNotice(notice(CAMPUS_TREND_NOTIFICATION, ['r']));
       for (const type of ['association_post', 'live_started', 'booking_open', 'event_open']) {
         await svc.pushNotice(notice(type, ['r']));
       }
@@ -184,6 +186,22 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       // Five capped pushes, then every uncapped one went out, the cap already spent.
       expect(pushed).toHaveLength(10);
       expect(await counter('r')).toBe(5);
+    });
+
+    it('friend activity beyond 5 in a day still pushes, and never spends the budget (amended 2026-11-10)', async () => {
+      const svc = service();
+      for (let i = 0; i < 4; i++) {
+        await svc.pushNotice(notice(FRIEND_REACTION_NOTIFICATION, ['r']));
+        await svc.pushNotice(notice(FRIEND_COMMENT_NOTIFICATION, ['r']));
+      }
+      await settle();
+      expect(pushed).toHaveLength(8);
+      expect(await counter('r')).toBeNull();
+      // The followed account's activity left the whole budget to what the reader does not follow.
+      for (let i = 0; i < 6; i++) await svc.pushNotice(notice(CAMPUS_TREND_NOTIFICATION, ['r']));
+      await settle();
+      expect(pushed).toHaveLength(13);
+      expect(await counter('r')).toBe(ENGAGEMENT_DAILY_PUSH_CAP);
     });
 
     it('an uncapped push never writes a counter row', async () => {
@@ -200,7 +218,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
       const broken = { query: () => Promise.reject(new Error('db down')) };
       (svc as unknown as { notifRepo: { manager: unknown } }).notifRepo.manager = broken;
-      await expect(svc.pushNotice(notice(FRIEND_REACTION_NOTIFICATION, ['r']))).rejects.toThrow(
+      await expect(svc.pushNotice(notice(CAMPUS_TREND_NOTIFICATION, ['r']))).rejects.toThrow(
         'db down'
       );
       await settle();

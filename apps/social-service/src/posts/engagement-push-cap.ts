@@ -5,10 +5,12 @@ import type { EntityManager } from 'typeorm';
  * "The noise budget - a daily cap from a counter row").
  *
  * Beyond {@link ENGAGEMENT_DAILY_PUSH_CAP} engagement pushes per person per Paris day, the rest stay
- * in the in-app bell with no push. ONLY the NEW kinds are capped (decision 11) - friends' activity
- * and campus trends; nothing that existed before the chantier is counted, nor shotgun openings,
- * nor anything addressed to the reader (messages, mentions, replies, comments and reactions on their
- * own content, calls - L5).
+ * in the in-app bell with no push. ONLY news about an account the reader does NOT follow is capped
+ * (decision 11 as amended by the owner on 2026-11-10: "On ne plafonne que les suggestions des gens
+ * que l'on ne suit pas") - today that is campus trends. Friends' activity is news of an account the
+ * reader chose to follow, so it pushes like that account's post (its bell still reduces it); nothing
+ * that existed before the chantier is counted, nor shotgun openings, nor anything addressed to the
+ * reader (messages, mentions, replies, comments and reactions on their own content, calls - L5).
  *
  * DURABLE STATE, NOT A TIMER: one counter row per (person, Paris date read from the DATABASE - L6),
  * incremented by the one statement below; a new day is a new row and nothing resets anything. The
@@ -38,18 +40,16 @@ export const CAMPUS_TREND_NOTIFICATION = 'campus_trend';
  * contract test pins every entry against chat-delivery's `push-category.ts` through its content key.
  * An ALLOWLIST: a type absent here is never counted and never capped.
  *
- * - `friend_reaction` and `friend_comment` (WP-9, decision 5b, friends' activity): an account the
- *   reader follows reacted to or commented on a post - two types, one native sentence each. Files
- *   under `posts` (L30): it is news about a post of someone else, not a reaction to or a comment on
- *   the reader's own, which is what `reactions` and `comments` switch off.
- * - `campus_trend` (WP-10, decision 5c): a post of the reader's space took off - `posts` too.
+ * Exactly the kinds about an account the reader does NOT follow (decision 11, amended 2026-11-10):
+ * - `campus_trend` (WP-10, decision 5c): a post of the reader's space took off - files under `posts`.
+ *
+ * NOT here: `friend_reaction` and `friend_comment` (WP-9, decision 5b). They name an account the
+ * reader follows, and following is the reader's own choice to hear from it (decision 10), so they
+ * push uncounted, reduced only by that account's bell (`BELL_PUSH_KINDS`), the `posts` switch and
+ * the told-once ledger.
  */
-export const ENGAGEMENT_PUSH_TYPES: ReadonlyMap<string, { contentKey: string; category: string }> =
-  new Map([
-    [FRIEND_REACTION_NOTIFICATION, { contentKey: 'social_friend_reaction', category: 'posts' }],
-    [FRIEND_COMMENT_NOTIFICATION, { contentKey: 'social_friend_comment', category: 'posts' }],
-    [CAMPUS_TREND_NOTIFICATION, { contentKey: 'social_campus_trend', category: 'posts' }],
-  ]);
+export const CAPPED_PUSH_TYPES: ReadonlyMap<string, { contentKey: string; category: string }> =
+  new Map([[CAMPUS_TREND_NOTIFICATION, { contentKey: 'social_campus_trend', category: 'posts' }]]);
 
 /**
  * The one statement of a capped fan-out: for every DISTINCT recipient (a fan-out that names a

@@ -1,0 +1,11 @@
+{
+  "_doc": "Commons file titles proposed for the demo: SCENES only (campus, party, trail, chess), no portrait and no identifiable face in the foreground (owner, 2026-11-09). `bun photos.mjs resolve` reads the live licence and author of each and rewrites photos.manifest.json; a licence outside the allowlist is refused.",
+  "titles": [
+    "File:People are walking over the footbridges at the campus Roeterseiland; free photo Amsterdam, 10-2021.jpg",
+    "File:Students crossing bridge in autumn at National Conservation Training Center - DPLA - a1ac1b52f0f380a596c8e1f0153ad78e.jpg",
+    "File:Birthday party decoration.jpg",
+    "File:Chess game Staunton No. 6.jpg",
+    "File:Footpath through a grassy meadow toward the forest edge, Potawatomi State Park, Wisconsin.jpg",
+    "File:Few Quad, West Campus, Duke University, Durham, NC (48961035937).jpg"
+  ]
+}

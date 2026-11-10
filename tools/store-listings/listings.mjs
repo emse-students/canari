@@ -1,7 +1,7 @@
 /**
  * Pure rules for the store listing texts and screenshots, shared by `play.mjs` and its test.
  *
- * WHY a rule file apart from the uploader: a text naming a removed feature (Stripe, audio calls)
+ * WHY a rule file apart from the uploader: a text naming a removed feature (Stripe) or a payment-security or ticketing claim
  * is a false claim in a public store, and it must be refused in CI, not discovered by a reviewer
  * of the store page. The limits are the stores' own, enforced here rather than truncated.
  */
@@ -29,19 +29,23 @@ export const LIMITS = {
 /** Claims that are false, unnamed on purpose, or superlative. Matched case-insensitively. */
 export const FORBIDDEN = [
   /stripe/i,
-  /\bappels?\b/i,
-  /\bcalls?\b/i,
   /\bmeilleure?s?\b/i,
   /\bbest\b/i,
   /\bn[°o]\s?1\b/i,
   /canari-emse\.fr/i,
   /lydia/i,
-  // Payments are `disabled` in production (Lydia is not live, docs/wiki/backlog.md WP-LYDIA-1), so a
-  // listing may not promise one, nor a ticketing/shop flow that rests on it.
-  /\bpaiements?\b/i,
-  /\bpayments?\b/i,
+  // Owner decision 2026-11-09: the shop, the cotisations and online or cash payment are active and may
+  // be named as plain features. What stays refused: any payment-security claim, and ticketing, which
+  // is not a built feature ("paid registrations" says the idea).
+  /\bpaiements?\s+s[ée]curis/i,
+  /\bs[ée]curis\w*\s+(?:de\s+)?paiements?\b/i,
+  /\bsecure[d]?\s+payments?\b/i,
+  /\bpayments?\s+(?:is\s+|are\s+)?secur/i,
   /billetterie/i,
   /ticketing/i,
+  /\btickets?\b/i,
+  // The old spelling: the product writes "CanaReels".
+  /Canareels/,
 ];
 
 const URL_FIELDS = ['play.contactWebsite', 'appStore.supportUrl', 'appStore.marketingUrl'];
