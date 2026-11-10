@@ -697,7 +697,7 @@
 
             <!-- ═══ Visibility: a CHOICE between two states, never an on/off switch (2026-11-10) ═══
                  A switch drew "Canal public" with the track OFF, which read as "public is disabled". -->
-            <div class="space-y-3">
+            <div class="space-y-3" aria-busy={privacySaving}>
               {#if canManage}
                 <SegmentedControl
                   label={m.chat_channel_access_title()}
@@ -716,7 +716,7 @@
                 />
               {/if}
               <ul class="space-y-2" data-testid="channel-access-options">
-                {#each [{ isPrivate: false, label: m.chat_channel_public_label(), description: m.chat_channel_public_description(), icon: Globe }, { isPrivate: true, label: m.chat_channel_private_label(), description: m.chat_channel_private_description(), icon: Lock }] as option (option.isPrivate)}
+                {#each [{ isPrivate: false, label: m.chat_channel_access_option_public(), description: m.chat_channel_public_description(), icon: Globe }, { isPrivate: true, label: m.chat_channel_access_option_restricted(), description: m.chat_channel_private_description(), icon: Lock }] as option (option.isPrivate)}
                   {@const current = option.isPrivate === accessIsPrivate}
                   {@const Icon = option.icon}
                   <li

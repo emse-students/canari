@@ -6,7 +6,8 @@
    *
    * Equal columns (`minmax(0, 1fr)`) with the icon above the label, which may wrap, so nothing is
    * clipped at 320 px whatever the translation. Full tablist semantics: roving tabindex, the arrow
-   * keys / Home / End move AND select (automatic activation, as the panels load lazily on select).
+   * keys / Home / End move AND select by default (automatic activation, as the panels load lazily on
+   * select); `activation="manual"` moves focus only and Enter/Space selects.
    */
   import type { Component } from 'svelte';
 

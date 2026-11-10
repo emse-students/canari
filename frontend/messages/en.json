@@ -483,7 +483,6 @@
   "chat_channel_join_as_admin_done": "You joined #{name}",
   "chat_channel_join_as_admin_failed": "Could not join #{name}",
   "chat_channel_private_description": "Only authorized members can access",
-  "chat_channel_public_label": "Public channel",
   "chat_channel_public_description": "All community members can access",
   "chat_channel_visibility_label": "Visibility",
   "chat_channel_visibility_public": "Public",
