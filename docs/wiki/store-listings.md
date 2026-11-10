@@ -1,6 +1,6 @@
 # Store listings: texts, screenshots and the pipeline that refreshes them
 
-Status: DESIGN (2026-10-09), texts redrafted 2026-10-22 (section 8). Nothing here has been uploaded;
+Status: DESIGN (2026-10-09), texts redrafted 2026-10-22 and again 2026-11-09 (section 8). Nothing here has been uploaded;
 the measured parts (API reach, current texts, sizes) are facts, the pipeline is a plan. Release notes live in
 [store/README.md](../../store/README.md); this page owns the REST of what the two stores show.
 
@@ -164,16 +164,55 @@ Each step idempotent and logged:
 
 **Status: DRAFT. Nothing is uploaded and nothing here changes a store data declaration.**
 
-### 8.1 Texts - done as a draft in `store/listings/`
+### 8.1 Texts - redrafted 2026-11-09 against production `v1.6.8`, still not uploaded
 
-True today, in both languages: encrypted messaging (MLS), communities, associations (directory,
-news, the carte de la vie asso for officers), agenda (audiences, ICS subscription, PDF export),
-news/polls/forms, Canareels, institutions, encrypted media. **Removed as false or unprovable:** Stripe,
-audio calls (come back with the stable that flips `CALLS_COMPILED`), the shop and ticketing bullet and
-the word "billetterie" (payments are disabled in production), "adhesions" (a membership flow
-the user cannot complete without payment) and "rappels" (no reminder feature is documented in
-[calendar](frontend/modules/calendar.md); re-add only after someone reads one on a phone).
-Nothing about live features. The disclaimer "not published by the school administration" stays.
+Owner decisions (2026-11-09), binding: the audience is all students, in a neutral tone ("tous les
+etudiants", never "eleves"); Canari is presented as the student-life app, messaging being one part
+of it, with end-to-end encryption named in the short description, the promotional text and the
+description; nothing that is not in production. **"Le reseau des Marteaux" is KEPT** (owner, same
+day: he likes it) as the fr Apple subtitle and the opening of the Play fr short description; the
+English side says "The Marteaux network".
+
+**Shop, cotisations and payment are in the texts as plain features (owner, 2026-11-09: "la boutique est
+active, de meme que les cotisations etc.").** The wording says associations run registration forms
+with online or cash payment, manage cotisations and have a shop; it names no provider, makes no
+security claim and does not promise it for every association. The wiki itself still lists the Lydia
+readings as owed (a validated Business observed through a form, the guest payment, each
+association's re-onboarding: [WP-LYDIA-1](backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end)),
+so this line rests on the owner's statement, not on a reading. **Ticketing is not a built feature and
+stays out** ("billetterie", "ticketing", "ticket"): "paid registrations" says the idea.
+
+Advertised, all in production: encrypted chats and communities, feed, polls and reposts, CanaReels
+and sharing a post or reel into a chat, audio and video calls, lives, bookings, forms, follow
+requests and the bell, "Campus" events, the carte de la vie asso, the guided tour. **Not
+advertised, on purpose:** ticketing, filming a reel inside a chat (dev builds only), birthdays, widgets, the
+follow chip everywhere, suggestions, live replays, the sign-in handoff, and a ticketing flow.
+The product writes "CanaReels", and the English says "association", never "club".
+
+Guard: `FORBIDDEN` in `tools/store-listings/listings.mjs` lets calls, the shop, cotisations and online
+payment through (they are true); it refuses Stripe, Lydia, superlatives, the old domain, any
+payment-security claim (secure payment), billetterie, ticketing and ticket words, and the spelling
+"Canareels". Limits as the stores state them: Play
+short description 80, Apple subtitle 30, promotional text 170, keywords 100.
+
+The disclaimer "not published by the school administration" stays. The Apple name field is
+plain `Canari` and is not in the JSON.
+
+### 8.1b The declarations only the owner can change (found 2026-11-09, read from the public pages)
+
+Data Safety (Play) and App Privacy (Apple) live ONLY in the two consoles, never in this repository,
+and no agent changes them. Where they disagree with the code and the privacy policy:
+
+| # | Declaration | Today | To be read against |
+| --- | --- | --- | --- |
+| 1 | Apple App Privacy | "Data not collected" | The server stores name, login id, user content, device ids and push tokens, presence and message metadata; Play declares name and user id as collected |
+| 2 | Play "payment info" collected and shared | Stripe-era answer | Stripe is gone; the app keeps amount, product, status and a provider transaction id, never bank details |
+| 3 | Play shared list (audio, photos, videos, files) vs Apple | Declared on Play, absent on Apple | One answer for both stores, including whether end-to-end audio counts as collected (the owed question of [calls](frontend/modules/calls.md#the-store-answers-b14)) |
+| 4 | Messages, device or other ids, app activity | Declared on neither | Stored per the privacy policy |
+| 5 | Purchase history, phone number, e-mail | Declared on neither | Records and guest data of paid forms |
+| 6 | Apple age rating | 13+ | The policy says not for people under 15; Play shows parental guidance |
+| 7 | Apple privacy-policy URL | the old name | Must be `https://canari.emse.fr/legal/privacy` |
+| 8 | Play `USE_FULL_SCREEN_INTENT` declaration | status unknown | In the manifest since the native ring |
 
 ### 8.2 Screenshot shot list - to be taken on a BENCH PHONE, real chrome, never browser emulation
 
@@ -190,7 +229,7 @@ tabs: they are reached from the dashboard (the sections hub). An association pag
 `/associations/<slug>`, and the Canareels camera is the tab LEFT of the feed (swipe right). Shot 4 is
 therefore taken from the dashboard, not from a tab, and the entry point of the Canareels viewer and of
 the carte de la vie asso is still to be confirmed on the device before shooting. The shop route exists
-but no shot or text shows it while payments are disabled.
+and the owner says the shop is active (2026-11-09); a shot of it is his call.
 
 1. Conversation list, then one open conversation (encrypted messaging, the lock shown).
 2. A community with its channels and a few messages.
@@ -215,7 +254,7 @@ every PNG against the checklist of section 4 before it leaves the scratchpad. No
 * Any upload to Play Console or App Store Connect (`play.mjs` is dry-run by default; `--apply` is the
   user's), and App Store texts, which ride a release.
 * **Any store data declaration** (Data safety, App Privacy, content rating, ads): never changed by an agent.
-* Whether the shop and payments return to the listing, and when.
+* Whether a ticketing line ever returns to the listing: it needs a built ticketing feature first.
 
 ### 8.4 Next steps
 
