@@ -204,7 +204,7 @@
         >
         {#if ready.isReel}
           <span
-            class="text-2xs bg-cn-yellow/20 text-text-main shrink-0 rounded-full px-2 py-0.5 font-bold"
+            class="text-2xs bg-accent/20 text-text-main shrink-0 rounded-full px-2 py-0.5 font-bold"
             >{m.shared_post_reel_chip()}</span
           >
         {/if}
