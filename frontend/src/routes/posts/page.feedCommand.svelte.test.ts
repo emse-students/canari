@@ -25,6 +25,11 @@ const page = vi.hoisted(() => ({
   url: new URL('https://canari.test/posts'),
   state: {},
 }));
+// The follow suggestions (engagement WP-6) are a read of their own: none in these feeds.
+vi.mock('$lib/follows/suggestions.svelte', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  ensureFeedSuggestions: () => {},
+}));
 vi.mock('$app/state', () => ({ page }));
 
 const goto = vi.hoisted(() => vi.fn());
