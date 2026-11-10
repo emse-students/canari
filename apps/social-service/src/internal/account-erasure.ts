@@ -219,7 +219,7 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'posts.images': NO_ACCOUNT('media references of a post: media ids and dimensions'),
   'posts.forms': NO_ACCOUNT('form references a post embeds'),
   'posts.reachSpaces': NO_ACCOUNT(
-    "the formation x campus pairs an institution's post targets (migration 161)"
+    "the formation x campus pairs an institution's post targets (migration 162)"
   ),
   'channel_messages.attachments': NO_ACCOUNT('encrypted attachment references of a salon message'),
   'channel_members.readMarks': NO_ACCOUNT('channel id -> read time of one member'),

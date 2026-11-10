@@ -1,4 +1,4 @@
--- Migration 161 : the reach an institution chooses for each of its posts (owner, 2026-11-10).
+-- Migration 162 : the reach an institution chooses for each of its posts (owner, 2026-11-10).
 --
 -- docs/wiki/backlog.d/institution-post-reach.md. An institution's post names WHICH SPACES of the
 -- institution's own audience it targets and WHICH PUBLIC in them - everyone, the students (an

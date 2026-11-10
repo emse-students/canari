@@ -537,7 +537,7 @@ keeps its name), and MINITEL (`minitel`, governing one gardanne space on 2026-11
 **THE POSTS HALF IS BUILT, IN THE OWNER'S OWN SHAPE (2026-11-10)**: an institution chooses the
 spaces AND a public (everyone, students, staff) of each post, with NO default - so the "defaults to
 the whole audience" below no longer holds for a new post - stored as two columns on `posts`
-(migration 161) rather than a `post_audiences` table
+(migration 162) rather than a `post_audiences` table
 ([as built](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)). The
 EVENTS half below (`association_calendar_event_audiences`) is not built: an event a post announces
 keeps its own visibility.

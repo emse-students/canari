@@ -2469,7 +2469,7 @@ half of the reform's C1 / WP-I ([reform section 3](spaces-and-audiences-reform.m
 
 
 
-**Schema - migration `161_institution_post_reach.sql`, plain (not held).** Two nullable columns on
+**Schema - migration `162_institution_post_reach.sql`, plain (not held).** Two nullable columns on
 `posts`, no new table: `"reachPublic"` (`'all' | 'students' | 'staff'`) and `"reachSpaces"` (a jsonb
 array of `{formation, campus}` pairs). Three CHECKs, added `NOT VALID` then validated (every row is
 NULL): the two are set together or not at all, and only on an entity's post; the public is one of
@@ -2482,7 +2482,8 @@ statement, with nothing to keep consistent across tables, and read by containmen
 than NULL-wildcard rules: the shortcuts are the composer's, and "a whole campus" is stored as the
 campus's spaces the institution reaches today. Not held: every statement is plainly additive under
 the hold judge (`infrastructure/lib/migration-hold.sh`); the reform's F8 ("every migration held")
-was written for the reform's own schema changes - the lead may still add `-- canari:hold-for-owner`.
+was written for the reform's own schema changes. Decided NOT held by the lead (2026-11-10): a new owner
+decision, an additive schema, and the owner wants it in `1.6.10`.
 
 **The predicate** (`spaces/reader-spaces.ts`), two changes, each read from the row at every query:
 
@@ -2572,7 +2573,7 @@ for students, two spaces for staff) over the predicate, the `associations` and `
 (`listPostRows`), the search, the post by id (read and comment), the bell and the announcement, a
 republication's newly-reached readers, `postReachesSpaceSql`, a ticked space outside the audience
 (opens nothing), an edit narrowing then widening, the options and the write's four refusals against
-a real audience, and migration 161's CHECKs and re-run. `posts.service.institution-reach.spec.ts`:
+a real audience, and migration 162's CHECKs and re-run. `posts.service.institution-reach.spec.ts`:
 the contract, the create (stored, required, outside, not offered), the edit (narrow and widen with the
 cache dropped, absent leaves it, refused on an association and a replay), the options' refusals, the
 served field; `post-preview.service.spec.ts`, the link preview refused for students or staff and

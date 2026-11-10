@@ -1,6 +1,6 @@
 /**
  * AN INSTITUTION'S REACH AGAINST A REAL POSTGRESQL (owner, 2026-11-10) - migrations 071, 072, 073,
- * 078, 121, 123, 127, 132, 133 and 161 applied, 161 on a `posts` table that does not have the columns.
+ * 078, 121, 123, 127, 132, 133 and 162 applied, 162 on a `posts` table that does not have the columns.
  *
  * The rule: an institution chooses, at every post, the SPACES of its own audience the post targets
  * and the PUBLIC in them - everyone, the students (an account with a cursus), the staff (none). The
@@ -122,7 +122,7 @@ const CASES: {
   },
 ];
 
-maybe("an institution's reach against PostgreSQL (migration 161)", () => {
+maybe("an institution's reach against PostgreSQL (migration 162)", () => {
   const schema = `institution_reach_it_${Math.random().toString(36).slice(2, 10)}`;
   let ds: DataSource;
   let service: PostsService;
@@ -213,7 +213,7 @@ maybe("an institution's reach against PostgreSQL (migration 161)", () => {
     await ds.initialize();
     manager = ds.manager;
     await q(`CREATE SCHEMA ${schema}`);
-    // `posts` WITHOUT the reach columns: migration 161 adds them, as it will on every estate.
+    // `posts` WITHOUT the reach columns: migration 162 adds them, as it will on every estate.
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, "displayName" varchar,
@@ -255,7 +255,7 @@ maybe("an institution's reach against PostgreSQL (migration 161)", () => {
       '127_post_space_pins.sql',
       '132_read_grant_readers.sql',
       '133_post_students_only.sql',
-      '161_institution_post_reach.sql',
+      '162_institution_post_reach.sql',
     ]) {
       await q(migration(file));
     }
@@ -332,7 +332,7 @@ maybe("an institution's reach against PostgreSQL (migration 161)", () => {
     await ds.destroy();
   });
 
-  it('migration 161: every post starts with no reach, the CHECKs hold, a re-run is safe', async () => {
+  it('migration 162: every post starts with no reach, the CHECKs hold, a re-run is safe', async () => {
     const rows = await q(`SELECT count(*)::int AS n FROM posts WHERE "reachPublic" IS NOT NULL`);
     expect(rows[0].n).toBe(0);
     // A personal post never carries a reach.
@@ -356,7 +356,7 @@ maybe("an institution's reach against PostgreSQL (migration 161)", () => {
         ])
       ).rejects.toThrow(/CHK_posts_reach_spaces_shape/);
     }
-    await q(migration('161_institution_post_reach.sql'));
+    await q(migration('162_institution_post_reach.sql'));
   });
 
   it.each(CASES)('THE PREDICATE - $name', async ({ reach, readers }) => {

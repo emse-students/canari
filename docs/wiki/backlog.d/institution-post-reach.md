@@ -24,7 +24,7 @@ with the owner's own shape of it.
    (as decided for "Entre étudiants").
 6. The owner's requirement on the result: "clair, propre, user-friendly" - one compact block.
 
-### Built (2026-11-10, migration 161, not held)
+### Built (2026-11-10, migration 162, not held)
 
 Two columns on `posts` (`"reachPublic"`, `"reachSpaces"`), a public gate beside "Entre étudiants" and
 a space filter on the post's own institution door, both inside `postVisibleToUserSql`; the write,
@@ -34,7 +34,7 @@ in the build and the test that proves it are in
 One question is parked for the owner: whether "Personnel" should also reach every staff account of a
 ticked campus ([open-questions](../open-questions.md#question---should-an-institutions-personnel-public-reach-every-staff-account-of-its-campuses-2026-11-10)).
 
-### Owed before this entry is deleted (it ships with the first release carrying migration 161)
+### Owed before this entry is deleted (it ships with the first release carrying migration 162)
 
 1. On dev, on a pre-release: an institution member publishes with two spaces and "Étudiants", and
    the post is read by a student of a ticked space, NOT by a student of an unticked space of the

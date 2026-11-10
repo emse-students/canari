@@ -249,7 +249,7 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
       '127_post_space_pins.sql',
       '132_read_grant_readers.sql',
       '133_post_students_only.sql',
-      '161_institution_post_reach.sql',
+      '162_institution_post_reach.sql',
     ]) {
       await q(migration(file));
     }

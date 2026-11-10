@@ -484,7 +484,7 @@ export function studentsOnlyAdmitsUserSql(post: string, user: string): string {
 }
 
 /**
- * THE PUBLIC AN INSTITUTION CHOSE (owner, 2026-11-10; migration 161): post row `post` carries no
+ * THE PUBLIC AN INSTITUTION CHOSE (owner, 2026-11-10; migration 162): post row `post` carries no
  * reach (`reachPublic` NULL: not an institution's post, or one written before the reach existed), or
  * its public is 'all', or 'students' and user row `user` is a student ({@link isStudentSql}), or
  * 'staff' and they are not - or they are a member of the institution that PUBLISHED it, who reads
@@ -523,7 +523,7 @@ export function postPublicAdmitsViewerSql(post: string, viewer: string): string 
 }
 
 /**
- * THE SPACES AN INSTITUTION TICKED (owner, 2026-11-10; migration 161): space row `space` is one post
+ * THE SPACES AN INSTITUTION TICKED (owner, 2026-11-10; migration 162): space row `space` is one post
  * row `post` reaches through its OWN association - the post carries no reach (`reachSpaces` NULL:
  * every space of the association's audience, as before), or the space is one of its ticked pairs.
  * Containment (`@>`) as `users.cursus` is read: a malformed value contains nothing, so the post then
@@ -573,7 +573,7 @@ export function postReachHoldsSpaceSql(post: string, space: string): string {
  *   (`allowHidden`: the post by id, its comments, a comment's moderation). Reacting, commenting,
  *   voting and browsing it ask the gate of an admin like of anyone.
  *
- * AN INSTITUTION'S REACH (owner, 2026-11-10, amending D19 for institutions only; migration 161):
+ * AN INSTITUTION'S REACH (owner, 2026-11-10, amending D19 for institutions only; migration 162):
  * - its PUBLIC is a second gate beside the switch ({@link institutionReachAdmitsUserSql}, both in
  *   {@link postPublicAdmitsUserSql}), over every door but the author's; 'students' closes the grant
  *   and browsing-admin doors exactly as the switch does;
