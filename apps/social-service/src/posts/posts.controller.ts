@@ -202,6 +202,7 @@ export class PostsController {
       singleMedia: query.singleMedia === true,
       multiMedia: query.multiMedia === true,
       withLinks: query.withLinks === true,
+      withReplays: query.withReplays === true,
     });
   }
 
@@ -273,12 +274,14 @@ export class PostsController {
   getPost(
     @Param('postId', ParseUUIDPipe) postId: string,
     @Headers('x-global-admin') xGlobalAdmin?: string,
-    @Headers('x-user-id') userId?: string
+    @Headers('x-user-id') userId?: string,
+    @Query('withReplays') withReplays?: string
   ) {
     return this.service.getById(postId, {
       allowHidden: xGlobalAdmin === 'true',
       viewerId: userId,
       isGlobalAdmin: xGlobalAdmin === 'true',
+      withReplays: withReplays === 'true',
     });
   }
 

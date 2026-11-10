@@ -310,7 +310,7 @@
     "input": 0
   },
   "src/lib/components/chat/ChannelSettingsPanel.svelte": {
-    "button": 2,
+    "button": 1,
     "select": 0,
     "input": 1
   },

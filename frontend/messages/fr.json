@@ -524,14 +524,14 @@
   "chat_channel_join_as_admin_done": "Vous avez rejoint #{name}",
   "chat_channel_join_as_admin_failed": "Impossible de rejoindre #{name}",
   "chat_channel_private_description": "Seuls les membres autorisés peuvent accéder",
-  "chat_channel_public_label": "Canal public",
   "chat_channel_public_description": "Tous les membres de la communauté peuvent accéder",
   "chat_channel_visibility_label": "Visibilité",
   "chat_channel_visibility_public": "Public",
   "chat_channel_visibility_private": "Privé",
   "chat_channel_visibility_public_note": "Tous les membres peuvent voir et rejoindre ce canal.",
   "chat_channel_visibility_private_note": "Seuls les membres invités peuvent accéder à ce canal.",
-  "chat_toggle_private_channel_label": "Rendre le canal privé",
+  "chat_channel_access_option_public": "Public",
+  "chat_channel_access_option_restricted": "Restreint",
   "chat_allowed_members_label": "Membres autorisés",
   "chat_no_allowed_members_warning": "Aucun membre autorisé - le canal sera inaccessible.",
   "chat_add_member_label": "Ajouter un membre",
@@ -1340,6 +1340,7 @@
     }
   ],
   "admin_storage_reels": "{live} reels en vie, {overdue} en retard de suppression (un reel en retard est encore là passé son mois : le traitement horaire ne l'a pas retiré).",
+  "admin_storage_replays": "{live} replays de live en ligne ({size}) ; {evictions} supprimés avant leurs 3 jours par le plafond total en 30 jours (un chiffre non nul veut dire que le plafond LIVE_REPLAY_TOTAL_MAX_GB est trop petit).",
   "admin_storage_media_unclassified": [
     {
       "declarations": ["input count", "input size", "local countPlural = count: plural"],

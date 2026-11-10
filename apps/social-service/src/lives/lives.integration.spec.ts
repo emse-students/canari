@@ -56,8 +56,10 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
 import type { UserModeration } from '../moderation/entities/user-moderation.entity';
 import type { Repository } from 'typeorm';
 import type { PostNotificationsService } from '../posts/post-notifications.service';
+import type { RedisService } from '../common/redis';
 import {
   DELETED_ACCOUNT,
+  ERASURE_LIVES_LOCK_SQL,
   LIVES_ERASURE_STATEMENTS,
   runErasureStatements,
 } from '../internal/account-erasure';
@@ -299,6 +301,12 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
   let admin: Client;
   let ds: DataSource;
   let store: MemoryStore;
+  /** The feed cache's generation moves: each replay published, cut, evicted or erased counts one. */
+  let feedGenerations = 0;
+  const feedCache = {
+    incr: async () => (feedGenerations += 1),
+    deleteByPattern: async () => 0,
+  } as unknown as RedisService;
   let lives: LivesService;
   let sweeper: LiveRetentionScheduler;
   let announcer: LiveAnnouncer;
@@ -425,8 +433,17 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
          live_replays_mode varchar(16) NOT NULL DEFAULT 'off')`
     );
     await q(`INSERT INTO platform_config (id) VALUES (1)`);
+    // The posts columns a replay is written with and read through (`publishReplay`, the post rule
+    // `readPostOpenVerdict` asks), and the three tables that rule reads beside the live's.
     await q(`CREATE TABLE posts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      "authorId" varchar(255) NOT NULL)`);
+      "authorId" varchar(255) NOT NULL, "associationId" uuid, markdown text NOT NULL DEFAULT '',
+      "publishedAt" timestamptz, "feedNotifiedAt" timestamptz,
+      anonymous boolean NOT NULL DEFAULT false, "studentsOnly" boolean NOT NULL DEFAULT false,
+      "allowReposts" boolean NOT NULL DEFAULT true, "hiddenByModeration" boolean NOT NULL DEFAULT false,
+      "scheduledAt" timestamptz)`);
+    await q(`CREATE TABLE member_reposts ("postId" uuid, "reposterId" varchar(255))`);
+    await q(`CREATE TABLE post_republications ("postId" uuid, "associationId" uuid)`);
+    await q(`CREATE TABLE user_moderation ("userId" varchar(255), "isMuted" boolean)`);
     await q(REELS);
     await q(LIVE_REPLAYS);
     await q(LIVE_REPLAYS);
@@ -437,6 +454,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
   beforeEach(async () => {
     // A replay post names its live with no cascade (migration 156): it goes first.
     await q(`DELETE FROM posts`);
+    await q(`DELETE FROM live_replay_cap_evictions`);
     await q(`UPDATE platform_config SET live_replays_mode = 'off'`);
     await q(`DELETE FROM lives`);
     await q(`DELETE FROM live_starts`);
@@ -479,7 +497,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       { isUserMuted: async (userId: string) => muted.has(userId) } as unknown as ModerationService,
       seats as unknown as LiveSeats,
       announcer,
-      notifications
+      notifications,
+      feedCache
     );
     sweeper = new LiveRetentionScheduler(lives);
   });
@@ -686,6 +705,327 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(await code(insert('replay', live.id, 60_000))).toBe('23505');
       // NO CASCADE: a live cannot be deleted under its replay - the purge must wait for the post.
       expect(await code(q(`DELETE FROM lives WHERE id = $1`, [live.id]))).toBe('23503');
+    });
+  });
+
+  describe('live replays: a finished live kept three days as a post (WP-R2, docs/wiki/live-replays.md)', () => {
+    const MOD = '9'.repeat(64);
+    const replayOn = () => q(`UPDATE platform_config SET live_replays_mode = 'on'`);
+    const replays = async (liveId: string) =>
+      (await q(
+        `SELECT p.id, p."authorId", p."durationMs", p."allowReposts", p."studentsOnly",
+                p."feedNotifiedAt" IS NOT NULL AS announced,
+                p."expiresAt" = l."endedAt" + interval '3 days' AS "threeDays",
+                p."publishedAt" = l."endedAt" AS "publishedAtEnd",
+                p."expiresAt" > now() AS showing
+           FROM posts p JOIN lives l ON l.id = p."liveId"
+          WHERE p."liveId" = $1 AND p.kind = 'replay'`,
+        [liveId]
+      )) as {
+        id: string;
+        authorId: string;
+        durationMs: number;
+        allowReposts: boolean;
+        studentsOnly: boolean;
+        announced: boolean;
+        threeDays: boolean;
+        publishedAtEnd: boolean;
+        showing: boolean;
+      }[];
+    /**
+     * A live of `who` that ran past the 30-second floor and sent two segments 50 s apart, then ended
+     * by its broadcaster - every duration moved back by SQL, never waited for.
+     */
+    const finishedLive = async (who = ALICE) => {
+      const live = await start(who);
+      await q(`UPDATE lives SET "startedAt" = now() - interval '10 minutes' WHERE id = $1`, [
+        live.id,
+      ]);
+      await lives.ingest(who, live.id, 0, segment(0));
+      await lives.ingest(who, live.id, 1, segment(1));
+      await q(
+        `UPDATE live_segments SET "createdAt" = "createdAt" - interval '50 seconds'
+          WHERE "liveId" = $1 AND "index" = 0`,
+        [live.id]
+      );
+      return live;
+    };
+    /** The hourly worker's own predicate (ReelRetentionScheduler), run by SQL: no media to delete here. */
+    const reelWorker = () =>
+      q(`DELETE FROM posts WHERE kind IN ('reel', 'replay') AND "expiresAt" <= now()`);
+
+    beforeEach(() => replayOn());
+
+    it('PUBLISHES ONE REPLAY at the end, the end plus three days, unannounced, never repostable; sweeps and retries add none', async () => {
+      const live = await finishedLive();
+      await lives.end(ALICE, live.id);
+      const [replay, ...more] = await replays(live.id);
+      expect(more).toEqual([]);
+      expect(replay).toMatchObject({
+        authorId: ALICE,
+        allowReposts: false,
+        studentsOnly: false,
+        announced: true,
+        threeDays: true,
+        publishedAtEnd: true,
+        showing: true,
+      });
+      expect(replay.durationMs).toBeGreaterThanOrEqual(49_000);
+      // The segments and the row stay: the post holds them.
+      expect(store.countFor(live.id)).toBe(2);
+      expect(
+        await q(`SELECT "replayPostedAt" IS NOT NULL AS posted FROM lives WHERE id = $1`, [live.id])
+      ).toEqual([{ posted: true }]);
+
+      // Two sweeps and a direct retry: the live is excluded, then answered `kept`, never re-published.
+      await expect(sweeper.sweepOnce()).resolves.toMatchObject({ deleted: 0, replays: 0 });
+      await expect(sweeper.sweepOnce()).resolves.toMatchObject({ deleted: 0, replays: 0 });
+      await expect(lives.purgeEnded(live.id)).resolves.toBe('kept');
+      expect(await replays(live.id)).toHaveLength(1);
+    });
+
+    it('a replay deleted is never published again: replayPostedAt answers for ever, and the live is purged', async () => {
+      const live = await finishedLive();
+      await lives.end(ALICE, live.id);
+      await q(`DELETE FROM posts WHERE "liveId" = $1`, [live.id]);
+      expect((await sweeper.sweepOnce()).deleted).toBe(1);
+      expect(store.countFor(live.id)).toBe(0);
+      expect(await q(`SELECT count(*)::int AS n FROM posts`)).toEqual([{ n: 0 }]);
+    });
+
+    it('a live under 30 s keeps no replay and is purged as before (D4)', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.end(ALICE, live.id);
+      expect(await q(`SELECT count(*)::int AS n FROM posts`)).toEqual([{ n: 0 }]);
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      expect(store.countFor(live.id)).toBe(0);
+    });
+
+    it('a live that drained through the sweep publishes there, counted as a replay', async () => {
+      const live = await finishedLive();
+      await lives.get(BOB, live.id); // a seat: the end drains instead of publishing at once
+      await lives.end(ALICE, live.id);
+      expect(await replays(live.id)).toEqual([]);
+      await q(
+        `UPDATE lives SET "endedAt" = now() - $2 * interval '1 millisecond' - interval '1 second' WHERE id = $1`,
+        [live.id, LIVE_SEAT_LEASE_MS]
+      );
+      await expect(sweeper.sweepOnce()).resolves.toMatchObject({ replays: 1, deleted: 0 });
+      expect(await replays(live.id)).toHaveLength(1);
+    });
+
+    it('A CUT ends the replay NOW; the worker deletes the post and the next sweep purges the live', async () => {
+      const live = await finishedLive();
+      await lives.end(ALICE, live.id);
+      await lives.cut(MOD, live.id, { reason: 'spam' });
+      expect((await replays(live.id))[0].showing).toBe(false);
+      expect((await refusal(lives.replay(CAROL, live.id))).code).toBe('LIVE_NOT_FOUND');
+      // Still held by the post until the worker's tick: the purge never runs under it.
+      expect(store.countFor(live.id)).toBe(2);
+      await reelWorker();
+      expect((await sweeper.sweepOnce()).deleted).toBe(1);
+      expect(store.countFor(live.id)).toBe(0);
+    });
+
+    it('a CUT committed before the publication leaves no replay at all', async () => {
+      const live = await finishedLive();
+      await lives.get(BOB, live.id);
+      await lives.end(ALICE, live.id); // drained by BOB's seat
+      await lives.cut(MOD, live.id, { reason: 'spam' });
+      expect(await q(`SELECT count(*)::int AS n FROM posts`)).toEqual([{ n: 0 }]);
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+    });
+
+    it("an ERASED broadcaster's replay is ended by the next sweep", async () => {
+      const live = await finishedLive();
+      await lives.end(ALICE, live.id);
+      await ds.transaction((m) =>
+        runErasureStatements(
+          {
+            write: async (sql, params) => ((await m.query(sql, params)) as [unknown, number])[1],
+            read: async <T>(sql: string, params: unknown[]) => (await m.query(sql, params)) as T[],
+          },
+          LIVES_ERASURE_STATEMENTS,
+          ALICE
+        )
+      );
+      await sweeper.sweepOnce();
+      expect((await replays(live.id))[0].showing).toBe(false);
+      await reelWorker();
+      expect((await sweeper.sweepOnce()).deleted).toBe(1);
+    });
+
+    /** An association's finished live of ALICE (BDE reaching Saint-Etienne ICM), past the 30 s floor. */
+    const finishedAssociationLive = async () => {
+      await q(`INSERT INTO associations (id, name) VALUES ($1, 'BDE')`, [ASSO]);
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ICM', ${SE})`,
+        [ASSO]
+      );
+      mayActAs.add(`${ALICE}:${ASSO}`);
+      const live = await lives.start(ALICE, { key: KEY, associationId: ASSO, title: 'Gala live' });
+      await q(`UPDATE lives SET "startedAt" = now() - interval '10 minutes' WHERE id = $1`, [
+        live.id,
+      ]);
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.ingest(ALICE, live.id, 1, segment(1));
+      await q(
+        `UPDATE live_segments SET "createdAt" = "createdAt" - interval '50 seconds'
+          WHERE "liveId" = $1 AND "index" = 0`,
+        [live.id]
+      );
+      await lives.end(ALICE, live.id);
+      return live;
+    };
+
+    it("an ASSOCIATION's replay keeps its live's block rule, either way (review of #3248)", async () => {
+      const live = await finishedAssociationLive();
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [DAVE, ALICE]);
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [ALICE, EVE]);
+      await expect(lives.replay(CAROL, live.id)).resolves.toMatchObject({ liveId: live.id });
+      for (const who of [DAVE, EVE]) {
+        expect((await refusal(lives.replay(who, live.id))).code).toBe('LIVE_NOT_FOUND');
+      }
+    });
+
+    it("an ERASED broadcaster's association replay ends IN the erasure and loses the title it copied (review of #3248)", async () => {
+      const live = await finishedAssociationLive();
+      expect(
+        await q(`SELECT markdown FROM posts WHERE "liveId" = $1 AND kind = 'replay'`, [live.id])
+      ).toEqual([{ markdown: 'Gala live' }]);
+      await ds.transaction(async (m) => {
+        await m.query(ERASURE_LIVES_LOCK_SQL, [ALICE]);
+        await runErasureStatements(
+          {
+            write: async (sql, params) => ((await m.query(sql, params)) as [unknown, number])[1],
+            read: async <T>(sql: string, params: unknown[]) => (await m.query(sql, params)) as T[],
+          },
+          LIVES_ERASURE_STATEMENTS,
+          ALICE
+        );
+      });
+      // Before any sweep: refused to everyone, and the member's words are gone.
+      expect((await replays(live.id))[0].showing).toBe(false);
+      expect(
+        await q(`SELECT markdown FROM posts WHERE "liveId" = $1 AND kind = 'replay'`, [live.id])
+      ).toEqual([{ markdown: '' }]);
+      expect((await refusal(lives.replay(CAROL, live.id))).code).toBe('LIVE_NOT_FOUND');
+    });
+
+    it('a publication, a cut and a cap eviction each move the feed cache generation (review of #3248)', async () => {
+      const live = await finishedLive();
+      let before = feedGenerations;
+      await lives.end(ALICE, live.id);
+      expect(feedGenerations).toBe(before + 1);
+      before = feedGenerations;
+      await lives.cut(MOD, live.id, { reason: 'spam' });
+      expect(feedGenerations).toBe(before + 1);
+
+      const other = await finishedLive(BOB);
+      await lives.end(BOB, other.id);
+      before = feedGenerations;
+      await expect(lives.enforceReplayCap(1)).resolves.toHaveLength(1);
+      expect(feedGenerations).toBe(before + 1);
+    });
+
+    it('serves the replay with its key and its time line - and the same 404 to an outsider, a removed viewer, a blocked one, and past its time', async () => {
+      const live = await start();
+      await lives.removeViewer(ALICE, live.id, BOB);
+      await q(`UPDATE lives SET "startedAt" = now() - interval '10 minutes' WHERE id = $1`, [
+        live.id,
+      ]);
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.ingest(ALICE, live.id, 1, segment(1));
+      await q(
+        `UPDATE live_segments SET "createdAt" = "createdAt" - interval '50 seconds'
+          WHERE "liveId" = $1 AND "index" = 0`,
+        [live.id]
+      );
+      await lives.end(ALICE, live.id);
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [ALICE, DAVE]);
+
+      const page = await lives.replay(CAROL, live.id);
+      expect(page).toMatchObject({ liveId: live.id, key: KEY, nextFrom: null });
+      expect(page.segments.map((s) => s.index)).toEqual([0, 1]);
+      expect(page.segments[0].atMs).toBe(0);
+      expect(page.segments[1].atMs).toBeGreaterThanOrEqual(49_000);
+      expect(new Date(page.expiresAt).getTime()).toBeGreaterThan(
+        new Date(page.serverNow).getTime()
+      );
+      // From an index on: the page starts there.
+      expect((await lives.replay(CAROL, live.id, 1)).segments.map((s) => s.index)).toEqual([1]);
+
+      for (const who of [FRANK, BOB, DAVE]) {
+        expect(await refusal(lives.replay(who, live.id))).toEqual({
+          status: HttpStatus.NOT_FOUND,
+          code: 'LIVE_NOT_FOUND',
+        });
+      }
+      await q(`UPDATE posts SET "expiresAt" = now() WHERE "liveId" = $1`, [live.id]);
+      expect((await refusal(lives.replay(CAROL, live.id))).code).toBe('LIVE_NOT_FOUND');
+    });
+
+    it('THE TRIM KEEPS THREE HOURS on a live that keeps a replay, and the window alone on one that does not (D1)', async () => {
+      const kept = await start(ALICE);
+      await q(`UPDATE platform_config SET live_replays_mode = 'off'`);
+      const plain = await start(BOB);
+      const total = LIVE_RETAINED_SEGMENTS + 4;
+      for (const [who, id] of [
+        [ALICE, kept.id],
+        [BOB, plain.id],
+      ]) {
+        await q(`UPDATE lives SET "startedAt" = now() - interval '10 minutes' WHERE id = $1`, [id]);
+        for (let i = 0; i < total; i++) {
+          await lives.ingest(who, id, i, segment(i));
+          await lives.trimsSettled();
+        }
+      }
+      const rows = async (id: string) =>
+        Number((await q(`SELECT count(*) AS n FROM live_segments WHERE "liveId" = $1`, [id]))[0].n);
+      expect(await rows(plain.id)).toBe(LIVE_RETAINED_SEGMENTS);
+      expect(await rows(kept.id)).toBe(total);
+
+      // Segments 0 and 1 are now over three hours older than the newest: the next trim takes them.
+      await q(
+        `UPDATE live_segments SET "createdAt" = "createdAt" - interval '3 hours 1 minute'
+          WHERE "liveId" = $1 AND "index" < 2`,
+        [kept.id]
+      );
+      await lives.ingest(ALICE, kept.id, total, segment(total));
+      await lives.trimsSettled();
+      expect(await rows(kept.id)).toBe(total + 1 - 2);
+    });
+
+    it('THE TOTAL CAP ends the OLDEST replay first, records it, and stops under the cap (D5)', async () => {
+      const older = await finishedLive(ALICE);
+      await lives.end(ALICE, older.id);
+      const newer = await finishedLive(BOB);
+      await lives.end(BOB, newer.id);
+      await q(`UPDATE lives SET "storedBytes" = 600 WHERE id = $1`, [older.id]);
+      await q(`UPDATE lives SET "storedBytes" = 500 WHERE id = $1`, [newer.id]);
+      await q(
+        `UPDATE posts SET "expiresAt" = "expiresAt" - interval '1 hour' WHERE "liveId" = $1`,
+        [older.id]
+      );
+      await q(`DELETE FROM live_replay_cap_evictions`);
+
+      await expect(lives.enforceReplayCap(2000)).resolves.toEqual([]);
+      await expect(lives.enforceReplayCap(1000)).resolves.toEqual([
+        { liveId: older.id, bytes: 600, totalBytes: 1100 },
+      ]);
+      expect((await replays(older.id))[0].showing).toBe(false);
+      expect((await replays(newer.id))[0].showing).toBe(true);
+      expect(
+        await q(`SELECT "liveId", bytes, "totalBytes", "capBytes" FROM live_replay_cap_evictions`)
+      ).toEqual([{ liveId: older.id, bytes: '600', totalBytes: '1100', capBytes: '1000' }]);
+      // Under the cap now: a second pass ends nothing.
+      await expect(lives.enforceReplayCap(1000)).resolves.toEqual([]);
+
+      // The record lives 30 days.
+      expect(await lives.pruneReplayEvictions()).toBe(0);
+      await q(`UPDATE live_replay_cap_evictions SET "evictedAt" = now() - interval '31 days'`);
+      expect(await lives.pruneReplayEvictions()).toBe(1);
     });
   });
 
@@ -1583,7 +1923,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
             throw new Error('mute lookup down');
           },
         } as unknown as PostNotificationsService),
-        notifications
+        notifications,
+        feedCache
       );
       const live = await broken.start(ALICE, { key: KEY });
       await expect(broken.ingest(ALICE, live.id, 0, segment(0))).resolves.toMatchObject({
@@ -1616,7 +1957,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
             return data.recipientIds.length;
           },
         } as unknown as PostNotificationsService),
-        notifications
+        notifications,
+        feedCache
       );
       const live = await held.start(ALICE, { key: KEY });
       // Answered with the push still held inside `pushNotice`: nothing here waits for it.
@@ -1677,7 +2019,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           { isUserMuted: async () => false } as unknown as ModerationService,
           seats as unknown as LiveSeats,
           new LiveAnnouncer(one, notifications),
-          notifications
+          notifications,
+          feedCache
         );
         const live = await onOne.start(ALICE, { key: KEY });
         const hold = store.holdNextStore();
@@ -1984,6 +2327,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         ended: 1,
         deleted: 1,
         kept: 0,
+        replays: 0,
+        capEvicted: 0,
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
@@ -2004,6 +2349,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         ended: 1,
         deleted: 1,
         kept: 0,
+        replays: 0,
+        capEvicted: 0,
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
@@ -2037,6 +2384,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         ended: 0,
         deleted: 0,
         kept: 1,
+        replays: 0,
+        capEvicted: 0,
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
@@ -2050,6 +2399,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         ended: 0,
         deleted: 1,
         kept: 0,
+        replays: 0,
+        capEvicted: 0,
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
@@ -2065,6 +2416,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         ended: 0,
         deleted: 0,
         kept: 0,
+        replays: 0,
+        capEvicted: 0,
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
@@ -2082,6 +2435,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         ended: 0,
         deleted: 0,
         kept: 1,
+        replays: 0,
+        capEvicted: 0,
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
@@ -2096,6 +2451,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         ended: 0,
         deleted: 1,
         kept: 0,
+        replays: 0,
+        capEvicted: 0,
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
@@ -2518,6 +2875,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         ended: 0,
         deleted: 1,
         kept: 0,
+        replays: 0,
+        capEvicted: 0,
         orphans: 0,
         cutsPruned: 0,
         chatLinesErased: 0,
