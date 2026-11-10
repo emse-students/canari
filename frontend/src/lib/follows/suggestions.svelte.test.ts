@@ -6,15 +6,18 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'me' }));
 const getFollowSuggestions = vi.hoisted(() => vi.fn());
+const dismissFollowSuggestion = vi.hoisted(() => vi.fn());
 vi.mock('./api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   getFollowSuggestions,
+  dismissFollowSuggestion,
 }));
 
 import {
   CAROUSEL_CARDS_MAX,
   FEED_CAROUSEL_AFTER_POSTS,
   ONBOARDING_FOLLOWS_BELOW,
+  dismissSuggestion,
   ensureFeedSuggestions,
   feedSuggestionCards,
   feedSuggestionPlacement,
@@ -90,6 +93,27 @@ describe('feedSuggestionCards', () => {
     ensureFeedSuggestions();
     await vi.waitFor(() => expect(feedSuggestionCards()).toHaveLength(2));
     expect(feedSuggestionCards().map((c) => c.kind)).toEqual(['user', 'user']);
+    resetSuggestions();
+  });
+
+  it('a card that leaves is replaced at the END by the next one the server sent (owner, 2026-11-10)', async () => {
+    resetSuggestions();
+    dismissFollowSuggestion.mockResolvedValue(undefined);
+    getFollowSuggestions.mockResolvedValue({
+      people: Array.from({ length: 12 }, (_, i) => person(`p${i}`)),
+      entities: [],
+      followingCount: 9,
+    });
+    ensureFeedSuggestions();
+    await vi.waitFor(() => expect(feedSuggestionCards()).toHaveLength(CAROUSEL_CARDS_MAX));
+    expect(feedSuggestionCards().map((c) => c.id)).toEqual(
+      Array.from({ length: 10 }, (_, i) => `p${i}`)
+    );
+    await dismissSuggestion('user', 'p1');
+    const ids = feedSuggestionCards().map((c) => c.id);
+    expect(ids).toHaveLength(CAROUSEL_CARDS_MAX);
+    expect(ids).not.toContain('p1');
+    expect(ids.at(-1)).toBe('p10');
     resetSuggestions();
   });
 });

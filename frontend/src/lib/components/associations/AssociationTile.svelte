@@ -188,7 +188,7 @@
         The role REPLACES the count rather than joining it, and it is the same pill that used to sit
         beside the name rather than a second styling of one idea - see the docblock.
       -->
-      <div class="mt-auto flex items-center justify-between gap-2 pt-1">
+      <div class="mt-auto flex flex-wrap items-center gap-x-1.5 gap-y-1 pt-1">
         {#if association.role}
           <div>
             <span class="text-cn-dark bg-accent/20 rounded-full px-2 py-0.5 text-xs font-semibold">
@@ -220,12 +220,14 @@
           </p>
         {/if}
         <!-- Above the stretched link's layer, and gone entirely when the chip renders nothing. -->
-        <div class="relative z-10 ml-auto empty:hidden">
+        <!-- A quiet text link after the count, "7 membres . Suivre" (owner, 2026-11-10), never a button. -->
+        <div class="text-text-muted relative z-10 flex items-center gap-1.5 text-xs empty:hidden">
           <FollowChip
             kind="association"
             targetId={association.id}
             name={association.name}
             archived={association.archived === true}
+            dotted={!association.role && (showsMemberCount || association.archived || isMember)}
           />
         </div>
       </div>

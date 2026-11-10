@@ -6182,6 +6182,8 @@
   "profile_birthday_change_opens": "You can change the date from {date}.",
   "profile_birthday_change_too_soon": "The date was already changed less than 30 days ago.",
   "follow_chip_follow_named": "Follow {name}",
+  "follow_toast_requested_named": "Follow request sent to {name}",
+  "follow_toast_following_named": "You follow {name}",
   "follow_chip_withdraw_named": "Request sent - withdraw the follow request to {name}",
   "follow_chip_withdraw": "Request sent - withdraw the follow request",
   "suggestions_title": "Suggested for you",

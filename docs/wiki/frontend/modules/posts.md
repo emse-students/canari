@@ -31,8 +31,12 @@ a remembered `followed`, like a `?feed=followed` link, now opens Pour toi (`pars
    on top - no ranking, nothing interleaved (*"un des problemes de Facebook est de trouver les
    informations"*; *"ca n'a pas de sens dans Campus, parce que tout y est deja"*).
 2. **Pour toi replaces Suivis**: what the people the reader follows publish or repost, PLUS the
-   suggested posts (WP-7's rules: popular, last 7 days, not followed, Suivre in the header, the
-   "Suggestion" badge). Suggestions leave Campus entirely.
+   suggested posts (WP-7's rules: popular, last 7 days, not followed; the header's meta line reads
+   `19 h . Suggestion . Suivre`, "Suggestion" a muted word and "Suivre" a quiet text link - no yellow
+   badge, no button, only the "..." on the right, owner 2026-11-10 -
+   [engagement](../../engagement.md#wp-2---suivre-everywhere-built)). Suggestions leave Campus
+   entirely. **Switching feed tab opens the new list at its top** (`resetPageScroll`, before and after
+   the navigation; re-pressing the open tab leaves the scroll alone).
 3. **Pour toi is ordered by freshness and popularity**, not by date alone.
 4. **Tab order**: Associations (default) / Pour toi / Campus.
 5. **The feed opens on the last tab the reader opened** (per device; first run = Associations).
