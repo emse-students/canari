@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
@@ -684,13 +685,9 @@
         </div>
       {/if}
       {#if filterAssociationId}
-        <button
-          type="button"
-          onclick={clearAssociationFilter}
-          class="border-cn-border text-text-main hover:bg-cn-bg max-w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-left text-sm font-medium transition-colors"
-        >
+        <Button variant="secondary" onclick={clearAssociationFilter} class="max-w-full">
           {m.calendar_association_filter_active()}
-        </button>
+        </Button>
       {/if}
     {/snippet}
 
