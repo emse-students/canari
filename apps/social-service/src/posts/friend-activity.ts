@@ -102,7 +102,8 @@ RETURNING "recipientId"`;
 /**
  * Tells X's followers what X just did on post `post`, under {@link friendActivityLedgerSql}:
  * the ledger first, then one in-app row and one push per reader THIS write told - the push through
- * `createNotifications`, so the bell and the daily cap (WP-8) apply as to any engagement push.
+ * `createNotifications`, so the bell applies as to a followed account's post; the daily cap (WP-8)
+ * does not (decision 11 as amended 2026-11-10: only accounts the reader does not follow are capped).
  * Called after the reaction or the comment is stored; answers how many readers were told.
  *
  * A failure is the caller's to log: the act itself is already stored, and nothing here retries -

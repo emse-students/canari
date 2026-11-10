@@ -2,8 +2,8 @@
  * FRIENDS' ACTIVITY (engagement WP-9) against a REAL PostgreSQL: migration 159 as it ships, one case
  * per rule of the disclosure list (docs/wiki/engagement.md, "(b) friends' activity - the disclosure
  * rule"), rule 0 included and rule 8 once for each of its three comment shapes, the told-once ledger,
- * and the in-app row and push the told readers get through `createNotifications` (the bell and the
- * WP-8 cap on the way).
+ * and the in-app row and push the told readers get through `createNotifications` (the bell on the
+ * way; not the WP-8 cap, which counts only accounts the reader does not follow).
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every `*.integration.spec.ts`; CI's
  * `test-social-integration` sets it. Locally, against any throwaway PostgreSQL:
