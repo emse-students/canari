@@ -120,6 +120,17 @@ const BUILD_READY = 'VALID';
 const BUILD_TERMINAL_BAD = new Set(['INVALID', 'FAILED']);
 
 /**
+ * A screenshot or preview Apple has finished processing. A fresh upload sits in `UPLOAD_COMPLETE`
+ * while Apple renders it, and a version holding one is refused at `POST /v1/reviewSubmissionItems`
+ * with `409 ... Asset Library validation error: Asset is being processed` (`v1.6.9`, 2026-11-10:
+ * the store screenshots were replaced an hour before the stable). `AWAITING_UPLOAD` is a reserved
+ * slot nobody filled and `FAILED` a rejected file - neither ever completes, so neither is waited on.
+ */
+const ASSET_READY = 'COMPLETE';
+const ASSET_PROCESSING = 'UPLOAD_COMPLETE';
+const ASSET_TERMINAL_BAD = new Set(['FAILED', 'AWAITING_UPLOAD']);
+
+/**
  * The version states an automated run may write into. Anything else is a version a human is
  * already working on, or one the store has published, and both are answers rather than obstacles.
  */
@@ -287,6 +298,30 @@ export function classifyBuildState(state) {
   // An unknown state is NOT a reason to keep polling: a new Apple state that happens to be terminal
   // would hold the runner until the job timed out, and the log would say nothing.
   return { action: 'fail', why: `unknown build processing state ${state}` };
+}
+
+/**
+ * What to do about the media of a version, given the delivery state of every screenshot and preview
+ * across its localizations. One unfinished asset holds the whole submission, so the verdict is
+ * about the set: any terminal-bad or unknown state fails, otherwise any processing one waits.
+ *
+ * @param {Array<{name: string, state: string | undefined}>} assets
+ * @returns {{action: 'use'} | {action: 'wait', pending: number} | {action: 'fail', why: string}}
+ */
+export function classifyAssetStates(assets) {
+  let pending = 0;
+  for (const { name, state } of assets) {
+    if (state === ASSET_READY) continue;
+    if (state === ASSET_PROCESSING) {
+      pending++;
+      continue;
+    }
+    if (state && ASSET_TERMINAL_BAD.has(state))
+      return { action: 'fail', why: `store asset ${name} will never finish processing (${state})` };
+    // As for builds: an unknown state is a refusal, never a reason to poll until the job times out.
+    return { action: 'fail', why: `store asset ${name} is in an unknown delivery state ${state}` };
+  }
+  return pending ? { action: 'wait', pending } : { action: 'use' };
 }
 
 /**
@@ -914,6 +949,51 @@ async function main() {
         },
       });
       log(`  release notes written for ${loc.attributes?.locale}`);
+    }
+  }
+
+  // -- the store media must be processed -----------------------------------------------------------
+  // Read, not assumed: a screenshot uploaded shortly before the release is still being rendered,
+  // and the submission below would be refused for it (`classifyAssetStates`). The same bounded
+  // wait as the build's, on the state Apple reports, and a refusal for anything that cannot finish.
+  {
+    const assetDeadline = Date.now() + 30 * 60_000;
+    for (let attempt = 1; ; attempt++) {
+      const assets = [];
+      const locs = await api(
+        'GET',
+        `/v1/appStoreVersions/${version.id}/appStoreVersionLocalizations?limit=50`
+      );
+      for (const loc of locs?.data ?? []) {
+        for (const [sets, kind] of [
+          ['appScreenshotSets', 'appScreenshots'],
+          ['appPreviewSets', 'appPreviews'],
+        ]) {
+          const res = await api(
+            'GET',
+            `/v1/appStoreVersionLocalizations/${loc.id}/${sets}?include=${kind}&limit=50&limit[${kind}]=50`
+          );
+          for (const a of res?.included ?? []) {
+            if (a?.type !== kind) continue;
+            assets.push({
+              name: `${loc.attributes?.locale}/${a.attributes?.fileName ?? a.id}`,
+              state: a.attributes?.assetDeliveryState?.state,
+            });
+          }
+        }
+      }
+      const verdict = classifyAssetStates(assets);
+      if (verdict.action === 'use') {
+        log(`  ${assets.length} store asset(s) processed`);
+        break;
+      }
+      if (verdict.action === 'fail') throw new Error(verdict.why);
+      if (Date.now() > assetDeadline)
+        throw new Error(`${verdict.pending} store asset(s) still processing after 30 minutes`);
+      log(
+        `  waiting for ${verdict.pending} store asset(s) to finish processing (attempt ${attempt})`
+      );
+      await sleep(60_000);
     }
   }
 
