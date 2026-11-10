@@ -276,11 +276,14 @@
           d'une association ou retiré par la modération, ni pour un commentaire sur une publication
           anonyme. Vos réactions et commentaires sont annoncés de la même façon à vos abonnés
           acceptés, sauf si vous désactivez « Partager mon activité » dans les réglages (activé par
-          défaut) : cela arrête les annonces à venir, sans retirer celles déjà envoyées. Ces
-          annonces ne vous envoient pas plus de cinq notifications par jour ; les autres restent
-          dans vos notifications. Sont conservés : votre réglage, le fait qu'un lecteur a déjà été
-          prévenu d'une publication (jusqu'à l'effacement de la publication ou de son compte) et le
-          nombre de ces notifications reçues chaque jour (sept jours).
+          défaut) : cela arrête les annonces à venir, sans retirer celles déjà envoyées. Quand une
+          publication de votre espace (votre campus ou votre formation, jamais par un abonnement ou
+          un accès nominatif) fait réagir au moins quatre personnes dans les 24 heures qui suivent
+          sa publication, vous en êtes prévenu une fois, sans nom de personne ; son auteur ne l'est
+          pas. Ces annonces ne vous envoient pas plus de cinq notifications par jour ; les autres
+          restent dans vos notifications. Sont conservés : votre réglage, le fait qu'un lecteur a
+          déjà été prévenu d'une publication (jusqu'à l'effacement de la publication ou de son
+          compte) et le nombre de ces notifications reçues chaque jour (sept jours).
         </dd>
       </div>
       <div>

@@ -806,6 +806,12 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *body = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.body", fixedStem]);
     return;
   }
+  // A campus trend (engagement WP-10): nobody acted, a fixed title; the body is the post's opening.
+  if ([key isEqualToString:@"social_campus_trend"]) {
+    *title = CanariLocalized(@"notif.social.campus_trend.title");
+    *body = arg.length > 0 ? arg : CanariLocalized(@"notif.social.campus_trend.body");
+    return;
+  }
   // The bookings' reminder (WP-N): nobody acted, a fixed title; the body is the place and the time.
   if ([key isEqualToString:@"social_booking_reminder"]) {
     *title = CanariLocalized(@"notif.social.booking_reminder.title");

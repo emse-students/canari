@@ -565,6 +565,10 @@
           ? m.notif_friend_reaction_text()
           : m.notif_friend_comment_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if notif.type === 'campus_trend'}
+        <!-- Engagement WP-10: nobody acted; the sentence names the reader's space, the body the post. -->
+        {m.notif_campus_trend_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if isRepostNotif}
         {notif.type === 'repost_proposed'
           ? m.notif_repost_proposed_text()

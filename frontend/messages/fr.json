@@ -5979,6 +5979,7 @@
   "notif_member_repost_text": "a republié :",
   "notif_friend_reaction_text": "a réagi à une publication :",
   "notif_friend_comment_text": "a commenté une publication :",
+  "notif_campus_trend_text": "Une publication de votre espace fait réagir :",
   "settings_share_activity": "Partager mon activité",
   "settings_share_activity_hint": "Les personnes qui vous suivent sont prévenues quand vous réagissez ou commentez une publication qu'elles voient déjà. Rien n'est envoyé sur une publication qu'elles ne voient pas, ni pour un commentaire anonyme ou au nom d'une association.",
   "settings_share_activity_error": "Le réglage n'a pas pu être enregistré.",

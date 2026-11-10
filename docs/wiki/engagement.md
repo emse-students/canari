@@ -6,7 +6,7 @@ design that answers each one, what each surface reveals and to whom, and the wor
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
-(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); WP-6 BUILT (the surfaces, 2026-11-09, [below](#wp-6---the-surfaces-built)); WP-7 BUILT (suggested posts, 2026-11-09, [below](#wp-7---suggested-posts-built)); WP-8 BUILT (the daily cap, 2026-11-09, [below](#wp-8---the-daily-cap-built)); WP-9 BUILT (friends' activity, 2026-11-09, [below](#wp-9---friends-activity-built)); everything else DESIGNED, not built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
+(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); WP-6 BUILT (the surfaces, 2026-11-09, [below](#wp-6---the-surfaces-built)); WP-7 BUILT (suggested posts, 2026-11-09, [below](#wp-7---suggested-posts-built)); WP-8 BUILT (the daily cap, 2026-11-09, [below](#wp-8---the-daily-cap-built)); WP-9 BUILT (friends' activity, 2026-11-09, [below](#wp-9---friends-activity-built)); WP-10 BUILT (campus trends, 2026-11-09, [below](#wp-10---campus-trends-built)) - every work package is built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
 
 Context it must respect, and which nothing here changes:
 
@@ -729,13 +729,49 @@ write, under the post row's lock, against the database's `now()`:
   at one write; it decides eligibility, it never decides idempotence (the stamp does).
 - **Recipients**: everyone who sees P through the SPACE rule (P reaches one of their spaces -
   `postReachesSpaceSql` - and `postVisibleToUserSql` holds), minus P's author, minus blocks with the
-  author, minus the ledger and `post_notifications` (L14). Never through a follower door or a read
+  author when P names it (rule 4 of (b)), minus the ledger and `post_notifications` (L14). Never through a follower door or a read
   grant: decision 5(c) says "from your space".
 - **`TREND_THRESHOLD` is a MEASUREMENT owed before WP-10 merges**, not a guess: the smallest integer
   at which **at most one post per campus per day** would have crossed, over the last 90 days. That
   target rate is the explanation the rule carries: a trend is rare by construction, and the number
   is re-derived from the same query if the population changes. The query is
   [R1 below](#r1---the-trend-threshold). Until it is read, WP-10 does not merge.
+
+### WP-10 - campus trends (BUILT)
+
+Built 2026-11-09 to the rule above, with `TREND_THRESHOLD = 4` as R1 read it. Migration **160**
+(`posts."trendAnnouncedAt"`, a nullable column, no backfill, plain); `posts/campus-trend.ts`.
+
+- **The crossing, stamped once** (`STAMP_TREND_SQL`): after every new reaction and every comment,
+  one `UPDATE ... SET "trendAnnouncedAt" = now() WHERE "trendAnnouncedAt" IS NULL` that also requires
+  a published, unhidden post (not a reel) within 24 hours of `publishedAt` and `engagedAccountsSql`
+  (WP-7's one definition) at or above the threshold. Under concurrent writers the row lock lets
+  exactly one through; the others re-read a stamped row. No sweep, no timer. **The stamp and the
+  ledger are ONE statement** (`campusTrendSql`, the stamp a data-modifying CTE the ledger insert
+  reads): they commit together or not at all, so a post is never stamped with nobody told (review of
+  #3285; the first draft ran them as two statements).
+- **The audience** (`campusTrendLedgerSql`): everyone a space of whom the post reaches
+  (`postReachesSpaceSql`) and who sees it by the plain predicate with the follower door closed and no
+  grant, minus the author, a block either way with the author when the post names it
+  (`namedAuthorUnblockedSql`: an anonymous or an association post is exempt, as in the feed - review
+  of #3285), the other side of the review cohort,
+  and whoever has a row for the post in the ledger (friends' activity included) or in
+  `post_notifications`; inserted into `post_engagement_notices` with reason `trend`.
+- **Naming nobody**: the row and the push carry the system actor and an empty name - an anonymous
+  post stays anonymous, and a trend is the space's, not a person's. Type `campus_trend`, key
+  `social_campus_trend` ("Une publication fait réagir votre espace", the post's opening as body),
+  native strings on Android and iOS, in `ENGAGEMENT_PUSH_TYPES` under `posts` (the cap applies), in
+  `POST_BOUND_NOTIFICATION_TYPES`, not in `BELL_PUSH_KINDS` (no account to reduce).
+- **Proof**: `posts/campus-trend.integration.spec.ts` on PostgreSQL - no stamp below the threshold
+  (the author's own reaction not counted), exactly one at the crossing write, none at the next one;
+  a comment writer counted once; none after 24 hours, for a hidden post, for a reel; the space-only
+  audience (the author, a block with the author, a reader with a row, a follower outside the space,
+  a reader through a read grant all left out); a reader told by friends' activity not told again;
+  six concurrent writers over the crossing stamping once and telling each reader once; an anonymous
+  post told to a reader its hidden writer blocked; a ledger that cannot be written leaving the post
+  unstamped.
+- **Owed**: a dev pass and a phone reading (a post of the bench account's space reaching four
+  engaged accounts within a day pushes "Une publication fait réagir votre espace" once).
 
 ### (d) openings for followers - one notice, never two
 
@@ -1021,7 +1057,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-7** (BUILT, [above](#wp-7---suggested-posts-built)) | Suggested posts (decision 8), through the feed's own block filter (`PostsService.blockedAuthorSql`) as every feed row | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door, and never by an author blocked either way |
 | **WP-8** (BUILT, [above](#wp-8---the-daily-cap-built)) | The daily cap (decisions 6 and 11): `engagement_push_days`, `ENGAGEMENT_PUSH_TYPES` holding ONLY the new kinds, the statement in `fanOutPush` | `posts/post-notifications.service.ts` | [R2](#r2---the-cap-check) read and written back; integration spec: the 6th capped push of a day is a bell row with no push, two concurrent fan-outs never exceed 5, and an association post, a live, an opening and a mention on the same day are never counted |
 | **WP-9** (BUILT, [above](#wp-9---friends-activity-built)) | Friends' activity (5b) with the ledger `post_engagement_notices` and the activity setting (decision 9: `user_activity_settings`, no row = ON, the Settings switch) | `posts/comment-write.ts`, the reaction write | integration spec, one case per rule of the disclosure list, rule 0 included, and for rule 8 one case EACH: an `anonymous` comment, a comment written as an association, and a `removedByModeration` comment, none of which notifies |
-| **WP-10** | Campus trends (5c) | the reaction write | [R1](#r1---the-trend-threshold) read FIRST and written back; integration spec: exactly one stamp at the crossing write, none after 24 hours, the space-only audience |
+| **WP-10** (BUILT, [above](#wp-10---campus-trends-built)) | Campus trends (5c) | the reaction write | [R1](#r1---the-trend-threshold) read FIRST and written back; integration spec: exactly one stamp at the crossing write, none after 24 hours, the space-only audience |
 
 ### WP-2 - Suivre everywhere (BUILT)
 

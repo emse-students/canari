@@ -371,6 +371,13 @@ describe('NotificationRow sentence', () => {
     // Never the sentence of a comment on the reader's own post.
     expect(m.notif_friend_comment_text()).not.toBe(m.notif_comment_text());
   });
+
+  it('says a post of the space is taking off, naming nobody (WP-10)', () => {
+    const row = renderRow({ ...postRow('campus_trend'), actorId: 'system', actorName: '' });
+    expect(row.textContent).toContain(m.notif_campus_trend_text());
+    expect(row.textContent).toContain('Scene ouverte lundi');
+    expect(row.textContent).not.toContain(m.notif_comment_text());
+  });
 });
 
 /**

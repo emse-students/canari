@@ -29,6 +29,8 @@ export const ENGAGEMENT_PUSH_DAYS_KEPT = 7;
 export const FRIEND_REACTION_NOTIFICATION = 'friend_reaction';
 /** Friends' activity (WP-9): an account the reader follows commented on a post they see. */
 export const FRIEND_COMMENT_NOTIFICATION = 'friend_comment';
+/** A campus trend (WP-10): a post of the reader's space took off. */
+export const CAMPUS_TREND_NOTIFICATION = 'campus_trend';
 
 /**
  * THE CAPPED PUSH TYPES, and the notification category each files under - ONE map, so the category
@@ -46,7 +48,7 @@ export const ENGAGEMENT_PUSH_TYPES: ReadonlyMap<string, { contentKey: string; ca
   new Map([
     [FRIEND_REACTION_NOTIFICATION, { contentKey: 'social_friend_reaction', category: 'posts' }],
     [FRIEND_COMMENT_NOTIFICATION, { contentKey: 'social_friend_comment', category: 'posts' }],
-    ['campus_trend', { contentKey: 'social_campus_trend', category: 'posts' }],
+    [CAMPUS_TREND_NOTIFICATION, { contentKey: 'social_campus_trend', category: 'posts' }],
   ]);
 
 /**

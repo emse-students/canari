@@ -135,7 +135,9 @@ describe('PostInteractionsService.addComment notifications', () => {
       .manager;
     const routed = manager.query.getMockImplementation()!;
     manager.query.mockImplementation((sql: string, params?: unknown[]) => {
-      if (sql.includes('INSERT INTO post_engagement_notices')) order.push('friends');
+      // Friends' activity's ledger statement (a campus trend's names reason 'trend' instead).
+      if (sql.includes('INSERT INTO post_engagement_notices') && sql.includes("'friend'"))
+        order.push('friends');
       return routed(sql, params);
     });
     await service.addComment('p1', { userId: 'reader', text: 'hello', parentId: 'parent' });
