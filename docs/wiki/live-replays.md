@@ -2,7 +2,8 @@
 
 **State (2026-11-09): DESIGNED, every question decided by the owner on 2026-11-09
 ([the decisions](#the-owners-decisions-of-2026-11-09)); WP-R1 (the switch and the schema) and WP-R2
-(the server, [as built](#wp-r2-as-built)) built, WP-R3 (out of the backup) following, the client
+(the server, [as built](#wp-r2-as-built)) built, WP-R3 (out of the backup,
+[as built](#wp-r3-as-built-the-segments-outside-the-backup)) built and owed a dev pass, the client
 (WP-R4, WP-R5) and the texts (WP-R6) not built; `live_replays_mode` is `off` everywhere.**
 
 This page is the ONE design. It reconciles the two drafts written for it: #3234 (2026-11-09, the
@@ -30,7 +31,7 @@ Answered by the owner on 2026-11-09, recorded as DECIDED. Each one names where i
 | # | Decision (owner, 2026-11-09) | Where it is built |
 | --- | --- | --- |
 | D1 | **A replay keeps the last 3 hours of a live at most.** A 10-hour live keeps its end. | the trim, by the segments' own database times ([section 2](#c-in-detail), step 1), `LIVE_REPLAY_MAX_MS` |
-| D2 | **Replays are never in backups.** | WP-R3: the live segments go to a store of their own that `backup-objects.sh` never reads |
+| D2 | **Replays are never in backups.** | WP-R3: the live segments go to a volume of their own, `live_segments`, that `backup-objects.sh` never mounts ([as built](#wp-r3-as-built-the-segments-outside-the-backup)) |
 | D3 | **The time left is shown on replays** ("encore 2 j"); a reel keeps its age. | WP-R4, from `expiresAt` and the server's `serverNow` |
 | D4 | **A replay is kept only for a live that lasted at least 30 s** (a false start shows nothing). | the replay creation, `LIVE_REPLAY_MIN_MS`, read from `lastSegmentAt - startedAt` |
 | D5 | **A total space cap, default 20 GB, a config value**: past it, **the oldest replay is deleted before its 3 days**, and **admins are signalled**. | the live sweep, `LIVE_REPLAY_TOTAL_MAX_GB`; the signal is a `WARN` line tagged `[LIVE_REPLAY_CAP]` and the replay line of the admin storage panel (the channel that exists: [the cap](#the-total-cap-and-how-admins-learn-of-it)) |
@@ -95,7 +96,8 @@ plus the lives still running, under half of it.
 The media store is backed up nightly by restic (`backup-objects.sh`: the Garage volumes, 14 daily,
 8 weekly, 6 monthly, [backup](infrastructure/backup.md)) into a repository on the same disk. Garage
 keeps an object as content-addressed blocks, not under its key, so **the backup cannot leave out the
-`live/` prefix**. A snapshot holds the replays alive that night; the retained union is about 47 days'
+`live/` prefix** (checked again for WP-R3: `garage_data` is `data/<2 hex>/<2 hex>/<block hash>`, and
+which block belongs to which key is only in `garage_meta`'s database). A snapshot holds the replays alive that night; the retained union is about 47 days'
 worth of replay: **~26 GB at S0, ~85-130 GB at S1** - more than the headroom, and a replay promised
 "deleted after 3 days" would survive up to six months in a backup. Hence D2 and WP-R3.
 
@@ -298,7 +300,7 @@ dropped but a constraint and an index re-created in the same file, no row is rew
 | --- | --- | --- |
 | **WP-R1** | the two migrations; `live_replays_mode` read like `lives_mode` (`GET /api/version` `liveReplays.mode`, `/admin/platform`); `keepsReplay` written at the start; the `[LIVE]` end line carries the live's duration and stored bytes | built (this page's pull request) |
 | **WP-R2** | the time-bounded trim; the replay creation (idempotent), the chat deleted at it; the purge waiting for the post; a cut or erasure ending the replay; `GET /api/lives/:id/replay`; `withReplays`; the read clause and the worker on `expiresAt`; reposts and republications refused; the removed-viewer term; the total cap and its signal | built, inert while the switch is off ([as built](#wp-r2-as-built)) |
-| **WP-R3** | the live segments in a second Garage store outside `backup-objects.sh` (D2); `MIGRATION.md`; **a dev pass before production**; must ship before the switch is flipped | infrastructure, built in the repo only |
+| **WP-R3** | the live segments on a volume of their own, `live_segments`, outside `backup-objects.sh` (D2); `MIGRATION.md`; **a dev pass before production**; must ship before the switch is flipped | built in the repo, owed its dev pass ([as built](#wp-r3-as-built-the-segments-outside-the-backup)) |
 | **WP-R4** | the replay mode of `livePlayer`, the replay page and feed card (cover, "Rediffusion", duration, time left - D3), the end screen, the pre-live sheet; the first-live rules raised to version 3 moved to WP-R6 ([why](#wp-r4-and-wp-r5-as-built)) | client, built ([as built](#wp-r4-and-wp-r5-as-built)) |
 | **WP-R5** | the segment-by-segment save, a new part on an init change, the size first | client, built ([as built](#wp-r4-and-wp-r5-as-built)) |
 | **WP-R6** | the texts (below), then `live_replays_mode = on` on dev, the readings, then production | not built |
@@ -355,6 +357,76 @@ so with the switch off nothing changes for any live.
   a chat attachment names a reel's own blob, which a replay does not have.
 - **The cap**: [above](#the-total-cap-and-how-admins-learn-of-it).
 
+### WP-R3, as built: the segments outside the backup
+
+**The choice: a plain disk volume of media-service, not a second Garage node.** The design first named
+a second Garage node with its own volumes and a second S3 client. Checked before building, the
+premise holds (no prefix of one Garage can be left out of its backup, above), but the remedy was
+heavier than the problem:
+
+| | Second Garage node | Second bucket of the same Garage | **A volume of media-service (CHOSEN)** |
+| --- | --- | --- | --- |
+| Out of the backup | yes, by not mounting its volumes | **no**: same `data_dir`, same blocks | **yes, by not mounting `live_segments`** |
+| New moving parts | a container, an RPC secret, an admin token, an access key, a bucket, a healthcheck, a second S3 client | - | **one volume, one directory class** |
+| New secrets / bootstrap | 4 secrets on 2 estates, the `--default-bucket` provisioning | - | **none: `docker compose` creates the volume, media-service its directories** |
+| Writers | any media-service replica | - | ONE: media-service is `exclusive` (one container, recreated in place, [cicd](cicd.md)), the reason its metadata index is already one JSON file on `media_meta` |
+
+What the segments need from a store is small: a ~0.5 MB object put, read, deleted and listed by
+prefix, one writer, no range, no presigning. A directory gives all of it, and the backup is an
+allowlist of volume NAMES, so a volume it does not name is out of it by construction - the precedent
+is `media_upload_sessions`, already "DELIBERATELY not backed up".
+
+**What was built:**
+
+- **`LiveSegmentStore`** (`apps/media-service/src/media/live-segment-store.ts`): the key
+  `live/<liveId>/<name>` is the file `$LIVE_SEGMENTS_DIR/live/<liveId>/<name>`; written in
+  `.staging/` then renamed (a reader sees a whole segment or none; staging is emptied at boot, one
+  process); a key outside `live/`, not exactly `live/<folder>/<name>`, or resolving outside the root
+  is refused (so a delete's folder removal can never name `live/` itself); deleting a live's last
+  segment removes its folder, so the orphan reaper's folder listing names only lives that hold bytes
+  (no store races that: a live on air keeps its newest 20 segments, and its purge runs after its end
+  and the drain of its uploads). `LiveSegmentsService` reads it through the same six calls it read
+  Garage with, so the trim, the purge and its empty-listing proof, the reaper and the public read are
+  unchanged; the posters (`live/<liveId>/<uuid>`) move with them.
+- **The split holds whoever writes**: `StorageService.put` and `putFileStream` REFUSE a `live/` key,
+  so no path can put a segment back into the backed-up store.
+- **The old segments are drained**: at each boot media-service deletes every live segment left in
+  Garage (the lives on air at the deploy - no replay can be there, the switch ships after WP-R3) and
+  logs `[LIVE_STORE] ... drained=N leftAlone=M`. The delete is an ALLOWLIST of one key shape,
+  `live/<uuid>/<uuid>` in canonical lower case (`LiveSegmentsService.isSegmentKey`, what `key()`
+  wrote, segments and posters alike), never the bare prefix: anything else under `live/` is named at
+  WARN and kept (review of #3253); removal condition in
+  [legacy-compatibility](legacy-compatibility.md#removal-once-both-estates-log-drained0---live-segments-an-older-release-left-in-garage-2026-11-09).
+  A live on air during that deploy loses at most its last ~40 s window to its viewers, as any
+  media-service recreate already costs.
+- **The admin storage panel**: `liveSegment*` is read from the new store; `totalBytes`, `objectCount`
+  and the weekly buckets describe the backed-up object store only, and a `live/` key found there
+  counts as `untracked` (an accusation, not a segment).
+- **Compose**: `live_segments:/app/live_segments` and `LIVE_SEGMENTS_DIR=/app/live_segments` on
+  media-service in the production, dev and local files; the volume is declared in each. No deploy
+  workflow change: the deploy runs `docker compose`, which creates a declared volume.
+- **The guard**: `.github/scripts/tests/backup-sources.test.sh` (in `make test-ci-scripts`) runs the
+  real `backup-objects.sh` against a stub `docker`, and fails if the volumes it mounts are anything but
+  `garage_data`, `garage_meta`, `media_meta`, if any backup script names `live_segments`, or if a
+  compose file stops mounting `live_segments` at `LIVE_SEGMENTS_DIR`.
+
+**What it costs.** The same bytes on the same disk (Garage's volumes and this one share the root
+filesystem), so section 1's figures are unchanged. A restored host starts with no live segment and no
+replay (`MIGRATION.md` section 6): the replay posts that come back with the database play nothing
+(every segment fetch 404s) until their `expiresAt` drops them, 3 days at most.
+
+**Owed on dev, before any production release carries it** (and before `live_replays_mode` moves):
+
+1. a live from a phone on dev: its segments under the dev estate's `live_segments` volume and NONE
+   under `live/` in Garage (`garage` CLI or an S3 listing), the viewer plays, the poster shows;
+2. the end of that live: the volume's folder for it gone within a sweep, the `[LIVE_GC]` line with
+   `remaining=0`;
+3. the media-service boot line `[LIVE_STORE] object store drained of old live segments: drained=N`
+   at the first deploy, then `drained=0` at the next;
+4. the admin storage panel's live line moving with the live, and back to 0 after it;
+5. the backup (reading 7 below), on production only: the next restic snapshot holds no
+   `live_segments` path.
+
 ### The texts that must change before the flip (from #3133's list)
 
 | Text | Where | What says the opposite today |
@@ -373,7 +445,8 @@ so with the switch off nothing changes for any live.
 4. **Expiry on dev**: `expiresAt` moved into the past by SQL, gone within an hour and 30 s, the prefix listed empty.
 5. **A staff deletion** removes the replay and records NO strike (D7); a cut of the live records one.
 6. **The audience**: an outsider, a blocked account and a removed viewer each get `404`.
-7. **The backup**: after WP-R3, the next restic snapshot holds no replay byte.
+7. **The backup**: after WP-R3, the next restic snapshot holds no replay byte (`restic ls latest` names
+   no `live_segments` path, and `live/` is absent from Garage's listing).
 8. **The cap on dev**: `LIVE_REPLAY_TOTAL_MAX_GB` set low, the oldest replay evicted, `[LIVE_REPLAY_CAP]` logged, the panel's line showing it.
 9. **The first week in production**: the panel's replay bytes against the scenarios above.
 

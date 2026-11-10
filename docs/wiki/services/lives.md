@@ -212,7 +212,7 @@ a same request is one a cache answers.
 
 | Where | What it does |
 | --- | --- |
-| media-service `GET /media/public/live/:liveId/:name` | streams the object `live/<liveId>/<name>` from Garage; no token, `LIVE_ENABLED` checked, no Cache-Control of its own. **Answers the CANONICAL path only** (`LiveSegmentsService.isCanonicalSegmentPath`: both uuids lower case, the raw path exactly `/api/media/public/live/<liveId>/<name>`, no trailing slash, no query, no percent-encoding) and 404s anything else before the store is asked - Express 5 matches any case and a trailing slash, and `/api/media/PUBLIC/live/...` reaches the route through the authenticated `/api/media` location. Replaces the JWT route `GET /media/live/...` of WP-L3, which no client ever called |
+| media-service `GET /media/public/live/:liveId/:name` | streams the object `live/<liveId>/<name>` from the live segment store (the `live_segments` volume, NOT Garage since live replays WP-R3: never backed up, [live-replays](../live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)); no token, `LIVE_ENABLED` checked, no Cache-Control of its own. **Answers the CANONICAL path only** (`LiveSegmentsService.isCanonicalSegmentPath`: both uuids lower case, the raw path exactly `/api/media/public/live/<liveId>/<name>`, no trailing slash, no query, no percent-encoding) and 404s anything else before the store is asked - Express 5 matches any case and a trailing slash, and `/api/media/PUBLIC/live/...` reaches the route through the authenticated `/api/media` location. Replaces the JWT route `GET /media/live/...` of WP-L3, which no client ever called |
 | nginx `proxy_cache_path ... keys_zone=live_segments` | http level: 512 MB, `inactive=2m`, written in place (`use_temp_path=off`) |
 | nginx `location ^~ /api/media/public/live/` | **owns the whole prefix**: `^~` stops the regex search, so nothing under it can fall into `/api/media/public/` (no cache, no limit) or the `~* \.mjs$` location. Inside, ONE nested regex `"^/api/media/public/live/<uuid>/<uuid>\z"` (lower case, and `\z`, never `$`: see below) is the cached location below; everything else under the prefix is a JSON `404` from the guard itself, before any upstream |
 
@@ -886,7 +886,7 @@ The steps of a sweep:
    returned. A refusal keeps the row, invisible (410), for the next run; a `try` per live. A live
    with a segment still storing is kept too (above), and an OPEN live is never purged by this path;
 3. **the orphan reaper**: media-service lists the `live/` folders (`POST /media/internal/live-list`,
-   a delimiter listing, one entry per folder) and every folder with NO live row behind it is purged
+   one entry per folder of the live segment store; a folder goes with its last segment) and every folder with NO live row behind it is purged
    and proven empty the same way. A ROW-STATE RULE, NOT A CLOCK: a folder is written only under a
    reservation, which needs the row, and a row is deleted only once its prefix proved empty with no
    reservation in flight - so a folder with no row was written after its purge, by a store that

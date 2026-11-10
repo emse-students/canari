@@ -337,7 +337,7 @@ describe('one file, two holds: published on CanaReels and sent to conversations'
 
   it('counts the shared file on its own stats line, inside the reel line', async () => {
     const { service } = await publishedAndSent();
-    const stats = await service.getStorageStats();
+    const stats = await service.getStorageStats([]);
     expect(stats.reelCount).toBe(1);
     expect(stats.sharedReelCount).toBe(1);
     expect(stats.sharedReelBytes).toBe(10);
@@ -545,7 +545,7 @@ describe('a lapsed chat hold under a live post keeps nothing', () => {
 
   it('is not counted as shared in the stats', async () => {
     const { service } = serviceWith(lapsed());
-    const stats = await service.getStorageStats();
+    const stats = await service.getStorageStats([]);
     expect(stats.reelCount).toBe(1);
     expect(stats.sharedReelCount).toBe(0);
   });

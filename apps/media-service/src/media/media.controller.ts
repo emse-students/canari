@@ -71,6 +71,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
 import * as crypto from 'crypto';
+import { pipeline } from 'stream';
 import {
   MediaService,
   boundedSharp,
@@ -563,7 +564,7 @@ export class MediaController {
     @Headers('x-internal-secret') internalSecret: string | undefined
   ): Promise<MediaStorageStats> {
     assertInternalSecret(internalSecret);
-    return this.mediaService.getStorageStats();
+    return this.mediaService.getStorageStats(await this.liveSegments.listSegments());
   }
 
   // ---------------------------------------------------------------------------
@@ -1218,11 +1219,18 @@ export class MediaController {
     this.logger.debug(`[LIVE] segment ${liveId}/${name} served to the edge cache (${size} B)`);
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Length', size);
-    stream.on('error', (err) => {
+    // `pipeline`, not `pipe`: the segment is an OPEN FILE since WP-R3 (`LiveSegmentStore.get`), and
+    // `pipe` leaves its source open when the edge drops the connection - one descriptor held per
+    // aborted read until a garbage collection closes it. `pipeline` destroys both ends either way.
+    pipeline(stream, res, (err) => {
+      if (!err) return;
+      // The reader hung up (`ERR_STREAM_PREMATURE_CLOSE`): its answer, not a store failure.
+      if ((err as NodeJS.ErrnoException).code === 'ERR_STREAM_PREMATURE_CLOSE') {
+        this.logger.debug(`[LIVE] segment ${liveId}/${name}: the reader closed before the end`);
+        return;
+      }
       this.logger.warn(`[LIVE] segment ${liveId}/${name} stream failed: ${String(err)}`);
-      res.destroy(err);
     });
-    stream.pipe(res);
   }
 
   // ---------------------------------------------------------------------------  // GET /media/:id
