@@ -17,6 +17,8 @@
   import { beforeNavigate } from '$app/navigation';
   import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
+  import { showToast } from '$lib/stores/toast.svelte';
   import {
     ensureAssociationsLoaded,
     ensureBlocksLoaded,
@@ -86,8 +88,29 @@
     // The chip sits beside links and inside cards: a tap on it is never a tap on them.
     e.preventDefault();
     e.stopPropagation();
-    const followed = kind === 'user' ? await tapPerson(targetId) : await tapAssociation(targetId);
-    if (followed) onFollowed?.();
+    const status =
+      kind === 'user'
+        ? await tapPerson(targetId)
+        : (await tapAssociation(targetId))
+          ? 'accepted'
+          : null;
+    if (!status) return;
+    // The confirmation says what the SERVER answered: a request for a private account, a follow for
+    // one that took it at once (tapPerson hands the status back; an association is always a follow).
+    const requested = status === 'pending';
+    Log.d(
+      'FollowChip',
+      `${kind} ${targetId.slice(0, 8)} -> ${requested ? 'requested' : 'following'}`
+    );
+    showToast(
+      name
+        ? requested
+          ? m.follow_toast_requested_named({ name })
+          : m.follow_toast_following_named({ name })
+        : followLabel(requested ? 'pending' : 'accepted'),
+      'info'
+    );
+    onFollowed?.();
   }
 </script>
 
@@ -95,10 +118,10 @@
   {#if variant === 'soft'}
     <Button
       size="compact"
-      variant="secondary"
+      variant="soft"
       onclick={onTap}
       aria-label={label}
-      class="relative bg-black/5 before:absolute before:-inset-1.5 before:content-[''] dark:bg-white/10"
+      class="relative before:absolute before:-inset-1.5 before:content-['']"
       data-follow-chip={kind}
       data-follow-chip-state="ask"
       data-follow-chip-variant="soft"
@@ -106,17 +129,20 @@
       {followLabel(null)}
     </Button>
   {:else}
-    {#if dotted}<span aria-hidden="true">&#183;</span>{/if}
-    <button
-      type="button"
-      onclick={onTap}
-      aria-label={label}
-      class="text-accent-text relative shrink-0 font-semibold before:absolute before:-inset-x-1.5 before:-inset-y-2.5 before:content-[''] hover:underline focus-visible:underline"
-      data-follow-chip={kind}
-      data-follow-chip-state="ask"
-      data-follow-chip-variant="link"
-    >
-      {followLabel(null)}
-    </button>
+    <!-- The dot and the link are ONE unit, so they never split across a wrapped line. -->
+    <span class="inline-flex shrink-0 items-center gap-1.5">
+      {#if dotted}<span aria-hidden="true">&#183;</span>{/if}
+      <button
+        type="button"
+        onclick={onTap}
+        aria-label={label}
+        class="text-accent-text relative shrink-0 font-semibold before:absolute before:-inset-x-2 before:-inset-y-4 before:content-[''] hover:underline focus-visible:underline"
+        data-follow-chip={kind}
+        data-follow-chip-state="ask"
+        data-follow-chip-variant="link"
+      >
+        {followLabel(null)}
+      </button>
+    </span>
   {/if}
 {/if}

@@ -100,29 +100,33 @@
       />
     {/if}
     <div
-      class="text-text-muted text-2xs mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium opacity-80"
+      class="text-text-muted text-2xs mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium"
       data-post-time-line
     >
-      <span class="shrink-0" title={exactDate(post.publishedAt)}>{timeAgo(post.publishedAt)}</span>
+      <span class="shrink-0 opacity-80" title={exactDate(post.publishedAt)}
+        >{timeAgo(post.publishedAt)}</span
+      >
       {#if post.pinned}
         <!-- A PINNED POST IS A MUTED WORD ON THE TIME'S LINE, as Facebook marks a pinned or sponsored post - no coloured sticker over the card's edge. -->
-        <span class="flex shrink-0 items-center gap-1" data-post-pinned>
+        <span class="flex shrink-0 items-center gap-1 opacity-80" data-post-pinned>
           <Pin size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
           {m.post_pinned()}
         </span>
       {/if}
       {#if post.studentsOnly}
-        <StudentsOnlyChip />
+        <span class="shrink-0 opacity-80"><StudentsOnlyChip /></span>
       {/if}
       {#if post.feedSuggested}
         <!-- "Suggestion" is a muted word here, as the pinned mark is - no yellow badge over the card's edge (owner, 2026-11-10). -->
-        <span class="flex shrink-0 items-center gap-1.5" data-post-suggestion>
+        <span class="flex shrink-0 items-center gap-1.5 opacity-80" data-post-suggestion>
           <span aria-hidden="true">&#183;</span>
           {m.suggestion_post_badge()}
         </span>
       {/if}
       {#if showFollow && post.association}
         <!--
+          THE LINE IS NOT DIMMED AS A WHOLE: an opacity on a parent cannot be undone by a child, and
+          "Suivre" must stay at full strength, so each muted item carries its own `opacity-80`.
           "Suivre" for whoever published this, when the reader does not follow them yet (engagement
           WP-2), a quiet text link on this line and never a button (owner, 2026-11-10). An association
           post offers the association; a personal post its author; an anonymous post nothing (a revealed
@@ -139,7 +143,10 @@
       {/if}
       {#if republished}
         <!-- One wrapping unit: beside the time and the "Entre etudiants" chip it was squeezed to "Republie par Cl..." on a phone, so it drops to its own line when the three do not fit. -->
-        <span class="flex max-w-full min-w-0 items-center gap-1.5" data-post-republished-unit>
+        <span
+          class="flex max-w-full min-w-0 items-center gap-1.5 opacity-80"
+          data-post-republished-unit
+        >
           <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
           <span class="truncate" data-post-republished-by><EmojiText text={republished} /></span>
         </span>

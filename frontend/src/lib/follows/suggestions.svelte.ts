@@ -25,7 +25,7 @@ import {
   type SuggestedPerson,
   type SuggestionKind,
 } from './api';
-import { associationChipState, personChipState } from './followState.svelte';
+import { associationChipState, isTapSettling, personChipState } from './followState.svelte';
 
 /**
  * L12: "follows almost nobody" is fewer than this many follows in total (accepted person follows
@@ -170,6 +170,9 @@ export function isSuggestionDismissed(kind: SuggestionKind, id: string): boolean
  */
 export function cardDrawn(card: SuggestionCard): boolean {
   if (dismissed.has(key(card.kind, card.id))) return false;
+  // A follow still out keeps its card: it leaves only once the server said yes, so a refusal never
+  // makes it vanish and come back over the card that slid into its place.
+  if (isTapSettling(card.id)) return true;
   if (card.kind === 'user') {
     const s = personChipState(card.id);
     return s === undefined || s === null;

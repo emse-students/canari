@@ -1112,8 +1112,11 @@ in the moderation preview, `showFollow={false}`), the directory rows (on the lin
 row being a stretched link) and `AssociationTile` (`7 membres . Suivre`, matching `18 membres . Membre`).
 `soft`: a neutral light-grey secondary button with no icon, for the "Suggestions pour vous" cards only.
 A tap follows at once and the control GOES AWAY (a request already sent draws nothing; it is withdrawn
-from the profile or the sent-requests list), with a toast: "Demande envoyee" for a person (every
-personal account is private), "Abonne" for an association (`followLabel`, the profile's strings). It
+from the profile or the sent-requests list), with a NAMED toast worded from the status the SERVER
+returned, by `FollowChip` (never `followState`, so `FollowBackButton` does not toast): "Demande de suivi
+envoyee a {name}" for a request (every personal account is private), "Vous suivez {name}" for a follow.
+The `soft` look is `ui/Button`'s own variant (`cn-surface-alt`). The link is outside the meta line's
+dimming (each muted item carries its own `opacity-80`) with a 44 px hit area. It
 is NEVER drawn for yourself, a blocked account, a person already
 followed or requested, an association already followed, an ARCHIVED association, or one
 the reader is a MEMBER of (lead decision), and it draws nothing while its answer is unknown.
@@ -1167,8 +1170,10 @@ follow of the reader's, so it writes nothing.
   for the session: fail-closed for the BDE flags, which is right for them); the ledger asks
   `didMyAssociationsProbeFail()` and offers nothing on any association when membership is unknown.
 - **A tap** flips the state at once, is guarded by a per-id in-flight set (a second tap does nothing),
-  and puts the state back with a toast on a refusal (the profile's sentences); on success `tapPerson`
-  and `tapAssociation` toast and return `true`, which the chip hands to `onFollowed`. A withdraw
+  and puts the state back with a toast on a refusal (the profile's sentences); `tapPerson`
+  answers the server's status (`tapAssociation` a boolean), which the chip words and hands to
+  `onFollowed`; a card stays drawn while its tap is out (`isTapSettling`) and leaves only on success,
+  so a refusal never makes it vanish and come back. A withdraw
   (`withdrawPerson`, from the profile) that raced the other side ends in what the server says now - a
   follow (409) or none (404) - with no toast and no stuck state. An association follows at once and
   the chip goes away.

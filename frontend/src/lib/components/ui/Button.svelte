@@ -11,6 +11,8 @@
    *
    *  - `primary`   the yellow fill, reserved for THE action of a surface (save, send, confirm);
    *  - `secondary` the thin grey edge of a field on a neutral fill - everything else, cancel included;
+   *  - `soft`      a quiet filled secondary (the recessed `cn-surface-alt`, no edge) for an offer beside
+   *    content that must not shout - "Suivre" on a suggestion card (owner, 2026-11-10);
    *  - `ghost`     no fill and no edge, for a low-ranking action beside a primary one;
    *  - `danger-outline` a destructive action on a list row or a panel: red text and a thin red edge on
    *    the neutral fill, so it reads as destructive without outshouting the primary;
@@ -36,7 +38,7 @@
     /** Slot content rendered inside the button. */
     children?: import('svelte').Snippet;
     /** Visual variant. */
-    variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'danger-outline';
+    variant?: 'primary' | 'secondary' | 'soft' | 'ghost' | 'danger' | 'danger-outline';
     /** `default` is 2.5rem, `compact` 2rem. */
     size?: 'default' | 'compact';
     /** A square holding one icon; the caller supplies `aria-label`. */
@@ -63,6 +65,7 @@
   const VARIANT: Record<NonNullable<Props['variant']>, string> = {
     primary: 'border-transparent bg-accent text-on-accent hover:bg-accent-hover',
     secondary: 'bg-cn-surface text-text-main hover:bg-black/5 dark:hover:bg-white/10',
+    soft: 'border-transparent bg-cn-surface-alt text-text-main hover:bg-cn-border',
     ghost:
       'border-transparent bg-transparent text-text-muted hover:bg-black/5 hover:text-text-main dark:hover:bg-white/10',
     danger: 'border-transparent bg-red-solid text-white hover:brightness-90',

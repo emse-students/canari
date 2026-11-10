@@ -6177,6 +6177,8 @@
   "profile_birthday_change_opens": "Vous pourrez changer la date à partir du {date}. Vous pouvez toujours changer qui la voit, ou la retirer.",
   "profile_birthday_change_too_soon": "La date a déjà été changée il y a moins de 30 jours.",
   "follow_chip_follow_named": "Suivre {name}",
+  "follow_toast_requested_named": "Demande de suivi envoyée à {name}",
+  "follow_toast_following_named": "Vous suivez {name}",
   "follow_chip_withdraw_named": "Demande envoyée - retirer la demande de suivi à {name}",
   "follow_chip_withdraw": "Demande envoyée - retirer la demande de suivi",
   "suggestions_title": "Suggestions pour vous",

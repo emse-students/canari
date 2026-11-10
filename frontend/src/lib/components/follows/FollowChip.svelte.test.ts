@@ -105,7 +105,38 @@ describe('a person', () => {
     expect(api.askToFollow).toHaveBeenCalledWith('u1');
     // The control goes away at once and a toast says what happened (owner, 2026-11-10).
     expect(chip()).toBeNull();
-    expect(toast.showToast).toHaveBeenCalledWith(m.profile_follow_requested_btn(), 'info');
+    expect(toast.showToast).toHaveBeenCalledWith(
+      m.follow_toast_requested_named({ name: 'X' }),
+      'info'
+    );
+  });
+
+  it('words the toast from the status the SERVER returned: an account that took it at once is a follow', async () => {
+    api.getFollowStatuses.mockResolvedValue({});
+    api.askToFollow.mockResolvedValue('accepted');
+    await render('user', 'u1');
+    chip()!.click();
+    await settle();
+    expect(toast.showToast).toHaveBeenCalledWith(
+      m.follow_toast_following_named({ name: 'X' }),
+      'info'
+    );
+  });
+
+  it('a refusal says the refusal only - no confirmation, no onFollowed', async () => {
+    api.getFollowStatuses.mockResolvedValue({});
+    api.askToFollow.mockRejectedValue(new ApiRefusalError(403, FOLLOW_BLOCKED, 'x'));
+    const onFollowed = vi.fn();
+    component = mount(FollowChip, {
+      target: document.body,
+      props: { kind: 'user', targetId: 'u1', name: 'X', onFollowed },
+    });
+    await settle();
+    chip()!.click();
+    await settle();
+    expect(toast.showToast).toHaveBeenCalledTimes(1);
+    expect(toast.showToast).toHaveBeenCalledWith(m.refusal_follow_blocked());
+    expect(onFollowed).not.toHaveBeenCalled();
   });
 
   it('is a bare accent text link: no icon, no fill, the label in the accessible name', async () => {
