@@ -315,9 +315,8 @@
    * `accessIsPrivate` is not flipped until the write succeeds, so it stays the server's truth at
    * every moment nothing is in flight - there is no separate "pending" toggle state to track.
    */
-  async function handleTogglePrivacy() {
-    if (privacySaving) return;
-    const next = !accessIsPrivate;
+  async function handleSetPrivacy(next: boolean) {
+    if (privacySaving || next === accessIsPrivate) return;
     const confirmed = await showConfirm(
       next ? m.chat_channel_make_private_confirm() : m.chat_channel_make_public_confirm(),
       { danger: !next }
@@ -338,7 +337,7 @@
       // The answer, not `next`: going private also grants whoever flipped it (server-side).
       await afterAccessWrite(channelId, base, answer);
     } catch (e) {
-      Log.d('channelSettings.handleTogglePrivacy failed', e);
+      Log.d('channelSettings.handleSetPrivacy failed', e);
       saveError = await accessWriteRefused(channelId, e, m.chat_channel_access_save_error());
     } finally {
       privacySaving = false;
@@ -696,59 +695,52 @@
               </div>
             {/if}
 
-            <!-- ═══ Visibility toggle ═══ -->
-            <div class="flex items-center justify-between gap-4">
-              <div class="flex items-center gap-3">
-                {#if accessIsPrivate}
-                  <div class="text-amber-warn-text bg-amber-warn/10 rounded-xl p-2">
-                    <Lock size={18} strokeWidth={2.5} />
-                  </div>
-                  <div>
-                    <p class="text-text-main text-sm font-bold">
-                      {m.chat_channel_private_label()}
-                    </p>
-                    <p class="text-text-muted text-xs">
-                      {m.chat_channel_private_description()}
-                    </p>
-                  </div>
-                {:else}
-                  <div class="text-green-ok rounded-xl bg-emerald-500/10 p-2">
-                    <Globe size={18} strokeWidth={2.5} />
-                  </div>
-                  <div>
-                    <p class="text-text-main text-sm font-bold">
-                      {m.chat_channel_public_label()}
-                    </p>
-                    <p class="text-text-muted text-xs">
-                      {m.chat_channel_public_description()}
-                    </p>
-                  </div>
-                {/if}
-              </div>
+            <!-- ═══ Visibility: a CHOICE between two states, never an on/off switch (2026-11-10) ═══
+                 A switch drew "Canal public" with the track OFF, which read as "public is disabled". -->
+            <div class="space-y-3">
               {#if canManage}
-                <button
-                  type="button"
-                  onclick={() => void handleTogglePrivacy()}
-                  disabled={privacySaving}
-                  class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 {accessIsPrivate
-                    ? 'bg-accent'
-                    : 'bg-black/10 dark:bg-white/20'}"
-                  role="switch"
-                  aria-checked={accessIsPrivate}
-                  aria-busy={privacySaving}
-                >
-                  <span class="sr-only">{m.chat_toggle_private_channel_label()}</span>
-                  {#if privacySaving}
-                    <Loader size={12} class="absolute inset-0 m-auto animate-spin text-white" />
-                  {:else}
-                    <span
-                      class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {accessIsPrivate
-                        ? 'translate-x-6'
-                        : 'translate-x-1'}"
-                    ></span>
-                  {/if}
-                </button>
+                <SegmentedControl
+                  label={m.chat_channel_access_title()}
+                  items={[
+                    { key: 'public', label: m.chat_channel_access_option_public(), icon: Globe },
+                    {
+                      key: 'restricted',
+                      label: m.chat_channel_access_option_restricted(),
+                      icon: Lock,
+                    },
+                  ]}
+                  value={accessIsPrivate ? 'restricted' : 'public'}
+                  onSelect={(key) => void handleSetPrivacy(key === 'restricted')}
+                  class={privacySaving ? 'pointer-events-none opacity-50' : ''}
+                />
               {/if}
+              <ul class="space-y-2" data-testid="channel-access-options">
+                {#each [{ isPrivate: false, label: m.chat_channel_public_label(), description: m.chat_channel_public_description(), icon: Globe }, { isPrivate: true, label: m.chat_channel_private_label(), description: m.chat_channel_private_description(), icon: Lock }] as option (option.isPrivate)}
+                  {@const current = option.isPrivate === accessIsPrivate}
+                  {@const Icon = option.icon}
+                  <li
+                    class="flex items-start gap-3 {current ? 'text-text-main' : 'text-text-muted'}"
+                    aria-current={current ? 'true' : undefined}
+                  >
+                    <div
+                      class="rounded-xl p-2 {current
+                        ? 'bg-accent/15 text-accent-icon'
+                        : 'bg-black/5 dark:bg-white/5'}"
+                    >
+                      <Icon size={18} strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <p class="text-sm font-bold">
+                        {option.label}
+                        {#if privacySaving && current}
+                          <Loader size={12} class="inline animate-spin" />
+                        {/if}
+                      </p>
+                      <p class="text-text-muted text-xs">{option.description}</p>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
             </div>
 
             <!-- ═══ Qui peut écrire ? ═══ -->
