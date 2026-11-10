@@ -16,6 +16,7 @@ import { BaseMlsService } from '$lib/services/BaseMlsService';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
+import { noteMlsStateLoaded, resetStateAuthorityForTests } from '$lib/mls-client/stateAuthority';
 import {
   noteUnackedFrame,
   refusedBacklogIsQueued,
@@ -225,9 +226,32 @@ describe('waitForMessageQueueIdle', () => {
       await svc.fetchPendingMessages();
 
       expect(pullPendingMessagesJson).not.toHaveBeenCalled();
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('follower tab'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('without the leader copy'));
     } finally {
       tab.leadership = 'undecided';
+      error.mockRestore();
+    }
+  });
+
+  /**
+   * THE COPY, NOT THE ROLE (2026-11-10): a leader promoted in place still holds the copy it loaded
+   * as a follower until its promotion reload, and a pull would decrypt into that copy.
+   */
+  it('pulls nothing on a leader promoted in place, whose reload is owed', async () => {
+    tab.leadership = 'leader';
+    noteMlsStateLoaded(false);
+    withSocket(false);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await svc.waitForMessageQueueIdle('a test', null);
+      await svc.fetchPendingMessages();
+
+      expect(pullPendingMessagesJson).not.toHaveBeenCalled();
+      // The barrier knows it and says nothing; only the direct pull is a caller that forgot.
+      expect(error).toHaveBeenCalledTimes(1);
+    } finally {
+      tab.leadership = 'undecided';
+      resetStateAuthorityForTests();
       error.mockRestore();
     }
   });

@@ -16,6 +16,7 @@ import {
   type MlsReplayCommit,
 } from './history';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { HISTORY_BATCH_MAX_GROUPS } from '$lib/mls-client/mlsDeliveryApi';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -1026,238 +1027,259 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // single encrypted checkpoint is flushed at the end; the per-conversation progress markers
   // (stream cursor / seen hashes) are committed by the helper only once a checkpoint that
   // started after the last replay LANDED, so they never run ahead of the persisted ratchet.
+  //
+  // A TAB WITHOUT THE LEADER COPY REPLAYS NOTHING AND OPENS NO WINDOW (2026-11-10). A replay moves
+  // the ratchet of the copy it runs on, and the window's close checkpoints that copy: production
+  // `1.6.9` showed a follower's restore writing its copy over the leader's, whose own writes were then
+  // refused as stale. The leader replays every archive at its own restore and relays what arrives
+  // after it (`message_added`), so a follower draws the stored pages - the local half below - and no
+  // more. Said once per pass, here, where it is decided.
+  const replaysHere = !refusesCommitsHere();
+  if (!replaysHere) {
+    ctx.log(
+      "[RESTORE] Follower tab - stored pages drawn, the archive replay is the leader tab's (nothing decrypted here)"
+    );
+  }
   const pendingCommits: MlsReplayCommit[] = [];
-  await withMlsBulkIngest(
-    ctx.mlsService,
-    async () => {
-      /**
-       * THE SERVER GOT NO ANSWER THIS PASS, AND EVERY REPLAY BELOW WOULD ASK IT AGAIN.
-       *
-       * Set by the first transport failure of the pass (the group list, then the batch) and read by
-       * every conversation after it, so the archive replay is skipped rather than sent: a replay
-       * reads its own first page and takes the mailbox barrier, which pulls. Measured on production
-       * (`1.5.1`, a phone at a cold start with no network): the batch got no answer, then 125
-       * per-group history reads and 125 mailbox pulls left in one second, all of them failing - 306
-       * `[HISTORY] no answer` and 327 `[PENDING] ... got no answer` lines for one absent link.
-       *
-       * ONLY WHILE THE LINK IS KNOWN DOWN (`connectivity.isOffline`), not on one failure alone: a
-       * single deadline on a slow but working link is a slow moment, and skipping every replay of
-       * the pass on it would be a regression against the per-group path it used to take.
-       *
-       * WHAT IS OWED, AND TO WHOM. The frames queued for this device come with the reconnect's pull
-       * (`initializeConnection` pulls after every connect, and the barrier does not pull while the
-       * link is down - `BaseMlsService.settleBarrier`). The skipped archives are handed to
-       * `ctx.onArchiveReplaysSkipped`, which replays them on the next reconnect - this pass runs
-       * only at boot and on a Welcome. The LOCAL half of this pass - the stored page, the DM repair -
-       * still runs. An ANSWER (a refused chunk, a 4xx/5xx for one group) is not this: the group's
-       * own replay still reads its own page.
-       */
-      let unreachable: unknown = null;
-      /** A transport failure while the link is KNOWN down: the pass stops asking the server. */
-      const linkDown = (e: unknown): boolean => isTransportFailure(e) && connectivity.isOffline;
-      let serverGroupIndex = null;
-      try {
-        const groups = await ctx.mlsService.getUserGroups(ctx.userId);
-        serverGroupIndex = buildUserGroupSyncIndex(groups);
-      } catch (e) {
-        // A link known down is said once, by the `[CATCHUP]` line below, with what it stops.
-        if (linkDown(e)) unreachable = e;
-        else
-          ctx.log(
-            `[WARN] getUserGroups unavailable — DM/group classification from the local cache: ${String(e)}`
-          );
-      }
-
-      const replayMetas = mergedConvMetas.filter((m) => !isChannelConversationId(m.id));
-      let batchFirstPages: Map<string, import('$lib/mls-client/historyTypes').HistoryPage> =
-        new Map();
-      if (unreachable === null && replayMetas.length > 0 && ctx.mlsService.fetchHistoryBatch) {
-        try {
-          batchFirstPages = await ctx.mlsService.fetchHistoryBatch(
-            replayMetas.map((meta) => ({
-              groupId: meta.id,
-              afterStreamId: readHistoryStreamCursor(ctx.userId, meta.id),
-            }))
-          );
-          // Naming the request count, not "1 request": the list is chunked at
-          // HISTORY_BATCH_MAX_GROUPS, and a gap between asked and primed is a refused chunk.
-          const requests = Math.ceil(replayMetas.length / HISTORY_BATCH_MAX_GROUPS);
-          ctx.log(
-            `[CATCHUP] batch history: ${batchFirstPages.size}/${replayMetas.length} group(s) ` +
-              `primed in ${requests} request(s)`
-          );
-        } catch (e) {
-          // Only a transport failure is thrown (`fetchHistoryBatch`). On a link known down the pass
-          // stops; on a link not known down (one deadline on a slow link) each group reads its own
-          // page, as it always could; anything else is a defect of the batch itself, accused.
-          if (linkDown(e)) unreachable = e;
-          else if (isTransportFailure(e))
-            console.warn(
-              `[CATCHUP] batch history got no answer on a link not known down - each group reads its own page: ${String(e)}`
-            );
-          else console.error('[CATCHUP] batch history threw - each group reads its own page:', e);
-        }
-      }
-      if (unreachable !== null && replayMetas.length > 0) {
-        // ONE LINE FOR THE WHOLE PASS, naming what is owed next - not one per conversation.
-        console.warn(
-          `[CATCHUP] the server got no answer - the archive replay of ${replayMetas.length} ` +
-            "conversation(s) is skipped this pass: the mailbox is owed to the reconnect's pull, " +
-            `the archives to the next reconnect: ${String(unreachable)}`
+  const restorePass = async (): Promise<MlsReplayCommit[] | undefined> => {
+    /**
+     * THE SERVER GOT NO ANSWER THIS PASS, AND EVERY REPLAY BELOW WOULD ASK IT AGAIN.
+     *
+     * Set by the first transport failure of the pass (the group list, then the batch) and read by
+     * every conversation after it, so the archive replay is skipped rather than sent: a replay
+     * reads its own first page and takes the mailbox barrier, which pulls. Measured on production
+     * (`1.5.1`, a phone at a cold start with no network): the batch got no answer, then 125
+     * per-group history reads and 125 mailbox pulls left in one second, all of them failing - 306
+     * `[HISTORY] no answer` and 327 `[PENDING] ... got no answer` lines for one absent link.
+     *
+     * ONLY WHILE THE LINK IS KNOWN DOWN (`connectivity.isOffline`), not on one failure alone: a
+     * single deadline on a slow but working link is a slow moment, and skipping every replay of
+     * the pass on it would be a regression against the per-group path it used to take.
+     *
+     * WHAT IS OWED, AND TO WHOM. The frames queued for this device come with the reconnect's pull
+     * (`initializeConnection` pulls after every connect, and the barrier does not pull while the
+     * link is down - `BaseMlsService.settleBarrier`). The skipped archives are handed to
+     * `ctx.onArchiveReplaysSkipped`, which replays them on the next reconnect - this pass runs
+     * only at boot and on a Welcome. The LOCAL half of this pass - the stored page, the DM repair -
+     * still runs. An ANSWER (a refused chunk, a 4xx/5xx for one group) is not this: the group's
+     * own replay still reads its own page.
+     */
+    let unreachable: unknown = null;
+    /** A transport failure while the link is KNOWN down: the pass stops asking the server. */
+    const linkDown = (e: unknown): boolean => isTransportFailure(e) && connectivity.isOffline;
+    let serverGroupIndex = null;
+    try {
+      const groups = await ctx.mlsService.getUserGroups(ctx.userId);
+      serverGroupIndex = buildUserGroupSyncIndex(groups);
+    } catch (e) {
+      // A link known down is said once, by the `[CATCHUP]` line below, with what it stops.
+      if (linkDown(e)) unreachable = e;
+      else
+        ctx.log(
+          `[WARN] getUserGroups unavailable — DM/group classification from the local cache: ${String(e)}`
         );
-        ctx.onArchiveReplaysSkipped?.(replayMetas.map((m) => m.id));
-      }
+    }
 
-      for (const meta of mergedConvMetas) {
-        // A SALON'S STORED PAGE IS KEPT (F4 of community-open-budget): it is the copy its next open
-        // draws before the server page, which replaces it (`loadChannelHistory`). It used to be
-        // erased here at every boot, which is what made a salon's first open network-only.
-        if (isChannelConversationId(meta.id)) continue;
-        try {
-          const existingConvo = ctx.conversations.get(meta.id);
-          if (existingConvo && !isChannelConversationId(meta.id) && serverGroupIndex) {
-            const row = serverGroupIndex.byGroupId.get(meta.id);
-            if (row?.isGroup === false) {
-              // Repair a DM whose peer identity is corrupted: either misclassified as a group,
-              // or stored as direct but with a missing/self peer (legacy self-only group name).
-              // resolveDirectPeerId falls back to the authoritative roster when the name is unusable.
-              const self = ctx.userId.toLowerCase();
-              const currentPeer = (existingConvo.directPeerId ?? '').toLowerCase();
-              const needsRepair =
-                (existingConvo.conversationType ?? 'group') !== 'direct' ||
-                !currentPeer ||
-                currentPeer === self;
-              if (needsRepair) {
-                const peer = await resolveDirectPeerId(
-                  ctx.mlsService,
-                  meta.id,
-                  row.name ?? meta.name,
-                  ctx.userId,
-                  ctx.log
+    const replayMetas = mergedConvMetas.filter((m) => !isChannelConversationId(m.id));
+    let batchFirstPages: Map<string, import('$lib/mls-client/historyTypes').HistoryPage> =
+      new Map();
+    if (
+      replaysHere &&
+      unreachable === null &&
+      replayMetas.length > 0 &&
+      ctx.mlsService.fetchHistoryBatch
+    ) {
+      try {
+        batchFirstPages = await ctx.mlsService.fetchHistoryBatch(
+          replayMetas.map((meta) => ({
+            groupId: meta.id,
+            afterStreamId: readHistoryStreamCursor(ctx.userId, meta.id),
+          }))
+        );
+        // Naming the request count, not "1 request": the list is chunked at
+        // HISTORY_BATCH_MAX_GROUPS, and a gap between asked and primed is a refused chunk.
+        const requests = Math.ceil(replayMetas.length / HISTORY_BATCH_MAX_GROUPS);
+        ctx.log(
+          `[CATCHUP] batch history: ${batchFirstPages.size}/${replayMetas.length} group(s) ` +
+            `primed in ${requests} request(s)`
+        );
+      } catch (e) {
+        // Only a transport failure is thrown (`fetchHistoryBatch`). On a link known down the pass
+        // stops; on a link not known down (one deadline on a slow link) each group reads its own
+        // page, as it always could; anything else is a defect of the batch itself, accused.
+        if (linkDown(e)) unreachable = e;
+        else if (isTransportFailure(e))
+          console.warn(
+            `[CATCHUP] batch history got no answer on a link not known down - each group reads its own page: ${String(e)}`
+          );
+        else console.error('[CATCHUP] batch history threw - each group reads its own page:', e);
+      }
+    }
+    // A follower owes no archive to anyone: the leader's restore replays them.
+    if (replaysHere && unreachable !== null && replayMetas.length > 0) {
+      // ONE LINE FOR THE WHOLE PASS, naming what is owed next - not one per conversation.
+      console.warn(
+        `[CATCHUP] the server got no answer - the archive replay of ${replayMetas.length} ` +
+          "conversation(s) is skipped this pass: the mailbox is owed to the reconnect's pull, " +
+          `the archives to the next reconnect: ${String(unreachable)}`
+      );
+      ctx.onArchiveReplaysSkipped?.(replayMetas.map((m) => m.id));
+    }
+
+    for (const meta of mergedConvMetas) {
+      // A SALON'S STORED PAGE IS KEPT (F4 of community-open-budget): it is the copy its next open
+      // draws before the server page, which replaces it (`loadChannelHistory`). It used to be
+      // erased here at every boot, which is what made a salon's first open network-only.
+      if (isChannelConversationId(meta.id)) continue;
+      try {
+        const existingConvo = ctx.conversations.get(meta.id);
+        if (existingConvo && !isChannelConversationId(meta.id) && serverGroupIndex) {
+          const row = serverGroupIndex.byGroupId.get(meta.id);
+          if (row?.isGroup === false) {
+            // Repair a DM whose peer identity is corrupted: either misclassified as a group,
+            // or stored as direct but with a missing/self peer (legacy self-only group name).
+            // resolveDirectPeerId falls back to the authoritative roster when the name is unusable.
+            const self = ctx.userId.toLowerCase();
+            const currentPeer = (existingConvo.directPeerId ?? '').toLowerCase();
+            const needsRepair =
+              (existingConvo.conversationType ?? 'group') !== 'direct' ||
+              !currentPeer ||
+              currentPeer === self;
+            if (needsRepair) {
+              const peer = await resolveDirectPeerId(
+                ctx.mlsService,
+                meta.id,
+                row.name ?? meta.name,
+                ctx.userId,
+                ctx.log
+              );
+              // RE-READ AFTER THE AWAIT: a live delivery may have written this row while the roster
+              // was being asked, and spreading the copy read before it would erase that message.
+              const latest = ctx.conversations.get(meta.id);
+              if (!latest) {
+                // Every swallowed branch logs: the row left the map while its roster was asked
+                // (a leave, a delete or an account switch), so there is nothing left to repair.
+                ctx.log(
+                  `[RESTORE] DM repair skipped for ${meta.id} - the conversation vanished while its peer was resolved`
                 );
-                // RE-READ AFTER THE AWAIT: a live delivery may have written this row while the roster
-                // was being asked, and spreading the copy read before it would erase that message.
-                const latest = ctx.conversations.get(meta.id);
-                if (!latest) {
-                  // Every swallowed branch logs: the row left the map while its roster was asked
-                  // (a leave, a delete or an account switch), so there is nothing left to repair.
-                  ctx.log(
-                    `[RESTORE] DM repair skipped for ${meta.id} - the conversation vanished while its peer was resolved`
-                  );
-                } else if (peer && peer !== self) {
-                  ctx.conversations.set(meta.id, {
-                    ...latest,
-                    conversationType: 'direct',
-                    directPeerId: peer,
-                    contactName: peer,
-                    name: peer,
+              } else if (peer && peer !== self) {
+                ctx.conversations.set(meta.id, {
+                  ...latest,
+                  conversationType: 'direct',
+                  directPeerId: peer,
+                  contactName: peer,
+                  name: peer,
+                });
+                const normalizedName = canonicalDirectName(ctx.userId, peer);
+                if (meta.name !== normalizedName) {
+                  await ctx.storage.saveConversation({
+                    ...meta,
+                    name: normalizedName,
                   });
-                  const normalizedName = canonicalDirectName(ctx.userId, peer);
-                  if (meta.name !== normalizedName) {
-                    await ctx.storage.saveConversation({
-                      ...meta,
-                      name: normalizedName,
-                    });
-                  }
                 }
               }
             }
           }
-
-          const storedMessages = await ctx.storage.getMessagesPage(
-            meta.id,
-            ctx.deviceKeyB64,
-            INITIAL_MESSAGES_PAGE
-          );
-          const msgs = await retroactivelyResolveHexIds(
-            mapStoredMessagesToChatMessages(storedMessages, ctx.userId),
-            ctx.storage,
-            meta.id,
-            ctx.deviceKeyB64
-          );
-          const preReplayMsgIds = new Set(msgs.map((m) => m.id));
-          const existing = ctx.conversations.get(meta.id);
-          if (existing && msgs.length > 0) {
-            // MERGED, NEVER ASSIGNED (`mergeMessagePage`): the rows are seeded before this read, so a
-            // message delivered live since then is already on the row and is not in this page.
-            ctx.conversations.set(meta.id, {
-              ...existing,
-              messages: mergeMessagePage(existing.messages, msgs),
-            });
-
-            // Restore reactions into the shared messageReactions map
-            for (const m of msgs) {
-              if (m.reactions && m.reactions.length > 0) {
-                ctx.messageReactions.set(m.id, m.reactions);
-              }
-            }
-          }
-          // The stored page is drawn; the archive is owed elsewhere (said once, above the loop).
-          if (unreachable !== null) continue;
-          // Fetch from network → decrypt → save to DB (no direct UI update)
-          const commit = await replayConversationHistory({
-            mlsService: ctx.mlsService,
-            id: meta.id,
-            contactName: meta.id,
-            userId: ctx.userId,
-            deviceKey: () => ctx.deviceKeyB64,
-            storage: ctx.storage,
-            getConversation: (name) => ctx.conversations.get(name),
-            setConversation: (name, next) => ctx.conversations.set(name, next),
-            saveConversation: async (name) => {
-              const convo = ctx.conversations.get(name);
-              if (convo)
-                await ctx.storage.saveConversation(toConversationMeta(name, convo, ctx.userId));
-            },
-            messageReactions: ctx.messageReactions,
-            log: ctx.log,
-            primedFirstPage: batchFirstPages.get(meta.id),
-          });
-          if (commit) pendingCommits.push(commit);
-          // Reload from DB after network sync so display reflects new messages
-          const refreshed = await ctx.storage.getMessagesPage(
-            meta.id,
-            ctx.deviceKeyB64,
-            INITIAL_MESSAGES_PAGE
-          );
-          const refreshedMsgs = await retroactivelyResolveHexIds(
-            mapStoredMessagesToChatMessages(refreshed, ctx.userId),
-            ctx.storage,
-            meta.id,
-            ctx.deviceKeyB64
-          );
-          const current = ctx.conversations.get(meta.id);
-          if (current) {
-            // "Arrived during this replay" is only a PROXY for "not seen yet", and it breaks when
-            // the replay carries a history bundle - hence the watermark check in isUnreadForUser.
-            //
-            // COUNTED OVER THE MERGED LIST, NOT OVER THE PAGE. The page is one window of the store and
-            // a message delivered live while the replay ran is not in it, so counting the page alone
-            // both dropped that message from the display and then wrote a badge that did not include
-            // it - the same stale read, once as a loss and once as an undercount.
-            const mine = readPointFor(current, ctx.userId.toLowerCase());
-            const messages = mergeMessagePage(current.messages, refreshedMsgs);
-            const newUnreadCount = messages.filter(
-              (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, mine.stamped, mine.server)
-            ).length;
-            ctx.conversations.set(meta.id, { ...current, messages, unreadCount: newUnreadCount });
-            for (const m of refreshedMsgs) {
-              if (m.reactions && m.reactions.length > 0) {
-                ctx.messageReactions.set(m.id, m.reactions);
-              }
-            }
-          }
-        } catch (e) {
-          ctx.log(`[WARN] Conversation load failed ${meta.id}: ${String(e)}`);
         }
+
+        const storedMessages = await ctx.storage.getMessagesPage(
+          meta.id,
+          ctx.deviceKeyB64,
+          INITIAL_MESSAGES_PAGE
+        );
+        const msgs = await retroactivelyResolveHexIds(
+          mapStoredMessagesToChatMessages(storedMessages, ctx.userId),
+          ctx.storage,
+          meta.id,
+          ctx.deviceKeyB64
+        );
+        const preReplayMsgIds = new Set(msgs.map((m) => m.id));
+        const existing = ctx.conversations.get(meta.id);
+        if (existing && msgs.length > 0) {
+          // MERGED, NEVER ASSIGNED (`mergeMessagePage`): the rows are seeded before this read, so a
+          // message delivered live since then is already on the row and is not in this page.
+          ctx.conversations.set(meta.id, {
+            ...existing,
+            messages: mergeMessagePage(existing.messages, msgs),
+          });
+
+          // Restore reactions into the shared messageReactions map
+          for (const m of msgs) {
+            if (m.reactions && m.reactions.length > 0) {
+              ctx.messageReactions.set(m.id, m.reactions);
+            }
+          }
+        }
+        // The stored page is drawn; the archive is owed elsewhere (said once, above the loop), or
+        // is the leader tab's (said once, above the pass).
+        if (unreachable !== null || !replaysHere) continue;
+        // Fetch from network → decrypt → save to DB (no direct UI update)
+        const commit = await replayConversationHistory({
+          mlsService: ctx.mlsService,
+          id: meta.id,
+          contactName: meta.id,
+          userId: ctx.userId,
+          deviceKey: () => ctx.deviceKeyB64,
+          storage: ctx.storage,
+          getConversation: (name) => ctx.conversations.get(name),
+          setConversation: (name, next) => ctx.conversations.set(name, next),
+          saveConversation: async (name) => {
+            const convo = ctx.conversations.get(name);
+            if (convo)
+              await ctx.storage.saveConversation(toConversationMeta(name, convo, ctx.userId));
+          },
+          messageReactions: ctx.messageReactions,
+          log: ctx.log,
+          primedFirstPage: batchFirstPages.get(meta.id),
+        });
+        if (commit) pendingCommits.push(commit);
+        // Reload from DB after network sync so display reflects new messages
+        const refreshed = await ctx.storage.getMessagesPage(
+          meta.id,
+          ctx.deviceKeyB64,
+          INITIAL_MESSAGES_PAGE
+        );
+        const refreshedMsgs = await retroactivelyResolveHexIds(
+          mapStoredMessagesToChatMessages(refreshed, ctx.userId),
+          ctx.storage,
+          meta.id,
+          ctx.deviceKeyB64
+        );
+        const current = ctx.conversations.get(meta.id);
+        if (current) {
+          // "Arrived during this replay" is only a PROXY for "not seen yet", and it breaks when
+          // the replay carries a history bundle - hence the watermark check in isUnreadForUser.
+          //
+          // COUNTED OVER THE MERGED LIST, NOT OVER THE PAGE. The page is one window of the store and
+          // a message delivered live while the replay ran is not in it, so counting the page alone
+          // both dropped that message from the display and then wrote a badge that did not include
+          // it - the same stale read, once as a loss and once as an undercount.
+          const mine = readPointFor(current, ctx.userId.toLowerCase());
+          const messages = mergeMessagePage(current.messages, refreshedMsgs);
+          const newUnreadCount = messages.filter(
+            (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, mine.stamped, mine.server)
+          ).length;
+          ctx.conversations.set(meta.id, { ...current, messages, unreadCount: newUnreadCount });
+          for (const m of refreshedMsgs) {
+            if (m.reactions && m.reactions.length > 0) {
+              ctx.messageReactions.set(m.id, m.reactions);
+            }
+          }
+        }
+      } catch (e) {
+        ctx.log(`[WARN] Conversation load failed ${meta.id}: ${String(e)}`);
       }
-      // Nothing to commit is said as `undefined`, so the helper owes no checkpoint for it.
-      return pendingCommits.length > 0 ? pendingCommits : undefined;
-    },
-    (commits) => {
-      for (const commit of commits) commit();
     }
-  );
+    // Nothing to commit is said as `undefined`, so the helper owes no checkpoint for it.
+    return pendingCommits.length > 0 ? pendingCommits : undefined;
+  };
+  if (!replaysHere) {
+    await restorePass();
+    return;
+  }
+  await withMlsBulkIngest(ctx.mlsService, restorePass, (commits) => {
+    for (const commit of commits) commit();
+  });
 }
 
 /**

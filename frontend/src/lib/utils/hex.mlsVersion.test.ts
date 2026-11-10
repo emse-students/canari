@@ -208,6 +208,39 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
     }
   );
 
+  /**
+   * A TAB WITHOUT THE LEADER COPY STORES NOTHING, so the leader's next write is never refused behind
+   * it (production `1.6.9`: a follower's capture, its counter run further, landed; the leader's own
+   * `v23514 < stored v23529` was then refused as stale).
+   */
+  it("refuses a write while the document holds no lead as 'not-leader', and the leader's next lands", async () => {
+    // The leader's blob, as another document wrote it.
+    const leaderVersion = (mlsSnapshotVersion(tagMlsSnapshot(new Uint8Array([0]))) ?? 0) + 1;
+    store.set(MLS_STATE_ENCRYPTED_KEY, new Uint8Array([9]));
+    store.set(MLS_STATE_VERSION_KEY, leaderVersion);
+    // The follower's capture is tagged FAR above it: the guard alone would let it land.
+    seedMlsSnapshotSeq(leaderVersion + 100);
+    const followers = tagMlsSnapshot(new Uint8Array([1]));
+    const latch = { isEnded: () => false, holdsNoLead: () => true };
+
+    expect(await saveMlsStateEncrypted('user-1', followers, latch)).toBe('not-leader');
+
+    expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([9]));
+    expect(store.get(MLS_STATE_VERSION_KEY)).toBe(leaderVersion);
+  });
+
+  it('reads the lead AT THE PUT: a lead lost while the write waited stores nothing', async () => {
+    // Leading at the start check, no longer at the transaction's verdict.
+    let reads = 0;
+    const latch = { isEnded: () => false, holdsNoLead: () => ++reads > 1 };
+
+    expect(await saveMlsStateEncrypted('user-1', tagMlsSnapshot(new Uint8Array([1])), latch)).toBe(
+      'not-leader'
+    );
+    expect(reads).toBe(2);
+    expect(store.has(MLS_STATE_ENCRYPTED_KEY)).toBe(false);
+  });
+
   it('forgets its own version after an untagged write, whose bytes it cannot vouch for', async () => {
     const older = tagMlsSnapshot(new Uint8Array([1]));
     const newer = tagMlsSnapshot(new Uint8Array([2]));

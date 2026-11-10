@@ -2203,7 +2203,8 @@ export abstract class BaseMlsService implements IMlsService {
     // one follower pulled the same 64 rows 37 times in ten seconds - one pull per conversation the
     // history catch-up settled - and DECRYPTED them, in a second tab, against the ratchet the leader
     // owns (WP-MULTITAB-1). The leader drains the queue; a follower only waits for its own scheduler.
-    if (getTabLeadership() === 'follower') return this.settleMailbox();
+    // The same reading as `mayPull`: a leader promoted in place pulls nothing until it reloads.
+    if (refusesCommitsHere()) return this.settleMailbox();
     if (
       !this.pendingPullInFlight &&
       !(this.mailboxEmptiedByAPull && this.isWsOpen()) &&
@@ -3129,11 +3130,13 @@ export abstract class BaseMlsService implements IMlsService {
       );
       return false;
     }
-    if (getTabLeadership() === 'follower') {
+    // NOT THE ROLE ALONE, THE COPY (`refusesCommitsHere`): a leader promoted in place still holds the
+    // copy it loaded as a follower until its promotion reload, and a pull would decrypt into that.
+    if (refusesCommitsHere()) {
       // AT A LEVEL THAT ACCUSES: every path that pulls is gated on leadership, so reaching this is a
       // caller that forgot - and letting it through decrypts in a tab that does not own the ratchet.
       console.error(
-        `[PENDING] pull ${when} on a follower tab, refused - only the leader drains the queue (a caller is not gated on leadership)`
+        `[PENDING] pull ${when} on a tab without the leader copy (${getTabLeadership()}), refused - only the leader drains the queue (a caller is not gated on leadership)`
       );
       return false;
     }
@@ -3810,6 +3813,9 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private stateWritesEnded = false;
 
+  /** {@link persistCheckpoint} has accused a checkpoint asked of a tab without the leader copy. */
+  private saidCheckpointRefusedHere = false;
+
   /**
    * Resolves (or generates and persists) this device's stable per-user id WITHOUT
    * touching the encrypted MLS state. Safe to call before {@link init}, so the PIN
@@ -4291,7 +4297,7 @@ export abstract class BaseMlsService implements IMlsService {
       // Already set by the web write; set here too for a writer that refuses outside a transaction.
       this.stateWritesEnded = true;
       console.error(
-        `[MLS] Device identity rotation ABORTED: another document wrote this account's state (${e.outcome}), so ${this.deviceId} is on no disk - ${oldDeviceId} stays the stored id and keeps its server row, every later MLS state write of this document is refused, and this document must end`
+        `[MLS] Device identity rotation ABORTED: ${e.outcome === 'not-leader' ? 'this tab does not hold the leader copy' : "another document wrote this account's state"} (${e.outcome}), so ${this.deviceId} is on no disk - ${oldDeviceId} stays the stored id and keeps its server row, every later MLS state write of this document is refused, and this document must end`
       );
       throw e;
     }
@@ -5039,9 +5045,25 @@ export abstract class BaseMlsService implements IMlsService {
    * THE LATCH IS READ TWICE ({@link stateWritesEnded}): here, so an ended document captures
    * nothing, and at the put, where it decides. `endsDocumentOnRefusal` is the rotation's: its write
    * sets the latch in the very transaction that refuses it.
+   *
+   * ONLY A DOCUMENT HOLDING THE LEADER COPY WRITES (`refusesCommitsHere`, 2026-11-10), read here and
+   * at the put (`MlsStateWriteLatch.holdsNoLead`). Production `1.6.9`: a follower tab's history replay
+   * advanced its own copy and checkpointed it, five times in nine minutes, and the leader's own writes
+   * were then refused as stale behind it - the disk held a copy behind the leader's commits. Every path
+   * that advances a follower's copy is now gated, so reaching this in one is a caller that forgot:
+   * said ONCE, at a level that accuses, then refused silently.
    */
   async persistCheckpoint(options?: { endsDocumentOnRefusal?: boolean }): Promise<void> {
     if (this.stateWritesEnded === true) throw new MlsStateWriteRefusedError('ended');
+    if (refusesCommitsHere()) {
+      if (!this.saidCheckpointRefusedHere) {
+        this.saidCheckpointRefusedHere = true;
+        console.error(
+          '[MLS] A checkpoint was asked of a tab that does not hold the leader copy - refused, nothing written: only the leader writes the MLS state, so a caller here is not gated on leadership (said once)'
+        );
+      }
+      throw new MlsStateWriteRefusedError('not-leader');
+    }
     const emitted = snapshotEmitted(this.userId);
     // A RATCHET WHOSE REPAIR THIS STATE DOES NOT HOLD IS NOT DECLARED DURABLE. A burn still owed
     // (or still running) when the count is read is not in the state this checkpoint exports, so
@@ -5055,6 +5077,7 @@ export abstract class BaseMlsService implements IMlsService {
     const replayMarks = snapshotPendingHistoryMarks(this.userId);
     await this.writeCheckpoint(this.currentDeviceKeyB64, {
       isEnded: () => this.stateWritesEnded === true,
+      holdsNoLead: refusesCommitsHere,
       endOnRefusal: options?.endsDocumentOnRefusal
         ? () => {
             this.stateWritesEnded = true;
@@ -5146,6 +5169,17 @@ export abstract class BaseMlsService implements IMlsService {
   protected async reconcileSendRatchets(): Promise<void> {
     this.owedSendBurns.clear();
     this.unprovenSendRatchets.clear();
+    // A TAB WITHOUT THE LEADER COPY NEVER SENDS, so its send ratchets are never read, and the ledger
+    // is the LEADER's (one per account, shared by every tab): burning against this copy would move
+    // nothing that counts, and forgetting or resetting entries from it would erase the leader's debt.
+    // Its checkpoint would be refused anyway (`persistCheckpoint`). The reload a promotion runs
+    // reconciles on the copy it then loads as the leader.
+    if (refusesCommitsHere()) {
+      console.log(
+        '[MLS] Send ledger left to the leader tab - this tab does not hold the leader copy and never sends'
+      );
+      return;
+    }
     if (this.freshStart) {
       resetSendRatchetLedger(this.userId);
       return;

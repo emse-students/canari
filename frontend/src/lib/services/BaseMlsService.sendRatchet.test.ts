@@ -19,6 +19,7 @@ import {
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
 import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { noteMlsStateLoaded, resetStateAuthorityForTests } from '$lib/mls-client/stateAuthority';
 
 /**
  * THE REPAIR THAT RUNS BEFORE ANYTHING CAN SEND, AND THE EPOCH IT RUNS IN.
@@ -207,6 +208,33 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
     expect(second.svc.persistCheckpoint).toHaveBeenCalledTimes(1);
     await second.send();
     expect(peer.reused).toEqual([]);
+  });
+
+  /**
+   * A TAB WITHOUT THE LEADER COPY LEAVES THE LEDGER TO THE LEADER (2026-11-10). The ledger is one per
+   * account: a follower's load burnt against its own copy, forgot entries judged by it, and then
+   * checkpointed that copy - the follower write production `1.6.9` showed.
+   */
+  it('a tab without the leader copy burns nothing, keeps the ledger and writes nothing', async () => {
+    const peer = new Peer();
+    const disk = { state: { epoch: 4, next: {} } as ModelState };
+    const before = new RatchetModel();
+    const first = session(before, peer, disk);
+    await first.send();
+    await first.send();
+    const ledger = sendRatchetEntries(U);
+
+    noteMlsStateLoaded(false);
+    try {
+      const follower = session(new RatchetModel(disk.state), peer, disk);
+      await follower.svc.reconcileSendRatchets();
+
+      expect(follower.svc.skipSendGenerations).not.toHaveBeenCalled();
+      expect(follower.svc.persistCheckpoint).not.toHaveBeenCalled();
+      expect(sendRatchetEntries(U)).toEqual(ledger);
+    } finally {
+      resetStateAuthorityForTests();
+    }
   });
 
   /**

@@ -41,6 +41,7 @@ import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions'
 import { mergeReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { holdsGroupState } from './groupUsability';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { editSupersedes } from './editPrecedence';
@@ -777,6 +778,14 @@ export function shouldFlagStaleEpochGap(
   return groupWasLocal && sawEpochGap && epochAfter === epochBefore;
 }
 
+/** {@link replayConversationHistory} has accused a replay asked of a tab without the leader copy. */
+let saidReplayRefusedHere = false;
+
+/** Test seam: the accusation above is said again. */
+export function resetReplayRefusalForTests(): void {
+  saidReplayRefusedHere = false;
+}
+
 export async function replayConversationHistory(params: {
   mlsService: IMlsService;
   id: string;
@@ -809,6 +818,20 @@ export async function replayConversationHistory(params: {
     log,
     primedFirstPage,
   } = params;
+
+  // ONLY THE LEADER COPY DECRYPTS AN ARCHIVE (2026-11-10). A replay moves the ratchet of the copy it
+  // runs on and writes the shared stream cursor and seen marks; in a follower that was its own copy,
+  // then checkpointed over the leader's (production `1.6.9`). The restore and the open both draw the
+  // stored page in a follower instead, so reaching this is a caller that forgot: said once, accusing.
+  if (refusesCommitsHere()) {
+    if (!saidReplayRefusedHere) {
+      saidReplayRefusedHere = true;
+      console.error(
+        `[HISTORY] archive replay of ${id.slice(0, 8)}... asked of a tab without the leader copy - refused, nothing decrypted: only the leader replays, so a caller here is not gated on leadership (said once)`
+      );
+    }
+    return undefined;
+  }
 
   // Stale-behind detection: a group present in local WASM whose replay hits an epoch gap
   // (missing commit) is forked behind the server. We capture the epoch on entry to tell a real

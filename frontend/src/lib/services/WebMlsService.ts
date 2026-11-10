@@ -1024,8 +1024,9 @@ export class WebMlsService extends BaseMlsService {
    * rejects typed on `stale` and `collision`, where the stored blob is another document's. Silent:
    * the guard has already said it in one line.
    *
-   * And on `ended`: the latch is handed to the write and read IN ITS TRANSACTION, after this capture
-   * and its off-thread seal - a refused rotation may have set it while this one was encrypting.
+   * And on `ended` and `not-leader`: the latch is handed to the write and read IN ITS TRANSACTION,
+   * after this capture and its off-thread seal - a refused rotation may have set it, or the lead may
+   * have left this document, while this one was encrypting.
    *
    * EVERY OTHER FAILURE IS TYPED BY WHERE IT HAPPENED ({@link MlsCheckpointNotWrittenError}): the
    * export and seal, or the IndexedDB transaction, which stores all of it or none of it. A caller
@@ -1044,7 +1045,12 @@ export class WebMlsService extends BaseMlsService {
     } catch (e) {
       throw new MlsCheckpointNotWrittenError('store', e);
     }
-    if (outcome === 'stale' || outcome === 'collision' || outcome === 'ended')
+    if (
+      outcome === 'stale' ||
+      outcome === 'collision' ||
+      outcome === 'ended' ||
+      outcome === 'not-leader'
+    )
       throw new MlsStateWriteRefusedError(outcome);
   }
 

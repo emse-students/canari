@@ -222,9 +222,17 @@ function openMlsDb(userId: string): Promise<IDBDatabase> {
  * version guard as `stale` (older than another document's stored blob) or `collision` (another
  * writer reached the same version). A checkpoint is durable on `written` or `superseded`; a write
  * that must land ITSELF - a device key change's re-seal - only on `written`. `ended` is the writing
- * document's own refusal, not the guard's: its {@link MlsStateWriteLatch} is set.
+ * document's own refusal, not the guard's: its {@link MlsStateWriteLatch} is set. `not-leader` is
+ * the document's own refusal too: it does not hold the leader copy (a follower tab, or a leader
+ * promoted in place whose reload is owed), and only the leader writes the account's MLS state.
  */
-export type MlsStateWriteOutcome = 'written' | 'superseded' | 'stale' | 'collision' | 'ended';
+export type MlsStateWriteOutcome =
+  | 'written'
+  | 'superseded'
+  | 'stale'
+  | 'collision'
+  | 'ended'
+  | 'not-leader';
 
 /**
  * A write was refused by the version guard, so the state it carried is NOT on disk. The device key
@@ -235,13 +243,18 @@ export type MlsStateWriteOutcome = 'written' | 'superseded' | 'stale' | 'collisi
  * `ended` is not the guard's: the document itself refused the write, because a rotation it ran was
  * refused and what it holds in memory is on no disk ({@link MlsStateWriteLatch}). That refusal is
  * said once, by the document, the first time it refuses.
+ *
+ * `not-leader` is not the guard's either: the document does not hold the leader copy, so its state
+ * is not the account's ({@link MlsStateWriteLatch.holdsNoLead}).
  */
 export class MlsStateWriteRefusedError extends Error {
   constructor(readonly outcome: Exclude<MlsStateWriteOutcome, 'written'>) {
     super(
       outcome === 'ended'
         ? 'the MLS state write was refused: this document ended after a refused rotation'
-        : `the MLS state write was refused by the version guard (${outcome})`
+        : outcome === 'not-leader'
+          ? 'the MLS state write was refused: this document does not hold the leader copy'
+          : `the MLS state write was refused by the version guard (${outcome})`
     );
     this.name = 'MlsStateWriteRefusedError';
   }
@@ -305,6 +318,21 @@ export interface MlsStateWriteLatch {
    * the transaction that refused it, so no later transaction of this document can land.
    */
   endOnRefusal?(): void;
+  /**
+   * True while this document does not hold the leader copy: the write resolves `not-leader`, nothing
+   * stored. READ AT THE PUT for the same reason as {@link isEnded}: a checkpoint started by the leader
+   * can still be sealing when the lead leaves this document, and its state is then no longer the one
+   * the next leader serves from. A follower's copy reaching the disk is what made the leader's own
+   * writes `stale` behind it (production `1.6.9`, 2026-11-10).
+   */
+  holdsNoLead?(): boolean;
+}
+
+/** The latch's verdict, or null when the write may go on to the version guard. */
+function latchRefusal(latch: MlsStateWriteLatch | undefined): 'ended' | 'not-leader' | null {
+  if (latch?.isEnded()) return 'ended';
+  if (latch?.holdsNoLead?.()) return 'not-leader';
+  return null;
 }
 
 async function writeMlsState(
@@ -312,7 +340,8 @@ async function writeMlsState(
   bytes: Uint8Array,
   latch?: MlsStateWriteLatch
 ): Promise<MlsStateWriteOutcome> {
-  if (latch?.isEnded()) return 'ended';
+  const refusedAtStart = latchRefusal(latch);
+  if (refusedAtStart) return refusedAtStart;
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -333,8 +362,9 @@ async function writeMlsState(
     const verReq = store.get(MLS_STATE_VERSION_KEY);
     verReq.onsuccess = () => {
       // THE LATCH, AT THE PUT: see `MlsStateWriteLatch` for why the check at the start is not one.
-      if (latch?.isEnded()) {
-        outcome = 'ended';
+      const refusedAtPut = latchRefusal(latch);
+      if (refusedAtPut) {
+        outcome = refusedAtPut;
         return;
       }
       const stored = (verReq.result as number | undefined) ?? 0;

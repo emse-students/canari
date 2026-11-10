@@ -34,6 +34,8 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 const { useConversations } = await import('./useConversations.svelte');
+const { noteMlsStateLoaded, resetStateAuthorityForTests } =
+  await import('$lib/mls-client/stateAuthority');
 
 const DM = 'peer-dm';
 const GROUP_ID = 'e4c1f0aa-0000-4000-8000-000000000002';
@@ -230,5 +232,45 @@ describe('loadHistoryForConversation - the stored page is drawn before the serve
 
     expect(convs.conversations.get(DM)?.messages.map((m) => m.id)).toEqual(['m1']);
     expect(replayConversationHistory).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A TAB WITHOUT THE LEADER COPY DECRYPTS NOTHING, EVEN A GROUP ITS COPY HOLDS (2026-11-10).
+ *
+ * Production `1.6.9`: a follower's open replayed the archive into its own copy and the bulk window's
+ * close checkpointed it, over the leader's - whose own writes were then refused as stale behind it.
+ * The open used to skip the replay only for a group the follower's copy did not hold.
+ */
+describe('loadHistoryForConversation - a tab without the leader copy', () => {
+  afterEach(() => resetStateAuthorityForTests());
+
+  it('draws the stored page and replays nothing, though its copy holds the group', async () => {
+    noteMlsStateLoaded(false);
+    const convs = useConversations();
+    convs.conversations.set(DM, conversation());
+    convs.selectConversation(DM);
+    readHistoryStreamCursor.mockReturnValue('cursor-1');
+    const { ctx, log } = makeCtx();
+    const mls = (ctx as unknown as { ensureMls: () => Record<string, unknown> }).ensureMls();
+    mls.getLocalGroups = () => [GROUP_ID];
+    const storage = {
+      getMessagesPage: vi.fn().mockResolvedValue([
+        {
+          id: 'm1',
+          conversationId: GROUP_ID,
+          senderId: 'peer',
+          content: 'held',
+          timestamp: 1_000,
+        },
+      ]),
+    };
+
+    await convs.loadHistoryForConversation(DM, GROUP_ID, { ...(ctx as object), storage } as never);
+
+    expect(replayConversationHistory).not.toHaveBeenCalled();
+    expect(mls.fetchHistory).not.toHaveBeenCalled();
+    expect(convs.conversations.get(DM)?.messages.map((m) => m.id)).toEqual(['m1']);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('without the leader copy'));
   });
 });

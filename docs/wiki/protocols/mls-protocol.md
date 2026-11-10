@@ -3211,6 +3211,47 @@ refuses on a follower at `error` level: every path that pulls is gated on leader
 is a caller that forgot. `undecided` is not `follower` - the boot pull runs after the election, and a
 native client is always the leader. Guarded by `BaseMlsService.mailboxBarrier.test.ts`.
 
+### A follower tab wrote its MLS copy over the leader's (2026-11-10)
+
+**Production `1.6.9`, the owner's web log.** A follower tab's login ran the restore's archive replay
+(`loadExistingConversations` -> `replayConversationHistory`, `createDecryptSession`/`decryptPage`)
+inside a bulk-ingest window. The replay advanced the FOLLOWER'S OWN ratchet copy, and the window's
+close checkpointed it (`endBulkIngest` -> `flushEncrypted` -> `persistCheckpoint`): `Encrypted state
+checkpoint persisted` five times in nine minutes from a tab that had logged `Another tab is active`.
+The leader's own writes were then refused behind it (`REFUSED as stale (v23514 < stored v23529) - the
+stored blob is another document's`), so the disk held a copy behind the leader's commits: stale epochs
+and lost secrets at the next load. **The version guard was no protection** - it orders by counter,
+and the follower's counter had run further. `persistCheckpoint`'s latch read only
+`stateWritesEnded`, never the role. The replay also wrote the account's shared stream cursor and seen
+marks from the follower's copy.
+
+**A document that does not hold the leader copy never writes MLS state, and never decrypts into its
+copy.** "The leader copy" is `refusesCommitsHere()` (`stateAuthority.ts`): a follower, or a leader
+promoted in place whose reload is owed.
+
+- `persistCheckpoint` refuses typed (`MlsStateWriteRefusedError('not-leader')`) before it captures,
+  and hands the write a latch that reads the same fact AT THE PUT, inside the IndexedDB transaction
+  (`MlsStateWriteLatch.holdsNoLead`): a checkpoint the leader started is not stored once the lead has
+  left the document while it sealed. Reaching it in a follower is a caller that forgot, said once at
+  `error` level.
+- The restore draws the stored pages and opens no bulk window, asks for no history batch and replays
+  no archive (`[RESTORE] Follower tab - stored pages drawn ...`, once per pass). Opening a conversation
+  draws the stored page and replays nothing, even for a group the copy holds. The leader replays every
+  archive at its own restore and relays what arrives after it (`message_added`).
+- `replayConversationHistory` itself refuses in such a tab (said once, `error`): the last line.
+- `reconcileSendRatchets` leaves the send ledger to the leader: a tab that never sends burns nothing
+  against its copy and neither forgets nor resets the ledger, which is one per account.
+- `mayPull` and the mailbox barrier read the same fact instead of the role alone, so a leader promoted
+  in place pulls nothing until its reload.
+
+`changeDeviceKey` is not gated: a PIN change from a follower still re-seals the copy it loaded, under
+the device-key gate, and is refused by the version guard when the leader wrote since. Guarded by
+`BaseMlsService.checkpointLedgers.test.ts`, `hex.mlsVersion.test.ts`, `restoreFollower.test.ts`,
+`history.followerRefused.test.ts`, `useConversations.loadHistory.svelte.test.ts`,
+`BaseMlsService.sendRatchet.test.ts` and `BaseMlsService.mailboxBarrier.test.ts`. Owed: a two-tab
+reading on dev showing no `checkpoint persisted` in the follower and no `REFUSED as stale` in the
+leader ([backlog](../backlog.d/p1-a-follower-tab-wrote-its-mls-copy-over-the-leaders.md)).
+
 ## Bugs fixed by the 2026-06 rewrite
 
 | Bug ID | Description | Fix |

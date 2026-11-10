@@ -105,6 +105,7 @@ import {
   reportMemberRemovalFailure,
 } from '$lib/utils/chat/conversationRefusalMessage';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import {
   delegateCommitToLeader,
   type DelegatedCommitExecutors,
@@ -593,13 +594,15 @@ export function useConversations() {
       return;
     }
 
-    // A FOLLOWER TAB DOES NOT DECRYPT A GROUP ITS MLS COPY DOES NOT HOLD - one the leader created
-    // or joined for it after this tab loaded (`tabCommitDelegation.ts`). Its copy was loaded once and
-    // will never hold that group, so a replay here could only fail every frame; the leader decrypts,
-    // stores and relays (`message_added`), and this tab draws what the leader stored.
-    if (getTabLeadership() === 'follower' && !holdsGroupState(ctx.ensureMls(), id)) {
+    // A TAB WITHOUT THE LEADER COPY DECRYPTS NOTHING (2026-11-10), not only a group its copy does
+    // not hold. A replay moves the ratchet of the copy it runs on and closes in a checkpoint of it:
+    // production `1.6.9` showed a follower's open writing its copy over the leader's, whose own writes
+    // were then refused as stale. The leader decrypts, stores and relays (`message_added`), and this
+    // tab draws what the leader stored. `refusesCommitsHere`, not the role: a leader promoted in place
+    // holds a follower's copy until its reload.
+    if (refusesCommitsHere()) {
       ctx.log(
-        `[HISTORY] ${id.slice(0, 8)}... not held by this follower tab's copy - the leader's stored page is drawn, nothing replayed`
+        `[HISTORY] ${id.slice(0, 8)}... opened in a tab without the leader copy - the leader's stored page is drawn, nothing replayed${holdsGroupState(ctx.ensureMls(), id) ? '' : ' (the group is not in this copy either)'}`
       );
       await renderStoredPage(contactName, id, ctx);
       return;

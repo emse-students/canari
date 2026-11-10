@@ -15,6 +15,8 @@ vi.mock('$lib/utils/chat/history', () => ({
 }));
 
 import { BaseMlsService } from './BaseMlsService';
+import { noteMlsStateLoaded, resetStateAuthorityForTests } from '$lib/mls-client/stateAuthority';
+import { MlsStateWriteRefusedError, type MlsStateWriteLatch } from '$lib/utils/hex';
 
 /**
  * ONE WRITE, TWO LEDGERS, AND THE ORDER IS THE WHOLE PROPERTY.
@@ -130,5 +132,63 @@ describe('BaseMlsService.persistCheckpoint', () => {
 
     expect(order).toEqual(['snapshot', 'write', 'commit']);
     expect(commitPendingHistoryMarks).toHaveBeenCalledWith(before);
+  });
+});
+
+/**
+ * ONLY THE LEADER COPY IS WRITTEN (2026-11-10). Production `1.6.9`: a follower tab checkpointed its
+ * own copy five times in nine minutes, and the leader's writes were then refused as stale behind it.
+ */
+describe('BaseMlsService.persistCheckpoint in a tab without the leader copy', () => {
+  let error: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    error.mockRestore();
+    resetStateAuthorityForTests();
+  });
+
+  it('writes nothing, declares nothing, and rejects typed', async () => {
+    noteMlsStateLoaded(false);
+    const ctx = makeCtx();
+
+    await expect(persist(ctx)).rejects.toEqual(new MlsStateWriteRefusedError('not-leader'));
+
+    expect(ctx.writeCheckpoint).not.toHaveBeenCalled();
+    expect(commitPendingHistoryMarks).not.toHaveBeenCalled();
+  });
+
+  it('accuses the caller once, however often it is asked', async () => {
+    noteMlsStateLoaded(false);
+    const ctx = makeCtx();
+
+    await persist(ctx).catch(() => undefined);
+    await persist(ctx).catch(() => undefined);
+
+    const accusations = error.mock.calls.filter((c: unknown[]) =>
+      String(c[0]).includes('does not hold the leader copy')
+    );
+    expect(accusations).toHaveLength(1);
+  });
+
+  it('hands the write a latch that reads the lead AT THE PUT, so a lead lost mid-seal is seen', async () => {
+    noteMlsStateLoaded(true);
+    let atThePut: boolean | undefined;
+    const ctx = makeCtx({
+      writeCheckpoint: vi
+        .fn()
+        .mockImplementation(async (_key: string, latch: MlsStateWriteLatch) => {
+          // The lead leaves this document while the capture is sealing.
+          noteMlsStateLoaded(false);
+          atThePut = latch.holdsNoLead?.();
+        }),
+    });
+
+    await persist(ctx);
+
+    expect(atThePut).toBe(true);
   });
 });
