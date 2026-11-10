@@ -40,6 +40,9 @@ const P = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}
 const reactors = (n: number, from = 0) =>
   Object.fromEntries(Array.from({ length: n }, (_, i) => [`e${from + i}`, 'like']));
 
+/** The threshold every case is written against. */
+const T = TREND_THRESHOLD;
+
 maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
   const schema = `trend_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
@@ -219,18 +222,19 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
   afterEach(() => jest.restoreAllMocks());
 
   it('stamps exactly once, at the write that reaches the threshold, and tells its space', async () => {
-    expect(TREND_THRESHOLD).toBe(4);
-    await post(P(1), 'a', { reactions: { ...reactors(3), a: 'like' } });
+    // Every case is written in T: the threshold is a measurement and moves with R1.
+    expect(T).toBeGreaterThan(2);
+    await post(P(1), 'a', { reactions: { ...reactors(T - 1), a: 'like' } });
     await q(
       `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId", text)
        VALUES ('seen', 'followed_post', $1, 'a', 'x')`,
       [P(1)]
     );
-    // Three others and the author's own reaction: below the threshold.
+    // T - 1 others and the author's own reaction: below the threshold.
     expect(await announceCampusTrend({ manager, notifications }, P(1))).toBe(0);
     expect(await stampOf(P(1))).toBeNull();
 
-    await react(P(1), 'e3');
+    await react(P(1), `e${T - 1}`);
     // s1, s2, grant: they share a's space. Not a (the author), not blk (a block with the author),
     // not seen (a row for the post already), not g (a follower outside the space).
     expect(await announceCampusTrend({ manager, notifications }, P(1))).toBe(3);
@@ -238,7 +242,7 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     expect(stamp).not.toBeNull();
     expect(await told(P(1))).toEqual(['grant', 's1', 's2']);
 
-    await react(P(1), 'e4');
+    await react(P(1), `e${T}`);
     expect(await announceCampusTrend({ manager, notifications }, P(1))).toBe(0);
     expect(await stampOf(P(1))).toEqual(stamp);
 
@@ -263,10 +267,10 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
 
   it('a comment writer counts once, a reactor who also comments once', async () => {
     await post(P(2), 'a', {
-      reactions: reactors(2),
+      reactions: reactors(T - 2),
       comments: [{ userId: 'e0' }, { userId: 'c1' }, { userId: 'a' }],
     });
-    // e0, e1 and c1: three.
+    // e0 .. e(T-3) and c1 - e0 commenting counts once, the author not at all: T - 1.
     expect(await announceCampusTrend({ manager, notifications }, P(2))).toBe(0);
     await q(`UPDATE posts SET comments = comments || '[{"userId": "c2"}]'::jsonb WHERE id = $1`, [
       P(2),
@@ -275,9 +279,9 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
   });
 
   it('none after 24 hours, none for a hidden post or a reel', async () => {
-    await post(P(3), 'a', { reactions: reactors(6), hoursAgo: 25 });
-    await post(P(4), 'a', { reactions: reactors(6), hidden: true });
-    await post(P(5), 'a', { reactions: reactors(6), kind: 'reel' });
+    await post(P(3), 'a', { reactions: reactors(T + 2), hoursAgo: 25 });
+    await post(P(4), 'a', { reactions: reactors(T + 2), hidden: true });
+    await post(P(5), 'a', { reactions: reactors(T + 2), kind: 'reel' });
     for (const id of [P(3), P(4), P(5)]) {
       expect(await announceCampusTrend({ manager, notifications }, id)).toBe(0);
       expect(await stampOf(id)).toBeNull();
@@ -285,13 +289,13 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
   });
 
   it("an association's post: its space is told, a reader through a read grant is not", async () => {
-    await post(P(6), 'a', { association: EG, reactions: reactors(4) });
+    await post(P(6), 'a', { association: EG, reactions: reactors(T) });
     expect(await announceCampusTrend({ manager, notifications }, P(6))).toBe(1);
     expect(await told(P(6))).toEqual(['g']);
   });
 
   it('a reader already told by friends activity is not told again', async () => {
-    await post(P(7), 'a', { reactions: reactors(4) });
+    await post(P(7), 'a', { reactions: reactors(T) });
     await q(
       `INSERT INTO post_engagement_notices ("postId", "recipientId", reason) VALUES ($1, 's1', 'friend')`,
       [P(7)]
@@ -303,13 +307,13 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
   it('an anonymous post: a block with its hidden writer withholds nothing (no oracle)', async () => {
     // The feed shows blk this post whatever the block (`blockedAuthorSql`); a trend withheld from
     // blk on that block would tell blk who wrote it.
-    await post(P(9), 'a', { reactions: reactors(4), anonymous: true });
+    await post(P(9), 'a', { reactions: reactors(T), anonymous: true });
     expect(await announceCampusTrend({ manager, notifications }, P(9))).toBe(5);
     expect(await told(P(9))).toEqual(['blk', 'grant', 's1', 's2', 'seen']);
   });
 
   it('a ledger that cannot be written leaves the post unstamped - one statement, both or neither', async () => {
-    await post(P(10), 'a', { reactions: reactors(4) });
+    await post(P(10), 'a', { reactions: reactors(T) });
     await q(
       `ALTER TABLE post_engagement_notices ADD CONSTRAINT it_refuse_p10 CHECK ("postId" <> '${P(10)}')`
     );
@@ -327,7 +331,7 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
   });
 
   it('concurrent writers over the crossing stamp once and tell each reader once', async () => {
-    await post(P(8), 'a', { reactions: reactors(5) });
+    await post(P(8), 'a', { reactions: reactors(T + 1) });
     const pooledNotifications = notificationsOn(pooled);
     const results = await Promise.all(
       Array.from({ length: 6 }, () =>
@@ -343,28 +347,28 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     q(`UPDATE posts SET "trendEngagedSeen" = NULL WHERE id = $1`, [id]);
 
   it('a post already past the threshold when first evaluated is never announced (the deploy of 2026-11-10)', async () => {
-    // Published before the rule, already at 6: its next reactions record a count and stamp nothing.
-    await post(P(11), 'a', { reactions: reactors(6) });
+    // Published before the rule, already past it: its next reactions record a count, stamp nothing.
+    await post(P(11), 'a', { reactions: reactors(T + 2) });
     await unrecorded(P(11));
     expect(await announceCampusTrend({ manager, notifications }, P(11))).toBe(0);
-    await react(P(11), 'e6');
+    await react(P(11), `e${T + 2}`);
     expect(await announceCampusTrend({ manager, notifications }, P(11))).toBe(0);
     expect(await stampOf(P(11))).toBeNull();
     expect(await told(P(11))).toEqual([]);
     // Published before the rule BELOW the threshold: recorded at its first evaluation, then a real
     // crossing is announced.
-    await post(P(12), 'a', { reactions: reactors(2) });
+    await post(P(12), 'a', { reactions: reactors(T - 2) });
     await unrecorded(P(12));
     expect(await announceCampusTrend({ manager, notifications }, P(12))).toBe(0);
-    await react(P(12), 'e2');
-    await react(P(12), 'e3');
+    await react(P(12), `e${T - 2}`);
+    await react(P(12), `e${T - 1}`);
     expect(await announceCampusTrend({ manager, notifications }, P(12))).toBe(4);
   });
 
   it('a count recorded at or past the threshold (a threshold lowered since) announces nothing', async () => {
-    await post(P(13), 'a', { reactions: reactors(4) });
-    await q(`UPDATE posts SET "trendEngagedSeen" = $2 WHERE id = $1`, [P(13), TREND_THRESHOLD]);
-    await react(P(13), 'e4');
+    await post(P(13), 'a', { reactions: reactors(T) });
+    await q(`UPDATE posts SET "trendEngagedSeen" = $2 WHERE id = $1`, [P(13), T]);
+    await react(P(13), `e${T}`);
     expect(await announceCampusTrend({ manager, notifications }, P(13))).toBe(0);
     expect(await stampOf(P(13))).toBeNull();
   });
@@ -383,11 +387,11 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
   });
 
   it('ONE trend per reader per day: a second post the same day tells only who was not told yet', async () => {
-    await post(P(15), 'a', { reactions: reactors(4) });
+    await post(P(15), 'a', { reactions: reactors(T) });
     expect(await announceCampusTrend({ manager, notifications }, P(15))).toBe(4);
     // grant, s1, s2 and seen were told today; blk - left out of a's named post by the block, but
     // in the audience of an anonymous one - has had no trend today, so it alone is told.
-    await post(P(16), 'a', { reactions: reactors(4), anonymous: true });
+    await post(P(16), 'a', { reactions: reactors(T), anonymous: true });
     await new Promise((r) => setTimeout(r, 20));
     pushes.length = 0;
     expect(await announceCampusTrend({ manager, notifications }, P(16))).toBe(1);
@@ -404,20 +408,20 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
   });
 
   it('the next Paris day, a reader may be told of a trend again', async () => {
-    await post(P(17), 'a', { reactions: reactors(4) });
+    await post(P(17), 'a', { reactions: reactors(T) });
     expect(await announceCampusTrend({ manager, notifications }, P(17))).toBe(4);
     // Move yesterday's rows to yesterday by the database's own clock - no wall clock asserted.
     await q(`UPDATE post_engagement_notices SET "trendDay" = "trendDay" - 1 WHERE "postId" = $1`, [
       P(17),
     ]);
-    await post(P(18), 'a', { reactions: reactors(4) });
+    await post(P(18), 'a', { reactions: reactors(T) });
     expect(await announceCampusTrend({ manager, notifications }, P(18))).toBe(4);
     expect(await told(P(18))).toEqual(['grant', 's1', 's2', 'seen']);
   });
 
   it('two posts crossing at once: each reader is told of exactly one', async () => {
-    await post(P(19), 'a', { reactions: reactors(4) });
-    await post(P(20), 'a', { reactions: reactors(4) });
+    await post(P(19), 'a', { reactions: reactors(T) });
+    await post(P(20), 'a', { reactions: reactors(T) });
     const pooledNotifications = notificationsOn(pooled);
     const counts = await Promise.all(
       [P(19), P(20)].map((id) =>
@@ -436,7 +440,7 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
 
   it('a post with no text is told by what it shows: its photo, on the row and in the push', async () => {
     await post(P(21), 'a', {
-      reactions: reactors(4),
+      reactions: reactors(T),
       markdown: '',
       images: [{ type: 'image', mediaId: 'm1' }],
     });

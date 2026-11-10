@@ -766,15 +766,17 @@ write, under the post row's lock, against the database's `now()`:
   author when P names it (rule 4 of (b)), minus the ledger and `post_notifications` (L14). Never through a follower door or a read
   grant: decision 5(c) says "from your space".
 - **`TREND_THRESHOLD` is a MEASUREMENT owed before WP-10 merges**, not a guess: the smallest integer
-  at which **at most one post per campus per day** would have crossed, over the last 90 days - read
-  per DAY since 2026-11-10 (the busiest day, not the 90-day average; [R1](#r1---the-trend-threshold)). That
+  at which **at most one post per campus per day** would have crossed, over the last 90 days -
+  amended 2026-11-10 by the lead to **at most one per three days per campus**, burst days left to
+  the per-reader daily cap ([R1](#r1---the-trend-threshold): `10`). That
   target rate is the explanation the rule carries: a trend is rare by construction, and the number
   is re-derived from the same query if the population changes. The query is
   [R1 below](#r1---the-trend-threshold). Until it is read, WP-10 does not merge.
 
 ### WP-10 - campus trends (BUILT)
 
-Built 2026-11-09 to the rule above, with `TREND_THRESHOLD = 4` as R1 read it. Migration **160**
+Built 2026-11-09 to the rule above, with `TREND_THRESHOLD = 4` as R1 read it then (**10 since
+2026-11-10**, [R1](#r1---the-trend-threshold)). Migration **160**
 (`posts."trendAnnouncedAt"`, a nullable column, no backfill, plain); `posts/campus-trend.ts`.
 
 - **The crossing, stamped once** (`STAMP_TREND_SQL`): after every new reaction and every comment,
@@ -805,7 +807,7 @@ Built 2026-11-09 to the rule above, with `TREND_THRESHOLD = 4` as R1 read it. Mi
   six concurrent writers over the crossing stamping once and telling each reader once; an anonymous
   post told to a reader its hidden writer blocked; a ledger that cannot be written leaving the post
   unstamped.
-- **Owed**: a dev pass and a phone reading (a post of the bench account's space reaching four
+- **Owed**: a dev pass and a phone reading (a post of the bench account's space reaching ten
   engaged accounts within a day pushes "Suggestion : <its opening>" once, and a second post crossing
   the same day pushes nothing to the same reader).
 
@@ -853,7 +855,9 @@ decisions of 2026-11-10, as built:
   `NOTIFICATION_CATEGORIES`, which stores only the DISABLED categories, so no migration and on for
   everyone. The three keys are filed under `suggestions`, and so is `campus_trend` in
   `CAPPED_PUSH_TYPES`. **A reader who switched "Publications" off to silence trends hears them again
-  until they switch "Suggestions" off** - the price of separating the two.
+  until they switch "Suggestions" off** - the price of separating the two. **Measured on production
+  2026-11-10 (the lead, read-only): exactly 1 account has "Publications" off, of 4
+  `notification_preference` rows**, so no backfill copies that choice into "Suggestions".
 - **Never to a build too old to draw it**: the rule is general and lives in
   [legacy-compatibility](legacy-compatibility.md#the-client-floor-of-every-notification-type-owner-2026-11-10);
   `campus_trend` and its three keys have the floor `1.6.10`.
@@ -1047,10 +1051,10 @@ here with the date, the row counts and the distribution's tail.
 **Superseded on 2026-11-10 by the per-DAY reading below.** An average of 1.00 a day still allows five
 on one busy day, which is what the owner rules out: "at most one trend a day" is a bound on the
 BUSIEST day, so the reading groups by the Paris date of `publishedAt` and takes the maximum. Reels
-are left out, as the rule leaves them out. **Owed: the lead runs it on production** (this pull
-request's author could not reach it) and writes the value back here; `TREND_THRESHOLD` in
-`posts/campus-trend.ts` is then a one-line change, and a raise or a lowering announces no backlog
-([the crossing rule](#the-deploy-of-2026-11-10-and-what-it-changed)).
+are left out, as the rule leaves them out. `TREND_THRESHOLD` in `posts/campus-trend.ts` is a
+one-line change, and a raise or a lowering announces no backlog
+([the crossing rule](#the-deploy-of-2026-11-10-and-what-it-changed)). Read on production the same
+day - the table and the decision follow the query.
 
 ```sql
 BEGIN TRANSACTION READ ONLY;
@@ -1083,21 +1087,45 @@ FROM per_day GROUP BY campus, t ORDER BY campus, t;
 ROLLBACK;
 ```
 
-**Reading it:** per campus, the smallest `t` whose `max_in_a_day` is at most 1; `TREND_THRESHOLD` is
-the LARGEST of those per-campus values. A campus with no row constrains nothing; when no `t` up to 60
-reaches it, the upper end of `generate_series` is raised, as above. Even before it is read, a reader
-is told of at most one trend a day by the ledger's per-day index - the threshold decides how many
-posts are STAMPED, the index how many a reader hears of.
+**Read on production 2026-11-10** (the lead, read-only), 90 days, Saint-Etienne:
 
-**Read on production 2026-11-09** (the lead, with the owner's yes - decision 14), 90 days:
+| `t` | posts crossing | days with more than one | max in a day |
+| --- | --- | --- | --- |
+| 4 | 90 | 21 | 12 |
+| 6 | 55 | 10 | 11 |
+| 8 | 37 | 5 | 10 |
+| **10** | **28** | **5** | **10** |
+| 12 | 20 | 4 | 9 |
+| 15 | 15 | 3 | 8 |
+| 20 | 9 | 2 | 5 |
+| 22 | 5 | 1 | 3 |
+| 25 | 3 | 0 | 1 |
+
+Gardanne: 0 posts crossing at every `t`, so it constrains nothing.
+
+**Why "max in a day at most 1" was NOT the rule kept.** The busiest day stays high because of a few
+burst days (one day carried up to 12 posts over the threshold at 4); bounding it at 1 forces `t = 25`,
+three trends in 90 days - too rare to be a feature.
+
+**The decision rule (lead, 2026-11-10): `TREND_THRESHOLD` is the smallest `t` at which the posts
+crossing over 90 days are at most one per three days per campus (at most 30 in 90 days); the
+per-reader daily cap absorbs burst days.** That is **`TREND_THRESHOLD = 10`** (28 posts in 90 days,
+about one every three days; 8 gives 37). On a burst day several posts may still be stamped, but the
+ledger's per-day index (`trendDay`, migration 161) tells each reader of one at most - the threshold
+decides how many posts are STAMPED, the index how many a reader hears of. Re-read with the same query
+when the population changes; the largest per-campus value wins, a campus with no row constrains
+nothing.
+
+**Read on production 2026-11-09** (the lead, with the owner's yes - decision 14), 90 days, by the
+AVERAGE rule above (superseded 2026-11-10):
 
 | Campus | t = 3 | t = 4 | t = 5 | t = 10 |
 | --- | --- | --- | --- | --- |
 | saint-etienne | 106 posts (1.18/day) | at most 1.00/day - the smallest `t` meeting the rate | 60 (0.67/day) | 21 (0.23/day) |
 | gardanne | 0 | 0 | 0 | 0 |
 
-Gardanne has no post crossing at any threshold from 3, so it constrains nothing. **`TREND_THRESHOLD =
-4`**, Saint-Etienne's value.
+Gardanne has no post crossing at any threshold from 3, so it constrains nothing. `TREND_THRESHOLD =
+4` was Saint-Etienne's value by that rule, until the per-day reading above set it to 10.
 
 **When no threshold up to 60 gets a campus to 1 per day or below** (more than 90 posts in 90 days
 reached 60 engaged accounts), the reading does NOT pick 60: it is re-run with the upper end of

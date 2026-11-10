@@ -17,14 +17,15 @@ const logger = new Logger('CampusTrend');
 
 /**
  * HOW MANY DISTINCT ACCOUNTS make a post take off (engagement WP-10, decision 5c): the smallest
- * integer at which at most one post per campus per day crosses - R1 (docs/wiki/engagement.md,
- * "R1 - the trend threshold"). Read on production 2026-11-09 as an AVERAGE (Saint-Etienne 1.18 posts
- * a day at 3, at most 1.00 at 4); the owner's rule of 2026-11-10 asks the busiest DAY to stay at one,
- * and the query that reads that is written on the same page for the lead to run. THIS IS THE ONE
- * PLACE the number is written: one edit changes it, and a change never announces a post already
- * past it (the crossing rule below).
+ * integer at which the posts crossing over 90 days are at most one per three days per campus - R1
+ * (docs/wiki/engagement.md, "R1 - the trend threshold"), read per day on production 2026-11-10
+ * (Saint-Etienne: 28 posts in 90 days at 10, 37 at 8). A burst day can still carry several crossings
+ * (up to 10 at this value); the per-reader daily rule (`trendDay`, migration 161) absorbs it, so no
+ * reader hears of more than one. THIS IS THE ONE PLACE the number is written: one edit changes it,
+ * and a change never announces a post already past it (the crossing rule below). Lead's decision of
+ * 2026-11-10; 4 before it.
  */
-export const TREND_THRESHOLD = 4;
+export const TREND_THRESHOLD = 10;
 
 /** How long after its `publishedAt` a post may still take off: the rule's "a short time". */
 export const TREND_WINDOW_HOURS = 24;
@@ -44,9 +45,9 @@ const PARIS_DAY_SQL = `(now() AT TIME ZONE 'Europe/Paris')::date`;
  * threshold. When `1.6.9` deployed, every post of the previous 24 hours already past 4 took off at
  * its next reaction - five posts in eight minutes, 2483 notifications. With the recorded count:
  * - a post that existed before the rule has NO recorded count (`NULL`): its first evaluation records
- *   one and stamps nothing (`NULL < 4` is not true), so a deploy announces no backlog, ever;
- * - a CHANGE of the threshold announces nothing either: a post recorded at 3 that reads 4 after the
- *   constant moved from 4 to 3 has crossed nothing under the new rule (`3 < 3` is false);
+ *   one and stamps nothing (`NULL < T` is not true), so a deploy announces no backlog, ever;
+ * - a CHANGE of the threshold announces nothing either: a post recorded at 9 that reads 10 after the
+ *   constant moved from 10 to 9 has crossed nothing under the new rule (`9 < 9` is false);
  * - concurrent writes cannot hide a crossing: the count is re-read under the row lock, so whichever
  *   evaluation runs first after the count passed the threshold finds the last recorded one below it.
  *
