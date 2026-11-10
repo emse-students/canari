@@ -475,6 +475,13 @@ The unknown-type row above is a SIGNAL that this rule failed, never the path.
   UPDATE`. From `1.6.10` the client also keeps the switched-off ids it does not know and sends them
   back (`preferencesApi.ts`), so either side alone suffices. A new category takes the version of the
   release that adds its switch; the record type makes a missing floor a compile error.
+  **One gap, accepted (lead, 2026-11-10): a `1.6.8` save erases a stored "Anniversaires" choice.**
+  No header reads as `1.6.9`, which names `birthdays`, so a headerless save is taken to speak for
+  it; a `1.6.8` phone saving its switches therefore switches "Anniversaires" back on if another
+  device had switched it off. Covering it would need the server to tell a `1.6.8` from a `1.6.9`
+  without a header, which nothing allows. Birthdays shipped in `1.6.9`, so the population - a reader
+  who switched them off on a `1.6.9` device and then saves from a `1.6.8` one - is near zero, and it
+  ends with the update. Every category from `suggestions` on is covered, by the header.
 **Built and waiting on this floor (2026-10-22): `form_paid_over_capacity`**, the organiser alert for a
 payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
 **Step 1 is MET (2026-10-29):** production's `minClientVersion` was raised from `1.2.7` to `1.2.9` by the

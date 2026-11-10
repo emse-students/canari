@@ -857,6 +857,9 @@ decisions of 2026-11-10, as built:
   It stamps every post of the window, announced or not, so `1.6.9` announces nothing it did not see
   cross; the price is that no post of those 24 hours can trend after the rollback. Written in
   `CHANGELOG.md` with the rollback, as every rollback is.
+  **Run once on production, 2026-11-10, about 19:45 Paris time, under the owner's explicit yes**,
+  with a 7-day window instead of 24 hours, to stop 1.6.9's level-based bursts (three more after
+  17:00, about 500 recipients a post): 75 posts stamped, no row deleted.
 - **ONE trend per reader per Paris day** (161: `post_engagement_notices."trendDay"` and the partial
   unique index `UQ_post_engagement_notices_trend_day` on `("recipientId", "trendDay")`). The ledger
   insert writes the Paris date of the database's `now()` and `ON CONFLICT DO NOTHING` with no target,
