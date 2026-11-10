@@ -102,7 +102,7 @@
             <p class="text-red-err px-6 text-center text-xs font-semibold">{m.qr_error()}</p>
           {:else if rendering}
             <div
-              class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+              class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
             ></div>
           {/if}
         </div>

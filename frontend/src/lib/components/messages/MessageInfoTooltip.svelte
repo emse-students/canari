@@ -119,7 +119,7 @@
       <div
         class="mt-1 flex items-start gap-1.5 border-t border-black/5 pt-1.5 dark:border-white/10"
       >
-        <CheckCheck size={14} strokeWidth={2.5} class="mt-px shrink-0 text-amber-500" />
+        <CheckCheck size={14} strokeWidth={2.5} class="text-accent-text mt-px shrink-0" />
         <!-- The names WRAP: a long roster used to stay on one line and run off the screen. -->
         <span class="text-text-muted min-w-0 font-medium wrap-break-word">
           {m.msg_lu_par()} <span class="text-text-main font-bold">{readByLabels.join(', ')}</span>

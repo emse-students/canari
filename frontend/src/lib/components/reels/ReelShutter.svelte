@@ -98,7 +98,7 @@
   </span>
   <button
     type="button"
-    class="relative h-20 w-20 touch-none rounded-full outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+    class="focus-visible:ring-accent-icon relative h-20 w-20 touch-none rounded-full outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 disabled:opacity-40"
     aria-label={recording ? m.reels_shutter_stop() : m.reels_shutter_capture()}
     aria-pressed={recording}
     data-reel-shutter
@@ -117,7 +117,7 @@
         cy="50"
         r="45"
         fill="none"
-        class="stroke-cn-yellow"
+        class="stroke-accent-icon"
         stroke-width="6"
         stroke-linecap="round"
         stroke-dasharray={CIRCUMFERENCE}
@@ -128,7 +128,7 @@
     </svg>
     <span
       class="absolute inset-3 rounded-full transition-all duration-150 {recording
-        ? 'bg-cn-yellow inset-6 rounded-lg'
+        ? 'bg-accent inset-6 rounded-lg'
         : 'bg-white'}"
     ></span>
   </button>

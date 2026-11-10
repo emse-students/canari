@@ -344,7 +344,7 @@ it('draws one glass bar whose buttons wear no blur of their own, and a glass pla
   expect(target.querySelector('[data-video-bar]')!.className).toContain('glass-video');
   const glyph = target.querySelector('[data-video-play-glyph]')!;
   expect(glyph.querySelector('.glass-video-shape'), 'the triangle is the glass').not.toBeNull();
-  expect(glyph.className).not.toMatch(/glass-video|rounded-full|bg-cn-yellow/);
+  expect(glyph.className).not.toMatch(/glass-video|rounded-full|bg-accent/);
 });
 
 it('marks its box, which is what the viewer reads to leave the tap to it', () => {

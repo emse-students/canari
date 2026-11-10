@@ -327,7 +327,7 @@
                 {:else}
                   <a
                     href={profileHref(msg.senderId)}
-                    class="hover:text-text-main rounded-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    class="hover:text-text-main focus-visible:ring-accent-icon rounded-sm transition-colors outline-none focus-visible:ring-2"
                     data-sender-profile-link={msg.senderId}
                     onclick={(e) => e.stopPropagation()}
                   >

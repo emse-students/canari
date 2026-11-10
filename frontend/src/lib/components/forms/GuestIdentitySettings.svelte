@@ -53,7 +53,7 @@
       />
       {#if advice === 'paid'}
         <p
-          class="border-cn-yellow/30 bg-cn-yellow/5 text-text-main rounded-xl border px-3 py-2 text-xs font-semibold"
+          class="border-accent/30 bg-accent/5 text-text-main rounded-xl border px-3 py-2 text-xs font-semibold"
           data-testid="guest-identity-advice"
         >
           {m.form_guest_identity_advice_paid()}

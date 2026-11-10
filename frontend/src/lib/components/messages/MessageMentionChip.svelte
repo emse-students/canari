@@ -47,7 +47,7 @@
 <button
   type="button"
   onclick={openProfile}
-  class="inline cursor-pointer rounded-full bg-amber-500/10 px-1 align-baseline text-[0.9em] font-semibold text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+  class="bg-accent/10 text-accent-text hover:bg-accent/20 inline cursor-pointer rounded-full px-1 align-baseline text-[0.9em] font-semibold transition-colors"
 >
   @<EmojiText text={resolved ?? ''} />
 </button>

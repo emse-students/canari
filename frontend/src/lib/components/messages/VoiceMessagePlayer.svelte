@@ -248,7 +248,7 @@
         e.stopPropagation();
         togglePlay();
       }}
-      class="text-cn-ink inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-500 shadow-md transition-all outline-none hover:scale-105 hover:bg-amber-400 focus-visible:ring-4 focus-visible:ring-amber-500/40 active:scale-95"
+      class="text-on-accent bg-accent hover:bg-accent-hover focus-visible:ring-accent/40 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full shadow-md transition-all outline-none hover:scale-105 focus-visible:ring-4 active:scale-95"
       aria-label={isPlaying ? m.msg_pause_voice_message_label() : m.msg_play_voice_message_label()}
     >
       {#if isPlaying}
@@ -282,14 +282,14 @@
           aria-label={m.msg_playback_position_label()}
         />
         <div
-          class="pointer-events-none flex h-full w-full items-center gap-[2px] rounded-lg peer-focus-visible:ring-2 peer-focus-visible:ring-amber-500/50"
+          class="peer-focus-visible:ring-accent/50 pointer-events-none flex h-full w-full items-center gap-[2px] rounded-lg peer-focus-visible:ring-2"
           aria-hidden="true"
         >
           {#each bars as bar, index (index)}
             {@const played = (index + 1) / bars.length <= playedFraction}
             <div
               class="min-w-0 flex-1 rounded-full transition-colors duration-150 {played
-                ? 'bg-amber-500'
+                ? 'bg-accent'
                 : 'bg-black/20 dark:bg-white/25'}"
               style="height: {Math.round((BAR_FLOOR + (1 - BAR_FLOOR) * bar) * 100)}%"
             ></div>

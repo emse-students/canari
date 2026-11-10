@@ -110,7 +110,7 @@ describe('/notifications, the new-device alert', () => {
     const target = await render();
     expect(unreadDeviceNoticeCount()).toBe(0);
     expect(target.querySelector('[data-device-notice]')).not.toBeNull();
-    expect(target.querySelector('[data-device-notice] .bg-amber-500')).not.toBeNull();
+    expect(target.querySelector('[data-device-notice] .bg-accent')).not.toBeNull();
     expect(
       JSON.parse(localStorage.getItem(ACCOUNT_KEY.deviceNotices('alice')) ?? '{}')
     ).toMatchObject({
@@ -125,7 +125,7 @@ describe('/notifications, the new-device alert', () => {
     document.body.innerHTML = '';
     const again = await render();
     expect(again.querySelector('[data-device-notice]')).not.toBeNull();
-    expect(again.querySelector('[data-device-notice] .bg-amber-500')).toBeNull();
+    expect(again.querySelector('[data-device-notice] .bg-accent')).toBeNull();
   });
 
   it('draws nothing when no device was added', async () => {

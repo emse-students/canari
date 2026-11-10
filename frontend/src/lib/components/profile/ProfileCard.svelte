@@ -18,12 +18,12 @@
   class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm duration-500 md:p-8"
 >
   <div class="mb-5 flex items-center gap-3">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
+    <div class="bg-accent/10 text-cn-dark rounded-xl p-2.5">
       <Icon size={22} strokeWidth={2.5} />
     </div>
     <h2 class="text-text-main text-lg font-bold">{heading}</h2>
     {#if loading}
-      <LoaderCircle size={16} class="text-cn-yellow animate-spin" />
+      <LoaderCircle size={16} class="text-accent-icon animate-spin" />
     {/if}
   </div>
   {@render children()}
