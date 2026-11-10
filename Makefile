@@ -405,6 +405,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun tools/version-report/lib.test.mjs
 	@bun tools/test-inventory/lib.test.mjs
 	@bun test tools/store-listings
+	@bun test tools/store-screenshots
 	@bun test tools/call-audio-fidelity
 	@bun test tools/video-av-sync
 

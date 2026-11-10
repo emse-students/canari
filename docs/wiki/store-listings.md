@@ -262,6 +262,45 @@ every PNG against the checklist of section 4 before it leaves the scratchpad. No
 2. A fictional dev dataset exists (section 5), then capture on the bench phone, user views every frame.
 3. `tools/store-listings/play.mjs` dry-run; apply only on the user's word.
 
+## 9. The reproducible screenshot pipeline (decided 2026-11-09)
+
+**Owner decisions, binding:** the real app on dev, rendered at exact store sizes, composed by script; six
+shots in this order - promise (conversation list), encrypted messaging, communities, feed and polls,
+agenda and associations, privacy; bare rounded UI with no phone frame, cropped at the bottom, on the
+field `#f6c232`, caption at the top in Fredoka bold, ink `#151b2c`, three to six words and an optional
+short sub-line; LIGHT theme; French and English sets with the same layout. This section SUPERSEDES the
+bench-phone plan of 8.2 for the store images (a phone frame-less web render has no status bar to clean;
+the Mi 9T path stays valid for a native-chrome shot).
+
+Tooling: [tools/store-screenshots](../../tools/store-screenshots/README.md). Sizes: Apple 6.9in
+1320x2868 (accepted larger class of section 3), Apple 6.5in 1284x2778, Play phone 1080x1920, feature
+graphic 1024x500; output is RGB PNG without metadata. Capture is a 390x1000 CSS viewport at 3x in a Chrome
+signed in on dev, so the web layout (not the native Liquid Glass chrome) is what the stores show: a
+choice to confirm on the first review.
+
+**Demo scenario:** one integration and party week - invented common first names, generic associations
+(no real name), a group conversation, a poll, an event. **Photos:** free-licence Commons images only,
+each recorded with source URL, author and licence in `photos.manifest.json`; the files are downloaded,
+never committed. **Gate:** `verify` refuses a set while a `Canari Test` or `Fictif` string is on screen
+or a scenario string is missing, so the checklist of section 4 is partly asserted instead of read.
+
+**Owner rulings of the same day:** captures are NATIVE, from the iPhone 12 and the Mi 9T (the installed dev
+app, real chrome, theme and language set in the app); the browser path is a layout preview and
+`compose` refuses a non-native source for a final file; the demo names are set in the app's own data, never
+in the identity provider; every person and medium must look real (no initials circle, no empty image) and
+`verify` fails a shot showing one. **Apple sizes, read on Apple's page on 2026-11-09:** the ONLY mandatory
+iPhone class is Dynamic Island (medium), 1179x2556 or 1206x2622; the 6.9in set (1320x2868) and 6.5in set
+(1284x2778) are optional, the larger being the fallback chain. The owner ruled to produce only the mandatory
+class: `sizes.json` holds 1206x2622 for Apple, 1080x1920 for Play phones and the 1024x500 feature graphic.
+
+**State (2026-11-09, evening):** the dev demo content is seeded in French (names, associations, posts with a
+poll, events, one group conversation, four DMs, two communities, all from live clients after the demo seats
+were emptied through the product); the Android native capture and the composition run end to end; the manifest
+holds 6 Commons SCENE photos with source, author and licence (no portrait: faces are invented geometric
+avatars, served by the dev-only override of #3219); three scene-photo posts went through the real composer; the iOS capture path is written (tab and link taps, the accessibility tree as the page probe) but has not run on a signed-in iPhone; both phones' local debris is cleaned. NOT done, with what lifts each:
+[README](../../tools/store-screenshots/README.md#what-is-blocked-2026-11-09-evening-and-what-lifts-each) -
+the avatars on dev (the override must be deployed), a signed-in iPhone for the iOS capture, the English pass (it sets the French content aside, so it runs after the French capture). Event covers appear only in the event detail modal, which no shot opens, so none were posted.
+
 ## Decided by the owner, 2026-11-09/10
 
 - The two CC BY-SA photos in the store screenshots are replaced by CC0 photos.
