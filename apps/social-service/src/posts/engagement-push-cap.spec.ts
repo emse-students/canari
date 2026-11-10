@@ -28,11 +28,16 @@ describe('CAPPED_PUSH_TYPES', () => {
   });
 
   it.each([...CAPPED_PUSH_TYPES])(
-    '%s files under the category chat-delivery applies to its content key',
-    (_type, { contentKey, category }) => {
-      expect(categories.get(contentKey)).toBe(category);
+    '%s files under the category chat-delivery applies to each of its content keys',
+    (_type, { contentKeys, category }) => {
+      expect(contentKeys.length).toBeGreaterThan(0);
+      for (const key of contentKeys) expect([key, categories.get(key)]).toEqual([key, category]);
     }
   );
+
+  it('files a campus trend under its own switch, suggestions (owner, 2026-11-10)', () => {
+    expect(CAPPED_PUSH_TYPES.get('campus_trend')?.category).toBe('suggestions');
+  });
 
   it('caps ONLY accounts the reader does not follow (decision 11, amended 2026-11-10), at 5 a day', () => {
     expect([...CAPPED_PUSH_TYPES.keys()]).toEqual(['campus_trend']);

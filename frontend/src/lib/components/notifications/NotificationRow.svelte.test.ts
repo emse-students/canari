@@ -39,6 +39,15 @@ vi.mock('$lib/utils/associationLogoCache', () => ({
   resolveAssociationLogoDisplayUrl: async () => null,
   releaseAssociationLogoDisplayUrl: () => {},
 }));
+// A campus-trend row with a picture reads its post's preview: stubbed, answered "failed", so the
+// glyph stays and the test only asserts WHETHER the post was read.
+const sharedPostPreview = vi.hoisted(() => ({
+  fetch: vi.fn(async () => ({ state: 'failed' as const })),
+}));
+vi.mock('$lib/posts/sharedPostPreview', () => ({
+  cachedSharedPostPreview: () => null,
+  fetchSharedPostPreview: sharedPostPreview.fetch,
+}));
 
 const mounted: (() => void)[] = [];
 
@@ -372,11 +381,68 @@ describe('NotificationRow sentence', () => {
     expect(m.notif_friend_comment_text()).not.toBe(m.notif_comment_text());
   });
 
-  it('says a post of the space is taking off, naming nobody (WP-10)', () => {
-    const row = renderRow({ ...postRow('campus_trend'), actorId: 'system', actorName: '' });
+  /**
+   * THE TREND ROW IS NOT A PERSON (owner, 2026-11-10): 1.6.9 drew "Quelqu'un", an initials disc and
+   * nothing after the colon for a post with no text.
+   */
+  const trendRow = (text: string, meta?: PostNotification['meta']): PostNotification => ({
+    ...postRow('campus_trend'),
+    actorId: 'system',
+    actorName: '',
+    text,
+    meta,
+  });
+
+  it('reads "Suggestion :" and the opening, naming nobody, with the trend glyph (WP-10)', () => {
+    sharedPostPreview.fetch.mockClear();
+    const row = renderRow(trendRow('Scene ouverte lundi'));
     expect(row.textContent).toContain(m.notif_campus_trend_text());
     expect(row.textContent).toContain('Scene ouverte lundi');
+    expect(row.textContent).not.toContain(m.notif_actor_unknown());
     expect(row.textContent).not.toContain(m.notif_comment_text());
+    expect(row.querySelector('[aria-label^="Avatar"]')).toBeNull();
+    expect(
+      row.querySelector('[data-notif-trend-avatar]')?.getAttribute('data-notif-trend-avatar')
+    ).toBe('glyph');
+    // No attachment: the post is never read for a picture.
+    expect(sharedPostPreview.fetch).not.toHaveBeenCalled();
+  });
+
+  it('says what a post with no text shows, never a colon followed by nothing', () => {
+    for (const [meta, label] of [
+      [{ media: 'photo' }, m.notif_campus_trend_photo()],
+      [{ media: 'video' }, m.notif_campus_trend_video()],
+      [undefined, m.notif_campus_trend_untitled()],
+    ] as const) {
+      const row = renderRow(trendRow('', meta));
+      expect(row.textContent).toContain(m.notif_campus_trend_text());
+      expect(row.textContent).toContain(label);
+    }
+  });
+
+  it('reads the post for its picture once the row is near, when the row says it has one', () => {
+    sharedPostPreview.fetch.mockClear();
+    // Says "near" at once, as the viewport band would for a visible row.
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(readonly callback: IntersectionObserverCallback) {}
+        observe() {
+          this.callback(
+            [{ isIntersecting: true } as IntersectionObserverEntry],
+            this as unknown as IntersectionObserver
+          );
+        }
+        disconnect() {}
+      }
+    );
+    try {
+      renderRow(trendRow('', { media: 'photo' }));
+      flushSync();
+      expect(sharedPostPreview.fetch).toHaveBeenCalledWith('p9');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

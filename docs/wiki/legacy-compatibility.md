@@ -450,7 +450,57 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 2. The server sends an EXPLICIT `deepLink` (or a dedicated host) for it in `socialDeepLink`; never rely on the `postId` -> `post/<id>` default when the id is not a post.
 3. Add the type to `KNOWN_NOTIFICATION_TYPES` and the `notificationHref` switch (`notificationTarget.ts`), and give `NotificationRow` its glyph, colour and Paraglide sentence; the tests walk every known type through both.
 4. Native tables (`composeServerNotification`, NSE, `canari_push.mm`) get its `contentKey`.
+5. **Declare its client floor** in `apps/social-service/src/push/notification-client-floor.ts` - the
+   type in `NOTIFICATION_TYPE_MIN_CLIENT` and every push key in `PUSH_KEY_MIN_CLIENT` - as the
+   version of the release that first DRAWS it (the [section below](#the-client-floor-of-every-notification-type-owner-2026-11-10)).
+   `createNotification(s)` take a `NotificationType`, so an undeclared type does not compile, and
+   `notification-client-floor.spec.ts` fails when the floor table and `KNOWN_NOTIFICATION_TYPES` (or
+   the `PushContentKey` union) disagree.
 **Removal condition:** none; this is a floor requirement, not a shim.
+
+### The client floor of every notification type (owner, 2026-11-10)
+
+**The rule: the server never sends a notification type to a client too old to render it.** The 1.6.9
+deploy sent `campus_trend` rows to 1.6.8 builds, which drew "Une notification que cette version de
+l'application ne peut pas afficher" ([engagement](engagement.md#the-deploy-of-2026-11-10-and-what-it-changed)).
+The unknown-type row above is a SIGNAL that this rule failed, never the path.
+
+- **One table, the server's**: `notification-client-floor.ts` (social-service) gives every bell type
+  (`NOTIFICATION_TYPE_MIN_CLIENT`) and every push key (`PUSH_KEY_MIN_CLIENT`) the first release that
+  draws it; `null` means every build the update gate admits draws it. The floors were read from the
+  release tags (`KNOWN_NOTIFICATION_TYPES` and the native tables at each tag).
+- **The client names itself**: `X-Canari-Client-Version` (`CLIENT_VERSION_HEADER`, one spelling in
+  `frontend/src/lib/utils/appVersion.ts`, the lives routes' header), sent on the bell read.
+- **The bell read filters on it** (`getNotifications` / `bellPageQuery`: `type IN` the types the build
+  draws). **A read with no header is a build up to 1.6.9** (`HEADERLESS_CLIENT_VERSION`): every one of
+  those sent none, so it is served what 1.6.9 draws - the types it was already served - and every type
+  added from now on takes a floor ABOVE 1.6.9, so no headerless build ever receives it. A header that
+  does not parse is served only the `null`-floor types (fail closed).
+- **Pushes carry their key's floor**: `PushService.notifyContent` writes `minAppVersion` from
+  `PUSH_KEY_MIN_CLIENT` AFTER the caller's data (a caller cannot lower it), and chat-delivery's
+  `sendPushToUser` skips every device whose registered build (`key_package.deviceAppVersion`) is below
+  it - the lives mechanism of 2026-10-31, now one table for every key. A device whose build was never
+  reported is kept and counted in the log. **Consequence**: since this change a device below a key's
+  floor stops receiving that key's push (it drew it only as the server's legacy sentence before).
+- **Not at the WRITE**: the inbox row is written for every recipient, whatever their device - a reader
+  has several devices of several builds, and the row is drawn on the next read by whichever device
+  reads it, an updated one included.
+- **The same rule for the notification CATEGORIES** (review of #3312, D1): a build draws a switch only
+  for the categories it knows, so its save of the switches is no choice about the others. chat-delivery
+  holds `CATEGORY_MIN_CLIENT` (`services/push-category.ts`, the first release drawing each switch,
+  read from the tags) and `PUT mls/notification-preferences` keeps the STORED choice of every category
+  the caller's build cannot name (`categoriesNameableBy`, the same header, none = a build up to 1.6.9,
+  through the shared `keysKnownBy` of `utils/app-version.ts`), merged in one `INSERT ... ON CONFLICT DO
+  UPDATE`. From `1.6.10` the client also keeps the switched-off ids it does not know and sends them
+  back (`preferencesApi.ts`), so either side alone suffices. A new category takes the version of the
+  release that adds its switch; the record type makes a missing floor a compile error.
+  **One gap, accepted (lead, 2026-11-10): a `1.6.8` save erases a stored "Anniversaires" choice.**
+  No header reads as `1.6.9`, which names `birthdays`, so a headerless save is taken to speak for
+  it; a `1.6.8` phone saving its switches therefore switches "Anniversaires" back on if another
+  device had switched it off. Covering it would need the server to tell a `1.6.8` from a `1.6.9`
+  without a header, which nothing allows. Birthdays shipped in `1.6.9`, so the population - a reader
+  who switched them off on a `1.6.9` device and then saves from a `1.6.8` one - is near zero, and it
+  ends with the update. Every category from `suggestions` on is covered, by the header.
 **Built and waiting on this floor (2026-10-22): `form_paid_over_capacity`**, the organiser alert for a
 payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
 **Step 1 is MET (2026-10-29):** production's `minClientVersion` was raised from `1.2.7` to `1.2.9` by the

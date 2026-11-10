@@ -203,4 +203,48 @@ maybe('the bell page against PostgreSQL (migration 126)', () => {
       await runner.release();
     }
   });
+
+  /**
+   * NEVER A TYPE THE READER'S BUILD CANNOT DRAW (owner, 2026-11-10): `1.6.8` drew 1.6.9's campus
+   * trends as "a notification this version cannot show". The read serves the types whose floor the
+   * build it names meets (`notification-client-floor.ts`); a headerless read is a build up to 1.6.9.
+   */
+  it("serves only the types the reader's build draws, from the build it names", async () => {
+    await q(
+      `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId", text, "createdAt")
+         VALUES ('me', 'campus_trend', $1, 'system', 'p', now() + interval '2 minutes'),
+                ('me', 'friend_reaction', $1, 'officer', 'p', now() + interval '1 minute')`,
+      [P(1)]
+    );
+    try {
+      const typesFor = async (build?: string) =>
+        (await bell.getNotifications('me', 3, build)).map((n) => n.type);
+      // Up to 1.6.9 (no header): what it was served before the rule, never the trend it drew wrong.
+      expect(await typesFor(undefined)).toEqual([
+        'friend_reaction',
+        'association_post',
+        'association_post',
+      ]);
+      // A 1.6.8 build that names itself is not served 1.6.9's friend activity either.
+      expect(await typesFor('1.6.8')).toEqual([
+        'association_post',
+        'association_post',
+        'association_post',
+      ]);
+      // The first build that draws a trend as a suggestion, a pre-release of it included.
+      expect(await typesFor('1.6.10-alpha.1')).toEqual([
+        'campus_trend',
+        'friend_reaction',
+        'association_post',
+      ]);
+      // A build it cannot read is served only what every admitted build draws: fail closed.
+      expect(await typesFor('latest')).toEqual([
+        'association_post',
+        'association_post',
+        'association_post',
+      ]);
+    } finally {
+      await q(`DELETE FROM post_notifications WHERE type IN ('campus_trend', 'friend_reaction')`);
+    }
+  });
 });

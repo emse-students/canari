@@ -27,6 +27,7 @@ describe('notificationPreferences', () => {
   it('mirrors the server set after a load', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: ['posts', 'forms'],
+      unknownDisabled: [],
       groupLevels: {},
       groupCalls: {},
     });
@@ -38,6 +39,7 @@ describe('notificationPreferences', () => {
   it('keeps the current set and reports false when the load fails', async () => {
     api.fetchNotificationPreferences.mockResolvedValueOnce({
       disabled: ['posts'],
+      unknownDisabled: [],
       groupLevels: {},
       groupCalls: {},
     });
@@ -51,13 +53,30 @@ describe('notificationPreferences', () => {
     const pending = notificationPreferences.setEnabled('events', false);
     expect(notificationPreferences.isEnabled('events')).toBe(false);
     expect(await pending).toBe(true);
-    expect(api.saveDisabledCategories).toHaveBeenCalledWith(['events']);
+    expect(api.saveDisabledCategories).toHaveBeenCalledWith(['events'], []);
 
     await notificationPreferences.setEnabled('forms', false);
-    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['events', 'forms']);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['events', 'forms'], []);
 
     await notificationPreferences.setEnabled('events', true);
-    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['forms']);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['forms'], []);
+  });
+
+  it('sends back, on every save, the switched-off ids this build does not know', async () => {
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: ['posts'],
+      unknownDisabled: ['a_category_from_later'],
+      groupLevels: {},
+      groupCalls: {},
+    });
+    await notificationPreferences.load();
+    expect(notificationPreferences.disabled).toEqual(['posts']);
+    await notificationPreferences.setEnabled('posts', true);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith([], ['a_category_from_later']);
+    // A sign-out forgets them with the rest: the next account never sends another's choice.
+    notificationPreferences.reset();
+    await notificationPreferences.setEnabled('forms', false);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['forms'], []);
   });
 
   it('puts the switch back when the server refuses the write', async () => {
@@ -85,6 +104,7 @@ describe('notificationPreferences', () => {
       expect(notificationPreferences.loaded).toBe(false);
       api.fetchNotificationPreferences.mockResolvedValue({
         disabled: [],
+        unknownDisabled: [],
         groupLevels: { [g]: 'mentions' },
         groupCalls: {},
       });
@@ -127,6 +147,7 @@ describe('notificationPreferences', () => {
     it('an explicit choice from the server wins over the level', async () => {
       api.fetchNotificationPreferences.mockResolvedValue({
         disabled: [],
+        unknownDisabled: [],
         groupLevels: { [g]: 'none' },
         groupCalls: { [g]: true },
       });

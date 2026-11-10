@@ -36,6 +36,7 @@ beforeEach(() => {
   notificationPreferences.reset();
   api.fetchNotificationPreferences.mockResolvedValue({
     disabled: [],
+    unknownDisabled: [],
     groupLevels: {},
     groupCalls: {},
   });
@@ -67,6 +68,7 @@ describe('SettingsNotificationsSection', () => {
   it('shows the account state the server returned', async () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: ['posts'],
+      unknownDisabled: [],
       groupLevels: {},
       groupCalls: {},
     });
@@ -79,7 +81,7 @@ describe('SettingsNotificationsSection', () => {
     await render();
     switchOf('reactions').click();
     await settle();
-    expect(api.saveDisabledCategories).toHaveBeenCalledWith(['reactions']);
+    expect(api.saveDisabledCategories).toHaveBeenCalledWith(['reactions'], []);
     expect(switchOf('reactions').getAttribute('aria-checked')).toBe('false');
   });
 

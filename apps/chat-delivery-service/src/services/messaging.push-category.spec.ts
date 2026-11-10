@@ -114,6 +114,22 @@ describe('MessagingService - notification categories', () => {
       expect(JSON.stringify(fcmSend.mock.calls)).not.toContain('minAppVersion');
     });
 
+    it('says nothing of the floor when every device meets it (every push key carries one)', async () => {
+      const log = jest.spyOn(Logger.prototype, 'log');
+      unusedRepo.find.mockResolvedValue([
+        { userId: 'u1', deviceId: 'pixel', deviceAppVersion: '1.6.10' },
+      ]);
+      const r = await service.sendPushToUser('u1', 't', 'b', {
+        type: 'social',
+        contentKey: 'social_campus_trend',
+        minAppVersion: '1.6.10',
+      });
+      expect(r).toEqual({ sent: 1, failed: 0 });
+      expect(log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('floor='))).toEqual(
+        []
+      );
+    });
+
     it('only mutes the category named: another category still goes out', async () => {
       disabledRow = { disabledCategories: ['posts'] };
       await service.sendPushToUser('u1', 't', 'b', { type: 'social', contentKey: 'event_updated' });

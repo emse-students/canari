@@ -8,6 +8,7 @@ import {
   type BellTarget,
   type StoredBellLevel,
 } from '../follows/account-bells.service';
+import type { NotificationType, PushOnlyNotificationType } from '../push/notification-client-floor';
 
 /**
  * THE AGENDA'S NOTIFICATIONS ESCAPED THE ONE MAPPING THAT MAKES A PUSH TRANSLATABLE.
@@ -190,7 +191,7 @@ describe('PostNotificationsService.createNotifications', () => {
     ['event_deleted', 'event_deleted'],
     ['event_pending', 'event_pending'],
     ['event_pending_coorganiser', 'event_pending_coorganiser'],
-  ])('%s pushes a CONTENT KEY, never a composed sentence', async (type, expectedKey) => {
+  ] as const)('%s pushes a CONTENT KEY, never a composed sentence', async (type, expectedKey) => {
     await service().createNotifications({
       recipientIds: ['a'],
       type,
@@ -210,7 +211,8 @@ describe('PostNotificationsService.createNotifications', () => {
   it('writes the in-app row but ACCUSES when a type has no push content', async () => {
     const written = await service().createNotifications({
       recipientIds: ['a'],
-      type: 'event_postponed_maybe',
+      // A type the compiler refuses: only a caller that escapes the type system can reach the accusation.
+      type: 'event_postponed_maybe' as NotificationType,
       postId: 'assoc-1',
       actorId: 'x',
       text: 'Soiree BDE',
@@ -385,7 +387,7 @@ describe('PostNotificationsService.createNotifications', () => {
 
     it('never asks a bell about a mention, a reply or a comment', async () => {
       levels.set('a', 'none');
-      for (const type of ['mention', 'reply', 'comment']) {
+      for (const type of ['mention', 'reply', 'comment'] as const) {
         await service().createNotifications({
           postId: 'p1',
           actorId: 'author',
@@ -407,7 +409,7 @@ describe('PostNotificationsService.createNotifications', () => {
   describe('pushNotice', () => {
     const flush = () => new Promise((resolve) => setImmediate(resolve));
     const live = {
-      type: 'live_started',
+      type: 'live_started' as PushOnlyNotificationType,
       actorId: 'broadcaster',
       actorName: 'Claire',
       text: '',
@@ -474,7 +476,7 @@ describe('PostNotificationsService.createNotifications', () => {
       ['live_cut', 'social_live_cut', 'live-1'],
       ['live_suspended', 'social_live_suspended', 'live-1'],
       ['live_withdrawn', 'social_live_withdrawn', 'broadcaster'],
-    ])('%s writes its row and pushes %s', async (type, key, postId) => {
+    ] as const)('%s writes its row and pushes %s', async (type, key, postId) => {
       await service().createNotification({
         recipientId: 'broadcaster',
         type,

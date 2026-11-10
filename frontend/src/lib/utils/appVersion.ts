@@ -319,6 +319,22 @@ export function getClientAppVersion(): string {
 }
 
 /**
+ * THE HEADER A CALL NAMES THIS BUILD IN, for a server that answers each build what it can use: the
+ * lives routes (a build below their floor is answered like a switched-off estate) and the
+ * notifications read (only the types this build draws - social-service's
+ * `notification-client-floor.ts`). ONE spelling for every caller; the value is
+ * {@link getClientAppVersion}, the version the update gate compares too.
+ */
+export const CLIENT_VERSION_HEADER = 'X-Canari-Client-Version';
+
+/** `headers` with this build named in {@link CLIENT_VERSION_HEADER}. */
+export function withClientVersionHeader(
+  headers: Record<string, string> = {}
+): Record<string, string> {
+  return { ...headers, [CLIENT_VERSION_HEADER]: getClientAppVersion() };
+}
+
+/**
  * Splits a version into the numeric core and the pre-release identifiers that decide ties.
  *
  * Build metadata is dropped here and nowhere else: semver gives `+...` no part in precedence, and

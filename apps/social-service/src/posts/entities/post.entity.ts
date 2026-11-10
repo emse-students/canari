@@ -153,6 +153,39 @@ export class Post {
   @Column({ type: 'uuid', nullable: true, default: null })
   liveId: string | null;
 
+  /**
+   * CAMPUS TRENDS (engagement WP-10, migrations 160 and 161), declared so a `synchronize` boot (the
+   * local stack, the CI boot probe) builds them; production builds them from the migrations. Written
+   * ONLY by `EVALUATE_TREND_SQL` (`posts/campus-trend.ts`), so neither is selected, inserted or
+   * updated through the entity - no `save()` can write a stale value over the evaluation's.
+   * `trendAnnouncedAt`: the stamp, set once the engaged count reached the threshold.
+   */
+  @Column({
+    type: 'timestamptz',
+    nullable: true,
+    default: null,
+    select: false,
+    insert: false,
+    update: false,
+  })
+  trendAnnouncedAt?: Date | null;
+
+  /**
+   * The engaged count the last evaluation read; a new post is born with 0 (the default), a post
+   * older than migration 161 holds NULL ("never evaluated", which never announces). A `synchronize`
+   * that ADDS this column to an existing local database gives its rows 0, not NULL - a disposable
+   * database, never an estate.
+   */
+  @Column({
+    type: 'integer',
+    nullable: true,
+    default: 0,
+    select: false,
+    insert: false,
+    update: false,
+  })
+  trendEngagedSeen?: number | null;
+
   @CreateDateColumn()
   @Index()
   createdAt: Date;

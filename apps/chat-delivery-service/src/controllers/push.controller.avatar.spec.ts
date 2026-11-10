@@ -5,6 +5,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Logger } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
+import { ClientIpThrottlerGuard } from '../guards/client-ip-throttler.guard';
 import { PushSecretGuard } from '../guards/push-secret.guard';
 import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import { PushController } from './push.controller';
@@ -68,6 +70,10 @@ describe('PushController - GET mls/push/avatar/:targetUserId', () => {
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(ClientIpThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(PushSecretGuard)
       .useValue({ canActivate: () => true })

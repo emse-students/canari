@@ -844,6 +844,22 @@ export type DeviceMembershipRow = {
   admittedAtEpoch?: number | null;
 };
 
+/**
+ * The dismissed-groups read, CLASSIFIED WHERE IT IS MADE (`MlsDeliveryApi.getDismissedGroups`).
+ *
+ * WHY A TYPE AND NOT `[]` PLUS A WARNING. Discovery starts this read alongside the group list
+ * (weak-network audit, 2026-11-10) and consults it only when that list may be believed. A read that
+ * warned on its own failure would warn on every dead-link boot about a list nothing was going to
+ * read. The read now says WHAT happened, and the one consumer logs it on the branch that uses it: a
+ * refusal or an unexpected failure at warn, a transport failure at debug (the link is down, and the
+ * group list's own line already says so). Every failure is read as "nothing dismissed" - never purge
+ * on a doubt.
+ */
+export type DismissedGroupsRead =
+  | { kind: 'listed'; groupIds: string[] }
+  | { kind: 'refused'; status: number }
+  | { kind: 'failed'; transport: boolean; error: unknown };
+
 export interface IMlsService {
   /** Initialises the MLS identity for the given user, decrypting stored state with the device key. */
   init(
@@ -1778,8 +1794,12 @@ export interface IMlsService {
    * on a confirmed absence.
    */
   getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta>;
-  /** Lists the groups this user dismissed (manual deletion/leave, propagated to all their devices). */
-  getDismissedGroups(): Promise<string[]>;
+  /**
+   * Lists the groups this user dismissed (manual deletion/leave, propagated to all their devices),
+   * as a {@link DismissedGroupsRead}: never rejects, and never logs - the caller says the failure
+   * only where the list is actually used.
+   */
+  getDismissedGroups(): Promise<DismissedGroupsRead>;
   /** Marks a group as dismissed (manual deletion/leave) - propagates the purge to the other devices. */
   dismissGroup(groupId: string): Promise<void>;
   /** Lifts a group's dismiss (re-add via Welcome). */

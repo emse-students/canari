@@ -56,7 +56,13 @@ import {
   previewOf,
   type PushContent,
   type PushIcon,
+  type TrendMedia,
 } from '../push/push-content';
+import {
+  notificationTypesRenderableBy,
+  type NotificationType,
+  type PushOnlyNotificationType,
+} from '../push/notification-client-floor';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
 import {
@@ -195,6 +201,16 @@ export function bellRowShownSql(n: string): string {
         AND ${commentsWithheldFromViewerSql('notif_post', `${n}."recipientId"`)})))`;
 }
 
+/**
+ * What a campus trend's post shows when it has no text, as its bell row stores it (`meta.media`,
+ * written by `announceCampusTrend`); `null` for a row that says nothing - a post with neither, or a
+ * row written before the media was recorded.
+ */
+export function trendMediaOfMeta(meta: Record<string, unknown> | null | undefined): TrendMedia {
+  const media = meta?.media;
+  return media === 'photo' || media === 'video' ? media : null;
+}
+
 /** The shape of a uuid, which a varchar column must have before it is cast to one. */
 const UUID_SHAPE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 
@@ -313,7 +329,8 @@ export class PostNotificationsService {
     type: string,
     actorName: string,
     text: string,
-    icon?: PushIcon
+    icon?: PushIcon,
+    meta?: Record<string, unknown> | null
   ): PushContent | null {
     switch (type) {
       case 'mention':
@@ -344,10 +361,10 @@ export class PostNotificationsService {
         return friendReactionContent(actorName, text, icon);
       case FRIEND_COMMENT_NOTIFICATION:
         return friendCommentContent(actorName, text, icon);
-      // Engagement WP-10: a post of the recipient's space took off. Nobody acted; `text` is the
-      // opening of the post.
+      // Engagement WP-10: a post of the recipient's space took off, told as a suggestion. Nobody
+      // acted; `text` is the opening of the post, and `meta.media` what it shows when it has none.
       case CAMPUS_TREND_NOTIFICATION:
-        return campusTrendContent(text);
+        return campusTrendContent(text, trendMediaOfMeta(meta));
       // D38b: an association asks the AUTHOR to let it republish their personal post. `actorName`
       // is the ASSOCIATION. Its answers (`repost_personal_accepted` / `_refused`) are in-app only.
       case 'repost_personal_requested':
@@ -600,7 +617,7 @@ export class PostNotificationsService {
    */
   async createNotification(data: {
     recipientId: string;
-    type: string;
+    type: NotificationType;
     postId: string;
     actorId: string;
     text: string;
@@ -658,7 +675,7 @@ export class PostNotificationsService {
    */
   async createNotifications(data: {
     recipientIds: string[];
-    type: string;
+    type: NotificationType;
     postId: string;
     actorId: string;
     text: string;
@@ -722,7 +739,7 @@ export class PostNotificationsService {
    */
   async pushNotice(data: {
     recipientIds: string[];
-    type: string;
+    type: NotificationType | PushOnlyNotificationType;
     actorId: string;
     actorName: string;
     text: string;
@@ -750,6 +767,7 @@ export class PostNotificationsService {
       associationId?: string;
       associationLogoMediaId?: string | null;
       pushData?: Record<string, string>;
+      meta?: Record<string, unknown> | null;
     },
     recipients: string[]
   ): Promise<void> {
@@ -779,7 +797,8 @@ export class PostNotificationsService {
       data.type,
       actorName,
       await this.renderMentionsForPush(data.text),
-      icon
+      icon,
+      data.meta
     );
     if (!content) {
       this.logger.warn(
@@ -867,9 +886,14 @@ export class PostNotificationsService {
    * the read is the one answer every one of those paths shares (Opus review of #2859, 2026-11-01,
    * for member reposts; every post-bound type since the review of #2965, 2026-11-02); the row
    * itself is left to the 90-day sweep. A PUSH already delivered to a device cannot be recalled.
+   *
+   * ONLY THE TYPES THE READER'S BUILD CAN DRAW are served (`notification-client-floor.ts`):
+   * `clientVersion` is what the read's `X-Canari-Client-Version` names, `undefined` when it names
+   * none (a build up to `1.6.9`). A row withheld that way is not lost: the same read from a newer
+   * build serves it.
    */
-  async getNotifications(userId: string, limit = 30) {
-    const rows = await this.bellPageQuery(userId, limit).getMany();
+  async getNotifications(userId: string, limit = 30, clientVersion?: string) {
+    const rows = await this.bellPageQuery(userId, limit, clientVersion).getMany();
     const proposed = rows.filter((r) => r.type === 'repost_proposed' && r.text);
     if (proposed.length === 0) return rows;
     // A repost proposal's preview is re-asked here, at the read (`repostProposalTextWithheldSql`).
@@ -896,14 +920,23 @@ export class PostNotificationsService {
    * PostgreSQL (`bell-page.integration.spec.ts`); the production volumes it was sized for are in
    * that migration and in the posts module's wiki page.
    */
-  bellPageQuery(userId: string, limit: number) {
-    return this.notifRepo
-      .createQueryBuilder('n')
-      .where('n."recipientId" = :userId', { userId })
-      .andWhere(sameSideOfReviewCohortSql('n."actorId"', 'n."recipientId"'))
-      .andWhere(bellRowShownSql('n'))
-      .orderBy('n.createdAt', 'DESC')
-      .limit(limit);
+  bellPageQuery(userId: string, limit: number, clientVersion?: string) {
+    const types = notificationTypesRenderableBy(clientVersion);
+    this.logger.debug(
+      `[NOTIF] bell of ${userId.slice(0, 8)} for build ${clientVersion ?? 'undeclared'}: ` +
+        `${types.length} renderable type(s)`
+    );
+    return (
+      this.notifRepo
+        .createQueryBuilder('n')
+        .where('n."recipientId" = :userId', { userId })
+        // An ALLOWLIST of what the reader's build draws: a type with no declared floor is served to nobody.
+        .andWhere('n.type IN (:...renderableTypes)', { renderableTypes: types })
+        .andWhere(sameSideOfReviewCohortSql('n."actorId"', 'n."recipientId"'))
+        .andWhere(bellRowShownSql('n'))
+        .orderBy('n.createdAt', 'DESC')
+        .limit(limit)
+    );
   }
 
   /** Marks every notification for a user as read (called when the bell dropdown is opened). */

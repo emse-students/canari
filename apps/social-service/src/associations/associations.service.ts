@@ -246,6 +246,7 @@ import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
 import { announceOpeningToFollowers } from '../openings/opening-reminders';
 import { type PublicMember, publicMemberAvatarUrl } from '../public/public-member';
+import type { NotificationType } from '../push/notification-client-floor';
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 
@@ -3851,7 +3852,11 @@ ${rejectionReason}`
     associationId: string,
     actorId: string,
     eventTitle: string,
-    notice?: { type: string; meta: Record<string, unknown>; pushData: Record<string, string> }
+    notice?: {
+      type: NotificationType;
+      meta: Record<string, unknown>;
+      pushData: Record<string, string>;
+    }
   ): Promise<string[]> {
     // NEVER REJECTS, and that is the contract of this function - not of its callers: it runs after a
     // commit and is mostly fire-and-forget (`void`), where a rejection is an unhandled rejection
@@ -3878,7 +3883,11 @@ ${rejectionReason}`
     associationId: string,
     actorId: string,
     eventTitle: string,
-    notice?: { type: string; meta: Record<string, unknown>; pushData: Record<string, string> }
+    notice?: {
+      type: NotificationType;
+      meta: Record<string, unknown>;
+      pushData: Record<string, string>;
+    }
   ): Promise<string[]> {
     const validators: { userId: string }[] = await this.memberRepo.query(
       BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,

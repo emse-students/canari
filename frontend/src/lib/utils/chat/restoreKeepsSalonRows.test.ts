@@ -35,7 +35,7 @@ function mls() {
     endBulkIngest: vi.fn(),
     persistCheckpoint: vi.fn(async () => {}),
     isDistributionGroup: vi.fn(() => false),
-    getDismissedGroups: vi.fn(async () => []),
+    getDismissedGroups: vi.fn(async () => ({ kind: 'listed' as const, groupIds: [] })),
   } as never;
 }
 

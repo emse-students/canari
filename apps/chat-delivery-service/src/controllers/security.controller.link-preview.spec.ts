@@ -14,6 +14,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
+import { ClientIpThrottlerGuard } from '../guards/client-ip-throttler.guard';
 import { BadGatewayException, BadRequestException } from '@nestjs/common';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
@@ -91,6 +93,10 @@ describe('SecurityController - getLinkPreview classifies what it could not do', 
       ],
     })
       .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(ClientIpThrottlerGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(HeaderAuthGuard)
       .useValue({ canActivate: () => true })

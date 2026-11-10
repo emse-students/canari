@@ -965,6 +965,10 @@ after its deploy - build the run that DISCRIMINATES, and assert the build id, ne
 - **An allowlist is a DESCRIPTION OF THE CODE**, so it has a test that fails when the code calls a host it does not name. [edge](infrastructure/cloudflare-edge.md)
 - **A page's script policy is written by whoever knows its scripts' hashes - SvelteKit, not nginx** - a hashless second policy on a page is intersected with it and refuses every inline script, so the page blocks carry only `frame-ancestors`. And an inline script must be FIXED text: one that embeds a per-build value cannot be hashed in advance, so the value goes in an attribute it reads. [edge](infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)
 
+**Who a request is from, behind nginx**
+
+- **A SERVICE BEHIND NGINX NEVER THROTTLES ON THE STOCK `ThrottlerGuard`: it keys on `req.ip`, which is nginx's container for every request, so its quota is ONE bucket for the whole estate.** `push/register` sat on it until 2026-11-10 - the cold-start `429` the owner's log showed. A throttler counts on the key the guard BEFORE it proved: a session route per user (`HeaderAuthGuard`, then `UserThrottlerGuard`), a shut phone's route per user (`PushSecretGuard`, then `PushSecretThrottlerGuard`), and only a route proving nobody per address (`ClientIpThrottlerGuard`, `X-Real-IP`); every refusal leaves a `[THROTTLE] REFUSED` line, and `throttle-keys.spec.ts` asserts all of it over every controller `AppModule` mounts ([audit](frontend/weak-network-audit-2026-11-10.md#36-fixed-server---post-mlspushregister-shared-one-rate-limit-bucket-with-the-whole-estate)).
+
 **Topology**
 
 - **The account is the unit of audit, not the ZONE - and a second hostname can name the same destination.** The tunnel INGRESS table is the only listing that shows it; a DNS listing shows names alone. [edge](infrastructure/cloudflare-edge.md)
@@ -1027,6 +1031,15 @@ The link-preview pipeline, the SSRF guard, the favicon cascade and the undici se
 - **A CALL THAT MUST HAPPEN IS A DURABLE JOB, NEVER A `.catch(warn)` - AND ITS CALLEE ANSWERS 2xx ONLY WHEN THE WORK IS DONE.** Account deletion called three services best-effort and deleted the user row regardless, so a service down at that moment orphaned the data for ever. A job row, retried with backoff and accused when overdue, needs a callee that is idempotent and whose status is the truth: a 2xx over a partial failure closes the job on the failure. [account-erasure](account-erasure.md)
 
 ## Contracts the compiler does not check
+
+### A NOTIFICATION TYPE HAS A CLIENT FLOOR, DECLARED WITH THE TYPE
+
+The server never sends a type to a build too old to draw it: every bell type and push key has the
+first release that draws it in `notification-client-floor.ts`; the bell read filters on the
+`X-Canari-Client-Version` header (none = a build up to 1.6.9) and every push carries its key's
+`minAppVersion`. A new type takes a floor above every build that cannot draw it, and an undeclared
+one fails to compile or fails `notification-client-floor.spec.ts`.
+[legacy-compatibility](legacy-compatibility.md#the-client-floor-of-every-notification-type-owner-2026-11-10)
 
 ### A VALIDATOR'S BOUND IS DERIVED FROM THE GENERATOR OF THE VALUE, AND ITS SPEC USES A VALUE OF REAL LENGTH
 

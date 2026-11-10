@@ -32,6 +32,8 @@ import { SvelteMap } from 'svelte/reactivity';
 import { Log } from '$lib/utils/Log';
 
 let disabled = $state<NotificationCategory[]>([]);
+/** Switched-off ids this build does not know, as read: sent back on every save, never drawn. */
+let unknownDisabled: string[] = [];
 /** Serialises writes: each PUT carries the whole set, so two in flight could land out of order. */
 let writeChain: Promise<unknown> = Promise.resolve();
 /** Private conversations quieter than `all`, by group id; an absent one is `all`. */
@@ -66,6 +68,7 @@ export const notificationPreferences = {
     try {
       const snapshot = await fetchNotificationPreferences();
       disabled = snapshot.disabled;
+      unknownDisabled = snapshot.unknownDisabled;
       groupLevels = snapshot.groupLevels;
       groupCalls = snapshot.groupCalls;
       loaded = true;
@@ -93,7 +96,7 @@ export const notificationPreferences = {
     disabled = next;
     const write = writeChain.then(async () => {
       try {
-        await saveDisabledCategories(next);
+        await saveDisabledCategories(next, unknownDisabled);
         return true;
       } catch (e) {
         Log.d(`notificationPreferences.setEnabled(${category}) failed - reverting`, e);
@@ -222,6 +225,7 @@ export const notificationPreferences = {
   /** Back to the default (everything on) - on sign-out, so the next account never inherits a set. */
   reset(): void {
     disabled = [];
+    unknownDisabled = [];
     groupLevels = {};
     groupCalls = {};
     channelLevels = {};

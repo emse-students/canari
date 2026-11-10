@@ -59,6 +59,7 @@
 - [SEO and link previews](frontend/seo.md) — why a login-gated SPA needs server-rendered heads, the sitemap and robots routes, and what each decision follows from
 - [Local-first UI](frontend/local-first-ui.md) - the rule that no interaction servable from local state may await the network, what a shaped link measured on the phone, and the ledger of what is fixed
 - [Offline and weak network](frontend/offline-and-weak-network.md) - what each send and load path does offline and on Slow 3G / 2G, measured on the sandbox pair, the root causes with file:line, and the ordered work packages (salon outbox, deadlines, boot chain)
+- [Weak-network audit, second pass, 2026-11-10](frontend/weak-network-audit-2026-11-10.md) - every screen's serial round trips at 500 ms RTT on dev, the chains with their cause, the five cut (key-group status reads, profile extras, photo-presence repeats, the estate-wide rate bucket of push registration) and the ranked rest
 - [Markdown coherence: toolbar, composer preview and post render one grammar](frontend/markdown-coherence.md) - the `**x **` bug, the tolerance, the cases table
 - [Emoji: Noto pictures, replacing the bundled font](frontend/emoji.md) - the SVG set and the svgo plugins measured to damage it, the presentation rule, the gate, and the font until it is deleted
 - [Sounds](frontend/sounds.md) - every sound the app emits and its trigger, the rule that no audio output is held while nothing plays (the stream a frozen Android app kept `started`), and who owns the audio session category (the silent switch, the Android ringer)
