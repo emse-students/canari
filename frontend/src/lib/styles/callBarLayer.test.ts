@@ -80,9 +80,18 @@ describe('the call bar and the layers that cover the screen', () => {
     );
   });
 
-  it('gives the camera tab its status-bar padding back while a call bar is up', () => {
+  it('gives the camera tab its status-bar padding back while a call bar is up, and only once', () => {
+    // The padding reads the ROOT's inset, and the subtree's inset is zeroed: the camera's controls,
+    // already below the padded bar, would otherwise add the status bar a second time.
+    expect(css).toMatch(/:root \{[^}]*--app-status-top: var\(--safe-area-inset-top, 0px\);[^}]*\}/);
     expect(css).toMatch(
-      /:root\.fullscreen-place-open\[data-call-bar\] \.app-shell \{\s*padding-top: var\(--safe-area-inset-top, 0px\);\s*\}/
+      /:root\.fullscreen-place-open\[data-call-bar\] \.app-shell \{\s*padding-top: var\(--app-status-top\);\s*--safe-area-inset-top: 0px;\s*\}/
+    );
+  });
+
+  it('a full-screen place pads none of its sides in the shell - its controls do', () => {
+    expect(css).toMatch(
+      /\.fullscreen-place-open \.app-shell \{\s*padding-top: 0;\s*padding-left: 0;\s*padding-right: 0;\s*\}/
     );
   });
 

@@ -78,6 +78,7 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // reads the same category before it counts the daily cap; its contract spec pins the two.
   social_friend_activity: 'posts',
   social_campus_trend: 'posts',
+  social_live_mention: 'mentions',
   // A follow request and its acceptance (WP-F4): a category of their own, which the settings screen
   // draws a switch for. Off, the request still waits in the inbox - only the push is not sent.
   social_follow_request: 'follows',
