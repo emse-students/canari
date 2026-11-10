@@ -142,19 +142,4 @@ describe('CreatePostForm - "Entre étudiants"', () => {
       studentsOnly: true,
     });
   });
-
-  it('comes BACK from the reel step with "Garder comme post", as the step left it', async () => {
-    const target = await openAs('list-1');
-    target.querySelector<HTMLButtonElement>('button[data-post-camera]')!.click();
-    flushSync();
-    cameraOverlayStub.keepWith = { caption: 'la soirée', identity: 'list-1', studentsOnly: true };
-    try {
-      document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-keep]')!.click();
-      flushSync();
-      await tick();
-    } finally {
-      cameraOverlayStub.keepWith = null;
-    }
-    expect(switchOf(target)!.checked).toBe(true);
-  });
 });

@@ -83,6 +83,7 @@ function makeService(
   };
   const retention = {
     release: jest.fn(),
+    assertOwnMedia: jest.fn(),
     deleteWithdrawnMedia: jest.fn(() =>
       Promise.resolve({ deleted: 0, absent: 0, cited: 0, refused: 0 })
     ),

@@ -58,7 +58,7 @@ describe('PostsService: a post links an agenda event under the event lock', () =
       {} as FollowsService,
       associations as unknown as AssociationsService,
       { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,
-      { release: jest.fn() } as unknown as PostMediaRetentionService
+      { release: jest.fn(), assertOwnMedia: jest.fn() } as unknown as PostMediaRetentionService
     );
     return { service, postRepo, txRepo, txManager };
   }
