@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Check, Target } from '@lucide/svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import { getInstitutionReachOptions } from '$lib/posts/api';
   import {
     INSTITUTION_REACH_PUBLICS,
@@ -192,9 +193,9 @@
       <p class="text-xs font-semibold text-red-600 dark:text-red-400" role="alert">
         {m.post_reach_load_error({ name: associationName })}
       </p>
-      <button
-        type="button"
-        class="{chip} {off}"
+      <Button
+        variant="secondary"
+        size="compact"
         disabled={busy}
         data-reach-retry
         onclick={() => {
@@ -203,7 +204,7 @@
         }}
       >
         {m.common_retry_button()}
-      </button>
+      </Button>
     </div>
   {:else if options.length === 0}
     <p class="text-text-muted text-xs">{m.post_reach_no_space({ name: associationName })}</p>
