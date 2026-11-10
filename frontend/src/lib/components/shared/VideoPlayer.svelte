@@ -589,6 +589,13 @@
   function onKeydown(e: KeyboardEvent) {
     // A focused button answers its own space bar: the sound button must not play the video.
     if (e.key === ' ' && (e.target as HTMLElement).closest('button')) return;
+    // A feed card's tap is the viewer, so its keyboard twin is Enter on the focused card.
+    if (e.key === 'Enter' && variant === 'feed' && onOpen && e.target === root) {
+      e.preventDefault();
+      e.stopPropagation();
+      openViewer();
+      return;
+    }
     const action = videoKeyAction(e.key);
     if (!action) return;
     // The viewer around uses the same arrows for previous/next: the player's focus wins.
@@ -792,7 +799,7 @@
     ? ''
     : 'bg-black'} {klass}"
   role="group"
-  aria-label={m.video_player_label()}
+  aria-label={variant === 'feed' && onOpen && openLabel ? openLabel : m.video_player_label()}
   tabindex="0"
   data-video-player={variant}
   use:videoGestures={{ onTap: onPictureTap, onHoldStart, onHoldEnd }}
@@ -921,20 +928,24 @@
     <VideoFeedbackGlyph {feedback} />
 
     {#if inline}
-      <!-- AN INLINE VIDEO'S CHROME: the expand chip top-right (the viewer, which the tap no longer
-           opens) and the persistent speaker bottom-right - the feed's always, a conversation's once
+      <!-- AN INLINE VIDEO'S CHROME (owner, 2026-11-10: minimal, as Instagram and CanaReels). The
+           CHAT's expand chip top-right (its tap is the sound, not the viewer); the FEED has none,
+           its tap opens the viewer and the root carries `openLabel` (Enter and `f` open it from the
+           keyboard). The speaker bottom-right: the feed's a bare quiet glyph drawn only while the
+           video plays (nothing on a poster that is not playing), a conversation's a chip once
            started, with its progress line. No bar: there is nothing to fade. -->
-      {#if onOpen}
+      {#if onOpen && variant !== 'feed'}
         <VideoExpandButton
           label={openLabel}
           onclick={openViewer}
           class="absolute top-0.5 right-0.5 z-20"
         />
       {/if}
-      {#if variant === 'feed' || started}
+      {#if variant === 'feed' ? !paused : started}
         <VideoSoundButton
           {muted}
           onToggle={toggleMute}
+          quiet={variant === 'feed'}
           class="absolute right-0.5 bottom-0.5 z-20"
         />
       {/if}
