@@ -4,9 +4,10 @@
 </script>
 
 <script lang="ts">
-  import { Pause, Play, Volume2, VolumeX } from '@lucide/svelte';
+  import { Volume2, VolumeX } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { videoGlass } from '$lib/utils/videoGlass';
+  import VideoGlassGlyph from './VideoGlassGlyph.svelte';
 
   /**
    * THE FEEDBACK OF A GESTURE, NEVER A STATE (user, 2026-10-23; owner, 2026-11-09): the icon of what
@@ -46,20 +47,20 @@
 {#key live?.n}
   {#if live}
     {@const n = live.n}
+    <!-- Play and pause are the glass SHAPE with no disc (VideoGlassGlyph, owner 2026-11-09); the
+         two sound states stay a glass chip, which is their shape. -->
     <div
-      class="glass-video video-feedback-glyph pointer-events-none absolute top-1/2 left-1/2 z-30 flex items-center justify-center rounded-full {live.kind ===
+      class="video-feedback-glyph pointer-events-none absolute top-1/2 left-1/2 z-30 flex items-center justify-center {live.kind ===
         'play' || live.kind === 'pause'
         ? 'h-16 w-16'
-        : 'h-12 w-12'}"
+        : 'glass-video h-12 w-12 rounded-full'}"
       data-glass={videoGlass()}
       aria-hidden="true"
       data-video-glyph={live.kind}
       onanimationend={() => (doneN = n)}
     >
-      {#if live.kind === 'pause'}
-        <Pause size={28} strokeWidth={2.25} fill="currentColor" class="drop-shadow" />
-      {:else if live.kind === 'play'}
-        <Play size={28} strokeWidth={2.25} fill="currentColor" class="ml-1 drop-shadow" />
+      {#if live.kind === 'pause' || live.kind === 'play'}
+        <VideoGlassGlyph kind={live.kind} size={64} />
       {:else if live.kind === 'sound-on'}
         <Volume2 size={22} strokeWidth={2.25} class="text-accent drop-shadow" />
       {:else}

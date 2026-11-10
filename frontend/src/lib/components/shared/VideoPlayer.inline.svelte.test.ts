@@ -243,15 +243,15 @@ it('chat: does NOT start when it scrolls into view, and does not loop', () => {
   expect(video.autoplay).toBe(false);
 });
 
-it('chat: offers the glass play disc once the first frame is in, and not before', () => {
+it('chat: offers the glass play triangle once the first frame is in, and not before', () => {
   const { playButton, frameIn } = mountVariant('chat');
   expect(playButton()).toBeNull();
   frameIn();
   expect(playButton()).not.toBeNull();
-  expect(playButton()!.className).toContain('glass-video');
+  expect(playButton()!.querySelector('.glass-video-shape')).not.toBeNull();
 });
 
-it('chat: the disc starts it where it is, with sound, and opens nothing', () => {
+it('chat: the glyph starts it where it is, with sound, and opens nothing', () => {
   const { video, onOpen, frameIn, playButton } = mountVariant('chat');
   const play = vi.spyOn(video, 'play').mockResolvedValue();
   frameIn();

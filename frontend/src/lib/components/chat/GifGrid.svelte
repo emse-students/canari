@@ -4,6 +4,7 @@
   import { Log } from '$lib/utils/Log';
   import {
     fetchGifPage,
+    mergeGifPages,
     GifSearchUnavailableError,
     pickGridRendition,
     type GifResult,
@@ -82,7 +83,7 @@
     const remembered = cachedGifPage(q, nextPage);
     if (remembered) {
       Log.d('GifGrid', `page ${nextPage} of "${q.trim() ? 'search' : 'trending'}" from memory`);
-      results = nextPage === 1 ? remembered.gifs : [...results, ...remembered.gifs];
+      results = mergeGifPages(nextPage === 1 ? [] : results, remembered.gifs);
       page = nextPage;
       hasNext = remembered.hasNext;
       inFlight = null;
@@ -94,7 +95,7 @@
       const result = await fetchGifPage(q, nextPage, controller.signal);
       if (mine !== generation) return;
       rememberGifPage(q, nextPage, result);
-      results = nextPage === 1 ? result.gifs : [...results, ...result.gifs];
+      results = mergeGifPages(nextPage === 1 ? [] : results, result.gifs);
       page = nextPage;
       hasNext = result.hasNext;
     } catch (error) {

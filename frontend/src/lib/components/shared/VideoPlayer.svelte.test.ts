@@ -305,7 +305,7 @@ it('a press held on the picture pauses while held and resumes on release', () =>
   Object.defineProperty(video, 'paused', { configurable: true, get: () => true });
   video.dispatchEvent(new Event('pause'));
   flushSync();
-  expect(target.querySelector('[data-video-play-disc]'), 'a held pause draws no disc').toBeNull();
+  expect(target.querySelector('[data-video-play-glyph]'), 'a held pause draws no glyph').toBeNull();
 
   root.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
   expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
@@ -336,15 +336,15 @@ it("a tap on a control is the control's, and is not the sound tap", () => {
   expect(video.muted).toBe(true);
 });
 
-it('draws one glass bar whose buttons wear no blur of their own, and a glass play disc', () => {
+it('draws one glass bar whose buttons wear no blur of their own, and a glass play triangle with no disc', () => {
   const { target, video } = mountPlayer();
   video.dispatchEvent(new Event('loadeddata'));
   flushSync();
   expect(target.querySelectorAll('[data-video-bar] .glass-video').length).toBe(0);
   expect(target.querySelector('[data-video-bar]')!.className).toContain('glass-video');
-  const disc = target.querySelector('[data-video-play-disc]')!;
-  expect(disc.className).toContain('glass-video');
-  expect(disc.className).not.toContain('bg-accent');
+  const glyph = target.querySelector('[data-video-play-glyph]')!;
+  expect(glyph.querySelector('.glass-video-shape'), 'the triangle is the glass').not.toBeNull();
+  expect(glyph.className).not.toMatch(/glass-video|rounded-full|bg-accent/);
 });
 
 it('marks its box, which is what the viewer reads to leave the tap to it', () => {
@@ -521,7 +521,7 @@ it('minimal: a loading reel shows its first frame picture, never a play glyph', 
 it('minimal: with no picture a loading reel is a black box, with no glyph', () => {
   const { target } = mountMinimal();
   expect(target.querySelector('[data-video-first-frame-poster]')).toBeNull();
-  expect(target.querySelector('[data-video-play-disc]')).toBeNull();
+  expect(target.querySelector('[data-video-play-glyph]')).toBeNull();
 });
 
 it('minimal: a play button only when the engine REFUSES the autoplay', async () => {
