@@ -1483,3 +1483,8 @@ and every pass fires `seeking` / `waiting` / `seeked` at 0, no `ended`, never pa
 over audio (~100 ms per loop on this take). **Not fixed**: the ~210 ms audio pre-roll at each wrap -
 a seek-free loop (re-appending the segments to MSE) is a design of its own, not built.
 A manual `currentTime = 0` on `ended` would seek too and pre-roll the same way.
+
+## Decided by the owner, 2026-11-09/10
+
+Every vertical video of 90 s or less that is posted is a CanaReel, and a CanaReel lives 1 year.
+Live replays follow the same shape ([live replays](../../backlog.d/live-replays-kept-three-days-as-canareels.md)).
