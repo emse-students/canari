@@ -36,9 +36,12 @@
  * clock. Leaving the viewport band is the owner's to act on: it closes the stream, which aborts the
  * segment in flight (`PostMedia`, `deferred`).
  *
- * An UNPACED stream - the viewer, the lightbox - fetches the whole file as fast as it comes: the
- * reader asked for that video. {@link SegmentedStreamHandle.fetchAll} turns a paced stream into one
- * when its owner opens a viewer that waits for the whole file.
+ * The full-screen viewer is a FORK of the card's stream ({@link SegmentedStreamHandle.fork}): its
+ * own MediaSource and element, the same segment feed, paced by {@link VIEWER_STREAM_PACING}. It
+ * plays as soon as its head is appended and never waits for the whole file; a segment is fetched
+ * once however many elements read it. An UNPACED stream (the live viewer's replay, a gallery
+ * cell) fetches the whole file as fast as it comes, and {@link SegmentedStreamHandle.fetchAll}
+ * turns a paced one into it.
  *
  * # What is NOT here yet
  *
@@ -144,8 +147,42 @@ export interface SegmentedStreamHandle {
   attach(element: PacingElement): () => void;
   /** Lifts the pacing: every remaining segment is fetched. Idempotent. */
   fetchAll(): void;
+  /**
+   * A second stream over the SAME segments, for a second element (the full-screen viewer): its own
+   * URL, paced by {@link VIEWER_STREAM_PACING}. A segment the first stream already fetched is
+   * taken from the shared feed, and one the fork fetches is the first stream's too - the file is
+   * never downloaded twice, and the viewer starts as soon as ITS head is appended. Closing the fork
+   * stops only the fork; closing the original stops both. A fork is not forked again.
+   */
+  fork(): SegmentedStreamHandle;
   /** Stops fetching - the segment in flight included - and releases the URL. Safe to call twice. */
   close(): void;
+}
+
+/**
+ * How far one stream has got: what the in-app log's one line per reel view reads when the view ends
+ * (`reels/reelViewOutcome.ts`), so a reel that never showed a frame names where its bytes stopped.
+ * Mutated in place by the stream, never by a reader.
+ */
+export interface StreamProgress {
+  /** The segment count the file's header announced - `null` until that header has been read. */
+  segmentCount: number | null;
+  /** Segments verified and appended to the element's buffer. */
+  appended: number;
+  /** Plaintext bytes appended. */
+  bytes: number;
+}
+
+/** Every open stream's progress, by its MSE URL - the one name the element and its owner share. */
+const progressByUrl = new Map<string, StreamProgress>();
+
+/**
+ * The live progress of the open stream whose URL is `url`, or `undefined` when no stream owns that
+ * URL (a whole blob, or a stream already closed). The object is the stream's own: a caller that
+ * keeps it reads the last state reached even after the stream closes.
+ */
+export function streamProgressOf(url: string): StreamProgress | undefined {
+  return progressByUrl.get(url);
 }
 
 /** Resolves on the buffer's next `updateend`, rejects on its `error`. */
@@ -165,6 +202,45 @@ function appendSegment(buffer: SourceBuffer, bytes: ArrayBuffer): Promise<void> 
   });
 }
 
+/** Seconds kept behind the playhead when a full buffer is trimmed to take the next segment. */
+const QUOTA_KEEP_BEHIND_SECONDS = 10;
+
+/** Waits for a `SourceBuffer` to finish what it is doing (`remove` is asynchronous). */
+function settled(buffer: SourceBuffer): Promise<void> {
+  if (!buffer.updating) return Promise.resolve();
+  return new Promise((resolve) =>
+    buffer.addEventListener('updateend', () => resolve(), { once: true })
+  );
+}
+
+/**
+ * Appends a segment; when the engine's buffer is full (`QuotaExceededError`: nothing evicts behind
+ * the playhead on a long video, and the card and the viewer each hold a buffer) the already-played
+ * part is removed and the append retried ONCE. The whole file is built from the segment Blobs, never
+ * from this buffer, so trimming costs only a seek back into the removed part - which beats a
+ * `decode` error that ends the video.
+ */
+async function appendSegmentEvicting(
+  buffer: SourceBuffer,
+  bytes: ArrayBuffer,
+  element: () => PacingElement | null,
+  mediaId: string
+): Promise<void> {
+  try {
+    await appendSegment(buffer, bytes);
+  } catch (err) {
+    const el = element();
+    const isQuota = err instanceof DOMException && err.name === 'QuotaExceededError';
+    const cut = (el?.currentTime ?? 0) - QUOTA_KEEP_BEHIND_SECONDS;
+    if (!isQuota || !el || cut <= 0) throw err;
+    console.warn(`[media-seg] stream ${mediaId}: buffer full, trimming before ${cut.toFixed(1)} s`);
+    await settled(buffer);
+    buffer.remove(0, cut);
+    await settled(buffer);
+    await appendSegment(buffer, bytes);
+  }
+}
+
 /** Seconds buffered past the element's playhead - 0 when the playhead is in no buffered range. */
 export function bufferedAhead(element: Pick<PacingElement, 'currentTime' | 'buffered'>): number {
   const t = element.currentTime;
@@ -173,6 +249,67 @@ export function bufferedAhead(element: Pick<PacingElement, 'currentTime' | 'buff
     if (ranges.start(i) <= t && t <= ranges.end(i)) return ranges.end(i) - t;
   }
   return 0;
+}
+
+/**
+ * The viewer's pacing: the head, then 30 s ahead while it plays. Longer than a feed card's - the
+ * reader chose this video and watches it full screen - yet still bounded, so a 33 MB video left
+ * after ten seconds is not fetched whole.
+ */
+export const VIEWER_STREAM_PACING: StreamPacing = { headSegments: 2, aheadSeconds: 30 };
+
+/**
+ * The segments of ONE media, fetched at most once whoever asks. Every consumer of the stream - the
+ * inline element, a viewer forked from it - reads through this, so a second element never means a
+ * second download: a segment already in is a `Blob` in the engine's store (which spills to disk),
+ * and the next consumer simply takes it.
+ */
+interface SegmentFeed {
+  /** How many segments the media has - opens the reader on first use. */
+  count(): Promise<number>;
+  /** Segment `index`, fetched and verified the first time it is asked for. */
+  segment(index: number): Promise<Blob>;
+}
+
+/** A feed over `ref`; every read is aborted with `signal` (the root stream's close). */
+function createSegmentFeed(ref: MediaRef, baseUrl: string, signal: AbortSignal): SegmentFeed {
+  let reader: ReturnType<typeof openSegmentedMedia> | null = null;
+  // A FAILURE IS NOT MEMOISED: a transient range error on the card's read must not be handed to the
+  // viewer forever - the next consumer asks again (a closed root rejects them all anyway).
+  const open = () => {
+    if (!reader) {
+      const opening = openSegmentedMedia(
+        httpRangeSource(baseUrl, ref.mediaId),
+        ref.key,
+        ref.iv,
+        signal
+      );
+      reader = opening;
+      opening.catch(() => {
+        if (reader === opening) reader = null;
+      });
+    }
+    return reader;
+  };
+  const segments = new Map<number, Promise<Blob>>();
+  return {
+    count: async () => (await open()).segmentCount,
+    segment(index) {
+      let pending = segments.get(index);
+      if (!pending) {
+        // Each segment is kept as a BLOB, never as the `ArrayBuffer` it was decrypted into: the
+        // buffer is dropped once read, and what the final file needs sits in the engine's blob
+        // store instead of the JS heap, beside the MSE buffer.
+        pending = open().then(async (r) => new Blob([await r.readSegment(index, signal)]));
+        segments.set(index, pending);
+        const asked = pending;
+        asked.catch(() => {
+          if (segments.get(index) === asked) segments.delete(index);
+        });
+      }
+      return pending;
+    },
+  };
 }
 
 /**
@@ -191,12 +328,35 @@ export function openSegmentedStream(
   playback: Extract<SegmentedPlayback, { kind: 'stream' }>,
   pacing?: StreamPacing
 ): SegmentedStreamHandle {
+  const rootAbort = new AbortController();
+  const feed = createSegmentFeed(ref, baseUrl, rootAbort.signal);
+  return openConsumer(ref, feed, playback, pacing, rootAbort, 'stream');
+}
+
+/**
+ * One MSE consumer of a feed: its own `MediaSource`, URL and pacing. The root consumer owns the
+ * feed's abort; a fork's close stops only itself.
+ */
+function openConsumer(
+  ref: MediaRef,
+  feed: SegmentFeed,
+  playback: Extract<SegmentedPlayback, { kind: 'stream' }>,
+  pacing: StreamPacing | undefined,
+  rootAbort: AbortController,
+  label: 'stream' | 'viewer'
+): SegmentedStreamHandle {
   console.debug(
-    `[media-seg] stream ${ref.mediaId} (${ref.mimeType}) through ${playback.managed ? 'ManagedMediaSource' : 'MediaSource'}${pacing ? `, paced (${pacing.headSegments} head, ${pacing.aheadSeconds} s ahead)` : ''}`
+    `[media-seg] ${label} ${ref.mediaId} (${ref.mimeType}) through ${playback.managed ? 'ManagedMediaSource' : 'MediaSource'}${pacing ? `, paced (${pacing.headSegments} head, ${pacing.aheadSeconds} s ahead)` : ''}`
   );
-  const abort = new AbortController();
+  // The root's close reaches every consumer; a fork's close stops only itself.
+  const abort = label === 'stream' ? rootAbort : new AbortController();
+  if (label === 'viewer') {
+    rootAbort.signal.addEventListener('abort', () => abort.abort(), { once: true });
+  }
   const source = new playback.MediaSourceCtor();
   const url = URL.createObjectURL(source);
+  const progress: StreamProgress = { segmentCount: null, appended: 0, bytes: 0 };
+  progressByUrl.set(url, progress);
   let closed = false;
   let paced = !!pacing;
   let element: PacingElement | null = null;
@@ -221,7 +381,10 @@ export function openSegmentedStream(
   function wanted(index: number): boolean {
     if (!paced || !pacing || index < pacing.headSegments) return true;
     if (playback.managed && managedSource.streaming === false) return false;
-    if (!element || element.paused) return false;
+    if (!element) return false;
+    // A seek past what is buffered on a PAUSED element is a demand too: without it the picture
+    // stays black until the reader presses play (`seeking` is true until the data is in).
+    if (element.paused && !(element as { seeking?: boolean }).seeking) return false;
     return bufferedAhead(element) < pacing.aheadSeconds;
   }
 
@@ -243,25 +406,20 @@ export function openSegmentedStream(
       source.addEventListener('sourceopen', () => resolve(), { once: true })
     );
     const buffer = source.addSourceBuffer(ref.mimeType);
-    const reader = await openSegmentedMedia(
-      httpRangeSource(baseUrl, ref.mediaId),
-      ref.key,
-      ref.iv,
-      abort.signal
-    );
-    // Each segment is kept as a BLOB, never as the `ArrayBuffer` it was decrypted into: the buffer
-    // is dropped the moment the element has it, and the bytes the final file needs sit in the
-    // engine's blob store (which spills to disk) instead of the JS heap, beside the MSE buffer.
+    const segmentCount = await feed.count();
+    progress.segmentCount = segmentCount;
     const parts: Blob[] = [];
-    for (let i = 0; i < reader.segmentCount; i++) {
+    for (let i = 0; i < segmentCount; i++) {
       await demand(i);
-      const plain = await reader.readSegment(i, abort.signal);
+      const part = await feed.segment(i);
       if (closed) throw new DOMException('stream closed', 'AbortError');
-      await appendSegment(buffer, plain);
-      parts.push(new Blob([plain]));
+      await appendSegmentEvicting(buffer, await part.arrayBuffer(), () => element, ref.mediaId);
+      progress.appended += 1;
+      progress.bytes += part.size;
+      parts.push(part);
     }
     if (source.readyState === 'open') source.endOfStream();
-    console.debug(`[media-seg] stream ${ref.mediaId}: ${reader.segmentCount} segment(s) appended`);
+    console.debug(`[media-seg] ${label} ${ref.mediaId}: ${segmentCount} segment(s) appended`);
     return new Blob(parts, { type: ref.mimeType });
   })();
 
@@ -293,10 +451,15 @@ export function openSegmentedStream(
       paced = false;
       poke();
     },
+    fork() {
+      if (label === 'viewer') throw new Error('a viewer stream is not forked again');
+      return openConsumer(ref, feed, playback, VIEWER_STREAM_PACING, rootAbort, 'viewer');
+    },
     close() {
       if (closed) return;
       closed = true;
       abort.abort();
+      progressByUrl.delete(url);
       URL.revokeObjectURL(url);
     },
   };

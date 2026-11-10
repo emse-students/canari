@@ -111,7 +111,9 @@ describe('the thread follows its own bottom from four triggers', () => {
 
   it('holds the stick-to-bottom judgement in one shared predicate', () => {
     const body = read(CHAT_AREA);
-    expect(body).toContain('isNearBottom = isPinnedToBottom(chatContainer);');
+    // One writer, one shared predicate - `stickToBottomAfterScroll` over `isPinnedToBottom`.
+    expect(body).toContain('isNearBottom = stickToBottomAfterScroll({');
+    expect(body).toContain('pinned: isPinnedToBottom(chatContainer),');
     // The magic number this replaced must not come back inline.
     expect(body).not.toContain('distanceFromBottom');
   });
