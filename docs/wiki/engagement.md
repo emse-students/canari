@@ -2,6 +2,14 @@
 
 ## The product principle (owner, 2026-11-10)
 
+This page answers to [Nos principes](../principes.md), the charter the owner validated on 2026-11-10;
+every engagement decision that touches one of its principles cites it here. **Principle 2, "L'essentiel
+ne se perd pas", is the owner's sentence of 2026-11-10**, and principle 3, "Votre attention n'est pas
+à vendre" (no notification to bring you back, no time-spent metric, every suggestion and notification
+type switched off in one gesture, every ranking explained in one sentence, a chronological view always
+available), is what this chantier is held to. The principles are ordered and the first wins in a
+conflict: principle 1 (your messages are yours) outranks any engagement signal.
+
 *"La philosophie de Canari c'est de permettre aux gens de retrouver toutes leurs informations rapidement. L'engagement (et avoir une activité agréable) n'arrive qu'après, et ne doit jamais gêner le premier point."*
 
 **It takes precedence over every engagement choice on this page.** Finding information comes first;

@@ -1,4 +1,4 @@
-## P2 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF)
+## P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)
 
 Recorded from the owner's sovereignty philosophy ([durable-rules](../durable-rules.md#product-philosophy---sovereignty)).
 Owner, 2026-11-02: build it, behind a SERVER-SIDE switch that is OFF by default, deterministic like
@@ -14,6 +14,13 @@ Owner, 2026-11-02: build it, behind a SERVER-SIDE switch that is OFF by default,
 - **APNs cannot be replaced on iOS** (only Apple can wake an iOS app). **Android beyond FCM**
   (UnifiedPush with a self-hosted distributor, or a persistent connection) is a separate question:
   ntfy would be an install on the DSI host, so their written agreement first; not part of this.
+
+**Priority raised, 2026-11-10.** Principle 1 of [Nos principes](../../principes.md) says even Canari
+cannot read your messages and that data is kept to a minimum; a push that hands Google and Apple the
+sender, the group name and the plaintext opening of comments and posts is the largest leak left
+against it. This chantier now ranks with the other principle-1 debts, and with
+[encrypting the names](p1-encrypt-the-names-of-groups-communities-and-salons.md), which it closes
+for the push path. The steps and gates below are unchanged; what changes is their place in the queue.
 
 ### The whole design (2026-11-04) - what step 1 leaves, on its own page
 
