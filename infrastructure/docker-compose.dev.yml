@@ -450,6 +450,9 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
+      # TEMPORARY (owner, 2026-11-10): who is offered the profile-photo prompt, as FORMATION:campus pairs
+      # (docs/wiki/frontend/guided-help.md). Unset: nobody; a value that does not parse: nobody + boot error.
+      PROFILE_PHOTO_PROMPT_SPACES: ${PROFILE_PHOTO_PROMPT_SPACES:-}
       # CUT, NOT INHERITED. The previous version of this file defaulted this to
       # `https://gallery.mitv.fr`, which is the PRODUCTION MiGallery - a dev environment calling a
       # real service in another repository's estate. Empty means no MiGallery in dev.

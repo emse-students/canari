@@ -4,6 +4,7 @@ import { PlatformConfig } from './entities/platform-config.entity';
 import { PlatformAnnouncement } from './entities/platform-announcement.entity';
 import { PlatformAnnouncementSeen } from './entities/platform-announcement-seen.entity';
 import { HelpSeen } from './entities/help-seen.entity';
+import { User } from '../users/entities/user.entity';
 import { PlatformService } from './platform.service';
 import { AnnouncementService } from './announcement.service';
 import { PlatformAdminController } from './platform-admin.controller';
@@ -22,6 +23,7 @@ import { HelpSeenController } from './help-seen.controller';
       PlatformAnnouncement,
       PlatformAnnouncementSeen,
       HelpSeen,
+      User,
     ]),
   ],
   controllers: [PlatformAdminController, AnnouncementController, HelpSeenController],

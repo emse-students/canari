@@ -22,6 +22,11 @@ export const PROFILE_PHOTO_PROMPT_QUIET_MONTH = 9;
 export const PROFILE_PHOTO_REMINDER_AFTER_SECONDS = 30 * 24 * 60 * 60;
 
 export type ProfilePhotoPromptFacts = {
+  /**
+   * Whether the server offers this account the prompt - TEMPORARY (owner, 2026-11-10): only the
+   * spaces its `PROFILE_PHOTO_PROMPT_SPACES` names. `false` until the server has answered.
+   */
+  readonly eligible: boolean;
   /** `true`/`false` from the gallery's presence answer; `null` when nobody could say (never prompt). */
   readonly hasPhoto: boolean | null;
   readonly firstSeen: boolean;
@@ -35,6 +40,7 @@ export type ProfilePhotoPromptFacts = {
 export function profilePhotoPromptStage(
   facts: ProfilePhotoPromptFacts
 ): 'first' | 'reminder' | null {
+  if (!facts.eligible) return null;
   if (facts.hasPhoto !== false) return null;
   if (facts.month === PROFILE_PHOTO_PROMPT_QUIET_MONTH) return null;
   if (!facts.firstSeen) return 'first';
