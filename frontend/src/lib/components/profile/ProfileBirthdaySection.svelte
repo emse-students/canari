@@ -193,6 +193,10 @@
       onValueChange={(v) => (visibility = v as BirthdayVisibility)}
     />
 
+    <!-- ALWAYS VISIBLE: who is told and what everyone sees, whatever the choice (decision 3). -->
+    <p class="text-text-muted mt-3 text-xs" data-testid="birthday-ring-note">
+      {m.profile_birthday_ring_note()}
+    </p>
     {#if opensLabel}
       <p class="text-text-muted mt-3 text-xs" data-testid="birthday-change-opens">
         {m.profile_birthday_change_opens({ date: opensLabel })}

@@ -133,6 +133,10 @@ describe('the birthday settings are minimal (owner, 2026-11-10)', () => {
     expect(document.querySelectorAll('input[type="radio"]')).toHaveLength(0);
     expect(select('birthday-visibility')).not.toBeNull();
     expect(document.body.textContent).toContain(m.profile_birthday_visibility_label());
-    expect(document.querySelectorAll('p')).toHaveLength(1);
+    // The effect sentence, and the always-visible disclosure of the ring and of who is told.
+    expect(document.querySelectorAll('p')).toHaveLength(2);
+    expect(document.querySelector('[data-testid="birthday-ring-note"]')?.textContent).toContain(
+      m.profile_birthday_ring_note()
+    );
   });
 });

@@ -89,6 +89,18 @@ describe('the games page', () => {
     expect(document.querySelectorAll('[data-testid="games-ranking"] li')).toHaveLength(1);
   });
 
+  it('does not repeat a player when the next page overlaps the first', async () => {
+    api.board.mockResolvedValueOnce({ entries: [entry(1), entry(2)], total: 3 });
+    component = mount(Page, { target: document.body });
+    await settle();
+    api.board.mockResolvedValueOnce({ entries: [entry(2), entry(3)], total: 3 });
+    [...document.querySelectorAll<HTMLElement>('button')]
+      .find((b) => b.textContent?.trim() === m.minesweeper_load_more())
+      ?.click();
+    await settle();
+    expect(document.querySelectorAll('[data-testid="games-ranking"] li')).toHaveLength(3);
+  });
+
   it('says so when no promo has a ranking yet', async () => {
     api.promos.mockResolvedValue({ promos: [], mine: null });
     component = mount(Page, { target: document.body });

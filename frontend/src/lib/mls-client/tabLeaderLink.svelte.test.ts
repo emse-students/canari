@@ -22,6 +22,7 @@ import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import {
   handleLeaderLinkEvent,
   leaderSocketConnected,
+  leadershipChanged,
   publishLeaderLink,
   resetLeaderLinkForTests,
   startLeaderLink,
@@ -106,6 +107,34 @@ describe('the link announces itself when the account becomes known, never before
     state.decide?.('follower');
     await Promise.resolve();
     expect(await crossed()).toEqual([{ type: 'leader_link_query', account: 'u1' }]);
+  });
+
+  it('starts once per document: a second start adds no listener and no second query', async () => {
+    setCurrentUserId('u1');
+    const first = startLeaderLink();
+    const second = startLeaderLink();
+    stop = first;
+    expect(second).toBe(first);
+    flushSync();
+    state.decide?.('follower');
+    await Promise.resolve();
+    expect(await crossed()).toEqual([{ type: 'leader_link_query', account: 'u1' }]);
+  });
+
+  it('forgets the last leader answer when the account changes or the role changes', async () => {
+    setCurrentUserId('u1');
+    state.leadership = 'follower';
+    stop = startLeaderLink();
+    flushSync();
+    handleLeaderLinkEvent({ type: 'leader_link', connected: true, account: 'u1' });
+    expect(leaderSocketConnected()).toBe(true);
+    setCurrentUserId('u2');
+    flushSync();
+    expect(leaderSocketConnected()).toBe(false);
+    handleLeaderLinkEvent({ type: 'leader_link', connected: true, account: 'u2' });
+    expect(leaderSocketConnected()).toBe(true);
+    leadershipChanged();
+    expect(leaderSocketConnected()).toBe(false);
   });
 
   it('a leader republishes its socket when the account becomes known', async () => {

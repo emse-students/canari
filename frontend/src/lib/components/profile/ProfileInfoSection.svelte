@@ -16,7 +16,7 @@
       profile.campus ? campusLabel(profile.campus) : '',
     ]
       .filter(Boolean)
-      .join(' · ') || m.profile_promo_unknown()
+      .join(' · ') || m.profile_info_schooling_unknown()
   );
 
   function formatYear(year: number | null): string {

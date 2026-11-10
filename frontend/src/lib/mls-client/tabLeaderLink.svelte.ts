@@ -31,6 +31,8 @@ let leaderConnected = $state<boolean | null>(null);
 let channel: BroadcastChannel | null = null;
 /** The leader's own socket state, kept so a query can be answered. */
 let ownConnected = false;
+/** The teardown of the one running link, `null` before the first start. */
+let started: (() => void) | null = null;
 
 function ensureChannel(): BroadcastChannel | null {
   if (typeof BroadcastChannel === 'undefined') return null;
@@ -99,6 +101,9 @@ function announce(): void {
  * whichever order those happen.
  */
 export function startLeaderLink(): () => void {
+  // ONCE PER DOCUMENT: every session creation calls this and discards the teardown, so without the
+  // guard each one added an effect and a listener.
+  if (started) return started;
   const ch = ensureChannel();
   if (!ch) return () => {};
   const onMessage = (ev: MessageEvent<TabLeaderLinkEvent>) => {
@@ -106,21 +111,38 @@ export function startLeaderLink(): () => void {
     if (t === 'leader_link' || t === 'leader_link_query') handleLeaderLinkEvent(ev.data);
   };
   ch.addEventListener('message', onMessage);
+  let lastAccount: string | null | undefined;
   const stopEffect = $effect.root(() => {
     $effect(() => {
-      // The account is the one reactive input; the role is read inside `announce` once decided.
-      if (currentUserId()) announce();
+      const account = currentUserId();
+      // A last answer belongs to the account it was given for: never carried to another one.
+      if (lastAccount !== undefined && account !== lastAccount) leaderConnected = null;
+      lastAccount = account;
+      // The role is read inside `announce` once decided.
+      if (account) announce();
     });
   });
   void whenTabLeadershipDecided().then(announce);
-  return () => {
+  started = () => {
     stopEffect();
     ch.removeEventListener('message', onMessage);
+    started = null;
   };
+  return started;
+}
+
+/**
+ * This tab's role changed (promotion or demotion): forget the last leader's answer - a follower
+ * must never keep a dead leader's "connected" - and say where the tab stands now.
+ */
+export function leadershipChanged(): void {
+  leaderConnected = null;
+  announce();
 }
 
 /** Test seam: back to a document no leader has answered. */
 export function resetLeaderLinkForTests(): void {
+  started?.();
   leaderConnected = null;
   ownConnected = false;
 }

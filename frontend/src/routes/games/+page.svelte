@@ -91,7 +91,9 @@
       const scope = tab === 'promo' ? (promo ?? undefined) : undefined;
       const page = await fetchMinesweeperLeaderboard(PAGE, entries.length, scope);
       if (mine !== generation) return;
-      entries = [...entries, ...page.entries];
+      // Offset paging over a moving board can repeat a player: a keyed each would throw on it.
+      const seen = new Set(entries.map((e) => e.userId));
+      entries = [...entries, ...page.entries.filter((e) => !seen.has(e.userId))];
       total = page.total;
     } catch (e) {
       Log.d('games', `next page failed: ${String(e)}`);

@@ -135,11 +135,13 @@ notice is for followers (decision 4).
 
 - **Profile > Anniversaire** (`profileSections.ts`, section `birthday`; `ProfileBirthdaySection.svelte`):
   **minimal since 2026-11-10 (owner)**: one day + month row, one "Visible par" choice (a `Select`, no
-  per-choice explanation), ONE sentence (a date counts from tomorrow and holds 30 days; while the
-  window is open, the day it opens instead), save and remove. The `nobody` option carries the truth in
-  its label: the festive ring still shows on the day to everyone (decision 3).
+  per-choice explanation), one effect sentence (a date counts from tomorrow and holds 30 days; while
+  the window is open, the day it opens instead), save and remove - **plus ONE always-visible
+  disclosure sentence**: on the day the festive ring is shown to everyone and followers are told
+  according to the choice (decision 3), so the privacy statement does not depend on which option is
+  open. The register (C26) and the policy already say both, so they did not change.
 - **The prompt card** `prompt-birthday` (`components/posts/BirthdayFeedCard.svelte`): since 2026-11-10 a
-  SMALL QUIET CARD at the top of the feed - "🎂 Ton anniversaire ?", an "Ajouter" action, a cross - for
+  SMALL QUIET CARD at the top of the feed - "🎂 Votre anniversaire ?" (the app says "vous"), an "Ajouter" action, a cross - for
   an account with no birthday. It replaced the self-opening modal of 1.6.9 (too insistent; its button
   overflowed a phone). **Dismissed means gone**: the cross and "Ajouter" both record the help in the
   account's `help_seen` (`seenHelps`, the profile-photo prompt's store), so it never returns on any

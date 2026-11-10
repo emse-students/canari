@@ -85,7 +85,9 @@ button for the glass pill), all built by `profileHref` (`utils/users/profileHref
   centre pill opens the profile; **settings stay one tap away in the "..." menu** (they already had an
   entry there, so nothing became unreachable). A group or salon pill still opens its settings.
   **The pill fits its content and is centred** (owner, 2026-11-10: the full-width pill of 1.6.9 was
-  reverted); a long name truncates.
+  reverted); a long name truncates. **This reintroduces design-audit M5 as a cost the owner accepted**:
+  the native glass pill is drawn at the web button's rect, and its (wider) native system font clipped
+  "Canari Test Alpha" at 186 pt with 70 pt of the bar empty. Owed: one iPhone reading of a long name.
 - **A deleted or erased account gets no link**, and a pill with no page behind it falls back to settings:
   `isAbsentUser` (`displayName.ts`) is a reactive set filled when the server answers 404/deleted, so a
   link drawn before the answer is withdrawn when it lands. `false` means "not known gone". The profile
