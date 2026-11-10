@@ -282,7 +282,10 @@ describe('CreatePostForm - a picked vertical short video is said to be a CanaRee
     pick(target, new File(['take'], 'clip.mp4', { type: 'video/mp4' }));
     await settle();
     expect(notice(target)).toBe(
-      m.reels_publish_from_composer_notice({ seconds: 90, lifetime: m.reels_lifetime_one_year() })
+      m.reels_publish_from_composer_notice({
+        seconds: 90,
+        lifetime: m.reels_lifetime_years({ count: 1 }),
+      })
     );
   });
 

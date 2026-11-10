@@ -81,7 +81,8 @@ describe('reelDeclarationFor', () => {
 
 describe('reelLifetimeLabel', () => {
   it('words the year as a year, and anything else in days', () => {
-    expect(reelLifetimeLabel(365)).toBe(m.reels_lifetime_one_year());
+    expect(reelLifetimeLabel(365)).toBe(m.reels_lifetime_years({ count: 1 }));
+    expect(reelLifetimeLabel(1)).toBe(m.reels_lifetime_days({ count: 1 }));
     expect(reelLifetimeLabel(730)).toBe(m.reels_lifetime_years({ count: 2 }));
     expect(reelLifetimeLabel(30)).toBe(m.reels_lifetime_days({ count: 30 }));
   });

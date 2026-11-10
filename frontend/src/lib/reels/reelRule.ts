@@ -113,8 +113,7 @@ export function reelDeclarationFor(
  */
 export function reelLifetimeLabel(days: number): string {
   if (days > 0 && days % 365 === 0) {
-    const years = days / 365;
-    return years === 1 ? m.reels_lifetime_one_year() : m.reels_lifetime_years({ count: years });
+    return m.reels_lifetime_years({ count: days / 365 });
   }
   return m.reels_lifetime_days({ count: days });
 }

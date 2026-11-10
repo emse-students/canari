@@ -4835,9 +4835,26 @@
   "reels_publish_done": "CanaReel publié",
   "reels_publish_error": "Le CanaReel n'a pas pu être publié. Réessayez.",
   "reels_publish_expiry_note": "Visible {lifetime}, puis supprimé automatiquement. Vous pourrez l'enregistrer dans votre galerie d'ici là.",
-  "reels_lifetime_one_year": "1 an",
-  "reels_lifetime_years": "{count} ans",
-  "reels_lifetime_days": "{count} jours",
+  "reels_lifetime_years": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} an",
+        "countPlural=other": "{count} ans"
+      }
+    }
+  ],
+  "reels_lifetime_days": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} jour",
+        "countPlural=other": "{count} jours"
+      }
+    }
+  ],
   "reels_publish_from_composer_notice": "Une vidéo verticale de {seconds} secondes au plus est un CanaReel : supprimé au bout de {lifetime}.",
   "reels_viewer_label": "CanaReels",
   "reels_viewer_close": "Fermer les CanaReels",

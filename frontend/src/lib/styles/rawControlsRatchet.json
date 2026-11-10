@@ -860,7 +860,7 @@
     "input": 3
   },
   "src/lib/components/reels/CameraOverlayStub.test-helper.svelte": {
-    "button": 2,
+    "button": 1,
     "select": 0,
     "input": 0
   },

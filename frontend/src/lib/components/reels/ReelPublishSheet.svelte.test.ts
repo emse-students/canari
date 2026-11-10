@@ -234,7 +234,10 @@ describe('ReelPublishSheet reached from the new-post composer (one camera, one b
     const { target } = await render(deps(), vi.fn(), { composer: c });
     const notice = target.querySelector('[data-reel-publish-composer-notice]');
     expect(notice?.textContent?.trim()).toBe(
-      m.reels_publish_from_composer_notice({ seconds: 90, lifetime: m.reels_lifetime_one_year() })
+      m.reels_publish_from_composer_notice({
+        seconds: 90,
+        lifetime: m.reels_lifetime_years({ count: 1 }),
+      })
     );
     expect(target.querySelector<HTMLTextAreaElement>('[data-reel-caption]')!.value).toBe(
       'from the composer'
