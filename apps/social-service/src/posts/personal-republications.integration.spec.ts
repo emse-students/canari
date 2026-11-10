@@ -400,7 +400,12 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
     const moderation = {
       isUserMuted: (id: string) => muted(id),
     } as unknown as ModerationService;
-    const redis = { deleteByPattern: () => Promise.resolve(0) } as unknown as RedisService;
+    // What `invalidatePostListCache` calls after a republication changes: the generation's
+    // increment, then the sweep.
+    const redis = {
+      incr: () => Promise.resolve(1),
+      deleteByPattern: () => Promise.resolve(0),
+    } as unknown as RedisService;
     proposals = new ProposalsService(ds.getRepository(Proposal), associations);
     republications = new RepublicationsService(
       ds.getRepository(PostRepublication),
