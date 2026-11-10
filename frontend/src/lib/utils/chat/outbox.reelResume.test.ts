@@ -1227,7 +1227,13 @@ describe('one take, several conversations (RC-13)', () => {
           }
         : undefined;
     await enqueueTake(l, 3);
-    await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
+    // The take's verdict is told AFTER the rows are gone (`failTake` re-reads the take for the
+    // conversations it names), so the rows being gone is not the moment to read it: wait for the
+    // verdict itself, which is the event this test is about.
+    await waitForEvent(() => {
+      expect(w.sql.rows.size).toBe(0);
+      expect(l.failedIn).toHaveLength(1);
+    });
     expect(l.notices).toEqual(Array(3).fill(m.outbox_reel_over_budget()));
     expect(w.server.sent.filter((r) => r.method === 'POST' && r.path === '')).toHaveLength(1);
     // ONE notice for the take's verdict, never one per send.

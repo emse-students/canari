@@ -382,6 +382,46 @@ describe('LiveViewer', () => {
     );
   });
 
+  it("a dry buffer draws the kit's spinner over the last frame, and the next segment takes it away", async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // The broadcaster stores segment 2 only once the test says so.
+    let stored = false;
+    const plain = deps.fetchManifest!;
+    deps.fetchManifest = vi.fn(async (...args: Parameters<typeof plain>) => {
+      const answer = await plain(...args);
+      return stored
+        ? { ...answer, nextIndex: 3, segments: [{ index: 2, name: 'c', bytes: 1 }] }
+        : answer;
+    });
+    await render();
+    const el = document.querySelector<HTMLVideoElement>('[data-live-video]')!;
+    const spinner = () => document.querySelector('[data-video-buffering]');
+    expect(spinner()).toBeNull();
+    // The join held [0, 6]; the picture played to its end and the engine waits: starved.
+    el.currentTime = 6;
+    el.dispatchEvent(new Event('waiting'));
+    await settle();
+    expect(spinner()).not.toBeNull();
+    expect(stateOf()).toBe('playing');
+    // A poll with nothing new: still the spinner, never a loop.
+    timers.shift()!();
+    await settle();
+    expect(spinner()).not.toBeNull();
+    expect(el.currentTime).toBe(6);
+    // The next segment arrives: appended, the picture resumes where it stopped, no spinner.
+    stored = true;
+    timers.shift()!();
+    await settle();
+    expect(spinner()).toBeNull();
+    expect(el.currentTime).toBe(6);
+    expect(log.mock.calls.map((c) => String(c[0])).some((l) => l.includes(': stalled '))).toBe(
+      true
+    );
+    // The short margin it resumed on is rebuilt by playing slower, the voice kept.
+    expect(el.playbackRate).toBe(0.9);
+    expect(el.preservesPitch).toBe(true);
+  });
+
   it('Escape closes it and the seat goes back', async () => {
     const { onClose } = await render();
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
