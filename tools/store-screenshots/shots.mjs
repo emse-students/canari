@@ -14,7 +14,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLOSE_BANNER, pageProbe, flattenPng, newTab, pngInfo, serveDir } from './lib.mjs';
+import { pageProbe, flattenPng, newTab, pngInfo, serveDir } from './lib.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '../..');
@@ -145,7 +145,7 @@ body{position:relative;font-family:Fredoka,sans-serif;color:${ink}}
 
 /** Composes every size and language from the captured PNGs; refuses unverified demo content unless told. */
 async function compose() {
-  const problems = [...NATIVE.flatMap((src) => (existsSync(join(work, src)) ? verify(src) : [`${src}: no native capture (bun native.mjs --platform ${src})`]))];
+  const problems = NATIVE.flatMap((src) => (existsSync(join(work, src)) ? verify(src) : [`${src}: no native capture (bun native.mjs --platform ${src})`]));
   if (problems.length && !allowDirty) {
     for (const p of problems) log('NOT READY', p);
     throw new Error(`${problems.length} problem(s): fix the demo content on dev, or pass --allow-dirty for a PREVIEW- set that must never be uploaded`);

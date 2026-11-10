@@ -40,7 +40,7 @@ async function session(wsUrl, id, port) {
   const pend = new Map();
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
-    if (m.id && pend.has(m.id)) { const [ok, ko] = pend.get(m.id); pend.delete(m.id); m.error ? ko(new Error(m.error.message)) : ok(m.result); }
+    if (m.id && pend.has(m.id)) { const [ok, ko] = pend.get(m.id); pend.delete(m.id); if (m.error) ko(new Error(m.error.message)); else ok(m.result); }
   };
   const send = (method, params = {}) => new Promise((ok, ko) => { const i = ++n; pend.set(i, [ok, ko]); ws.send(JSON.stringify({ id: i, method, params })); });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
