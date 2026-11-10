@@ -350,7 +350,10 @@ interface StoredProofs {
  */
 function dependsOnAny(entry: OutboxEntry, ids: Set<string>): boolean {
   if (ids.size === 0) return false;
-  if (entry.replyTo && entry.kind !== 'control' && ids.has(entry.replyTo.id)) return true;
+  // ONLY A TEXT REPLY: its quote is a clear-readable payload at the queue read. A queued FILE's
+  // payload is NOT decoded there (media rows come back as scheduling columns), so its quote is
+  // checked in `flushOne` once the full row is loaded, against the same held-back set.
+  if (entry.kind === 'reply' && entry.replyTo && ids.has(entry.replyTo.id)) return true;
   if (entry.kind !== 'control' || !entry.controlProto) return false;
   const proto = entry.controlProto;
   for (const id of ids) {
@@ -2464,7 +2467,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   }
 
   /** Flush a single entry. Returns the outcome so the loop can schedule backoff/chaining. */
-  async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
+  async function flushOne(
+    entry: OutboxEntry,
+    heldBack: ReadonlySet<string> = new Set()
+  ): Promise<FlushOutcome> {
     // Withdrawn after this flush read its snapshot of the queue. The row is already gone, so this
     // is the only thing standing between a message the user deleted and the wire.
     // THE MARK IS NOT CONSUMED HERE. The withdrawal's delete may still be pending, and a second
@@ -2612,6 +2618,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       entry = resolved;
     }
     if (entry.kind === 'media' && entry.media && !entry.media.uploadedRef) uploadOwed.add(entry.id);
+    // A FILE SENT AS A REPLY WAITS FOR WHAT IT QUOTES, like a text reply (`dependsOnAny`). Decided
+    // HERE because its quote lives in the encrypted payload, which the lane's queue read leaves
+    // undecoded for a media row: only the full row, loaded above, names it.
+    if (entry.kind === 'media' && entry.replyTo && heldBack.has(entry.replyTo.id)) {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… waits: the file quotes ${entry.replyTo.id.slice(0, 8)}…, which is not sent yet`
+      );
+      return 'uploading';
+    }
 
     const terminalId = entry.conversationId;
     // THE SEAL BARRIER COMES BEFORE THE GATES, FOR AN UPLOADED FILE. The flush's own barrier is an
@@ -2624,7 +2639,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // notice just before the Welcome. Taken here, the health and membership gates read the drained
     // state and the send follows them with no await between. Free when the queue is idle, which is
     // the steady state.
+    // THE QUOTE IS DECIDED BEFORE THE BARRIER, never after the gates: `decideQuote` is a store read and
+    // a network round trip, and the promise below is NO AWAIT from the gates to the send.
+    let decidedMediaQuote: Awaited<ReturnType<typeof decideQuote>> | undefined;
     if (entry.kind === 'media' && entry.media?.uploadedRef) {
+      decidedMediaQuote = await decideQuote(entry);
       await mlsService
         .waitForMessageQueueIdle('outbox media seal', null)
         .catch((e) =>
@@ -2744,8 +2763,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         }
         // NO AWAIT FROM THE GATES ABOVE TO THE SEND BELOW: the inbound-queue barrier this entry owes
         // is taken BEFORE the gates (THE SEAL BARRIER above), so they read the post-drain state.
-        // A file sent as a reply quotes under the SAME exclusion-window rule as a text reply.
-        const decided = await decideQuote(entry);
+        // A file sent as a reply quotes under the SAME exclusion-window rule as a text reply, decided
+        // before the barrier (above) so nothing is awaited here.
+        const decided = decidedMediaQuote ?? { entry, commit: async () => {} };
         commitQuote = decided.commit;
         const prepared = buildMediaMessage(entry, media, media.uploadedRef, decided.entry.replyTo);
         proto = prepared.proto;
@@ -3331,7 +3351,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           log(`[OUTBOX] ${entry.id.slice(0, 8)}… waits: it depends on a parked message`);
           continue;
         }
-        const outcome = await withSendSlot(() => flushOne(entry));
+        const outcome = await withSendSlot(() => flushOne(entry, heldBack));
         settle(entry.id, settlementOf(outcome));
         // An attachment whose upload runs or is owed is unsent like a parked one: a reply quoting it
         // waits, an independent text goes (WP-OFF-9).
