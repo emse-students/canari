@@ -50,11 +50,15 @@ export async function blockedUserIdsFor(
  * click, so that probe would be repeatable until it named the author of every anonymous post on the
  * platform. EVERY FEED ROW passes through it: the four feeds of `PostsService`, and the suggested
  * posts (engagement WP-7).
+ *
+ * A LIVE REPLAY of an association is the one association post filtered: the live named its
+ * broadcaster to every viewer and hid itself from a block either way, so the replay keeps that rule
+ * and the block reveals nothing the live had not (docs/wiki/live-replays.md section 4).
  */
 export function blockedAuthorSql(blockedParam: number | null): string {
   if (blockedParam === null) return '';
   return `AND (
-           posts."associationId" IS NOT NULL
+           (posts."associationId" IS NOT NULL AND posts.kind <> 'replay')
            OR COALESCE(posts.anonymous, false)
            OR posts."authorId" <> ALL($${blockedParam}::text[])
          )`;

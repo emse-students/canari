@@ -101,6 +101,8 @@ export interface PostListCacheKeyParts {
   kind: string | undefined;
   /** The single-attachment posts the CanaReels list adds, or none (`full-screen-post-sql.ts`). */
   singleMedia: SingleMediaMode | undefined;
+  /** Whether live replays are in the page: a page with them is never served to a client without. */
+  withReplays?: boolean;
 }
 
 /**
@@ -109,7 +111,7 @@ export interface PostListCacheKeyParts {
  * is why the builder and that reader live side by side.
  */
 export function postListCacheKey(p: PostListCacheKeyParts): string {
-  return `${POST_LIST_CACHE_PREFIX}${p.feed}:${p.viewerUserId ?? 'anon'}:${p.promo ?? '-'}:${p.formation ?? '-'}:${p.limit}:${p.offset}:${p.kind ?? '-'}${p.singleMedia ? `+${p.singleMedia}` : ''}`;
+  return `${POST_LIST_CACHE_PREFIX}${p.feed}:${p.viewerUserId ?? 'anon'}:${p.promo ?? '-'}:${p.formation ?? '-'}:${p.limit}:${p.offset}:${p.kind ?? '-'}${p.singleMedia ? `+${p.singleMedia}` : ''}${p.withReplays ? '+replays' : ''}`;
 }
 
 /** The viewer field of a key {@link postListCacheKey} built (`anon` for a signed-out page). */

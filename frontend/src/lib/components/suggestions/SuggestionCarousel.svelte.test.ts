@@ -123,6 +123,16 @@ describe('SuggestionCarousel', () => {
     expect(faces.avatars).toEqual(['ann', 'f1', 'f2', 'f3', 'bob']);
   });
 
+  it('the first card snaps to the inset, not the scroller edge (scroll padding matches px-4)', async () => {
+    renderRow();
+    await settle();
+    // snap-start aligns to the snapport, which ignores padding: without scroll-padding the first
+    // card lands flush against the left edge once the row is swiped back.
+    const row = document.querySelector('[data-suggestion-id="ann"]')!.closest('ul')!;
+    expect(row.classList).toContain('px-4');
+    expect(row.classList).toContain('scroll-px-4');
+  });
+
   it('the X dismisses for good: the card leaves at once and the server is told', async () => {
     renderRow();
     await settle();

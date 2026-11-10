@@ -529,6 +529,8 @@ services:
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
       # Signs a reported live chat line kept for staff (WP-L8b, docs/wiki/services/lives.md).
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
+      # The live replays' total cap in GB (docs/wiki/live-replays.md, D5); empty means 20.
+      LIVE_REPLAY_TOTAL_MAX_GB: ${LIVE_REPLAY_TOTAL_MAX_GB:-}
       # Encrypts each association's Lydia Business private token at rest (migration 100). Unset, a
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.

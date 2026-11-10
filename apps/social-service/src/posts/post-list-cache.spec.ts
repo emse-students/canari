@@ -171,6 +171,24 @@ describe('invalidatePostListCacheFor', () => {
     expect(key('media')).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+media`);
     expect(key('carousel')).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+carousel`);
   });
+
+  it('keys a page with live replays apart, and leaves the key without them as it was', () => {
+    const key = (withReplays: boolean | undefined) =>
+      postListCacheKey({
+        feed: 'reels',
+        viewerUserId: 'u',
+        promo: undefined,
+        formation: undefined,
+        limit: 10,
+        offset: 0,
+        kind: 'reel',
+        singleMedia: 'media',
+        withReplays,
+      });
+    expect(key(undefined)).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+media`);
+    expect(key(false)).toBe(key(undefined));
+    expect(key(true)).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+media+replays`);
+  });
 });
 
 /**

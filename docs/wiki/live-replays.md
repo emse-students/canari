@@ -1,17 +1,17 @@
 # Live replays - a finished live kept three days as a CanaReel
 
 **State (2026-11-09): DESIGNED, every question decided by the owner on 2026-11-09
-([the decisions](#the-owners-decisions-of-2026-11-09)); WP-R1 (the switch and the schema) built,
-WP-R2 (the server) and WP-R3 (out of the backup) following, the client (WP-R4, WP-R5) and the texts
-(WP-R6) not built; `live_replays_mode` is `off` everywhere.**
+([the decisions](#the-owners-decisions-of-2026-11-09)); WP-R1 (the switch and the schema) and WP-R2
+(the server, [as built](#wp-r2-as-built)) built, WP-R3 (out of the backup) following, the client
+(WP-R4, WP-R5) and the texts (WP-R6) not built; `live_replays_mode` is `off` everywhere.**
 
 This page is the ONE design. It reconciles the two drafts written for it: #3234 (2026-11-09, the
 measured cost and the chosen mechanism, kept as the base) and #3133 (2026-11-07, closed; its
 concatenation measurement, its trap list and its list of the texts to change are folded in below).
 #3133 also recorded answers dated 2026-11-07 (2 h per account, a 90-day CanaReel for every vertical
-or short video, the time left on reels): **the owner's answers of 2026-11-09 below replace them**, and
-the CanaReel retention part is an [open question](open-questions.md#question---should-canareels-cover-every-short-or-vertical-video-and-for-how-long-owner-2026-11-09),
-not a decision.
+or short video, the time left on reels): **the owner's answers of 2026-11-09 below replace them**. The
+CanaReel rule was decided apart the same day (every vertical video of 90 s or less is a CanaReel, kept
+one year, existing ones too) and is built on its own branch, not here; a replay keeps its own 3 days.
 
 The owner's request of 2026-11-07 ([backlog entry](backlog.d/live-replays-kept-three-days-as-canareels.md)):
 a finished live is kept and watchable for **3 days**, then deleted; it appears **as a CanaReel in
@@ -43,10 +43,12 @@ report (`POST /api/lives/:id/cut`, accepted while the live row exists - now duri
 stays a cut of a live, with its strike, and deletes the replay first; D7 covers the replay POST
 (reported as a post, deleted by staff). Two different acts, two different consequences, as before.
 
-**Not decided, not built** - the owner's question of 2026-11-09, *"un truc général pour toutes les
-vidéos du genre ? 90 s et vidéos verticales ?"*: whether camera CanaReels move from 30 days to one
-year, or whether every vertical video of 90 s or less becomes a CanaReel. `REEL_RETENTION_DAYS`
-stays at 30. Parked in [open-questions](open-questions.md#question---should-canareels-cover-every-short-or-vertical-video-and-for-how-long-owner-2026-11-09).
+**Decided by the owner on 2026-11-09, built APART from this design** - *"un truc général pour toutes
+les vidéos du genre ? 90 s et vidéos verticales ?"*: every vertical video of 90 s or less is a
+CanaReel, and CanaReels are kept one year, the existing ones too. That work moves
+`REEL_RETENTION_DAYS` and the `kind = 'reel'` rows; **a replay is untouched by it**: its
+`expiresAt` is written once from `LIVE_REPLAY_RETENTION_DAYS` (3) at its publication, never from
+`REEL_RETENTION_DAYS`, and any re-dating of existing reels must name `kind = 'reel'`, never `'replay'`.
 
 ## 1. What a replay costs, measured
 
@@ -188,7 +190,7 @@ two generations of one phone write byte-equal inits) and any player but ffmpeg -
   (`createdAt + 30 days`). `posts_kind_shape` gains the `replay` shape (`durationMs`, `expiresAt` and
   `liveId` all present; `liveId` is NULL on every other kind).
 - **Every read excludes an expired row**: the clause `posts.kind <> 'reel' OR "expiresAt" > NOW()`
-  becomes `"expiresAt" IS NULL OR "expiresAt" > NOW()`, which covers every kind that expires.
+  became `"expiresAt" IS NULL OR "expiresAt" > NOW()` (WP-R2), which covers every kind that expires.
 - **`ReelRetentionScheduler`** (hourly) selects `kind IN ('reel', 'replay') AND "expiresAt" <= NOW()`
   (its partial index follows), per-row step unchanged: purge the blobs (a replay has none of its own -
   only its comments' media), then delete the row. **The replay's segments are NOT its blobs**: the
@@ -204,12 +206,16 @@ for an association's live, a moderator, an admin) - no strike (D7); the segments
 
 ### The total cap, and how admins learn of it
 
-**D5, built in the live sweep.** After the purges, the sweep sums `storedBytes` over the lives whose
-replay post exists. While the sum is above `LIVE_REPLAY_TOTAL_MAX_GB` (default 20, an environment
-value of social-service, read once at boot, refused at boot when not a positive number), it deletes
-the OLDEST replay post (smallest `expiresAt`, then id) through the same per-post deletion as the
-worker, records the eviction, and the next pass purges the live. The selection is a query of durable
-state; termination is the shrinking sum; nothing waits on a clock.
+**D5, built in the live sweep (WP-R2, `LivesService.enforceReplayCap`).** After the purges, the
+sweep sums `storedBytes` over the lives whose replay post is still showing (`"expiresAt" > now()`).
+While the sum is above `LIVE_REPLAY_TOTAL_MAX_GB` (default 20, an environment value of
+social-service, read once at construction, refused at boot when not a positive number), it ends the
+OLDEST replay (smallest `expiresAt`, then the post id) by the one early end every path uses -
+`posts."expiresAt" = now()` - so every read refuses it at once, the hourly worker deletes the post
+(comments and their media) and the next sweep purges the segments. Each round runs under one
+transaction-scoped advisory lock, so two replicas never evict twice for one excess; each round ends
+one replay still showing, so the set shrinks and the loop stops under the cap - a proof, not a
+clock.
 
 **The signal to admins, on the channel that exists.** Canari has no push or mail to admins: the
 operations reports are the scheduled jobs and the admin storage panel, "display only, no alert"
@@ -217,9 +223,12 @@ operations reports are the scheduled jobs and the admin storage panel, "display 
 
 - a `WARN` line, tag **`[LIVE_REPLAY_CAP]`**, naming the live, the bytes freed, the total before and
   the cap - stable, so a log search or a later report job can count it;
-- a row of `live_replay_cap_evictions` (`liveId`, `bytes`, `totalBytes`, `evictedAt`; pruned after
-  30 days by the same sweep), read by the **admin storage panel's replay line**: replays alive, their
-  bytes, the cap, the evictions of the last 7 days and the latest one.
+- a row of `live_replay_cap_evictions` (`liveId`, `bytes`, `totalBytes`, `capBytes`, `evictedAt`;
+  pruned after 30 days by the same sweep), read by the **admin storage panel's replay line**
+  (chat-delivery `GET /mls/admin/storage`, `replays`): replays showing, their bytes, the evictions on
+  record (30 days) and the latest one with the cap it was judged against. The cap itself is not
+  copied into chat-delivery; each eviction row carries the value it was judged against.
+- and the `[LIVE_GC]` line counts them (`replays=` published this run, `capEvicted=`).
 
 ## 4. Audience and visibility: exactly the live's
 
@@ -255,7 +264,7 @@ The CanaReels list is `GET /api/posts?kind=reel&multiMedia=true&withLinks=true`
 
 | Item | How it gets in | Kept | Where the rule lives |
 | --- | --- | --- | --- |
-| **Reel** - filmed with the Canari camera, 90 s at most (C4) | `kind = 'reel'` | **30 days** from publication | `REEL_RETENTION_DAYS`, each row's `expiresAt`, `ReelRetentionScheduler` |
+| **Reel** - filmed with the Canari camera, 90 s at most (C4) | `kind = 'reel'` | **30 days** from publication when this page was written; one year by the owner's decision of 2026-11-09, built apart | `REEL_RETENTION_DAYS`, each row's `expiresAt`, `ReelRetentionScheduler` |
 | **One picture** | `SINGLE_PHOTO_POST_SQL` | as long as the post | media class `archive`, never swept |
 | **One video not filmed with the Canari camera** | `SINGLE_MEDIA_POST_SQL` | as long as the post | same |
 | **A carousel**, 2 to 10 items | `MULTI_MEDIA_POST_SQL` | as long as the post | same |
@@ -267,8 +276,9 @@ Outside the tab: a reel SENT in a conversation (30 days by age, media-service), 
 
 **The model this page builds**: a CanaReel is any post the viewer can draw full screen; expiry is a
 property of an item's ORIGIN held in ONE column, `posts."expiresAt"` (NULL = permanent); one read
-predicate, one worker. Two origins expire today: the camera (30 days) and the live (3 days). Whether a
-third should (every short or vertical video) is the open question above, not decided.
+predicate, one worker. Two origins expire: the camera (a reel's retention) and the live (3 days). The
+owner's rule of 2026-11-09 for every short vertical video is built apart (above); the live's 3 days
+are its own constant whatever the reels' retention becomes.
 
 ## 6. Migrations, work packages, readings
 
@@ -277,7 +287,7 @@ third should (every short or vertical video) is the open question above, not dec
 | Service | File | What | Held? |
 | --- | --- | --- | --- |
 | core | `021_platform_config_live_replays_mode.sql` | `live_replays_mode varchar(16) NOT NULL DEFAULT 'off'` + CHECK, the calls/lives pattern | plain (additive) |
-| social | `156_live_replays.sql` | `lives."keepsReplay"`; `posts."liveId"` (FK to `lives`, no cascade) + its UNIQUE partial index; `posts_kind_shape` re-created with `replay`; the reel expiry index re-created on `kind IN ('reel', 'replay')`; `live_replay_cap_evictions` | plain - every statement on the allowlist of `migration-hold.sh` |
+| social | `156_live_replays.sql` | `lives."keepsReplay"`; `posts."liveId"` (FK to `lives`, no cascade) + its UNIQUE partial index; `posts_kind_shape` re-created with `replay`; the expiry index re-created on every row with an `expiresAt` (`idx_posts_expiry`, read by the worker for reels and replays alike); `live_replay_cap_evictions` | plain - every statement on the allowlist of `migration-hold.sh` |
 
 (`154` and `155` are taken by open drafts #3233 and #3237.) **No held migration**: nothing is
 dropped but a constraint and an index re-created in the same file, no row is rewritten.
@@ -287,11 +297,63 @@ dropped but a constraint and an index re-created in the same file, no row is rew
 | WP | What | State |
 | --- | --- | --- |
 | **WP-R1** | the two migrations; `live_replays_mode` read like `lives_mode` (`GET /api/version` `liveReplays.mode`, `/admin/platform`); `keepsReplay` written at the start; the `[LIVE]` end line carries the live's duration and stored bytes | built (this page's pull request) |
-| **WP-R2** | the time-bounded trim; the replay creation (idempotent), the chat deleted at it; the purge waiting for the post; a cut or erasure deleting the post; `GET /api/lives/:id/replay`; `withReplays`; the read clause and the worker on `expiresAt`; reposts and republications refused; the removed-viewer term; the total cap and its signal | server |
+| **WP-R2** | the time-bounded trim; the replay creation (idempotent), the chat deleted at it; the purge waiting for the post; a cut or erasure ending the replay; `GET /api/lives/:id/replay`; `withReplays`; the read clause and the worker on `expiresAt`; reposts and republications refused; the removed-viewer term; the total cap and its signal | built, inert while the switch is off ([as built](#wp-r2-as-built)) |
 | **WP-R3** | the live segments in a second Garage store outside `backup-objects.sh` (D2); `MIGRATION.md`; **a dev pass before production**; must ship before the switch is flipped | infrastructure, built in the repo only |
 | **WP-R4** | the replay mode of `livePlayer`, the replay page and feed card (cover, "Rediffusion", duration, time left - D3), the end screen, the pre-live sheet, the first-live rules raised to version 3 | client, not built |
 | **WP-R5** | the segment-by-segment save, a new part on an init change, the size first | client, not built |
 | **WP-R6** | the texts (below), then `live_replays_mode = on` on dev, the readings, then production | not built |
+
+### WP-R2, as built
+
+Everything below is reached only by a live started with `keepsReplay` (the switch on at its start),
+so with the switch off nothing changes for any live.
+
+- **The trim** (`LivesService.trim`): such a live keeps its last 3 hours (D1) - a segment goes only
+  when it is behind the window AND older than three hours before the newest one, by the segments'
+  own `createdAt`.
+- **The publication** (`publishReplay`, from `purgeEnded` once the drain is over and nothing is
+  storing): ONE transaction under the live's row lock re-reads every fact - ended, `keepsReplay`, not
+  yet published, not cut, not erased, `lastSegmentAt - startedAt >= 30 s` (D4) - inserts the
+  `kind = 'replay'` post (`ON CONFLICT ("liveId") DO NOTHING`), stamps `replayPostedAt`, deletes the
+  live's chat and reaction bursts. The post: the broadcaster as author, the live's association, its
+  title as text, `publishedAt` = the end, `expiresAt` = the end + 3 days (written once, database
+  clock), `durationMs` = first to last kept segment, `studentsOnly = false` (D8),
+  `allowReposts = false` (D6), `feedNotifiedAt` set so **no push announces a replay** (lead decision,
+  reversible). `replayPostedAt` answers "already published" for ever, so a replay deleted early is
+  never published again; the live is then purged by the next sweep.
+- **The purge waits for the post** and for nothing else; a replay that exists keeps the live
+  (`endedLiveIds` leaves it out, unless its broadcaster was erased and the replay still shows).
+- **A cut ends the replay at once** (`cut` -> `expireReplay`, in the cut's own transaction) - a cut is
+  moderation of the LIVE and keeps its strike; **a staff deletion of the replay POST is D7**: the
+  post's ordinary deletion, no strike. **An erasure ends it in its own transaction**: it locks the
+  account's lives first (`ERASURE_LIVES_LOCK_SQL`, the order a publication and a cut take them, so a
+  replay being published is seen or never published), a personal replay goes with the account's
+  posts, and an association's is ended and loses the title it copied (`live_replays`, before the live
+  forgets its broadcaster); the sweep's erased-broadcaster term is the backstop.
+- **A replay is edited by its caption alone**, as a reel (no media, poll, form, event or schedule),
+  and refuses the "Entre etudiants" switch (`students_only_not_offered`, D8).
+- **A publication, a cut, an eviction and an erasure met by the sweep invalidate the feed cache**
+  (`invalidatePostListCache`, after the commit), as every post write does - never a 30 s TTL later.
+- **`GET /api/lives/:id/replay?from=N`** (behind `LiveEnabledGuard`, `no-store`): the live key, the
+  segments from `N` with `atMs` on the database clock, `nextFrom`, `expiresAt` and `serverNow` (the
+  time left, D3, is computed against the server's clock). No seat. The gate is the replay post's own
+  (`readPostOpenVerdict`): its audience, moderation, a block either way with its broadcaster - an
+  association's replay included, as its live was (the feed's `blockedAuthorSql` exempts every other
+  association post, a replay alone not: the live had already named its broadcaster) - and the
+  **removed viewer** (a viewer the broadcaster removed from the live never sees the replay). Any
+  refusal and an expired replay are the same `404 LIVE_NOT_FOUND`.
+- **`withReplays`** on `GET /api/posts` (the feed, and `kind=reel` - the CanaReels list) and on
+  `GET /api/posts/:id`: a client that does not say it can draw a replay never receives one - a
+  replay by id is then `404`. Search, the linked-event post, pins, member-repost cards and the
+  personal-request list never carry a replay. The removed-viewer term is in every list arm that
+  serves replays. The feed cache keys a page with replays apart (`+replays`).
+- **Every read** drops a row past its `expiresAt` (`posts."expiresAt" IS NULL OR > now()`, the reels'
+  clause generalised), and **the hourly worker** deletes `kind IN ('reel', 'replay')` past it.
+- **Reposts and republications are refused** with the typed `403 POST_REPLAY_NOT_REPOSTABLE`
+  (`assertNotReplay`), after the visibility check, in the association republication, the personal
+  republication (ask and accept) and the member repost. Sending a replay in a message is not built:
+  a chat attachment names a reel's own blob, which a replay does not have.
+- **The cap**: [above](#the-total-cap-and-how-admins-learn-of-it).
 
 ### The texts that must change before the flip (from #3133's list)
 
