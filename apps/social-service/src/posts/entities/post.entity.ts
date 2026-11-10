@@ -6,7 +6,7 @@ import {
   UpdateDateColumn,
   Index,
 } from 'typeorm';
-import type { PostKind } from '../reel.constants';
+import type { StoredPostKind } from '../reel.constants';
 
 /** TypeORM entity representing a Canari post with optional polls, reactions, comments, and media. */
 @Entity('posts')
@@ -107,12 +107,13 @@ export class Post {
   feedNotifiedAt: Date | null;
 
   /**
-   * `'post'` for every row that predates CanaReels, `'reel'` for a short video that expires.
-   * Fixed at creation. The three reel columns are one fact (migration 069's CHECK): a reel has a
-   * `durationMs` and an `expiresAt`, a post has neither.
+   * `'post'` for every row that predates CanaReels, `'reel'` for a short video that expires,
+   * `'replay'` for a finished live kept three days (migration 156). Fixed at creation. The columns
+   * of each kind are one fact (`posts_kind_shape`): a reel has a `durationMs` and an `expiresAt`, a
+   * replay those and a `liveId`, a post none of them.
    */
   @Column({ type: 'varchar', length: 16, default: 'post' })
-  kind: PostKind;
+  kind: StoredPostKind;
 
   /** The length the CLIENT declared for a reel, 1..`REEL_MAX_DURATION_MS`; null on a post. Never verified server-side - the video is ciphertext. */
   @Column({ type: 'integer', nullable: true, default: null })
@@ -125,6 +126,13 @@ export class Post {
    */
   @Column({ type: 'timestamptz', nullable: true, default: null })
   expiresAt: Date | null;
+
+  /**
+   * The live a `kind = 'replay'` post shows (migration 156), null on every other kind. The live's
+   * purge waits for this row to be gone; the unique index makes one replay per live.
+   */
+  @Column({ type: 'uuid', nullable: true, default: null })
+  liveId: string | null;
 
   @CreateDateColumn()
   @Index()

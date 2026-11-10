@@ -146,3 +146,14 @@ describe('the media of a carousel page', () => {
     ).toBeNull();
   });
 });
+
+describe('fullScreenPageOf - a live replay', () => {
+  it('is a replay page, with no media of its own', () => {
+    expect(fullScreenPageOf(post({ kind: 'replay', media: [] }))).toBe('replay');
+  });
+  it('is a replay page whatever else the row carries', () => {
+    expect(fullScreenPageOf(post({ kind: 'replay', media: [video, video, picture] }))).toBe(
+      'replay'
+    );
+  });
+});

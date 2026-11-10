@@ -5757,6 +5757,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_member_repost_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_member_repost_body) }
             )
+            "social_friend_reaction" -> Pair(
+                res.getString(R.string.notif_social_friend_reaction_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_friend_reaction_body) }
+            )
+            "social_friend_comment" -> Pair(
+                res.getString(R.string.notif_social_friend_comment_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_friend_comment_body) }
+            )
             "social_repost_proposed" -> Pair(
                 res.getString(R.string.notif_social_repost_proposed_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_repost_proposed_body) }
@@ -5777,6 +5785,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             "social_live_started" -> Pair(
                 res.getString(R.string.notif_social_live_started_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_live_started_body) }
+            )
+            // Someone mentioned the recipient in a live's chat: the writer names the title, the body is
+            // the live's title, or a fixed sentence when it has none.
+            "social_live_mention" -> Pair(
+                res.getString(R.string.notif_social_live_mention_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_live_mention_body) }
             )
             // A follow request and its acceptance (WP-F2): the person names the title, the body is
             // a fixed sentence - the server sends no fragment for these keys.
@@ -5853,6 +5867,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 arg.ifEmpty { res.getString(R.string.notif_social_booking_removed_body) }
             )
             // The reminder: nobody acted, a fixed title; the body is the place and the time.
+            "social_campus_trend" -> Pair(
+                res.getString(R.string.notif_social_campus_trend_title),
+                arg.ifEmpty { res.getString(R.string.notif_social_campus_trend_body) }
+            )
             "social_booking_reminder" -> Pair(
                 res.getString(R.string.notif_social_booking_reminder_title),
                 arg.ifEmpty { res.getString(R.string.notif_social_booking_reminder_body) }

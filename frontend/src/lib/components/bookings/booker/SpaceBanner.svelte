@@ -46,7 +46,7 @@
     </div>
   {:else}
     <div
-      class="border-cn-border from-cn-yellow/25 to-cn-bg text-text-muted/60 flex h-28 w-full items-center justify-center overflow-hidden rounded-xl border bg-linear-to-br sm:h-40"
+      class="border-cn-border from-accent/25 to-cn-bg text-text-muted/60 flex h-28 w-full items-center justify-center overflow-hidden rounded-xl border bg-linear-to-br sm:h-40"
       aria-hidden="true"
       data-testid="space-banner-placeholder"
     >

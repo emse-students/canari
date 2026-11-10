@@ -39,6 +39,7 @@ import type {
   LiveReactionKind,
   LiveRefusalKind,
   LiveRemovedViewer,
+  LiveReplayPage,
   LiveRulesStatus,
   LiveTitleResult,
   LiveView,
@@ -301,6 +302,19 @@ export async function fetchLive(liveId: string): Promise<LiveView> {
 }
 
 /**
+ * `GET /api/lives/:id/replay[?from=<index>]` - one page of a finished live's three-day REPLAY: the
+ * key, the segments from `from` with their place on the time line, `nextFrom`. Takes NO seat. Every
+ * refusal is the same `not-found` (an outsider, a block, a removed viewer, an expired replay).
+ */
+export async function fetchLiveReplay(liveId: string, from?: number): Promise<LiveReplayPage> {
+  console.debug(`[LIVE_REPLAY] page of ${liveId} from ${from ?? 0}`);
+  return liveJson<LiveReplayPage>(
+    `${livePath(liveId)}/replay${from === undefined ? '' : `?from=${from}`}`,
+    'Live replay'
+  );
+}
+
+/**
  * `GET /api/lives/:id/manifest[?from=<index>]` - what a viewer polls; renews its seat. Without
  * `from`, the newest `manifestWindow` segments (the join); with it, from that index on. Same kinds
  * as {@link fetchLive}.
@@ -343,12 +357,15 @@ export function manifestQuery(from?: number, chat?: LiveChatQuery): string {
 export async function postLiveMessage(
   liveId: string,
   clientId: string,
-  sealed: string
+  sealed: string,
+  mentions: readonly string[] = []
 ): Promise<LiveChatMessageWire | LiveChatTombstoneWire> {
   console.debug(`[LIVE_CHAT] send ${clientId} on ${liveId}: ${sealed.length} b64 chars`);
   return liveJson(`${livePath(liveId)}/messages`, 'Live message', {
     method: 'POST',
-    body: JSON.stringify({ clientId, sealed }),
+    // `mentions` are CANDIDATES (the `@[id]` tokens of the text): the server narrows them to the live's
+    // audience and tells those people, once. Omitted when there are none, as an older server expects.
+    body: JSON.stringify({ clientId, sealed, ...(mentions.length > 0 ? { mentions } : {}) }),
   });
 }
 
@@ -379,6 +396,25 @@ export async function hideLiveMessage(liveId: string, messageId: string): Promis
     'Live hide message',
     { method: 'POST' }
   );
+}
+
+/**
+ * `POST /api/lives/:id/mention-audience` - which of `ids` the `@` picker of the live's chat may
+ * suggest (owner, 2026-11-09): the ones who can see the live, with no block either way. The picker
+ * asks it of the accounts a name search found, so it never offers someone a mention would not reach.
+ */
+export async function fetchLiveMentionAudience(
+  liveId: string,
+  ids: readonly string[]
+): Promise<string[]> {
+  if (ids.length === 0) return [];
+  console.debug(`[LIVE_CHAT] mention audience of ${liveId}: ${ids.length} candidate(s)`);
+  const body = await liveJson<{ ids: string[] }>(
+    `${livePath(liveId)}/mention-audience`,
+    'Live mention audience',
+    { method: 'POST', body: JSON.stringify({ ids }) }
+  );
+  return body.ids;
 }
 
 /**

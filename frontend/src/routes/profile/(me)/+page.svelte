@@ -1,7 +1,8 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import { Camera, SlidersHorizontal } from '@lucide/svelte';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import ProfileHeader from '$lib/components/profile/ProfileHeader.svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import ProfileChips from '$lib/components/profile/ProfileChips.svelte';
   import ProfileCorrectionRequest from '$lib/components/profile/ProfileCorrectionRequest.svelte';
@@ -34,58 +35,41 @@
 
 {#if profile}
   <!--
-    A COLUMN ON A PHONE, A ROW FROM `sm` - the shape `profile/[id]` has carried all along, and the
-    reason this header is the one that clipped. As a row at every width, a 390px screen spent 96px
-    on the avatar, 40px on two gaps and ~39px on the settings link, leaving the NAME 183px;
-    `truncate` then cut it. Stacked, the name gets the whole column and wraps instead.
-
-    THE STACKED COLUMN IS CENTRED (user, 2026-09-14: *"tu pourrais centrer la photo, la formation et
-    le nom sur la page profile"*): one axis runs through avatar, name, badge and formation chip, so
-    the block reads as one identity rather than four stacked fragments.
-
-    THE SETTINGS LINK IS A CORNER ICON (user, 2026-10-06: top right), absolute at the header's
-    top-right at every width. The name's column keeps `sm:pr-12` so a long name never runs under it.
+    THE SAME HEADER AS SOMEONE ELSE'S PROFILE (`ProfileHeader`), with the own profile's actions. The
+    settings link was a corner icon pinned absolutely at the top right, with `sm:pr-12` reserved
+    on the name so it never ran under it - the very arrangement that drew the action row over a
+    wrapped name on the other profile. It is now a button of the action row, which drops below the
+    identity when there is no room beside it. The centred stacked column on a phone is the owner's
+    (2026-09-14: *"tu pourrais centrer la photo, la formation et le nom"*).
   -->
-  <div
-    class="animate-in fade-in slide-in-from-bottom-4 relative flex flex-col items-center gap-5 duration-500 sm:flex-row sm:items-center sm:gap-6"
-  >
-    <div class="relative h-24 w-24 shrink-0 sm:h-28 sm:w-28">
-      <div
-        class="h-full w-full overflow-hidden rounded-full shadow-lg ring-4 ring-white/50 dark:ring-black/20"
-      >
-        <Avatar userId={profile.id} fill shape="circle" />
-      </div>
+  <ProfileHeader userId={profile.id} name={displayFallbackName}>
+    {#snippet avatarBadge()}
       <button
         type="button"
         onclick={changeProfilePhoto}
         title={m.profile_photo_change_label()}
         aria-label={m.profile_photo_change_label()}
-        class="tap-target bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink shadow-cn-yellow/30 absolute right-0 bottom-0 flex h-8
+        class="tap-target bg-accent hover:bg-accent-hover text-on-accent shadow-accent/30 absolute right-0 bottom-0 z-10 flex h-8
  w-8 items-center justify-center
  rounded-full shadow-md ring-2 ring-white transition-all
  active:scale-95 dark:ring-(--cn-bg)"
       >
         <Camera size={15} strokeWidth={2.5} />
       </button>
-    </div>
-    <div class="min-w-0 flex-1 text-center sm:pr-12 sm:text-left">
-      <h1 class="text-text-main mb-1 text-2xl font-bold sm:text-3xl">
-        {displayFallbackName}
-      </h1>
-      <ProfileMinesweeperBadge userId={profile.id} />
+    {/snippet}
+    {#snippet details()}
+      <ProfileMinesweeperBadge userId={profile!.id} />
       <ProfileChips {profile} />
-      <ProfileBirthdayLine userId={profile.id} self />
+      <ProfileBirthdayLine userId={profile!.id} self />
       <ProfileCorrectionRequest />
-    </div>
-    <a
-      href={resolve('/settings')}
-      title={m.settings_page_title()}
-      aria-label={m.settings_page_title()}
-      class="ui-icon-button text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow absolute top-0 right-0 rounded-xl hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
-    >
-      <SlidersHorizontal size={18} strokeWidth={2.5} />
-    </a>
-  </div>
+    {/snippet}
+    {#snippet actions()}
+      <Button variant="secondary" href={resolve('/settings')} class="min-h-11 flex-1 sm:flex-none">
+        <SlidersHorizontal size={16} class="shrink-0" aria-hidden="true" />
+        <span class="whitespace-nowrap">{m.settings_page_title()}</span>
+      </Button>
+    {/snippet}
+  </ProfileHeader>
 
   <SectionHub {rows} label={m.profile_hub_label()} />
 {/if}

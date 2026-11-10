@@ -261,3 +261,9 @@ holds 6 Commons SCENE photos with source, author and licence (no portrait: faces
 avatars, served by the dev-only override of #3219); three scene-photo posts went through the real composer; the iOS capture path is written (tab and link taps, the accessibility tree as the page probe) but has not run on a signed-in iPhone; both phones' local debris is cleaned. NOT done, with what lifts each:
 [README](../../tools/store-screenshots/README.md#what-is-blocked-2026-11-09-evening-and-what-lifts-each) -
 the avatars on dev (the override must be deployed), a signed-in iPhone for the iOS capture, the English pass (it sets the French content aside, so it runs after the French capture). Event covers appear only in the event detail modal, which no shot opens, so none were posted.
+
+## Decided by the owner, 2026-11-09/10
+
+- The two CC BY-SA photos in the store screenshots are replaced by CC0 photos.
+- Apple age rating **13+** (the youngest students are 16); the store UGC answers and register entry C19 no longer say "adults" ([store-ugc-answers](store-ugc-answers.md)).
+- The deleted dev demo communities stay deleted.

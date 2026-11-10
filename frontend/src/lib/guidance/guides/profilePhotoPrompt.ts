@@ -25,6 +25,7 @@ function stage() {
     firstSeen: seenHelps.has('prompt-profile-photo'),
     reminderSeen: seenHelps.has('prompt-profile-photo-reminder'),
     firstAgeSeconds: seenHelps.ageSeconds('prompt-profile-photo'),
+    month: new Date().getMonth() + 1,
   });
 }
 

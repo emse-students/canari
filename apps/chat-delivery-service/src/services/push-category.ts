@@ -72,6 +72,15 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // reader (WP-L7; widened 2026-11-07, docs/wiki/engagement.md): a publication like that account's
   // posts, so the switch that silences those posts silences its lives too.
   social_live_started: 'posts',
+  // Engagement (docs/wiki/engagement.md, L30): an account the reader follows reacted to or commented
+  // on a post (WP-9), and a post of the reader's space took off (WP-10) - news about somebody else's
+  // post, so the switch that silences posts silences them. social-service's `CAPPED_PUSH_TYPES`
+  // reads the same category before it counts the daily cap (campus trends only since 2026-11-10);
+  // its contract spec pins the two.
+  social_friend_reaction: 'posts',
+  social_friend_comment: 'posts',
+  social_campus_trend: 'posts',
+  social_live_mention: 'mentions',
   // A follow request and its acceptance (WP-F4): a category of their own, which the settings screen
   // draws a switch for. Off, the request still waits in the inbox - only the push is not sent.
   social_follow_request: 'follows',

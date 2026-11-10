@@ -134,9 +134,11 @@ describe('PostsService hides a blocked account, and only where the author was vi
     await service.listPosts({ limit: 10, offset: 0, feed: 'all', viewerUserId: 'viewer-1' });
 
     // Both arms sit in front of the author test, so a post whose author the viewer could not read
-    // in the first place is never weighed against the block list.
+    // in the first place is never weighed against the block list. A LIVE REPLAY is the one
+    // association post NOT exempted: the live named its broadcaster and hid itself from a block
+    // either way (docs/wiki/live-replays.md section 4), so the block reveals nothing the live did not.
     expect(feedSql(calls)).toMatch(
-      /posts\."associationId" IS NOT NULL\s*\n?\s*OR COALESCE\(posts\.anonymous, false\)\s*\n?\s*OR posts\."authorId" <> ALL/
+      /\(posts\."associationId" IS NOT NULL AND posts\.kind <> 'replay'\)\s*\n?\s*OR COALESCE\(posts\.anonymous, false\)\s*\n?\s*OR posts\."authorId" <> ALL/
     );
   });
 

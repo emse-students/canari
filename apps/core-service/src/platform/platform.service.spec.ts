@@ -47,6 +47,7 @@ describe('PlatformService', () => {
       livesMode: 'off' as const,
       pushMode: 'full' as const,
       checkpointSkipMode: 'off' as const,
+      liveReplaysMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -62,6 +63,7 @@ describe('PlatformService', () => {
       livesMode: 'off' as const,
       pushMode: 'full' as const,
       checkpointSkipMode: 'off' as const,
+      liveReplaysMode: 'off' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -79,6 +81,7 @@ describe('PlatformService', () => {
       livesMode: 'off',
       pushMode: 'full',
       checkpointSkipMode: 'off',
+      liveReplaysMode: 'off',
     });
 
     await service.ensureDefaults();
@@ -115,6 +118,15 @@ describe('PlatformService', () => {
     expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ checkpointSkipMode: 'off' }));
   });
 
+  it('ensureDefaults creates the row with live replays OFF - every live is deleted at its end until an admin says otherwise', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    await service.ensureDefaults();
+
+    expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ liveReplaysMode: 'off' }));
+  });
+
   /** A config row with `minClientVersion` at `min`, wired into the repo mock. */
   const rowWithMin = (min: string): PlatformConfig => {
     const existing: PlatformConfig = {
@@ -127,6 +139,7 @@ describe('PlatformService', () => {
       livesMode: 'off',
       pushMode: 'full',
       checkpointSkipMode: 'off',
+      liveReplaysMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -178,6 +191,7 @@ describe('PlatformService', () => {
         livesMode: 'off',
         pushMode: 'full',
         checkpointSkipMode: 'off',
+        liveReplaysMode: 'off',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -251,6 +265,7 @@ describe('PlatformService', () => {
         livesMode: 'off',
         pushMode: 'full',
         checkpointSkipMode: 'off',
+        liveReplaysMode: 'off',
       };
       repo.findOne.mockResolvedValue(existing);
       repo.findOneOrFail.mockResolvedValue(existing);
@@ -309,6 +324,7 @@ describe('PlatformService', () => {
       livesMode: 'off',
       pushMode: 'full',
       checkpointSkipMode: 'off',
+      liveReplaysMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -331,6 +347,7 @@ describe('PlatformService', () => {
       livesMode: 'off',
       pushMode: 'full',
       checkpointSkipMode: 'off',
+      liveReplaysMode: 'off',
     };
     repo.findOne.mockResolvedValue(existing);
     repo.findOneOrFail.mockResolvedValue(existing);
@@ -405,6 +422,22 @@ describe('PlatformService', () => {
     expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { checkpointSkipMode: 'on' });
     expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
       'checkpointSkipMode off -> on by=aaaaaaaa'
+    );
+    warn.mockRestore();
+  });
+
+  it('updateConfig moves the live replays switch, logs it at warn with the actor, and touches nothing else', async () => {
+    const existing = rowWithMin('0.13.0');
+    existing.livesMode = 'on';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    const result = await service.updateConfig({ liveReplaysMode: 'on' }, ADMIN);
+
+    expect(result.liveReplaysMode).toBe('on');
+    expect(result.livesMode).toBe('on');
+    expect(repo.update).toHaveBeenCalledWith({ id: 1 }, { liveReplaysMode: 'on' });
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+      'liveReplaysMode off -> on by=aaaaaaaa'
     );
     warn.mockRestore();
   });

@@ -14,6 +14,10 @@
    * `preload` fetches the media ahead (`reelViewerNav.carouselMediaRole` says which): a picture
    * mounts, a video is fetched by `ReelPreload` when it is worth it (`worthPreloading`), so the
    * player takes the warm path the moment the swipe lands.
+   *
+   * EVERY VIEW OF A VIDEO ENDS IN ONE INFO LINE (`[reel-view]`, owner, 2026-11-09): whether its first
+   * frame came and when, else where its load stopped (`reels/reelViewOutcome.ts`) - the in-app log
+   * records no debug, and a reel that neither failed nor played left nothing in it.
    */
   import { untrack } from 'svelte';
   import PostMedia from '$lib/components/posts/PostMedia.svelte';
@@ -23,6 +27,10 @@
   import { ReelPreload, worthPreloading } from '$lib/reels/reelPreload';
   import { captureReelPoster, reelPosterUrl } from '$lib/reels/reelPosters.svelte';
   import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
+  import { Log } from '$lib/utils/Log';
+  import { mediaRequestGate } from '$lib/utils/requestGate';
+  import { chooseSegmentedPlayback, streamProgressOf } from '$lib/utils/segmentedMediaStream';
+  import { ReelView, reelSourceKind, type ReelViewEvent } from '$lib/reels/reelViewOutcome';
 
   interface Props {
     /** The post the media belongs to, for the log lines. */
@@ -103,16 +111,19 @@
 
   /** The whole file is in: a video's first frame is kept once it leaves, so a swipe back lands on it. */
   function onMediaLoaded(url: string) {
+    view?.downloaded();
     loaded = true;
     if (video) posterSource = url;
   }
 
   function onPlaybackBlocked(cause: string) {
     console.debug(`[reel-viewer] ${postId} ${media.mediaId} will not play by itself (${cause})`);
+    view?.wontPlay(cause);
     blocked = cause;
   }
 
   function onMediaFailure(cause: MediaFailureCause) {
+    view?.failed(cause);
     if (cause !== 'expired' || !onMediaGone) return;
     console.debug(`[reel-viewer] ${postId} answered 410 - its file is gone, the opener is told`);
     onMediaGone();
@@ -128,6 +139,14 @@
     untrack(() => onReady?.());
   });
 
+  /**
+   * The preload this pane ran while it was the NEXT reel, kept for the view that starts when it
+   * becomes current (its outcome line says whether the warm path was taken). Dropped when the
+   * preload ends for any other reason. Either order of the two effects below gives the same
+   * answer: the preload's state is frozen at its stop.
+   */
+  let handedPreload: ReelPreload | null = null;
+
   $effect(() => {
     if (!preload || active || !video || !authToken) return;
     // A long feed video is not fetched whole for a media not yet reached (`worthPreloading`).
@@ -138,17 +157,64 @@
       undefined,
       (url) => void captureReelPoster(ref.mediaId, url)
     );
-    return () => ahead.stop();
+    handedPreload = ahead;
+    return () => {
+      // Handed to the player only when the stop comes from this pane becoming the current one.
+      if (!active && handedPreload === ahead) handedPreload = null;
+      ahead.stop();
+    };
   });
+
+  /** The view of the video on screen, from the moment it is active to the moment it is not. */
+  let view: ReelView | null = null;
+
+  $effect(() => {
+    if (!active || kind !== 'video') return;
+    const started = untrack(
+      () =>
+        new ReelView({
+          postId,
+          mediaId: media.mediaId,
+          source: reelSourceKind(chooseSegmentedPlayback(media)),
+          size: media.size,
+          preload: handedPreload?.state ?? 'none',
+        })
+    );
+    handedPreload = null;
+    view = started;
+    return () => {
+      if (view === started) view = null;
+      Log.i(
+        'reel-view',
+        started.end({ inFlight: mediaRequestGate.inFlight, queued: mediaRequestGate.queued })
+      );
+    };
+  });
+
+  /** One `<video>` event of the active player, heard in the capture phase (media events do not bubble). */
+  function onVideoEvent(e: Event) {
+    const target = e.target;
+    if (!view || !(target instanceof HTMLMediaElement)) return;
+    const type = e.type as ReelViewEvent;
+    const stream =
+      type === 'loadstart' ? streamProgressOf(target.currentSrc || target.src) : undefined;
+    view.event(type, target, stream);
+  }
 </script>
 
 <div
   class="flex h-full w-full items-center justify-center"
   data-reel-media={kind}
   data-reel-media-active={active ? '' : undefined}
-  onplayingcapture={() => {
+  onplayingcapture={(e) => {
+    onVideoEvent(e);
     if (active && !playing) playing = true;
   }}
+  onloadstartcapture={onVideoEvent}
+  onloadedmetadatacapture={onVideoEvent}
+  onloadeddatacapture={onVideoEvent}
+  onwaitingcapture={onVideoEvent}
+  onstalledcapture={onVideoEvent}
 >
   {#if !show}
     <!-- Out of reach: an empty box that keeps the strip's geometry. -->

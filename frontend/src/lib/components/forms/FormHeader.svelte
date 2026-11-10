@@ -49,9 +49,9 @@
     </div>
   {:else}
     <div
-      class="from-cn-yellow/10 flex items-start gap-4 bg-linear-to-br via-transparent to-transparent px-6 pt-6 pb-4"
+      class="from-accent/10 flex items-start gap-4 bg-linear-to-br via-transparent to-transparent px-6 pt-6 pb-4"
     >
-      <div class="bg-cn-yellow/20 text-cn-dark shrink-0 rounded-2xl p-3">
+      <div class="bg-accent/20 text-cn-dark shrink-0 rounded-2xl p-3">
         <ClipboardList size={26} />
       </div>
       <div class="min-w-0 flex-1">

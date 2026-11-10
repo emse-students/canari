@@ -114,6 +114,19 @@ export interface ReelUsage {
   oldestOverdueMs: number | null;
 }
 
+/**
+ * Live replays and the TOTAL CAP's evictions in the last 30 days (docs/wiki/live-replays.md, D5).
+ * Display only, like the rest of the panel: a non-zero `evictions` is the admins' signal that the
+ * cap is too small, written next to the `[LIVE_REPLAY_CAP]` WARN line of each eviction.
+ */
+export interface ReplayUsage {
+  live: number;
+  bytes: number;
+  evictions: number;
+  lastEvictedAt: string | null;
+  lastCapBytes: number | null;
+}
+
 export interface BackendStorageUsage {
   diskTotalBytes: number | null;
   diskUsedBytes: number | null;
@@ -122,6 +135,8 @@ export interface BackendStorageUsage {
   media: MediaBucketUsage | null;
   /** The reel worker's verdict on itself; `null` when the measurement failed. */
   reels: ReelUsage | null;
+  /** Live replays and the cap's evictions; `null` when the measurement failed (absent from an older server). */
+  replays?: ReplayUsage | null;
   /**
    * The MLS half. Postgres and Redis are bare totals above; this is what they are made of, and it
    * is DISPLAY ONLY - the user's call of 2026-08-17 was a panel and no alert, so nothing here

@@ -15,7 +15,8 @@
  */
 import { SvelteSet } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
-import { createPost, withdrawPost } from '$lib/posts/api';
+import { createPost, getReelLimits, withdrawPost } from '$lib/posts/api';
+import { reelRuleOf } from '$lib/reels/reelRule';
 import { MediaService, preparePostMedia } from '$lib/media';
 import { SEGMENTED_MEDIA_ENCODING, writesSegmented } from '$lib/mediaSegmented';
 import { assertNotMuted } from '$lib/moderation/muteCheck';
@@ -123,6 +124,7 @@ export function startPublishQueue(userId: string): void {
       const limits = file.type.startsWith('video/') ? await media.uploadLimits() : null;
       return preparePostMedia(file, { maxBytes: limits?.maxPlaintextBytes, onProgress, signal });
     },
+    reelRule: async () => reelRuleOf(await getReelLimits()),
     encodingFor: (mimeType) =>
       writesSegmented(mimeType) ? SEGMENTED_MEDIA_ENCODING : 'single-block',
     upload: (a) =>

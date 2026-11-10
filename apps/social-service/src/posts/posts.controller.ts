@@ -155,6 +155,21 @@ export class PostsController {
     });
   }
 
+  /**
+   * The caller's SUGGESTED POSTS (engagement WP-7, decision 8): popular posts they already see by the
+   * space rule, from accounts they do not follow - feed rows, which the client places in Mon espace
+   * marked "Suggestion" (at most one in every 8 items, never two in a row: L13). `me/...` is a
+   * literal no post id is.
+   */
+  @UseGuards(NginxAuthGuard, FeedAudienceGuard)
+  @Get('me/suggested-posts')
+  listSuggestedPosts(
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin?: string
+  ) {
+    return this.service.listSuggestedPosts(xUserId, xGlobalAdmin === 'true');
+  }
+
   /** Returns a paginated list of posts for the requested feed. */
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get()
@@ -187,6 +202,7 @@ export class PostsController {
       singleMedia: query.singleMedia === true,
       multiMedia: query.multiMedia === true,
       withLinks: query.withLinks === true,
+      withReplays: query.withReplays === true,
     });
   }
 
@@ -258,12 +274,14 @@ export class PostsController {
   getPost(
     @Param('postId', ParseUUIDPipe) postId: string,
     @Headers('x-global-admin') xGlobalAdmin?: string,
-    @Headers('x-user-id') userId?: string
+    @Headers('x-user-id') userId?: string,
+    @Query('withReplays') withReplays?: string
   ) {
     return this.service.getById(postId, {
       allowHidden: xGlobalAdmin === 'true',
       viewerId: userId,
       isGlobalAdmin: xGlobalAdmin === 'true',
+      withReplays: withReplays === 'true',
     });
   }
 

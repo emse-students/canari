@@ -197,6 +197,14 @@
    */
   const isMemberRepostNotif = $derived(notif.type === 'member_repost');
   /**
+   * FRIENDS' ACTIVITY (engagement WP-9), named for the same reason: a PERSON the reader follows
+   * reacted to or commented on a post the reader sees, so it draws that person's avatar, and the
+   * body is the POST's opening - never the comment, never the reaction.
+   */
+  const isFriendNotif = $derived(
+    notif.type === 'friend_reaction' || notif.type === 'friend_comment'
+  );
+  /**
    * A CO-ORGANISATION PROPOSAL (D39), named for the same reason: the ORGANISING association asks,
    * and the body is the event's title.
    */
@@ -328,7 +336,7 @@
     notif.type === 'reaction'
       ? 'bg-pink-500 text-white'
       : notif.type === 'mention'
-        ? 'bg-amber-500 text-cn-ink'
+        ? 'bg-accent text-on-accent'
         : notif.type === 'reply'
           ? 'bg-blue-500 text-white'
           : notif.type === 'form_reminder'
@@ -337,17 +345,17 @@
                 notif.type === 'lydia_payments_paused' ||
                 notif.type === 'delegation_revoked' ||
                 notif.type === 'delegation_receiver_not_ready'
-              ? 'bg-amber-500 text-cn-ink'
+              ? 'bg-accent text-on-accent'
               : notif.type === 'event_rejected'
                 ? 'bg-red-500 text-white'
                 : notif.type === 'event_pending' || notif.type === 'event_pending_coorganiser'
-                  ? 'bg-amber-500 text-cn-ink'
+                  ? 'bg-accent text-on-accent'
                   : isEventNotif || isCoorganiseNotif || isOpeningNotif
                     ? 'bg-sky-600 text-white'
-                    : isPostNotif || isRepostNotif || isPersonalRepostNotif
+                    : isPostNotif || isRepostNotif || isPersonalRepostNotif || isFriendNotif
                       ? 'bg-indigo-500 text-white'
                       : isFollowNotif || notif.type === 'birthday'
-                        ? 'bg-amber-500 text-cn-ink'
+                        ? 'bg-accent text-on-accent'
                         : notif.type === 'profile_correction_refused'
                           ? 'bg-red-500 text-white'
                           : isUnknownNotif
@@ -552,6 +560,15 @@
       {:else if isMemberRepostNotif}
         {m.notif_member_repost_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isFriendNotif}
+        {notif.type === 'friend_reaction'
+          ? m.notif_friend_reaction_text()
+          : m.notif_friend_comment_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if notif.type === 'campus_trend'}
+        <!-- Engagement WP-10: nobody acted; the sentence names the reader's space, the body the post. -->
+        {m.notif_campus_trend_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if isRepostNotif}
         {notif.type === 'repost_proposed'
           ? m.notif_repost_proposed_text()
@@ -599,16 +616,12 @@
       blue here; Canari's accent is the yellow, and an app with no other blue in its palette calling
       "unread" blue is the incoherence this pass exists to remove.
     -->
-    <p
-      class="mt-0.5 text-xs {unread
-        ? 'font-semibold text-amber-600 dark:text-amber-400'
-        : 'text-text-muted'}"
-    >
+    <p class="mt-0.5 text-xs {unread ? 'text-accent-text font-semibold' : 'text-text-muted'}">
       {formatRelative(notif.createdAt)}
     </p>
   </div>
 
   {#if unread}
-    <span class="mt-2 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true"></span>
+    <span class="bg-accent mt-2 h-2.5 w-2.5 shrink-0 rounded-full" aria-hidden="true"></span>
   {/if}
 </button>

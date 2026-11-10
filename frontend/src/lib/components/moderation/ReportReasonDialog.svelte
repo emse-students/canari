@@ -48,9 +48,9 @@
       {#each reasons as reason (reason.value)}
         <button
           type="button"
-          class="border-cn-border text-text-main w-full rounded-xl border px-3 py-2.5 text-left text-sm transition-colors hover:border-amber-400 disabled:opacity-40 {selected ===
+          class="border-cn-border text-text-main hover:border-accent-icon w-full rounded-xl border px-3 py-2.5 text-left text-sm transition-colors disabled:opacity-40 {selected ===
           reason.value
-            ? 'border-amber-400 bg-amber-400/10'
+            ? 'border-accent-icon bg-accent/10'
             : ''}"
           onclick={() => (selected = reason.value)}
           disabled={submitting}

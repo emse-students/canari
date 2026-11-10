@@ -27,7 +27,7 @@
   aria-live="polite"
   aria-busy="true"
 >
-  <LoaderCircle size={28} class="shrink-0 animate-spin text-amber-500" strokeWidth={2} />
+  <LoaderCircle size={28} class="text-accent-text shrink-0 animate-spin" strokeWidth={2} />
   <p class="text-text-main text-sm font-medium">{message}</p>
   <p class="text-text-muted max-w-sm text-xs">
     {m.chat_sync_overlay_description()}

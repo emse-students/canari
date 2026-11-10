@@ -14,12 +14,14 @@ import {
  * mirror - are proven against PostgreSQL in `account-bells.integration.spec.ts`.
  */
 describe('the bell rules', () => {
-  it('reduces only the publication, live and birthday pushes, never a mention or a manager notice', () => {
+  it('reduces only the publication, live, birthday and friend-activity pushes, never a mention or a manager notice', () => {
     expect([...BELL_PUSH_KINDS.entries()].sort(([a], [b]) => a.localeCompare(b))).toEqual([
       ['association_post', 'post'],
       ['association_repost', 'post'],
       ['birthday', 'post'],
       ['followed_post', 'post'],
+      ['friend_comment', 'post'],
+      ['friend_reaction', 'post'],
       ['live_started', 'live'],
       ['member_repost', 'post'],
       ['repost_personal_requested', 'post'],

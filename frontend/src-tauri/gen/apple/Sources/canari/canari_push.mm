@@ -744,6 +744,8 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // Republication (D38): the republishing, then the proposing, association names the title.
     @"social_association_repost" : @"association_repost",
     @"social_member_repost" : @"member_repost",
+    @"social_friend_reaction" : @"friend_reaction",
+    @"social_friend_comment" : @"friend_comment",
     @"social_repost_proposed" : @"repost_proposed",
     // D38b: an association asks the AUTHOR to republish their personal post.
     @"social_repost_personal_requested" : @"repost_personal_requested",
@@ -752,6 +754,7 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // A live started (WP-L7): the broadcaster - a person or an association - names the title, and
     // the body is always the fixed sentence (the server sends no fragment).
     @"social_live_started" : @"live_started",
+    @"social_live_mention" : @"live_mention",
     // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
     @"social_follow_request" : @"follow_request",
     @"social_follow_accepted" : @"follow_accepted",
@@ -801,6 +804,12 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
   if (fixedStem) {
     *title = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.title", fixedStem]);
     *body = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.body", fixedStem]);
+    return;
+  }
+  // A campus trend (engagement WP-10): nobody acted, a fixed title; the body is the post's opening.
+  if ([key isEqualToString:@"social_campus_trend"]) {
+    *title = CanariLocalized(@"notif.social.campus_trend.title");
+    *body = arg.length > 0 ? arg : CanariLocalized(@"notif.social.campus_trend.body");
     return;
   }
   // The bookings' reminder (WP-N): nobody acted, a fixed title; the body is the place and the time.

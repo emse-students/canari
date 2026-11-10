@@ -136,7 +136,7 @@ describe('SpaceGrid - drag a range', () => {
     expect(document.querySelector('[role="status"]')?.textContent).toMatch(/\d/);
     // ONE accent block for the whole range, not a coloured cell per unit.
     expect(document.querySelectorAll('[data-selection]')).toHaveLength(1);
-    expect(document.querySelector('[data-selection]')!.className).toContain('bg-cn-yellow');
+    expect(document.querySelector('[data-selection]')!.className).toContain('bg-accent');
     pointer('pointerup', cells[2], 'mouse', 20, 2);
     expect(document.querySelector('[role="status"]')).toBeNull();
   });

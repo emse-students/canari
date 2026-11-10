@@ -836,6 +836,19 @@ bandwidth, and pipelining is a later choice, not a defect. The native push-thumb
 compile- and `cargo test`-verified only. Evidence (JSON timelines, logs, screenshots) is kept
 machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
 
+## The test suite runs each file in a temporary directory (2026-11-09)
+
+The service resolves `chunks_temp`, `media_meta` and the default `upload_sessions` from
+`process.cwd()`, and so do the specs that touch the real filesystem (`chunks_temp/<id>.done` in
+`media.service.chunk-lifecycle.spec.ts`). Run from `apps/media-service`, the suite wrote into a
+`chunks_temp` that had been COMMITTED with eight `.done` sidecars, so every local run deleted tracked
+files; and all the files of a run shared that one directory, which is how the chat-holds spec's
+orphan purge once wiped another file's staged upload. `jest.temp-cwd.cjs`, loaded by
+`setupFilesAfterEnv` in both jest configs (`package.json`, `jest-boot.json`), makes a fresh
+`mkdtemp` directory the working directory of each test FILE before it is required, and removes it
+after. The runtime directories are ignored by `.gitignore`, never tracked: the service makes them at
+boot (`ensureDirSync`).
+
 ## Environment variables
 
 | Variable                                | Required | Description                                                                                                                                                                                                  |
@@ -856,6 +869,7 @@ machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
 | `MEDIA_UPLOAD_SESSION_TTL_MS`           | no       | The resume window, from the opening (default 24 h)                                                                                                                                                           |
 | `MEDIA_UPLOAD_SESSION_MAX_OPEN`         | no       | Open sessions per member (default 4)                                                                                                                                                                         |
 | `MEDIA_UPLOAD_SESSION_MAX_STAGED_BYTES` | no       | Total declared size of open sessions (default 2 GiB)                                                                                                                                                         |
+| `LIVE_SEGMENTS_DIR`                     | no       | The live segments' own store (default `./live_segments`); both estates mount the `live_segments` volume at `/app/live_segments` - never backed up ([live-replays](../live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)) |
 | `LIVE_ENABLED`                          | no       | `true` opens the two live segment routes; anything else is a 404. Rendered `true` on both estates since 2026-10-30; `lives_mode` closes the routes at runtime ([lives](lives.md)) |
 
 **Every one of these was named `MINIO_*` until 2026-08-18**, four days after the store itself

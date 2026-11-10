@@ -30,10 +30,14 @@ export type PushContentKey =
   | 'social_followed_post'
   | 'social_association_repost'
   | 'social_member_repost'
+  | 'social_friend_reaction'
+  | 'social_friend_comment'
+  | 'social_campus_trend'
   | 'social_repost_proposed'
   | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
   | 'social_live_started'
+  | 'social_live_mention'
   | 'social_follow_request'
   | 'social_follow_accepted'
   | 'social_birthday'
@@ -134,6 +138,7 @@ export type PushContent = {
    * - `social_reaction`: the reaction itself (an emoji)
    * - `social_association_post` / `social_followed_post`: the opening of the post's own text
    * - `social_live_started`: nothing, always empty
+   * - `social_live_mention`: the live's title, empty when it has none
    * - the three live moderation keys (`social_live_cut`, `_suspended`, `_withdrawn`): nothing, always
    *   empty - the reason is a WORD, so it stays on the in-app row, which the client words
    * - the two form reminder keys: nothing, always empty
@@ -673,6 +678,60 @@ export function memberRepostContent(
 }
 
 /**
+ * An account the recipient follows reacted to a post the recipient can see (engagement WP-9,
+ * friends' activity, docs/wiki/engagement.md). `actorName` is the person who reacted; `arg` is the
+ * opening of the POST's own text - never the reaction, never anything of the reader's.
+ */
+export function friendReactionContent(
+  actorName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
+  return {
+    key: 'social_friend_reaction',
+    icon,
+    actorName,
+    arg: preview,
+    legacyTitle: `${actorName} a réagi à une publication`,
+    legacyBody: preview || 'Voir la publication',
+  };
+}
+
+/**
+ * An account the recipient follows commented on a post the recipient can see (engagement WP-9).
+ * `actorName` is the writer; `arg` is the opening of the POST's text, never the comment's.
+ */
+export function friendCommentContent(
+  actorName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
+  return {
+    key: 'social_friend_comment',
+    icon,
+    actorName,
+    arg: preview,
+    legacyTitle: `${actorName} a commenté une publication`,
+    legacyBody: preview || 'Voir la publication',
+  };
+}
+
+/**
+ * A post of the recipient's space took off (engagement WP-10, campus trends): nobody acted in the
+ * notice's name, so `actorName` is empty - an anonymous post stays anonymous; `arg` is the opening
+ * of the post's own text.
+ */
+export function campusTrendContent(preview: string): PushContent {
+  return {
+    key: 'social_campus_trend',
+    actorName: '',
+    arg: preview,
+    legacyTitle: 'Une publication fait réagir votre espace',
+    legacyBody: preview || 'Voir la publication',
+  };
+}
+
+/**
  * Another association proposes a post to one the recipient may publish for (D38). `actorName` is
  * the PROPOSING association; `arg` the post's opening.
  */
@@ -795,6 +854,23 @@ export function liveStartedContent(
     arg: title,
     legacyTitle: `${broadcasterName} est en live`,
     legacyBody: title || 'Appuyez pour regarder',
+  };
+}
+
+/**
+ * Someone mentioned the recipient in a live's chat (owner, 2026-11-09). `actorName` is the person who
+ * wrote the line; `arg` is the live's TITLE, empty when it has none - the body is then the fixed
+ * sentence, as for `social_live_started`. Its own key rather than `social_mention`, whose fixed body
+ * says "in a comment"; it takes the same `mentions` category (chat-delivery's `push-category.ts`).
+ */
+export function liveMentionContent(actorName: string, title: string, icon?: PushIcon): PushContent {
+  return {
+    key: 'social_live_mention',
+    icon,
+    actorName,
+    arg: title,
+    legacyTitle: `${actorName} vous a mentionné dans un live`,
+    legacyBody: title || 'Appuyez pour rejoindre le live',
   };
 }
 

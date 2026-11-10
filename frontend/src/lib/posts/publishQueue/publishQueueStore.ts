@@ -46,7 +46,15 @@ export interface QueuedMedia {
    * are then the PREPARED ones, and they are never prepared again - an encoder is not bit-exact, and
    * the resumable session is bound to the bytes it was opened for.
    */
-  prepared?: { name: string; type: string; size: number; width?: number; height?: number };
+  prepared?: {
+    name: string;
+    type: string;
+    size: number;
+    width?: number;
+    height?: number;
+    /** A video's prepared length in whole ms: with the frame, what makes the post a CanaReel. */
+    durationMs?: number;
+  };
   /** The resumable session of this media's upload, written before its first part leaves. */
   upload?: OutboxResumableUpload;
   /** Set once the server holds the blob: the ref the post carries. Never uploaded again. */

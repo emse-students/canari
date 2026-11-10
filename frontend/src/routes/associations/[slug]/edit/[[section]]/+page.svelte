@@ -373,7 +373,7 @@
     {#if loading}
       <div class="flex items-center justify-center py-20">
         <div
-          class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+          class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else if error && !asso}
@@ -445,7 +445,7 @@
                 <CreditCard size={20} />
                 {m.asso_payments_section_title()}
               </h2>
-              <p class="text-amber-warn text-sm">{m.asso_payments_unavailable()}</p>
+              <p class="text-amber-warn-text text-sm">{m.asso_payments_unavailable()}</p>
             </div>
           {/if}
         </div>

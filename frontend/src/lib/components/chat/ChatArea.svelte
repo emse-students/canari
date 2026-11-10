@@ -40,8 +40,11 @@
   import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
   import {
     chatViewCountLine,
+    chatViewEntryLine,
     isPinnedToBottom,
     respondToNewMessage,
+    stickToBottomAfterScroll,
+    threadReach,
     keyboardChangeResponse,
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
@@ -419,6 +422,8 @@
   let lastConversationKey = $state('');
   /** Counts entries (fill passes): only the latest entry's fill and widen may go on. */
   let entryEpoch = 0;
+  /** The entry's `[CHAT_VIEW] ... entry settled` line is still to be written (one per entry). */
+  let entryReportOwed = false;
   let lastMessageCount = $state(0);
   /** First index (inclusive) of the sliding render window inside messageGroups. */
   let windowStart = $state(0);
@@ -443,6 +448,14 @@
   /** Whether local DB may have messages older than what's currently in memory. */
   let hasMoreInDb = $state(true);
   let isLoadingOlder = $state(false);
+  /**
+   * The older-history load in flight; a conversation switch retires it, so its late `scrollTop`
+   * restore - computed from the PREVIOUS conversation's offsets - never lands on the new one, and its
+   * `isLoadingOlder` does not hold the new entry's growth to `keep-row` (review of #3223).
+   */
+  let olderLoadToken = 0;
+  /** `scrollTop` at the last `measureScroll` of this conversation (`stickToBottomAfterScroll`). */
+  let lastMeasuredScrollTop: number | null = null;
   /**
    * Where this conversation's scrollback stands - the ask made once the LOCAL store is exhausted
    * and only a peer can supply what is older.
@@ -479,21 +492,21 @@
   /** The touches on the thread, read by the widen so no step writes `scrollTop` under a finger. */
   let threadTouch: TouchHold | null = null;
 
-  function scrollToBottom(smooth = true) {
+  /**
+   * Puts the pane on its last row.
+   *
+   * **INSTANT, NEVER SMOOTH** (2026-11-09). A smooth scroll is a span of frames in which the pane
+   * is between two places: every `scroll` event of the glide is measured (`measureScroll`), so the
+   * stick-to-bottom flag reads `false` mid-way, and a row growing then - a preview upgraded into its
+   * reply bubble - was answered as growth under a reader in history: the glide ended at the OLD
+   * bottom and the new rows stayed below the fold. Any plain `scrollTop` write also aborts a glide
+   * (the jump-to-message defect of 2026-10-12, chat.md). An instant scroll has nothing in flight.
+   */
+  function scrollToBottom() {
     if (!chatContainer) return;
-    chatContainer.scrollTo({
-      top: chatContainer.scrollHeight,
-      behavior: smooth ? 'smooth' : 'auto',
-    });
+    chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'auto' });
   }
 
-  /**
-   * Robustly pins the view to the latest message when entering a conversation.
-   * A single rAF scroll often fires before late-settling content (images, fonts,
-   * the freshly rendered group window) has finished growing the list, leaving the
-   * view above the bottom. Re-pinning across a few frames and two short delays
-   * guarantees we actually land on the last message.
-   */
   /**
    * Entering a conversation : the initial render window is kept small (one screenful) so the
    * first paint is instant. If that screenful happens to be shorter than the viewport while
@@ -601,29 +614,26 @@
   }
 
   /**
-   * Pins the view to the bottom, then keeps re-pinning across a few frames and two short
-   * delays so late-settling content (images, fonts) can't leave us above the bottom.
-   * `onPinned` fires on the first frame we are actually at the bottom - used to reveal the
-   * list only once it is correctly scrolled, so the entry never flashes the top.
+   * Pins the view to the bottom now and again on the next frame, where `onPinned` reveals the list -
+   * so the entry never flashes the top.
+   *
+   * **WHAT SETTLES LATER IS FOLLOWED, NOT WAITED FOR** (2026-11-09). This used to re-pin for four
+   * more frames and at 250 and 600 ms, guessing when late content (a medium, a font, a preview
+   * upgraded into its reply) would have landed. Content that landed after the guess was not
+   * followed, and a reader who scrolled up inside it was pulled back down. `observeThreadGrowth`
+   * follows every change of the thread's extent while the entry runs and while the reader is at the
+   * bottom after it (`threadGrowthResponse`), so the guess is gone.
    */
   function scrollToBottomSettled(onPinned?: () => void) {
     if (!chatContainer) {
       onPinned?.();
       return;
     }
-    scrollToBottom(false);
+    scrollToBottom();
     requestAnimationFrame(() => {
-      scrollToBottom(false);
+      scrollToBottom();
       onPinned?.();
-      let frames = 0;
-      const repin = () => {
-        scrollToBottom(false);
-        if (++frames < 4) requestAnimationFrame(repin);
-      };
-      requestAnimationFrame(repin);
     });
-    setTimeout(() => scrollToBottom(false), 250);
-    setTimeout(() => scrollToBottom(false), 600);
   }
 
   /**
@@ -650,7 +660,15 @@
     if (!chatContainer) return;
     // THE ONLY WRITER of the thread's stick-to-bottom flag. A scroll is the only thing that can
     // express the reader's intent to leave the live end, so it is the only thing that revises it.
-    isNearBottom = isPinnedToBottom(chatContainer);
+    // Leaving the bottom takes a move UP: a growth seen here before the observer could follow it
+    // must not drop the flag the observer is about to read (`stickToBottomAfterScroll`).
+    isNearBottom = stickToBottomAfterScroll({
+      pinned: isPinnedToBottom(chatContainer),
+      scrollTop: chatContainer.scrollTop,
+      wasNearBottom: isNearBottom,
+      previousScrollTop: lastMeasuredScrollTop,
+    });
+    lastMeasuredScrollTop = chatContainer.scrollTop;
     lastVisibleAnchor = measureLastVisibleAnchor();
     updateStickyDateIndicator();
     if (chatContainer.scrollTop < OLDER_TRIGGER_PX) {
@@ -919,20 +937,25 @@
       return;
     }
     if (onLoadOlderMessages && hasMoreInDb && !isLoadingOlder) {
+      const token = ++olderLoadToken;
       isLoadingOlder = true;
       try {
         const prevScrollHeight = chatContainer?.scrollHeight ?? 0;
         const prevScrollTop = chatContainer?.scrollTop ?? 0;
         const hasMore = await onLoadOlderMessages();
+        if (token !== olderLoadToken) {
+          Log.d('ChatArea', 'older-history load retired by a conversation switch - no restore');
+          return;
+        }
         if (!hasMore) hasMoreInDb = false;
         // New messages were prepended - restore scroll position so the
         // viewport doesn't jump back to the top.
         await tick();
-        if (chatContainer) {
+        if (chatContainer && token === olderLoadToken) {
           chatContainer.scrollTop = prevScrollTop + (chatContainer.scrollHeight - prevScrollHeight);
         }
       } finally {
-        isLoadingOlder = false;
+        if (token === olderLoadToken) isLoadingOlder = false;
       }
       return;
     }
@@ -981,7 +1004,7 @@
 
   function jumpToLatest() {
     windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
-    tick().then(() => requestAnimationFrame(() => scrollToBottom(true)));
+    tick().then(() => requestAnimationFrame(() => scrollToBottom()));
     isNearBottom = true;
   }
 
@@ -1182,6 +1205,10 @@
         switchTime = computeMessageListSwitchTime(c.messages);
         windowStart = entryWindowStart(messageGroups.length, ENTRY_FIRST_FRAME_GROUPS);
         hasMoreInDb = !isChannel;
+        // The previous conversation's older-history load and scroll offset are not this one's.
+        olderLoadToken++;
+        isLoadingOlder = false;
+        lastMeasuredScrollTop = null;
         scrollbackState = 'idle';
         scrollbackAskedAt = null;
         // Hold the list invisible until fillViewportThenPin() lands it at the bottom, so the
@@ -1190,6 +1217,7 @@
         entryWidening = false;
         // A new entry retires the previous one's fill and widen at once, not a tick later.
         entryEpoch++;
+        entryReportOwed = true;
         tick().then(() => fillViewportThenPin());
         isNearBottom = true;
       } else if (hasNewMessage) {
@@ -1225,7 +1253,7 @@
           windowStart =
             response === 'repin-entry' ? Math.min(renderWindow.start, entryStart) : entryStart;
           if (response === 'repin-entry') tick().then(() => fillViewportThenPin());
-          else tick().then(() => scrollToBottom(true));
+          else tick().then(() => scrollToBottom());
         }
       }
 
@@ -1238,6 +1266,42 @@
 
       lastConversationKey = convoKey;
       lastMessageCount = messageCount;
+    });
+  });
+
+  /**
+   * THE ENTRY'S OUTCOME, ONCE, IN THE EXPORTED LOG (owner's Android 1.6.8, 2026-11-09).
+   *
+   * The owner's log showed every row of a notification-tap open reaching the conversation map, and
+   * nothing of where the pane then stood - the count line above is debug, which the in-app log does
+   * not record. So one INFO line per entry, written when the entry is revealed AND its catch-up has
+   * ended (the history replay's upgrades and withdrawal have landed by then), measured on the next
+   * frame so the layout of those last changes is the one read. One line per entry, never per frame:
+   * `entryReportOwed` is set by the switch and spent here.
+   */
+  $effect(() => {
+    const settled = !entering && !(isLoadingHistory || isCatchingUpMessages);
+    const c = conversation;
+    if (!settled || !c) return;
+    untrack(() => {
+      if (!entryReportOwed) return;
+      entryReportOwed = false;
+      const epoch = entryEpoch;
+      requestAnimationFrame(() => {
+        // A switch inside this frame owes its own line; this one would measure the other list.
+        if (epoch !== entryEpoch || !chatContainer) return;
+        const newest = messageRows.at(-1);
+        Log.i(
+          'CHAT_VIEW',
+          chatViewEntryLine(c.id, {
+            pinned: isPinnedToBottom(chatContainer),
+            isNearBottom,
+            newestVisible: newest !== undefined && measureLastVisibleAnchor()?.id === newest.id,
+            rows: c.messages.length,
+            fromBottom: Math.round(threadReach(chatContainer) - chatContainer.scrollTop),
+          })
+        );
+      });
     });
   });
 
@@ -1323,7 +1387,7 @@
   $effect(() => {
     if (!_composerFocused || !chatContainer) return;
     untrack(() => {
-      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+      tick().then(() => requestAnimationFrame(() => scrollToBottom()));
     });
   });
 
@@ -1344,7 +1408,7 @@
       Log.d('ChatArea', `keyboard ${kbOpen ? 'opened' : 'closed'}: ${response}`);
     }
     if (response === 'follow-bottom') {
-      tick().then(() => requestAnimationFrame(() => scrollToBottom(false)));
+      tick().then(() => requestAnimationFrame(() => scrollToBottom()));
     }
     keyboardWasOpen = kbOpen;
   });
@@ -1570,7 +1634,7 @@
             onclick={() => (showPolls = !showPolls)}
             class="chat-chrome-bar border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
           >
-            <ChartColumn size={14} class="text-cn-yellow shrink-0" />
+            <ChartColumn size={14} class="text-accent-icon shrink-0" />
             <span class="font-semibold"
               >{m.chat_active_polls_count({ activePolls: activePolls.length })}</span
             >
@@ -1608,7 +1672,7 @@
             onclick={() => (showPinned = !showPinned)}
             class="chat-chrome-bar border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
           >
-            <Pin size={14} class="shrink-0 text-amber-500" />
+            <Pin size={14} class="text-accent-text shrink-0" />
             <span class="font-semibold"
               >{m.chat_pinned_messages_count({ pinnedIds: pinnedIds.length })}</span
             >
@@ -1835,7 +1899,7 @@
         </span>
         {#if unreadBelowCount > 0}
           <span
-            class="text-cn-ink text-2xs pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1 font-bold shadow-sm shadow-amber-500/30"
+            class="text-on-accent text-2xs bg-accent shadow-accent/30 pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 font-bold shadow-sm"
             aria-hidden="true"
           >
             {unreadBelowCount > 99 ? '99+' : unreadBelowCount}
@@ -1871,7 +1935,7 @@
           {#if (conversation?.conversationType ?? 'group') === 'group'}
             <button
               onclick={() => onStartAgainWithSamePeople?.()}
-              class="rounded-lg bg-amber-500/15 px-4 py-1.5 text-sm font-medium transition-all hover:bg-amber-500/25 active:scale-95"
+              class="bg-accent/15 hover:bg-accent/25 rounded-lg px-4 py-1.5 text-sm font-medium transition-all active:scale-95"
             >
               {m.chat_unopenable_start_again()}
             </button>

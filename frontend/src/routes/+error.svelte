@@ -19,6 +19,18 @@
   import { m } from '$lib/paraglide/messages';
 
   const failed = $derived(page.status >= 500);
+  /**
+   * THE LOCALIZED LINE FOR A STATUS - `page.error.message` is Kit's English status text ("Not Found")
+   * and was printed raw under a French button. A 5xx has its own copy, a 404 its own, anything else the
+   * generic one; the raw message is never shown.
+   */
+  const message = $derived(
+    failed
+      ? m.layout_error_boundary_message()
+      : page.status === 404
+        ? m.error_not_found_message()
+        : m.error_unexpected_message()
+  );
 
   function retry() {
     const here = appPathFromPathname(page.url.pathname) + page.url.search + page.url.hash;
@@ -35,16 +47,14 @@
 <main class="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
   <p class="text-text-main text-2xl font-bold">{page.status}</p>
   <p class="text-text-muted">
-    {failed
-      ? m.layout_error_boundary_message()
-      : (page.error?.message ?? m.error_unexpected_message())}
+    {message}
   </p>
   <div class="mt-2 flex gap-3">
     {#if failed}
       <button
         type="button"
         onclick={retry}
-        class="bg-cn-yellow text-cn-ink rounded-xl px-4 py-2 text-sm font-semibold"
+        class="bg-accent text-on-accent rounded-xl px-4 py-2 text-sm font-semibold"
       >
         {m.common_retry_button()}
       </button>
@@ -54,7 +64,7 @@
       onclick={home}
       class="{failed
         ? 'border-cn-border text-text-main border'
-        : 'bg-cn-yellow text-cn-ink'} rounded-xl px-4 py-2 text-sm font-semibold"
+        : 'bg-accent text-on-accent'} rounded-xl px-4 py-2 text-sm font-semibold"
     >
       {m.error_back_home()}
     </button>

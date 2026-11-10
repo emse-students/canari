@@ -212,7 +212,7 @@ a same request is one a cache answers.
 
 | Where | What it does |
 | --- | --- |
-| media-service `GET /media/public/live/:liveId/:name` | streams the object `live/<liveId>/<name>` from Garage; no token, `LIVE_ENABLED` checked, no Cache-Control of its own. **Answers the CANONICAL path only** (`LiveSegmentsService.isCanonicalSegmentPath`: both uuids lower case, the raw path exactly `/api/media/public/live/<liveId>/<name>`, no trailing slash, no query, no percent-encoding) and 404s anything else before the store is asked - Express 5 matches any case and a trailing slash, and `/api/media/PUBLIC/live/...` reaches the route through the authenticated `/api/media` location. Replaces the JWT route `GET /media/live/...` of WP-L3, which no client ever called |
+| media-service `GET /media/public/live/:liveId/:name` | streams the object `live/<liveId>/<name>` from the live segment store (the `live_segments` volume, NOT Garage since live replays WP-R3: never backed up, [live-replays](../live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)); no token, `LIVE_ENABLED` checked, no Cache-Control of its own. **Answers the CANONICAL path only** (`LiveSegmentsService.isCanonicalSegmentPath`: both uuids lower case, the raw path exactly `/api/media/public/live/<liveId>/<name>`, no trailing slash, no query, no percent-encoding) and 404s anything else before the store is asked - Express 5 matches any case and a trailing slash, and `/api/media/PUBLIC/live/...` reaches the route through the authenticated `/api/media` location. Replaces the JWT route `GET /media/live/...` of WP-L3, which no client ever called |
 | nginx `proxy_cache_path ... keys_zone=live_segments` | http level: 512 MB, `inactive=2m`, written in place (`use_temp_path=off`) |
 | nginx `location ^~ /api/media/public/live/` | **owns the whole prefix**: `^~` stops the regex search, so nothing under it can fall into `/api/media/public/` (no cache, no limit) or the `~* \.mjs$` location. Inside, ONE nested regex `"^/api/media/public/live/<uuid>/<uuid>\z"` (lower case, and `\z`, never `$`: see below) is the cached location below; everything else under the prefix is a JSON `404` from the guard itself, before any upstream |
 
@@ -839,6 +839,16 @@ Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a ty
 
 ## Deletion: at the end, plus a sweep (Q10, L3)
 
+**Live replays (2026-11-09) change this for a live started while `live_replays_mode` is `on`**: its
+`lives."keepsReplay"` is fixed at the start (migration 156); it keeps its last 3 hours instead of
+the trim's window, and once drained it publishes a three-day `kind = 'replay'` post instead of being
+purged, the purge then waiting for that post's deletion; a cut ends the replay at once, and a total
+cap ends the oldest early - [live-replays](../live-replays.md#wp-r2-as-built), the one design (WP-R2).
+For every live with `keepsReplay = false` - every live while the switch is off - what follows holds
+unchanged. Every `[LIVE]` end
+line (`ended by its broadcaster`, `ended by the sweep`) carries `duration=`, `segments=`, `stored=`
+and `replay=`, the only record of a past live's length (WP-R1).
+
 There is no replay. At the broadcaster's end the segments and the row are deleted at once **unless a
 viewer still holds a seat**; every other end, and any purge that failed or waited, is finished by
 `LiveRetentionScheduler` (every 30 s).
@@ -876,7 +886,7 @@ The steps of a sweep:
    returned. A refusal keeps the row, invisible (410), for the next run; a `try` per live. A live
    with a segment still storing is kept too (above), and an OPEN live is never purged by this path;
 3. **the orphan reaper**: media-service lists the `live/` folders (`POST /media/internal/live-list`,
-   a delimiter listing, one entry per folder) and every folder with NO live row behind it is purged
+   one entry per folder of the live segment store; a folder goes with its last segment) and every folder with NO live row behind it is purged
    and proven empty the same way. A ROW-STATE RULE, NOT A CLOCK: a folder is written only under a
    reservation, which needs the row, and a row is deleted only once its prefix proved empty with no
    reservation in flight - so a folder with no row was written after its purge, by a store that
@@ -1318,12 +1328,12 @@ below is reversible and names its reason.
 | C8 | **The five reaction kinds** | **The user's list of 2026-10-20 ([below](#the-five-reactions-of-2026-10-20))**: `like` ❤️, `laugh` 😂, `clap` 👏, `fire` 🔥, `canari` 🐤, drawn with the Noto SVG pictures every emoji uses ([emoji](../frontend/emoji.md)). `love` and `happy` (the first set) are refused `400 LIVE_REACTION_INVALID` | ASCII wire names (a new wire, so no accented key). Sad and angry are left out of a floating stream on purpose. Server: `LIVE_REACTION_KINDS`. |
 | C9 | **Who may post** | Exactly who may WATCH (`assertMayWatch`: the rule of a post, not blocked with the broadcaster, not removed, the live open), **and not muted** (`403 LIVE_MUTED`, the account-level mute of [moderation](../moderation-and-blocking.md), the same code as a muted start). The ended and removed checks are **repeated under the row lock**, so a removal or an end that commits first is never overtaken by a message. **No seat is needed**: a seat is bandwidth, and a message costs none of it | "A banned or removed viewer cannot post" (user): banned is the account mute, removed is the broadcaster's per-live list. |
 | C10 | **Blocks between viewers** | A viewer never receives the messages, or the reaction taps, of an account blocked either way (`blockedUserIdsFor`, filtered per poll) | As the feed hides a blocked author. |
-| C11 | **Content** | **Plain text only**, at most **300 characters** (UTF-16 units, the client's to enforce before sealing - the server sees ciphertext). The server bounds the SEALED size: 29 to 928 bytes (12 IV + at most 900 UTF-8 bytes + 16 tag). **No link is rendered** (a URL stays text), **no mention in v1**, no media | The server cannot read a message, so length and shape are the client's; the byte bound is what the server CAN hold. A rendered link or a mention would need the server to resolve something it cannot read. |
+| C11 | **Content** | **Plain text only**, at most **300 characters** (UTF-16 units, the client's to enforce before sealing - the server sees ciphertext). The server bounds the SEALED size: 29 to 928 bytes (12 IV + at most 900 UTF-8 bytes + 16 tag). **No link is rendered** (a URL stays text), **no mention in v1** (REVERSED 2026-11-09: [mentions](#mentions-in-the-live-chat-owner-2026-11-09)), no media | The server cannot read a message, so length and shape are the client's; the byte bound is what the server CAN hold. A rendered link or a mention would need the server to resolve something it cannot read. |
 | C12 | **Encryption** | The message is sealed with the LIVE KEY (AES-256-GCM, fresh 12-byte IV): `iv + ciphertext + tag`, AAD `canari-live-chat-v1` `0x00` + the live id (16 raw bytes) + the `clientId` (16 raw bytes) + the author's account id (UTF-8). Built in `frontend/src/lib/live/liveChatCrypto.ts` (client PR), **owed the same adversarial crypto review as the segment seal** | The AAD binds a message to its live, its author and its idempotence key: a server (or a store) that served one author's ciphertext under another's name, or replayed it on another live, makes it FAIL to open, and the client drops it. Chat lines never reach the media store: they live only in social-service's database, beside the key that opens them, so **the seal gives NO confidentiality against anyone holding that database or its backups**, nor against social-service itself. What it gives is integrity of place and author. Reactions are NOT sealed: the server must add them up (C7), and a kind and a count say nothing a picture on the screen does not. |
 | C13 | **A late joiner** | The first poll without `messagesAfter` answers the **newest 50 messages the viewer can SEE** - hidden ones and blocked authors are left out IN THE SQL, BEFORE the limit, so hides never empty a joiner's backlog - and a message cursor that is the live's highest seq (read before the rows, so nothing between is skipped; a row read twice is deduped by the client on `author:clientId`); **no reaction backlog** (`reactionsAfter` absent: the cursor only) | A reaction is a moment; a joiner sees the stream from now. |
 | C14 | **Hiding a message** | `POST /api/lives/:id/messages/:messageId/hide`, by the **broadcaster or staff** (`isContentModerator`: a platform admin, or a BDE member holding `MODERATE` - the posts' one moderator predicate, as WP-L8's staff cut uses). It ERASES the ciphertext (`sealed = NULL`, `hiddenAt` set) and gives the row a NEW sequence number, so every viewer's next poll carries a tombstone `{ id, seq, hidden: true }` and removes the line it drew. Idempotent; `404 LIVE_MESSAGE_NOT_FOUND` for a message not on that live; a caller who is neither is `404 LIVE_NOT_FOUND` (no oracle, as every write). **A live STAFF CUT and then purged** answers the broadcaster and staff its `410 LIVE_ENDED` `endReason: 'cut'` from WP-L8's `live_cuts` record (`LivesService.cutOf`), as every live route does | D6. Erasing rather than flagging: nobody may read it again, so nothing keeps it. Re-sequencing is what makes the cursor carry a hide without a second channel. **Removing a viewer and reporting are WP-L8's** (its own pull request), not duplicated here. |
 | C15 | **The live ends** | Every chat route answers what the live's other routes answer: `410 LIVE_ENDED` WITH its `endedAt` and `endReason` (WP-L8's one `liveEnded`, so `cut` is told apart), and a write that reaches a live purged after a cut gets that `410 cut` too (`refuseIfCut`); the rows go with the live (C2) | One end, the row's (Q5). |
-| C16 | **Push** | **None.** A live message notifies nobody | A live chat is read while watching; a push per message to 24 viewers is noise (CLAUDE.md). |
+| C16 | **Push** | **None, except a mention (owner, 2026-11-09: [below](#mentions-in-the-live-chat-owner-2026-11-09)).** A live message notifies nobody | A live chat is read while watching; a push per message to 24 viewers is noise (CLAUDE.md). |
 
 **What the chat seal does NOT protect, accepted and stated (review of #2136, 2026-10-19).** The
 seal (C12) binds a message to its live, its author and its `clientId`, and nothing else:
@@ -1354,6 +1364,32 @@ social-service.
 
 The numbers (`chatMessageMaxChars`, `chatSealedMaxBytes`, the two rates, `chatBacklog`,
 `reactionKinds`, `reactionWindowMs`) are in `GET /api/lives/limits`, from `live.constants.ts`.
+
+### Mentions in the live chat (owner, 2026-11-09)
+
+Wanted by the owner (*"Ce serait bien de pouvoir mentionner quelqu'un dans le chat dans un live"*); the
+lead took the recommended, reversible options. **Reverses C11's "no mention in v1" and C16's "no push"
+for a mention only.**
+
+| # | Question | Decision | Why |
+| --- | --- | --- | --- |
+| M1 | **Who the `@` picker suggests** | FIRST the people the chat has shown (whoever wrote, whoever the broadcaster was told arrived, the broadcaster), THEN anyone the live's audience holds, found by the shared name search and narrowed by `POST /api/lives/:id/mention-audience` (`liveMentionRecipientsSql('suggest')`: the audience and the author's own blocks, NOT the fan-out's third-party clauses - a removal or a block with the broadcaster read back for ids the caller picks would be an oracle, review of #3233; such a person is offered, then told nothing). Never someone who cannot see the live | A live has no list of who is watching on purpose (no route serves viewer ids), so "the people here" is the people the chat shows. The picker, the `@[id]` token, the parser and the chip are the ones every other surface uses; the picker's `roster` and a new `audienceFilter` option are all the live adds |
+| M2 | **What a line carries** | The text keeps the stored token `@[<64-hex id>]` INSIDE the sealed message, and the client also sends `mentions: [ids]` in the clear beside it (candidates: at most 20 declared, the first 5 kept) | The server cannot read the sealed text (C11, C12), and opening it for every line would widen what the server does with a message: it opens one only for a reported line. The declared ids are CANDIDATES; the text is the client's, the audience the database's |
+| M3 | **Who is told** | The candidates narrowed IN THE INSERT'S TRANSACTION (`liveMentionRecipientsSql`): they can see the live by the plain rule of a post (a named reader through a read grant is not in it), are not removed from it, and have no block either way with the author or the broadcaster; never the author. **The broadcaster can be mentioned** | One predicate, the announcement's, so a mention never reaches someone the live would hide from. Blocks and removals are asked under the live's row lock, so a removal that commits first is never overtaken |
+| M4 | **Once, and not a flood** | One push per addressed person per LINE INSERTED - a retried send finds its row and tells nobody. The same author tells the same person at most once per minute on a live, counted from `live_chat_messages."mentionedUserIds"` (migration 154, the addressees of each line), never a clock | Idempotence is a durable row (CLAUDE.md), and the rate is a COUNT of rows like C6. 3 messages per 5 s to one person would otherwise be 36 pushes a minute |
+| M5 | **The notification** | A push `social_live_mention` ("X vous a mentionné dans un live", the body the live's title or a fixed sentence), category `mentions` - the reader's own mention switch. **No bell row**: a live is deleted when it ends (L3), so a row naming it would be a dead link for ever (the rule of `live_started`). The tap opens the live through its `liveId`; an ended live answers as every ended live does. Sent after the commit, never throws: a failure is logged (`[LIVE_MENTION]`) and the line stands | One notice, the existing pipeline. Its own key and native strings (Android, the iOS app and its NSE, fr and en) because `social_mention` says "in a comment" |
+| M6 | **Drawn** | A mention is the shared amber chip (`LiveChatMention`, a `span role="link"` - a line with actions is itself one button), tapped to open the profile; the line of the mentioned viewer is tinted with an edge (`mentionsViewer`). A `#word` stays text, a link stays text (C15) | Same look as every other surface; no motion |
+
+**Left open.** A mention costs 67 of the 300 characters (the token is counted in the text). **An
+older build draws the raw token** (review of #3233): a `1.5.4` build up to the one before mentions
+renders a line's text as is, so its viewers read `@[<64 hex>]` where a newer one draws the chip. The
+text is sealed, so the server cannot rewrite it; the only lever is `LIVE_MIN_CLIENT_VERSION`
+(`x-canari-client-version`), which would shut those builds out of every live - not taken, an owner's
+call, and the cost lasts as long as such builds still open lives. If live
+replays are ever kept ([backlog](../backlog.d/live-replays-kept-three-days-as-canareels.md)), the
+notification would need to open them. **Privacy.** The declared ids sit next to the sealed line and go
+with it (C2); the register of processing needs no new row. Client:
+[live](../frontend/modules/live.md#mentions-in-the-chat-owner-2026-11-09).
 
 ### An erased account, and a single message reported
 

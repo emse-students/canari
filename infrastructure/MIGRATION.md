@@ -271,6 +271,14 @@ and the Authentik database. No separate bucket/key bootstrap is needed afterward
 the bucket/key from `GARAGE_ACCESS_KEY_ID`/`GARAGE_SECRET_ACCESS_KEY` on every boot, and is a no-op when
 the restored volumes already contain them. See [backup/README.md](backup/README.md).
 
+**Live segments and replays are NOT restored, by design** (owner decision D2, 2026-11-09): they sit
+on the `live_segments` volume (media-service, `/app/live_segments`), which no backup reads, so a
+restored host starts with none. Nothing to bootstrap: `docker compose` creates the volume empty at the
+first deploy and media-service creates its directories at boot. What that loses is the lives on air
+and the replays of the last 3 days; their post rows come back with the database and are dropped by
+the reel worker at their `expiresAt`, and the live sweep purges their (empty) prefixes
+([live-replays](../docs/wiki/live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)).
+
 ## 7. Enable recurring backups
 
 ```bash
@@ -367,7 +375,7 @@ only copy. What a bootstrap owes:
 | Data | a FICTIONAL seed, never production's rows (owner, 2026-10-16): `infrastructure/dev/reset-dev-to-seed.sh`, run by `scheduled.yml`'s `dev-reset` job on demand. Supports `--dry-run`, which changes nothing and reports what it would do. It refuses to write anywhere but the `canari-dev` compose project, and that refusal is a re-read Docker label rather than a flag. A virgin dev database first needs the owner's SCHEMA-ONLY restore ([dev-environment](../docs/wiki/infrastructure/dev-environment.md#a-virgin-dev-database-the-schema-only-restore-owner-run)) |
 | Deployed from | `/home/canari/canari-dev`, a SEPARATE clone - two estates sharing one working tree would race, a `git reset --hard` for one rewriting the compose file the other is deployed from. `deploy-dev` creates it if absent, so there is nothing to do by hand |
 | Images | the two frontends are dev's own (`frontend:dev`, `frontend-ssr:dev`), because SvelteKit bakes `import.meta.env.*` in at build time; **every backend image is shared with production**, which is deliberate - it means a behavioural difference between the estates can never be blamed on a different build |
-| Feature switches | `LIVE_ENABLED` (the live routes of social-service and media-service) is a LITERAL `true` on both estates since the production flip of 2026-10-30 - nothing to set, and no secret; lives are closed at runtime by `platform_config.lives_mode` at `/admin/platform` ([lives](../docs/wiki/services/lives.md)). `LYDIA_RECONCILE_ENABLED` (social-service's Lydia reconciliation sweep) is COMPUTED by `render-env.sh`: `true` on dev, `false` on production until the amount format Lydia signs in a `request/state` answer is measured - nothing to set; production is turned on by changing `compute_lydia_reconcile_enabled` in a commit ([lydia-api](../docs/wiki/lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)). `QUEUED_PAYLOAD_SHARED_WRITES` (chat-delivery's key-group shared-payload writer) is a LITERAL `false` on both estates, turned `true` by a commit in a release after the one shipping its readers - nothing to set ([chat-delivery](../docs/wiki/services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)) |
+| Feature switches | `LIVE_ENABLED` (the live routes of social-service and media-service) is a LITERAL `true` on both estates since the production flip of 2026-10-30 - nothing to set, and no secret; lives are closed at runtime by `platform_config.lives_mode` at `/admin/platform` ([lives](../docs/wiki/services/lives.md)). `LIVE_REPLAY_TOTAL_MAX_GB` (social-service, + `DEV_` twin) is an OPTIONAL GitHub secret: unset means 20 GB, the total the live replays may hold before the sweep ends the oldest one early and logs `[LIVE_REPLAY_CAP]`; a value that is not a positive number stops social-service at boot. Replays themselves are off until `platform_config.live_replays_mode` is moved at `/admin/platform` ([live-replays](../docs/wiki/live-replays.md)). `LYDIA_RECONCILE_ENABLED` (social-service's Lydia reconciliation sweep) is COMPUTED by `render-env.sh`: `true` on dev, `false` on production until the amount format Lydia signs in a `request/state` answer is measured - nothing to set; production is turned on by changing `compute_lydia_reconcile_enabled` in a commit ([lydia-api](../docs/wiki/lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)). `QUEUED_PAYLOAD_SHARED_WRITES` (chat-delivery's key-group shared-payload writer) is a LITERAL `false` on both estates, turned `true` by a commit in a release after the one shipping its readers - nothing to set ([chat-delivery](../docs/wiki/services/chat-delivery.md#a-key-group-frame-is-stored-once-migration-034-2026-10-22)) |
 | Deploy order | dev deploys BEFORE production, and a failed dev deploy stops production's. Setting `DEV_ENVIRONMENT_ENABLED` to anything but `true` is the escape hatch |
 | Turning it on | (1) the ingress rule above, (2) the `DEV_*` secrets - see [section 3](#3-github-secrets), (3) set `DEV_ENVIRONMENT_ENABLED` to `true` in `Settings -> Secrets and variables -> Actions -> Variables` |
 | Owed by a human, but NOT blocking | a dev Firebase project (push), a dev Android keystore and its backup location, and a Cloudflare Access service token for the test harness |
@@ -381,6 +389,7 @@ only copy. What a bootstrap owes:
 - [ ] SSH to the offsite backup host working
 - [ ] CD passed green (Canari + Authentik)
 - [ ] Data restored from the offsite backup
+- [ ] NOT the `live_segments` volume: it is never backed up, and starts empty (section 6)
 - [ ] Backup cron installed
 - [ ] Egress probe cron installed (`/home/canari/egress/samples.ndjson` growing by one line a minute)
 - [ ] Reverse proxy / DNS / TLS in place

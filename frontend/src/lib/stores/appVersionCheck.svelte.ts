@@ -8,6 +8,7 @@ import {
   type CallsMode,
   type CheckpointSkipMode,
   type LivesMode,
+  type LiveReplaysMode,
 } from '$lib/utils/appVersion';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 
@@ -85,6 +86,16 @@ export function serverCallsMode(): CallsMode {
  */
 export function serverLivesMode(): LivesMode {
   return lastCheck?.livesMode ?? 'off';
+}
+
+/**
+ * The server's live-replays switch as the last `/api/version` answer gave it, `off` before any
+ * answer. Reactive like {@link serverLivesMode}. A CLIENT THAT READS `off` NEVER ASKS FOR A REPLAY
+ * (`withReplays` is not sent) and draws none: the switch is the server's, the question is the
+ * client's (`live/replayAvailability.ts`).
+ */
+export function serverLiveReplaysMode(): LiveReplaysMode {
+  return lastCheck?.liveReplaysMode ?? 'off';
 }
 
 /**

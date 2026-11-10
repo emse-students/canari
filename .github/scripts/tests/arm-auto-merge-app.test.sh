@@ -149,7 +149,9 @@ run_case() {
 # Armed: by the shared step (`armable=true`), or - the App's path - by the step itself, bound to the
 # event's head commit.
 armed() { grep -qx 'armable=true' "$work/output" || grep -q -- '^pr merge 5 --auto' "$work/gh.log"; }
-app_armed_on_head() { grep -qxF "pr merge 5 --auto --squash --match-head-commit $M2 --repo o/r" "$work/gh.log" && ! grep -qx 'armable=true' "$work/output"; }
+# The App's refresh is handed to the ONE shared arming step (head-bound, B32; merges at once when
+# already mergeable, B33), so "armed on the head" is the guard's verdict and no arming call of its own.
+app_armed_on_head() { grep -qx 'armable=true' "$work/output" && ! grep -q -- '^pr merge' "$work/gh.log"; }
 not_armed() { # <name>
   if [ "$st" = 0 ] && ! armed; then pass "$1"; else fail "$1 (exit $st)" "$out"; fi
 }
@@ -506,6 +508,81 @@ fi
     fail "B32 an arming does not pin the judged head with --match-head-commit" "$arm_lines"
   fi
 }
+
+# ── B33: a pull request that is ALREADY mergeable cannot be armed, so it is merged now ───────────
+# GitHub refuses `--auto` on a clean or unstable pull request (#3202). The ordinary step must then
+# read `mergeStateStatus` as data and merge on the judged head when `CI passed` is green on it.
+awk '
+  /^      - name: Ask GitHub to merge it/ { inside = 1; next }
+  inside && /^      - name:/ { exit }
+  inside && /^        run: \|/ { inrun = 1; next }
+  inside && inrun { sub(/^          /, ""); print }
+' "$wf" >"$work/merge.sh"
+mkdir -p "$work/bin2"
+# API-shaped answers, every `--jq` run by the real jq (through the CRLF shim in $work/bin).
+cat >"$work/bin2/gh" <<'SH'
+#!/usr/bin/env bash
+echo "$*" >>"$FAKE_GH_LOG"
+jqexpr=''
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  [ "${args[$i]}" = --jq ] && jqexpr="${args[$((i + 1))]}"
+done
+case "$1 ${2:-}" in
+  "pr merge") case " $* " in *" --auto "*) exit 1 ;; esac; exit 0 ;;
+  "pr view") case " $* " in
+      *mergeStateStatus*) jq -nr --arg s "$FAKE_STATE" --argjson d "${FAKE_DRAFT:-false}" '{mergeStateStatus: $s, isDraft: $d}' | jq -r "$jqexpr" ;;
+      *) echo false ;;
+    esac ;;
+  api*) printf '%s' "$FAKE_RUNS" | jq -r "$jqexpr" ;;
+esac
+SH
+chmod +x "$work/bin2/gh"
+# A check run as the API answers it: <id> <name> <app slug> <head sha> <conclusion|null>.
+check_run() { jq -nc --argjson i "$1" --arg n "$2" --arg a "$3" --arg h "$4" --arg c "$5" \
+  '{id: $i, name: $n, app: {slug: $a}, head_sha: $h, conclusion: (if $c == "null" then null else $c end)}'; }
+runs() { jq -sc '{check_runs: .}'; }
+GREEN="$(check_run 7 'CI passed' github-actions "$M2" success | runs)"
+merge_case() { # <state> <check runs json> -> $out, $st
+  : >"$work/gh.log"
+  out="$(cd "$work" && PATH="$work/bin2:$work/bin:$PATH" GH_TOKEN=x REPO=o/r PR=5 HEAD_SHA="$M2" FAKE_STATE="$1" FAKE_RUNS="$2" FAKE_GH_LOG="$work/gh.log" bash "$work/merge.sh" 2>&1)"
+  st=$?
+}
+merged_now() { grep -qxF "pr merge 5 --squash --match-head-commit $M2 --repo o/r" "$work/gh.log"; }
+refused() { # <name>
+  if [ "$st" != 0 ] && ! merged_now; then pass "$1"; else fail "$1 (merged, or the step passed)" "$out"; fi
+}
+for state in CLEAN UNSTABLE; do
+  merge_case "$state" "$GREEN"
+  if [ "$st" = 0 ] && merged_now; then pass "B33 a $state pull request with CI passed green on its head is merged now, on that head"; else fail "B33 $state was not merged now" "$out"; fi
+done
+merge_case UNSTABLE '{"check_runs": []}'
+refused "B33 an UNSTABLE pull request with no CI passed on the head is not merged, and fails"
+for state in BLOCKED BEHIND DIRTY UNKNOWN HAS_HOOKS; do
+  merge_case "$state" "$GREEN"
+  refused "B33 a $state pull request is not merged now, and the step fails loudly"
+done
+# THE APP BYPASSES THE RULESET, so these reads are the gate (review of #3244).
+FAKE_DRAFT=true merge_case CLEAN "$GREEN"
+refused "B33 a pull request that is a draft again is never merged, even CLEAN and green"
+merge_case CLEAN "$(check_run 7 'CI passed' some-other-app "$M2" success | runs)"
+refused "B33 a CI passed from another app than GitHub Actions does not merge"
+merge_case CLEAN "$({ check_run 7 'CI passed' github-actions "$M2" success; check_run 9 'CI passed' github-actions "$M2" failure; } | runs)"
+refused "B33 an older green CI passed beside a newer red one does not merge"
+merge_case CLEAN "$({ check_run 9 'CI passed' github-actions "$M2" null; check_run 7 'CI passed' github-actions "$M2" success; } | runs)"
+refused "B33 a newer CI passed still running beside an older green one does not merge"
+merge_case CLEAN "$(check_run 7 'CI passed' github-actions "$M1" success | runs)"
+refused "B33 a CI passed on another commit than the judged head does not merge"
+merge_case CLEAN "$(check_run 7 'CI passedx' github-actions "$M2" success | runs)"
+refused "B33 a check run whose name only resembles CI passed does not merge"
+
+# ── B34: ONE arming implementation - the guard step never arms or merges by itself ───────────────
+# shellcheck disable=SC2016 # the dollar sign is the workflow's own shell text, matched literally
+if ! grep -qE 'gh pr merge "\$PR" (--auto|--squash)' "$work/step.raw"; then
+  pass "B34 the guard step (the App's refresh path included) holds no arming or merge call: the shared step is the only one"
+else
+  fail "B34 the guard step arms or merges on its own - a second implementation to keep in step"
+fi
 
 # ── B20: `pull_request_target` runs with the base repository's secrets: it never checks out ───────
 if grep -qE '^\s*-?\s*uses:\s*actions/checkout' "$wf"; then
