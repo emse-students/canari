@@ -68,6 +68,8 @@ Two more the same day, after the review of #3299:
 - **B. "Seen up to" (after 1.6.9, not built)**: one server-side date per account syncs the
   "Nouveau" badge across devices, and Pour toi then leads with what is really unseen instead of
   "under 48 h" ([backlog.d](../../backlog.d/seen-up-to-one-date-per-account.md)).
+  **Before it is built, check it against principle 1 of the charter (keep the least data
+  possible, [Nos principes](../../../principes.md)): a per-account server-side date is a new stored datum.**
 
 ### Pour toi - the ranked tab (owner, 2026-11-10)
 
