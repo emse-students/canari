@@ -606,7 +606,7 @@
           title={m.post_comment_add_image_label()}
           aria-label={m.post_comment_add_image_label()}
           data-testid="comment-image-button"
-          class="text-text-muted tap-target flex h-11 w-9 shrink-0 items-center justify-center transition-colors hover:text-amber-500 disabled:opacity-40 [@media(min-width:768px)_and_(pointer:fine)]:h-9.5"
+          class="ui-icon-button text-text-muted shrink-0 transition-colors hover:text-amber-500 disabled:opacity-40"
         >
           <ImagePlus size={18} strokeWidth={2.25} />
         </button>
