@@ -22,7 +22,7 @@ vi.mock('$lib/components/posts/PostAuthorAvatar.svelte', async () => ({
   default: (await import('./PostAuthorAvatarStub.test-helper.svelte')).default,
 }));
 vi.mock('$lib/components/posts/PostMedia.svelte', async () => ({
-  default: (await import('./PostMediaStub.test-helper.svelte')).default,
+  default: (await import('../reels/PostMediaStub.test-helper.svelte')).default,
 }));
 vi.mock('$lib/components/reels/ReelViewer.svelte', async () => ({
   default: (await import('../posts/ReelViewerStub.test-helper.svelte')).default,
@@ -63,6 +63,18 @@ async function settled(target: HTMLElement, state: string) {
   await vi.waitFor(() =>
     expect(target.querySelector(`[data-shared-post="${state}"]`)).not.toBeNull()
   );
+}
+
+/** Makes the stubbed picture report a typed download failure, as `PostMedia`'s `onFailure` does. */
+async function failPicture(target: HTMLElement, mediaId: string, cause: 'expired' | 'failed') {
+  await vi.waitFor(() =>
+    expect(target.querySelector(`[data-post-media-stub="${mediaId}"]`)).not.toBeNull()
+  );
+  flushSync();
+  target
+    .querySelector(`[data-post-media-stub="${mediaId}"]`)!
+    .dispatchEvent(new CustomEvent('stubfailed', { detail: cause }));
+  flushSync();
 }
 
 function tap(target: HTMLElement) {
@@ -186,8 +198,7 @@ describe('SharedPostCard', () => {
       media: [{ type: 'image', mediaId: 'img-9', width: 10, height: 10 }],
     });
     const target = render();
-    await vi.waitFor(() => expect(target.querySelector('[data-fail-expired]')).not.toBeNull());
-    (target.querySelector('[data-fail-expired]') as HTMLElement).click();
+    await failPicture(target, 'img-9', 'expired');
     await settled(target, 'unavailable');
   });
 
@@ -197,8 +208,7 @@ describe('SharedPostCard', () => {
       media: [{ type: 'image', mediaId: 'img-8', width: 10, height: 10 }],
     });
     const target = render();
-    await vi.waitFor(() => expect(target.querySelector('[data-fail-other]')).not.toBeNull());
-    (target.querySelector('[data-fail-other]') as HTMLElement).click();
+    await failPicture(target, 'img-8', 'failed');
     await vi.waitFor(() => expect(target.querySelector('[data-shared-post-media]')).toBeNull());
     expect(target.textContent).toContain('La soirée de rentrée');
   });
