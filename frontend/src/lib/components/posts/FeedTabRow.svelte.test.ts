@@ -119,6 +119,21 @@ it('draws no pill until the active tab has been measured, then places it on that
   );
 });
 
+it('stacks every label above the pill explicitly, and keeps the pill off a 3D layer', () => {
+  // iPhone 12, 1.6.9-alpha.4: a `translate3d` pill was drawn OVER its label by iOS WebKit inside
+  // the masked scroller, though the labels come after it in the DOM. The order is stated, not implied.
+  vi.spyOn(HTMLElement.prototype, 'offsetLeft', 'get').mockReturnValue(300);
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(120);
+  const row = render();
+  const pill = row.querySelector<HTMLElement>('[data-feed-tab-pill]')!;
+  expect(row.classList.contains('isolate')).toBe(true);
+  expect(pill.classList.contains('z-0')).toBe(true);
+  expect(pill.style.transform).toBe('translateX(300px)');
+  const labels = row.querySelectorAll<HTMLElement>('[data-feed-tab]');
+  expect(labels.length).toBe(3);
+  labels.forEach((label) => expect(label.classList.contains('z-1')).toBe(true));
+});
+
 it('never draws an ink label on the glass: not before the pill is measured, not during the slide', () => {
   const left = vi.spyOn(HTMLElement.prototype, 'offsetLeft', 'get');
   const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get');

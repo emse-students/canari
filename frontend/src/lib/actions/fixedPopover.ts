@@ -1,3 +1,6 @@
+import { currentKeyboardInsetBottom } from '$lib/stores/keyboardViewport.svelte';
+import { Log } from '$lib/utils/Log';
+
 export type FixedPopoverSide = 'top' | 'bottom';
 
 export interface FixedPopoverLayoutOptions {
@@ -61,12 +64,20 @@ const MIN_USEFUL_HEIGHT = 160;
 /** Default minimum viewport margin in px - callers sizing content to the room read it here. */
 export const POPOVER_MARGIN = 8;
 
-/** Computes viewport-safe fixed coordinates for a popover panel. */
+/**
+ * Computes viewport-safe fixed coordinates for a popover panel.
+ *
+ * @param keyboardInset the band at the bottom of the layout viewport the on-screen keyboard covers
+ *   (`currentKeyboardInsetBottom`). The panel is laid out in what is left above it: the layout
+ *   viewport catches up with the keyboard late on Android, and never in a phone browser.
+ */
 export function computeFixedPopoverPosition(
   anchor: HTMLElement,
   panel: HTMLElement,
-  options: FixedPopoverLayoutOptions = {}
+  options: FixedPopoverLayoutOptions = {},
+  keyboardInset = 0
 ): FixedPopoverPosition {
+  const viewportHeight = window.innerHeight - keyboardInset;
   const offset = options.offset ?? 8;
   const margin = options.margin ?? POPOVER_MARGIN;
   const estimatedHeight = options.estimatedHeight ?? 360;
@@ -79,10 +90,10 @@ export function computeFixedPopoverPosition(
   const panelHeight = panel.offsetHeight || estimatedHeight;
 
   if (options.dockBottom) {
-    const maxHeight = Math.min(estimatedHeight, window.innerHeight - margin * 2);
+    const maxHeight = Math.min(estimatedHeight, viewportHeight - margin * 2);
     const height = Math.min(panelHeight, maxHeight);
     return {
-      top: window.innerHeight - margin - height,
+      top: viewportHeight - margin - height,
       left: Math.max(margin, (window.innerWidth - panelWidth) / 2),
       maxHeight,
       side: 'top',
@@ -90,7 +101,7 @@ export function computeFixedPopoverPosition(
     };
   }
 
-  const spaceBelow = window.innerHeight - anchorRect.bottom - margin;
+  const spaceBelow = viewportHeight - anchorRect.bottom - margin;
   const spaceAbove = anchorRect.top - margin;
   const side: FixedPopoverSide =
     spaceBelow >= Math.min(panelHeight, estimatedHeight) + offset || spaceBelow >= spaceAbove
@@ -103,7 +114,7 @@ export function computeFixedPopoverPosition(
   // there is nowhere to move a panel taller than the screen.
   const maxHeight = Math.min(
     estimatedHeight,
-    window.innerHeight - margin * 2,
+    viewportHeight - margin * 2,
     Math.max(MIN_USEFUL_HEIGHT, side === 'bottom' ? spaceBelow - offset : spaceAbove - offset)
   );
 
@@ -116,7 +127,7 @@ export function computeFixedPopoverPosition(
   // popover does, and it needs no new number.
   const height = Math.min(panelHeight, maxHeight);
   let top = side === 'bottom' ? anchorRect.bottom + offset : anchorRect.top - offset - height;
-  top = Math.max(margin, Math.min(top, window.innerHeight - margin - height));
+  top = Math.max(margin, Math.min(top, viewportHeight - margin - height));
 
   // A PANEL THAT FILLS THE SCREEN HAS NO SIDE TO BE ON, SO IT IS CENTRED RATHER THAN ANCHORED.
   // Edge alignment says "this belongs to that": it only says anything while the panel is narrow
@@ -167,8 +178,12 @@ function isLaidOut(anchor: HTMLElement): boolean {
   return rect.width > 0 || rect.height > 0;
 }
 
-/** Keeps a `position: fixed` popover inside the viewport while scrolling/resizing. */
+/**
+ * Keeps a `position: fixed` popover inside the VISIBLE viewport - above the on-screen keyboard -
+ * while scrolling, resizing and while the keyboard moves.
+ */
 export function bindFixedPopover(panel: HTMLElement, options: FixedPopoverOptions): () => void {
+  let lastKeyboardInset = 0;
   const apply = () => {
     const anchor = options.anchor();
     if (!anchor) return;
@@ -181,11 +196,17 @@ export function bindFixedPopover(panel: HTMLElement, options: FixedPopoverOption
       );
       return;
     }
+    const keyboardInset = currentKeyboardInsetBottom();
     const { top, left, maxHeight, side, width } = computeFixedPopoverPosition(
       anchor,
       panel,
-      options
+      options,
+      keyboardInset
     );
+    if (keyboardInset !== lastKeyboardInset) {
+      Log.d('popover', `keyboard band ${lastKeyboardInset} -> ${keyboardInset}px: top ${top}px`);
+      lastKeyboardInset = keyboardInset;
+    }
     panel.style.top = `${top}px`;
     panel.style.left = `${left}px`;
     // Only written when asked for: pinning a panel to its own measured width would freeze
@@ -201,10 +222,16 @@ export function bindFixedPopover(panel: HTMLElement, options: FixedPopoverOption
   ro.observe(panel);
   window.addEventListener('resize', apply);
   window.addEventListener('scroll', apply, true);
+  // THE KEYBOARD ARRIVES HERE FIRST: the visual viewport shrinks as the keyboard rises, while the
+  // layout viewport (`window` `resize`) follows only when the native layer pads the WebView - about
+  // a second later on the Mi 9T, several on the owner's phone, never in a phone browser. Listening to
+  // `window` alone left the reaction picker under the keyboard for that whole gap (2026-11-10).
+  window.visualViewport?.addEventListener('resize', apply);
 
   return () => {
     ro.disconnect();
     window.removeEventListener('resize', apply);
     window.removeEventListener('scroll', apply, true);
+    window.visualViewport?.removeEventListener('resize', apply);
   };
 }
