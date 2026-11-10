@@ -97,6 +97,11 @@
      * nothing.
      */
     onMediaGone?: (postId: string) => void;
+    /**
+     * On a carousel page, the media the viewer opens on: the one the reader TAPPED in the post's
+     * grid (owner, 2026-11-10: a tap on a feed video opens full screen on THAT video). 0 elsewhere.
+     */
+    startMediaIndex?: number;
   }
 
   let {
@@ -107,6 +112,7 @@
     likerId,
     expandOrigin = null,
     onMediaGone,
+    startMediaIndex = 0,
   }: Props = $props();
 
   /**
@@ -174,6 +180,7 @@
     // The viewer paints black under the status bar: light icons while it is up, handed back after.
     const releaseBar = themeStore.holdNativeBar('dark');
     reels = [startPost];
+    if (startMediaIndex > 0) mediaIndexById = { [startPost.id]: startMediaIndex };
     overlay.syncOpen();
     console.debug(`[reel-viewer] opened on ${startPost.id}`);
     return releaseBar;

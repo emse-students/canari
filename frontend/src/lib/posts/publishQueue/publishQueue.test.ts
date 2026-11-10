@@ -175,6 +175,7 @@ function rig(store = memoryStore()): Rig {
           }),
           dims: { width: r.video.width, height: r.video.height },
           durationMs: r.video.durationMs,
+          placeholder: 'AAAA',
         };
       }
       return {
@@ -793,6 +794,15 @@ describe('PublishQueue - every vertical video of 90 s or less is a CanaReel (own
     await r.queue.drain();
     expect(r.payloads).toHaveLength(1);
     expect(r.payloads[0]).toMatchObject({ kind: 'reel', durationMs: 41_250, id: 'v-1' });
+  });
+
+  /** A reader's feed draws the first frame before a byte arrives (owner, 2026-11-10). */
+  it("a video's first-frame placeholder travels with its media ref into the post", async () => {
+    const r = rig();
+    queueFiles(r.store, 'v-2', [['IMG_2.mov', 'video/quicktime']]);
+    await r.queue.drain();
+    const media = r.payloads[0].media as Array<{ placeholder?: string }>;
+    expect(media[0].placeholder).toBe('AAAA');
   });
 
   it('reads the 4:5 boundary and the 90 s cap as the server does', async () => {

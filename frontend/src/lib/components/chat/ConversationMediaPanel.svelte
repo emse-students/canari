@@ -304,7 +304,12 @@
   >
     {#if lightboxUrl}
       {#if current.media.type === 'video'}
-        <VideoPlayer src={lightboxUrl} soundScope="local" class="h-full w-full" />
+        <VideoPlayer
+          src={lightboxUrl}
+          variant="conversation"
+          soundScope="local"
+          class="h-full w-full"
+        />
       {:else}
         <img
           src={lightboxUrl}
