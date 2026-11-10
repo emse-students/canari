@@ -336,7 +336,7 @@
   const pill =
     'inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50';
   const iconButton =
-    'ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500';
+    'ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-accent-icon';
 </script>
 
 <!-- A DOUBLE TAP ON THE PREVIEW FLIPS THE LENS (previewDoubleTap.ts), only while the lens button
@@ -652,7 +652,7 @@
 
       {#if batteryWarrantsWarning(batteryLevel)}
         <p
-          class="flex items-start gap-2.5 rounded-2xl bg-amber-500/20 px-3 py-2 text-sm text-amber-200"
+          class="bg-accent/20 text-accent-text flex items-start gap-2.5 rounded-2xl px-3 py-2 text-sm"
           data-live-battery
         >
           <BatteryWarning size={18} strokeWidth={2.25} class="mt-0.5 shrink-0" />

@@ -207,7 +207,7 @@
   {#if loading}
     <div class="flex justify-center py-12">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else}
@@ -247,7 +247,7 @@
           </p>
         </div>
         {#if !delegation.parentReady}
-          <p class="text-amber-warn flex items-start gap-2 text-sm">
+          <p class="text-amber-warn-text flex items-start gap-2 text-sm">
             <TriangleAlert size={16} class="mt-0.5 shrink-0" />
             {m.asso_deleg_parent_not_ready()}
           </p>
@@ -291,7 +291,7 @@
         </div>
 
         {#if !canReceiveDelegation}
-          <p class="text-amber-warn flex items-start gap-2 text-sm">
+          <p class="text-amber-warn-text flex items-start gap-2 text-sm">
             <TriangleAlert size={16} class="mt-0.5 shrink-0" />
             {m.asso_deleg_parent_not_payments_ready()}
           </p>
@@ -310,7 +310,7 @@
                       class="rounded-full px-2 py-0.5 text-xs font-semibold {child.status ===
                       'approved'
                         ? 'bg-green-ok/15 text-green-ok'
-                        : 'bg-amber-warn/15 text-amber-warn'}"
+                        : 'bg-amber-warn/15 text-amber-warn-text'}"
                     >
                       {child.status === 'approved'
                         ? m.asso_deleg_child_approved_badge()
@@ -377,7 +377,7 @@
                   {#if childLoading === child.associationId}
                     <div class="flex justify-center py-6">
                       <div
-                        class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
+                        class="border-accent-icon h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
                       ></div>
                     </div>
                   {:else if (childPurchases[child.associationId]?.length ?? 0) === 0}

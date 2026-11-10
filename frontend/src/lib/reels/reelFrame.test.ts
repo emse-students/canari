@@ -4,6 +4,7 @@ import {
   containFrame,
   frameReachesBottom,
   frameToPixels,
+  reelVideoFit,
   stableStageSize,
   stageStep,
 } from './reelFrame';
@@ -132,5 +133,21 @@ describe('overlay coordinates', () => {
     const b = containFrame({ width: 360, height: 800 }, REEL_FRAME_RATIO);
     const point = { x: 0.5, y: 0.9 };
     expect(frameToPixels(point, a).y / a.height).toBeCloseTo(frameToPixels(point, b).y / b.height);
+  });
+});
+
+describe('reelVideoFit (owner, 2026-11-09: a reel fills its frame)', () => {
+  it('fills when the shapes agree or differ by at most 20 % of a dimension', () => {
+    expect(reelVideoFit(9 / 16, 9 / 16)).toBe('cover');
+    expect(reelVideoFit(1, 1.2)).toBe('cover');
+    expect(reelVideoFit(0.5, 9 / 16)).toBe('cover');
+  });
+  it('letterboxes a clip clearly of another shape', () => {
+    expect(reelVideoFit(16 / 9, 9 / 16)).toBe('contain');
+    expect(reelVideoFit(1, 9 / 16)).toBe('contain');
+  });
+  it('fills while the shape is unknown', () => {
+    expect(reelVideoFit(0, 9 / 16)).toBe('cover');
+    expect(reelVideoFit(1, 0)).toBe('cover');
   });
 });

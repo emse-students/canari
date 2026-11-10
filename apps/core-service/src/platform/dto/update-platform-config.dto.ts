@@ -3,10 +3,12 @@ import {
   CALLS_MODES,
   CHECKPOINT_SKIP_MODES,
   LIVES_MODES,
+  LIVE_REPLAYS_MODES,
   PUSH_MODES,
   type CallsMode,
   type CheckpointSkipMode,
   type LivesMode,
+  type LiveReplaysMode,
   type PushMode,
 } from '../entities/platform-config.entity';
 
@@ -51,4 +53,9 @@ export class UpdatePlatformConfigDto {
   @IsOptional()
   @IsIn(CHECKPOINT_SKIP_MODES)
   checkpointSkipMode?: CheckpointSkipMode;
+
+  /** The live replays switch: `off` deletes a live at its end, `on` keeps a live started now three days. */
+  @IsOptional()
+  @IsIn(LIVE_REPLAYS_MODES)
+  liveReplaysMode?: LiveReplaysMode;
 }

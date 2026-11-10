@@ -29,9 +29,9 @@ describe('TemplatePicker', () => {
       expect(card(key).querySelectorAll('[aria-hidden="true"] > span')).toHaveLength(7);
     }
     // "Toujours ouvert" fills every day, "Vide" none.
-    expect(card('always').querySelectorAll('.bg-cn-yellow')).toHaveLength(7);
-    expect(card('empty').querySelectorAll('.bg-cn-yellow')).toHaveLength(0);
-    expect(card('weekdays').querySelectorAll('.bg-cn-yellow')).toHaveLength(5);
+    expect(card('always').querySelectorAll('.bg-accent')).toHaveLength(7);
+    expect(card('empty').querySelectorAll('.bg-accent')).toHaveLength(0);
+    expect(card('weekdays').querySelectorAll('.bg-accent')).toHaveLength(5);
   });
 
   it('marks only the selected card pressed when a selection is passed', () => {

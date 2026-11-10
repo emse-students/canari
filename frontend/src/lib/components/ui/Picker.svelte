@@ -75,7 +75,7 @@
   }: Props = $props();
 
   const INLINE_TRIGGER =
-    'text-text-main flex max-w-full items-center gap-1 truncate rounded-lg px-1 py-1 text-sm font-semibold outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500/40 disabled:opacity-60 dark:hover:bg-white/10';
+    'text-text-main flex max-w-full items-center gap-1 truncate rounded-lg px-1 py-1 text-sm font-semibold outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60 dark:hover:bg-white/10';
 
   const resolvedTriggerClass = $derived(
     triggerClass ||
@@ -189,7 +189,7 @@
           disabled={option.disabled}
           aria-disabled={option.disabled}
           class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors outline-none hover:bg-black/5 focus-visible:bg-black/5 disabled:cursor-default disabled:opacity-45 disabled:hover:bg-transparent dark:hover:bg-white/10 dark:focus-visible:bg-white/10 {isSelected
-            ? 'text-amber-700 dark:text-amber-400'
+            ? 'text-accent-text'
             : option.muted
               ? 'text-text-muted'
               : 'text-text-main'}"

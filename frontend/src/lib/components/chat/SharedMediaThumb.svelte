@@ -84,7 +84,7 @@
   type="button"
   onclick={onClick}
   use:nearViewport={{ onnear: () => (isNear = true) }}
-  class="relative aspect-square w-full overflow-hidden rounded-lg bg-black/5 transition-opacity outline-none hover:opacity-90 focus-visible:ring-2 focus-visible:ring-amber-500 dark:bg-white/10"
+  class="focus-visible:ring-accent-icon relative aspect-square w-full overflow-hidden rounded-lg bg-black/5 transition-opacity outline-none hover:opacity-90 focus-visible:ring-2 dark:bg-white/10"
   aria-label={failureLabel ?? m.chat_open_media_label()}
   title={failureLabel}
 >

@@ -27,7 +27,7 @@
   const priced = $derived(showPriceModifier && !pricedByGrid);
 
   const fieldClass =
-    'w-full min-w-0 px-3 py-2.5 sm:px-4 sm:py-3 border-2 border-cn-border sm:border-black/10 dark:sm:border-white/10 rounded-xl sm:rounded-2xl text-sm sm:text-base text-text-main bg-(--cn-surface) outline-none transition-all placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]';
+    'w-full min-w-0 px-3 py-2.5 sm:px-4 sm:py-3 border-2 border-cn-border sm:border-black/10 dark:sm:border-white/10 rounded-xl sm:rounded-2xl text-sm sm:text-base text-text-main bg-(--cn-surface) outline-none transition-all placeholder:text-text-muted/50 focus:border-accent-icon focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]';
 
   function addOption() {
     item.options = [
@@ -56,9 +56,7 @@
   </div>
 
   {#if pricedByGrid}
-    <p
-      class="border-cn-yellow/40 bg-cn-yellow/5 text-text-muted rounded-xl border px-3 py-2 text-xs"
-    >
+    <p class="border-accent/40 bg-accent/5 text-text-muted rounded-xl border px-3 py-2 text-xs">
       {m.form_builder_priced_by_grid()}
     </p>
   {/if}
@@ -143,7 +141,7 @@
   </div>
 
   <button
-    class="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-amber-500/30 px-3 py-2.5 text-sm font-bold text-amber-600 transition-colors hover:bg-amber-500/10 hover:text-amber-500 sm:w-auto sm:justify-start sm:border-0 sm:py-2 dark:text-amber-500 dark:hover:text-amber-400"
+    class="border-accent/30 text-accent-text hover:bg-accent/10 hover:text-accent-text inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed px-3 py-2.5 text-sm font-bold transition-colors sm:w-auto sm:justify-start sm:border-0 sm:py-2"
     onclick={addOption}
     type="button"
   >

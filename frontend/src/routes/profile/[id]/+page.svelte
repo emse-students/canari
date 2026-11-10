@@ -14,6 +14,7 @@
     recordPersonStatus,
     withdrawPerson,
   } from '$lib/follows/followState.svelte';
+  import FollowAlsoSuggestions from '$lib/components/suggestions/FollowAlsoSuggestions.svelte';
   import AccountBell from '$lib/components/follows/AccountBell.svelte';
   import {
     describeFollowRefusal,
@@ -68,6 +69,8 @@
   /** Where the reader stands with this person: a request, a follow, or neither (WP-F4). */
   let followStatus = $state<FollowStatus | null>(null);
   let followLoading = $state(false);
+  /** The person the reader followed or asked on THIS visit: "Suivez aussi..." follows it (WP-6). */
+  let followedHereId = $state<string | null>(null);
   let memberships = $state<UserMembershipRow[]>([]);
   let roleHistory = $state<UserRoleHistoryRow[]>([]);
   let parrainage = $state<SkyEntourage | null>(null);
@@ -221,7 +224,10 @@
     actionMessage = '';
     Log.d('profile.handleFollowToggle', `${action} from ${was ?? 'none'}`);
     try {
-      if (action === 'ask') followStatus = await askPerson(profile.id);
+      if (action === 'ask') {
+        followStatus = await askPerson(profile.id);
+        followedHereId = profile.id;
+      }
       // A withdraw answers where the pair stands NOW: a request accepted meanwhile stays a follow.
       else if (action === 'withdraw') followStatus = await withdrawPerson(profile.id);
       else await leavePerson(profile.id);
@@ -305,7 +311,7 @@
   <div class="space-y-6 md:space-y-8">
     {#if loading}
       <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-32" in:fade>
-        <LoaderCircle size={32} class="text-cn-yellow animate-spin" strokeWidth={2.5} />
+        <LoaderCircle size={32} class="text-accent-icon animate-spin" strokeWidth={2.5} />
         <span class="text-sm font-bold">{m.profile_public_loading()}</span>
       </div>
     {:else if error}
@@ -335,7 +341,7 @@
           <ProfileBirthdayLine userId={p.id} />
         {/snippet}
         {#snippet actions()}
-          <!-- ONE yellow button: "Suivre" until the reader follows, then "Message". -->
+          <!-- ONE accent button: "Suivre" until the reader follows, then "Message". -->
           <Button
             variant={followStatus ? 'secondary' : 'primary'}
             class="min-h-11 flex-1 sm:flex-none"
@@ -387,6 +393,14 @@
         >
           {m.profile_blocked_notice()}
         </p>
+      {/if}
+
+      <!--
+        "SUIVEZ AUSSI..." (engagement WP-6, L15): right after a follow or a request made here, the
+        READER's own suggestions minus this person - never this person's follows.
+      -->
+      {#if followedHereId === profile.id && followStatus}
+        <FollowAlsoSuggestions exclude={profile.id} />
       {/if}
 
       <!-- Bio section -->

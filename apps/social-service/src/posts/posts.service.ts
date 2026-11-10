@@ -37,7 +37,7 @@ import {
   DAY_MS,
   REEL_EXPIRY_WARNING_DAYS,
   REEL_RETENTION_DAYS,
-  isExpiredReel,
+  isExpiredPost,
   type PostKind,
 } from './reel.constants';
 import { assertReelEditShape } from './reel-rules';
@@ -1169,6 +1169,12 @@ export class PostsService {
     } else {
       data.kind = 'post';
       delete data.durationMs;
+      // Every picture is the author's own upload: a delete of this post releases the blobs it names.
+      await this.mediaRetention.assertOwnMedia(
+        authorId,
+        postMediaIds({ media: data.media }),
+        'post'
+      );
     }
 
     const post = this.postRepo.create(data) as unknown as Post;
@@ -2234,7 +2240,7 @@ export class PostsService {
 
     // A reel is edited by its caption alone; a post's text-or-media rule is the DTO's.
     if (post.kind === 'reel') {
-      if (isExpiredReel(post)) throw new NotFoundException('Post not found');
+      if (isExpiredPost(post)) throw new NotFoundException('Post not found');
       assertReelEditShape(data);
       post.markdown = data.markdown;
       const saved = await this.postRepo.save(post);
@@ -2248,6 +2254,11 @@ export class PostsService {
     const nextMedia = data.media ?? data.images;
     if (nextMedia !== undefined) {
       assertWithinPostAttachmentCap(nextMedia.length);
+      // Only what THIS edit adds is the editor's to prove: the edit form sends back the media the
+      // post already carries, and those were checked when they were added.
+      const already = new Set(postMediaIds(post));
+      const added = postMediaIds({ media: nextMedia }).filter((id) => !already.has(id));
+      await this.mediaRetention.assertOwnMedia(userId, added, 'post');
       post.media = nextMedia;
     }
 

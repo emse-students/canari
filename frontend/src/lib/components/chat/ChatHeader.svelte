@@ -265,7 +265,7 @@
           icon: ChevronLeft,
           onClick: onBack,
         }}
-        class="glass-chrome ui-icon-button text-text-main rounded-full transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+        class="glass-chrome ui-icon-button text-text-main focus-visible:ring-accent-icon rounded-full transition-transform outline-none focus-visible:ring-2 active:scale-95"
       >
         <ChevronLeft size={22} strokeWidth={2.25} />
       </button>
@@ -283,7 +283,7 @@
           avatar: true,
           onClick: openPill,
         }}
-        class="glass-chrome flex w-full max-w-full min-w-0 items-center justify-center gap-2 rounded-full py-1 pr-4 pl-1 transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98]"
+        class="glass-chrome focus-visible:ring-accent-icon flex w-full max-w-full min-w-0 items-center justify-center gap-2 rounded-full py-1 pr-4 pl-1 transition-transform outline-none focus-visible:ring-2 active:scale-[0.98]"
       >
         {#if isChannel}
           <span
@@ -347,7 +347,7 @@
       <button
         onclick={onBack}
         aria-label={m.chat_back_label()}
-        class="ui-icon-button text-text-muted hover:text-text-main rounded-xl transition-all outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:hover:bg-white/10"
+        class="ui-icon-button text-text-muted hover:text-text-main focus-visible:ring-accent-icon rounded-xl transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
       >
         <ChevronLeft size={24} />
       </button>
@@ -420,7 +420,7 @@
           onclick={onStartAudioCall}
           aria-label={m.chat_audio_call_label()}
           title={m.chat_audio_call_label()}
-          class="ui-icon-button text-text-muted hover:text-text-main rounded-xl transition-all outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:hover:bg-white/10"
+          class="ui-icon-button text-text-muted hover:text-text-main focus-visible:ring-accent-icon rounded-xl transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
         >
           <Phone size={20} strokeWidth={2.5} />
         </button>
@@ -430,7 +430,7 @@
           onclick={onStartVideoCall}
           aria-label={m.chat_video_call_label()}
           title={m.chat_video_call_label()}
-          class="ui-icon-button text-text-muted hover:text-text-main rounded-xl transition-all outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:hover:bg-white/10"
+          class="ui-icon-button text-text-muted hover:text-text-main focus-visible:ring-accent-icon rounded-xl transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
         >
           <Video size={20} strokeWidth={2.5} />
         </button>
@@ -443,8 +443,8 @@
         aria-label={m.chat_channel_members_title()}
         title={m.common_members_label()}
         aria-pressed={membersActive}
-        class="ui-icon-button rounded-xl transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {membersActive
-          ? 'bg-amber-500/10 text-amber-500'
+        class="ui-icon-button focus-visible:ring-accent-icon rounded-xl transition-all outline-none focus-visible:ring-2 active:scale-95 {membersActive
+          ? 'bg-accent/10 text-accent-text'
           : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
       >
         <Users size={20} strokeWidth={2.5} />
@@ -456,7 +456,7 @@
         onclick={onOpenMedia}
         aria-label={m.chat_media_links_files_label()}
         title={m.chat_media_links_files_label()}
-        class="ui-icon-button text-text-muted hover:text-text-main rounded-xl transition-all outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:hover:bg-white/10"
+        class="ui-icon-button text-text-muted hover:text-text-main focus-visible:ring-accent-icon rounded-xl transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
       >
         <Images size={20} strokeWidth={2.5} />
       </button>
@@ -467,8 +467,8 @@
         onclick={onToggleSearch}
         aria-label={m.chat_search_in_conversation_label()}
         title={m.chat_search_title()}
-        class="ui-icon-button rounded-xl transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 {searchActive
-          ? 'bg-amber-500/10 text-amber-500'
+        class="ui-icon-button focus-visible:ring-accent-icon rounded-xl transition-all outline-none focus-visible:ring-2 active:scale-95 {searchActive
+          ? 'bg-accent/10 text-accent-text'
           : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
       >
         <Search size={20} strokeWidth={2.5} />
@@ -489,7 +489,7 @@
         : isGroupConversation
           ? m.chat_group_settings_label()
           : m.chat_dm_settings_label()}
-      class="ui-icon-button text-text-muted hover:text-text-main rounded-xl transition-all outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:hover:bg-white/10"
+      class="ui-icon-button text-text-muted hover:text-text-main focus-visible:ring-accent-icon rounded-xl transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
       title={m.chat_settings_title()}
     >
       <Settings size={20} strokeWidth={2.5} />

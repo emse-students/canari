@@ -112,4 +112,45 @@ it('draws no pill until the active tab has been measured, then places it on that
   const pill = row.querySelector<HTMLElement>('[data-feed-tab-pill]')!;
   expect(pill.style.width).toBe('120px');
   expect(pill.style.transform).toContain('300px');
+  // The accent FILL, with the ink label on it (the pill alone is 1.66:1 on the bar).
+  expect(pill.classList.contains('bg-accent')).toBe(true);
+  expect(row.querySelector('[aria-pressed="true"]')!.classList.contains('text-on-accent')).toBe(
+    true
+  );
+});
+
+it('never draws an ink label on the glass: not before the pill is measured, not during the slide', () => {
+  const left = vi.spyOn(HTMLElement.prototype, 'offsetLeft', 'get');
+  const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get');
+  left.mockReturnValue(0);
+  width.mockReturnValue(0);
+  const props = $state({ feed: 'all' as string, onFeed: () => {}, authToken: 't' });
+  const target = document.createElement('div');
+  document.body.append(target);
+  mounted = mount(FeedTabRow, { target, props: props as never });
+  flushSync();
+  const label = (feed: string) => target.querySelector<HTMLElement>(`[data-feed-tab="${feed}"]`)!;
+  // Pill not measured yet: the selected label is muted, not ink.
+  expect(label('all').classList.contains('text-on-accent')).toBe(false);
+  // First measure (no transition): the pill is under its label at once.
+  left.mockReturnValue(300);
+  width.mockReturnValue(120);
+  resized.forEach((callback) => callback());
+  flushSync();
+  expect(label('all').classList.contains('text-on-accent')).toBe(true);
+  // A new selection slides the pill: the leaving label goes muted, the arriving one waits.
+  left.mockReturnValue(0);
+  width.mockReturnValue(100);
+  props.feed = 'all' === props.feed ? 'followed' : 'all';
+  flushSync();
+  const arriving = label(props.feed);
+  expect(label('all').classList.contains('text-on-accent')).toBe(false);
+  expect(arriving.classList.contains('text-on-accent')).toBe(false);
+  // The slide ends: the label turns ink.
+  const pill = target.querySelector<HTMLElement>('[data-feed-tab-pill]')!;
+  const end = new Event('transitionend');
+  Object.defineProperty(end, 'propertyName', { value: 'transform' });
+  pill.dispatchEvent(end);
+  flushSync();
+  expect(arriving.classList.contains('text-on-accent')).toBe(true);
 });

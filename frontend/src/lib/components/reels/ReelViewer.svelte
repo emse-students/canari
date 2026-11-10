@@ -819,7 +819,7 @@
     >
       <button
         type="button"
-        class="ui-icon-button pointer-events-auto rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full outline-none focus-visible:ring-2"
         aria-label={m.reels_viewer_close()}
         title={m.reels_viewer_close()}
         onclick={() => overlay.dismissFromUi()}
@@ -834,7 +834,7 @@
     >
       <button
         type="button"
-        class="ui-icon-button pointer-events-auto rounded-full bg-white/15 outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-30"
+        class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full bg-white/15 outline-none hover:bg-white/25 focus-visible:ring-2 disabled:opacity-30"
         aria-label={m.reels_viewer_prev()}
         title={m.reels_viewer_prev()}
         disabled={index === 0}
@@ -844,7 +844,7 @@
       </button>
       <button
         type="button"
-        class="ui-icon-button pointer-events-auto rounded-full bg-white/15 outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-30"
+        class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full bg-white/15 outline-none hover:bg-white/25 focus-visible:ring-2 disabled:opacity-30"
         aria-label={m.reels_viewer_next()}
         title={m.reels_viewer_next()}
         disabled={index >= reels.length - 1}

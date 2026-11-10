@@ -155,7 +155,7 @@
       {#if loading}
         <div class="flex justify-center py-16">
           <div
-            class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+            class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
           ></div>
         </div>
       {:else if error}
@@ -173,7 +173,7 @@
             bind:value={query}
             placeholder={m.reviewer_docs_search_placeholder()}
             aria-label={m.reviewer_docs_search_placeholder()}
-            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full max-w-sm rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+            class="border-cn-border text-text-main focus:ring-accent/40 w-full max-w-sm rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           />
           <span class="text-text-muted text-xs font-semibold">
             {m.reviewer_docs_count_label({ assos: groups.length, docs: totalDocs })}
@@ -199,7 +199,7 @@
                   />
                 {:else}
                   <span
-                    class="bg-cn-yellow/15 text-cn-dark flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+                    class="bg-accent/15 text-cn-dark flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
                   >
                     <Building2 size={18} />
                   </span>
@@ -238,7 +238,7 @@
                       >
                         {#if downloadingId === doc.id}
                           <div
-                            class="border-cn-yellow h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
+                            class="border-accent-icon h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
                           ></div>
                         {:else}
                           <Download size={15} />
