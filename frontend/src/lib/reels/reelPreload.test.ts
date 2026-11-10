@@ -59,6 +59,8 @@ describe('ReelPreload', () => {
     expect(signal()?.aborted).toBe(true);
     expect(c.release).not.toHaveBeenCalled();
     expect(p.ready).toBe(false);
+    // The abort a stop causes is not a failure: the state is frozen where the stop found it.
+    expect(p.state).toBe('in-flight');
   });
 
   it('a stop after the video is in gives the hold back, once', async () => {
@@ -70,6 +72,8 @@ describe('ReelPreload', () => {
     p.stop();
     p.stop();
     expect(c.release).toHaveBeenCalledTimes(1);
+    // Still `ready` after the stop: the outcome line reads it once the reel is current.
+    expect(p.state).toBe('ready');
   });
 
   it('hands the decrypted URL over once the video is in, for its first frame', async () => {

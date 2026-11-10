@@ -2489,6 +2489,10 @@ reloading MLS state and interrupting an in-flight send for a movement of the wri
 Negative control, run 2026-08-17: under a forced `user_rotation 1`, Settings reported `cur=2400x1080`
 while Canari stayed `cur=1080x2400`.
 
+**Since 2026-11-09 this is the STARTING orientation, not a lock**: the video and camera screens ask for
+another one through `canariOrientation` while they are mounted, and the configuration changes are what
+keeps the activity alive through the turn - [screen-orientation](screen-orientation.md).
+
 #### VIBRATE is a manifest permission, and `navigator.vibrate` fails silently without it (2026-10-06)
 
 `navigator.vibrate` (MessageBubble, ReelCapture, `useNotifications`) goes through Chromium's

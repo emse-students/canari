@@ -13,6 +13,7 @@ import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { REEL_AUDIO_CONSTRAINTS } from '$lib/reels/framedCapture';
 import { captureUserMedia } from '$lib/utils/audioSession';
+import { logCaptureAudioLayout } from '$lib/utils/audioLayout';
 import {
   LIVE_BATTERY_WARN_LEVEL,
   LIVE_CAPTURE_FPS,
@@ -55,6 +56,7 @@ export async function openLiveCamera(
       },
       'live-camera'
     );
+    logCaptureAudioLayout('LIVE-CAM', stream);
     const settings = stream.getVideoTracks()[0]?.getSettings?.();
     console.debug(
       `[LIVE-CAM] opened ${facing}: ${settings?.width ?? '?'}x${settings?.height ?? '?'} @ ${settings?.frameRate ?? '?'}`
@@ -336,6 +338,7 @@ export async function openLiveScreen(
   const video = display.getVideoTracks()[0];
   const shareAudio = display.getAudioTracks();
   const micTrack = mic.getAudioTracks()[0];
+  logCaptureAudioLayout('LIVE-CAM', mic);
   const sources: MediaStreamTrack[] = micTrack ? [micTrack, ...shareAudio] : [...shareAudio];
   let audio: MediaStreamTrack | undefined = micTrack;
   if (micTrack && shareAudio.length > 0 && context) {

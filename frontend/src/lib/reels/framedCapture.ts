@@ -56,6 +56,10 @@ export const REEL_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: false,
   noiseSuppression: false,
   autoGainControl: false,
+  // ONE channel: without voice processing a phone mic can answer two channels with the second one
+  // empty, and the recorder then writes a stereo file that plays out of one side only. A mono track
+  // plays on both sides everywhere (utils/audioLayout.ts reads back what the engine granted).
+  channelCount: { ideal: 1 },
 };
 
 /** Audio bitrate asked of the recorder, so its Opus is not left at an engine default. */
