@@ -5778,6 +5778,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_live_started_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_live_started_body) }
             )
+            // Someone mentioned the recipient in a live's chat: the writer names the title, the body is
+            // the live's title, or a fixed sentence when it has none.
+            "social_live_mention" -> Pair(
+                res.getString(R.string.notif_social_live_mention_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_live_mention_body) }
+            )
             // A follow request and its acceptance (WP-F2): the person names the title, the body is
             // a fixed sentence - the server sends no fragment for these keys.
             "social_follow_request" -> Pair(

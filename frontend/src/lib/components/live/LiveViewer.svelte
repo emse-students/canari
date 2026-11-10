@@ -20,6 +20,7 @@
   import { LoaderCircle, MessageCircle, MessageCircleOff, Radio, Share2, X } from '@lucide/svelte';
   import { videoGestures } from '$lib/actions/videoGestures';
   import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
+  import MediaSpinner from '$lib/components/shared/MediaSpinner.svelte';
   import VideoFeedbackGlyph, {
     type VideoFeedbackKind,
   } from '$lib/components/ui/player/VideoFeedbackGlyph.svelte';
@@ -37,7 +38,7 @@
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { LivePlayer, type LivePlayerDeps, type LiveVideoLike } from '$lib/live/livePlayer';
-  import { fetchLiveLimits } from '$lib/live/api';
+  import { fetchLiveLimits, fetchLiveMentionAudience } from '$lib/live/api';
   import { shareLiveLink } from '$lib/live/shareLive';
   import {
     LiveChatSession,
@@ -70,6 +71,8 @@
   let actionButton = $state<HTMLButtonElement | null>(null);
   let closeButton = $state<HTMLButtonElement | null>(null);
   let viewerState = $state<LiveViewerState>({ kind: 'connecting' });
+  /** The buffer ran dry while the live plays: the kit's spinner over the last frame until media comes. */
+  let buffering = $state(false);
   let elapsedMs = $state<number | null>(null);
   /** How many watch, from each manifest poll - a number, never who (null: nothing to show). */
   let viewers = $state<number | null>(null);
@@ -129,6 +132,14 @@
       },
       get readyState() {
         return el.readyState;
+      },
+      get playbackRate() {
+        return el.playbackRate;
+      },
+      set playbackRate(rate: number) {
+        // The pace changes the speed a few percent, never the voice (`LiveBufferPolicy.pace`).
+        el.preservesPitch = true;
+        el.playbackRate = rate;
       },
       async play() {
         try {
@@ -205,6 +216,9 @@
       },
       onViewers: (count) => {
         viewers = count;
+      },
+      onBuffering: (dry) => {
+        buffering = dry;
       },
       chat: {
         onKey: (key, opened) => {
@@ -307,6 +321,12 @@
     ></video>
     <!-- A tap's glyph: the feedback of a gesture, never a state. -->
     <VideoFeedbackGlyph {feedback} />
+    <!-- THE LAST RESORT: the margin ran out (the broadcaster later than all of it). The kit's spinner
+         over the frozen last frame - never a loop, never black - until the next media resumes it.
+         "Reconnecting" and the final screens say their own thing instead. -->
+    {#if buffering && viewerState.kind === 'playing'}
+      <MediaSpinner />
+    {/if}
 
     <div
       class="absolute inset-x-0 top-0 flex items-center gap-2 bg-linear-to-b from-black/60 to-transparent p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
@@ -404,6 +424,7 @@
               discard={(id) => chat?.discard(id)}
               hide={(id) => void chat?.hide(id)}
               report={(line) => (reportedLine = line)}
+              audienceOf={(ids) => fetchLiveMentionAudience(live.id, ids)}
             />
           {/if}
         </div>

@@ -492,7 +492,7 @@
   "src/lib/components/live/LiveChatPanel.svelte": {
     "button": 7,
     "select": 0,
-    "input": 1
+    "input": 0
   },
   "src/lib/components/live/LiveFeedCard.svelte": {
     "button": 1,

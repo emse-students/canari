@@ -37,6 +37,8 @@ sourceSets {
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/call")
         // The name a shared file is stored under (share into Canari), same rule.
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/share")
+        // The orientation modes the video and camera screens request (screen-orientation.md), same rule.
+        kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/orientation")
     }
 }
 

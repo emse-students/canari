@@ -73,6 +73,8 @@ const RAW_TABLES = [
   // Migration 146's unpublished form revisions: a form id and the form's own content, no account -
   // they go with their form (ON DELETE CASCADE), as its other content does.
   'form_drafts',
+  // Migration 155's dismissed follow suggestions (engagement WP-5): the reader, and a person target.
+  'follow_suggestion_dismissals',
 ];
 
 const SRC = join(__dirname, '..');

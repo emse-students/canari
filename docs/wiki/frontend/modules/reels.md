@@ -577,12 +577,17 @@ in flight aborted) and the `<video>` unmounts with its decoder; a deferred video
 either, so only the cards near the screen hold a player. Coming back opens a new stream, which
 re-fetches the head (nothing else keeps those bytes). The segments the final file needs are kept as
 `Blob`s, never as the decrypted `ArrayBuffer`s - the JS-heap second copy is gone - and a paced
-stream builds the whole file only once the member has watched it to the end, or opened the media
-viewer (`fetchAll`) - which opens AT THE TAP on the poster and fills when the file is in, and goes
-away with the card if the card leaves the band. On an iPhone the pacing also honours
+stream builds the whole file only once the member has watched it to the end. The media viewer is a
+FORK of the card's stream (`SegmentedStreamHandle.fork`, 2026-11-09, owner: a 33 MB video waited 26 s
+for the whole file before the viewer played, the card already playing): its own MediaSource and
+`<video>` over the SAME segment feed, so what the card fetched is not fetched again and what the
+viewer fetches is the card's too; it opens AT THE TAP on the poster, plays once ITS head is appended,
+is paced like the card but further ahead (`VIEWER_STREAM_PACING`, 30 s), and goes away with the card
+if the card leaves the band. The gallery viewer (`galleryMode`, opened through `onOpen`) is its own
+`PostMedia` and still opens its own paced stream: a second head fetch, not a whole-file wait. On an iPhone the pacing also honours
 `ManagedMediaSource.streaming` (`startstreaming`/`endstreaming`); a range the engine EVICTS is not
 fetched again (no time-to-segment index yet), and nothing is trimmed behind the playhead because a
-feed video loops from its own buffer. The decrypted pool is capped by BYTES (64 MiB,
+feed video loops from its own buffer - EXCEPT when the engine says the buffer is full (`QuotaExceededError`: the card and the viewer each hold one): the played part is removed (10 s kept) and the segment appended once more, which beats the `decode` error that ended the video; a segment or a reader open that FAILED is not memoised by the shared feed, so a second consumer asks again; a seek on a PAUSED fork is a demand (`seeking`), so the picture fills without a press on play. The decrypted pool is capped by BYTES (64 MiB,
 `BLOB_URL_POOL_MAX_BYTES`) as well as entries, SOFTLY: when a new blob takes it past the cap, the
 least recently used IDLE blob is revoked, a held one - the video playing - never, and a release
 alone evicts nothing, so a page torn down by a tab swipe keeps its grace. Pinned by `segmentedMediaStream.test.ts` (ten unplayed cards fetch 20
