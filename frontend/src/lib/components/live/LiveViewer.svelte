@@ -38,7 +38,7 @@
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { LivePlayer, type LivePlayerDeps, type LiveVideoLike } from '$lib/live/livePlayer';
-  import { fetchLiveLimits } from '$lib/live/api';
+  import { fetchLiveLimits, fetchLiveMentionAudience } from '$lib/live/api';
   import { shareLiveLink } from '$lib/live/shareLive';
   import {
     LiveChatSession,
@@ -424,6 +424,7 @@
               discard={(id) => chat?.discard(id)}
               hide={(id) => void chat?.hide(id)}
               report={(line) => (reportedLine = line)}
+              audienceOf={(ids) => fetchLiveMentionAudience(live.id, ids)}
             />
           {/if}
         </div>
