@@ -529,6 +529,30 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
+   * THE ONE `channel.member.joined` PUBLISH. A device that hears of a salon live draws its row from
+   * this event, so the event carries what the listing would have: the salon's `writePolicy` and the
+   * recipient's own `viewerCanWrite` - split by the answer, like `channel.updated`, since one payload
+   * cannot carry a per-viewer verdict (one publish under `everyone`, two at most otherwise). Without
+   * them a live-added row knew no policy, and a later role change could not judge its composer.
+   */
+  private async announceSalonJoined(
+    channel: Channel,
+    data: Record<string, unknown>,
+    audience: string[]
+  ): Promise<void> {
+    const decisions = await this.writeDecisionsFor(channel, audience);
+    for (const mayWrite of [true, false]) {
+      const half = audience.filter((u) => (decisions.get(u) ?? true) === mayWrite);
+      if (half.length === 0) continue;
+      await this.redis.publishChannelEvent(
+        'channel.member.joined',
+        { ...data, writePolicy: channel.writePolicy ?? 'everyone', viewerCanWrite: mayWrite },
+        half
+      );
+    }
+  }
+
+  /**
    * Who, among `userIds`, may write in `channel` - the same decision {@link writeStandingIn}
    * enforces and the workspace listing answers, computed for a whole audience at once.
    *
@@ -1098,8 +1122,8 @@ export class ChannelService implements OnApplicationBootstrap {
   private async announceChannelAccessGranted(channel: Channel, userIds: string[]): Promise<void> {
     if (userIds.length === 0) return;
     const workspace = await this.workspaceRepo.findOne({ where: { id: channel.workspaceId } });
-    await this.redis.publishChannelEvent(
-      'channel.member.joined',
+    await this.announceSalonJoined(
+      channel,
       {
         channelId: channel.id,
         channelName: channel.name,
@@ -2049,8 +2073,8 @@ export class ChannelService implements OnApplicationBootstrap {
     });
     if (repChannel) {
       const memberIds = await this.getWorkspaceMemberIds(ws.id);
-      await this.redis.publishChannelEvent(
-        'channel.member.joined',
+      await this.announceSalonJoined(
+        repChannel,
         {
           channelId: repChannel.id,
           channelName: repChannel.name,
@@ -2715,8 +2739,8 @@ export class ChannelService implements OnApplicationBootstrap {
     channel.accessRevision = granted.channel.accessRevision;
 
     const audience = await this.channelAudience(channel);
-    await this.redis.publishChannelEvent(
-      'channel.member.joined',
+    await this.announceSalonJoined(
+      channel,
       {
         channelId,
         channelName: channel.name,
@@ -3132,8 +3156,8 @@ export class ChannelService implements OnApplicationBootstrap {
     // creator alone, on every device they hold) and a public one reaches the whole community.
     const workspace = await this.workspaceRepo.findOne({ where: { id: savedChannel.workspaceId } });
     const audience = await this.channelAudience(savedChannel);
-    await this.redis.publishChannelEvent(
-      'channel.member.joined',
+    await this.announceSalonJoined(
+      savedChannel,
       {
         channelId: savedChannel.id,
         channelName: savedChannel.name,
@@ -3146,11 +3170,15 @@ export class ChannelService implements OnApplicationBootstrap {
       audience
     );
 
+    // The creator's row carries what a listing would: the policy and their own verdict on it.
+    const creatorWrites = await this.writeDecisionsFor(savedChannel, [input.actorUserId]);
     return {
       id: savedChannel.id,
       workspaceId: savedChannel.workspaceId,
       name: savedChannel.name,
       visibility: savedChannel.isPrivate ? 'private' : 'public',
+      writePolicy: savedChannel.writePolicy ?? 'everyone',
+      viewerCanWrite: creatorWrites.get(input.actorUserId) === true,
     };
   }
 
@@ -3430,7 +3458,7 @@ export class ChannelService implements OnApplicationBootstrap {
       // The recovery path, and the only line that says it was taken. Rare by construction: a manager
       // who is on the allowlist is `readable` and never spends the permission query.
       this.logger.log(
-        `[CHANNEL_ACCESS] settings served to manager ${actorUserId} outside the allowlist of ${channelId}`
+        `[CHANNEL_ACCESS] settings served to manager ${actorUserId.slice(0, 8)} outside the allowlist of ${channelId}`
       );
     }
 
@@ -3882,7 +3910,16 @@ export class ChannelService implements OnApplicationBootstrap {
     const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
 
-    const viewerCanManage = await this.memberHasWorkspaceManage(member);
+    // THE VIEWER'S STANDING, resolved once for every salon. This is the SIDEBAR's listing, and until
+    // 2026-11-10 it carried neither `writePolicy` nor `viewerCanWrite` - only `getWorkspaceBySlug`
+    // did - so every load drew a composer in every restricted salon, and only a live
+    // `channel.updated` ever took one away (production: a moderator whose role granted nothing typed
+    // into an "admins and moderators" salon and collected a 403).
+    const heldRoles = member.roleIds?.length
+      ? await this.roleRepo.find({ where: { id: In(member.roleIds) } })
+      : [];
+    const standing = standingOfPermissions(heldRoles.flatMap((r) => r.permissions));
+    const viewerCanManage = standing.canManage;
     const channels = sortChannels(await this.channelRepo.find({ where: { workspaceId } }));
     const visible: Array<{
       id: string;
@@ -3890,16 +3927,21 @@ export class ChannelService implements OnApplicationBootstrap {
       name: string;
       visibility: 'public' | 'private';
       viewerHasAccess: boolean;
+      writePolicy: ChannelWritePolicy;
+      viewerCanWrite: boolean;
     }> = [];
     for (const channel of channels) {
       const hasAccess = this.canAccessChannel(channel, member, userId);
       if (!hasAccess && !viewerCanManage) continue;
+      const writePolicy: ChannelWritePolicy = channel.writePolicy ?? 'everyone';
       visible.push({
         id: channel.id,
         workspaceId: channel.workspaceId,
         name: channel.name,
         visibility: channel.isPrivate ? 'private' : 'public',
         viewerHasAccess: hasAccess,
+        writePolicy,
+        viewerCanWrite: writePolicyAllows(writePolicy, standing),
       });
     }
     return visible;
@@ -4137,8 +4179,8 @@ export class ChannelService implements OnApplicationBootstrap {
 
       // Publish event to notify the invited user and connected clients
       const audience = await this.channelAudience(channel);
-      await this.redis.publishChannelEvent(
-        'channel.member.joined',
+      await this.announceSalonJoined(
+        channel,
         {
           channelId,
           channelName: channel.name,

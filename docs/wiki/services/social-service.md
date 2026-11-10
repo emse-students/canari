@@ -239,8 +239,8 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   able to offer people who are not in it yet. Getting this wrong is visible: the members sidebar
   listed all nine people of a community in a channel only five of them could read.
 - **Write policy.** Independent of read access, `channels.writePolicy` (migration 031) gates
-  posting: `everyone` (default), `admins_moderators` (roles with `channel.moderate` or
-  `workspace.manage`), or `admins` (`workspace.manage` only). Enforced in `sendMessage` via
+  posting: `everyone` (default), `admins_moderators` (roles with `channel.moderate`, `channel.manage`
+  or `workspace.manage` - `roleGrantsModeration`), or `admins` (`workspace.manage` only). Enforced in `sendMessage` via
   `writeStandingIn`; used for announcement-style channels. Set from the channel settings "Accès" tab.
   **`writePolicyAllows` in `permissions.ts` is the only definition of the rule**, and every caller
   reads it: `writeStandingIn` per message, `getWorkspaceBySlug` for the `viewerCanWrite` it projects
@@ -261,6 +261,11 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   `workspace.role.changed` carries `canWriteByPolicy` (the verdict for each of the three policies),
   and every salon row keeps its `writePolicy` (listing, `channel.updated`) to look its own verdict
   up - before this, a role edit moved the three cached flags and left every composer where it was.
+  **And the sidebar's own listing (`listChannelsForUser`) never carried `viewerCanWrite` at all** -
+  only `getWorkspaceBySlug` did - so every load drew a composer in every restricted salon; it now
+  projects `writePolicy` and `viewerCanWrite` like the community page, and `channel.member.joined`
+  (one helper, `announceSalonJoined`, split by verdict) and `createChannel`'s answer carry both, so
+  a row added live knows its policy too.
   The access read (`getChannelAccess`) carries `writerRoles`, the roles each restricted policy admits
   by what they grant; the panel names them under the select and warns when "admins and moderators"
   admits the administrators alone.

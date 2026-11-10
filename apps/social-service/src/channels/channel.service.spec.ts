@@ -1335,8 +1335,47 @@ describe('ChannelService security hardening', () => {
         // salon an admin can SEE but has not joined comes back with `false`, which is what makes
         // the join reachable without giving them any of its content.
         viewerHasAccess: true,
+        // The SIDEBAR's listing: until 2026-11-10 it carried neither, so every load drew a composer
+        // in every restricted salon.
+        writePolicy: 'everyone',
+        viewerCanWrite: true,
       },
     ]);
+  });
+
+  it('tells the sidebar who may write in each salon, from the viewer roles', async () => {
+    const { service, channelRepo, memberRepo, roleRepo } = makeService();
+    // A "Moderateur" whose role grants nothing - the production case.
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r-mod'] });
+    roleRepo.find.mockResolvedValue([{ id: 'r-mod', permissions: [] }]);
+    channelRepo.find.mockResolvedValue([
+      { id: 'a', workspaceId: 'ws1', name: 'a', isPrivate: false, allowedUsers: [] },
+      {
+        id: 'b',
+        workspaceId: 'ws1',
+        name: 'b',
+        isPrivate: false,
+        allowedUsers: [],
+        writePolicy: 'admins_moderators',
+      },
+    ]);
+
+    const rows = (await service.listChannelsForUser('ws1', 'u1')) as Array<{
+      id: string;
+      writePolicy: string;
+      viewerCanWrite: boolean;
+    }>;
+    expect(rows.map((r) => [r.id, r.writePolicy, r.viewerCanWrite])).toEqual([
+      ['a', 'everyone', true],
+      ['b', 'admins_moderators', false],
+    ]);
+
+    // Granting the role `channel.moderate` is all it takes - the name never counted.
+    roleRepo.find.mockResolvedValue([{ id: 'r-mod', permissions: ['channel.moderate'] }]);
+    const after = (await service.listChannelsForUser('ws1', 'u1')) as Array<{
+      viewerCanWrite: boolean;
+    }>;
+    expect(after.map((r) => r.viewerCanWrite)).toEqual([true, true]);
   });
 
   // A message names the Graine session that opens it and which key of that session; the server

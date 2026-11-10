@@ -100,9 +100,10 @@
   import { forgetRevokedLeafAnswers } from '$lib/utils/graine/rosterReconcile';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
-  import type {
-    ListingRetryTrigger,
-    WorkspacePurgeContext,
+  import {
+    writeFieldsOf,
+    type ListingRetryTrigger,
+    type WorkspacePurgeContext,
   } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import { registerReelSendHost } from '$lib/reels/reelSendBridge';
@@ -1129,6 +1130,7 @@
           id: channelConversationId,
           name: channelName,
           isPrivate,
+          ...writeFieldsOf(event),
         });
         if (!globalConvs.conversations.has(channelConversationId)) {
           globalConvs.conversations.set(

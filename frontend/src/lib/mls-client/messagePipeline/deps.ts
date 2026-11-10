@@ -59,6 +59,10 @@ export interface MessageHandlerDeps {
     visibility?: 'public' | 'private';
     roleName?: string;
     joinedBy?: string;
+    /** The salon's write policy. Absent (an older server) = unknown, the row keeps what it had. */
+    writePolicy?: ChannelWritePolicy;
+    /** The server's verdict on whether THIS device may post here. Absent = unchanged. */
+    viewerCanWrite?: boolean;
   }) => void;
   /**
    * A member lost access to a channel or to a whole community. Broadcast to EVERY remaining

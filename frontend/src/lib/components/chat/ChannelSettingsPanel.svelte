@@ -32,7 +32,8 @@
   import type { PickerOption } from '../ui/picker';
   import { admitSalonGrantee } from '$lib/utils/graine/admitNewcomer';
   import { commitSalonRevoke, committingDeviceId } from '$lib/utils/graine/commitRemoval';
-  import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+  import { untrack } from 'svelte';
+  import { appendLog, globalChannels } from '$lib/stores/globalChatSingleton.svelte';
   import { summarizeWriterRoles } from '$lib/utils/chat/channelWritePolicy';
 
   interface ChannelSidebarItem {
@@ -135,6 +136,37 @@
   let writerRoles = $state<ChannelAccessState['writerRoles']>(undefined);
   /** Which roles the selected policy currently admits, and whether that is the admins alone. */
   const writerSummary = $derived(summarizeWriterRoles(writePolicy, writerRoles));
+
+  /*
+   * A ROLE EDIT WHILE THIS TAB IS OPEN RE-READS WHO QUALIFIES. `workspace.role.permissions` reaches
+   * every member and lands in `globalChannels.rolePermissions` (a new object per event), so an admin
+   * ticking "Modérer les messages" in the roles grid sees the warning here clear without reopening
+   * the panel. Only the lists are re-read and applied: the access on screen is left alone, so this
+   * never races an access write.
+   */
+  let seenRolePermissions = globalChannels.rolePermissions;
+  $effect(() => {
+    const current = globalChannels.rolePermissions;
+    if (current === seenRolePermissions) return;
+    seenRolePermissions = current;
+    untrack(() => {
+      if (activeTab === 'access' && accessLoadedFor === selectedChannelId) {
+        void refreshWriterRoles(selectedChannelId);
+      }
+    });
+  });
+
+  /** Re-reads the roles each policy admits after a role edit; anything else on screen is kept. */
+  async function refreshWriterRoles(channelId: string) {
+    try {
+      const state = await channelService.getChannelAccess(channelId);
+      if (channelId !== selectedChannelId || !state.writerRoles) return;
+      writerRoles = state.writerRoles;
+      appendLog(`[CHANNEL] writer roles re-read after a role edit ${channelId.slice(0, 8)}`);
+    } catch (e) {
+      Log.i('channelSettings.refreshWriterRoles failed - the previous lists stay on screen', e);
+    }
+  }
   /**
    * The server's revision of the access on screen, sent as the BASE of every write here. The list
    * this panel holds is the one it read; a grant made since by someone else is absent from it, and
@@ -781,7 +813,9 @@
                 </p>
                 {#if writerSummary.onlyAdmins}
                   <p class="text-red-err text-xs font-medium" role="alert">
-                    {m.chat_channel_write_no_moderator_role_warning()}
+                    {m.chat_channel_write_no_moderator_role_warning({
+                      permission: m.chat_permission_moderate_label(),
+                    })}
                   </p>
                 {/if}
               {/if}

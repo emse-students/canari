@@ -194,3 +194,26 @@ describe('what a role or access change hands the store about writing', () => {
     expect(onChannelUpdated.mock.calls[1][0].writePolicy).toBeUndefined();
   });
 });
+
+describe('a salon heard of live', () => {
+  it('passes its policy and the verdict when stated, and nothing invented when absent', async () => {
+    const onChannelMemberJoined = vi.fn();
+    await handleChannelEvent(
+      {
+        type: 'channel.member.joined',
+        data: { channelId: 'c1', writePolicy: 'admins_moderators', viewerCanWrite: false },
+      },
+      ctx({ onChannelMemberJoined })
+    );
+    await handleChannelEvent(
+      { type: 'channel.member.joined', data: { channelId: 'c2' } },
+      ctx({ onChannelMemberJoined })
+    );
+    expect(onChannelMemberJoined.mock.calls[0][0]).toMatchObject({
+      writePolicy: 'admins_moderators',
+      viewerCanWrite: false,
+    });
+    expect(onChannelMemberJoined.mock.calls[1][0].writePolicy).toBeUndefined();
+    expect(onChannelMemberJoined.mock.calls[1][0].viewerCanWrite).toBeUndefined();
+  });
+});

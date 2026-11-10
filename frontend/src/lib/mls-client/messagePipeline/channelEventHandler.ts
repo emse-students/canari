@@ -208,6 +208,9 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       visibility: data.visibility,
       roleName: data.roleName,
       joinedBy: data.joinedBy,
+      // Absent stays absent: a row heard of live must not invent a policy or a verdict.
+      writePolicy: isWritePolicy(data.writePolicy) ? data.writePolicy : undefined,
+      viewerCanWrite: typeof data.viewerCanWrite === 'boolean' ? data.viewerCanWrite : undefined,
     });
     return;
   }

@@ -133,6 +133,21 @@ export interface ChannelSidebarItem {
   writePolicy?: ChannelWritePolicy;
 }
 
+/**
+ * The write fields a server answer or event states about a salon - its policy and the viewer's
+ * verdict - as row fields, ONLY those it states: a row merged with an absent field keeps its own
+ * (`upsertChannelRow` spreads), so nothing here may write `undefined` over a known value.
+ */
+export function writeFieldsOf(source: {
+  writePolicy?: ChannelWritePolicy;
+  viewerCanWrite?: boolean;
+}): Pick<ChannelSidebarItem, 'writePolicy' | 'canWrite'> {
+  return {
+    ...(source.writePolicy ? { writePolicy: source.writePolicy } : {}),
+    ...(typeof source.viewerCanWrite === 'boolean' ? { canWrite: source.viewerCanWrite } : {}),
+  };
+}
+
 /** One workspace (community) shown in the sidebar, containing its channels. */
 export interface ChannelSidebarWorkspace {
   /** URL slug used as the local identifier (e.g. "emse-mine"). */
@@ -557,7 +572,7 @@ export function useChannelWorkspaces() {
         isPrivate,
         hasAccess: viewerHasAccess,
         canWrite: channel.viewerCanWrite !== false,
-        ...(channel.writePolicy ? { writePolicy: channel.writePolicy } : {}),
+        ...writeFieldsOf(channel),
       });
 
       // AN UNJOINED SALON GETS NO CONVERSATION, and that is the point: a conversation row is what
@@ -1775,6 +1790,7 @@ export function useChannelWorkspaces() {
             id: channelConversationId,
             name: channel.name,
             isPrivate: channel.visibility === 'private',
+            ...writeFieldsOf(channel),
           });
           // `messages: []` USED TO BE WRITTEN HERE UNCONDITIONALLY, over a row this same statement
           // had just read for its unread count. Hydrating the workspace emptied a channel the user
@@ -1868,6 +1884,7 @@ export function useChannelWorkspaces() {
           id: channelId,
           name: normalizedChannelName,
           isPrivate,
+          ...writeFieldsOf(createdChannel ?? {}),
         });
       }
 
@@ -2614,11 +2631,12 @@ export function useChannelWorkspaces() {
             // salon's own policy. Until 2026-11-10 only the three flags above moved, so a moderator
             // whose role lost its moderation grant kept a composer in every "admins and moderators"
             // salon until the next full load, and each post came back a 403.
+            // A row that does not know its policy (an older server) keeps its `canWrite`: absent
+            // means unchanged, never "everyone".
             channels: verdicts
-              ? ws.channels.map((ch) => ({
-                  ...ch,
-                  canWrite: verdicts[ch.writePolicy ?? 'everyone'],
-                }))
+              ? ws.channels.map((ch) =>
+                  ch.writePolicy ? { ...ch, canWrite: verdicts[ch.writePolicy] } : ch
+                )
               : ws.channels,
           }
         : ws

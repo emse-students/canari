@@ -364,8 +364,9 @@
       }
       globalChannels.setRolePermissions(perms);
     } catch (e) {
+      Log.i('communityAdmin.loadRolesAndPermissions failed - the grid is not drawn', e);
       console.warn('[COMMUNITY] roles and permissions not loaded - the grid is not drawn', e);
-      rolesError = m.chat_community_load_members_error();
+      rolesError = m.chat_community_roles_load_error();
     } finally {
       rolesLoading = false;
     }

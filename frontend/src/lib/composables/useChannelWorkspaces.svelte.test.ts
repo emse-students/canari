@@ -136,7 +136,11 @@ vi.mock('$lib/utils/graine/repair', async (importOriginal) => ({
   requestCommunityHistory: (...args: unknown[]) => requestCommunityHistory(...args),
 }));
 
-import { useChannelWorkspaces, type ChannelWorkspaceContext } from './useChannelWorkspaces.svelte';
+import {
+  useChannelWorkspaces,
+  writeFieldsOf,
+  type ChannelWorkspaceContext,
+} from './useChannelWorkspaces.svelte';
 // NOT MOCKED, DELIBERATELY: the channel-to-community map is the fact the send path reads, so the
 // test asserting it survives a failed join has to read the real one.
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
@@ -903,6 +907,23 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
     });
     expect(canWrite()).toEqual({ channel_open: true, channel_mods: false, channel_adm: false });
 
+    // A row that does not know its policy keeps its verdict: absent is unchanged, never "everyone".
+    store.handleChannelWriteRefused('channel_open', 'admins');
+    store.channelWorkspaces = store.channelWorkspaces.map((ws) => ({
+      ...ws,
+      channels: ws.channels.map((c) =>
+        c.id === 'channel_open' ? { ...c, writePolicy: undefined } : c
+      ),
+    }));
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Membre',
+      canManage: false,
+      canWriteByPolicy: { everyone: true, admins_moderators: false, admins: false },
+      permissions: [],
+    });
+    expect(canWrite().channel_open).toBe(false);
+
     // An older server sends no table: every composer stays where the last listing put it.
     store.handleWorkspaceRoleChanged({
       workspaceId: 'ws1',
@@ -910,7 +931,16 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
       canManage: true,
       permissions: ['workspace.manage'],
     });
-    expect(canWrite()).toEqual({ channel_open: true, channel_mods: false, channel_adm: false });
+    expect(canWrite()).toEqual({ channel_open: false, channel_mods: false, channel_adm: false });
+  });
+
+  it('turns only the write fields an answer states into row fields', () => {
+    expect(writeFieldsOf({ writePolicy: 'admins', viewerCanWrite: false })).toEqual({
+      writePolicy: 'admins',
+      canWrite: false,
+    });
+    // Nothing stated, nothing written: a merge must not put `undefined` over a known value.
+    expect(writeFieldsOf({})).toEqual({});
   });
 
   it('takes the composer from a salon whose post was refused by its write policy', async () => {
