@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { ChannelWritePolicy } from '$lib/services/ChannelService';
+  import { writePolicyLine } from '$lib/utils/chat/channelWritePolicy';
   import { usesGlassChrome } from '$lib/mobile/glassChrome';
   import { excludeRightEdgeOver } from '$lib/mobile/edgeGestureExclusion';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
@@ -233,6 +235,8 @@
      * write policy, and a channel row that has not been refreshed must not silence anybody.
      */
     canWrite?: boolean;
+    /** The open salon's write policy, so the read-only line can say who may write. */
+    writePolicy?: ChannelWritePolicy;
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
     /** Sends a finished recording straight out, without staging it. Enables the microphone. */
@@ -310,6 +314,7 @@
     pendingInvites = [],
     mentionRoster,
     canWrite = true,
+    writePolicy,
     sendError = '',
     onGroupRename,
     onGroupSetImage,
@@ -1959,7 +1964,7 @@
         class="absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-2 border-t border-black/8 bg-[var(--color-surface)] px-4 py-3 dark:border-white/10"
       >
         <p class="text-center text-sm text-[var(--color-text-muted)]">
-          {m.chat_channel_read_only()}
+          {writePolicyLine(writePolicy)}
         </p>
       </div>
     {:else}

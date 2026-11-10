@@ -32,7 +32,10 @@ vi.mock('$lib/utils/graine/commitRemoval', () => ({
   commitSalonRevoke,
   committingDeviceId: () => 'web-actor',
 }));
-vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({ appendLog: vi.fn() }));
+vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
+  appendLog: vi.fn(),
+  globalChannels: { rolePermissions: {} },
+}));
 const showConfirmMock = vi.hoisted(() => vi.fn());
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: showConfirmMock }));
 // Each member row mounts an `Avatar`, which resolves its image on mount - and happy-dom really
@@ -387,6 +390,33 @@ describe('ChannelSettingsPanel - access tab', () => {
       true,
       ['owner'],
       'admins'
+    );
+  });
+
+  // Production 2026-11-10: "Admins and moderators" read as if the role CALLED Moderateur counted,
+  // while that community's Moderateur role granted nothing. The panel names who really qualifies.
+  it('names the roles the policy admits, and warns when only administrators qualify', async () => {
+    service.getChannelAccess.mockImplementation((id: string) =>
+      Promise.resolve({
+        channelId: id,
+        isPrivate: true,
+        allowedUsers: ['owner'],
+        writePolicy: 'admins_moderators',
+        accessRevision: REVISION,
+        writerRoles: {
+          admins: [{ id: 'r-admin', name: 'Administrateur', displayLabel: null }],
+          admins_moderators: [{ id: 'r-admin', name: 'Administrateur', displayLabel: null }],
+        },
+      })
+    );
+    await mountOnAccessTab('salon-a');
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain(m.chat_channel_write_roles_qualifying({ roles: m.chat_role_admin() }));
+    expect(text).toContain(
+      m.chat_channel_write_no_moderator_role_warning({
+        permission: m.chat_permission_moderate_label(),
+      })
     );
   });
 });
