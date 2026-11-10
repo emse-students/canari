@@ -458,6 +458,11 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
     expect(await reaches()).toEqual(['Autre', 'FSSS', 'ICM', 'ISMIN', 'PDIS']);
     await setReach(Q, { spaces: [ICM_SE, ISMIN_SE], public: 'all' });
     expect(await reaches()).toEqual(['ICM', 'ISMIN']);
+    await setReach(Q, { spaces: [ICM_SE, ISMIN_SE], public: 'students' });
+    expect(await reaches()).toEqual(['ICM', 'ISMIN']);
+    // A space's readers are students: a staff-only post reaches no space, so takes no pin slot.
+    await setReach(Q, { spaces: [ICM_SE, ISMIN_SE], public: 'staff' });
+    expect(await reaches()).toEqual([]);
   });
 
   it('NEVER WIDER THAN THE AUDIENCE: a ticked space the institution does not reach opens nothing', async () => {

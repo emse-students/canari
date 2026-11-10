@@ -722,6 +722,8 @@ export const NEWLY_REACHED_BY_MEMBER_REPOST_SQL = `SELECT nr_user.id FROM users 
  * - an association post: one of the association's rules reaches the space (a membership is one
  *   person's door, never a space's) and, for an institution's post with a reach, the space is one it
  *   ticked (`postReachHoldsSpaceSql`, 2026-11-10);
+ * - an institution's post for staff only (`reachPublic` 'staff') reaches no space at all: a space's
+ *   readers are students, whom its public refuses (review of #3314);
  * - a personal post: its author belongs to the space (`isReaderSpaceSql`, so a review account's post
  *   reaches no real space);
  * - either: an association that REPUBLISHED it, and is not archived, has a rule reaching the space
@@ -736,7 +738,9 @@ export function postReachesSpaceSql(post: string, space: string): string {
         JOIN association_audiences sp_rep_rule ON sp_rep_rule."associationId" = sp_rep."associationId"
         WHERE sp_rep."postId" = ${post}.id AND NOT COALESCE(sp_rep_asso.archived, false)
           AND ${ruleReachesSpaceSql('sp_rep_rule', space)})`;
-  return `((${post}."associationId" IS NULL AND (
+  // A space's readers are students - they HAVE the space - so a post an institution wrote for staff
+  // only (`reachPublic` 'staff') reaches no space as a space, and never takes a pin slot there.
+  return `(${post}."reachPublic" IS DISTINCT FROM 'staff' AND ((${post}."associationId" IS NULL AND (
       EXISTS (SELECT 1 FROM users sp_author
         WHERE sp_author.id = ${post}."authorId" AND ${isReaderSpaceSql(space, 'sp_author')})
       OR ${republished}))
@@ -744,7 +748,7 @@ export function postReachesSpaceSql(post: string, space: string): string {
       (EXISTS (SELECT 1 FROM association_audiences sp_rule
         WHERE sp_rule."associationId" = ${post}."associationId" AND ${ruleReachesSpaceSql('sp_rule', space)})
         AND ${postReachHoldsSpaceSql(post, space)})
-      OR ${republished})))`;
+      OR ${republished}))))`;
 }
 
 /**

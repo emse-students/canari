@@ -22,6 +22,7 @@
     emptyReachDraft,
     institutionReachOffered,
     isReachComplete,
+    plainReach,
     type InstitutionReachDraft,
   } from '$lib/posts/institutionReach';
   import type { ComposerReelState } from '$lib/posts/composerReelState';
@@ -111,9 +112,7 @@
   });
   const reachMissing = $derived(reachAssociation !== null && !isReachComplete(reach));
   const sendReach = $derived(
-    reachAssociation !== null && isReachComplete(reach)
-      ? { spaces: [...reach.spaces], public: reach.public }
-      : undefined
+    reachAssociation !== null && isReachComplete(reach) ? plainReach(reach) : undefined
   );
   let publishing = $state(false);
   let stage = $state<PublishStage | null>(null);

@@ -154,6 +154,9 @@ describe('CreatePostForm - the reach of an institution post', () => {
       associationId: 'inst-1',
       reach: { spaces: [{ formation: 'ISMIN', campus: 'gardanne' }], public: 'staff' },
     });
+    // The queue stores the payload in IndexedDB, whose structured clone throws `DataCloneError` on
+    // a `$state` proxy (review of #3314): what is enqueued must clone, whole.
+    expect(() => structuredClone(enqueuePost.mock.calls[0][1])).not.toThrow();
   });
 
   it('is offered to no association, list or personal post, and never sent from one', async () => {

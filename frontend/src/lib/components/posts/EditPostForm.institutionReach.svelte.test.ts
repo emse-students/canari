@@ -129,6 +129,20 @@ describe('EditPostForm - the reach of an institution post', () => {
     });
   });
 
+  it('a ticked space the audience no longer holds is pruned by the picker, and that alone sends no reach', async () => {
+    const target = await open({
+      spaces: [
+        { formation: 'ICM', campus: 'saint-etienne' },
+        { formation: 'ISMIN', campus: 'gardanne' },
+      ],
+      public: 'all',
+    });
+    // The picker dropped ISMIN|gardanne on its own: not the author's choice (review of #3314).
+    expect(target.querySelector('[data-reach-space="ISMIN|gardanne"]')).toBeNull();
+    await submit(target);
+    expect(updatePost.mock.calls[0][1]).not.toHaveProperty('reach');
+  });
+
   it('on a post published before the reach existed, saves without one until a choice is complete', async () => {
     const target = await open(null);
     expect(target.querySelector('[data-institution-reach-picker]')).not.toBeNull();

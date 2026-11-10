@@ -74,6 +74,7 @@
     emptyReachDraft,
     institutionReachOffered,
     isReachComplete,
+    plainReach,
     type InstitutionReachDraft,
   } from '$lib/posts/institutionReach';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -364,7 +365,7 @@
       selectedAssociationId,
       selectedLinkedCalendarEventId,
       ...(studentsOnly ? { studentsOnly: true } : {}),
-      ...(reach.spaces.length > 0 || reach.public !== null ? { reach } : {}),
+      ...(reach.spaces.length > 0 || reach.public !== null ? { reach: plainReach(reach) } : {}),
     };
   }
 
@@ -653,7 +654,7 @@
           stage = 'content';
           throw new LocalizedError(m.post_reach_required());
         }
-        payload.reach = { spaces: [...reach.spaces], public: reach.public };
+        payload.reach = plainReach(reach);
         Log.d(
           'INSTITUTION_REACH',
           `publishing to ${reach.spaces.length} space(s), public ${reach.public}`
@@ -980,7 +981,12 @@
         : undefined}
       reel={reelAllowed
         ? {
-            start: { caption: markdown, identity: selectedAssociationId, studentsOnly, reach },
+            start: {
+              caption: markdown,
+              identity: selectedAssociationId,
+              studentsOnly,
+              reach: plainReach(reach),
+            },
             onpublished: onReelPublished,
           }
         : undefined}

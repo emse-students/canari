@@ -42,5 +42,7 @@
   data-institution-reach-chip
 >
   <Target size={12} strokeWidth={2.5} aria-hidden="true" class="shrink-0" />
-  <span class="truncate">{publicLabel(reach.public)} - {where}</span>
+  <span class="truncate"
+    >{m.post_reach_chip_label({ public: publicLabel(reach.public), where })}</span
+  >
 </span>

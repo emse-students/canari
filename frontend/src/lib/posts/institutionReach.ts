@@ -62,6 +62,21 @@ export function isReachComplete(
   return !!reach && reach.spaces.length > 0 && reach.public !== null;
 }
 
+/**
+ * The reach as a PLAIN object, ready to leave the component: fresh arrays and objects, never the
+ * `$state` proxies the picker mutates. What the publish queue stores goes through IndexedDB's
+ * structured clone, which throws `DataCloneError` on a proxy (review of #3314) - so every payload,
+ * draft or hand-over to another step is built here, and a later edit of the picker cannot reach it.
+ */
+export function plainReach(reach: InstitutionReach): InstitutionReach;
+export function plainReach(reach: InstitutionReachDraft): InstitutionReachDraft;
+export function plainReach(reach: InstitutionReachDraft): InstitutionReachDraft {
+  return {
+    spaces: reach.spaces.map((s) => ({ formation: s.formation, campus: s.campus })),
+    public: reach.public,
+  };
+}
+
 /** The two spaces are the same pair. */
 export function sameSpace(a: ReachSpace, b: ReachSpace): boolean {
   return a.formation === b.formation && a.campus === b.campus;

@@ -2496,7 +2496,10 @@ decision, an additive schema, and the owner wants it in `1.6.10`.
   on their "after" side, and (as `postPublicAdmitsViewerSql`) what a repost proposal's text is
   withheld by. **`students` closes the read-grant door and the browsing admin's by-id door exactly as
   the switch does** (S1, S2 of the review of #3010): the guard is "not students-only AND public is
-  not `students`".
+  not `students`". **"Staff" is exactly `NOT isStudentSql`: any account with no space** - staff (a
+  campus and an empty cursus), a student whose campus and formation make no opened space, an account
+  with no campus, and a review account - the SQL and every sentence here mean that set, nothing
+  narrower; the picker's "Personnel" hint names who it reaches in those terms.
 - **The spaces narrow the post's OWN institution door**: `associationVisibleToUserSql` takes a
   `spaceFilter` (`ReadOpts.spaceFilter`), threaded into the rules door and the read-grant door, and
   `postVisibleToUserSql` passes `postReachHoldsSpaceSql` for the post's own association only. So a
@@ -2504,7 +2507,9 @@ decision, an additive schema, and the owner wants it in `1.6.10`.
   ticked - never wider than the audience, and shrinking with it. A membership is not narrowed (D21),
   and **a republisher still reaches its own readers** (G4, republication stays the inter-campus
   mechanism), as do a member's repost and an accepted follow: the public still applies to them.
-  `postReachesSpaceSql` (pins, campus trends, suggested posts) asks the same filter.
+  `postReachesSpaceSql` (pins, campus trends, suggested posts) asks the same filter, and **honours
+  the public**: a space's readers are students (they have the space), so a `staff` post reaches no
+  space and never takes a student space's pin slot, trend or suggestion (review of #3314).
 
 Every consumer goes through it: the feed arms and the CanaReels viewer, the search, the post by id
 with every intent (read, react, comment, vote), the comments withheld from a named reader, the
@@ -2546,6 +2551,17 @@ edit form starts from `post.reach`; a legacy post (`reach: null`) shows the pick
 without a reach until a choice is complete. `InstitutionReachChip.svelte` on the card's time line and
 in the CanaReels viewer: the public and the one space, or a count, every space in its title. The four
 codes read as localized sentences (`publishFailure.ts`).
+
+Four rules from the review of #3314: **every reach leaving a component is built by `plainReach`**
+(fresh objects - a `$state` proxy makes IndexedDB's structured clone throw `DataCloneError`, and the
+publish queue stores the payload there; `CreatePostForm.institutionReach.svelte.test.ts` clones the
+enqueued call); **the edit form sends a reach only after the author touched the picker** (`ontouch`) -
+the picker prunes, on its own, a ticked space the audience no longer holds, and that is not a choice;
+**a failed options load offers Retry**, and options on a campus this build does not know are not
+drawn, ACCUSED by a `console.warn` and, when nothing is left, told to the author
+(`post_reach_unknown_campus`); **the four codes are FINAL in the durable publish queue**
+(`retryCannotCure`, `QueuedPostFailure.final`): the queue re-sends the payload it stored, so a Retry
+would be refused word for word - the banner offers Delete alone.
 
 #### Decisions taken in the build, reversible
 

@@ -41,6 +41,11 @@
      * missing-choice line is drawn muted rather than as a warning.
      */
     required?: boolean;
+    /**
+     * Called when the AUTHOR changes a choice - never when the picker prunes a space on its own. The
+     * edit form sends a reach only after it (review of #3314).
+     */
+    ontouch?: () => void;
   }
 
   let {
@@ -49,14 +54,18 @@
     associationName,
     busy = false,
     required = true,
+    ontouch,
   }: Props = $props();
 
   let options = $state<ReachSpace[]>([]);
   let loading = $state(true);
   let failed = $state(false);
+  /** Bumped by the Retry of a failed load: the effect reads it, so a bump loads again. */
+  let attempt = $state(0);
 
   $effect(() => {
     const id = associationId;
+    void attempt;
     let cancelled = false;
     loading = true;
     failed = false;
@@ -89,12 +98,30 @@
     };
   });
 
+  /**
+   * The options on a campus this build knows, the only ones it can draw. A campus it does not know
+   * (a server ahead of the build, or a value outside the profile's list) is a defect upstream, so
+   * it is ACCUSED once per load - and if nothing is left to draw, the author is told so.
+   */
+  const drawable = $derived(
+    options.filter((o) => (CAMPUSES as readonly string[]).includes(o.campus))
+  );
+  $effect(() => {
+    const unknown = [...new Set(options.map((o) => o.campus))].filter(
+      (c) => !(CAMPUSES as readonly string[]).includes(c)
+    );
+    if (unknown.length > 0) {
+      console.warn(
+        `[INSTITUTION_REACH] ${unknown.length} campus(es) of the audience unknown to this build, not drawn: ${unknown.join(', ')}`
+      );
+    }
+  });
   /** The campuses the options cover, in the profile's order. */
-  const campuses = $derived(CAMPUSES.filter((c) => options.some((o) => o.campus === c)));
+  const campuses = $derived(CAMPUSES.filter((c) => drawable.some((o) => o.campus === c)));
   /** The formations present on more than one campus: only those earn a "whole formation" chip. */
   const sharedFormations = $derived(
-    [...new Set(options.map((o) => o.formation))].filter(
-      (f) => new Set(options.filter((o) => o.formation === f).map((o) => o.campus)).size > 1
+    [...new Set(drawable.map((o) => o.formation))].filter(
+      (f) => new Set(drawable.filter((o) => o.formation === f).map((o) => o.campus)).size > 1
     )
   );
 
@@ -108,12 +135,14 @@
     const rest = reach.spaces.filter((s) => !group.some((g) => sameSpace(g, s)));
     reach = { ...reach, spaces: off ? rest : [...rest, ...group] };
     Log.d('INSTITUTION_REACH', `${what} ${off ? 'unticked' : 'ticked'}`);
+    ontouch?.();
   }
 
   function choosePublic(next: InstitutionReachPublic) {
     if (busy) return;
     reach = { ...reach, public: next };
     Log.d('INSTITUTION_REACH', `public chosen: ${next}`);
+    ontouch?.();
   }
 
   const publicLabel = (p: InstitutionReachPublic) =>
@@ -159,16 +188,34 @@
   {#if loading}
     <p class="text-text-muted text-xs">{m.post_reach_loading()}</p>
   {:else if failed}
-    <p class="text-xs font-semibold text-red-600 dark:text-red-400" role="alert">
-      {m.post_reach_load_error({ name: associationName })}
-    </p>
+    <div class="flex flex-wrap items-center gap-2">
+      <p class="text-xs font-semibold text-red-600 dark:text-red-400" role="alert">
+        {m.post_reach_load_error({ name: associationName })}
+      </p>
+      <button
+        type="button"
+        class="{chip} {off}"
+        disabled={busy}
+        data-reach-retry
+        onclick={() => {
+          Log.d('INSTITUTION_REACH', 'the author retries loading the reach options');
+          attempt += 1;
+        }}
+      >
+        {m.common_retry_button()}
+      </button>
+    </div>
   {:else if options.length === 0}
     <p class="text-text-muted text-xs">{m.post_reach_no_space({ name: associationName })}</p>
+  {:else if drawable.length === 0}
+    <p class="text-xs font-semibold text-red-600 dark:text-red-400" role="alert">
+      {m.post_reach_unknown_campus({ name: associationName })}
+    </p>
   {:else}
     <p class="text-text-muted text-2xs mb-1.5 font-semibold">{m.post_reach_spaces_label()}</p>
     <div class="space-y-2">
       {#each campuses as campus (campus)}
-        {@const group = options.filter((o) => o.campus === campus)}
+        {@const group = drawable.filter((o) => o.campus === campus)}
         {@const whole = allTicked(group)}
         <div class="flex flex-wrap items-center gap-1.5" data-reach-campus-row={campus}>
           <label
@@ -208,7 +255,7 @@
         <div class="flex flex-wrap items-center gap-1.5">
           <span class="text-text-muted text-2xs font-semibold">{m.post_reach_formation_row()}</span>
           {#each sharedFormations as formation (formation)}
-            {@const group = options.filter((o) => o.formation === formation)}
+            {@const group = drawable.filter((o) => o.formation === formation)}
             {@const whole = allTicked(group)}
             <label class="{chip} {whole ? on : off}">
               <input

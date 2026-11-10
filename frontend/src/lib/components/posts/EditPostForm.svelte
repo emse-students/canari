@@ -40,6 +40,7 @@
   import {
     institutionReachOffered,
     isReachComplete,
+    plainReach,
     reachDraftFrom,
     sameReach,
     type InstitutionReachDraft,
@@ -184,7 +185,12 @@
   const reachEditable = $derived(
     !!post.associationId && (!!post.reach || institutionReachOffered(post.association?.type))
   );
-  const reachChanged = $derived(reachEditable && !sameReach(reach, servedReach));
+  /**
+   * The AUTHOR changed the picker (review of #3314): the picker also prunes, on its own, a ticked
+   * space the audience no longer holds - that is not a choice, so it never sends a reach by itself.
+   */
+  let reachTouched = $state(false);
+  const reachChanged = $derived(reachEditable && reachTouched && !sameReach(reach, servedReach));
   /** A changed choice that is not complete yet holds the save: an incomplete reach is never sent. */
   const reachPending = $derived(reachChanged && !isReachComplete(reach));
 
@@ -348,7 +354,7 @@
       }
       // Sent only when the author changed it AND completed it: absent leaves the stored reach alone.
       if (reachChanged && isReachComplete(reach)) {
-        payload.reach = { spaces: [...reach.spaces], public: reach.public };
+        payload.reach = plainReach(reach);
         Log.d(
           'INSTITUTION_REACH',
           `edit sets the reach to ${reach.spaces.length} space(s), public ${reach.public}`
@@ -428,6 +434,7 @@
           associationName={post.association?.name ?? ''}
           busy={saving}
           required={!!post.reach}
+          ontouch={() => (reachTouched = true)}
         />
       </div>
     {/if}
