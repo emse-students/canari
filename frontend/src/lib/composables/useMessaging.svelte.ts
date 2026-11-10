@@ -2139,6 +2139,7 @@ export function useMessaging() {
             ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
             caption: captionForFile,
             ...(entry.voiceNote ? { voiceNote: true } : {}),
+            ...(entry.durationMs ? { durationMs: entry.durationMs } : {}),
           };
           const placeholder = serializeEnvelope(
             mkMediaEnvelope(
@@ -2154,6 +2155,7 @@ export function useMessaging() {
                 height: entry.height,
                 ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                 ...(entry.voiceNote ? { voiceNote: true } : {}),
+                ...(entry.durationMs ? { durationMs: entry.durationMs } : {}),
               },
               captionForFile
             )
@@ -2555,7 +2557,13 @@ export function useMessaging() {
         `[MEDIA] video prepared: ${(prepared.sourceBytes / 1024 / 1024).toFixed(1)} Mo -> ` +
           `${(prepared.outputBytes / 1024 / 1024).toFixed(1)} Mo, ${prepared.width}x${prepared.height}`
       );
-      return { file: prepared.file, width: prepared.width, height: prepared.height };
+      return {
+        file: prepared.file,
+        width: prepared.width,
+        height: prepared.height,
+        // Declared with the message (owner, 2026-11-10): whole ms, never 0 ("not declared").
+        durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
+      };
     } catch (e) {
       if (!isVideoPrepareError(e)) throw e;
       const message = videoPrepareFailureMessage(e);

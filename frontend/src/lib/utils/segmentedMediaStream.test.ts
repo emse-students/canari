@@ -157,6 +157,64 @@ describe('openSegmentedStream', () => {
     expect(progress.appended).toBe(3);
   });
 
+  /**
+   * A STREAM CAN BE SOUGHT IN BEFORE IT IS WHOLE (owner, 2026-11-10: "on ne peut plus avancer"): the
+   * sender's declared length is set on the source as it opens, before any buffer exists - otherwise
+   * a file whose header declares none reads `Infinity` until its last segment.
+   */
+  it('sets the declared duration on the source before its first buffer, and nothing when undeclared', async () => {
+    const plain = new Uint8Array(10).map((_, i) => i);
+    const { ciphertext, keyHex, ivHex } = await encryptSegmentedMedia(plain.buffer);
+    const sealed = new Uint8Array(ciphertext);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init: RequestInit) => {
+        const [, a, b] = /bytes=(\d+)-(\d+)/.exec((init.headers as Record<string, string>).Range)!;
+        return Promise.resolve(
+          new Response(sealed.slice(Number(a), Math.min(Number(b) + 1, sealed.byteLength)), {
+            status: 206,
+          })
+        );
+      })
+    );
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:declared');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const seen: { duration: number; buffers: number }[] = [];
+    class DurationSource extends FakeMediaSource {
+      buffers = 0;
+      set duration(seconds: number) {
+        seen.push({ duration: seconds, buffers: this.buffers });
+      }
+      addSourceBuffer() {
+        this.buffers += 1;
+        return super.addSourceBuffer();
+      }
+    }
+    const open = (durationMs?: number) =>
+      openSegmentedStream(
+        {
+          type: 'video',
+          mediaId: 'd1',
+          key: keyHex,
+          iv: ivHex,
+          mimeType: WEBM,
+          size: 10,
+          encoding: 'segmented-v1',
+          ...(durationMs ? { durationMs } : {}),
+        },
+        'https://media.test',
+        {
+          kind: 'stream',
+          MediaSourceCtor: DurationSource as unknown as MediaSourceConstructor,
+          managed: false,
+        }
+      );
+    await open(42_000).done;
+    expect(seen).toEqual([{ duration: 42, buffers: 0 }]);
+    await open().done;
+    expect(seen, 'undeclared: the file header answers').toHaveLength(1);
+  });
+
   it('ends the stream as a decode error when a segment does not authenticate', async () => {
     const plain = new Uint8Array(SEGMENTED_MEDIA_SEGMENT_BYTES + 10);
     const s = await encryptSegmentedMedia(plain.buffer);

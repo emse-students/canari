@@ -3,6 +3,7 @@
   import { isReel, type PostEntity, type PostMediaRef } from '$lib/posts/api';
   import ReplayCard from './ReplayCard.svelte';
   import { isReplay } from '$lib/live/replayTimeline';
+  import { fullScreenPageOf } from '$lib/reels/fullScreenPost';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
   import PostMarkdown from './PostMarkdown.svelte';
@@ -135,8 +136,25 @@
   function watchNear(media: PostMediaRef) {
     const near = () => nearMedia.add(media.mediaId);
     if (resolveMediaType(media) !== 'video') return { onnear: near };
-    return { onnear: near, onleave: () => nearMedia.delete(media.mediaId) };
+    return {
+      onnear: near,
+      onleave: () => nearMedia.delete(media.mediaId),
+      rootMargin: VIDEO_NEAR_MARGIN,
+      leaveMargin: VIDEO_LEAVE_MARGIN,
+    };
   }
+
+  /**
+   * A VIDEO'S BAND IS A SCREEN AHEAD, MEASURED IN SCREENS (owner, 2026-11-10: "precharger pour ne
+   * jamais attendre"). Its head - two segments fetched, decrypted, a frame decoded - is far more work
+   * than a picture's, and the 400 px the pictures use is under half a phone screen: a reader scrolling
+   * reached the card before its first frame. One full height of the scroll box ahead (`100%` of the
+   * root, whatever the phone) opens the stream while the previous card is still being read; it is
+   * given back two heights away, so a card resting near an edge never reopens it on a small scroll.
+   * A distance, not a timer: getting it wrong costs one head early, never a wrong answer.
+   */
+  const VIDEO_NEAR_MARGIN = '100% 0px';
+  const VIDEO_LEAVE_MARGIN = '200% 0px';
 
   /**
    * A CanaReel (C7) is drawn in the SAME box as any video (`singleMedia`): the clip's own ratio under
@@ -153,8 +171,35 @@
     return asReel ? REEL_FALLBACK_ASPECT : DEFAULT_MEDIA_ASPECT;
   }
   let reelViewerOpen = $state(false);
+  /** The carousel media the CanaReels viewer opens on (the tapped cell); 0 off a carousel. */
+  let reelStartIndex = $state(0);
   /** A live replay: no media, a card that opens the CanaReels viewer (`ReplayCard`). */
   const replay = $derived(isReplay(post));
+
+  /**
+   * FULL SCREEN IS THE CANAREELS VIEWER (owner, 2026-11-10): a tap on a feed video - a CanaReel or a
+   * post's video - opens the viewer on THAT video, at the time it had reached (`videoResume`), and a
+   * swipe goes on to the next reels. The page the post is drawn as decides (`fullScreenPageOf`): a
+   * post of one video is a `reel` page, a grid of pictures and videos a `carousel` page opened on the
+   * tapped cell. A post the viewer cannot draw (a poll, a file, a linked event beside the video) keeps
+   * the media viewer - a fact read from the post, said in the log.
+   */
+  const fullPage = $derived(fullScreenPageOf(post));
+
+  function openReelViewer(mediaIndex = 0) {
+    Log.d('PostContent.openReelViewer', { postId: post.id, page: fullPage, mediaIndex });
+    reelStartIndex = mediaIndex;
+    reelViewerOpen = true;
+  }
+
+  /** What a tap on a video of this post opens: the CanaReels viewer, else `undefined` (the media viewer). */
+  function videoOpener(media: PostMediaRef, index: number): (() => void) | undefined {
+    if (resolveMediaType(media) !== 'video') return undefined;
+    if (reel || fullPage === 'reel') return () => openReelViewer(0);
+    if (fullPage === 'carousel') return () => openReelViewer(index);
+    Log.d('PostContent.videoOpener', { postId: post.id, page: fullPage, viewer: 'media' });
+    return undefined;
+  }
 </script>
 
 {#if post.markdown}
@@ -182,10 +227,7 @@
 {/if}
 
 {#if replay}
-  <ReplayCard {post} onOpen={() => (reelViewerOpen = true)} />
-  {#if reelViewerOpen}
-    <ReelViewer startPost={post} {authToken} {likerId} onClose={() => (reelViewerOpen = false)} />
-  {/if}
+  <ReplayCard {post} onOpen={() => openReelViewer(0)} />
 {:else if postMedia.length > 0 && authToken}
   <div
     class="w-full overflow-hidden first:rounded-t-2xl last:rounded-b-2xl {post.markdown
@@ -194,14 +236,6 @@
   >
     {#if reel}
       {@render singleMedia(postMedia[0], true)}
-      {#if reelViewerOpen}
-        <ReelViewer
-          startPost={post}
-          {authToken}
-          {likerId}
-          onClose={() => (reelViewerOpen = false)}
-        />
-      {/if}
     {:else if postMedia.length === 1}
       {@render singleMedia(postMedia[0])}
     {:else}
@@ -243,7 +277,7 @@
                 letterbox={resolveMediaType(media) === 'video'}
                 videoFit="cover"
                 deferred={!nearMedia.has(media.mediaId)}
-                onOpen={() => openLightbox(i)}
+                onOpen={videoOpener(media, i) ?? (() => openLightbox(i))}
               />
               {#if overflowCell}
                 <button
@@ -304,7 +338,8 @@
         letterbox={reserved}
         deferred={!nearMedia.has(media.mediaId)}
         compact={compact && resolveMediaType(media) === 'file'}
-        onOpen={asReel ? () => (reelViewerOpen = true) : undefined}
+        onOpen={videoOpener(media, 0)}
+        durationMs={asReel ? post.durationMs : null}
         {postInfo}
       />
     </div>
@@ -313,6 +348,16 @@
     {/if}
   </div>
 {/snippet}
+
+{#if reelViewerOpen}
+  <ReelViewer
+    startPost={post}
+    startMediaIndex={reelStartIndex}
+    {authToken}
+    {likerId}
+    onClose={() => (reelViewerOpen = false)}
+  />
+{/if}
 
 <!-- Gallery lightbox with navigation -->
 {#if lightboxIndex !== null && lightboxMedia[lightboxIndex]}

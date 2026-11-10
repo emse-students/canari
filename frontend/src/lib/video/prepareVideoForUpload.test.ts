@@ -57,6 +57,12 @@ const state: {
   decodes: [],
 };
 
+// The muxer here is a stand-in writing zeros: the duration patch reads real bytes in its own test
+// (`mp4Duration.test.ts`, on mediabunny's actual output); here it only has to be asked.
+vi.mock('$lib/utils/mp4Duration', () => ({
+  declareMp4Duration: vi.fn(() => ({ kind: 'written', seconds: 1, was: 0 })),
+}));
+
 vi.mock('mediabunny', () => {
   class UnsupportedInputFormatError extends Error {}
   class ConversionCanceledError extends Error {}

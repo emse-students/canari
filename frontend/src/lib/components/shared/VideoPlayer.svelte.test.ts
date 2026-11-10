@@ -726,3 +726,80 @@ it('the reel variant draws its video over the WHOLE box, never at its intrinsic 
   expect(video.style.objectFit).toBe('cover');
   expect(video.dataset.reelVideoFit).toBe('cover');
 });
+
+// ------------------------------------------------------- a conversation's viewer (owner, 2026-11-10)
+
+function mountConversation(src = 'blob:conv') {
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const component = mount(VideoPlayer, {
+    target,
+    props: { src, variant: 'conversation', soundScope: 'local' },
+  });
+  mounted.push(() => unmount(component));
+  flushSync();
+  const root = target.querySelector('[role="group"]') as HTMLElement;
+  const video = target.querySelector('video')!;
+  return { target, root, video };
+}
+
+/**
+ * "MOCHE ET CASSE" (owner, 2026-11-10): the conversation's viewer showed `0:23 / 0:00` in a glass
+ * pill. Now: the line on the bottom edge, its speaker in a corner, and no pill, no time, no fade.
+ */
+it('conversation viewer: a line and a speaker, no bar, no timecode, never looped, nothing fades', () => {
+  vi.useFakeTimers();
+  const { target, video } = mountConversation();
+  expect(barShown(target)).toBe(false);
+  expect(target.querySelector('[data-video-progress="line"]')).not.toBeNull();
+  expect(target.querySelector(`button[aria-label="${m.video_sound_label()}"]`)).not.toBeNull();
+  expect(target.textContent).not.toMatch(/\d:\d\d \/ \d:\d\d/);
+  expect(video.loop).toBe(false);
+  startPlaying(video);
+  vi.advanceTimersByTime(CONTROLS_FADE_MS * 2);
+  flushSync();
+  expect(target.querySelector('[data-video-progress="line"]')).not.toBeNull();
+  expect(barShown(target)).toBe(false);
+});
+
+it('conversation viewer: a tap on the picture pauses it and the next plays it', () => {
+  const { root, video } = mountConversation();
+  startPlaying(video);
+  tap(root);
+  expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
+  Object.defineProperty(video, 'paused', { configurable: true, get: () => true });
+  tap(root);
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalled();
+  expect(video.muted, 'the tap is not the sound here').toBe(false);
+});
+
+/**
+ * "ON NE PEUT PLUS AVANCER DANS LES VIDEOS" (owner, 2026-11-10): a press on the line seeks once the
+ * element knows its length - which every file now declares (`mp4Duration.ts`). With no length there
+ * is nothing to map the press onto, and the line lands nowhere rather than at a made-up time.
+ */
+it('the line seeks where it is pressed once the duration is known, and not before', () => {
+  const { target, video } = mountConversation();
+  const slider = target.querySelector<HTMLElement>('[role="slider"]')!;
+  slider.getBoundingClientRect = () => ({ left: 0, width: 200, top: 0, height: 32 }) as DOMRect;
+  const press = (x: number) => {
+    slider.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: x, pointerId: 1 })
+    );
+    slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+  };
+
+  withDuration(video, Number.POSITIVE_INFINITY);
+  video.dispatchEvent(new Event('durationchange'));
+  flushSync();
+  press(100);
+  expect(video.currentTime, 'no length, no seek').toBe(0);
+
+  withDuration(video, 40);
+  video.dispatchEvent(new Event('durationchange'));
+  flushSync();
+  press(150);
+  expect(video.currentTime).toBe(30);
+});

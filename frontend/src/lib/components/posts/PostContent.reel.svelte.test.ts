@@ -89,3 +89,64 @@ describe('PostContent, a reel', () => {
     expect(target.querySelector('[data-reel-card]')?.textContent ?? '').not.toMatch(/\d+\s*j\b/);
   });
 });
+
+/**
+ * FULL SCREEN IS THE CANAREELS VIEWER (owner, 2026-11-10): a tap on a post's video - not only a
+ * reel's - opens the viewer on that video; in a grid, on the tapped cell. A post the viewer cannot
+ * draw (a poll beside the video) keeps the media viewer.
+ */
+describe('PostContent, a tap on a feed video', () => {
+  async function renderPost(extra: Record<string, unknown>) {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const post = {
+      id: 'p2',
+      kind: 'post',
+      markdown: '',
+      createdAt: new Date(0).toISOString(),
+      ...extra,
+    } as never;
+    const app = mount(PostContent, { target, props: { post, authToken: 'tok' } });
+    mounted.push(() => void unmount(app));
+    flushSync();
+    await tick();
+    flushSync();
+    return target;
+  }
+  const viewer = () => document.querySelector('[data-reel-viewer-stub]');
+
+  it('a post of one video opens the CanaReels viewer on it', async () => {
+    const target = await renderPost({ media: [video] });
+    target.querySelector<HTMLButtonElement>('[data-post-media-open]')!.click();
+    flushSync();
+    expect(viewer()?.getAttribute('data-reel-viewer-stub')).toBe('p2');
+    expect(viewer()?.getAttribute('data-start-media-index')).toBe('0');
+  });
+
+  it('a video cell of a grid opens the viewer on THAT media of the carousel', async () => {
+    const picture = { ...video, type: 'image', mediaId: 'img', mimeType: 'image/webp' };
+    const second = { ...video, mediaId: 'm-2' };
+    const target = await renderPost({ media: [picture, second] });
+    target.querySelector<HTMLButtonElement>('[data-media-id="m-2"]')!.click();
+    flushSync();
+    expect(viewer()?.getAttribute('data-start-media-index')).toBe('1');
+  });
+
+  it('a picture cell of a grid keeps the media viewer', async () => {
+    const picture = { ...video, type: 'image', mediaId: 'img', mimeType: 'image/webp' };
+    const target = await renderPost({ media: [picture, { ...video, mediaId: 'm-2' }] });
+    target.querySelector<HTMLButtonElement>('[data-media-id="img"]')!.click();
+    flushSync();
+    expect(viewer()).toBeNull();
+  });
+
+  it('a video beside a poll is not a CanaReels page: no viewer is opened from it', async () => {
+    const target = await renderPost({
+      media: [video],
+      polls: [{ id: 'q', question: 'q', options: [] }],
+    });
+    target.querySelector<HTMLButtonElement>('[data-post-media-open]')!.click();
+    flushSync();
+    expect(viewer()).toBeNull();
+  });
+});

@@ -340,6 +340,7 @@
                 preload={role.preload}
                 show={role.show}
                 playerSafeBottom={frameReachesBottom}
+                durationMs={page === 'reel' ? post.durationMs : null}
                 onReady={() => onPaneReady(i)}
                 {onMediaGone}
               />

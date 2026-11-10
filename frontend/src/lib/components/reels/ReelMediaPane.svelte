@@ -46,6 +46,8 @@
     show: boolean;
     /** Whether the frame reaches the screen bottom: the player's progress line clears the inset. */
     playerSafeBottom: boolean;
+    /** A reel's declared length (`post.durationMs`), so its stream can be sought before it is whole. */
+    durationMs?: number | null;
     /** The active media is SETTLED: whole and, for a video, playing (or decidedly failed). */
     onReady?: () => void;
     /** The media service answered `410`: the file is gone for good. */
@@ -61,6 +63,7 @@
     preload,
     show,
     playerSafeBottom,
+    durationMs = null,
     onReady,
     onMediaGone,
   }: Props = $props();
@@ -235,6 +238,7 @@
       galleryMode
       minimalPlayer
       {playerSafeBottom}
+      {durationMs}
       poster={posterUrl}
       onLoaded={onMediaLoaded}
       {onPlaybackBlocked}

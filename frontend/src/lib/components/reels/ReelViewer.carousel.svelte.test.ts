@@ -76,7 +76,7 @@ async function settle() {
   flushSync();
 }
 
-async function render() {
+async function render(startMediaIndex?: number) {
   const onClose = vi.fn();
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -88,6 +88,7 @@ async function render() {
         authToken: 'tok',
         onClose,
         loadPage: vi.fn(async () => [carousel, nextReel]),
+        ...(startMediaIndex !== undefined ? { startMediaIndex } : {}),
       },
     })
   );
@@ -161,6 +162,13 @@ describe('a carousel page in the reel viewer', () => {
     // Only the visible picture is fetched until it settles: nothing competes with it.
     expect(drawn()).toEqual(['p1']);
     expect(preloads).toEqual([]);
+  });
+
+  /** A tap on a grid's video in the feed opens full screen on THAT video (owner, 2026-11-10). */
+  it('opens on the media it was asked for, the tapped video playing', async () => {
+    const { current, players } = await render(1);
+    expect(current()).toBe(1);
+    expect(players()).toEqual(['v2']);
   });
 
   it('a swipe left shows the next media, and only the VISIBLE video has a player', async () => {

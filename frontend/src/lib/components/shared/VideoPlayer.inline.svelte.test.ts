@@ -103,15 +103,91 @@ it('feed: starts at the app answer, and its speaker answers for every video', ()
   expect(first.soundButton()!.getAttribute('aria-pressed')).toBe('true');
 });
 
-it('feed: a tap on the picture is the sound too, with its glyph, and opens nothing', () => {
-  const { root, target, onOpen } = mountVariant('feed');
+/**
+ * A TAP ON A FEED VIDEO OPENS FULL SCREEN (owner, 2026-11-10, reverting 1.6.9's tap = sound): the
+ * CanaReels viewer, on that video, at the time it had reached. The sound stays the speaker's.
+ */
+it('feed: a tap on the picture opens full screen where it is, and leaves the sound alone', () => {
+  const { root, onOpen, video } = mountVariant('feed', { positionKey: 'media-1' });
+  video.currentTime = 7;
+  tap(root);
+  flushSync();
+  expect(onOpen).toHaveBeenCalledOnce();
+  expect(videoSound.muted).toBe(true);
+  expect(takeVideoPosition('media-1')).toBe(7);
+});
+
+it('feed with no viewer to open: the tap is the sound, with its glyph', () => {
+  const { root, target } = mountVariant('feed', { onOpen: undefined });
   tap(root);
   flushSync();
   expect(videoSound.muted).toBe(false);
   expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
     'sound-on'
   );
-  expect(onOpen).not.toHaveBeenCalled();
+});
+
+/**
+ * LEAVING FULL SCREEN NEVER RESTARTS THE FEED VIDEO (owner, 2026-11-10): the viewer's player, as it
+ * leaves, hands back where it got to, and the feed video that opened it seeks there.
+ */
+it('feed: the viewer it opened hands back its time as it closes, and the feed video seeks there', () => {
+  const feed = mountVariant('feed', { positionKey: 'media-1' });
+  feed.video.currentTime = 4;
+  feed.openButton().click();
+  flushSync();
+
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const viewer = mount(VideoPlayer, {
+    target,
+    props: { src: 'blob:stream-of-the-viewer', variant: 'reel', positionKey: 'media-1' },
+  });
+  flushSync();
+  const viewerVideo = target.querySelector('video')!;
+  Object.defineProperty(viewerVideo, 'duration', { configurable: true, get: () => 40 });
+  viewerVideo.dispatchEvent(new Event('loadedmetadata'));
+  expect(viewerVideo.currentTime, 'the viewer entered at the feed time').toBe(4);
+  viewerVideo.currentTime = 19;
+  viewerVideo.dispatchEvent(new Event('timeupdate'));
+  flushSync();
+  unmount(viewer);
+
+  expect(feed.video.currentTime).toBe(19);
+});
+
+it('a viewer that was opened from nowhere hands back into nothing', () => {
+  const feed = mountVariant('feed', { positionKey: 'media-2' });
+  feed.video.currentTime = 3;
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const viewer = mount(VideoPlayer, {
+    target,
+    props: { src: 'blob:x', variant: 'reel', positionKey: 'media-2' },
+  });
+  flushSync();
+  unmount(viewer);
+  expect(feed.video.currentTime, 'nobody opened it from the feed').toBe(3);
+});
+
+/**
+ * THE FIRST FRAME, FROZEN, AND ITS BANDS COME IN TOGETHER (owner, 2026-11-10: a dark box, then the
+ * frame with white bands, then the blur - three stages): with a first-frame picture, the blurred
+ * bands are drawn from it at once, the element stays invisible until its own frame, and no second
+ * capture swaps the bands.
+ */
+it('feed: draws the first-frame picture and its blurred bands before the video has a frame', () => {
+  const { target, video, frameIn } = mountVariant('feed', {
+    backdrop: true,
+    poster: 'data:image/png;base64,poster',
+  });
+  expect(target.querySelector('[data-video-first-frame-poster]')).not.toBeNull();
+  expect(target.querySelector('[style*="data:image/png;base64,poster"]')).not.toBeNull();
+  expect(video.className).toContain('opacity-0');
+  frameIn();
+  expect(video.className).not.toContain('opacity-0');
+  expect(captureVideoFrame).not.toHaveBeenCalled();
+  expect(target.querySelector('[data-video-first-frame-poster]')).toBeNull();
 });
 
 it("feed: the speaker is the kit's glass chip, yellow only when the sound is on", () => {
@@ -419,8 +495,8 @@ describe('feed: the reader pauses, and the feed does not undo it', () => {
   });
 });
 
-it('feed: a tap on a video on screen but paused (an autoplay refused) gives the sound and plays it', () => {
-  const { root, video } = mountVariant('feed');
+it('feed with no viewer: a tap on a video on screen but paused gives the sound and plays it', () => {
+  const { root, video } = mountVariant('feed', { onOpen: undefined });
   const { play } = liveElement(video);
   tap(root);
   flushSync();

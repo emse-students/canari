@@ -63,6 +63,7 @@
 import { SEGMENTED_MEDIA_ENCODING } from '$lib/mediaSegmented';
 import type { MediaRef } from '$lib/media';
 import { httpRangeSource, openSegmentedMedia } from './segmentedMediaReader';
+import { declareVideoDuration } from './mediaBlobCache';
 
 /** The constructor MSE offers on this engine: the standard one, or Safari's managed one. */
 export type MediaSourceConstructor = {
@@ -334,6 +335,42 @@ export function openSegmentedStream(
 }
 
 /**
+ * THE STREAM KNOWS HOW LONG IT LASTS BEFORE ITS FIRST BYTE (owner, 2026-11-10: "on ne peut plus
+ * avancer dans les videos"). A file written before its writer declared its length (`mp4Duration.ts`)
+ * gives the MSE parser an init segment with no duration, so the element reads `Infinity` until the
+ * LAST segment is appended - which a paced stream never does - and its `seekable` range ends at what
+ * is buffered: the scrubber has nothing to map onto, a resume is clamped to the buffered head. The
+ * sender's DECLARED length (`MediaRef.durationMs`: a conversation's video, a reel's post) is set on
+ * the source as soon as it opens, before any buffer exists - the one moment the spec allows it with
+ * nothing to truncate. Undeclared, the file's own header answers (every upload since the fix).
+ */
+function declareStreamDuration(source: MediaSource, ref: MediaRef, label: string): void {
+  const ms = ref.durationMs;
+  if (!ms || ms <= 0) return;
+  try {
+    source.duration = ms / 1000;
+    console.debug(`[media-seg] ${label} ${ref.mediaId}: declared duration ${ms} ms`);
+  } catch (e) {
+    // Only an engine that broke the spec (an open source with no buffer) lands here: said, loudly.
+    console.warn(`[media-seg] ${label} ${ref.mediaId}: the declared duration was refused`, e);
+  }
+}
+
+/** The whole file the segments make, its movie duration declared when it was not (`mp4Duration.ts`). */
+function wholeFile(ref: MediaRef, parts: ArrayBuffer[]): Blob {
+  if (ref.type !== 'video') return new Blob(parts, { type: ref.mimeType });
+  const total = parts.reduce((n, p) => n + p.byteLength, 0);
+  const whole = new Uint8Array(total);
+  let at = 0;
+  for (const p of parts) {
+    whole.set(new Uint8Array(p), at);
+    at += p.byteLength;
+  }
+  declareVideoDuration(ref, whole.buffer);
+  return new Blob([whole], { type: ref.mimeType });
+}
+
+/**
  * One MSE consumer of a feed: its own `MediaSource`, URL and pacing. The root consumer owns the
  * feed's abort; a fork's close stops only itself.
  */
@@ -405,22 +442,23 @@ function openConsumer(
     await new Promise<void>((resolve) =>
       source.addEventListener('sourceopen', () => resolve(), { once: true })
     );
+    declareStreamDuration(source, ref, label);
     const buffer = source.addSourceBuffer(ref.mimeType);
     const segmentCount = await feed.count();
     progress.segmentCount = segmentCount;
-    const parts: Blob[] = [];
+    const parts: ArrayBuffer[] = [];
     for (let i = 0; i < segmentCount; i++) {
       await demand(i);
-      const part = await feed.segment(i);
+      const part = await (await feed.segment(i)).arrayBuffer();
       if (closed) throw new DOMException('stream closed', 'AbortError');
-      await appendSegmentEvicting(buffer, await part.arrayBuffer(), () => element, ref.mediaId);
+      await appendSegmentEvicting(buffer, part, () => element, ref.mediaId);
       progress.appended += 1;
-      progress.bytes += part.size;
+      progress.bytes += part.byteLength;
       parts.push(part);
     }
     if (source.readyState === 'open') source.endOfStream();
     console.debug(`[media-seg] ${label} ${ref.mediaId}: ${segmentCount} segment(s) appended`);
-    return new Blob(parts, { type: ref.mimeType });
+    return wholeFile(ref, parts);
   })();
 
   // NOT LOGGED HERE: `done` is handed to the consumer, which logs the failure by its cause - a range

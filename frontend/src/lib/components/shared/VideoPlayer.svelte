@@ -1,13 +1,15 @@
 <script module lang="ts">
   /**
    * The surface a player is (owner, 2026-11-09: one player, a `variant` each): the full-screen
-   * viewer, a CanaReel, a feed card's inline video, a conversation's.
+   * viewer, a CanaReel, a feed card's inline video, a conversation's, a conversation's viewer.
    */
-  export type VideoVariant = 'lightbox' | 'reel' | 'feed' | 'chat';
+  import type { VideoVariant as TapVariant } from '$lib/utils/videoTapAction';
+  export type VideoVariant = TapVariant;
 </script>
 
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
+  import { videoTapAction } from '$lib/utils/videoTapAction';
   import { useViewerChrome } from '$lib/utils/videoViewerChrome.svelte';
   import { CircleAlert, Ellipsis, Maximize, Minimize, Pause, Play } from '@lucide/svelte';
   import { videoGestures } from '$lib/actions/videoGestures';
@@ -37,7 +39,13 @@
     formatVideoTime,
     videoKeyAction,
   } from '$lib/utils/videoPlayback';
-  import { rememberVideoPosition, resumePosition, takeVideoPosition } from '$lib/utils/videoResume';
+  import {
+    awaitVideoHandBack,
+    handBackVideoPosition,
+    rememberVideoPosition,
+    resumePosition,
+    takeVideoPosition,
+  } from '$lib/utils/videoResume';
   import {
     decideAutoplayRejection,
     playRejectionName,
@@ -129,6 +137,10 @@
      * - `chat`: a conversation's video, played when asked (user, 2026-10-02, Discord's way): the
      *   glass disc until started, then its own speaker and progress line; never looped, its sound
      *   its own;
+     * - `conversation`: a conversation's MEDIA VIEWER (owner, 2026-11-10: "moche et casse", make it
+     *   minimal like the CanaReels): the line on the bottom edge (dragged to seek), its speaker in
+     *   the bottom-right corner, the glass play glyph while paused - no bar, no time, no fade. The
+     *   tap PAUSES and PLAYS (`videoTapAction`); never looped; its sound the caller's scope;
      * - `reel`: THE REEL VIEWER'S PLAYER (user, 2026-10-23: *"les Reels d'instagram sont beaucoup plus
      *   epures, la barre de lecture est discrete et collee en bas, sans timecode"*): no control row,
      *   no timecode, no big play button except on an autoplay refusal. One thin progress line on the
@@ -136,9 +148,16 @@
      *   it, thickening with a handle only while touched. Its speaker is the reel rail's
      *   (`ReelActionRail`, the kit's `VideoSoundButton`), on the same `videoSound` answer.
      *
-     * The gestures are the same on both (`videoGestures`): a tap is the sound, a hold pauses.
+     * The tap is `videoTapAction`'s table (a feed tap opens full screen, a full-screen tap is the
+     * sound, a conversation viewer's the pause); a hold pauses everywhere (`videoGestures`).
      */
     variant?: VideoVariant;
+    /**
+     * WHAT NAMES THIS VIDEO across the two players of an opening (`videoResume`): a post's media id,
+     * so the feed card and the CanaReels viewer - two downloads, two URLs - hand the time over. The
+     * URL when absent (a conversation's inline video and its viewer share one blob URL).
+     */
+    positionKey?: string;
     /** `src` is a segmented stream's MSE URL, which must reach the element exactly as minted. */
     streamed?: boolean;
     /**
@@ -204,7 +223,11 @@
     onMetadata,
     onVideo,
     backdrop = false,
+    positionKey,
   }: Props = $props();
+
+  /** The key positions travel under (`positionKey`, else the URL). */
+  const resumeKey = $derived(positionKey ?? src);
 
   /**
    * HOW THE ELEMENT TAKES TURNS, chosen once at mount - the variant is not live:
@@ -223,6 +246,8 @@
 
   /** An inline video (the feed's, a conversation's): no bar, chips in its corners. */
   const inline = $derived(variant === 'feed' || variant === 'chat');
+  /** A conversation's viewer: the minimal chrome (a line, a speaker, the glyph while paused). */
+  const conversation = $derived(variant === 'conversation');
   /** A conversation's sound is the element's own, whatever the caller says. */
   const scope = $derived<VideoSoundScope>(variant === 'chat' ? 'local' : soundScope);
   /** What the element is given: a decrypted file seeks to its first frame inline (see above). */
@@ -240,7 +265,16 @@
   let resumeFrom = 0;
   onMount(() => {
     // An inline video is where a position is WRITTEN for the viewer about to open; it takes none.
-    if (!inline) resumeFrom = takeVideoPosition(src);
+    if (!inline) resumeFrom = takeVideoPosition(resumeKey);
+  });
+
+  /** The inline player waits for the viewer it opened to hand its time back (`videoResume`). */
+  let stopAwaiting: (() => void) | null = null;
+  onDestroy(() => {
+    stopAwaiting?.();
+    // A VIEWER HANDS BACK WHERE IT GOT TO as it leaves, so the inline video resumes there - or, if
+    // it never reached its resume point (closed before the metadata), the point it was opened at.
+    if (!inline) handBackVideoPosition(resumeKey, resumeFrom > 0 ? resumeFrom : currentTime);
   });
 
   $effect(() => {
@@ -248,11 +282,25 @@
     return onVideo(video) ?? undefined;
   });
 
-  /** Opens the viewer from the expand chip (or `f`), noting where this video had got to. */
+  /**
+   * Opens the viewer from a tap, the expand chip or `f`, noting where this video had got to, and
+   * waiting for the viewer to hand back where it left it (owner, 2026-11-10: entering and leaving
+   * full screen never restart at 0).
+   */
   function openViewer() {
     if (!onOpen) return;
     Log.d('VideoPlayer', `${variant}: the viewer is opened`);
-    rememberVideoPosition(src, video?.currentTime ?? 0);
+    rememberVideoPosition(resumeKey, video?.currentTime ?? 0);
+    stopAwaiting?.();
+    stopAwaiting = awaitVideoHandBack(resumeKey, (seconds) => {
+      if (!video) return;
+      Log.d(
+        'VideoPlayer',
+        `${variant}: resumes at ${seconds.toFixed(1)} s, where the viewer left it`
+      );
+      video.currentTime = seconds;
+      currentTime = seconds;
+    });
     onOpen();
   }
 
@@ -394,7 +442,7 @@
   function togglePlay() {
     if (!video) return;
     showControls();
-    if (minimal || inline) showFeedback(video.paused ? 'play' : 'pause');
+    if (minimal || inline || conversation) showFeedback(video.paused ? 'play' : 'pause');
     if (video.paused) {
       playNow();
     } else {
@@ -429,15 +477,27 @@
    */
   function onPictureTap() {
     if (!video) return;
-    if (variant === 'chat' && !started) {
-      Log.d('VideoPlayer', 'chat: the first tap plays it');
-      togglePlay();
-      return;
-    }
-    toggleMute();
-    if (variant === 'feed' && video.paused) {
-      Log.d('VideoPlayer', 'feed: a tap on a paused video plays it');
-      playNow();
+    const action = videoTapAction({
+      variant,
+      canOpen: !!onOpen,
+      paused: video.paused,
+      started,
+    });
+    Log.d('VideoPlayer', `${variant}: tap -> ${action}`);
+    switch (action) {
+      case 'open-viewer':
+        openViewer();
+        break;
+      case 'toggle-play':
+        togglePlay();
+        break;
+      case 'toggle-sound':
+        toggleMute();
+        break;
+      case 'toggle-sound-and-play':
+        toggleMute();
+        playNow();
+        break;
     }
   }
 
@@ -545,7 +605,7 @@
   function onPointerMove(e: PointerEvent) {
     // Only a player with a bar has controls to raise; elsewhere this would restart the fade timer on
     // every mouse movement for nothing.
-    if (e.pointerType === 'mouse' && !minimal && !inline) showControls();
+    if (e.pointerType === 'mouse' && !minimal && !inline && !conversation) showControls();
   }
 
   /** A drag on the scrubber keeps the controls up; its end restarts the fade. */
@@ -651,7 +711,8 @@
   /** The first frame is decoded: show it, and take the backdrop from it if the box wants one. */
   function onFirstFrame() {
     frameReady = true;
-    if (backdrop && video && backdropUrl === null) {
+    // A first-frame picture is already the backdrop's source: no second capture, no swap.
+    if (backdrop && video && backdropUrl === null && !poster) {
       backdropUrl = captureVideoFrame(video);
       Log.d('VideoPlayer', `backdrop frame taken=${backdropUrl !== null}`);
     }
@@ -708,8 +769,10 @@
   onfocusin={onFocusIn}
   onpointermove={onPointerMove}
 >
-  {#if backdrop && backdropUrl}
-    <BlurredBackdrop src={backdropUrl} />
+  {#if backdrop && (backdropUrl ?? poster)}
+    <!-- The bands' blur, from the first-frame picture while there is one, so the picture and its
+         backdrop come in TOGETHER (owner, 2026-11-10: three visible stages before). -->
+    <BlurredBackdrop src={(backdropUrl ?? poster)!} />
   {/if}
   <!-- svelte-ignore a11y_media_has_caption -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -717,13 +780,15 @@
     bind:this={video}
     src={elementSrc}
     autoplay={autoplay && !inline}
-    loop={loop && variant !== 'chat'}
+    loop={loop && variant !== 'chat' && !conversation}
     playsinline
     preload="metadata"
     poster={TRANSPARENT_VIDEO_POSTER}
     disableremoteplayback={disableRemotePlayback || undefined}
     use:playback={scope}
-    class={minimal ? REEL_VIDEO_CLASS : videoClass}
+    class="{minimal ? REEL_VIDEO_CLASS : videoClass} {backdrop && !frameReady && !unplayable
+      ? 'opacity-0'
+      : ''}"
     style:object-fit={minimal ? reelFit : undefined}
     bind:clientWidth={boxWidth}
     bind:clientHeight={boxHeight}
@@ -738,6 +803,13 @@
           'VideoPlayer',
           `intrinsic ${naturalWidth}x${naturalHeight} in a ${boxWidth}x${boxHeight} box`
         );
+        // NO LENGTH, NO SEEK (owner, 2026-11-10): a file or stream that declares none is said, with
+        // what it is, so the population of such videos is countable (`mp4Duration.ts`).
+        if (!Number.isFinite(video.duration) || video.duration <= 0) {
+          console.info(
+            `[VideoPlayer] ${variant}: the engine knows no duration (${video.duration}, ${streamed ? 'stream' : 'file'}) - the scrubber cannot seek`
+          );
+        }
       }
       resumeOnce();
       sync();
@@ -867,6 +939,31 @@
           />
         </div>
       {/if}
+    {:else if conversation}
+      <!-- A CONVERSATION'S VIEWER, MINIMAL (owner, 2026-11-10): the line on the bottom edge, always
+           drawn and dragged to seek, and the speaker in the corner above it. No bar, no time, no
+           fade - so nothing hides the viewer's header either. -->
+      <VideoSoundButton
+        {muted}
+        onToggle={toggleMute}
+        disabled={scope === 'silent'}
+        class="absolute right-1 z-40 {safeBottom
+          ? 'bottom-[calc(var(--safe-area-inset-bottom,0px)+2rem)]'
+          : 'bottom-8'}"
+      />
+      <div
+        class="absolute inset-x-0 bottom-0 z-40"
+        style={safeBottom ? 'bottom: var(--safe-area-inset-bottom, 0px)' : undefined}
+        data-video-line-slot
+      >
+        <VideoScrubber
+          variant="line"
+          {currentTime}
+          {duration}
+          onSeek={seekTo}
+          {onScrubbingChange}
+        />
+      </div>
     {:else if minimal}
       <!-- THE LINE: on the bottom edge (above the home indicator when the player reaches it), above
            the caption's vignette (`z-40` over its `z-20`). Always drawn: it is not part of the
