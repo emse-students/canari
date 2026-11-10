@@ -25,7 +25,7 @@ describe('the feed tab cache', () => {
 
   it('never paints one tab from another', () => {
     writeFeedCache(feedCacheKey({ feed: 'all' }), { posts: [post('p1')], hasMore: true });
-    expect(readFeedCache(feedCacheKey({ feed: 'followed' }))).toBeNull();
+    expect(readFeedCache(feedCacheKey({ feed: 'foryou' }))).toBeNull();
     expect(readFeedCache(feedCacheKey({ feed: 'all', promo: 2027 }))).toBeNull();
   });
 

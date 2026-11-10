@@ -17,7 +17,7 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import ReelsEmptyState from './ReelsEmptyState.svelte';
   import type { PostEntity } from '$lib/posts/api';
-  import { REEL_PAGE, listAllReels, reelsAfterFirstPage } from '$lib/reels/allReels';
+  import { allReelsLoader, listAllReels } from '$lib/reels/allReels';
   import { expandFrom, type ExpandOrigin } from '$lib/reels/expandFrom';
   import { showToast } from '$lib/stores/toast.svelte';
   import { isTransportFailure } from '$lib/utils/transportFailure';
@@ -33,6 +33,8 @@
 
   let opening = $state(false);
   let firstPage = $state<PostEntity[] | null>(null);
+  /** ONE loader per opening: it keeps the ranking its pages are asked of (`allReelsLoader`). */
+  const reelLoader = $derived(firstPage ? allReelsLoader(firstPage) : undefined);
   let emptyOpen = $state(false);
   let entry = $state<HTMLButtonElement | null>(null);
   /** Where the viewer grows from when the View Transitions API is absent (`expandFrom`). */
@@ -44,7 +46,7 @@
     let handedOff = false;
     console.debug('[reels-entry] opening the viewer at the newest reel');
     try {
-      const page = await listAllReels(0, REEL_PAGE);
+      const page = await listAllReels();
       if (page.length === 0) {
         console.debug('[reels-entry] no reel yet - the empty sheet');
         emptyOpen = true;
@@ -97,7 +99,7 @@
   <ReelViewer
     startPost={firstPage[0]}
     {authToken}
-    loadPage={reelsAfterFirstPage(firstPage)}
+    loadPage={reelLoader}
     likerId={currentUserId() ?? undefined}
     {expandOrigin}
     onClose={() => (firstPage = null)}

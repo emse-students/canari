@@ -44,8 +44,11 @@ export type SuggestionCard =
   | { kind: 'user'; id: string; person: SuggestedPerson }
   | { kind: 'association'; id: string; entity: SuggestedEntity };
 
-/** The feeds the carousel belongs to: Mon espace and Suivis (`POST_FEEDS` 'all' and 'followed'). */
-const CAROUSEL_FEEDS: readonly string[] = ['all', 'followed'];
+/**
+ * The feed the carousel belongs to: Pour toi alone (owner, 2026-11-10 - Campus and Associations are
+ * pure lists, nothing inserted between their posts).
+ */
+const CAROUSEL_FEEDS: readonly string[] = ['foryou'];
 
 /**
  * People and entities interleaved, a person first, at most `max` cards: neither source buries the
@@ -78,8 +81,8 @@ export type SuggestionPlacement = 'banner' | 'page' | 'inline';
 
 /**
  * THE ONE RULE OF WHERE (decision 3 and 7, the table "Where suggestions appear"):
- * - only in Mon espace and Suivis, and only while a card is left to act on;
- * - an EMPTY Suivis feed: the carousel is the page body;
+ * - only in Pour toi, and only while a card is left to act on;
+ * - an EMPTY Pour toi: the carousel is the page body;
  * - a reader who follows fewer than {@link ONBOARDING_FOLLOWS_BELOW} accounts: a banner at the top;
  * - otherwise once, after the {@link FEED_CAROUSEL_AFTER_POSTS}rd post.
  * One placement at a time: a reader never sees the same cards twice on one screen.
@@ -91,7 +94,7 @@ export function feedSuggestionPlacement(input: {
   openCards: number;
 }): SuggestionPlacement | null {
   if (!CAROUSEL_FEEDS.includes(input.feed) || input.openCards === 0) return null;
-  if (input.feed === 'followed' && input.postCount === 0) return 'page';
+  if (input.feed === 'foryou' && input.postCount === 0) return 'page';
   if (input.followingCount < ONBOARDING_FOLLOWS_BELOW) return 'banner';
   if (input.postCount >= FEED_CAROUSEL_AFTER_POSTS) return 'inline';
   return null;
@@ -140,10 +143,17 @@ export function suggestionsFollowingCount(): number | null {
   return read.data ? read.data.followingCount : null;
 }
 
-/** The feed's cards, the dismissed ones gone. Empty until read. */
+/**
+ * The feed's cards, the dismissed ones gone. Empty until read. PEOPLE ONLY (lead's decision,
+ * 2026-11-10, reversible - docs/wiki/engagement.md, WP-6): the carousel lives in Pour toi, which is
+ * people's posts only, so an entity card there would offer what the tab never shows. The read still
+ * carries the entities (`me/suggestions` is unchanged for the installed clients); they are left here.
+ */
 export function feedSuggestionCards(): SuggestionCard[] {
   if (!read.data) return [];
-  return interleaveCards(read.data).filter((c) => !dismissed.has(key(c.kind, c.id)));
+  return interleaveCards({ people: read.data.people, entities: [] }).filter(
+    (c) => !dismissed.has(key(c.kind, c.id))
+  );
 }
 
 /** Whether a card was dismissed in this session (the "Suivez aussi..." row reads it too). */

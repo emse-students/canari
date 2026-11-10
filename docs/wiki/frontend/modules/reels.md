@@ -1100,7 +1100,7 @@ sans timecode."* The viewer's player is `VideoPlayer` with `minimal` (through `P
 the tabs that narrowed the open tab to its reels). On the phone the user found the two stacked bars
 ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no Reels tab in any bar.
 
-1. **One row**: the three tabs (Associations / Suivis / Mon espace, "Tout" until 1.6) and, at its right end, a clap icon
+1. **One row**: the three tabs (Associations / Pour toi / Campus since 1.6.9; Suivis / Mon espace before, "Tout" until 1.6) and, at its right end, a clap icon
    (`ReelsEntryButton`, named "Ouvrir les CanaReels"). The row is `FeedTabRow`: when it is too narrow
    (390 px at 2x text) the TABS scroll sideways with a fade, the icon never wraps or leaves. The
    SELECTED tab is scrolled into full view on arrival and on every selection
@@ -1110,7 +1110,7 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
 2. **A tap goes STRAIGHT INTO the viewer**, full screen (`coversScreen`: no tabs, no feed chrome, no
    bottom bar, no native tab bar), at the NEWEST reel. Closing returns to the feed exactly where it
    was - the feed never left the page.
-3. **The list is every reel the member may see, newest first, whatever tab is open**
+3. **The list is every reel the member may see, whatever tab is open** (newest first until 1.6.9, ranked since - below)
    (`reels/allReels.ts` - the C7 list the viewer already swiped through from a reel). Decided over
    "the open tab's reels": an entry beside the tabs is not one of them, and the Associations tab
    rarely carries a reel at all. **It is its own server feed, `feed=reels`** (`posts/list-feed.ts`,
@@ -1126,11 +1126,17 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
    member on another campus never saw that member's reels here, nor a reel a followed person
    reposted (WP-F6). **What the client sends:** installed clients (up to 1.6.x) send `kind=reel`
    with no `feed`; the server reads that shape as `feed=reels`
-   ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---kindreel-on-feedall-read-as-the-canareels-viewer-list-2026-11-03),
-   which also carries why the client keeps that shape for one more release).
+   ([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---kindreel-on-feedall-read-as-the-canareels-viewer-list-2026-11-03)).
+   **RANKED SINCE 1.6.9 (owner, 2026-11-10): no tabs in the viewer** (there were none to remove), the
+   same set, ordered by the SAME score as Pour toi (`forYouScoreSql`, no bands, no suggestion) and
+   paged by the same snapshot (`asOf`, `feedPosition`): the 1.6.9 client sends `feed=reels&ranked=true`
+   to an estate that declares `rankedFeeds`, and `allReelsLoader` keeps the rows it served so a later
+   page is asked of the same ranking ([posts](posts.md#pour-toi---the-ranked-tab-owner-2026-11-10)).
+   Without `ranked` - every installed client - the list is newest first as before, and an estate
+   older than `rankedFeeds` is asked the old shape.
 4. **The first page is read BEFORE the viewer opens**, because an empty viewer is no answer: with no
    reel yet, a small sheet says "Pas encore de CanaReels" and offers the camera (`ReelsEmptyState`,
-   `CAMERA_PLACE`). That page becomes the viewer's own first page (`reelsAfterFirstPage`), not a
+   `CAMERA_PLACE`). That page becomes the viewer's own first page (`allReelsLoader(firstPage)`), not a
    second request. A failed read is a toast, and nothing opens.
 5. **The filtered-feed mode is DELETED, not hidden**: no `kind` in the feed URL or in `load`, no
    remembered choice, no `feed:<tab>:reel` stored slot or cache key, no filtered empty state, no

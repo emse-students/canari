@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="09/11/2026"
+  updated="10/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -187,10 +187,10 @@
           d'abonnement, voit vos publications personnelles et vos directs, quels que soient son
           campus, sa formation ou son espace, y compris un membre du personnel, et y compris les
           publications parues avant votre acceptation ; elle est notifiée quand vous publiez ou
-          lancez un direct. Elle trouve vos publications dans son onglet « Suivis » et dans la
-          recherche, pas dans « Mon espace », qui reste limité aux espaces ; un direct en cours lui
-          est montré quel que soit l'onglet. Les commentaires, les réactions, les votes aux sondages
-          et les messages du chat d'un direct sur une de vos publications personnelles sont lus par
+          lancez un direct. Elle trouve vos publications dans son onglet « Pour toi » et dans la
+          recherche, pas dans « Campus », qui reste limité aux espaces ; un direct en cours lui est
+          montré quel que soit l'onglet. Les commentaires, les réactions, les votes aux sondages et
+          les messages du chat d'un direct sur une de vos publications personnelles sont lus par
           tout son public, qui comprend donc ces abonnés. Elle ne voit jamais ce que vous publiez de
           façon anonyme. La retirer de vos abonnés ou se désabonner lui retire aussitôt cet accès ;
           un blocage, dans un sens ou dans l'autre, le lui retire aussitôt et supprime l'abonnement,
@@ -236,9 +236,9 @@
           réels compris ; une publication que vous ne voyez que parce qu'une personne que vous
           suivez l'a republiée ne peut pas être republiée à nouveau. Une publication que vous
           republiez devient visible de vos abonnés acceptés (jamais d'une demande en attente), quels
-          que soient leur campus, leur formation ou leur espace, dans leur onglet « Suivis » à la
-          date de votre republication et dans la recherche, jamais dans « Mon espace » ; ceux qui ne
-          la voyaient pas encore reçoivent une notification à votre nom, une seule fois par
+          que soient leur campus, leur formation ou leur espace, dans la recherche et, pour une
+          publication personnelle, dans leur onglet « Pour toi », jamais dans « Campus » ; ceux qui
+          ne la voyaient pas encore reçoivent une notification à votre nom, une seule fois par
           publication, quel que soit le nombre de republications. Ils voient que vous l'avez
           republiée ; une personne qui ne vous suit pas ne le voit pas. Une publication personnelle
           n'est republiée qu'avec l'accord de son auteur : le réglage « Autoriser mes abonnés à
@@ -268,22 +268,24 @@
           service sait déjà (les personnes suivies par celles que vous suivez, vos associations,
           votre campus, votre formation et votre promotion) ; une suggestion que vous écartez ne
           revient plus, et ce choix est conservé jusqu'à l'effacement de votre compte. Des
-          publications populaires de votre espace, que vous voyez déjà, peuvent apparaître dans «
-          Mon espace » marquées « Suggestion ». Quand une personne que vous suivez réagit à une
-          publication ou la commente, vous en êtes prévenu une seule fois par publication, et
-          seulement si vous voyez déjà cette publication, sans blocage entre vous, ni avec son
-          auteur lorsque la publication le nomme ; jamais pour un commentaire anonyme, écrit au nom
-          d'une association ou retiré par la modération, ni pour un commentaire sur une publication
-          anonyme. Vos réactions et commentaires sont annoncés de la même façon à vos abonnés
-          acceptés, sauf si vous désactivez « Partager mon activité » dans les réglages (activé par
-          défaut) : cela arrête les annonces à venir, sans retirer celles déjà envoyées. Quand une
-          publication de votre espace (votre campus ou votre formation, jamais par un abonnement ou
-          un accès nominatif) fait réagir au moins quatre personnes dans les 24 heures qui suivent
-          sa publication, vous en êtes prévenu une fois, sans nom de personne ; son auteur ne l'est
-          pas. Ces annonces ne vous envoient pas plus de cinq notifications par jour ; les autres
-          restent dans vos notifications. Sont conservés : votre réglage, le fait qu'un lecteur a
-          déjà été prévenu d'une publication (jusqu'à l'effacement de la publication ou de son
-          compte) et le nombre de ces notifications reçues chaque jour (sept jours).
+          publications populaires de personnes de votre espace, que vous voyez déjà, peuvent
+          apparaître dans « Pour toi » marquées « Suggestion » ; cet onglet range les publications
+          selon leur fraîcheur et le nombre de personnes qui y ont réagi ou les ont commentées, sans
+          autre donnée sur vous. Quand une personne que vous suivez réagit à une publication ou la
+          commente, vous en êtes prévenu une seule fois par publication, et seulement si vous voyez
+          déjà cette publication, sans blocage entre vous, ni avec son auteur lorsque la publication
+          le nomme ; jamais pour un commentaire anonyme, écrit au nom d'une association ou retiré
+          par la modération, ni pour un commentaire sur une publication anonyme. Vos réactions et
+          commentaires sont annoncés de la même façon à vos abonnés acceptés, sauf si vous
+          désactivez « Partager mon activité » dans les réglages (activé par défaut) : cela arrête
+          les annonces à venir, sans retirer celles déjà envoyées. Quand une publication de votre
+          espace (votre campus ou votre formation, jamais par un abonnement ou un accès nominatif)
+          fait réagir au moins quatre personnes dans les 24 heures qui suivent sa publication, vous
+          en êtes prévenu une fois, sans nom de personne ; son auteur ne l'est pas. Ces annonces ne
+          vous envoient pas plus de cinq notifications par jour ; les autres restent dans vos
+          notifications. Sont conservés : votre réglage, le fait qu'un lecteur a déjà été prévenu
+          d'une publication (jusqu'à l'effacement de la publication ou de son compte) et le nombre
+          de ces notifications reçues chaque jour (sept jours).
         </dd>
       </div>
       <div>

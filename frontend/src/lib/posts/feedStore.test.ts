@@ -47,7 +47,7 @@ vi.mock('$lib/db', async (importOriginal) => ({
 async function writeStoredFeedPage(
   storage: IndexedDbStorage,
   access: FeedStoreAccess,
-  params: { feed: 'all' | 'followed' | 'associations' },
+  params: { feed: 'all' | 'foryou' | 'associations' },
   posts: PostEntity[]
 ): Promise<void> {
   const epoch = feedWriteEpoch(access.userId, storedFeedKey(params)!);
@@ -58,7 +58,7 @@ const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const OTHER_KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=';
 const ALICE: FeedStoreAccess = { userId: 'alice', deviceKeyB64: KEY };
 const ALL = { feed: 'all' as const };
-const FOLLOWED = { feed: 'followed' as const };
+const FOLLOWED = { feed: 'foryou' as const };
 let n = 0;
 
 function post(id: string, extra: Partial<PostEntity> = {}): PostEntity {
@@ -219,12 +219,12 @@ describe('the stored first page', () => {
 
   it('starts a new epoch after a sign-out and deletes the pages of the old one first', async () => {
     const storage = await openStore();
-    await writeStoredFeedPage(storage, ALICE, { feed: 'followed' }, [post('old')]);
+    await writeStoredFeedPage(storage, ALICE, { feed: 'foryou' }, [post('old')]);
     forgetStoredFeeds('test');
 
     await writeStoredFeedPage(storage, ALICE, ALL, [post('new')]);
 
-    expect(await storage.getFeedPage('feed:followed', KEY)).toBeNull();
+    expect(await storage.getFeedPage('feed:foryou', KEY)).toBeNull();
     expect((await readStoredFeedPage(storage, ALICE, ALL))?.map((p) => p.id)).toEqual(['new']);
   });
 });
@@ -399,7 +399,7 @@ describe('the page wiring, as decisions', () => {
   // Review of the reconnect refresh: the page read `data.feedParams` AFTER its await, so a refresh of
   // one tab landing after a switch was drawn over the next tab and written into its cache and store.
   it('a refresh asks for the tab it was issued for, and drops an answer for a tab left since', async () => {
-    const followed = { feed: 'followed' as const };
+    const followed = { feed: 'foryou' as const };
     let current = 1;
     let answer!: (rows: PostEntity[]) => void;
     const read = vi.fn(

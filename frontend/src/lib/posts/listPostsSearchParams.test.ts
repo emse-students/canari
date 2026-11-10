@@ -35,4 +35,28 @@ describe('buildListPostsSearchParams', () => {
   it('sends neither switch by default', () => {
     expect(buildListPostsSearchParams({ kind: 'reel' })).toBe('?kind=reel');
   });
+
+  it('asks the ranked lists of an estate that serves them, with their snapshot', () => {
+    const forYou = new URLSearchParams(
+      buildListPostsSearchParams({ feed: 'foryou', rankedFeeds: true, offset: 4, asOf: 'T' })
+    );
+    expect(forYou.get('feed')).toBe('foryou');
+    expect(forYou.get('asOf')).toBe('T');
+    const reels = new URLSearchParams(
+      buildListPostsSearchParams({ feed: 'reels', kind: 'reel', ranked: true, rankedFeeds: true })
+    );
+    expect(reels.get('feed')).toBe('reels');
+    expect(reels.get('ranked')).toBe('true');
+  });
+
+  it('asks an older estate the shapes it serves: Suivis for Pour toi, the old CanaReels list', () => {
+    const forYou = new URLSearchParams(
+      buildListPostsSearchParams({ feed: 'foryou', rankedFeeds: false, asOf: 'T' })
+    );
+    expect(forYou.get('feed')).toBe('followed');
+    expect(forYou.get('asOf')).toBeNull();
+    expect(
+      buildListPostsSearchParams({ feed: 'reels', kind: 'reel', ranked: true, rankedFeeds: false })
+    ).toBe('?kind=reel');
+  });
 });

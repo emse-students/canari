@@ -150,6 +150,18 @@ export function serverFormDrafts(): boolean | null {
   return loadCachedServerInfo()?.formDrafts ?? null;
 }
 
+/**
+ * Whether this estate serves the ranked lists (`rankedFeeds`: Pour toi and the ranked CanaReels
+ * viewer), as the last `/api/version` answer said - or `null` when no server has ever answered. Read
+ * by `rankedFeedRequest` (`posts/rankedFeeds.ts`): only `true` asks them (docs/wiki/legacy-compatibility.md,
+ * "a feed client newer than its server"). The cached answer counts, for the reason
+ * {@link serverPresencePost} gives.
+ */
+export function serverRankedFeeds(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.rankedFeeds;
+  return loadCachedServerInfo()?.rankedFeeds ?? null;
+}
+
 /** True when the client is below the server-enforced minimum version. */
 export function isBelowMinClientVersion(): boolean {
   return lastCheck?.belowMinVersion === true;

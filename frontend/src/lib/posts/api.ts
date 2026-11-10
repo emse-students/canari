@@ -6,7 +6,8 @@ import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
 import type { Campus, Formation } from '$lib/profile/miconnectProfile';
 import { nextPostSequence, stampServed } from '$lib/posts/postCardSync';
-import { serverLiveReplaysMode } from '$lib/stores/appVersionCheck.svelte';
+import { serverLiveReplaysMode, serverRankedFeeds } from '$lib/stores/appVersionCheck.svelte';
+import { Log } from '$lib/utils/Log';
 
 export type PostMediaRef = MediaRef & { caption?: string };
 
@@ -331,6 +332,15 @@ export interface PostEntity {
    * `expiresAt`): the time left is computed from the two, never from the phone's clock.
    */
   serverNow?: string;
+  /**
+   * A RANKED LIST's row only (Pour toi, the ranked CanaReels list, `rankedFeeds.ts`): the snapshot it
+   * was served from, as the server spelled it - sent back as `asOf` for the next page.
+   */
+  feedAsOf?: string;
+  /** A ranked list's row only: its place in the whole list; the next page starts after the last. */
+  feedPosition?: number;
+  /** Pour toi only: a suggested post (engagement WP-7), drawn with the "Suggestion" badge. */
+  feedSuggested?: boolean;
 }
 
 /** What a feed row is. A reel is a post of kind `'reel'`: same feed, comments, reactions, reports. */
@@ -377,7 +387,9 @@ export interface ReelLimits {
 }
 
 /**
- * The four feeds, as DATA rather than as a union spelled out at each call site.
+ * The four feeds, as DATA rather than as a union spelled out at each call site: `associations`,
+ * `foryou` ("Pour toi", ranked - it replaced "Suivis", `followed`, in 1.6.9), `all` ("Campus", "Mon
+ * espace" until 1.6.9) and the promo/formation browse `custom`.
  *
  * It was a bare union type, and the list therefore existed twice: once here and once as a literal
  * array in `routes/posts/+page.ts`, which validated the `?feed=` parameter against it. A type
@@ -385,7 +397,7 @@ export interface ReelLimits {
  * by the URL parser. It also now has a THIRD reader - the persisted preference, which is a string
  * off `localStorage` and therefore untrusted in exactly the same way a query parameter is.
  */
-export const POST_FEEDS = ['all', 'followed', 'custom', 'associations'] as const;
+export const POST_FEEDS = ['all', 'foryou', 'custom', 'associations'] as const;
 
 /** Which feed the posts page is showing. */
 export type PostFeed = (typeof POST_FEEDS)[number];
@@ -405,13 +417,31 @@ export const DEFAULT_POST_FEED: PostFeed = 'associations';
  * the posts page has two sources to try in order and needs to fall through the first.
  */
 export function parsePostFeed(value: string | null | undefined): PostFeed | null {
+  // "Suivis" became "Pour toi" (owner, 2026-11-10): a tab remembered, or a link written, before 1.6.9
+  // names the tab that took its place.
+  if (value === RETIRED_FOLLOWED_FEED) return 'foryou';
   return POST_FEEDS.includes(value as PostFeed) ? (value as PostFeed) : null;
 }
+
+/** The id of the "Suivis" tab Pour toi replaced - still a server feed, for the installed clients. */
+const RETIRED_FOLLOWED_FEED = 'followed';
 
 export interface ListPostsOptions {
   limit?: number;
   offset?: number;
-  feed?: PostFeed;
+  /** A tab, or `reels` - the CanaReels viewer's list (`reels/allReels.ts`). */
+  feed?: PostFeed | 'reels';
+  /** With `feed: 'reels'`: ranked like Pour toi rather than newest first (owner, 2026-11-10). */
+  ranked?: boolean;
+  /** A ranked list's later page: the snapshot its first page served (`rankedFeeds.ts`). */
+  asOf?: string;
+  /**
+   * Whether the estate serves the ranked lists (`serverRankedFeeds`); left undefined, `listPosts`
+   * reads it. Without them Pour toi is asked as the chronological `followed` and the CanaReels list
+   * in its older shape, with neither `ranked` nor `asOf` - an older server refuses `foryou` `400`
+   * (docs/wiki/legacy-compatibility.md, "a feed client newer than its server").
+   */
+  rankedFeeds?: boolean;
   promo?: number;
   formation?: string;
   /** Only reels, or only posts; absent means both, which is what the feed asks (C7). */
@@ -526,7 +556,10 @@ export function buildListPostsSearchParams(options: ListPostsOptions): string {
   const p = new URLSearchParams();
   if (options.limit != null) p.set('limit', String(options.limit));
   if (options.offset != null) p.set('offset', String(options.offset));
-  if (options.feed && options.feed !== 'all') p.set('feed', options.feed);
+  const feed = wireFeed(options);
+  if (feed && feed !== 'all') p.set('feed', feed);
+  if (options.rankedFeeds && feed === 'reels' && options.ranked) p.set('ranked', 'true');
+  if (options.rankedFeeds && options.asOf) p.set('asOf', options.asOf);
   if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
   if (options.kind) p.set('kind', options.kind);
@@ -541,6 +574,18 @@ export function buildListPostsSearchParams(options: ListPostsOptions): string {
   }
   const s = p.toString();
   return s ? `?${s}` : '';
+}
+
+/**
+ * The feed a list read names on the wire. Without the ranked lists (`rankedFeeds`), Pour toi is the
+ * chronological `followed` it replaced, and the CanaReels list the `all` + `kind=reel` shape every
+ * server reads as `reels` (`resolveListFeed`).
+ */
+function wireFeed(options: ListPostsOptions): string | undefined {
+  if (options.rankedFeeds) return options.feed;
+  if (options.feed === 'foryou') return RETIRED_FOLLOWED_FEED;
+  if (options.feed === 'reels') return 'all';
+  return options.feed;
 }
 
 export async function searchPosts(
@@ -604,17 +649,12 @@ export async function listPosts(
   const opts: ListPostsOptions =
     typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
   const withReplays = opts.withReplays ?? serverLiveReplaysMode() === 'on';
-  const q = buildListPostsSearchParams({ ...opts, withReplays });
+  const rankedFeeds = opts.rankedFeeds ?? serverRankedFeeds() === true;
+  if (!rankedFeeds && (opts.feed === 'foryou' || opts.ranked)) {
+    Log.d('POSTS', `this estate serves no ranked list - ${opts.feed} asked in its older shape`);
+  }
+  const q = buildListPostsSearchParams({ ...opts, withReplays, rankedFeeds });
   return readPosts<PostEntity[]>(`/api/posts${q}`);
-}
-
-/**
- * The reader's SUGGESTED POSTS (engagement WP-7, decision 8): popular posts of their space from
- * accounts they do not follow, best first - feed rows like any other, which Mon espace places among
- * its own (`suggestedPosts.svelte.ts`).
- */
-export async function listSuggestedPosts(): Promise<PostEntity[]> {
-  return readPosts<PostEntity[]>('/api/posts/me/suggested-posts');
 }
 
 /**

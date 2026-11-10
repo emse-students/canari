@@ -1,9 +1,30 @@
 # Engagement - who is told, whom to follow, and how much is too much
 
+## The product principle (owner, 2026-11-10)
+
+*"La philosophie de Canari c'est de permettre aux gens de retrouver toutes leurs informations rapidement. L'engagement (et avoir une activité agréable) n'arrive qu'après, et ne doit jamais gêner le premier point."*
+
+**It takes precedence over every engagement choice on this page.** Finding information comes first;
+a ranking, a suggestion or a notification that makes a reader's information harder to find is wrong
+whatever it does for engagement. That is why Campus and Associations are strictly chronological
+with nothing inserted, why Pour toi leads with the fresh posts of the people a reader follows before
+any suggestion, and why a global search is the next design question
+([backlog.d](backlog.d/global-search-to-design-after-1-6-9.md)). Also in
+[design-reference](frontend/design-reference.md#0-the-product-principle-above-every-choice-owner-2026-11-10).
+
 The owner's engagement chantier (2026-11-07): more people notified, following made easy, and
 Instagram-style follow suggestions, with a ceiling on the noise. This page holds the decisions, the
 design that answers each one, what each surface reveals and to whom, and the work packages in order.
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
+
+**The feed tabs of 1.6.9 (owner, 2026-11-10)**: Suivis became **Pour toi** (people only, ranked by
+freshness and popularity, the suggested posts merged into it with no quota) and "Mon espace" became
+**Campus** (chronological, nothing inserted) - every decision, the score, the bands and the paging are
+in [posts](frontend/modules/posts.md#the-owners-decisions-of-2026-11-10). What that changed on this
+page: WP-6's carousel lives in Pour toi only and offers people only; WP-7's posts are placed by the
+server's ranking, not by `placeSuggestedPosts` (deleted), so L13 no longer applies to Pour toi; WP-10's
+campus-trend notifications are UNCHANGED (on by default, at most 5 a day, switched off under
+Publications in the settings).
 
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
 (the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); WP-6 BUILT (the surfaces, 2026-11-09, [below](#wp-6---the-surfaces-built)); WP-7 BUILT (suggested posts, 2026-11-09, [below](#wp-7---suggested-posts-built)); WP-8 BUILT (the daily cap, 2026-11-09, [below](#wp-8---the-daily-cap-built)); WP-9 BUILT (friends' activity, 2026-11-09, [below](#wp-9---friends-activity-built)); WP-10 BUILT (campus trends, 2026-11-09, [below](#wp-10---campus-trends-built)) - every work package is built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
@@ -119,7 +140,7 @@ and is recorded here only; no package on this page builds it.
 | L10 | Suggestion score = `4 * min(mutual, 10) + 3 * min(sharedAssociations, 3) + tier` (tier 3 same promo and formation, 2 same formation, 1 same campus), ties broken by id. | Deterministic and explainable from the card ("N en commun" carries the dominant term). The weights are one constant each. |
 | L11 | A suggestion card shows NO reason line besides "N en commun" and the faces. | A line "Promo 2027" or "Membre du BDE" would disclose a profile fact or a membership to someone who may not see it elsewhere; the count and the faces are what decision 4 chose to show. |
 | L12 | "Almost nobody" (decision 7) is fewer than 5 follows in total (accepted person follows plus entity follows). | One constant, measured against the production distribution in WP-6's proof. |
-| L13 | A suggested post (decision 8) is at most one in every 8 feed items, never two in a row, and only in the space tab. | Instagram's density order of magnitude; a constant. |
+| L13 | ~~A suggested post (decision 8) is at most one in every 8 feed items, never two in a row, and only in the space tab.~~ SUPERSEDED 2026-11-10 (owner): suggested posts are in Pour toi only, ranked by the same score as the followed posts, with no quota. | - |
 | L14 | Friend activity (5b) and trends (5c) tell a reader about a given post AT MOST ONCE, whichever comes first, and never when the reader was already told about that post by its announcement. | One told-once ledger `(postId, recipientId)`; see [no double notification](#no-double-notification). |
 
 ## WP-1 - an association's live reaches everyone who can see it (BUILT)
@@ -481,9 +502,9 @@ Built 2026-11-09 to the shape above, in `follows/suggestions.service.ts` and
 
 | Surface | Reads | Shown when |
 | --- | --- | --- |
-| Feed carousel | the person and entity suggestions, interleaved, 10 cards | the Mon espace and Suivis feeds, once, after the 3rd post; hidden once every card is followed or dismissed |
+| Feed carousel | the PERSON suggestions, 10 cards (entities left out since 2026-11-10: Pour toi is people only - lead's decision, reversible) | Pour toi only (owner, 2026-11-10: Campus and Associations are pure lists), once, after the 3rd post; hidden once every card is followed or dismissed |
 | "Suivez aussi..." | the VIEWER's own person suggestions, minus the account just followed, limit 5 - never the target's follows (L15) | right after a follow or a follow request, under the profile header; nothing when empty |
-| Empty Suivis | the same carousel, as the page body | the Suivis feed has no post |
+| Empty Pour toi | the same carousel, as the page body | Pour toi has no post ("Suivis" until 1.6.9) |
 | Onboarding (decision 7) | the same carousel, as a banner at the top of the feed | the viewer follows fewer than 5 accounts (L12) |
 | Bell on a profile | the bell row for (viewer, account) | a person the viewer follows (accepted), or any entity they can see (L7) |
 
@@ -499,8 +520,8 @@ Built 2026-11-09 to the table above. The client is `follows/suggestions.svelte.t
 per-reader state), `components/suggestions/` (`SuggestionCard`, `SuggestionCarousel`,
 `FeedSuggestions`, `FollowAlsoSuggestions`) and the two calls in `follows/api.ts`.
 
-- **ONE read per reader** of `me/suggestions` for the carousel, the empty Suivis feed and the banner,
-  asked when Mon espace or Suivis opens; a failed read is a `console.warn` and is not asked again in
+- **ONE read per reader** of `me/suggestions` for the carousel, the empty Pour toi and the banner,
+  asked when Pour toi opens (Mon espace and Suivis until 1.6.9); a failed read is a `console.warn` and is not asked again in
   the session (the carousel is a bonus: a retry on every mount would be traffic with no event behind
   it). A per-reader cache, forgotten on sign-out and account switch; an answer for the previous
   reader is dropped.
@@ -548,21 +569,23 @@ Built 2026-11-09 to decision 8 and L13. The server is `GET /api/posts/me/suggest
 - **Popular** is the number of distinct accounts that reacted or commented, the author excluded:
   `posts/engagement-sql.ts` `engagedAccountsSql`, the ONE definition WP-10 and R1 also use. At least
   3; best first (then newest), at most 10 per read.
-- **Placed** by `placeSuggestedPosts`: one after every 7 feed posts, so at most one in every 8 items
-  and never two in a row (L13); only in Mon espace; never a post the page already shows (the next
-  suggestion takes the slot); never the page's last item. Marked "Suggestion" by the same corner
-  badge as "Nouveau" (`suggestion_post_badge`).
-- **ONE read per reader** when Mon espace opens, per-reader cache, a failure is a `console.warn` and
-  is not asked again in the session (the same contract as WP-6's read).
+- **Placed by the SERVER since 1.6.9** (owner, 2026-11-10): the suggestions of PEOPLE
+  (`suggestedPostIds(..., { peopleOnly: true })`) are merged into Pour toi's ranked window by the same
+  score as the followed posts, in their own band after the followed posts under 48 h, with no quota,
+  served with `feedSuggested` ([posts](frontend/modules/posts.md#pour-toi---the-ranked-tab-owner-2026-11-10)).
+  The client's `placeSuggestedPosts` and its per-reader read are DELETED, and so is Campus's slot.
+  Marked "Suggestion" by the same corner badge as "Nouveau" (`suggestion_post_badge`).
+- **`GET /posts/me/suggested-posts` stays** for the installed clients (1.6.8 and older), which still
+  interleave it in their Mon espace ([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-feed-client-newer-than-its-server---rankedfeeds-2026-11-10)).
 - **Proof**: `posts/suggested-posts.integration.spec.ts` on PostgreSQL (visible by the space rule;
   never through a read grant nor through the follower door; never an author blocked either way;
   not the viewer's own, not followed or requested, not an entity they follow or belong to; the
   engagement floor and the 7-day window; the order; a reader of another space gets that space's
-  posts); `lib/posts/suggestedPosts.svelte.test.ts` (the placement rule, the once-per-reader read)
-  and `routes/posts/page.suggestedPosts.svelte.test.ts` (drawn after the 7th post with its badge in
-  Mon espace, never in Suivis).
-- **Owed**: a phone reading on dev (Mon espace with more than 7 posts shows one "Suggestion" card,
-  its header carrying Suivre).
+  posts); since 1.6.9 `posts/for-you-feed.integration.spec.ts` (merged into Pour toi by the score, in
+  its band, people only) and `routes/posts/page.forYou.svelte.test.ts` (drawn in its own place with
+  its badge in Pour toi, never in Campus).
+- **Owed**: a phone reading on dev (Pour toi shows a "Suggestion" card where its score puts it, its
+  header carrying Suivre; Campus shows none).
 
 ## The bell - data model, and how it combines with categories and mutes
 

@@ -26,6 +26,7 @@ import {
 } from 'class-validator';
 import { COMMENT_MAX_LENGTH, COMMENT_PAGE_MAX, type CommentOrder } from '../comment-page';
 import { LIST_POST_FEEDS, type ListPostsFeed } from '../list-feed';
+import { FOR_YOU_AS_OF_PATTERN } from '../for-you-feed';
 
 /**
  * A post needs a body OR a media entry - the rule the composer's Publier button already applies
@@ -445,6 +446,24 @@ export class ListPostsQueryDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   withReplays?: boolean;
+
+  /**
+   * `feed=reels` only: the CanaReels viewer RANKED like Pour toi (owner, 2026-11-10, `for-you-feed.ts`)
+   * rather than newest first. Sent by the 1.6.9 client; an installed one does not, and keeps the
+   * order it pages by offset (docs/wiki/legacy-compatibility.md).
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  ranked?: boolean;
+
+  /**
+   * A ranked list only (`feed=foryou`, `feed=reels&ranked=true`): the `feedAsOf` its first page served, so a later page is a slice
+   * of THAT ranking (`for-you-feed.ts`). Exactly the served spelling: it names a stored snapshot.
+   */
+  @IsOptional()
+  @Matches(FOR_YOU_AS_OF_PATTERN)
+  asOf?: string;
 
   /** Custom feed: filter by author promotion (personal posts only). */
   @IsOptional()

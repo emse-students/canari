@@ -39,7 +39,7 @@
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { PostEntity } from '$lib/posts/api';
-  import { REEL_PAGE as PAGE, listAllReels, type ReelPageLoader } from '$lib/reels/allReels';
+  import { REEL_PAGE as PAGE, allReelsLoader, type ReelPageLoader } from '$lib/reels/allReels';
   import {
     mergeReelPage,
     mountedReelIndices,
@@ -103,7 +103,7 @@
     startPost,
     authToken,
     onClose,
-    loadPage = listAllReels,
+    loadPage = allReelsLoader(),
     likerId,
     expandOrigin = null,
     onMediaGone,

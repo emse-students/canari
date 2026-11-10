@@ -9,6 +9,7 @@ const mode = vi.hoisted(() => ({ value: 'off' as 'off' | 'on' }));
 const calls = vi.hoisted(() => ({ urls: [] as string[] }));
 vi.mock('$lib/stores/appVersionCheck.svelte', () => ({
   serverLiveReplaysMode: () => mode.value,
+  serverRankedFeeds: () => false,
 }));
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(async (url: string) => {

@@ -76,6 +76,7 @@ describe('VersionService', () => {
     const out = await service.getVersion();
 
     expect(out.formDrafts).toBe(true);
+    expect(out.rankedFeeds).toBe(true);
   });
 
   it('reports no build when the environment was not given one', async () => {

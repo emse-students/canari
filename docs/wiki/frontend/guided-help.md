@@ -244,7 +244,7 @@ Built 2026-11-04. All `kind: 'hint'`, once per account, listed after the tour in
 
 | Id | Route | Anchor(s) | Steps (fr) |
 | --- | --- | --- | --- |
-| `hint-feed-tabs` | `/posts` | `posts.tab.associations`, `.followed`, `.all`: each tab of `FeedTabRow` | one step per tab, reusing the `posts_tabs_info_*` strings of the removed (i) button (rewritten in "vous", like every guide string) |
+| `hint-feed-tabs` | `/posts` | `posts.tab.associations`, `.foryou`, `.all`: each tab of `FeedTabRow` | one step per tab, reusing the `posts_tabs_info_*` strings of the removed (i) button (rewritten in "vous", like every guide string); since 1.6.9 the steps are Associations, Pour toi (`posts_tabs_info_foryou_*`) and Campus (`posts_tabs_info_campus_*`) - the id is unchanged, so an account that saw the hint before 1.6.9 is not shown it again (replayable from Settings) |
 | `hint-reels` | `/posts` | `posts.reels`: the CanaReels icon (`ReelsEntryButton`), the control that OPENS the viewer | "CanaReels" - short videos, full screen, swipe for the next |
 | `hint-chats` | `/chat` | `chat.new`: the "+" of the list header (`SidebarHeaderControls`), which opens the new-conversation modal | "Démarrer une discussion" - the + creates a discussion (a channel in communities), touch a conversation to open it; left out (not-rendered) where the list is not drawn |
 
@@ -326,8 +326,8 @@ Why two manager helps: the agenda is a row of the association's PUBLIC page, the
 audience are rows of the management hub, and a hint never follows a navigation. Neither declares
 `replay` (one route per association).
 
-**"Mon espace" has no hint of its own** (lead decision, 2026-11-04, after review): the tab is already
-explained by step 3 of `hint-feed-tabs` (`posts_tabs_info_all_body`), on the same anchor, so a second
+**"Mon espace" (Campus since 1.6.9) has no hint of its own** (lead decision, 2026-11-04, after review): the tab is already
+explained by step 3 of `hint-feed-tabs` (`posts_tabs_info_campus_body`), on the same anchor, so a second
 hint would only repeat it. The owner's moment is kept, not duplicated.
 
 Pinned by `guides/batch3Hints.test.ts` (routes, layouts, anchors named in the sources, eligibility

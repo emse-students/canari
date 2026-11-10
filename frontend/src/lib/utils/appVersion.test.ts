@@ -88,6 +88,7 @@ describe('parseServerVersionInfo', () => {
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      rankedFeeds: false,
     });
   });
 
@@ -121,6 +122,10 @@ describe('parseServerVersionInfo', () => {
     expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.formDrafts).toBe(true);
     expect(parseServerVersionInfo({ version: '1.2.3' })?.formDrafts).toBe(false);
     expect(parseServerVersionInfo({ version: '1.2.3', formDrafts: 1 })?.formDrafts).toBe(false);
+    const ranked = parseServerVersionInfo({ version: '1.6.9', rankedFeeds: true });
+    expect(ranked?.rankedFeeds).toBe(true);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(ranked!))?.rankedFeeds).toBe(true);
+    expect(parseServerVersionInfo({ version: '1.6.8' })?.rankedFeeds).toBe(false);
   });
 
   it('stores the presence POST capability in the shape it is read back with', () => {
@@ -227,6 +232,7 @@ describe('buildAppVersionCheckResult', () => {
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      rankedFeeds: false,
     });
     expect(result.callsMode).toBe('audio');
     expect(result.livesMode).toBe('on');
@@ -249,6 +255,7 @@ describe('buildAppVersionCheckResult', () => {
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      rankedFeeds: false,
     });
     expect(result.belowMinVersion).toBe(true);
   });
@@ -319,6 +326,7 @@ describe('fetchServerAppVersionReliable', () => {
       presencePost: false,
       publishQueue: false,
       formDrafts: false,
+      rankedFeeds: false,
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });

@@ -54,7 +54,7 @@ function renderRow() {
   const target = document.body.appendChild(document.createElement('div'));
   const instance = mount(FeedTabRow, {
     target,
-    props: { feed: 'followed', onFeed, authToken: 't' },
+    props: { feed: 'foryou', onFeed, authToken: 't' },
   });
   flushSync();
   mounted.push(() => unmount(instance));
@@ -76,8 +76,8 @@ it('draws ONE row: the three tabs, then the named clap icon at its right end', (
   const tabs = [...row.querySelectorAll<HTMLButtonElement>('[data-feed-tabs] button')];
   expect(tabs.map((b) => b.textContent!.trim())).toEqual([
     m.posts_tab_associations(),
-    m.posts_tab_followed(),
-    m.posts_tab_all(),
+    m.posts_tab_foryou(),
+    m.posts_tab_campus(),
   ]);
   expect(tabs.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false']);
   // No second bar, no filter control: nothing on the row is a tablist or a toggle.
@@ -126,7 +126,8 @@ it('the icon opens the viewer at the newest reel, across every tab', async () =>
     kind: 'reel',
     multiMedia: true,
     withLinks: true,
-    feed: 'all',
+    feed: 'reels',
+    ranked: true,
     offset: 0,
     limit: 10,
   });

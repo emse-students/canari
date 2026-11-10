@@ -19,6 +19,18 @@ not a measurement of the reference - [controls](controls.md).
 
 ---
 
+## 0. The product principle, above every choice (owner, 2026-11-10)
+
+*"La philosophie de Canari c'est de permettre aux gens de retrouver toutes leurs informations rapidement. L'engagement (et avoir une activité agréable) n'arrive qu'après, et ne doit jamais gêner le premier point."*
+
+**This rule takes precedence over engagement, and over any reference copied below.** A layout,
+ranking or insertion that makes a reader's own information slower to find loses, whatever Messenger,
+Facebook or Instagram do. Its first applications: Campus and Associations are pure chronological
+lists with nothing inserted, and Pour toi leads with the fresh posts of the people a reader follows
+([posts](modules/posts.md#the-owners-decisions-of-2026-11-10), [engagement](../engagement.md#the-product-principle-owner-2026-11-10)).
+
+---
+
 ## 1. The finding in one line
 
 **Canari uses 36 distinct font sizes. Messenger and Facebook use five, and it is the same five on

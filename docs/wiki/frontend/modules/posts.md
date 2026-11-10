@@ -5,7 +5,7 @@
 
 ## Responsibilities
 
-- News feed with three tabs: all posts, followed associations, by category.
+- News feed with three tabs: Associations, Pour toi (ranked) and Campus (since 1.6.9).
 - Post creation with rich content: Markdown, image, poll, embedded form.
 - Reactions (emoji), comments, post sharing.
 - Search within the feed.
@@ -16,9 +16,98 @@
 
 | Tab (`feed=`) | Content |
 |---|---|
-| Associations (`associations`, the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication |
-| Suivis (`followed`) | Posts from the associations and members the reader follows (never an anonymous post), and what a followed association republished, placed at that republication |
-| Mon espace (`all`, "Tout" until 1.6; the identifier is unchanged) | Every post the reader may see through their spaces, campus and formation. The three tabs are explained once by the guided hint `hint-feed-tabs` (it replaced the (i) button, [guided-help](../guided-help.md)) |
+| Associations (`associations`, the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication. Chronological, pins on top. An entity followed OUTSIDE the reader's spaces adds nothing here: an entity follow opens no visibility door (`postVisibleToUserSql`), so every entity row the old Suivis showed was already in this tab |
+| Pour toi (`foryou`, "Suivis" / `followed` until 1.6.9) | PEOPLE's posts only: what the people the reader follows publish or repost, and the suggested posts of people (engagement WP-7), RANKED - [below](#pour-toi---the-ranked-tab-owner-2026-11-10). No pin. The only tab with the "Comptes a suivre" carousel |
+| Campus (`all`, "Mon espace" until 1.6.9, "Tout" until 1.6; the identifier is unchanged) | Every post the reader may see through their spaces, campus and formation. Chronological, pins on top, NOTHING inserted between posts (no suggestion, no carousel) |
+
+The three tabs are explained once by the guided hint `hint-feed-tabs` (it replaced the (i) button,
+[guided-help](../guided-help.md)). **The feed opens on the last tab the reader opened** (remembered
+per device, `settings.preferredPostFeed`; first run = Associations) - unchanged since 2026-09-10, and
+a remembered `followed`, like a `?feed=followed` link, now opens Pour toi (`parsePostFeed`).
+
+### The owner's decisions of 2026-11-10
+
+1. **"Mon espace" is renamed Campus.** Campus and Associations stay STRICTLY chronological with pins
+   on top - no ranking, nothing interleaved (*"un des problemes de Facebook est de trouver les
+   informations"*; *"ca n'a pas de sens dans Campus, parce que tout y est deja"*).
+2. **Pour toi replaces Suivis**: what the people the reader follows publish or repost, PLUS the
+   suggested posts (WP-7's rules: popular, last 7 days, not followed, Suivre in the header, the
+   "Suggestion" badge). Suggestions leave Campus entirely.
+3. **Pour toi is ordered by freshness and popularity**, not by date alone.
+4. **Tab order**: Associations (default) / Pour toi / Campus.
+5. **The feed opens on the last tab the reader opened** (per device; first run = Associations).
+6. **Suggestions in Pour toi have no quota**: ranked by the same score (L13's one-in-eight is gone
+   there); the badge and Suivre stay.
+7. **Pins lead Associations and Campus only**, never Pour toi.
+8. **Pour toi is PEOPLE only**: an association's, a list's or an institution's post never appears
+   there - followed people and suggestions of people.
+9. **Associations** = the associations of the reader's spaces plus the entities they follow outside
+   them, chronological, pins on top. Campus unchanged.
+10. **CanaReels has no tabs**: its set is every reel the reader may see, ordered by the SAME score as
+    Pour toi, with the same `asOf` paging ([reels](reels.md)).
+11. **The order inside Pour toi**: a followed person's post under 48 h comes first (ranked by score
+    among themselves), then the suggestions (by score), then everything else by score. "Not yet
+    seen" was asked too: the estate keeps NO durable, cheap fact of what a reader has seen (the
+    "Nouveau" marker is a per-device client set), so the age alone decides - no clock stands in.
+12. **The "Comptes a suivre" carousel appears in Pour toi only**, and suggests PEOPLE only (lead's
+    decision, reversible: Pour toi shows no entity's post, so an entity card there would offer what
+    the tab never shows - `feedSuggestionCards` drops the entities; `me/suggestions` is unchanged).
+13. **The product principle above every engagement choice** ([engagement](../../engagement.md#the-product-principle-owner-2026-11-10)).
+
+### Pour toi - the ranked tab (owner, 2026-11-10)
+
+Server: `apps/social-service/src/posts/for-you-feed.ts` (the design note), `PostsService.listRankedRows`
+and `rankWindow`, `republished-feed-sql.ts` `forYouFollowedSql`, `suggested-posts.ts` (`peopleOnly`).
+Client: `lib/posts/rankedFeeds.ts` (`nextListPage`), `buildListPostsSearchParams` (`wireFeed`).
+
+- **The candidates.** A non-anonymous personal post of an account the reader follows (accepted), or a
+  post a followed person reposted (WP-F6) - never an entity's post, never what an association
+  republished (both are Associations'). Placed at its latest followed repost, else its publication.
+  Plus the suggested posts of people (`suggestedPostIds(..., { peopleOnly: true })`, at most 10).
+  Every filter of the other arms applies, on every page: moderation hide, live-reel expiry, the review
+  cohort, the block filter, the promo cutoff, the whole visibility predicate.
+- **The score, ONE SQL definition** (`forYouScoreSql`): `(1 + engaged) / (age_hours + 2) ^ 1.5`,
+  `engaged` being `engagement-sql.ts` `engagedAccountsSql` (THE popularity, WP-7's and WP-10's), the
+  age read from `asOf`, never from `now()`. Why: the gravity rule news aggregators use - one line,
+  monotone in both terms, no constant learnt from data the estate does not have. A post an hour old
+  with nobody engaged (0.19) is above a day-old one with 10 accounts (0.08), itself above a 3-day-old
+  one with 20 (0.04): freshness leads, popularity reorders within a day or two.
+- **The bands** (`forYouBandSql`, decision 11): 0 - a followed post placed within 48 h of `asOf`;
+  1 - a suggestion; 2 - every other followed post of the window. The score orders each band; the
+  placement time then the id break ties, so the order is total.
+- **The window.** The followed posts placed within 14 days of `asOf` (at most 200, the most recent),
+  with the suggestions, are RANKED. Below them, **the tail**: the older followed posts, newest first,
+  below a fixed boundary - so a reader still scrolls down to everything their follows ever published.
+- **Deterministic paging - the snapshot.** A reaction carries no date (`posts.reactions` maps a reader
+  to an emoji), so "the engagement as of `asOf`" cannot be read back later, and a ranking recomputed
+  for page 2 would repeat or skip posts. So the window is ranked ONCE, at the first page, and kept in
+  Redis as a snapshot of ids under (list, reader, `asOf`), 2 h after its last read
+  (`posts:ranked:v1:...`, outside the feed cache's prefix). Every row served carries `feedAsOf`,
+  `feedPosition` (its place in the WHOLE list) and, for a suggestion, `feedSuggested`. The client
+  asks the next page as `asOf=<feedAsOf>&offset=<last feedPosition + 1>` (`nextListPage`), never from
+  the count on screen: a row withdrawn between two pages (deleted, hidden, blocked) is skipped by the
+  server's slice, which reads on until the page is full, so a short page still means the end. The
+  feed cache key carries `asOf` (`postListCacheKey`). Proven on PostgreSQL by
+  `for-you-feed.integration.spec.ts`: the order against a hand computation, and three pages of one
+  ranking that neither repeat nor skip while a post gains 80 reactions, a new post appears and a
+  ranked post is hidden between them.
+- **A snapshot that is gone ends the list**: the 2 h lapsed with no page read, or Redis lost it (a
+  TTL key is evictable under `volatile-lru`) - the next page is empty (a `log` line names it; an
+  unreadable Redis is an `error`), and the reader's pull-to-refresh ranks anew. Never a recompute
+  passed off as the same ranking.
+- **What the tail does not freeze**: a republication or a followed repost written after `asOf` can lift
+  an old post's placement above the boundary, and it then leaves the tail (it is fresh, and the next
+  ranking has it) - the residual every chronological tab already has under a repost.
+- **A follow or an unfollow between two pages** does not change the snapshot: the ranked rows are
+  re-read under the visibility filters only.
+
+### What the installed clients see (1.6.8 and older)
+
+Nothing changes for them: `feed=followed` (their Suivis) and `feed=all` (their Mon espace) answer
+exactly as before, `GET /posts/me/suggested-posts` still serves the suggestions they interleave in
+Mon espace, `feed=reels` without `ranked` is still newest first. A 1.6.9 client facing an estate older
+than the `rankedFeeds` capability asks Pour toi as `followed` and the CanaReels list in its older shape
+([legacy-compatibility](../../legacy-compatibility.md#no-date-yet---a-feed-client-newer-than-its-server---rankedfeeds-2026-11-10)).
 
 **A republication is an association publishing, so the feeds of what associations publish carry it
 (user, 2026-10-24).** The Associations and Suivis arms of `listPosts` read `posts."associationId"`

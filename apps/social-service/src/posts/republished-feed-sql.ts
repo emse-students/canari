@@ -95,6 +95,57 @@ export function republishedFeedAtSql(viewer: string, among?: string, repostedAt?
            (SELECT MAX(rf_at."republishedAt") ${countedRepublicationsSql('rf_at', viewer, among)})${reposted})`;
 }
 
+/**
+ * THE SUIVIS ADMISSION (`feed=followed`, chronological), kept unchanged for the installed clients
+ * that still draw a Suivis tab; the 1.6.9 client's Pour toi reads {@link forYouFollowedSql}. `assoc` is the `uuid[]` placeholder of the followed associations, `users` the `text[]` one of the
+ * accepted follows, `viewer` the reader's id. `join` goes after the `FROM posts ... LEFT JOIN
+ * associations`, `admitted` in the `WHERE`, `at` is the instant the row is placed at.
+ */
+export function followedFeedSql(
+  assoc: string,
+  users: string,
+  viewer: string
+): { join: string; admitted: string; at: string } {
+  return {
+    join: followedRepostLateralSql(users, viewer),
+    admitted: `(
+         (posts."associationId" IS NOT NULL AND posts."associationId" = ANY(${assoc}::uuid[]))
+         -- Never an anonymous post: appearing in THIS feed at all already says "written by
+         -- someone in the small, known set you follow" - a leak no amount of masking the
+         -- author's name removes, because the leak is membership, not the name.
+         OR (posts."associationId" IS NULL AND posts."authorId" = ANY(${users}::text[])
+             AND NOT posts.anonymous)
+         -- What a followed association REPUBLISHED, never anonymous.
+         OR (NOT COALESCE(posts.anonymous, false)
+             AND ${republishedForViewerSql(viewer, assoc)})
+         -- What a followed PERSON reposted (WP-F6), never anonymous: the lateral, read once
+         -- for admission and once for placement.
+         OR ${MEMBER_REPOSTED_BY_FOLLOWED_SQL}
+       )`,
+    at: republishedFeedAtSql(viewer, assoc, FOLLOWED_REPOST_AT),
+  };
+}
+
+/**
+ * POUR TOI'S FOLLOWED POSTS (owner, 2026-11-10: PEOPLE only): a personal post of an account the
+ * reader follows (never anonymous), or one a followed person reposted (WP-F6) - never an entity's
+ * post, and nothing an association republished (both are the Associations tab's). Placed at the
+ * latest followed repost, else at its publication. `users` is the `text[]` placeholder of the
+ * accepted follows, `viewer` the reader's id.
+ */
+export function forYouFollowedSql(
+  users: string,
+  viewer: string
+): { join: string; admitted: string; at: string } {
+  return {
+    join: followedRepostLateralSql(users, viewer),
+    admitted: `(posts."associationId" IS NULL AND (
+         (posts."authorId" = ANY(${users}::text[]) AND NOT posts.anonymous)
+         OR ${MEMBER_REPOSTED_BY_FOLLOWED_SQL}))`,
+    at: `GREATEST(posts."publishedAt", ${FOLLOWED_REPOST_AT})`,
+  };
+}
+
 /** The "Associations" feed: published by an association, or republished by one the viewer sees. */
 export function inAssociationsFeedSql(viewer: string): string {
   return `(posts."associationId" IS NOT NULL
