@@ -7,6 +7,7 @@ import {
   Index,
 } from 'typeorm';
 import type { StoredPostKind } from '../reel.constants';
+import type { InstitutionReachPublic, InstitutionReachSpace } from '../institution-reach';
 
 /** TypeORM entity representing a Canari post with optional polls, reactions, comments, and media. */
 @Entity('posts')
@@ -91,6 +92,24 @@ export class Post {
    */
   @Column({ type: 'boolean', default: false })
   studentsOnly: boolean;
+
+  /**
+   * THE REACH AN INSTITUTION CHOSE FOR THIS POST (owner, 2026-11-10; migration 162): the public in
+   * the ticked spaces - 'all', 'students' (an account with a cursus) or 'staff' (no cursus). NULL on
+   * every post that is not an institution's, and on an institution post written before the reach
+   * existed (read as its whole audience, everyone). Set with {@link reachSpaces}, never alone (a
+   * CHECK says so); read by `institutionReachAdmitsUserSql`, a conjunct of `postVisibleToUserSql`.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true, default: null })
+  reachPublic: InstitutionReachPublic | null;
+
+  /**
+   * The spaces an institution's post targets, inside the institution's audience (migration 162): a
+   * jsonb array of `{formation, campus}` pairs, NULL exactly when {@link reachPublic} is. Read by
+   * containment in the predicate, so a value that is not such an array reaches nobody.
+   */
+  @Column({ type: 'jsonb', nullable: true, default: null })
+  reachSpaces: InstitutionReachSpace[] | null;
 
   @Column({ type: 'timestamptz', nullable: true, default: null })
   scheduledAt: Date | null;

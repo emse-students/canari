@@ -71,6 +71,11 @@ export interface QueuedPostFailure {
   stage: 'moderation' | 'mediaPrepare' | 'mediaUpload' | 'createPost' | 'withdraw';
   /** The sentence shown, in the member's language at the time it failed. */
   message: string;
+  /**
+   * A refusal a Retry cannot cure (`retryCannotCure`): the queued payload is fixed, so it would be
+   * refused again, word for word. Only Delete is offered - never an endless Retry.
+   */
+  final?: true;
 }
 
 /** One post waiting to be published. */

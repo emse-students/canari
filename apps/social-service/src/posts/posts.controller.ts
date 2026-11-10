@@ -182,6 +182,25 @@ export class PostsController {
     return this.service.listSuggestedPosts(xUserId, xGlobalAdmin === 'true');
   }
 
+  /**
+   * The spaces an INSTITUTION's post may target (owner, 2026-11-10): every space of its own
+   * audience, which the composer offers to tick and the publish checks a reach against. Only for a
+   * caller who may publish as it (403), and only for an institution (400 `institution_reach_not_offered`).
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('reach-options/:associationId')
+  listInstitutionReachOptions(
+    @Param('associationId', ParseUUIDPipe) associationId: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin?: string
+  ) {
+    return this.service.listInstitutionReachOptions(
+      associationId,
+      xUserId,
+      xGlobalAdmin === 'true'
+    );
+  }
+
   /** Returns a paginated list of posts for the requested feed. */
   @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get()

@@ -53,6 +53,15 @@ import {
   writePostListPage,
 } from './post-list-cache';
 import { STUDENTS_ONLY_NOT_OFFERED, assertStudentsOnlyOffered } from './students-only';
+import {
+  INSTITUTION_REACH_CODES,
+  foldServedReach,
+  institutionReachOffered,
+  institutionReachOptions,
+  resolveInstitutionReachWrite,
+  servedInstitutionReach,
+  type InstitutionReachSpace,
+} from './institution-reach';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedAuthorSql, blockedUserIdsFor } from '../common/blocked-user-ids';
 import { SUGGESTED_POSTS_MAX, suggestedPostIds } from './suggested-posts';
@@ -948,6 +957,7 @@ export class PostsService {
     const polls = servePolls(p.polls, viewer.viewerId);
     if (!p.associationId) {
       const out: any = { ...p, ...capabilities, ...(p.polls !== undefined ? { polls } : {}) };
+      foldServedReach(out);
       if (!capabilities.canSeeComments) withholdCommentsAndPeople(out, viewer.viewerId);
       if (this.mustHideAnonymousAuthor(p, viewer)) {
         delete out.authorId;
@@ -958,6 +968,7 @@ export class PostsService {
       return out;
     }
     const out: any = { ...p, ...capabilities, ...(p.polls !== undefined ? { polls } : {}) };
+    foldServedReach(out);
     if (!capabilities.canSeeComments) withholdCommentsAndPeople(out, viewer.viewerId);
     delete out.authorId;
     delete out.authorDisplayName;
@@ -988,6 +999,7 @@ export class PostsService {
     const raw: any = { ...(post as any) };
     // WP-F6: the author's per-post consent is served to the author alone, as `repostConsent`.
     delete raw.allowReposts;
+    foldServedReach(raw);
     // Backward compatibility: expose both `media` (canonical) and `images` (legacy clients).
     if (Array.isArray(raw.media)) {
       raw.images = raw.media;
@@ -1218,6 +1230,17 @@ export class PostsService {
       assertStudentsOnlyOffered(true, await this.associationTypeOf(data.associationId ?? null));
       this.logger.debug('[STUDENTS_ONLY] a post published for students only');
     }
+    // An institution's reach (owner, 2026-11-10): its spaces and its public, chosen at EVERY post -
+    // refused, typed, when missing on an institution's post or present on any other.
+    const reach = await resolveInstitutionReachWrite(this.postRepo.manager, {
+      mode: 'create',
+      associationId: data.associationId ?? null,
+      associationType: await this.associationTypeOf(data.associationId ?? null),
+      raw: data.reach,
+    });
+    delete data.reach;
+    data.reachPublic = reach?.reachPublic ?? null;
+    data.reachSpaces = reach?.reachSpaces ?? null;
     // The event link is resolved where the row is written (`saveWithEventLink`), under the event's
     // lock - never here, where a presentation switch could land between the check and the insert.
     // A post is read by its audience: a DRAFT form attached to it would show them a form they cannot
@@ -1650,6 +1673,7 @@ export class PostsService {
          posts."linkedCalendarEventId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts."scheduledAt",
          posts.kind, posts."durationMs", posts."expiresAt", posts."liveId", posts."studentsOnly",
+         posts."reachPublic", posts."reachSpaces",
          ${commentCount} AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
@@ -2461,7 +2485,7 @@ export class PostsService {
     const rows: any[] = await this.postRepo.manager.query(
       `SELECT posts.id, posts."authorId", posts.anonymous, posts.markdown, posts."createdAt",
               posts."associationId", posts."linkedCalendarEventId", posts."hiddenByModeration",
-              posts."studentsOnly",
+              posts."studentsOnly", posts."reachPublic", posts."reachSpaces",
               assoc.id AS "assocJoinId", assoc.name AS "assocName", assoc.slug AS "assocSlug",
               assoc."logoUrl" AS "assocLogoUrl", assoc.type AS "assocType"
        FROM posts
@@ -2684,6 +2708,7 @@ export class PostsService {
       linkedCalendarEventId?: string | null;
       scheduledAt?: string | null;
       studentsOnly?: boolean;
+      reach?: unknown;
     },
     isGlobalAdmin = false
   ) {
@@ -2691,6 +2716,7 @@ export class PostsService {
     if (!post) throw new NotFoundException('Post not found');
     await this.assertMayEdit(post, userId, isGlobalAdmin);
     await this.applyStudentsOnly(post, data.studentsOnly);
+    await this.applyInstitutionReach(post, data.reach);
 
     // A reel - and a live replay, whose shape the server wrote (docs/wiki/live-replays.md) - is
     // edited by its caption alone; a post's text-or-media rule is the DTO's.
@@ -2803,6 +2829,75 @@ export class PostsService {
       `[STUDENTS_ONLY] post ${post.id.slice(0, 8)}: switch turned ${next ? 'ON - withdrawn from readers outside students and members' : 'OFF - given back to its audience'}`
     );
     post.studentsOnly = next;
+  }
+
+  /**
+   * Changes an institution post's REACH when an edit names it (owner, 2026-11-10: editable after
+   * publishing, both ways). Narrowing withdraws the post from the readers it leaves out at once,
+   * widening gives it back - the predicate reads the row, and the caller drops every cached feed page.
+   * No notification is sent: the post was announced once, and a bell row already delivered is
+   * re-asked against the predicate at every read (`bellRowShownSql`), as for the students-only switch.
+   * Absent leaves the stored reach alone (an institution post written before the reach keeps its
+   * whole audience until an edit chooses one). A live replay keeps its live's audience (D8).
+   */
+  private async applyInstitutionReach(post: Post, raw: unknown): Promise<void> {
+    if (raw === undefined) return;
+    if (post.kind === 'replay') {
+      this.logger.warn(`[INSTITUTION_REACH] refused on live replay ${post.id.slice(0, 8)} (D8)`);
+      throw new BadRequestException({
+        code: INSTITUTION_REACH_CODES.notOffered,
+        message: 'A live replay keeps the audience of its live.',
+      });
+    }
+    const reach = await resolveInstitutionReachWrite(this.postRepo.manager, {
+      mode: 'edit',
+      associationId: post.associationId ?? null,
+      associationType: await this.associationTypeOf(post.associationId ?? null),
+      raw,
+    });
+    if (!reach) return;
+    const before = servedInstitutionReach(post);
+    this.logger.log(
+      `[INSTITUTION_REACH] post ${post.id.slice(0, 8)}: reach ${before ? `${before.public}/${before.spaces.length}` : 'none'} -> ${reach.reachPublic}/${reach.reachSpaces.length} space(s), read at once by every path`
+    );
+    post.reachPublic = reach.reachPublic;
+    post.reachSpaces = reach.reachSpaces;
+  }
+
+  /**
+   * The spaces `userId` may target when publishing as institution `associationId` - the composer's
+   * reach options (owner, 2026-11-10), the SAME statement the write checks a reach against. Refused
+   * like the publish itself: 403 for a caller who may not post as it, 400
+   * `institution_reach_not_offered` for an entity that is not an institution.
+   */
+  async listInstitutionReachOptions(
+    associationId: string,
+    userId: string,
+    isGlobalAdmin: boolean
+  ): Promise<{ spaces: InstitutionReachSpace[] }> {
+    const canPost = await this.associationsService.canPostAs(userId, associationId, {
+      isGlobalAdmin,
+    });
+    if (!canPost) {
+      this.logger.debug(
+        `[INSTITUTION_REACH] options of ${associationId.slice(0, 8)}: not a publisher`
+      );
+      throw new ForbiddenException('You may not publish as this association');
+    }
+    if (!institutionReachOffered(await this.associationTypeOf(associationId))) {
+      this.logger.warn(
+        `[INSTITUTION_REACH] options asked of ${associationId.slice(0, 8)}, which is not an institution`
+      );
+      throw new BadRequestException({
+        code: INSTITUTION_REACH_CODES.notOffered,
+        message: 'Only an institution chooses the reach of a post.',
+      });
+    }
+    const spaces = await institutionReachOptions(this.postRepo.manager, associationId);
+    this.logger.debug(
+      `[INSTITUTION_REACH] options of ${associationId.slice(0, 8)}: ${spaces.length} space(s)`
+    );
+    return { spaces };
   }
 
   /**

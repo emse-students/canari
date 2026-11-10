@@ -12,6 +12,7 @@ import {
   serverRankedFeeds,
 } from '$lib/stores/appVersionCheck.svelte';
 import { Log } from '$lib/utils/Log';
+import type { InstitutionReach, ReachSpace } from '$lib/posts/institutionReach';
 import { withClientVersionHeader } from '$lib/utils/appVersion';
 
 export type PostMediaRef = MediaRef & { caption?: string };
@@ -293,6 +294,12 @@ export interface PostEntity {
    * members, whatever the path. Served to every reader, so the card says so to all of them.
    */
   studentsOnly?: boolean;
+  /**
+   * The reach an institution chose for this post (owner, 2026-11-10): its spaces and its public.
+   * Null on every other post, and on an institution post published before the reach existed.
+   * Served to every reader, so the card says so to all of them.
+   */
+  reach?: InstitutionReach | null;
   linkedCalendarEventId?: string | null;
   linkedCalendarEvent?: PostLinkedCalendarEvent | null;
   reactions?: Record<string, string>; // userId -> reactionType
@@ -511,6 +518,8 @@ export interface CreatePostPayload {
   anonymous?: boolean;
   /** "Entre étudiants" - offered on an association's or a list's post only (`studentsOnly.ts`). */
   studentsOnly?: boolean;
+  /** The reach of an institution's post - REQUIRED there, refused anywhere else (`institutionReach.ts`). */
+  reach?: InstitutionReach;
   linkedCalendarEventId?: string;
   /** `'reel'` publishes a CanaReel: exactly one video, no poll, form, event or schedule. */
   kind?: PostKind;
@@ -530,6 +539,8 @@ export interface UpdatePostPayload {
   scheduledAt?: string | null;
   /** "Entre étudiants", changed after publication; absent leaves it as stored. */
   studentsOnly?: boolean;
+  /** An institution post's reach, changed after publication; absent leaves it as stored. */
+  reach?: InstitutionReach;
 }
 
 /**
@@ -714,6 +725,19 @@ export async function fetchFeedAudience(): Promise<{ inAudience: boolean }> {
 /** The server's reel numbers (`ReelLimits`). */
 export async function getReelLimits(): Promise<ReelLimits> {
   return request<ReelLimits>('/api/posts/reel-limits');
+}
+
+/**
+ * The spaces institution `associationId` may target with a post: those of its own audience, sorted
+ * campus then formation. 403 when the caller may not post as it; 400
+ * `institution_reach_not_offered` when it is not an institution.
+ */
+export async function getInstitutionReachOptions(
+  associationId: string
+): Promise<{ spaces: ReachSpace[] }> {
+  return request<{ spaces: ReachSpace[] }>(
+    `/api/posts/reach-options/${encodeURIComponent(associationId)}`
+  );
 }
 
 export async function createPost(payload: CreatePostPayload): Promise<PostEntity> {

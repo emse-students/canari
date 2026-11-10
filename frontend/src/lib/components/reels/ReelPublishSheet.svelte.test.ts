@@ -26,6 +26,17 @@ vi.mock('$lib/posts/postIdentity', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/postIdentity')>()),
   listPostAsAssociations: () => Promise.resolve(postAs.list),
 }));
+// The reach picker's options (owner, 2026-11-10): one institution with two spaces.
+vi.mock('$lib/posts/api', async (orig) => ({
+  ...(await orig<typeof import('$lib/posts/api')>()),
+  getInstitutionReachOptions: () =>
+    Promise.resolve({
+      spaces: [
+        { formation: 'ICM', campus: 'saint-etienne' },
+        { formation: 'ISMIN', campus: 'saint-etienne' },
+      ],
+    }),
+}));
 vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
   ...(await orig<typeof import('$lib/utils/historyOverlayStack')>()),
   pushHistoryOverlay: vi.fn(),
@@ -224,7 +235,12 @@ describe('ReelPublishSheet', () => {
 describe('ReelPublishSheet reached from the new-post composer (one camera, one behaviour, 2026-10-19)', () => {
   function composer() {
     return {
-      start: { caption: 'from the composer', identity: '', studentsOnly: false },
+      start: {
+        caption: 'from the composer',
+        identity: '',
+        studentsOnly: false,
+        reach: { spaces: [], public: null },
+      },
       onpublished: vi.fn(),
     };
   }
@@ -313,7 +329,12 @@ describe('ReelPublishSheet - review of #2124', () => {
   it('from the composer the deletion notice is a note and takes the focus as the step opens', async () => {
     const { target } = await render(deps(), vi.fn(), {
       composer: {
-        start: { caption: '', identity: '', studentsOnly: false },
+        start: {
+          caption: '',
+          identity: '',
+          studentsOnly: false,
+          reach: { spaces: [], public: null },
+        },
         onpublished: vi.fn(),
       },
     });
@@ -334,7 +355,12 @@ describe('ReelPublishSheet - review of #2124', () => {
     postAs.list = [{ id: 'asso-1', name: 'BDE Test', logoUrl: null }];
     const { target } = await render(deps(), vi.fn(), {
       composer: {
-        start: { caption: '', identity: 'asso-1', studentsOnly: false },
+        start: {
+          caption: '',
+          identity: 'asso-1',
+          studentsOnly: false,
+          reach: { spaces: [], public: null },
+        },
         onpublished: vi.fn(),
       },
     });
@@ -348,7 +374,12 @@ describe('ReelPublishSheet - "Entre étudiants" both ways with the composer (rev
     const d = deps();
     const { target, submit } = await render(d, vi.fn(), {
       composer: {
-        start: { caption: 'x', identity: 'list-1', studentsOnly: true },
+        start: {
+          caption: 'x',
+          identity: 'list-1',
+          studentsOnly: true,
+          reach: { spaces: [], public: null },
+        },
         onpublished: vi.fn(),
       },
     });
@@ -361,5 +392,40 @@ describe('ReelPublishSheet - "Entre étudiants" both ways with the composer (rev
     submit().click();
     await settle();
     expect(d.createPost).toHaveBeenCalledWith(expect.not.objectContaining({ studentsOnly: true }));
+  });
+});
+
+describe('ReelPublishSheet - the reach of an institution reel (owner, 2026-11-10)', () => {
+  it('holds "Publier" until a space and a public are chosen, then sends the reach', async () => {
+    postAs.list = [{ id: 'inst-1', name: 'Mines', logoUrl: null, type: 'institution' }];
+    const d = deps();
+    const { target, submit } = await render(d, vi.fn(), {
+      composer: {
+        start: {
+          caption: 'x',
+          identity: 'inst-1',
+          studentsOnly: false,
+          reach: { spaces: [], public: null },
+        },
+        onpublished: vi.fn(),
+      },
+    });
+    await settle();
+    expect(target.querySelector('[data-institution-reach-picker]')).not.toBeNull();
+    expect(submit().disabled).toBe(true);
+    target.querySelector<HTMLInputElement>('[data-reach-space="ICM|saint-etienne"]')!.click();
+    flushSync();
+    expect(submit().disabled).toBe(true);
+    target.querySelector<HTMLInputElement>('[data-reach-public="staff"]')!.click();
+    flushSync();
+    expect(submit().disabled).toBe(false);
+    submit().click();
+    await settle();
+    expect(d.createPost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        associationId: 'inst-1',
+        reach: { spaces: [{ formation: 'ICM', campus: 'saint-etienne' }], public: 'staff' },
+      })
+    );
   });
 });

@@ -159,6 +159,11 @@ application computed from the same profile, so no application keeps a hard-coded
   formation. Reaching beyond it (an ICM Saint-Etienne association addressing the FSSS) is set by an
   admin on the association, and a nominative permission may WIDEN one post (the rare inter-campus
   case).
+  **AMENDED FOR INSTITUTIONS ONLY (owner, 2026-11-10): an institution CHOOSES the reach of each
+  post** - the spaces it targets, inside the audience the admin gave it (never wider: the server
+  refuses anything else), and the public in them (Tous / Étudiants / Personnel), with no default and
+  editable after publishing both ways. Associations, lists and personal posts keep the rule above
+  ([as built](#an-institutions-reach-per-post-as-built-owner-2026-11-10)).
 - **D20 - A new publishing entity type, "Institution"** (Ecole, ME, Alumni association), beside
   association and list, to publish in its own name and propose events. Its members are added
   NOMINATIVELY by an admin: declaring "personnel ME" proves nothing (D8) and only informs the
@@ -2453,4 +2458,149 @@ revisit them:**
   post by id, its comment page and a comment's moderation, the routes a platform admin calls as
   one. Reacting, commenting, voting and browsing ask the gate of an admin like of anyone, so an
   admin without a cursus cannot act on a post they could not read.
+
+### An institution's reach per post, as built (owner, 2026-11-10)
+
+The owner's decisions and the readings owed are in the [backlog entry](backlog.d/institution-post-reach.md);
+the rule in one line: an INSTITUTION chooses, at every post, the spaces of its own audience the post
+targets and the public in them (everyone, the students, the staff), with no default, and may change
+both after publishing, both ways. Associations, lists and personal posts keep D19. It is the posts
+half of the reform's C1 / WP-I ([reform section 3](spaces-and-audiences-reform.md#3-per-item-audience-for-institutions-only-c1)).
+
+
+
+**Schema - migration `162_institution_post_reach.sql`, plain (not held).** Two nullable columns on
+`posts`, no new table: `"reachPublic"` (`'all' | 'students' | 'staff'`) and `"reachSpaces"` (a jsonb
+array of `{formation, campus}` pairs). Three CHECKs, added `NOT VALID` then validated (every row is
+NULL): the two are set together or not at all, and only on an entity's post; the public is one of
+the three; the spaces are a non-empty array. NULL on both is every post that is not an
+institution's, and every institution post written before the file - read as the institution's whole
+audience, everyone, which is what it was published to. **No backfill.** Two columns rather than the
+`post_audiences` table section 3 sketched: the reach is written and edited with the row, in its own
+statement, with nothing to keep consistent across tables, and read by containment (`@>`) exactly as
+`users.cursus` is - a malformed value contains nothing, so it fails closed. Concrete pairs rather
+than NULL-wildcard rules: the shortcuts are the composer's, and "a whole campus" is stored as the
+campus's spaces the institution reaches today. Not held: every statement is plainly additive under
+the hold judge (`infrastructure/lib/migration-hold.sh`); the reform's F8 ("every migration held")
+was written for the reform's own schema changes. Decided NOT held by the lead (2026-11-10): a new owner
+decision, an additive schema, and the owner wants it in `1.6.10`.
+
+**The predicate** (`spaces/reader-spaces.ts`), two changes, each read from the row at every query:
+
+- **The public is a gate over every door but the author's**, beside the switch:
+  `institutionReachAdmitsUserSql` admits a reader when the post has no reach, its public is `all`,
+  `students` and the reader is a student (`isStudentSql`, the switch's definition), `staff` and they
+  are not - or they are a member of the publishing institution (D21: an institution's members read
+  everything it publishes). `postPublicAdmitsUserSql` ANDs it with `studentsOnlyAdmitsUserSql`, and
+  it is what `postVisibleToUserSql` narrows every door with, what the two newly-reached rules restate
+  on their "after" side, and (as `postPublicAdmitsViewerSql`) what a repost proposal's text is
+  withheld by. **`students` closes the read-grant door and the browsing admin's by-id door exactly as
+  the switch does** (S1, S2 of the review of #3010): the guard is "not students-only AND public is
+  not `students`". **"Staff" is exactly `NOT isStudentSql`: any account with no space** - staff (a
+  campus and an empty cursus), a student whose campus and formation make no opened space, an account
+  with no campus, and a review account - the SQL and every sentence here mean that set, nothing
+  narrower; the picker's "Personnel" hint names who it reaches in those terms.
+- **The spaces narrow the post's OWN institution door**: `associationVisibleToUserSql` takes a
+  `spaceFilter` (`ReadOpts.spaceFilter`), threaded into the rules door and the read-grant door, and
+  `postVisibleToUserSql` passes `postReachHoldsSpaceSql` for the post's own association only. So a
+  reader is reached through a space that BOTH one of the institution's rules reaches AND the post
+  ticked - never wider than the audience, and shrinking with it. A membership is not narrowed (D21),
+  and **a republisher still reaches its own readers** (G4, republication stays the inter-campus
+  mechanism), as do a member's repost and an accepted follow: the public still applies to them.
+  `postReachesSpaceSql` (pins, campus trends, suggested posts) asks the same filter, and **honours
+  the public**: a space's readers are students (they have the space), so a `staff` post reaches no
+  space and never takes a student space's pin slot, trend or suggestion (review of #3314).
+
+Every consumer goes through it: the feed arms and the CanaReels viewer, the search, the post by id
+with every intent (read, react, comment, vote), the comments withheld from a named reader, the
+reactions' answer, the bell (re-asked at every read), the announcement and mentions, the newly-reached
+readers of a republication and a member repost, a pin, a trend, a suggestion, the agenda's link back
+to the post. The public link preview (`PostPreviewService.findShareable`) refuses a post whose public
+is `students` or `staff`, as it refuses "Entre étudiants"; spaces alone narrow an audience as any
+association's does, and leave the preview as it was.
+
+**The write** (`posts/institution-reach.ts`, `resolveInstitutionReachWrite`, the ONE decision):
+`reach: { spaces, public }` on `POST /api/posts` and `PATCH /api/posts/:id`. On a create, an
+institution's post without one is a 400 `institution_reach_required`; on any other post a reach is
+`institution_reach_not_offered` (a live replay too: it keeps its live's audience, D8); a malformed one
+`institution_reach_invalid`; a space the institution's audience does not reach
+`institution_reach_outside_audience`. The spaces are folded and sorted, so two equal choices store
+one value. An edit with no `reach` leaves the stored one alone (an older client never clears it, and a
+legacy post keeps its whole audience until an edit chooses one); a present one replaces it, both ways.
+Every change drops the feed cache (`invalidateListCache`, the generation of #3010), and nothing is
+announced again: a bell row already delivered is re-asked against the predicate at every read, as for
+the switch. The constants equal `libs/contracts/institution-reach.json`, asserted on both sides.
+
+**The options** - `GET /api/posts/reach-options/:associationId` answers `{ spaces }`, the spaces the
+institution's audience reaches, campus then formation: `INSTITUTION_REACH_OPTIONS_SQL`, the SAME
+statement the write checks against, so what is offered and what is accepted cannot disagree. 403 for
+a caller who may not publish as it (`canPostAs`), 400 `institution_reach_not_offered` for an entity
+that is not an institution.
+
+**Served**: every post carries `reach: { spaces, public } | null` (`foldServedReach`), to every
+reader, so the card can say who it is for.
+
+**The client** (`frontend/src/lib/posts/institutionReach.ts`, the contract's mirror):
+`InstitutionReachPicker.svelte`, one block in the composer, the reel publish step and the edit form,
+shown while the identity is an institution: the option spaces grouped by campus, a campus chip that
+ticks or unticks the whole campus, a "Toute une formation" row only for a formation present on
+several campuses, the public as three choices with none selected, and ONE line that says what is
+missing or who will see the post. "Publier" stays disabled until a space and a public are chosen. The
+composer keeps the choice in its draft and hands it to the reel step inside `ComposerReelState`. The
+edit form starts from `post.reach`; a legacy post (`reach: null`) shows the picker empty and saves
+without a reach until a choice is complete. `InstitutionReachChip.svelte` on the card's time line and
+in the CanaReels viewer: the public and the one space, or a count, every space in its title. The four
+codes read as localized sentences (`publishFailure.ts`).
+
+Four rules from the review of #3314: **every reach leaving a component is built by `plainReach`**
+(fresh objects - a `$state` proxy makes IndexedDB's structured clone throw `DataCloneError`, and the
+publish queue stores the payload there; `CreatePostForm.institutionReach.svelte.test.ts` clones the
+enqueued call); **the edit form sends a reach only after the author touched the picker** (`ontouch`) -
+the picker prunes, on its own, a ticked space the audience no longer holds, and that is not a choice;
+**a failed options load offers Retry**, and options on a campus this build does not know are not
+drawn, ACCUSED by a `console.warn` and, when nothing is left, told to the author
+(`post_reach_unknown_campus`); **the four codes are FINAL in the durable publish queue**
+(`retryCannotCure`, `QueuedPostFailure.final`): the queue re-sends the payload it stored, so a Retry
+would be refused word for word - the banner offers Delete alone.
+
+#### Decisions taken in the build, reversible
+
+1. **"Personnel" reaches the staff who already have a door** - the institution's members, named
+   readers whose grant cell meets a ticked space, a republisher's or a reposter's staff readers. A
+   staff account has no space, so the institution's rules never reached one, and the read-grant
+   decision (6) - "staff without a cursus see nothing more by default, the named ones do" - stands.
+   Whether "Personnel" should ALSO open the post to every staff account of a ticked space's campus
+   is parked for the owner ([open-questions](open-questions.md#question---should-an-institutions-personnel-public-reach-every-staff-account-of-its-campuses-2026-11-10)).
+2. **A republication and a member repost keep reaching their own readers** (G4); only the public
+   follows the post there.
+3. **An institution's members read every post of it**, whatever its reach (D21), as the switch lets
+   the publishing association's members in.
+4. **A legacy institution post keeps NULL** (its whole audience, everyone) until an edit gives it a
+   reach; the edit form does not force one.
+5. **An entity's type is not editable today** (`UpdateAssociationDto` has no `type`; only a direct
+   database edit changes it), so a post that carries a reach always belongs to an institution. If the
+   type ever became editable, an ex-institution's post would keep a reach it can no longer change:
+   the options route answers `400 institution_reach_not_offered` (the picker shows its load error)
+   and a PATCH naming a reach is refused the same way - the type change would then have to clear
+   `"reachPublic"`/`"reachSpaces"` on that entity's posts in the same transaction (or the write
+   accept a reach on a post that already has one), and the edit form draw the picker from the
+   served `type` alone (review of #3314, unreachable today, nothing built).
+6. **Events are not touched**: the event a post announces keeps its own visibility. The events half
+   of C1 (`association_calendar_event_audiences`, reform section 3) is not built.
+
+#### Proof
+
+`posts/institution-reach.integration.spec.ts` (real PostgreSQL; ten readers - students of two
+ticked and one unticked space, the institution's member and officer, two named readers, a carrier's
+staff, an outsider, the platform admin - under four reaches: none, one space for everyone, two spaces
+for students, two spaces for staff) over the predicate, the `associations` and `all` feeds
+(`listPostRows`), the search, the post by id (read and comment), the bell and the announcement, a
+republication's newly-reached readers, `postReachesSpaceSql`, a ticked space outside the audience
+(opens nothing), an edit narrowing then widening, the options and the write's four refusals against
+a real audience, and migration 162's CHECKs and re-run. `posts.service.institution-reach.spec.ts`:
+the contract, the create (stored, required, outside, not offered), the edit (narrow and widen with the
+cache dropped, absent leaves it, refused on an association and a replay), the options' refusals, the
+served field; `post-preview.service.spec.ts`, the link preview refused for students or staff and
+kept for everyone. **Break-proof, run 2026-11-10**: with `postReachHoldsSpaceSql` always true, 9 of the 28
+integration tests fail; with `institutionReachAdmitsUserSql` always true, 11.
 
