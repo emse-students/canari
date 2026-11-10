@@ -33,13 +33,52 @@ it('serves the first page it was handed, then asks the same ranking after its la
   expect(listPosts).not.toHaveBeenCalled();
   listPosts.mockResolvedValueOnce([row('d', 3)]);
   await load(2, REEL_PAGE);
-  expect(listPosts).toHaveBeenLastCalledWith({ ...BASE, offset: 3, asOf: 'T', limit: REEL_PAGE });
+  expect(listPosts).toHaveBeenLastCalledWith({
+    ...BASE,
+    offset: 3,
+    asOf: 'T',
+    rankedFeeds: true,
+    limit: REEL_PAGE,
+  });
   await load(3, REEL_PAGE);
-  expect(listPosts).toHaveBeenLastCalledWith({ ...BASE, offset: 4, asOf: 'T', limit: REEL_PAGE });
+  expect(listPosts).toHaveBeenLastCalledWith({
+    ...BASE,
+    offset: 4,
+    asOf: 'T',
+    rankedFeeds: true,
+    limit: REEL_PAGE,
+  });
+});
+
+it('a ranking gone between two pages is ranked anew, and a reel already held is not handed back', async () => {
+  const load = allReelsLoader([row('a', 0), row('b', 1)]);
+  const { ApiRefusalError } = await import('$lib/utils/apiRefusalError');
+  const { Log } = await import('$lib/utils/Log');
+  const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+  listPosts
+    .mockRejectedValueOnce(new ApiRefusalError(410, 'RANKING_GONE', 'gone'))
+    .mockResolvedValueOnce([
+      { id: 'b', feedAsOf: 'T2', feedPosition: 0 },
+      { id: 'z', feedAsOf: 'T2', feedPosition: 1 },
+    ] as PostEntity[]);
+  expect((await load(2, REEL_PAGE)).map((r) => r.id)).toEqual(['z']);
+  expect(listPosts).toHaveBeenLastCalledWith({
+    ...BASE,
+    offset: 0,
+    rankedFeeds: true,
+    limit: REEL_PAGE,
+  });
+  warn.mockRestore();
 });
 
 it('an unranked answer (an older estate) is paged by the viewer count, as before', async () => {
   const load = allReelsLoader([row('a'), row('b')]);
   await load(2, REEL_PAGE);
-  expect(listPosts).toHaveBeenLastCalledWith({ ...BASE, offset: 2, limit: REEL_PAGE });
+  // In the shape its first page was served in, never a ranked page 2 of an unranked page 1.
+  expect(listPosts).toHaveBeenLastCalledWith({
+    ...BASE,
+    offset: 2,
+    rankedFeeds: false,
+    limit: REEL_PAGE,
+  });
 });

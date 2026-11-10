@@ -68,13 +68,21 @@ const FOLLOWED_REPOST = 'mf_followed';
  * subqueries, each running the carry check on every followed repost of every candidate. Whether the
  * viewer may READ the post is still the arm's own `postVisibleToViewerSql`; a stale row neither
  * surfaces a post nor dates it.
+ *
+ * `asOf` (a `timestamptz` SQL expression, Pour toi's ranking instant) counts only the reposts made
+ * by then: a ranked list's tail is placed as of its ranking, so a repost written between two pages
+ * neither admits a row nor moves one across the tail's cursor (`for-you-feed.ts`).
  */
-export function followedRepostLateralSql(reposters: string, viewer: string): string {
+export function followedRepostLateralSql(reposters: string, viewer: string, asOf?: string): string {
+  const madeBy = asOf
+    ? `
+            AND mf_at."repostedAt" <= ${asOf}`
+    : '';
   return `LEFT JOIN LATERAL (
          SELECT MAX(mf_at."repostedAt") AS at FROM member_reposts mf_at
            JOIN users mf_at_user ON mf_at_user.id = mf_at."reposterId"
           WHERE mf_at."postId" = posts.id AND mf_at."reposterId" = ANY(${reposters}::text[])
-            AND NOT COALESCE(posts.anonymous, false)
+            AND NOT COALESCE(posts.anonymous, false)${madeBy}
             AND ${memberRepostCarriesSql('posts', 'mf_at_user', viewer)}) ${FOLLOWED_REPOST} ON true`;
 }
 
@@ -127,21 +135,26 @@ export function followedFeedSql(
 }
 
 /**
- * POUR TOI'S FOLLOWED POSTS (owner, 2026-11-10: PEOPLE only): a personal post of an account the
- * reader follows (never anonymous), or one a followed person reposted (WP-F6) - never an entity's
- * post, and nothing an association republished (both are the Associations tab's). Placed at the
+ * POUR TOI'S FOLLOWED POSTS (owner, 2026-11-10): what the PEOPLE the reader follows WRITE or
+ * REPOST - a personal post of an account they follow (never anonymous), or any post a followed
+ * person reposted (WP-F6), an association's or an entity's included (owner, decision A: drawn with
+ * its "X a repartage" header, from `repostedBy`). Never an entity's post nobody they follow
+ * reposted, and nothing an association republished (both are the Associations tab's). Placed at the
  * latest followed repost, else at its publication. `users` is the `text[]` placeholder of the
- * accepted follows, `viewer` the reader's id.
+ * accepted follows, `viewer` the reader's id, `asOf` the ranking's instant (reposts after it do not
+ * count, {@link followedRepostLateralSql}). THE ONE SEAM of "people only" with
+ * `suggestedPostIds(..., { peopleOnly: true })`.
  */
 export function forYouFollowedSql(
   users: string,
-  viewer: string
+  viewer: string,
+  asOf?: string
 ): { join: string; admitted: string; at: string } {
   return {
-    join: followedRepostLateralSql(users, viewer),
-    admitted: `(posts."associationId" IS NULL AND (
-         (posts."authorId" = ANY(${users}::text[]) AND NOT posts.anonymous)
-         OR ${MEMBER_REPOSTED_BY_FOLLOWED_SQL}))`,
+    join: followedRepostLateralSql(users, viewer, asOf),
+    admitted: `((posts."associationId" IS NULL AND posts."authorId" = ANY(${users}::text[])
+          AND NOT posts.anonymous)
+         OR ${MEMBER_REPOSTED_BY_FOLLOWED_SQL})`,
     at: `GREATEST(posts."publishedAt", ${FOLLOWED_REPOST_AT})`,
   };
 }

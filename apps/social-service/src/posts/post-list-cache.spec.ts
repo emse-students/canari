@@ -189,6 +189,26 @@ describe('invalidatePostListCacheFor', () => {
     expect(key(false)).toBe(key(undefined));
     expect(key(true)).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+media+replays`);
   });
+
+  it('keys two rankings and two tail cursors of one list apart (for-you-feed.ts)', () => {
+    const key = (asOf?: string, cursor?: string) =>
+      postListCacheKey({
+        feed: 'foryou',
+        viewerUserId: 'u',
+        promo: undefined,
+        formation: undefined,
+        limit: 10,
+        offset: 12,
+        kind: undefined,
+        singleMedia: undefined,
+        asOf,
+        cursor,
+      });
+    expect(key()).toBe(`${POST_LIST_CACHE_PREFIX}foryou:u:-:-:10:12:-`);
+    expect(key('T1')).not.toBe(key('T2'));
+    expect(key('T1', 'C1')).not.toBe(key('T1', 'C2'));
+    expect(key('T1', 'C1')).not.toBe(key('T1'));
+  });
 });
 
 /**

@@ -1,5 +1,5 @@
 import { listPosts, type PostEntity } from '$lib/posts/api';
-import { nextListPage } from '$lib/posts/rankedFeeds';
+import { readNextPage, type ListPage } from '$lib/posts/rankedFeeds';
 
 /**
  * THE LIST THE REEL VIEWER SWIPES THROUGH (C7): every live reel the reader may see, and since
@@ -24,7 +24,7 @@ export type ReelPageLoader = (offset: number, limit: number) => Promise<PostEnti
 export const REEL_PAGE = 10;
 
 /** One read of the C7 list: the first page, or the page a snapshot names. */
-function readReels(page: { offset: number; limit: number; asOf?: string }): Promise<PostEntity[]> {
+function readReels(page: ListPage & { limit: number }): Promise<PostEntity[]> {
   return listPosts({
     kind: 'reel',
     multiMedia: true,
@@ -42,9 +42,10 @@ export function listAllReels(limit = REEL_PAGE): Promise<PostEntity[]> {
 
 /**
  * The C7 list for ONE viewer: it keeps the rows it served, so a later page is asked of the same
- * ranking, after the last place served (`nextListPage`) - the viewer's own count of reels is only
- * the fallback of an unranked estate. With `firstPage` (the entry read it already), the viewer's
- * first page is that one and not a second request for the same rows.
+ * ranking, after the last place served, in the shape its first page was served in
+ * (`readNextPage`, which also ranks anew a ranking that expired and never hands back a reel the
+ * viewer already holds). With `firstPage` (the entry read it already), the viewer's first page is
+ * that one and not a second request for the same rows.
  */
 export function allReelsLoader(firstPage?: PostEntity[]): ReelPageLoader {
   let served: PostEntity[] = firstPage ? [...firstPage] : [];
@@ -55,8 +56,8 @@ export function allReelsLoader(firstPage?: PostEntity[]): ReelPageLoader {
       served = [...page];
       return page;
     }
-    const page = await readReels({ ...nextListPage(served, offset), limit });
-    served = [...served, ...page];
-    return page;
+    const next = await readNextPage({ shown: served, limit, read: readReels });
+    served = next.rows;
+    return next.appended;
   };
 }

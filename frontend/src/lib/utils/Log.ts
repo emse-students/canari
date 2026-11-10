@@ -100,4 +100,17 @@ function i(tag: string, payload?: unknown): void {
   console.info(`[${tag}] ${typeof payload === 'string' ? payload : renderLogPayload(payload)}`);
 }
 
-export const Log = { d, i } as const;
+/**
+ * Logs a WARNING: a path that should not have been taken, or a recovery from one, which a reader of
+ * the in-app log must see (it records warnings). One line per occurrence, never per function entry.
+ */
+function w(tag: string, payload?: unknown): void {
+  if (typeof window === 'undefined') return;
+  if (payload === undefined) {
+    console.warn(`[${tag}]`);
+    return;
+  }
+  console.warn(`[${tag}] ${typeof payload === 'string' ? payload : renderLogPayload(payload)}`);
+}
+
+export const Log = { d, i, w } as const;

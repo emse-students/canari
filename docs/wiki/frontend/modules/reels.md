@@ -1131,7 +1131,9 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
    same set, ordered by the SAME score as Pour toi (`forYouScoreSql`, no bands, no suggestion) and
    paged by the same snapshot (`asOf`, `feedPosition`): the 1.6.9 client sends `feed=reels&ranked=true`
    to an estate that declares `rankedFeeds`, and `allReelsLoader` keeps the rows it served so a later
-   page is asked of the same ranking ([posts](posts.md#pour-toi---the-ranked-tab-owner-2026-11-10)).
+   page is asked of the same ranking, through the feed's one path (`readNextPage`: a ranking gone
+   `410` is ranked anew and no reel the viewer holds is handed back; a `503` keeps the viewer's
+   toast) ([posts](posts.md#pour-toi---the-ranked-tab-owner-2026-11-10)).
    Without `ranked` - every installed client - the list is newest first as before, and an estate
    older than `rankedFeeds` is asked the old shape.
 4. **The first page is read BEFORE the viewer opens**, because an empty viewer is no answer: with no

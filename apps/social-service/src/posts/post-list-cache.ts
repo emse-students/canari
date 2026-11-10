@@ -107,6 +107,8 @@ export interface PostListCacheKeyParts {
   ranked?: boolean;
   /** A ranked list's ranking a later page is a slice of (`for-you-feed.ts`): two rankings, two pages. */
   asOf?: string;
+  /** A ranked list's tail cursor (`for-you-feed.ts`): two cursors, two pages. */
+  cursor?: string;
 }
 
 /**
@@ -115,7 +117,7 @@ export interface PostListCacheKeyParts {
  * is why the builder and that reader live side by side.
  */
 export function postListCacheKey(p: PostListCacheKeyParts): string {
-  return `${POST_LIST_CACHE_PREFIX}${p.feed}:${p.viewerUserId ?? 'anon'}:${p.promo ?? '-'}:${p.formation ?? '-'}:${p.limit}:${p.offset}:${p.kind ?? '-'}${p.singleMedia ? `+${p.singleMedia}` : ''}${p.withReplays ? '+replays' : ''}${p.ranked ? '+ranked' : ''}${p.asOf ? `@${p.asOf}` : ''}`;
+  return `${POST_LIST_CACHE_PREFIX}${p.feed}:${p.viewerUserId ?? 'anon'}:${p.promo ?? '-'}:${p.formation ?? '-'}:${p.limit}:${p.offset}:${p.kind ?? '-'}${p.singleMedia ? `+${p.singleMedia}` : ''}${p.withReplays ? '+replays' : ''}${p.ranked ? '+ranked' : ''}${p.asOf ? `@${p.asOf}` : ''}${p.cursor ? `<${p.cursor}` : ''}`;
 }
 
 /** The viewer field of a key {@link postListCacheKey} built (`anon` for a signed-out page). */

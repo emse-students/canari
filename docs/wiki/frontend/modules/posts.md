@@ -17,7 +17,7 @@
 | Tab (`feed=`) | Content |
 |---|---|
 | Associations (`associations`, the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication. Chronological, pins on top. An entity followed OUTSIDE the reader's spaces adds nothing here: an entity follow opens no visibility door (`postVisibleToUserSql`), so every entity row the old Suivis showed was already in this tab |
-| Pour toi (`foryou`, "Suivis" / `followed` until 1.6.9) | PEOPLE's posts only: what the people the reader follows publish or repost, and the suggested posts of people (engagement WP-7), RANKED - [below](#pour-toi---the-ranked-tab-owner-2026-11-10). No pin. The only tab with the "Comptes a suivre" carousel |
+| Pour toi (`foryou`, "Suivis" / `followed` until 1.6.9) | What PEOPLE the reader follows write or repost - an association's or an entity's post a followed person reposted included, with its "X a repartage" header (decision A) - and the suggested posts of people (engagement WP-7), RANKED - [below](#pour-toi---the-ranked-tab-owner-2026-11-10). No pin. The only tab with the "Comptes a suivre" carousel |
 | Campus (`all`, "Mon espace" until 1.6.9, "Tout" until 1.6; the identifier is unchanged) | Every post the reader may see through their spaces, campus and formation. Chronological, pins on top, NOTHING inserted between posts (no suggestion, no carousel) |
 
 The three tabs are explained once by the guided hint `hint-feed-tabs` (it replaced the (i) button,
@@ -39,8 +39,8 @@ a remembered `followed`, like a `?feed=followed` link, now opens Pour toi (`pars
 6. **Suggestions in Pour toi have no quota**: ranked by the same score (L13's one-in-eight is gone
    there); the badge and Suivre stay.
 7. **Pins lead Associations and Campus only**, never Pour toi.
-8. **Pour toi is PEOPLE only**: an association's, a list's or an institution's post never appears
-   there - followed people and suggestions of people.
+8. **Pour toi is PEOPLE only**: what followed people write or repost, and suggestions of people -
+   an entity's post nobody the reader follows reposted never appears there. Amended by decision A.
 9. **Associations** = the associations of the reader's spaces plus the entities they follow outside
    them, chronological, pins on top. Campus unchanged.
 10. **CanaReels has no tabs**: its set is every reel the reader may see, ordered by the SAME score as
@@ -54,15 +54,27 @@ a remembered `followed`, like a `?feed=followed` link, now opens Pour toi (`pars
     the tab never shows - `feedSuggestionCards` drops the entities; `me/suggestions` is unchanged).
 13. **The product principle above every engagement choice** ([engagement](../../engagement.md#the-product-principle-owner-2026-11-10)).
 
+Two more the same day, after the review of #3299:
+
+- **A. A followed person's repost of an association's or an entity's post IS in Pour toi**, drawn
+  with its "X a repartage" header (`repostedBy`). Pour toi = the posts written OR reposted by the
+  people the reader follows. `forYouFollowedSql` admits any post a followed person's repost carries
+  (`MEMBER_REPOSTED_BY_FOLLOWED_SQL`); the authorship disjunct alone stays personal and
+  non-anonymous. Before it, such a repost was in no tab (Associations shows no member repost).
+- **B. "Seen up to" (after 1.6.9, not built)**: one server-side date per account syncs the
+  "Nouveau" badge across devices, and Pour toi then leads with what is really unseen instead of
+  "under 48 h" ([backlog.d](../../backlog.d/seen-up-to-one-date-per-account.md)).
+
 ### Pour toi - the ranked tab (owner, 2026-11-10)
 
 Server: `apps/social-service/src/posts/for-you-feed.ts` (the design note), `PostsService.listRankedRows`
 and `rankWindow`, `republished-feed-sql.ts` `forYouFollowedSql`, `suggested-posts.ts` (`peopleOnly`).
 Client: `lib/posts/rankedFeeds.ts` (`nextListPage`), `buildListPostsSearchParams` (`wireFeed`).
 
-- **The candidates.** A non-anonymous personal post of an account the reader follows (accepted), or a
-  post a followed person reposted (WP-F6) - never an entity's post, never what an association
-  republished (both are Associations'). Placed at its latest followed repost, else its publication.
+- **The candidates.** A non-anonymous personal post of an account the reader follows (accepted), or
+  any post a followed person reposted (WP-F6), an entity's included (decision A) - never an entity's
+  post nobody they follow reposted, never what an association republished (both are
+  Associations'). Placed at its latest followed repost made by `asOf`, else its publication.
   Plus the suggested posts of people (`suggestedPostIds(..., { peopleOnly: true })`, at most 10).
   Every filter of the other arms applies, on every page: moderation hide, live-reel expiry, the review
   cohort, the block filter, the promo cutoff, the whole visibility predicate.
@@ -75,31 +87,65 @@ Client: `lib/posts/rankedFeeds.ts` (`nextListPage`), `buildListPostsSearchParams
 - **The bands** (`forYouBandSql`, decision 11): 0 - a followed post placed within 48 h of `asOf`;
   1 - a suggestion; 2 - every other followed post of the window. The score orders each band; the
   placement time then the id break ties, so the order is total.
-- **The window.** The followed posts placed within 14 days of `asOf` (at most 200, the most recent),
-  with the suggestions, are RANKED. Below them, **the tail**: the older followed posts, newest first,
-  below a fixed boundary - so a reader still scrolls down to everything their follows ever published.
+- **The window.** The followed posts placed within 14 days of `asOf` (at most 200, the most recent -
+  `PostsService.rankedWindowMax`, a field so the spec proves the cut with three rows), with the
+  suggestions, are RANKED, one row per post (the repost lateral aggregates; a post both followed and
+  suggested is the followed one). Below them, **the tail**: the older followed posts, newest first,
+  below a fixed boundary (the window's first instant, or its oldest row when the cap cut it) - so a
+  reader still scrolls down to everything their follows ever published.
 - **Deterministic paging - the snapshot.** A reaction carries no date (`posts.reactions` maps a reader
   to an emoji), so "the engagement as of `asOf`" cannot be read back later, and a ranking recomputed
   for page 2 would repeat or skip posts. So the window is ranked ONCE, at the first page, and kept in
-  Redis as a snapshot of ids under (list, reader, `asOf`), 2 h after its last read
-  (`posts:ranked:v1:...`, outside the feed cache's prefix). Every row served carries `feedAsOf`,
-  `feedPosition` (its place in the WHOLE list) and, for a suggestion, `feedSuggested`. The client
-  asks the next page as `asOf=<feedAsOf>&offset=<last feedPosition + 1>` (`nextListPage`), never from
-  the count on screen: a row withdrawn between two pages (deleted, hidden, blocked) is skipped by the
-  server's slice, which reads on until the page is full, so a short page still means the end. The
-  feed cache key carries `asOf` (`postListCacheKey`). Proven on PostgreSQL by
-  `for-you-feed.integration.spec.ts`: the order against a hand computation, and three pages of one
-  ranking that neither repeat nor skip while a post gains 80 reactions, a new post appears and a
-  ranked post is hidden between them.
-- **A snapshot that is gone ends the list**: the 2 h lapsed with no page read, or Redis lost it (a
-  TTL key is evictable under `volatile-lru`) - the next page is empty (a `log` line names it; an
-  unreadable Redis is an `error`), and the reader's pull-to-refresh ranks anew. Never a recompute
-  passed off as the same ranking.
-- **What the tail does not freeze**: a republication or a followed repost written after `asOf` can lift
-  an old post's placement above the boundary, and it then leaves the tail (it is fresh, and the next
-  ranking has it) - the residual every chronological tab already has under a repost.
+  Redis as a snapshot of ids. **Bounded per reader**: ONE hash per (list, reader)
+  (`posts:ranked:v2:<list>:<reader>`, the list naming the feed, the kind, the single-media mode and
+  replays), a field per `asOf`, at most the 3 newest kept - trimmed in the same Lua step as the
+  write - and the key's 2 h renewed by `EXPIRE` on every read, never a rewrite. The two scripts
+  (`RANKED_SNAPSHOT_WRITE_SCRIPT`, `RANKED_SNAPSHOT_READ_SCRIPT`) were run against `redis:7` on
+  2026-11-10 (five writes keep the three newest, a read renews the TTL, an absent field is null);
+  the specs run them by meaning (`ranked-snapshots.it-fixture.ts`).
+- **The pages.** Every row served carries `feedAsOf`, `feedPosition` (its place in the WHOLE list),
+  for a suggestion `feedSuggested`, for a tail row `feedCursor`. The client asks the next page as
+  `asOf=<feedAsOf>&offset=<last feedPosition + 1>` and, below the window, `&cursor=<last
+  feedCursor>` (`rankedFeeds.ts` `nextListPage`), never from the count on screen. **The window's
+  slice** reads in two steps: the ids left that still pass every filter (ids only), then the full
+  rows of the first `limit` of them - a row withdrawn between two pages (deleted, hidden, blocked)
+  takes no place, and a short page still means the end. **The tail** is a KEYSET below the cursor
+  (never an OFFSET, which a withdrawn row would shift), excludes every id of the snapshot (`<> ALL`:
+  a post ranked through a repost withdrawn since is not served a second time from the tail), and
+  counts only the followed reposts made by `asOf` (`followedRepostLateralSql`'s `asOf`): a repost
+  written between two pages neither admits a row nor moves one across the cursor. The feed cache
+  key carries `asOf` and `cursor` (`postListCacheKey`).
+- **Every failure is an ANSWER, never an empty page** (an empty page reads as "Vous avez tout vu"):
+  - `410 RANKING_GONE` - the snapshot a page names is gone (2 h with no page, pushed out by 3 newer
+    rankings, or lost by Redis: a TTL key is evictable under `volatile-lru`). The client ranks anew
+    (a first page, a new `asOf`), appends only the posts not on screen - a post already drawn stays
+    where it is and takes its new place, so the next page starts after it - and logs a warning
+    (`Log.w('RANKED', ...)`, `readNextPage`).
+  - `503 RANKING_UNAVAILABLE` - Redis did not answer the read, or the write of a FIRST page: a first
+    page whose snapshot could not be kept is never served, since its page 2 would have nothing to be
+    a slice of. The feed shows "La suite n'a pas pu etre chargee" with a retry (`loadMoreFailed`),
+    never the end of the list; the CanaReels viewer keeps its toast.
+  - `400 RANKING_PAGE_INVALID` - a later page without `asOf`, a cursor inside the window, or an
+    offset past it without a cursor: a client that mixed two shapes of one list. The client fixes a
+    list's shape from its FIRST page (`nextListPage` returns `rankedFeeds: false` for rows served
+    without ranking facts - a first launch that asked before `/api/version` was read), and keeps it
+    until a refresh.
+- **Proven on PostgreSQL** by `for-you-feed.integration.spec.ts` (17 cases, 2026-11-10): the order
+  against a hand computation; three pages that neither repeat nor skip while a post gains 80
+  reactions, a new post appears and a ranked post is hidden; a block between pages; a students-only
+  post (a student follower only) and an anonymous one (no follower); the cap and its tail; a served
+  tail row withdrawn and a repost written between pages; scenario (a), a repost withdrawn after a
+  post ranked through it; a post both reposted and suggested; Redis refusing the read and the write;
+  the three 400s; two readers with the same `asOf`; and one walk through `listPosts` itself (the
+  feed cache and the decorated rows keep the facts). The client half: `rankedFeeds.test.ts`,
+  `allReels.test.ts`, `page.forYou.svelte.test.ts` (the next page asked, the 503 retry, the 410
+  re-rank drawing no post twice).
+- **What the tail still does not freeze**: a followed repost DELETED between two pages lowers its
+  row's placement (Pour toi's placement reads no republication) - an unserved row stays below the
+  cursor, a served one may come again and is dropped by the client as already shown
+  (`mergeListPage`). A post that gains a followed repost after `asOf` waits for the next ranking.
 - **A follow or an unfollow between two pages** does not change the snapshot: the ranked rows are
-  re-read under the visibility filters only.
+  re-read under the visibility filters only; the tail reads the follows of the page's own request.
 
 ### What the installed clients see (1.6.8 and older)
 

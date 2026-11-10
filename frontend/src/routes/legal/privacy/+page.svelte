@@ -236,8 +236,8 @@
           réels compris ; une publication que vous ne voyez que parce qu'une personne que vous
           suivez l'a republiée ne peut pas être republiée à nouveau. Une publication que vous
           republiez devient visible de vos abonnés acceptés (jamais d'une demande en attente), quels
-          que soient leur campus, leur formation ou leur espace, dans la recherche et, pour une
-          publication personnelle, dans leur onglet « Pour toi », jamais dans « Campus » ; ceux qui
+          que soient leur campus, leur formation ou leur espace, dans la recherche et dans leur
+          onglet « Pour toi », celle d'une association comprise, jamais dans « Campus » ; ceux qui
           ne la voyaient pas encore reçoivent une notification à votre nom, une seule fois par
           publication, quel que soit le nombre de republications. Ils voient que vous l'avez
           republiée ; une personne qui ne vous suit pas ne le voit pas. Une publication personnelle

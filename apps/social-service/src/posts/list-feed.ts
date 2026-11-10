@@ -72,6 +72,8 @@ export interface ListPostsParams {
   ranked?: boolean;
   /** A ranked list only: the ranking a later page is a slice of (`for-you-feed.ts`); absent ranks anew. */
   asOf?: string;
+  /** A ranked list's tail only: the last tail row served (`feedCursor`), read below. */
+  cursor?: string;
 }
 
 /** The kind a page is narrowed to: `reel` on the viewer's list whatever was asked, else the request's. */

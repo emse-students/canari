@@ -17,8 +17,9 @@ Instagram-style follow suggestions, with a ceiling on the noise. This page holds
 design that answers each one, what each surface reveals and to whom, and the work packages in order.
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
-**The feed tabs of 1.6.9 (owner, 2026-11-10)**: Suivis became **Pour toi** (people only, ranked by
-freshness and popularity, the suggested posts merged into it with no quota) and "Mon espace" became
+**The feed tabs of 1.6.9 (owner, 2026-11-10)**: Suivis became **Pour toi** (what the people one follows write
+or repost - an entity's post a followed person reposted included -, ranked by freshness and
+popularity, the suggested posts of people merged into it with no quota) and "Mon espace" became
 **Campus** (chronological, nothing inserted) - every decision, the score, the bands and the paging are
 in [posts](frontend/modules/posts.md#the-owners-decisions-of-2026-11-10). What that changed on this
 page: WP-6's carousel lives in Pour toi only and offers people only; WP-7's posts are placed by the

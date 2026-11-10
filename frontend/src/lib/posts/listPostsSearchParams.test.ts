@@ -42,6 +42,22 @@ describe('buildListPostsSearchParams', () => {
     );
     expect(forYou.get('feed')).toBe('foryou');
     expect(forYou.get('asOf')).toBe('T');
+    const tail = new URLSearchParams(
+      buildListPostsSearchParams({
+        feed: 'foryou',
+        rankedFeeds: true,
+        offset: 30,
+        asOf: 'T',
+        cursor: 'C',
+      })
+    );
+    expect(tail.get('cursor')).toBe('C');
+    // A cursor is never sent without the ranking it belongs to.
+    expect(
+      new URLSearchParams(
+        buildListPostsSearchParams({ feed: 'foryou', rankedFeeds: true, cursor: 'C' })
+      ).get('cursor')
+    ).toBeNull();
     const reels = new URLSearchParams(
       buildListPostsSearchParams({ feed: 'reels', kind: 'reel', ranked: true, rankedFeeds: true })
     );

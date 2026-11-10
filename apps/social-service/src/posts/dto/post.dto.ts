@@ -26,7 +26,7 @@ import {
 } from 'class-validator';
 import { COMMENT_MAX_LENGTH, COMMENT_PAGE_MAX, type CommentOrder } from '../comment-page';
 import { LIST_POST_FEEDS, type ListPostsFeed } from '../list-feed';
-import { FOR_YOU_AS_OF_PATTERN } from '../for-you-feed';
+import { FOR_YOU_AS_OF_PATTERN, FOR_YOU_CURSOR_PATTERN } from '../for-you-feed';
 
 /**
  * A post needs a body OR a media entry - the rule the composer's Publier button already applies
@@ -464,6 +464,14 @@ export class ListPostsQueryDto {
   @IsOptional()
   @Matches(FOR_YOU_AS_OF_PATTERN)
   asOf?: string;
+
+  /**
+   * A ranked list's TAIL only: the `feedCursor` of the last tail row served, the keyset the next
+   * page reads below (`for-you-feed.ts`). With `asOf`, never without.
+   */
+  @IsOptional()
+  @Matches(FOR_YOU_CURSOR_PATTERN)
+  cursor?: string;
 
   /** Custom feed: filter by author promotion (personal posts only). */
   @IsOptional()

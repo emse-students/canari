@@ -339,6 +339,11 @@ export interface PostEntity {
   feedAsOf?: string;
   /** A ranked list's row only: its place in the whole list; the next page starts after the last. */
   feedPosition?: number;
+  /**
+   * A ranked list's TAIL row only: the keyset of its place below the ranked window, sent back as
+   * `cursor` when it is the last row served (`rankedFeeds.ts`).
+   */
+  feedCursor?: string;
   /** Pour toi only: a suggested post (engagement WP-7), drawn with the "Suggestion" badge. */
   feedSuggested?: boolean;
 }
@@ -435,6 +440,8 @@ export interface ListPostsOptions {
   ranked?: boolean;
   /** A ranked list's later page: the snapshot its first page served (`rankedFeeds.ts`). */
   asOf?: string;
+  /** A ranked list's later tail page: the `feedCursor` of the last tail row served. */
+  cursor?: string;
   /**
    * Whether the estate serves the ranked lists (`serverRankedFeeds`); left undefined, `listPosts`
    * reads it. Without them Pour toi is asked as the chronological `followed` and the CanaReels list
@@ -560,6 +567,7 @@ export function buildListPostsSearchParams(options: ListPostsOptions): string {
   if (feed && feed !== 'all') p.set('feed', feed);
   if (options.rankedFeeds && feed === 'reels' && options.ranked) p.set('ranked', 'true');
   if (options.rankedFeeds && options.asOf) p.set('asOf', options.asOf);
+  if (options.rankedFeeds && options.asOf && options.cursor) p.set('cursor', options.cursor);
   if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
   if (options.kind) p.set('kind', options.kind);

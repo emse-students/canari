@@ -530,7 +530,11 @@ refuses `feed=foryou` `400` (`@IsIn`) - the tab would be empty for those days.
 - an older server, or no answer yet - it asks Pour toi as `feed=followed` (the chronological Suivis,
 entities included) and the CanaReels list in its older shape (`feed=all&kind=reel`, newest first),
 with neither `ranked` nor `asOf`; the rows carry no `feedAsOf`, so `nextListPage` pages by the count
-as before. A `Log.d` names the downgrade.
+as before. A `Log.d` names the downgrade. **A list keeps the shape its first page was served in**
+until a refresh: `nextListPage` returns `rankedFeeds: false` for rows served without ranking facts,
+so a first launch that asked before `/api/version` answered never asks a ranked page 2 of an
+unranked page 1 - which the server would refuse `400 RANKING_PAGE_INVALID` (a later ranked page
+without `asOf`).
 **Removal condition:** when no estate older than the release carrying `rankedFeeds` is served (both
 estates deployed past 1.6.9), the client branch for `false` may go; the field stays, always `true`.
 

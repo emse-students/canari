@@ -204,8 +204,9 @@ export class PostsController {
       withLinks: query.withLinks === true,
       withReplays: query.withReplays === true,
       ranked: feed === 'reels' && query.ranked === true,
-      asOf:
-        feed === 'foryou' || (feed === 'reels' && query.ranked === true) ? query.asOf : undefined,
+      ...(feed === 'foryou' || (feed === 'reels' && query.ranked === true)
+        ? { asOf: query.asOf, cursor: query.cursor }
+        : {}),
     });
   }
 

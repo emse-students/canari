@@ -67,7 +67,7 @@
     feedSuggestionPlacement,
     suggestionsFollowingCount,
   } from '$lib/follows/suggestions.svelte';
-  import { nextListPage } from '$lib/posts/rankedFeeds';
+  import { readNextPage, type ListPage } from '$lib/posts/rankedFeeds';
   import { initialScrollDirection, nextScrollDirection } from '$lib/utils/scrollDirection';
   import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
   import LiveViewer from '$lib/components/live/LiveViewer.svelte';
@@ -229,6 +229,8 @@
   let loading = $state(false);
   let loadingMore = $state(false);
   let hasMore = $state(true);
+  /** The last next-page read failed (a 503, the network): a retry is offered, the list is not ended. */
+  let loadMoreFailed = $state(false);
 
   /**
    * THE FIRST SCREEN MOUNTS FIRST, THE REST A FRAME AT A TIME (`progressiveCount`). Mounting every
@@ -533,6 +535,7 @@
     const painted = untrack(() => postsOverride);
     initialPostsResolved = stale;
     hasMore = cached?.hasMore ?? true;
+    loadMoreFailed = false;
     fromStore = false;
     storedRefreshFailed = false;
     firstPage = 'pending';
@@ -636,10 +639,10 @@
    * resolved; the only thing that changes between pages is where the next one starts. The caller passes the tab's
    * params as it took them BEFORE its await, never `data.feedParams` read after it.
    */
-  function buildListOptions(params: FeedCacheParams, shown: PostEntity[]) {
-    // A ranked tab (Pour toi) is paged by its snapshot, after the last place served, never by the
-    // count on screen (`rankedFeeds.ts`); a chronological one by that count, as before.
-    return { limit: FEED_PAGE_SIZE, ...nextListPage(shown, shown.length), ...params };
+  function buildListOptions(params: FeedCacheParams, page: ListPage & { limit: number }) {
+    // A ranked tab (Pour toi) is paged by its snapshot, after the last place served, in the shape
+    // its first page was served in (`rankedFeeds.ts`); a chronological one by the count on screen.
+    return { ...page, ...params };
   }
 
   /**
@@ -672,6 +675,7 @@
     loading = true;
     errorMessage = '';
     hasMore = true;
+    loadMoreFailed = false;
     const outcome = await refreshFirstPage({
       params: data.feedParams,
       // The SAME first page the cold start asks and stores - never a scroll page (Mi 9T, alpha.3).
@@ -714,20 +718,26 @@
     const issuedFor = tabLoad;
     const params = data.feedParams;
     loadingMore = true;
+    loadMoreFailed = false;
     try {
-      const more = await listPosts(buildListOptions(params, currentPosts));
+      // `readNextPage`: a ranked tab whose ranking expired is ranked anew, and a row already on
+      // screen is never appended twice.
+      const next = await readNextPage({
+        shown: currentPosts,
+        limit: FEED_PAGE_SIZE,
+        read: (page) => listPosts(buildListOptions(params, page)),
+      });
       if (issuedFor !== tabLoad) {
         Log.d('POSTS', 'a next page answered for a tab the reader has left - dropped');
         return;
       }
-      if (more.length === 0 || more.length < FEED_PAGE_SIZE) hasMore = false;
-      // Deduplicate in case new posts were inserted between page fetches.
-      const existingIds = new Set(currentPosts.map((p) => p.id));
-      const newPosts = more.filter((p) => !existingIds.has(p.id));
-      postsOverride = [...currentPosts, ...newPosts];
+      if (next.ended) hasMore = false;
+      postsOverride = next.rows;
       writeFeedCache(feedCacheKey(params), { posts: postsOverride, hasMore });
-    } catch {
-      // silent - user can scroll back up and retry
+    } catch (err) {
+      // Not the end of the list: the line under the posts says so, and offers the retry.
+      console.warn('[POSTS] the next page could not be read', err);
+      if (issuedFor === tabLoad) loadMoreFailed = true;
     } finally {
       if (issuedFor === tabLoad) loadingMore = false;
     }
@@ -1240,6 +1250,16 @@
           {#if loadingMore}
             <div class="flex justify-center py-4">
               <RefreshCw size={20} class="text-text-muted animate-spin opacity-50" />
+            </div>
+          {:else if loadMoreFailed}
+            <div class="flex items-center justify-center gap-2 py-4" data-load-more-failed>
+              <p class="text-text-muted text-xs">{m.posts_load_more_error()}</p>
+              <Button
+                variant="secondary"
+                size="compact"
+                onclick={() => void loadMorePosts(resolvedPosts)}
+                >{m.posts_load_more_retry()}</Button
+              >
             </div>
           {:else if !hasMore && !fromStore && resolvedPosts.length >= FEED_PAGE_SIZE}
             <p class="text-text-muted text-2xs py-4 text-center opacity-50">
