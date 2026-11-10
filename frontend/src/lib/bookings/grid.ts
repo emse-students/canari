@@ -18,6 +18,7 @@
  */
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
+import { currentUserId } from '$lib/stores/userState.svelte';
 import type { BookerSpace, ResourceSlots, SlotUnit } from './api';
 import { bookingWindowRefusal, type WindowRefusal } from './bookingWindow';
 import { addDays, datesBetween, dayCount, localDate, localTime, offsetMs } from './zonedTime';
@@ -468,13 +469,30 @@ export function bookingUnitLimit(space: Pick<BookerSpace, 'slotMode' | 'maxSteps
 }
 
 /**
- * What a unit says in a cell or a row: the holder (or "Ma réservation"), the block's reason, "Libre"
- * for a free unit a booking may start on now, and "Non réservable" for one it may not. ONE reading
- * for the grid and the phone's planning.
+ * Whether the reader is only INVITED to a booked unit: the server marks it `mine` (holder or a
+ * participant still in) and the holder is somebody else. The distinction comes from the payload -
+ * `holderId` is sent exactly where the name is, which includes every booking that is `mine` - and
+ * a viewer that is not known yet is never called invited (no guess: the unit reads as a plain one).
  */
-export function unitText(unit: SlotUnit, bookable: boolean): string {
+export function isInvitedUnit(unit: SlotUnit, viewerId: string | null = currentUserId()): boolean {
+  if (unit.state !== 'booked' || !unit.booking.mine) return false;
+  // Pure and called per drawn cell: logging here would write a line per render (noise).
+  return !!viewerId && !!unit.booking.holderId && unit.booking.holderId !== viewerId;
+}
+
+/**
+ * What a unit says in a cell or a row: "Ma réservation" for a booking the reader MADE, the holder
+ * for any other (an invited reader included: it is not theirs), the block's reason, "Libre" for a
+ * free unit a booking may start on now, and "Non réservable" for one it may not. ONE reading for the
+ * grid and the phone's planning.
+ */
+export function unitText(
+  unit: SlotUnit,
+  bookable: boolean,
+  viewerId: string | null = currentUserId()
+): string {
   if (unit.state === 'booked') {
-    return unit.booking.mine
+    return unit.booking.mine && !isInvitedUnit(unit, viewerId)
       ? m.bookings_cell_mine()
       : (unit.booking.holderName ?? m.bookings_cell_booked());
   }
