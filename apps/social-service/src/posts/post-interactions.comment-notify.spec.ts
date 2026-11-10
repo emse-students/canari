@@ -136,8 +136,6 @@ describe('PostInteractionsService.addComment notifications', () => {
       .manager;
     const routed = manager.query.getMockImplementation()!;
     manager.query.mockImplementation((sql: string, params?: unknown[]) => {
-      if (sql.includes('INSERT INTO post_engagement_notices') && sql.includes("'friend'"))
-        order.push('friends');
       if (sql.includes('INSERT INTO post_engagement_notices') && sql.includes("'trend'"))
         order.push('trend');
       return routed(sql, params);

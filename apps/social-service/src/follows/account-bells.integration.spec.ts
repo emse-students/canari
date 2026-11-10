@@ -30,6 +30,7 @@ import { PostNotificationsService } from '../posts/post-notifications.service';
 import {
   createEngagementPushCapTables,
   createPostNotificationsTable,
+  givePushDevices,
 } from '../posts/post-notifications.it-schema';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import type { PushContent } from '../push/push-content';
@@ -163,6 +164,7 @@ maybe('the bell against PostgreSQL (engagement WP-3)', () => {
     await q(migration('143_account_bells_copy_push_mutes.sql'));
     // A followed person's post is counted by the daily push cap (owner, 2026-11-10).
     await createEngagementPushCapTables((sql) => q(sql));
+    await givePushDevices(q, PEOPLE);
     // Applied twice, as a re-run of a deploy would: nothing changes.
     await q(migration('142_account_bells.sql'));
     await q(migration('143_account_bells_copy_push_mutes.sql'));

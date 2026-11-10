@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import {
   NOTIFICATION_TYPE_MIN_CLIENT,
+  PUSH_KEY_MIN_CLIENT,
   PUSH_ONLY_NOTIFICATION_TYPES,
 } from '../push/notification-client-floor';
 import { CAPPED_PUSH_TYPES, ENGAGEMENT_DAILY_PUSH_CAP, PUSH_BUDGET } from './engagement-push-cap';
@@ -89,6 +90,16 @@ describe('PUSH_BUDGET', () => {
       ...PUSH_ONLY_NOTIFICATION_TYPES,
     ].sort();
     expect(Object.keys(PUSH_BUDGET).sort()).toEqual(types);
+  });
+
+  it('gives every counted type ONE floor, shared by all its keys, which the claim applies', () => {
+    const split = [...CAPPED_PUSH_TYPES].filter(
+      ([, { contentKeys, floor }]) =>
+        !contentKeys.every((key) => (PUSH_KEY_MIN_CLIENT[key] ?? null) === floor)
+    );
+    expect(split).toEqual([]);
+    expect(CAPPED_PUSH_TYPES.get('campus_trend')?.floor).toBe('1.6.10');
+    expect(CAPPED_PUSH_TYPES.get('reaction')?.floor).toBeNull();
   });
 
   it('names at least one content key for every counted type', () => {

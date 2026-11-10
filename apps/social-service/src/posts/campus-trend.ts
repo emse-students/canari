@@ -46,10 +46,20 @@ export const TREND_THRESHOLD = 10;
 
 /**
  * HOW MANY TRENDS ONE READER IS TOLD OF PER WEEK (owner, 2026-11-10: "on y est allés un peu fort"),
- * on top of one per day: a Monday-to-Sunday week on the Paris calendar, read from the ledger's own
- * `"trendDay"` rows - durable state, no clock heuristic.
+ * on top of one per day: a Monday-to-Sunday week on the Paris calendar, counted in the reader's
+ * `campus_trend_weeks` row (migration 162) - durable state, no clock heuristic.
  */
 export const TREND_WEEKLY_CAP = 2;
+
+/**
+ * THE REACTIONS A TREND MAY SAY "AIMÉE" OF: the two whose meaning is liking (the lead's reading of
+ * the owner's sentence, 2026-11-10). A followed account is named only for one of these, and
+ * "et 9 autres" counts only these - a "Rire" or a "Marteau" is not a like.
+ */
+export const TREND_LIKE_REACTIONS = ["J'aime", "J'adore"] as const;
+
+/** {@link TREND_LIKE_REACTIONS} as a SQL list, quotes doubled. */
+const LIKES_SQL = TREND_LIKE_REACTIONS.map((r) => `'${r.replace(/'/g, "''")}'`).join(', ');
 
 /** How long after its `publishedAt` a post may still take off: the rule's "a short time". */
 export const TREND_WINDOW_HOURS = 24;
@@ -132,28 +142,42 @@ export function campusTrendCandidatesSql(): string {
 }
 
 /**
- * WHO IS TOLD, into the told-once ledger: every candidate, ONE TREND PER READER PER PARIS DAY AND
- * {@link TREND_WEEKLY_CAP} PER PARIS WEEK (owner, 2026-11-10). The row carries its day
- * (`"trendDay"`), and a partial UNIQUE index on (reader, day) (migration 161) makes a second trend
- * the same day a conflict - `ON CONFLICT DO NOTHING` with no target answers every unique
- * constraint, the told-once primary key and that index alike. So the ledger IS the counter: one row
- * is both "told of this post" and "told today", written in one statement, and two posts crossing at
- * the same instant are ordered by the index, never by a clock.
+ * THE READERS WHOSE DAY AND WEEK STILL HAVE ROOM, claimed (owner, 2026-11-10): ONE TREND PER READER
+ * PER PARIS DAY AND {@link TREND_WEEKLY_CAP} PER PARIS WEEK, both read from the reader's
+ * `campus_trend_weeks` row (migration 162) under its own row lock - `told` the week's count,
+ * `"lastDay"` the day of its latest trend. The upsert takes the row only while both hold, so two
+ * posts crossing at once for one reader are ordered by the lock and the second finds no room; the
+ * bound is exact. The row names no post, so deleting a post frees nothing. One lock order
+ * (`ORDER BY`), as the daily push cap's.
  *
- * THE WEEK is counted from the same rows: a reader with {@link TREND_WEEKLY_CAP} rows on EARLIER days
- * of this Monday-to-Sunday Paris week is not a candidate. Only earlier days are counted, and that is
- * what makes the bound exact under concurrency: a row of an earlier day can no longer be written (it
- * is a past date), so every concurrent writer reads the same count; today's single row is the
- * index's. A new week is a new range of dates - nothing resets anything.
+ * A reader the ledger already shows told of a trend TODAY is skipped first: the rows a build before
+ * migration 162 wrote on its deploy day, which its counter row does not know of.
+ */
+export function campusTrendWeekClaimSql(): string {
+  return `INSERT INTO campus_trend_weeks ("userId", week, told, "lastDay")
+SELECT ct_c."recipientId", date_trunc('week', ${PARIS_DAY_SQL})::date, 1, ${PARIS_DAY_SQL}
+  FROM candidates ct_c
+ WHERE NOT EXISTS (SELECT 1 FROM post_engagement_notices ct_d
+                    WHERE ct_d."recipientId" = ct_c."recipientId" AND ct_d."trendDay" = ${PARIS_DAY_SQL})
+ ORDER BY ct_c."recipientId"
+ON CONFLICT ("userId", week) DO UPDATE
+   SET told = campus_trend_weeks.told + 1, "lastDay" = EXCLUDED."lastDay"
+ WHERE campus_trend_weeks.told < ${TREND_WEEKLY_CAP}
+   AND campus_trend_weeks."lastDay" < EXCLUDED."lastDay"
+RETURNING "userId"`;
+}
+
+/**
+ * WHO IS TOLD, into the told-once ledger: every candidate the week claim took
+ * ({@link campusTrendWeekClaimSql}), with its Paris day (`"trendDay"`). `ON CONFLICT DO NOTHING`
+ * keeps the told-once primary key and migration 161's (reader, day) index as backstops; the claim
+ * already decided who has room.
  */
 export function campusTrendLedgerSql(): string {
   return `INSERT INTO post_engagement_notices ("postId", "recipientId", reason, "trendDay")
 SELECT ct_c."postId", ct_c."recipientId", 'trend', ${PARIS_DAY_SQL}
   FROM candidates ct_c
- WHERE (SELECT count(*) FROM post_engagement_notices ct_w
-         WHERE ct_w."recipientId" = ct_c."recipientId"
-           AND ct_w."trendDay" >= date_trunc('week', ${PARIS_DAY_SQL})::date
-           AND ct_w."trendDay" < ${PARIS_DAY_SQL}) < ${TREND_WEEKLY_CAP}
+  JOIN week_claim ct_w ON ct_w."userId" = ct_c."recipientId"
  ORDER BY ct_c."recipientId"
 ON CONFLICT DO NOTHING
 RETURNING "recipientId"`;
@@ -161,30 +185,38 @@ RETURNING "recipientId"`;
 
 /**
  * WHOM EACH TOLD READER SEES LIKING THE POST (owner, 2026-11-10: friends' activity is no longer a
- * notification - the trend names the followed people who reacted instead): for each reader the
- * ledger took, ONE account they follow (accepted) that reacted to the post, the smallest id of them
- * (deterministic), under the disclosure rule friends' activity had - the account shares its activity
- * (no `user_activity_settings` row saying otherwise), is not the post's author, has no block either
- * way with the reader, stands on the reader's side of the review cohort, and the post's reactors are
- * not withheld from the reader. NULL when no such account exists: the trend then names nobody.
- * Reactions only - the sentence is "aimée par". Read from the `told` and `stamped` CTEs.
+ * notification - the trend names the followed people who liked it instead): for each reader the
+ * ledger took, ONE account they follow (accepted) that LIKED the post ({@link TREND_LIKE_REACTIONS}),
+ * the smallest id of them (deterministic), under the disclosure rule friends' activity had - the
+ * account shares its activity (no `user_activity_settings` row saying otherwise), is not the post's
+ * author (an anonymous author included: the guard is on the id, whatever the post shows), has no
+ * block either way with the reader, stands on the reader's side of the review cohort, and the post's
+ * reactors are not withheld from the reader. NULL when no such account exists: the trend then names
+ * nobody. `others` is how many OTHER accounts liked it - never the author, the named account or the
+ * reader themself. Read from the `told` and `stamped` CTEs.
  */
 export function campusTrendNamedSql(): string {
-  return `SELECT ct_t."recipientId",
-       (SELECT min(ct_f."followedUserId") FROM user_follows ct_f
-         WHERE ct_f."followerUserId" = ct_t."recipientId" AND ${acceptedFollowSql('ct_f')}
-           AND ct_np.reactions ? ct_f."followedUserId"
-           AND ct_f."followedUserId" <> ct_np."authorId"
-           AND NOT EXISTS (SELECT 1 FROM user_activity_settings ct_set
-                            WHERE ct_set."userId" = ct_f."followedUserId" AND NOT ct_set."shareActivity")
-           AND NOT EXISTS (SELECT 1 FROM user_blocks ct_b
-                            WHERE (ct_b."blockerId" = ct_t."recipientId" AND ct_b."blockedId" = ct_f."followedUserId")
-                               OR (ct_b."blockedId" = ct_t."recipientId" AND ct_b."blockerId" = ct_f."followedUserId"))
-           AND ${sameSideOfReviewCohortSql('ct_t."recipientId"', 'ct_f."followedUserId"')}
-           AND NOT ${commentsWithheldFromViewerSql('ct_np', 'ct_t."recipientId"')}) AS friend
+  return `SELECT ct_t."recipientId", ct_fr.friend,
+       CASE WHEN ct_fr.friend IS NULL THEN 0
+            ELSE (SELECT count(*) FROM jsonb_each_text(ct_np.reactions) ct_l
+                   WHERE ct_l.value IN (${LIKES_SQL})
+                     AND ct_l.key NOT IN (ct_np."authorId", ct_t."recipientId", ct_fr.friend))::int
+       END AS others
   FROM told ct_t
   JOIN stamped ct_s ON true
-  JOIN posts ct_np ON ct_np.id = ct_s.id`;
+  JOIN posts ct_np ON ct_np.id = ct_s.id
+  LEFT JOIN LATERAL (
+    SELECT min(ct_f."followedUserId") AS friend FROM user_follows ct_f
+     WHERE ct_f."followerUserId" = ct_t."recipientId" AND ${acceptedFollowSql('ct_f')}
+       AND ct_np.reactions ->> ct_f."followedUserId" IN (${LIKES_SQL})
+       AND ct_f."followedUserId" <> ct_np."authorId"
+       AND NOT EXISTS (SELECT 1 FROM user_activity_settings ct_set
+                        WHERE ct_set."userId" = ct_f."followedUserId" AND NOT ct_set."shareActivity")
+       AND NOT EXISTS (SELECT 1 FROM user_blocks ct_b
+                        WHERE (ct_b."blockerId" = ct_t."recipientId" AND ct_b."blockedId" = ct_f."followedUserId")
+                           OR (ct_b."blockedId" = ct_t."recipientId" AND ct_b."blockerId" = ct_f."followedUserId"))
+       AND ${sameSideOfReviewCohortSql('ct_t."recipientId"', 'ct_f."followedUserId"')}
+       AND NOT ${commentsWithheldFromViewerSql('ct_np', 'ct_t."recipientId"')}) ct_fr ON true`;
 }
 
 /**
@@ -200,6 +232,7 @@ export function campusTrendSql(): string {
   return `WITH evaluated AS (${EVALUATE_TREND_SQL}),
 stamped AS (SELECT id, markdown, images FROM evaluated WHERE crossed),
 candidates AS (${campusTrendCandidatesSql()}),
+week_claim AS (${campusTrendWeekClaimSql()}),
 told AS (${campusTrendLedgerSql()}),
 named AS (${campusTrendNamedSql()})
 SELECT EXISTS (SELECT 1 FROM stamped) AS announced,
@@ -207,12 +240,10 @@ SELECT EXISTS (SELECT 1 FROM stamped) AS announced,
        (SELECT markdown FROM stamped) AS markdown,
        (SELECT images FROM stamped) AS images,
        (SELECT count(*) FROM candidates)::int AS eligible,
-       (SELECT count(*) FROM stamped ct_s JOIN posts ct_rp ON ct_rp.id = ct_s.id,
-               jsonb_object_keys(ct_rp.reactions) ct_k
-         WHERE ct_k <> ct_rp."authorId")::int AS reactors,
        COALESCE((SELECT json_agg(json_build_object(
                    'recipientId', ct_n."recipientId",
                    'friendId', ct_n.friend,
+                   'others', ct_n.others,
                    'displayName', ct_u."displayName",
                    'firstName', ct_u."firstName",
                    'lastName', ct_u."lastName") ORDER BY ct_n."recipientId")
@@ -235,19 +266,24 @@ export function trendMediaOf(images: unknown): TrendMedia {
 
 /**
  * After a reaction or a comment on post `postId` is stored: if THIS write made the post take off,
- * stamps it and tells its space - the ledger first, then one in-app row and one push per reader the
- * ledger took, through `createNotifications` (the daily cap applies, WP-8). Answers how many were
- * told; 0 when the post did not cross here (below the threshold, past 24 hours, already stamped, or
- * past the threshold before any evaluation saw it below).
+ * stamps it and tells its space - the week claim and the ledger first (one statement), then EVERY
+ * reader's bell row in ONE insert, then one push per group of readers who see the same account
+ * named (the daily cap applies, WP-8), each group's failure caught and logged on its own. Answers
+ * how many were told (rows written); 0 when the post did not cross here (below the threshold, past
+ * 24 hours, already stamped, or past the threshold before any evaluation saw it below).
  *
  * Nobody acted in the notice's name: the row and the push carry the system actor, never the
  * author - an anonymous post stays anonymous, and a trend is the campus's, not a person's. The row's
- * `meta.media` says what the post shows when it has no text, so the bell can say "une photo".
+ * `meta.media` says what the post shows when it has no text, so the bell can say "une photo"; its
+ * `meta.likedBy` keeps the named account's ID and the count, never the name, which the bell
+ * resolves when it is SERVED (`PostNotificationsService.resolveTrendLikedBy`) - an erasure, a block
+ * or the share switch turned off then takes the name out of rows already written. The push carries
+ * the name of the moment it is sent; a delivered push cannot be recalled.
  */
 export async function announceCampusTrend(
   deps: {
     manager: Pick<EntityManager, 'query'>;
-    notifications: Pick<PostNotificationsService, 'createNotifications'>;
+    notifications: Pick<PostNotificationsService, 'createNotificationRows' | 'pushNotice'>;
   },
   postId: string
 ): Promise<number> {
@@ -257,7 +293,6 @@ export async function announceCampusTrend(
     markdown: string | null;
     images: unknown;
     eligible: number;
-    reactors: number;
     told: TrendToldRow[];
   }[] = await deps.manager.query(campusTrendSql(), [postId]);
   if (result?.silent) {
@@ -270,38 +305,66 @@ export async function announceCampusTrend(
   if (!result?.announced) return 0;
   const told = result.told ?? [];
   const media = trendMediaOf(result.images);
-  const groups = groupByLikedBy(told, result.reactors);
+  const groups = groupByLikedBy(told);
+  const named = told.length - (groups.get(NOBODY)?.recipients.length ?? 0);
   logger.log(
     `[TREND] post=${postId.slice(0, 8)} took off: ${told.length} to tell of ${result.eligible} ` +
       `eligible (${result.eligible - told.length} already told of a trend today, twice this week, ` +
-      `or concurrently) media=${media ?? 'none'} named=${told.length - (groups.get(NOBODY)?.recipients.length ?? 0)}`
+      `or concurrently) media=${media ?? 'none'} named=${named}`
   );
   if (told.length === 0) return 0;
   const text = previewOf(result.markdown ?? '');
-  // ONE SEND PER NAMED ACCOUNT: the row and the push differ only by who is named, so the readers
-  // who see the same friend share one batch (one insert, one bounded fan-out).
+  const common = {
+    type: CAMPUS_TREND_NOTIFICATION,
+    postId,
+    actorId: SYSTEM_ACTOR_ID,
+    actorName: '',
+    text,
+  } as const;
+  // EVERY ROW FIRST, in one insert: a push failing below can never cost a reader their bell row.
+  const written = await deps.notifications.createNotificationRows({
+    ...common,
+    rows: [...groups.values()].flatMap(({ friendId, likedBy, recipients }) => {
+      const meta = {
+        ...(media ? { media } : {}),
+        ...(friendId && likedBy ? { likedBy: { userId: friendId, others: likedBy.others } } : {}),
+      };
+      return recipients.map((recipientId) => ({
+        recipientId,
+        meta: Object.keys(meta).length ? meta : null,
+      }));
+    }),
+  });
+  // THEN ONE PUSH PER GROUP - the push carries the name as it is now.
+  let failed = 0;
   for (const { likedBy, recipients } of groups.values()) {
-    const meta = {
-      ...(media ? { media } : {}),
-      ...(likedBy ? { likedBy } : {}),
-    };
-    await deps.notifications.createNotifications({
-      recipientIds: recipients,
-      type: CAMPUS_TREND_NOTIFICATION,
-      postId,
-      actorId: SYSTEM_ACTOR_ID,
-      actorName: '',
-      text,
-      ...(Object.keys(meta).length ? { meta } : {}),
-    });
+    const meta = { ...(media ? { media } : {}), ...(likedBy ? { likedBy } : {}) };
+    try {
+      await deps.notifications.pushNotice({
+        ...common,
+        recipientIds: recipients,
+        ...(Object.keys(meta).length ? { meta } : {}),
+      });
+    } catch (e: unknown) {
+      failed++;
+      logger.warn(
+        `[TREND] post=${postId.slice(0, 8)} push to ${recipients.length} reader(s) failed ` +
+          `(their bell rows are written): ${String(e)}`
+      );
+    }
   }
-  return told.length;
+  logger.log(
+    `[TREND] post=${postId.slice(0, 8)} told ${written}: ${groups.size} push group(s), ${failed} failed`
+  );
+  return written;
 }
 
 /** One reader the ledger took, with the followed account the trend names for them (or none). */
 type TrendToldRow = {
   recipientId: string;
   friendId: string | null;
+  /** How many OTHER accounts liked it - not the author, the named account or the reader. */
+  others: number;
   displayName: string | null;
   firstName: string | null;
   lastName: string | null;
@@ -311,24 +374,27 @@ type TrendToldRow = {
 const NOBODY = '';
 
 /**
- * The told readers grouped by the account the trend names for them. `others` is every OTHER account
- * that reacted (the post's reactors minus the author and the named one). An account with no name to
- * show is not named - a trend never prints an id.
+ * The told readers grouped by what their push says: the account named (and its id, which the row
+ * keeps) and how many others liked it - `others` excludes the reader, so it can differ between two
+ * readers who see the same account. An account with no name to show is not named - a trend never
+ * prints an id.
  */
 export function groupByLikedBy(
-  told: readonly TrendToldRow[],
-  reactors: number
-): Map<string, { likedBy: TrendLikedBy; recipients: string[] }> {
-  const groups = new Map<string, { likedBy: TrendLikedBy; recipients: string[] }>();
+  told: readonly TrendToldRow[]
+): Map<string, { friendId: string | null; likedBy: TrendLikedBy; recipients: string[] }> {
+  const groups = new Map<
+    string,
+    { friendId: string | null; likedBy: TrendLikedBy; recipients: string[] }
+  >();
   for (const row of told) {
     const name = row.friendId ? formatUserDisplayNameFromRaw(row) : '';
-    const key = name ? row.friendId! : NOBODY;
+    const others = Math.max(0, row.others ?? 0);
+    const key = name ? `${row.friendId}:${others}` : NOBODY;
     let group = groups.get(key);
     if (!group) {
-      group = {
-        likedBy: name ? { name, others: Math.max(0, reactors - 1) } : null,
-        recipients: [],
-      };
+      group = name
+        ? { friendId: row.friendId, likedBy: { name, others }, recipients: [] }
+        : { friendId: null, likedBy: null, recipients: [] };
       groups.set(key, group);
     }
     group.recipients.push(row.recipientId);

@@ -35,6 +35,7 @@ import { PostNotificationsService } from '../posts/post-notifications.service';
 import {
   createEngagementPushCapTables,
   createPostNotificationsTable,
+  givePushDevices,
 } from '../posts/post-notifications.it-schema';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import { announceSpaceOpening } from '../bookings/booking-spaces.service';
@@ -198,6 +199,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
     await q(migration('152_opening_reminders_copy_form_reminders.sql'));
     // An opening is counted by the daily push cap (owner, 2026-11-10).
     await createEngagementPushCapTables((sql) => q(sql));
+    await givePushDevices(q, [FAN, FAN_ASKER, MUTED_FAN, FAR_FAN, PUBLISHER, ASKER]);
     // Applied twice, as a re-run of a deploy would: nothing changes.
     await q(migration('151_opening_reminders.sql'));
     await q(migration('152_opening_reminders_copy_form_reminders.sql'));

@@ -298,12 +298,13 @@ export class FormReminderScheduler {
     }
   }
 
-  /** Daily at 03:05 - deletes the engagement push counters older than a week (engagement WP-8). */
+  /** Daily at 03:05 - deletes the engagement push counters older than a week (engagement WP-8), and the weekly trend counters older than two. */
   @Cron('5 3 * * *')
   async purgeEngagementPushDays() {
     try {
       const deleted = await pruneEngagementPushDays(this.reminderRepo.manager);
-      if (deleted > 0) this.logger.log(`[GC] engagement_push_days: ${deleted} deleted`);
+      if (deleted > 0)
+        this.logger.log(`[GC] engagement_push_days, campus_trend_weeks: ${deleted} deleted`);
     } catch (e) {
       this.logger.warn('[GC] purgeEngagementPushDays failed', e);
     }

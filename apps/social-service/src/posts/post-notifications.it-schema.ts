@@ -36,18 +36,22 @@ export async function createPostNotificationsTable(
 }
 
 /**
- * Builds what the DAILY PUSH CAP reads (engagement WP-8): `engagement_push_days` (migration 157)
- * and chat-delivery's `notification_preference` (its migration 028, the same database on every
- * estate), both read from the files the estates ran. Every spec that sends a COUNTED type through
- * the real notification service needs them since the cap widened (owner, 2026-11-10): without them
- * the claim fails, and a failed claim pushes nobody.
+ * Builds what the DAILY PUSH CAP reads (engagement WP-8): `engagement_push_days` (migration 157),
+ * the weekly trend counters its GC also prunes (migration 162), chat-delivery's
+ * `notification_preference` (its migration 028, the same database on every estate) - all read from
+ * the files the estates ran - and the two chat-delivery tables the claim's device floor reads,
+ * `push_token` and `key_package`, which no migration creates (TypeORM did): only the columns the
+ * claim reads, typed as the entities type them. Every spec that sends a COUNTED type through the
+ * real notification service needs them since the cap widened (owner, 2026-11-10): without them the
+ * claim fails, and a failed claim pushes nobody. A reader needs a device ({@link givePushDevices})
+ * to be pushed a type with a floor.
  */
 export async function createEngagementPushCapTables(
   q: (sql: string) => Promise<unknown>
 ): Promise<void> {
-  await q(
-    readFileSync(join(__dirname, '..', 'migrations', '157_engagement_push_days.sql'), 'utf8')
-  );
+  for (const file of ['157_engagement_push_days.sql', '162_campus_trend_weeks.sql']) {
+    await q(readFileSync(join(__dirname, '..', 'migrations', file), 'utf8'));
+  }
   await q(
     readFileSync(
       join(
@@ -57,4 +61,29 @@ export async function createEngagementPushCapTables(
       'utf8'
     )
   );
+  await q(`
+    CREATE TABLE IF NOT EXISTS push_token (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "userId" varchar(255) NOT NULL, "deviceId" varchar NOT NULL);
+    CREATE TABLE IF NOT EXISTS key_package (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "userId" varchar(255) NOT NULL, "deviceId" varchar NOT NULL,
+      "deviceAppVersion" varchar(32), UNIQUE ("userId", "deviceId"));
+  `);
+}
+
+/**
+ * Gives each of `userIds` one push device: a token, and a key package reporting `version` (NULL: a
+ * build never reported, which the floor keeps, as chat-delivery does).
+ */
+export async function givePushDevices(
+  q: (sql: string, params?: unknown[]) => Promise<unknown>,
+  userIds: readonly string[],
+  version: string | null = null
+): Promise<void> {
+  for (const userId of userIds) {
+    await q(`INSERT INTO push_token ("userId", "deviceId") VALUES ($1, 'd1')`, [userId]);
+    await q(
+      `INSERT INTO key_package ("userId", "deviceId", "deviceAppVersion") VALUES ($1, 'd1', $2)`,
+      [userId, version]
+    );
+  }
 }

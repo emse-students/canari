@@ -19,7 +19,7 @@ import {
   pruneEngagementPushDays,
 } from './engagement-push-cap';
 import { PostNotificationsService } from './post-notifications.service';
-import { createEngagementPushCapTables } from './post-notifications.it-schema';
+import { createEngagementPushCapTables, givePushDevices } from './post-notifications.it-schema';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import type { NotificationType, PushOnlyNotificationType } from '../push/notification-client-floor';
 
@@ -45,6 +45,8 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     await q(`CREATE SCHEMA ${schema}`);
     await q(`SET search_path TO ${schema}, public`);
     await createEngagementPushCapTables((sql) => q(sql));
+    // Every reader the cases name has a device of unknown build, which every floor keeps.
+    await givePushDevices(q, ['r', 's', 'a', 'b', 'c', 'd', 'off', 'other', 'full', 'fresh']);
     pool = new Pool({ connectionString: URL, max: 8, options: `-c search_path=${schema},public` });
   });
 
@@ -73,8 +75,27 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     expect(await counter('r')).toBe(ENGAGEMENT_DAILY_PUSH_CAP);
   });
 
-  it('is three a day (owner, 2026-11-10)', () => {
-    expect(ENGAGEMENT_DAILY_PUSH_CAP).toBe(3);
+  it("a type's floor is asked before a unit is spent: a reader whose every device is too old spends none", async () => {
+    // campus_trend's floor is 1.6.10: `old` runs 1.6.9 only, `mixed` has a 1.6.9 and a 1.6.10-alpha.1,
+    // `unknown` never reported its build (kept, as chat-delivery keeps it), `none` has no device.
+    await givePushDevices(q, ['old'], '1.6.9');
+    await givePushDevices(q, ['mixed'], '1.6.9');
+    await q(`INSERT INTO push_token ("userId", "deviceId") VALUES ('mixed', 'd2')`);
+    await q(
+      `INSERT INTO key_package ("userId", "deviceId", "deviceAppVersion") VALUES ('mixed', 'd2', '1.6.10-alpha.1')`
+    );
+    await givePushDevices(q, ['unknown'], 'garbage');
+    const allowed = await claimEngagementPushes(
+      manager,
+      ['old', 'mixed', 'unknown', 'none'],
+      'suggestions',
+      '1.6.10'
+    );
+    expect([...allowed].sort()).toEqual(['mixed', 'unknown']);
+    expect(await counter('old')).toBeNull();
+    expect(await counter('none')).toBeNull();
+    // With no floor, every device counts - and so does a reader with none, as before.
+    expect([...(await claimEngagementPushes(manager, ['old'], 'reactions'))]).toEqual(['old']);
   });
 
   it('two dozen concurrent fan-outs over the same readers never exceed the cap', async () => {
@@ -231,20 +252,25 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       expect((await q(`SELECT count(*)::int AS n FROM engagement_push_days`)).rows[0].n).toBe(0);
     });
 
-    it('withinPushBudget answers the readers left, and says each withheld one once at debug level', async () => {
+    it('withinPushBudget answers the readers left, in ONE line per call', async () => {
       const svc = service();
-      const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+      const log = jest.spyOn(Logger.prototype, 'log');
+      log.mockClear();
       await q(
         `INSERT INTO engagement_push_days ("userId", day, pushed)
          VALUES ('full', (now() AT TIME ZONE 'Europe/Paris')::date, $1)`,
         [ENGAGEMENT_DAILY_PUSH_CAP]
       );
-      expect(await svc.withinPushBudget('reaction', ['full', 'fresh'])).toEqual(['fresh']);
-      expect(debug).toHaveBeenCalledTimes(1);
-      expect(String(debug.mock.calls[0][0])).toContain('user=full');
+      expect(await svc.withinPushBudget('reaction', ['full', 'fresh', 'r'])).toEqual([
+        'fresh',
+        'r',
+      ]);
+      expect(log.mock.calls.map(([m]) => String(m))).toEqual([
+        expect.stringContaining('type=reaction withheld 1 of 3'),
+      ]);
       // An uncounted type is answered untouched, with no statement and no line.
       expect(await svc.withinPushBudget('birthday', ['full'])).toEqual(['full']);
-      expect(debug).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledTimes(1);
     });
 
     it('a failed claim pushes nobody and reaches the caller', async () => {

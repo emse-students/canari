@@ -21,7 +21,9 @@ import { PostNotificationsService } from './post-notifications.service';
 import {
   createEngagementPushCapTables,
   createPostNotificationsTable,
+  givePushDevices,
 } from './post-notifications.it-schema';
+import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import type { PushContent } from '../push/push-content';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -39,6 +41,10 @@ const EG = '5e000000-0000-4000-8000-0000000000e9';
 
 /** A post id per case, readable in a failure. */
 const P = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+
+/** `n` distinct accounts that LIKED it ("J'aime"), none of them the author, as `posts.reactions`. */
+const likers = (n: number, from = 100) =>
+  Object.fromEntries(Array.from({ length: n }, (_, i) => [`l${from + i}`, "J'aime"]));
 
 /** `n` distinct reactors, none of them the author, as `posts.reactions`. */
 const reactors = (n: number, from = 0) =>
@@ -187,6 +193,8 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     // a writes; s1, s2, blk, seen, grant share a's space; g is in Gardanne and follows a.
     for (const id of ['a', 's1', 's2', 'blk', 'seen', 'grant']) await user(id);
     await user('g', GA, ISMIN);
+    // Every reader has a device of unknown build: the push cap's floor keeps it (a trend has one).
+    await givePushDevices(q, ['a', 's1', 's2', 'blk', 'seen', 'grant', 'g']);
     await q(
       `INSERT INTO user_follows (id, "followerUserId", "followedUserId", status, "acceptedAt")
        VALUES (gen_random_uuid(), 'g', 'a', 'accepted', now())`
@@ -210,6 +218,7 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     // Each case starts on a day nobody was told of a trend (the rule's own cases set it themselves).
     await q(`DELETE FROM post_engagement_notices WHERE reason = 'trend'`);
+    await q(`DELETE FROM campus_trend_weeks`);
     // ... and with the whole daily push budget (WP-8), which every case here would otherwise share.
     await q(`DELETE FROM engagement_push_days`);
   });
@@ -439,6 +448,7 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     await q(`UPDATE post_engagement_notices SET "trendDay" = "trendDay" - 1 WHERE "postId" = $1`, [
       P(17),
     ]);
+    await q(`UPDATE campus_trend_weeks SET "lastDay" = "lastDay" - 1`);
     await post(P(18), 'a', { reactions: reactors(T) });
     expect(await announceCampusTrend({ manager, notifications }, P(18))).toBe(4);
     expect(await told(P(18))).toEqual(['grant', 's1', 's2', 'seen']);
@@ -480,26 +490,62 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     );
   });
 
-  it('names, per reader, ONE followed account that liked it - under the disclosure rule (owner, 2026-11-10)', async () => {
-    // e0 and e1 react; e2 too. Named outside the audience (Gardanne) so the told set is unchanged.
-    await user('e0', GA, ISMIN);
-    await user('e1', GA, ISMIN);
-    await user('e2', GA, ISMIN);
-    await q(`UPDATE users SET "firstName" = 'Léa', "lastName" = 'Martin' WHERE id = 'e0'`);
-    await q(`UPDATE users SET "firstName" = 'Hugo', "lastName" = 'Petit' WHERE id = 'e1'`);
-    await q(`UPDATE users SET "firstName" = 'Inès', "lastName" = 'Roux' WHERE id = 'e2'`);
+  describe('the followed account a trend names (owner, 2026-11-10; review of #3316)', () => {
     const follow = (follower: string, followed: string, status = 'accepted') =>
       q(
         `INSERT INTO user_follows (id, "followerUserId", "followedUserId", status, "acceptedAt")
          VALUES (gen_random_uuid(), $1, $2, $3, now())`,
         [follower, followed, status]
       );
-    try {
+    /** The rows of a post, as the bell reads them: `meta` resolved at the read. */
+    const served = async (postId: string) => {
+      const rows: {
+        id: string;
+        recipientId: string;
+        type: string;
+        meta: Record<string, unknown> | null;
+      }[] = (
+        await q(
+          `SELECT id, "recipientId", type, meta FROM post_notifications WHERE "postId" = $1 ORDER BY 2`,
+          [postId]
+        )
+      ).rows;
+      await (
+        notifications as unknown as { resolveTrendLikedBy(r: typeof rows): Promise<void> }
+      ).resolveTrendLikedBy(rows);
+      return Object.fromEntries(rows.map((r) => [r.recipientId, r.meta]));
+    };
+
+    beforeAll(async () => {
+      // Named accounts live in Gardanne, outside the audience, so the told set is unchanged.
+      for (const [id, first, last] of [
+        ['e0', 'Léa', 'Martin'],
+        ['e1', 'Hugo', 'Petit'],
+        ['e2', 'Inès', 'Roux'],
+        ['e3', 'Noé', 'Blanc'],
+      ]) {
+        await user(id, GA, ISMIN);
+        await q(`UPDATE users SET "firstName" = $2, "lastName" = $3 WHERE id = $1`, [
+          id,
+          first,
+          last,
+        ]);
+      }
+    });
+
+    afterEach(async () => {
+      await q(`DELETE FROM user_follows WHERE "followerUserId" <> 'g'`);
+      await q(`DELETE FROM user_activity_settings`);
+      await q(`DELETE FROM user_blocks WHERE NOT ("blockerId" = 'a' AND "blockedId" = 'blk')`);
+    });
+
+    it('names, per reader, ONE followed account that LIKED it - its id on the row, its name in the push', async () => {
       // s1 follows e1 and e0: the smallest id, e0, is named.
       await follow('s1', 'e1');
       await follow('s1', 'e0');
-      // s2 follows e1, who does not share their activity: nobody.
+      // s2 follows e1, who does not share their activity, and e3, who only laughed: nobody.
       await follow('s2', 'e1');
+      await follow('s2', 'e3');
       await q(
         `INSERT INTO user_activity_settings ("userId", "shareActivity") VALUES ('e1', false)`
       );
@@ -509,16 +555,28 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
       // seen asked to follow e0, never accepted: nobody.
       await follow('seen', 'e0', 'pending');
 
-      await post(P(30), 'a', { reactions: { ...reactors(T), a: 'like' } });
+      // Likes: T - 3 strangers, e0, e1, e2 and s1 (the reader) - and the author's own, never counted.
+      await post(P(30), 'a', {
+        reactions: {
+          ...likers(T - 3),
+          e0: "J'aime",
+          e1: "J'adore",
+          e2: "J'aime",
+          e3: 'Rire',
+          s1: "J'aime",
+          a: "J'aime",
+        },
+      });
       expect(await announceCampusTrend({ manager, notifications }, P(30))).toBe(4);
       const rows = await q(
         `SELECT "recipientId", meta FROM post_notifications WHERE "postId" = $1 ORDER BY 1`,
         [P(30)]
       );
-      // T reactors besides the author: the named one and T - 1 others.
+      // "et N autres" counts likes only, never the author, the named account or the reader: the
+      // T - 3 strangers, e1 and e2.
       expect(rows.rows).toEqual([
         { recipientId: 'grant', meta: null },
-        { recipientId: 's1', meta: { likedBy: { name: 'Léa Martin', others: T - 1 } } },
+        { recipientId: 's1', meta: { likedBy: { userId: 'e0', others: T - 1 } } },
         { recipientId: 's2', meta: null },
         { recipientId: 'seen', meta: null },
       ]);
@@ -539,12 +597,85 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
         })
       );
       expect(byReader.get('s2')?.count).toBeUndefined();
-    } finally {
-      await q(`DELETE FROM user_follows WHERE "followedUserId" IN ('e0', 'e1', 'e2')`);
+    });
+
+    it('the bell serves the name only while the naming holds: a block, the share switch, an unfollow, an erasure', async () => {
+      await follow('s1', 'e0');
+      await post(P(40), 'a', { reactions: { ...likers(T), e0: "J'aime" } });
+      expect(await announceCampusTrend({ manager, notifications }, P(40))).toBe(4);
+      const named = { likedBy: { name: 'Léa Martin', others: T } };
+      expect((await served(P(40))).s1).toEqual(named);
+      // A block either way.
+      await q(`INSERT INTO user_blocks VALUES ('s1', 'e0')`);
+      expect((await served(P(40))).s1).toEqual({});
+      await q(`DELETE FROM user_blocks WHERE "blockerId" = 's1'`);
+      expect((await served(P(40))).s1).toEqual(named);
+      // The share switch turned off.
+      await q(
+        `INSERT INTO user_activity_settings ("userId", "shareActivity") VALUES ('e0', false)`
+      );
+      expect((await served(P(40))).s1).toEqual({});
       await q(`DELETE FROM user_activity_settings`);
-      await q(`DELETE FROM user_blocks WHERE "blockerId" = 'e2'`);
-      await q(`DELETE FROM users WHERE id IN ('e0', 'e1', 'e2')`);
-    }
+      // The follow gone.
+      await q(`DELETE FROM user_follows WHERE "followerUserId" = 's1'`);
+      expect((await served(P(40))).s1).toEqual({});
+      await follow('s1', 'e0');
+      expect((await served(P(40))).s1).toEqual(named);
+      // The account erased: its key leaves the stored row, which stays and names nobody.
+      const erase = ERASURE_STATEMENTS.find((x) => x.label === 'post_notifications_liked_by')!;
+      await q(erase.sql, ['e0']);
+      const stored = await q(
+        `SELECT meta FROM post_notifications WHERE "postId" = $1 AND "recipientId" = 's1'`,
+        [P(40)]
+      );
+      expect(stored.rows).toEqual([{ meta: {} }]);
+      expect((await served(P(40))).s1).toEqual({});
+    });
+
+    it('never names the author, an anonymous one included', async () => {
+      // s1 follows a, who wrote the post anonymously and liked it: naming a would unmask them.
+      await follow('s1', 'a');
+      await post(P(41), 'a', { reactions: { ...likers(T), a: "J'aime" }, anonymous: true });
+      expect(await announceCampusTrend({ manager, notifications }, P(41))).toBe(5);
+      const rows = await q(`SELECT DISTINCT meta FROM post_notifications WHERE "postId" = $1`, [
+        P(41),
+      ]);
+      expect(rows.rows).toEqual([{ meta: null }]);
+    });
+
+    it('never names an account across the review cohort', async () => {
+      const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = 'e0';
+      try {
+        await follow('s1', 'e0');
+        await post(P(42), 'a', { reactions: { ...likers(T), e0: "J'aime" } });
+        expect(await announceCampusTrend({ manager, notifications }, P(42))).toBe(4);
+        const rows = await q(`SELECT DISTINCT meta FROM post_notifications WHERE "postId" = $1`, [
+          P(42),
+        ]);
+        expect(rows.rows).toEqual([{ meta: null }]);
+      } finally {
+        if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+      }
+    });
+
+    it('writes every bell row even when a push fails, and says so per group', async () => {
+      await follow('s1', 'e0');
+      await post(P(43), 'a', { reactions: { ...likers(T), e0: "J'aime" } });
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const failing = notificationsOn(manager);
+      jest.spyOn(failing, 'pushNotice').mockRejectedValue(new Error('push down'));
+      expect(await announceCampusTrend({ manager, notifications: failing }, P(43))).toBe(4);
+      expect(await told(P(43))).toEqual(['grant', 's1', 's2', 'seen']);
+      const rows = await q(
+        `SELECT count(*)::int AS n FROM post_notifications WHERE "postId" = $1`,
+        [P(43)]
+      );
+      expect(rows.rows[0].n).toBe(4);
+      // Two groups (s1 named; the others not), each failing on its own.
+      expect(warn.mock.calls.filter(([m]) => String(m).includes('push down'))).toHaveLength(2);
+    });
   });
 
   describe('TWO trends per reader per Paris week (owner, 2026-11-10)', () => {
@@ -611,6 +742,19 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
       expect(await told(P(35))).toEqual(['grant', 's1', 's2', 'seen']);
     });
 
+    it('a deleted post frees no slot: the week is counted on its own row, not from the ledger', async () => {
+      await at('2026-11-09 12:00');
+      expect(await crossingAt(P(44))).toBe(4);
+      await at('2026-11-10 12:00');
+      expect(await crossingAt(P(45))).toBe(4);
+      // Both posts deleted: their ledger rows go with them (ON DELETE CASCADE), the count does not.
+      await q(`DELETE FROM posts WHERE id IN ($1, $2)`, [P(44), P(45)]);
+      await at('2026-11-11 12:00');
+      expect(await crossingAt(P(46))).toBe(0);
+      const week = await q(`SELECT DISTINCT told, "lastDay"::text AS d FROM campus_trend_weeks`);
+      expect(week.rows).toEqual([{ told: 2, d: '2026-11-10' }]);
+    });
+
     it('a reader with one trend this week may still have a second - the cap is per reader', async () => {
       await at('2026-11-09 12:00');
       expect(await crossingAt(P(36))).toBe(4);
@@ -639,27 +783,31 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
 });
 
 describe('groupByLikedBy', () => {
-  const row = (recipientId: string, friendId: string | null, firstName: string | null = null) => ({
-    recipientId,
-    friendId,
-    displayName: null,
-    firstName,
-    lastName: null,
-  });
+  const row = (
+    recipientId: string,
+    friendId: string | null,
+    others: number,
+    firstName: string | null = null
+  ) => ({ recipientId, friendId, others, displayName: null, firstName, lastName: null });
 
-  it('groups the readers by the account named for them; an account with no name names nobody', () => {
-    const groups = groupByLikedBy(
-      [row('r1', 'f1', 'Léa'), row('r2', null), row('r3', 'f1', 'Léa'), row('r4', 'f2')],
-      10
-    );
+  it('groups by what the push says - the account and the count; an account with no name names nobody', () => {
+    const groups = groupByLikedBy([
+      row('r1', 'f1', 9, 'Léa'),
+      row('r2', null, 0),
+      row('r3', 'f1', 9, 'Léa'),
+      // r5 liked it too, so its "others" leaves itself out: another sentence, another group.
+      row('r5', 'f1', 8, 'Léa'),
+      row('r4', 'f2', 3),
+    ]);
     expect([...groups.values()]).toEqual([
-      { likedBy: { name: 'Léa', others: 9 }, recipients: ['r1', 'r3'] },
-      { likedBy: null, recipients: ['r2', 'r4'] },
+      { friendId: 'f1', likedBy: { name: 'Léa', others: 9 }, recipients: ['r1', 'r3'] },
+      { friendId: null, likedBy: null, recipients: ['r2', 'r4'] },
+      { friendId: 'f1', likedBy: { name: 'Léa', others: 8 }, recipients: ['r5'] },
     ]);
   });
 
   it('never counts fewer than zero others', () => {
-    const [group] = groupByLikedBy([row('r1', 'f1', 'Léa')], 0).values();
+    const [group] = groupByLikedBy([row('r1', 'f1', -1, 'Léa')]).values();
     expect(group.likedBy).toEqual({ name: 'Léa', others: 0 });
   });
 });

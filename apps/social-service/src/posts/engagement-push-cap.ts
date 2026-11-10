@@ -1,5 +1,10 @@
 import type { EntityManager } from 'typeorm';
-import type { NotificationType, PushOnlyNotificationType } from '../push/notification-client-floor';
+import {
+  PUSH_KEY_MIN_CLIENT,
+  type NotificationType,
+  type PushOnlyNotificationType,
+} from '../push/notification-client-floor';
+import type { PushContentKey } from '../push/push-content';
 
 /**
  * THE GLOBAL DAILY PUSH CAP (engagement WP-8; owner, 2026-11-10: "on y est allés un peu fort";
@@ -45,10 +50,10 @@ export const CAMPUS_TREND_NOTIFICATION = 'campus_trend';
  */
 export type PushBudget =
   | { counted: false }
-  | { counted: true; contentKeys: readonly string[]; category: string };
+  | { counted: true; contentKeys: readonly PushContentKey[]; category: string };
 
 const FREE: PushBudget = { counted: false };
-const counted = (category: string, ...contentKeys: string[]): PushBudget => ({
+const counted = (category: string, ...contentKeys: PushContentKey[]): PushBudget => ({
   counted: true,
   contentKeys,
   category,
@@ -58,8 +63,9 @@ const counted = (category: string, ...contentKeys: string[]): PushBudget => ({
  * EVERY NOTIFICATION TYPE, CLASSIFIED (owner, 2026-11-10) - a `Record` over the whole union, so a
  * new type does not compile until it is placed here, and a test asserts the same at run time.
  *
- * COUNTED, the owner's list: campus trends, reactions and comments on your posts, member reposts,
- * followed accounts' posts, booking and event openings, and friends' activity (no longer written).
+ * COUNTED - the lead's list, shown to the owner on 2026-11-10: campus trends, reactions and comments
+ * on your posts, member reposts, followed accounts' posts, booking and event openings, and friends'
+ * activity (no longer written).
  *
  * NOT COUNTED, the owner's list: bookings (reminders and changes), follow requests and acceptances,
  * direct mentions and replies, moderation and the organiser workflow, BIRTHDAYS, ASSOCIATION POSTS
@@ -131,17 +137,39 @@ export const PUSH_BUDGET: Readonly<
   delegation_resumed: FREE,
 };
 
-/** The counted types and their category, read off {@link PUSH_BUDGET} - the cap's allowlist. */
+/**
+ * The counted types, read off {@link PUSH_BUDGET} - the cap's allowlist: their content keys, their
+ * category, and the FLOOR of their keys (`PUSH_KEY_MIN_CLIENT`; every key of one type shares it, a
+ * spec asserts so), which chat-delivery applies AFTER the claim - so the claim applies it first,
+ * and a reader with no device able to show the push never spends a unit on it.
+ */
 export const CAPPED_PUSH_TYPES: ReadonlyMap<
   string,
-  { contentKeys: readonly string[]; category: string }
+  { contentKeys: readonly PushContentKey[]; category: string; floor: string | null }
 > = new Map(
   Object.entries(PUSH_BUDGET).flatMap(([type, budget]) =>
     budget.counted
-      ? [[type, { contentKeys: budget.contentKeys, category: budget.category }] as const]
+      ? [
+          [
+            type,
+            {
+              contentKeys: budget.contentKeys,
+              category: budget.category,
+              floor: PUSH_KEY_MIN_CLIENT[budget.contentKeys[0]] ?? null,
+            },
+          ] as const,
+        ]
       : []
   )
 );
+
+/**
+ * A device's build as `major.minor.patch`, NULL when it was never reported or does not parse - read
+ * exactly as chat-delivery's `appVersionAtLeast` reads it (a suffix after `-` or `+` ignored), so the
+ * claim and the send agree on which device is too old. POSIX classes, no backslash: this text sits
+ * in a template literal, where a backslash would be eaten.
+ */
+const DEVICE_CORE_SQL = `substring(kp."deviceAppVersion" from '^[[:space:]]*([0-9]+[.][0-9]+[.][0-9]+)[[:space:]]*([-+].*)?$')`;
 
 /**
  * The one statement of a capped fan-out: for every DISTINCT recipient (a fan-out that names a
@@ -149,29 +177,47 @@ export const CAPPED_PUSH_TYPES: ReadonlyMap<
  * ONE lock order (two concurrent fan-outs over overlapping readers can then never deadlock, and the
  * row lock orders them on each shared reader, so the cap is exact), skipping a reader who switched
  * the type's category off (`notification_preference`, chat-delivery's table in the same database:
- * they are never pushed, so they must not spend the budget), one unit of today's budget is taken
- * while it lasts. `RETURNING` names the readers who got one - the others keep their bell row only.
+ * they are never pushed, so they must not spend the budget), and skipping a reader with no device
+ * able to show the push - when the type has a floor (`$4`), chat-delivery drops the tokens of
+ * devices KNOWN to run an older build (`key_package."deviceAppVersion"`), keeping a device of
+ * unknown build, so this asks the same of the same tables before a unit is spent - one unit of
+ * today's budget is taken while it lasts. `RETURNING` names the readers who got one - the others
+ * keep their bell row only.
  *
- * `$1` the recipients, `$2` the cap, `$3` the category.
+ * `$1` the recipients, `$2` the cap, `$3` the category, `$4` the floor (NULL for none).
  */
 export const CLAIM_ENGAGEMENT_PUSHES_SQL = `INSERT INTO engagement_push_days ("userId", day, pushed)
 SELECT ids.r, (now() AT TIME ZONE 'Europe/Paris')::date, 1
   FROM (SELECT DISTINCT r FROM unnest($1::varchar[]) r) ids
  WHERE NOT EXISTS (SELECT 1 FROM notification_preference np
                     WHERE np."userId" = ids.r AND np."disabledCategories" ? $3::text)
+   AND ($4::text IS NULL OR EXISTS (
+         SELECT 1 FROM push_token pt
+           LEFT JOIN key_package kp ON kp."userId" = pt."userId" AND kp."deviceId" = pt."deviceId"
+          WHERE pt."userId" = ids.r
+            AND (${DEVICE_CORE_SQL} IS NULL
+                 OR string_to_array(${DEVICE_CORE_SQL}, '.')::int[] >= string_to_array($4::text, '.')::int[])))
  ORDER BY ids.r
 ON CONFLICT ("userId", day) DO UPDATE SET pushed = engagement_push_days.pushed + 1
   WHERE engagement_push_days.pushed < $2::int
 RETURNING "userId"`;
 
-/** The daily GC's statement: counter rows older than {@link ENGAGEMENT_PUSH_DAYS_KEPT} days, counted. */
+/**
+ * The daily GC's statement, counted: the daily push counters older than
+ * {@link ENGAGEMENT_PUSH_DAYS_KEPT} days, and the weekly campus-trend counters (migration 162) of a
+ * week that started more than two weeks ago - the trend's week claim reads only the current week.
+ */
 export const PRUNE_ENGAGEMENT_PUSH_DAYS_SQL = `WITH gone AS (
   DELETE FROM engagement_push_days
    WHERE day < (now() AT TIME ZONE 'Europe/Paris')::date - ${ENGAGEMENT_PUSH_DAYS_KEPT}
+  RETURNING 1),
+gone_weeks AS (
+  DELETE FROM campus_trend_weeks
+   WHERE week < (now() AT TIME ZONE 'Europe/Paris')::date - 14
   RETURNING 1)
-SELECT count(*)::int AS n FROM gone`;
+SELECT ((SELECT count(*) FROM gone) + (SELECT count(*) FROM gone_weeks))::int AS n`;
 
-/** Deletes the counter rows the cap no longer reads; answers how many. */
+/** Deletes the counter rows the cap and the trend's week claim no longer read; answers how many. */
 export async function pruneEngagementPushDays(
   manager: Pick<EntityManager, 'query'>
 ): Promise<number> {
@@ -180,19 +226,22 @@ export async function pruneEngagementPushDays(
 }
 
 /**
- * Takes one unit of today's budget for each of `recipients` who still has one and has not switched
- * `category` off; answers who may be pushed. One statement, whatever the fan-out's size.
+ * Takes one unit of today's budget for each of `recipients` who still has one, has not switched
+ * `category` off and has a device able to show a push of `floor`; answers who may be pushed. One
+ * statement, whatever the fan-out's size.
  */
 export async function claimEngagementPushes(
   manager: Pick<EntityManager, 'query'>,
   recipients: readonly string[],
-  category: string
+  category: string,
+  floor: string | null = null
 ): Promise<Set<string>> {
   if (recipients.length === 0) return new Set();
   const rows: { userId: string }[] = await manager.query(CLAIM_ENGAGEMENT_PUSHES_SQL, [
     recipients,
     ENGAGEMENT_DAILY_PUSH_CAP,
     category,
+    floor,
   ]);
   return new Set(rows.map((r) => r.userId));
 }

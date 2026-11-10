@@ -285,7 +285,8 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
       CREATE TABLE user_follows ("followerUserId" varchar(255) NOT NULL,
         "followedUserId" varchar(255) NOT NULL, status varchar(16) NOT NULL);
       CREATE TABLE post_notifications (id serial PRIMARY KEY, "recipientId" varchar NOT NULL,
-        type varchar NOT NULL, "postId" varchar NOT NULL, "associationId" uuid, "actorId" varchar);
+        type varchar NOT NULL, "postId" varchar NOT NULL, "associationId" uuid, "actorId" varchar,
+        meta jsonb);
     `);
     // Only what the erasure's association lock reads (`LOCK_ONLY`): no statement runs against them.
     await q(`
