@@ -70,6 +70,10 @@
     <string name="notif_social_association_repost_body">New post</string>
     <string name="notif_social_member_repost_title">%1$s reposted a post</string>
     <string name="notif_social_member_repost_body">New post</string>
+    <string name="notif_social_friend_reaction_title">%1$s reacted to a post</string>
+    <string name="notif_social_friend_reaction_body">See the post</string>
+    <string name="notif_social_friend_comment_title">%1$s commented on a post</string>
+    <string name="notif_social_friend_comment_body">See the post</string>
     <string name="notif_social_repost_proposed_title">%1$s proposes a post to share</string>
     <string name="notif_social_repost_proposed_body">A post to share</string>
     <string name="notif_social_repost_personal_requested_title">%1$s asks to share your post</string>

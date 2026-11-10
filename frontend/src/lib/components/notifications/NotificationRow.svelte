@@ -197,6 +197,14 @@
    */
   const isMemberRepostNotif = $derived(notif.type === 'member_repost');
   /**
+   * FRIENDS' ACTIVITY (engagement WP-9), named for the same reason: a PERSON the reader follows
+   * reacted to or commented on a post the reader sees, so it draws that person's avatar, and the
+   * body is the POST's opening - never the comment, never the reaction.
+   */
+  const isFriendNotif = $derived(
+    notif.type === 'friend_reaction' || notif.type === 'friend_comment'
+  );
+  /**
    * A CO-ORGANISATION PROPOSAL (D39), named for the same reason: the ORGANISING association asks,
    * and the body is the event's title.
    */
@@ -344,7 +352,7 @@
                   ? 'bg-accent text-on-accent'
                   : isEventNotif || isCoorganiseNotif || isOpeningNotif
                     ? 'bg-sky-600 text-white'
-                    : isPostNotif || isRepostNotif || isPersonalRepostNotif
+                    : isPostNotif || isRepostNotif || isPersonalRepostNotif || isFriendNotif
                       ? 'bg-indigo-500 text-white'
                       : isFollowNotif || notif.type === 'birthday'
                         ? 'bg-accent text-on-accent'
@@ -551,6 +559,11 @@
         <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if isMemberRepostNotif}
         {m.notif_member_repost_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isFriendNotif}
+        {notif.type === 'friend_reaction'
+          ? m.notif_friend_reaction_text()
+          : m.notif_friend_comment_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if isRepostNotif}
         {notif.type === 'repost_proposed'

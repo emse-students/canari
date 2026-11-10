@@ -827,6 +827,21 @@ export async function setRepostSettings(
   });
 }
 
+/** Engagement WP-9: whether the caller's reactions and comments are told to their followers. */
+export async function getActivitySettings(): Promise<{ shareActivity: boolean }> {
+  return request('/api/posts/me/activity-settings');
+}
+
+/** Engagement WP-9: sets it; turning it off stops every notice not yet sent. */
+export async function setActivitySettings(
+  shareActivity: boolean
+): Promise<{ shareActivity: boolean }> {
+  return request('/api/posts/me/activity-settings', {
+    method: 'PUT',
+    body: JSON.stringify({ shareActivity }),
+  });
+}
+
 /** WP-F6: the author's override for one post - true, false, or null to follow the setting. */
 export async function setPostRepostConsent(
   postId: string,

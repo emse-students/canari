@@ -6,7 +6,7 @@ design that answers each one, what each surface reveals and to whom, and the wor
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
-(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); WP-6 BUILT (the surfaces, 2026-11-09, [below](#wp-6---the-surfaces-built)); WP-7 BUILT (suggested posts, 2026-11-09, [below](#wp-7---suggested-posts-built)); WP-8 BUILT (the daily cap, 2026-11-09, [below](#wp-8---the-daily-cap-built)); everything else DESIGNED, not built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
+(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); WP-6 BUILT (the surfaces, 2026-11-09, [below](#wp-6---the-surfaces-built)); WP-7 BUILT (suggested posts, 2026-11-09, [below](#wp-7---suggested-posts-built)); WP-8 BUILT (the daily cap, 2026-11-09, [below](#wp-8---the-daily-cap-built)); WP-9 BUILT (friends' activity, 2026-11-09, [below](#wp-9---friends-activity-built)); everything else DESIGNED, not built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
 
 Context it must respect, and which nothing here changes:
 
@@ -655,7 +655,11 @@ told ONLY when ALL of these hold, each a predicate that already exists except ru
    students-only gate, the spaces, the follower doors and the repost doors all apply.
 3. **R would see X's act on P's own page**: for a comment, `commentsWithheldFromViewerSql(P, R)` is
    false and the comment is not hidden; for a reaction, the post shows its reactors to R.
-4. **No block** between R and X, nor between R and P's author.
+4. **No block** between R and X, nor between R and P's author **when P names its author**: an
+   anonymous or an association post is exempt, exactly as the feed's block filter exempts it
+   (`blockedAuthorSql`) - a notice withheld on a block with the hidden writer would be a
+   de-anonymisation oracle (block a suspect, see whether the notice comes). `namedAuthorUnblockedSql`,
+   review of #3281.
 5. **P is not anonymous** when the act is a comment (a comment thread under an anonymous post is
    already the one place the author is hidden; naming X there adds nothing and risks inference) - a
    reaction to an anonymous post may be told, since it names only X and the post.
@@ -676,6 +680,39 @@ links to P, whose own predicate is re-asked on open.
 
 Sent at the WRITE (the reaction or comment commits under the post row's lock, `comment-write.ts`), one
 statement for all of X's followers, then counted by the cap like any engagement push.
+
+### WP-9 - friends' activity (BUILT)
+
+Built 2026-11-09 to the rule above. Migration **159** (`user_activity_settings` and
+`post_engagement_notices`, plain); `posts/friend-activity.ts` holds the one statement.
+
+- **Two notice types, not one**: `friend_reaction` and `friend_comment`, each with its own push key
+  (`social_friend_reaction`, `social_friend_comment`) and native sentence ("X a réagi à une
+  publication" / "X a commenté une publication"), since a native table states one fixed sentence per
+  key. Both are in `ENGAGEMENT_PUSH_TYPES` under `posts` (WP-8's cap and the category apply), in
+  `BELL_PUSH_KINDS` as a post (an account's reduced bell reduces its activity too), and in
+  `POST_BOUND_NOTIFICATION_TYPES` (the bell row is shown only while its reader still sees the post).
+  The row's text and the push's body are the POST's opening, never the comment or the reaction.
+- **One statement at the write** (`friendActivityLedgerSql`): rules 0-7 and the review cohort, the
+  ledger insert `ON CONFLICT DO NOTHING RETURNING`, one lock order. Rule 8 is asked of the stored
+  comment before it (`commentSpeaksAsWriter`). Then `createNotifications` writes the rows and pushes
+  through the bell and the cap. Called after a NEW reaction (changing the emoji is not news) and
+  after every comment (`PostInteractionsService.tellFriends`, fire-and-forget, a failure logged) -
+  a comment's only once its own comment, reply and mention rows are written, so a follower it
+  answers or mentions is told once by rule 7, never twice by a race (review of #3281).
+- **"Partager mon activité"**: `GET` / `PUT /api/posts/me/activity-settings`, the switch in
+  Settings > Préférences (`ActivitySharingSetting.svelte`, strings `settings_share_activity`,
+  `settings_share_activity_hint`).
+- **Erasure**: the person's setting and every ledger row naming them as recipient; a ledger row of
+  a post goes with the post.
+- **Proof**: `posts/friend-activity.integration.spec.ts` on PostgreSQL - the told set exactly (rules
+  1, 2, 4, 6), the rows and pushes; rule 0 off then on; a hidden post; a reader reaching the post only
+  through a read grant (rules 2 and 3); rule 5 (comment refused, reaction told); rule 6; rule 7 (a
+  `post_notifications` row, and told once across acts); rule 8 for an anonymous comment, one written
+  as an association and a removed one, none of which reaches the database; the review cohort; the
+  erasure; the cascade. `ActivitySharingSetting.svelte.test.ts`, the native-strings test.
+- **Owed**: a dev pass and a phone reading on both bench phones (a follower's push "X a réagi à une
+  publication", its bell row opening the post; the switch off silencing it).
 
 ### (c) campus trends - "takes off", defined without a clock heuristic
 
@@ -800,7 +837,7 @@ A new day is a new row: nothing resets anything. The daily GC that already prune
 
 Built 2026-11-09 to the design above, with the cap at 5 as R2 read it. Migration **157**
 (`engagement_push_days`, plain); `posts/engagement-push-cap.ts` holds the constant, the allowlist
-`ENGAGEMENT_PUSH_TYPES` (`friend_activity` and `campus_trend`, both filed under `posts`, L30), the one
+`ENGAGEMENT_PUSH_TYPES` (`friend_reaction`, `friend_comment` since WP-9, and `campus_trend`, all filed under `posts`, L30), the one
 claim statement and the GC statement.
 
 - **The seam** is in `PostNotificationsService.fanOutPush`, AFTER the bell (a reader the bell
@@ -810,7 +847,7 @@ claim statement and the GC statement.
   does: nobody is pushed, an error names the type, and the error reaches the caller.
 - **The table the category is read from** is chat-delivery's `notification_preference` (singular,
   its migration 028; the design text above said `notification_preferences`).
-- **chat-delivery** files `social_friend_activity` and `social_campus_trend` under `posts` now, so
+- **chat-delivery** files `social_friend_reaction`, `social_friend_comment` and `social_campus_trend` under `posts` now, so
   the switch already governs them the day WP-9 and WP-10 send them; `engagement-push-cap.spec.ts`
   reads chat-delivery's `CATEGORY_BY_CONTENT_KEY` and pins every capped type's category against it.
 - **The GC**: `FormReminderScheduler.purgeEngagementPushDays`, daily at 03:05, rows older than 7
@@ -983,7 +1020,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-6** (BUILT, [above](#wp-6---the-surfaces-built)) | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
 | **WP-7** (BUILT, [above](#wp-7---suggested-posts-built)) | Suggested posts (decision 8), through the feed's own block filter (`PostsService.blockedAuthorSql`) as every feed row | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door, and never by an author blocked either way |
 | **WP-8** (BUILT, [above](#wp-8---the-daily-cap-built)) | The daily cap (decisions 6 and 11): `engagement_push_days`, `ENGAGEMENT_PUSH_TYPES` holding ONLY the new kinds, the statement in `fanOutPush` | `posts/post-notifications.service.ts` | [R2](#r2---the-cap-check) read and written back; integration spec: the 6th capped push of a day is a bell row with no push, two concurrent fan-outs never exceed 5, and an association post, a live, an opening and a mention on the same day are never counted |
-| **WP-9** | Friends' activity (5b) with the ledger `post_engagement_notices` and the activity setting (decision 9: `user_activity_settings`, no row = ON, the Settings switch) | `posts/comment-write.ts`, the reaction write | integration spec, one case per rule of the disclosure list, rule 0 included, and for rule 8 one case EACH: an `anonymous` comment, a comment written as an association, and a `removedByModeration` comment, none of which notifies |
+| **WP-9** (BUILT, [above](#wp-9---friends-activity-built)) | Friends' activity (5b) with the ledger `post_engagement_notices` and the activity setting (decision 9: `user_activity_settings`, no row = ON, the Settings switch) | `posts/comment-write.ts`, the reaction write | integration spec, one case per rule of the disclosure list, rule 0 included, and for rule 8 one case EACH: an `anonymous` comment, a comment written as an association, and a `removedByModeration` comment, none of which notifies |
 | **WP-10** | Campus trends (5c) | the reaction write | [R1](#r1---the-trend-threshold) read FIRST and written back; integration spec: exactly one stamp at the crossing write, none after 24 hours, the space-only audience |
 
 ### WP-2 - Suivre everywhere (BUILT)

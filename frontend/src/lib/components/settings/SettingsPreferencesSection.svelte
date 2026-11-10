@@ -26,6 +26,7 @@
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
   import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import RepostConsentSetting from './RepostConsentSetting.svelte';
+  import ActivitySharingSetting from './ActivitySharingSetting.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
     EMOJI_STYLES,
@@ -240,6 +241,8 @@
     </div>
 
     <RepostConsentSetting />
+
+    <ActivitySharingSetting />
 
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3.5">

@@ -25,20 +25,27 @@ export const ENGAGEMENT_DAILY_PUSH_CAP = 5;
 /** How many days of counter rows the daily GC keeps. */
 export const ENGAGEMENT_PUSH_DAYS_KEPT = 7;
 
+/** Friends' activity (WP-9): an account the reader follows reacted to a post they see. */
+export const FRIEND_REACTION_NOTIFICATION = 'friend_reaction';
+/** Friends' activity (WP-9): an account the reader follows commented on a post they see. */
+export const FRIEND_COMMENT_NOTIFICATION = 'friend_comment';
+
 /**
  * THE CAPPED PUSH TYPES, and the notification category each files under - ONE map, so the category
  * the cap reads before counting and the one chat-delivery applies at the send cannot disagree; a
  * contract test pins every entry against chat-delivery's `push-category.ts` through its content key.
  * An ALLOWLIST: a type absent here is never counted and never capped.
  *
- * - `friend_activity` (WP-9, decision 5b): an account the reader follows reacted to or commented on
- *   a post. Files under `posts` (L30): it is news about a post of someone else, not a reaction to or
- *   a comment on the reader's own, which is what `reactions` and `comments` switch off.
+ * - `friend_reaction` and `friend_comment` (WP-9, decision 5b, friends' activity): an account the
+ *   reader follows reacted to or commented on a post - two types, one native sentence each. Files
+ *   under `posts` (L30): it is news about a post of someone else, not a reaction to or a comment on
+ *   the reader's own, which is what `reactions` and `comments` switch off.
  * - `campus_trend` (WP-10, decision 5c): a post of the reader's space took off - `posts` too.
  */
 export const ENGAGEMENT_PUSH_TYPES: ReadonlyMap<string, { contentKey: string; category: string }> =
   new Map([
-    ['friend_activity', { contentKey: 'social_friend_activity', category: 'posts' }],
+    [FRIEND_REACTION_NOTIFICATION, { contentKey: 'social_friend_reaction', category: 'posts' }],
+    [FRIEND_COMMENT_NOTIFICATION, { contentKey: 'social_friend_comment', category: 'posts' }],
     ['campus_trend', { contentKey: 'social_campus_trend', category: 'posts' }],
   ]);
 

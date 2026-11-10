@@ -80,6 +80,9 @@ const RAW_TABLES = [
   'live_replay_cap_evictions',
   // Migration 157's daily push counters (engagement WP-8): the recipient's own rows.
   'engagement_push_days',
+  // Migration 159 (engagement WP-9): the activity setting and the told-once ledger.
+  'user_activity_settings',
+  'post_engagement_notices',
 ];
 
 const SRC = join(__dirname, '..');

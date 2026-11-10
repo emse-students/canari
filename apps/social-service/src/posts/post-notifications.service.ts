@@ -5,7 +5,12 @@ import { PostNotification } from './entities/post-notification.entity';
 import { Post } from './entities/post.entity';
 import { PushService } from '../push/push.service';
 import { AccountBellsService, bellTargetOf } from '../follows/account-bells.service';
-import { ENGAGEMENT_PUSH_TYPES, claimEngagementPushes } from './engagement-push-cap';
+import {
+  ENGAGEMENT_PUSH_TYPES,
+  FRIEND_COMMENT_NOTIFICATION,
+  FRIEND_REACTION_NOTIFICATION,
+  claimEngagementPushes,
+} from './engagement-push-cap';
 import {
   mentionContent,
   replyContent,
@@ -23,6 +28,8 @@ import {
   followedPostContent,
   associationRepostContent,
   memberRepostContent,
+  friendReactionContent,
+  friendCommentContent,
   repostProposedContent,
   repostPersonalRequestedContent,
   coorganiseProposedContent,
@@ -115,6 +122,10 @@ export const POST_BOUND_NOTIFICATION_TYPES: readonly string[] = [
   'repost_personal_requested',
   'repost_personal_accepted',
   'repost_personal_refused',
+  // Engagement WP-9: friends' activity names a post its recipient saw at the write; the row is shown
+  // only while they still do.
+  FRIEND_REACTION_NOTIFICATION,
+  FRIEND_COMMENT_NOTIFICATION,
 ];
 
 /**
@@ -323,6 +334,12 @@ export class PostNotificationsService {
       // WP-F6: a person the recipient follows reposted a post. `actorName` is the REPOSTER.
       case 'member_repost':
         return memberRepostContent(actorName, text, icon);
+      // Engagement WP-9: an account the recipient follows reacted to or commented on a post the
+      // recipient sees. `actorName` is that account; `text` is the opening of the POST.
+      case FRIEND_REACTION_NOTIFICATION:
+        return friendReactionContent(actorName, text, icon);
+      case FRIEND_COMMENT_NOTIFICATION:
+        return friendCommentContent(actorName, text, icon);
       // D38b: an association asks the AUTHOR to let it republish their personal post. `actorName`
       // is the ASSOCIATION. Its answers (`repost_personal_accepted` / `_refused`) are in-app only.
       case 'repost_personal_requested':

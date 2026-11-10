@@ -359,6 +359,18 @@ describe('NotificationRow sentence', () => {
     expect(row.textContent).toContain(m.notif_birthday_text());
     expect(row.textContent).not.toContain('a commenté');
   });
+
+  it("says a followed person reacted to or commented on a post, with the post's opening (WP-9)", () => {
+    const reacted = renderRow(postRow('friend_reaction'));
+    expect(reacted.textContent).toContain(m.notif_friend_reaction_text());
+    expect(reacted.textContent).toContain('Scene ouverte lundi');
+    expect(reacted.textContent).not.toContain(m.notif_comment_text());
+    const commented = renderRow(postRow('friend_comment'));
+    expect(commented.textContent).toContain(m.notif_friend_comment_text());
+    expect(commented.textContent).toContain('Scene ouverte lundi');
+    // Never the sentence of a comment on the reader's own post.
+    expect(m.notif_friend_comment_text()).not.toBe(m.notif_comment_text());
+  });
 });
 
 /**

@@ -111,6 +111,9 @@ export function notificationHref(
     case 'association_repost':
     // WP-F6: a person the reader follows reposted the post.
     case 'member_repost':
+    // Engagement WP-9: a person the reader follows reacted to or commented on the post.
+    case 'friend_reaction':
+    case 'friend_comment':
     // D38b: the proposer was told the author's answer - the post shows it (carried, or not).
     case 'repost_personal_accepted':
     case 'repost_personal_refused':
@@ -159,6 +162,8 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'followed_post',
   'association_repost',
   'member_repost',
+  'friend_reaction',
+  'friend_comment',
   'repost_proposed',
   'coorganise_proposed',
   'repost_personal_requested',
