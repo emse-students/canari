@@ -1719,6 +1719,34 @@ predicate carries that exclusion once, and moderation reads it (proved in
   the platform admin's edit of another person's post refused), the moderation and lives controller
   specs.
 
+### The agenda's space filter (owner, 2026-11-10)
+
+A reader whose signed-in agenda reaches SEVERAL spaces narrows the VIEW to one campus or one
+formation. It replaced the "Association" select of `/calendar`, which named nothing a reader thinks
+in; an association is still reached from its own page, and a `?association=` deep link keeps working
+(the remembered space is ignored while it is active, and a "show everything" button resets both).
+
+- **Options** come from `GET /api/associations/calendar/spaces` (signed in), `AGENDA_REACHED_SPACES_SQL`
+  (`reader-spaces.ts`): the reader's OWN spaces; the spaces addressed by the rules of an association
+  they are a MEMBER of (D21); and, for a read grant, the spaces of a ticked cell that an association
+  addresses. **The (NULL, NULL) "everyone" rule addresses no space here**, and an association merely
+  visible through its rules adds nothing - otherwise every reader would get every option. So a
+  one-space student reaches one space (filter hidden); a student who joined an association of another
+  space, or staff or an admin with read grants over several spaces, reach those.
+  `agendaSpaceOptions` (`calendar/agendaSpaceFilter.ts`) lists "Tous les espaces", the campuses, then
+  the formations, **drops an axis with a single value (its option would equal "all") and hides the
+  control when fewer than two choices remain**.
+- **An event visible only through membership (D21)** whose association does not address the chosen
+  space is hidden under that filter: the narrowing keeps events by the spaces their association
+  addresses, not by who may read them.
+- **Narrowing** is the feed's existing `campus=` / `formation=` query (`restrictToSelection`,
+  `eventReachesSpaceMatchingSql`), applied on top of `restrictToViewerSpaces`: it can only shrink the
+  answer. It is a view setting and decides nothing about access.
+- **Remembered per reader** in `localStorage` (`ACCOUNT_KEY.agendaSpaceFilter`, swept with the
+  account). The first month is asked with the remembered value; a value the reader's spaces no longer
+  offer is dropped and the month re-read. The subscribe link and the PDF export keep their own
+  selectors (D40) and do not follow this filter.
+
 ### D40 closed - no event is published to an anonymous reader (2026-11-02)
 
 **Decided by the owner (2026-11-02):** only what the student portal shows is public, and it shows no

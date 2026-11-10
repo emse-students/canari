@@ -783,7 +783,8 @@ creator's name, which no agenda surface shows anyone. The form's hint says exact
 (`asso_calendar_event_neutral_hint`: "only the agenda's managers see which association filed it").
 
 **The label is "Campus"** (`calendar_neutral_label`, the same word in both locales). The UI had no
-better existing word: the agenda's filter says "Toutes les associations", which names associations,
+better existing word: (the agenda's filter then said "Toutes les associations", which named
+associations; it is now the [space filter](../../profiles-and-access.md#the-agendas-space-filter-owner-2026-11-10))
 and "Campus" is already the axis of the spaces model (a reader's campus) and of the public feed
 selection. It is also the word the server can write itself, untranslated, in the anonymous `.ics`
 (`NEUTRAL_EVENT_LABEL`), which has no locale.
