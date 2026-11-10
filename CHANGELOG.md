@@ -14,6 +14,453 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.9] - 2026-11-10
+
+### Fixed - scrolling the GIF tab no longer crashes the chat page when KLIPY repeats an item across two pages
+
+The GIF grid keys its tiles by id and appended page 2 as it came, so one repeated id was a Svelte `each_key_duplicate`. Pages are now merged by id (`mergeGifPages`), the first occurrence kept and the count dropped logged at debug level.
+
+### Fixed - a "joined" / "added" row no longer stays "Utilisateur inconnu" when the newcomer's name arrives late
+
+A membership or group notice row now carries the ids it names and the reader draws the names from the one display-name source, fetching an unknown one, instead of a sentence frozen at write time. Rows written before this keep their stored sentence. See [history-reconciliation](docs/wiki/protocols/history-reconciliation.md#the-acting-device-writes-its-own-notice).
+
+### Added - a CanaReel that never loads now says so in the in-app log
+
+Every reel view ends in one `[reel-view]` info line: its first frame and how long it took, or where its load stopped ([reels](docs/wiki/frontend/modules/reels.md#one-line-per-reel-view-the-outcome-the-in-app-log-carries-owner-2026-11-09)).
+
+### Fixed - a follower tab no longer reads "Hors-ligne", a leadership change keeps the open conversation, the paid-forms banner wraps, and End on a live cannot hang the screen
+
+The header pill of a follower tab (which holds no socket) reads the leader's socket, which the leader publishes to it, a promotion or demotion reload carries the open conversation across, the banner's link flows inside its sentence, and the live's End settles the screen at once and reaches the server afterwards, retried until answered ([live](docs/wiki/frontend/modules/live.md)).
+
+### Fixed - a pull request marked ready after its CI finished is merged by the chain instead of failing the arming
+
+GitHub refuses to enable auto-merge on a pull request that is already mergeable (#3202: `unstable status`), so the arming run failed and a human had to merge. The step now reads `mergeStateStatus` (CLEAN or UNSTABLE, not a draft) and merges at once, pinned to the judged head and only when GitHub Actions' newest `CI passed` on it is green - those reads are the whole gate, since the App bypasses the ruleset; any other state still fails loudly ([cicd](docs/wiki/cicd.md)).
+
+### Changed - the association page's actions sit on one row under the name on a phone
+
+Follow, the bell, leave and manage stacked as full-width bars; they now share a wrapping row ([associations](docs/wiki/frontend/modules/associations.md)).
+
+### Fixed - an association tab no longer shows its URL slug after in-app navigation, and the iOS share sheet's conversation suggestions can be donated
+
+The route stops inventing a title from the slug and the page hands its loaded name to the tab; the app now declares `INSendMessageIntent` in `NSUserActivityTypes`, without which every donation was refused (code 1901), reading owed on the iPhone ([sharing](docs/wiki/frontend/sharing.md#share-suggestions-ios---lot-s5)).
+
+### Fixed - the notifications bell answers in milliseconds again, not 1-13 s
+
+PostgreSQL was JIT-compiling the bell's large visibility statement on every poll for heavy readers; every social-service connection now starts with `jit=off` ([posts](docs/wiki/frontend/modules/posts.md#the-bell-re-checks-the-post-review-of-2965-2026-11-03)).
+
+### Added - birthdays on profiles: the day and month, a festive ring on the day, the followers told that morning
+
+A member may enter the day and month of their birthday (never the year) and choose who sees the date; on the day a ring surrounds their avatar everywhere, and their followers who may see the date are notified once that morning (switchable off) ([birthdays](docs/wiki/birthdays.md)).
+
+### Changed - a new booking space has no longest booking, and the editor shows the field
+
+A space created without a limit no longer caps a booking at 2 h: "Durée maximale d'une réservation" sits in the booking rules, empty means no limit, and the duration it allows is shown live. Migration 153 relaxes one CHECK; existing spaces keep their value ([bookings](docs/wiki/bookings-chantier.md)).
+
+### Fixed - the dependency audit tolerates the unmaintained `pin-utils` warning in call-service
+
+RUSTSEC-2026-0441 (status warning only) arrives through webrtc 0.17 -> nix 0.26 and no lockfile bump removes it; it is ignored until the webrtc 0.21 port, with a 2027-01-31 re-examination ([cicd](docs/wiki/cicd.md#the-rust-ignores-live-in-cargoaudittoml-and-retire-themselves-too-2026-10-24)).
+
+### Changed - a channel's access is a Public / Restreint choice, no longer a switch that read "off" for a public channel
+
+The Accès tab of the channel settings now offers two explained options with the current one selected, instead of a toggle drawn off beside "Canal public". See [chat](docs/wiki/frontend/modules/chat.md#channel-access-is-a-choice-not-a-switch-2026-11-10).
+
+### Fixed - the conversation title pill in the phone apps uses the free width of the header
+
+The pill's web rect is where the native pill is drawn, and it hugged the web text, so a name was cut ("Canari Test Alp...") with room to spare; it now fills the space between back and menu ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - the Android release build no longer downloads Gradle and its jars cold
+
+`android.yml` restores the Gradle wrapper and dependency cache that `main` wrote, read-only, so a 504 from `services.gradle.org` or Maven Central no longer blocks a release ([cicd](docs/wiki/cicd.md#the-android-release-build-restores-gradle-it-never-saves-it-2026-11-09)).
+
+### Fixed - an iOS release build restores the Swift package cache, and the wasm-pack download retries
+
+`ios.yml` restores, read-only, the SwiftPM cache `compile-ios-app` saves on `main`, and `scripts/install-wasm-pack.sh` retries a transient answer: the 504 that failed main's iOS compile on the `v1.6.9-alpha.1` bump came from that download ([cicd](docs/wiki/cicd.md#the-ios-release-build-restores-swiftpm-it-never-saves-it-2026-11-09)).
+
+### Fixed - four open CodeQL alerts closed
+
+A null check ordered after the `typeof` that hid it (both copies of the answer text), a test import ahead of its first use, a handler called with an argument it never reads; no behaviour change ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - a comment or a post can only cite pictures its writer uploaded
+
+The write is refused (400) when a cited picture belongs to someone else, and answers 503 when the media service cannot say: deleting a row that cited a foreign id used to release that blob to the idle sweep ([posts](docs/wiki/frontend/modules/posts.md#reply-with-an-imported-image-2026-11-09)).
+
+### Changed - the first salon open no longer runs a 60 ms task for a search box nobody opened
+
+The composer's idle emoji warm-up folded the search words of all ~1900 emoji while a salon was opening; they are now folded on first read, and a message with no pictograph no longer builds a grapheme segmenter ([community-open-budget](docs/wiki/frontend/community-open-budget.md#the-composers-idle-warm-up-ran-a-60-ms-task-inside-every-first-open-and-what-is-next-2026-11-09)).
+
+### Added - a community can give its three roles its own display names
+
+An administrator renames the administrator, moderator and member roles (labels only: rights and role identity unchanged; blank resets to the default). The name is stored in its own column so older clients keep reading the same role, and reaches every member live through the existing role event ([social-service](docs/wiki/services/social-service.md)).
+
+### Changed - the conversation list reads like Messenger's: 72 dp rows, 56 dp avatars, a time on the name line, a neutral search pill
+
+Rows go from 78 to 72 dp and avatars from 48 to 56 dp; the relative time of the last message sits right-aligned on the name line (the existing `timeAgo`), and an unread conversation is bold in its name, time and preview. The search sits on an opaque neutral band instead of a translucent navy one, and the field is a 40 dp filled pill with no border ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+The time label advances on its own every minute through one shared tick (`minuteClock.svelte.ts`), and the row and search focus rings use the `cn-yellow` token instead of raw amber.
+
+### Added - "Modifier les pseudos": a nickname per conversation, Messenger-style
+
+Any member names any member in a DM or group (a silent MLS frame); in a community a moderator does,
+checked by the server (migration 149). Never in a notification, refused across a block, reportable in a
+community ([chat](docs/wiki/frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)).
+
+### Changed - feed media runs edge to edge in the card, and the dark post card is a step lighter instead of outlined
+
+Photos and videos in a post fill the card's width with square corners, 8 px under the text and none above the action bar (the inset of 2026-10-01 existed for a corner the card no longer has). The dark card's 15 % outline is gone; its fill is a new token one step lighter than the page, so it still stands off on an OLED panel. Measurements and the revisited decisions: [design-reference](docs/wiki/frontend/design-reference.md#22-the-post-card---facebooks-chrome-measured-on-the-same-phone-and-the-162px-it-gave-back).
+
+### Fixed - a message sent while production deploys waits for the server instead of failing
+
+A `502`, `503` or `504` is now typed at the throw as "not now" and is never a refusal: a DM or group text is held on the plain retry ladder and resumed by a reconnect (it used to count toward the five 5xx that show "Echec"), a salon text is held and re-sent under its client id instead of turning "non confirme", and the bubble says "En attente du serveur" meanwhile; only twelve "not now" in a row with no success between - a route that stays dead - hand the message back to the member ([chat](docs/wiki/frontend/modules/chat.md#a-deploys-not-now-is-not-a-send-failure-r05-2026-11-09)).
+
+### Fixed - the new-device notification row, the notification badge, the comment thumbnail and the profile ring
+
+The "new device" notification row has a bold title, a muted body and one row of three 44 px pill buttons on a visible fill, the type badge on a notification avatar is 20 px so it no longer hides the initials, the comment preview's media thumbnail is 96 px, and the profile avatar keeps its ring to hover, keyboard focus and the slow-link hint, each by its own token ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Changed - section headings use the body font, headings lose their letter-spacing, and a settings section no longer says its name twice
+
+Fredoka now carries only page titles, names and the wordmark; `h2..h6` are Nunito bold, no heading is tightened, and a settings card drops its icon tile and repeated heading ([design-reference](docs/wiki/frontend/design-reference.md)). The `h1` display-face rule now sits in `@layer base`, so a `font-body` opt-out on an `h1` finally wins (it was unlayered and beat every utility).
+
+### Added - the dev estate can serve an explicit avatar per account, and cannot be made to on production
+
+`DEV_AVATAR_OVERRIDE_DIR` swaps the gallery's avatar for an invented geometric portrait on listed accounts; core-service refuses to boot with it set on any estate whose `FRONTEND_URL` is not dev's ([dev-environment](docs/wiki/infrastructure/dev-environment.md#explicit-dev-avatars-the-only-face-dev-has-2026-11-09)).
+
+### Fixed - the reaction picker no longer sits under the keyboard for seconds when its search is focused
+
+Floating panels followed only the layout viewport, which Android resizes for the keyboard late (and a phone browser never); they now follow the visual viewport through the keyboard store's one measurement ([mobile](docs/wiki/frontend/mobile.md#a-floating-panel-follows-the-keyboard-from-the-visual-viewport-2026-11-10)).
+
+### Fixed - the emoji picker's pictures appear at once instead of blank, growing in or showing a stray glyph
+
+The first screen of the picker and its tab icons were lazy, asynchronously decoded and fetched only on the tap that opened it; they are now eager, boxed, warmed at low priority once the thread is idle, and a picture still on its way never shows its alt glyph. The iPhone reading is owed ([emoji](docs/wiki/frontend/emoji.md#the-picker-paints-at-once---2026-11-08)).
+
+### Changed - emoji are drawn by the system font by default, Canari's pictures are a setting
+
+Settings > Preferences > "Emojis" chooses between "Systeme" (the device's emoji, now the default) and "Canari" (the Noto pictures every build drew until now). **Existing users see their system emoji after this update** until they pick "Canari"; exports and CanaReels keep the pictures ([emoji](docs/wiki/frontend/emoji.md#the-setting---one-resolver-2026-11-09)).
+
+### Fixed - the call worker's "undecryptable" test no longer times out under a parallel full run
+
+The test sealed 249 foreign frames with real AES-GCM before exercising the receiver; one seal repeated fails identically, so it now seals once. Same assertions, same 100th-failure boundary ([testing-methodology](docs/wiki/testing-methodology.md)).
+
+### Changed - the daily push cap counts only accounts the reader does not follow
+
+Friends' activity (an account you follow reacted or commented) is no longer held back after 5 pushes a
+day: following an account is the choice to hear from it, so only campus trends stay capped (owner,
+2026-11-10; [engagement](docs/wiki/engagement.md#the-noise-budget---a-daily-cap-from-a-counter-row)).
+
+### Added - campus trends
+
+A post of your space that four people react to or comment on within a day is told to its space
+once, naming nobody, within the daily cap. Engagement WP-10
+([engagement](docs/wiki/engagement.md#wp-10---campus-trends-built)).
+
+### Added - a "Suivre" chip on post headers, directory results and association cards
+
+Wherever a person or association is named and the reader does not follow it yet, one shared chip asks to follow (a request for a person, at once for an association). One bulk status read per page, and a withdraw that can no longer undo a follow accepted in the meantime ([engagement](docs/wiki/engagement.md#wp-2---suivre-everywhere-built)).
+
+### Added - an association's followers are told when it opens a form, bookings or an event
+
+One notice at the opening, never a second for a reader who also pressed "Me prévenir", which is now the same row; the reminders move to `opening_reminders` through a HELD copy (migration 152); an archived association, a follower who no longer follows or sees it, or a booking space with an audience is told nothing ([engagement](docs/wiki/engagement.md#wp-4---openings-for-followers-built)).
+
+### Added - follow suggestions: who a reader might follow, and the X that dismisses one
+
+`GET /api/posts/me/suggestions` ranks friends of friends, co-members, the reader's promo, formation
+and campus, and the most-followed entities they see, with "N en commun" and its faces; a dismissal is
+permanent (migration 155). Engagement WP-5 ([engagement](docs/wiki/engagement.md#wp-5---the-suggestion-query-built)).
+
+### Added - follow suggestions in the feed, an empty Suivis feed, a banner for a new account, and "Suivez aussi..."
+
+A row of cards ("N en commun", Suivre, an X) after the third post of Mon espace and Suivis, as the
+body of an empty Suivis feed, as a banner for an account following fewer than five, and after a follow.
+Engagement WP-6 ([engagement](docs/wiki/engagement.md#wp-6---the-surfaces-built)).
+
+### Added - suggested posts in Mon espace
+
+Popular posts of the reader's own space, from accounts they do not follow, one in every eight items
+of Mon espace and marked "Suggestion". Engagement WP-7
+([engagement](docs/wiki/engagement.md#wp-7---suggested-posts-built)).
+
+### Added - a daily cap of five engagement pushes per person
+
+Friends' activity and campus trends, once they ship, push at most five times a day per person; the
+rest stay in the in-app notifications. Nothing that exists today is counted. Engagement WP-8
+([engagement](docs/wiki/engagement.md#wp-8---the-daily-cap-built)).
+
+### Added - friends' activity, and a switch to share yours or not
+
+When someone you follow reacts to or comments on a post you already see, you are told once ("X a
+réagi à une publication"), within the daily cap; "Partager mon activité" in Settings turns yours off.
+Engagement WP-9 ([engagement](docs/wiki/engagement.md#wp-9---friends-activity-built)).
+
+### Changed - every vertical video of 90 s or less is a CanaReel, and a CanaReel lives a year
+
+Owner, 2026-11-09: a vertical (4:5 or taller) video of 90 s or less imported into a post composer is published as a CanaReel, the server refuses a declared reel that is not vertical, and reels live 365 days instead of 30 - the ones already published moved with migration 158, live replays untouched ([reels](docs/wiki/services/reels.md#the-rule-what-is-a-canareel-owner-2026-11-09)).
+
+### Changed - the feed's post card follows the reference's chrome
+
+Header 68 -> 60 dp with a 40 dp avatar, no clock glyph, text inset 37 -> 32 dp, body at the 15/20 token line height and full contrast, card gap 24 -> 12 dp, the card at the 12 px corner instead of the 18 px bubble tier, "Epingle" a muted word on the time line instead of an amber sticker, and the 32 dp band above the feed tabs gone on a phone ([design-reference](docs/wiki/frontend/design-reference.md#the-feed-card-brought-to-the-reference-2026-11-09)).
+
+### Changed - the feed tabs are Associations, Pour toi and Campus; Pour toi and CanaReels are ranked
+
+Suivis became Pour toi (what followed people write or repost, and suggested posts, ranked by
+freshness and popularity, paged by a bounded server snapshot that answers 410 when gone) and "Mon
+espace" became Campus (chronological, nothing inserted); installed clients see no change
+([posts](docs/wiki/frontend/modules/posts.md#pour-toi---the-ranked-tab-owner-2026-11-10)).
+
+### Changed - a file attachment in a thread is a compact row instead of a bordered card
+
+Two files in a row took 150 dp; the row now drops its border and shrinks its tile, about 56 dp each ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - the Suivre chip inside the card, the photo badge above the ring, a plain communities header
+
+The "Suivre" chip sits in the association card's footer so a row of cards keeps one height, the profile photo badge stacks above the story ring, and the communities name header is a plain panel header (no box cutting the rounded corner, the 16px gutter kept on a phone).
+
+### Removed - four shims for builds older than 1.6.3, retired by the 1.6.6 floor
+
+With `minClientVersion` raised to `1.6.6` on both estates (owner, 2026-11-08), social-service drops
+the whole-table `GET associations/spaces/audiences`, the body-less pin and unpin (`spaceId` is now
+required), the drop of an unchanged `parentAssociationId` resent by an old list form, and the
+`EDIT_PROFILE` added to an old admin preset; five "nothing to remove" entries close with it, and the
+CanaReels modes stay, owed their collapse ([legacy-compatibility](docs/wiki/legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08)).
+
+### Added - "Suivre en retour" after accepting a follow request
+
+An accepted request keeps its row and offers the follow in the other direction (a request, as every personal account is private), unless the reader already follows, has asked, or a block stands between the two ([engagement](docs/wiki/engagement.md#wp-2---suivre-everywhere-built)).
+
+### Fixed - a draft form's association can be changed after its first autosave
+
+The first autosave shut the association picker and the server refused any other value on an edit; a draft now moves when its actor is a member of both associations, applied at its publication, while a published form keeps its association and says why ([forms](docs/wiki/frontend/modules/forms.md#a-drafts-association-may-change-a-published-forms-may-not-owner-2026-11-09)).
+
+### Fixed - a photo on a form question is shown whole, and its typed line breaks are kept
+
+A photo attached to a form question (product grids and the builder thumbnail included) is no longer cropped, and line breaks typed in a question text or description are shown, with the same `whitespace-pre-line` the rest of the app uses.
+
+### Fixed - Pour toi showed the old Suivis rows (a followed association's post) after the update
+
+The first page of a cold start asked Pour toi as the old `followed` list before `/api/version`
+answered, and kept that answer on the device as Pour toi; a ranked list now waits for the estate's
+answer. If the check ends with no answer, Pour toi is still asked as `foryou` (an older estate
+refuses it, shown as an error, never as other rows); only an estate that says `rankedFeeds: false`
+is asked `followed`, and its pages are then kept like any other. A stored copy of the old rows on a
+ranked estate is deleted alone, not the other tabs' pages
+([legacy-compatibility](docs/wiki/legacy-compatibility.md#no-date-yet---a-feed-client-newer-than-its-server---rankedfeeds-2026-11-10)).
+
+### Fixed - a failed membership probe is retried instead of denying the BDE flags for the whole session
+
+The probe behind `/admin` no longer caches a failure as "belongs to nothing": it is a failed state, logged at WARN with its status, and retried once on the next reconnect or navigation. The welcome-tour test no longer re-evaluates the icon barrel per case (430 ms to 75 ms), so it stops timing out under a full parallel run.
+
+### Fixed - parallel local runs of the social-service integration specs no longer lose a constraint to a sibling spec
+
+TypeORM installed `btree_gist` and `uuid-ossp` inside whichever spec's throwaway schema met them first, and that spec's `DROP SCHEMA ... CASCADE` then removed `bookings_live_no_overlap` and the UUID defaults from every other spec's schema; a one-time jest `globalSetup` now puts both in `public`, as production has them. Test harness only: production is untouched ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - on the iPhone, the selected feed tab showed an empty yellow pill with no label
+
+The sliding pill was drawn over its own label by iOS WebKit once the row overflowed; the labels now sit above it by an explicit stacking order and the pill no longer lives on a 3D layer ([design-reference](docs/wiki/frontend/design-reference.md#one-accent-four-tokens-and-a-guard-that-counts-the-amber-scale-owner-2026-11-09)).
+
+### Added - live replays: the client (WP-R4, WP-R5), inert while the switch is off
+
+A finished live is a CanaReel page and a feed card: played from its own segments in the shared player (`ReplayPlayer`, seekable, with the time left drawn on a replay only, from the server's clock on the card too, and the live's last preview as its cover), saved segment by segment as one MP4 (a second part when the camera changed), no repost; the client asks `withReplays` only when `/api/version` publishes `liveReplays.mode = on`, and the broadcaster's texts name the replay only then. [live-replays](docs/wiki/live-replays.md#wp-r4-and-wp-r5-as-built).
+
+### Added - live replays: the server (WP-R2), inert while the switch is off
+
+A live started with `live_replays_mode = on` keeps its last 3 hours and, once ended and drained, becomes a three-day `kind = 'replay'` post served by `GET /api/lives/:id/replay` to the live's audience and to clients that send `withReplays`; never reposted, ended at once by a cut, held under `LIVE_REPLAY_TOTAL_MAX_GB` (20 GB) with a `[LIVE_REPLAY_CAP]` WARN and an admin storage line. [live-replays](docs/wiki/live-replays.md#wp-r2-as-built).
+
+### Added - live replays: the switch and the schema (WP-R1), off everywhere
+
+`platform_config.live_replays_mode` (core 021, moved at `/admin/platform`, published as `liveReplays.mode`) is fixed on each live at its start (`lives."keepsReplay"`, social 156, with the `replay` post shape); the `[LIVE]` end lines now carry the live's duration and bytes. Nothing is kept yet: the design and the owner's decisions of 2026-11-09 are in [live-replays](docs/wiki/live-replays.md).
+
+### Changed - Live segments are stored on a volume no backup reads
+
+media-service keeps live segments and posters on a `live_segments` volume of its own instead of Garage, so a live replay is never in a backup (owner decision D2), and the object store refuses a `live/` key ([live-replays](docs/wiki/live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)).
+
+### Fixed - a live viewer behind a broadcaster on a bad link replayed the last seconds at every late segment
+
+The viewer re-anchored a short buffer, and the end of a stall, BEHIND its playhead. It now never seeks backward: it holds three segments of margin, plays slightly slower to rebuild it (faster when far behind), and shows the kit's spinner over the last frame only when the buffer is really dry ([live](docs/wiki/frontend/modules/live.md#the-margin-the-pace-and-the-last-resort-owner-2026-11-09)).
+
+### Changed - small labels, badges and table headers are sentence case, without letter-spacing
+
+The audit's item M3: 76 components stop forcing capitals and wide tracking, and a guard test (`uppercaseTracking.test.ts`) keeps them out; two abbreviation cases are allowlisted ([design-reference](docs/wiki/frontend/design-reference.md#small-labels-are-sentence-case-with-no-letter-spacing-2026-11-09-audit-item-m3)).
+
+The guard now also reads CSS (`text-transform: uppercase`, a letter-spacing of 0.05em or more, in every `.css` and `<style>`), which found the floating day pill in `app.css`; it is sentence case like the inline separator. The attachment file-type badge keeps its capitals as an allowlisted abbreviation.
+
+### Fixed - the media-service test suite no longer deletes committed files
+
+Each media-service test file now runs in a temporary working directory of its own (`apps/media-service/jest.temp-cwd.cjs`), so a run no longer rewrites the `chunks_temp` directory that was committed under the package; that directory and the service's other runtime directories are now ignored, not tracked. See [media-service](docs/wiki/services/media-service.md#the-test-suite-runs-each-file-in-a-temporary-directory-2026-11-09).
+
+### Added - mention someone in a live's chat
+
+Typing `@` in a live's chat suggests the people the chat has shown, then anyone allowed to see that live; the mention is a tappable chip, the mentioned viewer's line is highlighted, and they get one push ("X vous a mentionné dans un live") through their mention switch, never a person who cannot see the live. Also fixes the roster picker looping on its first `@` when mounted ([lives](docs/wiki/services/lives.md#mentions-in-the-live-chat-owner-2026-11-09)).
+
+### Fixed - a long press on a message opens the menu only, and its actions fit on one row of icons
+
+On a phone, the text inside a bubble was `select-text` and overrode the bubble's `select-none`, so iOS selected a word and showed its handles next to the action sheet; on a coarse pointer the text is now neither selectable nor given a callout ("Copier" stays in the sheet). The sheet's actions are icons on ONE row (name kept as aria-label and tooltip) instead of wrapping onto a second one ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a salon post refused by its write policy now says who may write, and the composer follows role edits
+
+A moderator whose role grants no moderation read a generic "no permission" in an "admins and moderators" salon, with nothing logged; the refusal is now typed and logged, a role edit redraws every salon composer, and the access panel names the roles the policy admits ([social-service](docs/wiki/services/social-service.md)).
+
+### Fixed - a live or a reel recorded on a phone no longer plays out of one side only
+
+The microphone is now asked for ONE channel (a two-channel answer with an empty side was written as a stereo file), and every capture logs the layout it got ([live](docs/wiki/frontend/modules/live.md#audio-channels-the-sound-that-plays-out-of-one-side)).
+
+### Fixed - on "Mes formulaires", a card's seven actions sit on one row and its description shows as plain text
+
+On a phone the last action (delete) wrapped alone onto a second row; the actions now share the card's width equally, each 44px tall and named by aria-label and tooltip. The one-line description no longer prints the markdown markers it was written with ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Fixed
+
+- The icon buttons of "Mes formulaires" were squeezed to their glyph on a wide screen; they keep their square box again.
+
+### Fixed - a member added to a group receives the nicknames set before them, whichever path delivered their Welcome
+
+"Ajouter" and the owed-Welcome drain delivered Welcomes and sent no join push, the one bundle a nickname register is taken from; the push now follows every delivered Welcome, once, addressed and carrying none of the past - to a device connected at that moment only: a newcomer offline at the delivery still gets nothing, and that is [its own entry](docs/wiki/backlog.d/p2-an-offline-newcomer-receives-no-join-push.md) ([defect](docs/wiki/backlog.d/p2-a-member-added-after-a-nickname-does-not-receive-it.md), [chat](docs/wiki/frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)).
+
+### Fixed - messages received as notifications now show at the first open of the conversation
+
+An entry follows every change of the thread's extent, the follow of a new message is instant, the entry's timed re-pins are gone, a preview upgrade no longer writes a stale conversation back (nor over the stored copy of the preview), a growth measured before the observer followed it no longer drops the stick-to-bottom flag, a switch retires an older-history load in flight, and each entry writes one `[CHAT_VIEW] entry settled` line to the exported log ([chat](docs/wiki/frontend/modules/chat.md#rows-received-as-notifications-appeared-only-at-the-second-open-2026-11-09)).
+
+### Changed - one yellow accent for bars, tabs, buttons and selected states, and a darker shade of it for links and counters
+
+The Tailwind amber scale and the `cn-yellow` utilities are replaced by four tokens (`accent`, `on-accent`, `accent-text`, `accent-icon`), measured at WCAG AA in light and dark; amber survives only as the warning colour, and a test counts what remains ([design-reference](docs/wiki/frontend/design-reference.md#one-accent-four-tokens-and-a-guard-that-counts-the-amber-scale-owner-2026-11-09)).
+
+Review fixes: warnings keep the warning colour and an icon (toast, sign-in maintenance notice, admin database note, shop hints), warning text uses a darker `amber-warn-text` token that reaches 4.5:1 on its own tints, the selected feed label turns ink only once the pill is under it, and every solid `bg-accent` carries `text-on-accent` (guarded).
+
+### Changed - the cash / in-person payment method now reads "paiement sur place"
+
+"Paiement en especes", "Paiement en direct" and the other labels naming that method read "sur place" (on-site payment in English) in the forms, purchases, statements, exports, privacy page and user guide. Message keys and code identifiers are unchanged.
+
+### Fixed - "1 questions" and its siblings: counts of one now read in the singular, in French and English
+
+A post card for a form with a single question said "(1 questions)"; the message had no singular. It, the form question count, and fifteen sibling messages (device connections, reactions, PDF pages, audience people, free slots, the admin storage lines) are now plural-aware Paraglide messages, so one (and, in French, zero) takes the singular. `i18n.pluralGuard.test.ts` fails on a new bare `{count} noun` unless it is listed with the reason its count cannot be one.
+
+### Changed - the portail lists only the associations of its space
+
+`GET /api/public/associations` and `.../slug/:slug` take `?space=<formation>:<campus>` and answer only the associations whose audience reaches that space - its carte's set, plus its archived ones; without it the list is complete, as Canari's own pages read it ([anonymous surface](docs/wiki/anonymous-surface.md)).
+
+### Fixed - dropping a file or an image into the post composer attaches it
+
+The whole post sheet is now one drop zone with a visible drop state (padding, media strip and toolbar used to let the browser handle the drop), the announced drop effect follows the source (forcing `copy` made the browser refuse an image dragged from a web page), and an image with no file is fetched when its host allows it, else a toast says why ([chat](docs/wiki/frontend/modules/chat.md)); browser reading owed.
+
+### Changed - on a post, one tap on the reaction button likes it and a long press opens the picker
+
+A tap on your own reaction takes it back; a hold while reacted changes it. The picker stays reachable without a gesture (context menu, ArrowUp, a screen-reader button), a scroll never opens it, and the double-tap like is unchanged ([posts](docs/wiki/frontend/modules/posts.md#one-tap-likes-a-hold-chooses-2026-11-09)). Reading owed on a phone.
+
+### Fixed - the stored Pour toi copy of an estate without ranked lists is no longer deleted at the next cold start
+
+The page now records the shape it was served in, so a cold start (capability unknown) still draws it and deletes it only once the estate is known to serve ranked lists; the old Suivis rows alpha.6 stored without a marker are still cleaned. See [feedStore](frontend/src/lib/posts/feedStore.ts).
+
+### Changed
+
+- The invitation to add a profile photo (and its reminder) is never shown in September: new students have no photo in MiGallery before October.
+
+### Fixed - a CanaReel's video fills its frame instead of floating in it with black bands
+
+The reel viewer's `<video>` had no size of its own and was drawn at the clip's intrinsic size, so any clip smaller than its frame (a 720p clip on a wide desktop window, a near-square clip) showed bands on all four sides. It now takes the whole frame, `cover` unless the clip is clearly another shape (more than 20 % to crop). Rule and measurements: [reels](docs/wiki/frontend/modules/reels.md#a-reels-video-fills-its-frame-owner-2026-11-09).
+
+### Changed - the 1.6.9 store notes and the owner's decisions of 2026-11-09/10
+
+The 1.6.9 whats-new text, the lead's store and release authority, and the live replay, CanaReel and age-rating decisions are recorded ([store-listings](docs/wiki/store-listings.md), [live replays](docs/wiki/backlog.d/live-replays-kept-three-days-as-canareels.md)).
+
+### Added - a post can be answered with an imported image, and a comment's picture is validated on the server
+
+An image button beside GIF in the comment box picks one photo from the library (compressed, encrypted and uploaded before the comment can be sent, with a retry when the upload fails), and the server now refuses a comment picture that is not a bounded image ([posts](docs/wiki/frontend/modules/posts.md#reply-with-an-imported-image-2026-11-09)).
+
+### Security - RUSTSEC-2026-0459 (bundled SQLite, crafted `-wal`) ignored in `frontend/src-tauri`, time-boxed to 2027-01-31
+
+No released sqlx accepts the patched libsqlite3-sys 0.39, and the vulnerable path needs a crafted database pair inside the app sandbox; the reachability argument and the lift condition are in [cicd](docs/wiki/cicd.md#the-rust-ignores-live-in-cargoaudittoml-and-retire-themselves-too-2026-10-24) and [backlog](docs/wiki/backlog.d/p2-sqlite-bundled-needs-sqlx-release.md).
+
+### Changed - a salon open does less work per message bubble and per day separator
+
+Each bubble built its own `Intl.Segmenter` to decide whether it was an emoji-only message, and mounted the media renderer even for plain text; each day separator built three `Intl.DateTimeFormat`s on every regrouping of the conversation. One segmenter and a scan bounded by five graphemes, the renderer only for an attachment, and one set of formatters per pass ([community-open-budget](docs/wiki/frontend/community-open-budget.md#per-bubble-and-per-day-work-cut-2026-11-08)).
+
+### Added - the camera and the live broadcaster turn with the phone, and a double tap flips the broadcaster's lens
+
+The camera (chats, posts, CanaReels) and the live broadcaster follow the phone under its rotation lock, a rotate button forces landscape, a take or a live keeps the orientation it started in, a landscape reel is filmed 16:9 and letterboxed in the pager, and a double tap on the broadcaster's preview switches the lens as the CanaReels camera does ([screen-orientation](docs/wiki/frontend/screen-orientation.md)).
+
+### Added - the native half of rotation on the video and camera screens
+
+Android and iOS can now turn the app when a screen asks (portrait, auto under the rotation lock, or landscape forced by a button), through one store on the page; nothing asks yet, so the app stays portrait ([screen-orientation](docs/wiki/frontend/screen-orientation.md)).
+
+### Changed - the banners are one short line of 32 px
+
+The offline strip says "Hors connexion" and nothing else, the test-environment marker is a 24 px strip, and every banner (maintenance, MLS error, post being sent) shares one height token and one line; the explanatory sentence moved off the screen. See [design-reference](docs/wiki/frontend/design-reference.md#banners-are-one-line-and-one-height-owner-2026-11-09).
+
+The maintenance banner keeps the admin's whole message in its tooltip and in a screen-reader-only copy, and an icon-only `.banner-action` button now has a 44 x 44 hit area.
+
+### Changed - the store texts and the 1.6.9 notes name the three feed tabs (Associations, Pour toi, Campus)
+
+See [store-listings](docs/wiki/store-listings.md).
+
+### Changed - the store listing texts are redrafted to match production `1.6.8`, and the CI guard now lets calls through
+
+Both languages keep "Le réseau des Marteaux" as subtitle, present Canari as the student-life app with encryption named in the short text, advertise calls, lives, bookings and the bell, and state, as plain features, the associations' registration forms with online or cash payment, cotisations and shop (the owner's word of 2026-11-09, no provider named, no security claim, no ticketing); the owner's declarations still to fix in the consoles are listed ([store-listings](docs/wiki/store-listings.md#81b-the-declarations-only-the-owner-can-change-found-2026-11-09-read-from-the-public-pages)). Nothing is uploaded.
+
+### Fixed - the store screenshot tools pass the tools lint gate
+
+Four lint warnings in `tools/store-screenshots` failed `make test-harness` on every pull request that runs it; they are removed, with no change in behaviour ([store-listings](docs/wiki/store-listings.md)).
+
+### Added - reproducible store screenshots: the real app on dev, rendered at the store sizes and composed by script
+
+`tools/store-screenshots/` captures six routes in French and English on the dev estate (light theme, exact sizes, no alpha), composes them on the yellow field with a Fredoka caption, and refuses a set whose demo content is not on screen ([store-listings](docs/wiki/store-listings.md#9-the-reproducible-screenshot-pipeline-decided-2026-11-09)).
+
+### Fixed
+
+- The follow-suggestion row kept its first card flush against the left edge once swiped back: snapping ignored the row's padding, so it now carries a matching scroll padding.
+
+### Fixed - on a profile, the action row no longer covers a wrapped name
+
+The header is one layout for someone else's profile and your own: the name takes its own column and wraps there, the actions drop below it when there is no room beside it, the bell is an icon opening its level menu, report and block moved into a "..." menu, and the formation and campus chips never wrap inside their pills ([design-reference](docs/wiki/frontend/design-reference.md#the-profile-header-holds-its-name-2026-11-09)).
+
+### Added - a post or CanaReel sent into a chat shows a preview, like Instagram
+
+The bubble now carries the author, the first picture (a poster and play disc for a video, a tall card for a reel) and the caption, and says "Publication indisponible" when the reader may not see it ([sharing](docs/wiki/frontend/sharing.md#the-shared-post-bubble-owner-2026-11-09-comme-instagram)).
+
+### Changed - the thread's separators and system lines are plain muted text
+
+The thread's day and hour separators and its system lines (device added, call ended) are plain muted text, the conversation list no longer prefixes a system preview with "[Info]", and Settings no longer prints the raw device id ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Fixed - three page-tour defects: /events, the bookings disclosure, the shop's no-image card
+
+`/events` was a static empty stub contradicting the calendar and now leads to `/calendar`; the bookings page's past-bookings disclosure uses the app's rotating chevron and its notification line sits in a labelled card; a shop card with no image shows a tinted placeholder tile instead of a lone icon.
+
+### Fixed
+
+- The feed switch no longer clips "Mon espace" on a narrow phone, agenda chips wrap at word boundaries and a pending one is readable, "Ouvrir la file" stays on one line, and the error page shows a localized message instead of the raw English one.
+
+### Fixed - the upstream monitor reported three names "down" for three days while they were up
+
+Cloudflare challenged every reading from GitHub's runners (`403`, `cf-mitigated: challenge`). The monitor no longer probes those three names from a runner (one declared list, with the reason), keeps probing every other name, reports a refused reading as its own blindness rather than an outage, and a push to `main` reports a monitor that stopped reading; the loss of outside watching on those names is filed as a gap ([upstream-reachability](docs/wiki/infrastructure/upstream-reachability.md#when-the-monitor-is-refused)).
+
+### Changed - the play button is a glass triangle with no disc
+
+The paused video's play button, the gesture feedback's play and pause, and the poster before a first frame are drawn as the shape itself in Liquid Glass (blur and dark tint clipped to a rounded triangle or two bars, a light rim, a soft shadow); `VideoPlayDisc` becomes `VideoPlayGlyph`, the hit target stays a 64 px square. WebKit's blur through a clipped shape is not verified ([video-player](docs/wiki/frontend/modules/video-player.md#the-glass-play-glyph---a-triangle-with-no-disc-owner-2026-11-09)).
+
+### Changed - feed and conversation videos are the shared player: a tap is the sound, an expand chip opens the viewer
+
+`InlineVideo` is folded into `VideoPlayer` (`feed` and `chat` variants) and deleted: the glass speaker and expand chips, the glass play disc in a conversation, a hold pauses (and over a chat video opens no action sheet: a chip does), a pause the reader makes on the feed is no longer replayed by it ([video-player](docs/wiki/frontend/modules/video-player.md#the-feed-and-a-conversation-on-the-kit-step-d)).
+
+### Added - the video player's glass controls kit, its gestures, and a remembered sound
+
+One speaker, play disc, expand chip, scrubber and gesture glyph for every video surface, in Liquid Glass with timer-free fallbacks (flat on Android until measured); tap = sound, hold = pause, double tap = like where likes exist; the video sound is now remembered per device, never audible on the first run ([video-player](docs/wiki/frontend/modules/video-player.md)).
+
+### Changed - the full-screen video viewer wears the glass bar; a tap is the sound, a hold pauses
+
+The viewer's controls are one floating Liquid Glass pill (unmounted when faded) and a glass play disc instead of the amber sticker; a tap toggles the sound and brings the bar up, a press held pauses until released. The Mi 9T measurement protocol that decides Android's glass is written ([video-player](docs/wiki/frontend/modules/video-player.md#the-lightbox-on-the-kit-step-b)).
+
+### Changed - the live viewer on the shared player kit; a refused audible start is no longer remembered as "off"
+
+The live's speaker is the kit's and a tap on the picture is the sound (no hold: a live does not pause). An engine refusing an audible start silences the session without overwriting the reader's remembered choice ([video-player](docs/wiki/frontend/modules/video-player.md#the-live-viewer-on-the-kit-step-e)).
+
+### Changed - CanaReels: a tap is the sound, a hold pauses, and the rail's speaker is the player's
+
+A reel's tap toggles the remembered sound (with its glyph) instead of pausing; a press held pauses until released; a double-tap like leaves the sound as it was. The rail's sound button is the shared player kit's speaker ([video-player](docs/wiki/frontend/modules/video-player.md)).
+
+### Fixed - the full-screen viewer's header leaves with the video's controls
+
+The back arrow and the time stayed on screen while a video played: the viewer's bars hid only on its own tap while the player's glass bar faded on a timer. They now hide and return together, and a mouse over the header or a key focus on Back raises the controls ([video-player](docs/wiki/frontend/modules/video-player.md#the-lightbox-on-the-kit-step-b)).
+
+### Fixed - the full-screen viewer of a streaming video plays from its head instead of waiting for the whole file
+
+The viewer opened from a feed video took a fork of the card's stream (its own MediaSource over the same segments, paced 30 s ahead) rather than lifting the pacing and waiting for the last segment: a 33 MB video started after 26 s, now after its head, and no segment is fetched twice ([reels](docs/wiki/frontend/modules/reels.md)).
+
 ## [1.6.8] - 2026-11-08
 
 ### Added - a bell on an association and on a followed person: posts and lives, lives only, or nothing

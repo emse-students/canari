@@ -1,3 +1,0 @@
-### Changed - feed media runs edge to edge in the card, and the dark post card is a step lighter instead of outlined
-
-Photos and videos in a post fill the card's width with square corners, 8 px under the text and none above the action bar (the inset of 2026-10-01 existed for a corner the card no longer has). The dark card's 15 % outline is gone; its fill is a new token one step lighter than the page, so it still stands off on an OLED panel. Measurements and the revisited decisions: [design-reference](docs/wiki/frontend/design-reference.md#22-the-post-card---facebooks-chrome-measured-on-the-same-phone-and-the-162px-it-gave-back).
