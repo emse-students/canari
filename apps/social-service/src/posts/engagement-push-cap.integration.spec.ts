@@ -14,6 +14,7 @@ import { Logger } from '@nestjs/common';
 import { Client, Pool } from 'pg';
 import {
   CAMPUS_TREND_NOTIFICATION,
+  CAMPUS_TREND_WEEKS_KEPT,
   ENGAGEMENT_DAILY_PUSH_CAP,
   claimEngagementPushes,
   pruneEngagementPushDays,
@@ -140,6 +141,31 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     const erase = ERASURE_STATEMENTS.find((s) => s.label === 'engagement_push_days')!;
     await q(erase.sql, ['today']);
     expect(await counter('today')).toBeNull();
+  });
+
+  it('the GC keeps a weekly trend counter 14 days after its week ENDS, not after it starts; the erasure takes a reader', async () => {
+    expect(CAMPUS_TREND_WEEKS_KEPT).toBe(14);
+    // `week` is the week's Monday, so its week ends on `week + 7`: a week that started 21 days ago
+    // ended 14 days ago and goes; one that started 20 days ago ended 13 days ago and stays, as does
+    // the current week.
+    await q(
+      `INSERT INTO campus_trend_weeks ("userId", week, told, "lastDay") VALUES
+         ('gone', (now() AT TIME ZONE 'Europe/Paris')::date - 21, 2, (now() AT TIME ZONE 'Europe/Paris')::date - 20),
+         ('kept', (now() AT TIME ZONE 'Europe/Paris')::date - 20, 1, (now() AT TIME ZONE 'Europe/Paris')::date - 20),
+         ('now', (now() AT TIME ZONE 'Europe/Paris')::date, 1, (now() AT TIME ZONE 'Europe/Paris')::date)`
+    );
+    try {
+      expect(await pruneEngagementPushDays(manager)).toBe(1);
+      const left = await q(`SELECT "userId" FROM campus_trend_weeks ORDER BY 1`);
+      expect(left.rows.map((r) => r.userId)).toEqual(['kept', 'now']);
+
+      const erase = ERASURE_STATEMENTS.find((s) => s.label === 'campus_trend_weeks')!;
+      await q(erase.sql, ['now']);
+      const after = await q(`SELECT "userId" FROM campus_trend_weeks ORDER BY 1`);
+      expect(after.rows.map((r) => r.userId)).toEqual(['kept']);
+    } finally {
+      await q(`DELETE FROM campus_trend_weeks`);
+    }
   });
 
   describe('the seams: the fan-out, the singular notice, and the interactions', () => {

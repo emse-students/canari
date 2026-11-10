@@ -74,6 +74,7 @@ import {
 } from '../spaces/reader-spaces';
 import { isBlockedBetween } from '../common/user-blocks';
 import { acceptedFollowSql } from '../follows/follow-status';
+import { TREND_LIKES_SQL } from './engagement-sql';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 import { birthdayDateVisibleToSql } from '../birthdays/birthday-sql';
 import { BIRTHDAY_NOTIFICATION } from '../birthdays/birthday-notification';
@@ -975,11 +976,14 @@ export class PostNotificationsService {
   /**
    * A CAMPUS TREND'S NAMED ACCOUNT, RESOLVED AT THE READ (review of #3316): the row keeps only the
    * account's id and the count (`meta.likedBy = {userId, others}`), and the name is served only while
-   * the naming still holds - the account exists, no block stands either way with the reader, the
-   * account still shares its activity, the reader still follows it (accepted), and it is not the
-   * post's author. Served as `{name, others}` (what the client draws); dropped otherwise, so an
-   * erasure, a block, an unfollow or the share switch turned off takes the name out of rows already
-   * written. One statement for the page; a page with no named trend reads nothing.
+   * the naming still holds, every condition the send path (`campusTrendNamedSql`) asked: the account
+   * exists, still LIKES the post (the same list, `TREND_LIKES_SQL`), no block stands either way with
+   * the reader, the account still shares its activity, the reader still follows it (accepted), it is
+   * not the post's author, both stand on the same side of the review cohort, and the post's reactors
+   * are not withheld from the reader. Served as `{name, others}` (what the client draws); dropped
+   * otherwise, so an erasure, a removed like, a block, an unfollow or the share switch turned off
+   * takes the name out of rows already written. One statement for the page; a page with no named
+   * trend reads nothing.
    */
   private async resolveTrendLikedBy(
     rows: { id: string; type: string; meta?: Record<string, unknown> | null }[]
@@ -1002,6 +1006,9 @@ export class PostNotificationsService {
          JOIN posts p ON p.id::text = n."postId"
         WHERE n.id = ANY($1::uuid[])
           AND u.id <> p."authorId"
+          AND p.reactions ->> u.id IN (${TREND_LIKES_SQL})
+          AND ${sameSideOfReviewCohortSql('n."recipientId"', 'u.id')}
+          AND NOT ${commentsWithheldFromViewerSql('p', 'n."recipientId"')}
           AND NOT EXISTS (SELECT 1 FROM user_activity_settings s
                            WHERE s."userId" = u.id AND NOT s."shareActivity")
           AND NOT EXISTS (SELECT 1 FROM user_blocks b

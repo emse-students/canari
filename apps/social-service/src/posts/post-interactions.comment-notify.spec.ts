@@ -282,6 +282,9 @@ describe('PostInteractionsService.addReaction across the review cohort', () => {
         {
           findOne: jest.fn(() => Promise.resolve(post)),
           save: jest.fn((p: unknown) => Promise.resolve(p)),
+          // The trend's evaluation after a reaction: no row, so nothing announced (its own
+          // behaviour is proven in `campus-trend.integration.spec.ts`).
+          manager: { query: jest.fn(() => Promise.resolve([])) },
         } as unknown as Repository<Post>,
         notifications as unknown as PostNotificationsService,
         push as unknown as PushService,

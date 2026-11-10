@@ -33,6 +33,8 @@ describe('PostInteractionsService - comment identity', () => {
       mentionRecipientsOf: jest.fn((_p: unknown, _w: string, ids: string[]) =>
         Promise.resolve(ids)
       ),
+      // The daily cap, proven in `engagement-push-cap.integration.spec.ts`: open here.
+      withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
     };
     const push = { notifyContent: jest.fn(() => Promise.resolve()) };
     const query = jest.fn((sql: string) =>

@@ -599,11 +599,30 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
       expect(byReader.get('s2')?.count).toBeUndefined();
     });
 
-    it('the bell serves the name only while the naming holds: a block, the share switch, an unfollow, an erasure', async () => {
+    it('the bell serves the name only while the naming holds: the like, a block, the share switch, an unfollow, the cohort, an erasure', async () => {
       await follow('s1', 'e0');
       await post(P(40), 'a', { reactions: { ...likers(T), e0: "J'aime" } });
       expect(await announceCampusTrend({ manager, notifications }, P(40))).toBe(4);
       const named = { likedBy: { name: 'Léa Martin', others: T } };
+      expect((await served(P(40))).s1).toEqual(named);
+      // The like taken back, or turned into a reaction that is not a like.
+      await q(`UPDATE posts SET reactions = reactions - 'e0' WHERE id = $1`, [P(40)]);
+      expect((await served(P(40))).s1).toEqual({});
+      await q(`UPDATE posts SET reactions = reactions || '{"e0": "Rire"}' WHERE id = $1`, [P(40)]);
+      expect((await served(P(40))).s1).toEqual({});
+      await q(`UPDATE posts SET reactions = reactions || '{"e0": "J''adore"}' WHERE id = $1`, [
+        P(40),
+      ]);
+      expect((await served(P(40))).s1).toEqual(named);
+      // The named account now on the other side of the review cohort.
+      const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = 'e0';
+      try {
+        expect((await served(P(40))).s1).toEqual({});
+      } finally {
+        if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+      }
       expect((await served(P(40))).s1).toEqual(named);
       // A block either way.
       await q(`INSERT INTO user_blocks VALUES ('s1', 'e0')`);
@@ -630,6 +649,33 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
       );
       expect(stored.rows).toEqual([{ meta: {} }]);
       expect((await served(P(40))).s1).toEqual({});
+    });
+
+    it("the bell drops the name once the post's reactors are withheld from the reader (grant only)", async () => {
+      // g (Gardanne) is told of EG's post, liked by e0 whom g follows; Gardanne's e0, e1 and e2
+      // are told too.
+      await follow('g', 'e0');
+      try {
+        await post(P(47), 'e3', { association: EG, reactions: { ...likers(T), e0: "J'aime" } });
+        expect(await announceCampusTrend({ manager, notifications }, P(47))).toBe(4);
+        expect(await told(P(47))).toEqual(['e0', 'e1', 'e2', 'g']);
+        const named = { likedBy: { name: 'Léa Martin', others: T } };
+        expect((await served(P(47))).g).toEqual(named);
+        // g moves to Saint-Etienne and reaches Gardanne through a read grant only, with "voit les
+        // commentaires" off: the post's people are withheld from g, so is the name.
+        await q(`UPDATE users SET campus = $1 WHERE id = 'g'`, [SE]);
+        await q(
+          `INSERT INTO read_grants (user_id, campus, formation, granted_by) VALUES ('g', $1, NULL, 'admin')`,
+          [GA]
+        );
+        expect((await served(P(47))).g).toEqual({});
+      } finally {
+        await q(`DELETE FROM read_grants WHERE user_id = 'g'`);
+        await q(`UPDATE users SET campus = $1 WHERE id = 'g'`, [GA]);
+        await q(
+          `DELETE FROM user_follows WHERE "followerUserId" = 'g' AND "followedUserId" = 'e0'`
+        );
+      }
     });
 
     it('never names the author, an anonymous one included', async () => {

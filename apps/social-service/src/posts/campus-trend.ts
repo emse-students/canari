@@ -10,7 +10,7 @@ import {
   postVisibleToUserSql,
   sameSideOfReviewCohortSql,
 } from '../spaces/reader-spaces';
-import { engagedAccountsSql } from './engagement-sql';
+import { engagedAccountsSql, TREND_LIKES_SQL as LIKES_SQL } from './engagement-sql';
 import { CAMPUS_TREND_NOTIFICATION } from './engagement-push-cap';
 import type { PostNotificationsService } from './post-notifications.service';
 import { SYSTEM_ACTOR_ID } from './post-notifications.service';
@@ -50,16 +50,6 @@ export const TREND_THRESHOLD = 10;
  * `campus_trend_weeks` row (migration 163) - durable state, no clock heuristic.
  */
 export const TREND_WEEKLY_CAP = 2;
-
-/**
- * THE REACTIONS A TREND MAY SAY "AIMÉE" OF: the two whose meaning is liking (the lead's reading of
- * the owner's sentence, 2026-11-10). A followed account is named only for one of these, and
- * "et 9 autres" counts only these - a "Rire" or a "Marteau" is not a like.
- */
-export const TREND_LIKE_REACTIONS = ["J'aime", "J'adore"] as const;
-
-/** {@link TREND_LIKE_REACTIONS} as a SQL list, quotes doubled. */
-const LIKES_SQL = TREND_LIKE_REACTIONS.map((r) => `'${r.replace(/'/g, "''")}'`).join(', ');
 
 /** How long after its `publishedAt` a post may still take off: the rule's "a short time". */
 export const TREND_WINDOW_HOURS = 24;

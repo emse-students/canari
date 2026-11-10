@@ -202,10 +202,15 @@ ON CONFLICT ("userId", day) DO UPDATE SET pushed = engagement_push_days.pushed +
   WHERE engagement_push_days.pushed < $2::int
 RETURNING "userId"`;
 
+/** Days a `campus_trend_weeks` row is kept after its week ends (register C7, the privacy policy). */
+export const CAMPUS_TREND_WEEKS_KEPT = 14;
+
 /**
  * The daily GC's statement, counted: the daily push counters older than
- * {@link ENGAGEMENT_PUSH_DAYS_KEPT} days, and the weekly campus-trend counters (migration 163) of a
- * week that started more than two weeks ago - the trend's week claim reads only the current week.
+ * {@link ENGAGEMENT_PUSH_DAYS_KEPT} days, and the weekly campus-trend counters (migration 163)
+ * {@link CAMPUS_TREND_WEEKS_KEPT} days after their week ENDED (`week` is its Monday, so the week ends
+ * on `week + 7`, and the row goes on day `week + 7 + 14`) - the trend's week claim reads only the
+ * current week.
  */
 export const PRUNE_ENGAGEMENT_PUSH_DAYS_SQL = `WITH gone AS (
   DELETE FROM engagement_push_days
@@ -213,7 +218,7 @@ export const PRUNE_ENGAGEMENT_PUSH_DAYS_SQL = `WITH gone AS (
   RETURNING 1),
 gone_weeks AS (
   DELETE FROM campus_trend_weeks
-   WHERE week < (now() AT TIME ZONE 'Europe/Paris')::date - 14
+   WHERE week + 7 <= (now() AT TIME ZONE 'Europe/Paris')::date - ${CAMPUS_TREND_WEEKS_KEPT}
   RETURNING 1)
 SELECT ((SELECT count(*) FROM gone) + (SELECT count(*) FROM gone_weeks))::int AS n`;
 

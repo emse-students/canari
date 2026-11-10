@@ -68,10 +68,14 @@ of its adversarial review.
    (`campusTrendNamedSql`).
    - **The row keeps the account's ID, never its name** (`meta.likedBy = {userId, others}`). The
      bell resolves the name when it is SERVED (`PostNotificationsService.resolveTrendLikedBy`, one
-     statement per page) and shows it only while the naming still holds: the account exists, shares
-     its activity, is still followed (accepted), no block stands either way, and it is not the
-     author; otherwise the row names nobody. So an erasure, a block, an unfollow or the switch turned
-     off takes the name out of rows already written, and the erasure also removes the id
+     statement per page) and shows it only while the naming still holds - every condition the send
+     path asked, re-asked with the same helpers: the account exists, still LIKES the post (the same
+     list, `TREND_LIKES_SQL` in `engagement-sql.ts`), shares its activity, is still followed
+     (accepted), no block stands either way, it is not the author, both stand on the same side of the
+     review cohort (`sameSideOfReviewCohortSql`), and the post's reactors are not withheld from the
+     reader (`commentsWithheldFromViewerSql`); otherwise the row names nobody. So an erasure, a like
+     taken back, a block, an unfollow or the switch turned off takes the name out of rows already
+     written, and the erasure also removes the id
      (`post_notifications_liked_by`, `meta - 'likedBy'`). The push is sent at once and carries the
      name of that moment (`actorName` plus `contentCount`); a delivered push cannot be recalled.
    - The three trend keys stay; every native table chooses one of three sentences by the count
@@ -83,7 +87,10 @@ of its adversarial review.
      hint rewritten).
    - **Every bell row is written first, in one insert** (`createNotificationRows`), then one push per
      group of readers who read the same sentence, each group's failure caught and logged on its own;
-     `[TREND] ... told N` closes the announcement.
+     `[TREND] ... told N` closes the announcement. The rows are written AFTER the statement that
+     claimed the week committed, so an insert that fails still spends each reader's slot for the
+     day and the week - logged at WARN (`[TREND] post=... not told`), as the ledger row already was:
+     a reader is never told twice, at the price of one trend lost on a failed write.
 2. **At most TWO trends a week per reader**, on top of one a day: a Monday-to-Sunday week on the
    Paris calendar, counted in ONE row per reader and week (`campus_trend_weeks`, migration 163,
    plain): `told` the week's count, `"lastDay"` the day of the latest trend. The trend's statement
@@ -91,8 +98,9 @@ of its adversarial review.
    (`campusTrendWeekClaimSql`), so two posts crossing at once for one reader are ordered by the
    lock - exact, with no clock heuristic and no reset (a new week is a new row). The row names no
    post, so deleting a post frees nothing (the ledger's rows cascade with their post; the first
-   draft counted those and would have freed a slot). Pruned after 14 days by the daily GC, erased
-   with the account. A post that crossed for a reader already at two is stamped all the same, so it
+   draft counted those and would have freed a slot). Kept 14 days after its week ENDS (`week` is
+   the Monday, so the row goes on day `week + 7 + 14`, `CAMPUS_TREND_WEEKS_KEPT`) by the daily GC,
+   erased with the account. A post that crossed for a reader already at two is stamped all the same, so it
    is never announced later.
 3. **ONE global daily push cap of THREE per person** for the non-essential pushes: the cap of
    migration 157 (`ENGAGEMENT_DAILY_PUSH_CAP`, 5 for trends alone) becomes 3 and widens.

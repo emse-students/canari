@@ -109,8 +109,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // A notice's structured facts (migration 117): a booking's place and slot, a trend's media - and
   // ONE account id, a campus trend's named account (`meta.likedBy.userId`, owner 2026-11-10), which
   // sits on ANOTHER reader's row: that key is removed from every row naming the account (the row
-  // stays, naming nobody). The rest goes with the row the recipient's (or the actor's) statement
-  // deletes - never kept past its person.
+  // stays, naming nobody). `meta->'likedBy'->>'userId'` has no index, so that statement scans
+  // `post_notifications` - acceptable at today's size, and an erasure is rare; an expression index is
+  // the answer if the table grows. The rest goes with the row the recipient's (or the actor's)
+  // statement deletes - never kept past its person.
   'post_notifications.meta': { action: 'anonymise', via: 'likedBy' },
   'minesweeper_scores.userId': { action: 'delete' },
   'minesweeper_challenges.userId': { action: 'delete' },

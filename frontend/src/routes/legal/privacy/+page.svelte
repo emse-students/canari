@@ -281,16 +281,17 @@
           de vos abonnés acceptés quand vous aimez une publication qu'ils voient déjà, sauf si vous
           désactivez « Partager mon activité » dans les réglages (activé par défaut). La
           notification conservée chez votre abonné garde l'identifiant de votre compte, jamais votre
-          nom : votre nom n'y est affiché que tant que le partage est activé, qu'il vous suit et
-          qu'aucun blocage n'existe entre vous ; l'effacement de votre compte retire cet
-          identifiant. Une notification déjà reçue sur un téléphone ne peut pas être retirée. Les
-          notifications non essentielles (suggestions, réactions et commentaires sur vos
-          publications, publications des personnes suivies, republications, ouvertures de
-          réservations et d'événements) n'arrivent pas plus de trois fois par jour sur votre
-          téléphone ; les autres restent dans vos notifications. Sont conservés : votre réglage, le
-          fait qu'un lecteur a déjà été prévenu d'une publication (jusqu'à l'effacement de la
-          publication ou de son compte), le nombre de ces notifications reçues chaque jour (sept
-          jours) et le nombre de suggestions reçues chaque semaine (quatorze jours).
+          nom : votre nom n'y est affiché que tant que vous aimez toujours la publication, que le
+          partage est activé, qu'il vous suit et qu'aucun blocage n'existe entre vous ; l'effacement
+          de votre compte retire cet identifiant. Une notification déjà reçue sur un téléphone ne
+          peut pas être retirée. Les notifications non essentielles (suggestions, réactions et
+          commentaires sur vos publications, publications des personnes suivies, republications,
+          ouvertures de réservations et d'événements) n'arrivent pas plus de trois fois par jour sur
+          votre téléphone ; les autres restent dans vos notifications. Sont conservés : votre
+          réglage, le fait qu'un lecteur a déjà été prévenu d'une publication (jusqu'à l'effacement
+          de la publication ou de son compte), le nombre de ces notifications reçues chaque jour
+          (sept jours) et le nombre de suggestions reçues chaque semaine (quatorze jours après la
+          fin de la semaine).
         </dd>
       </div>
       <div>
