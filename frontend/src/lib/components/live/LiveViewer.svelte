@@ -260,8 +260,7 @@
   let feedbackCount = 0;
 
   /**
-   * The sound, from the speaker or a tap on the picture (owner, 2026-11-09: the tap is the sound on
-   * every video). A live has no hold: its player resumes a paused element at the next delivery.
+   * The sound, from the speaker or a tap on a muted picture (`onPictureTap`). A live has no hold: its player resumes a paused element at the next delivery.
    */
   function toggleSound() {
     videoSound.toggle();
@@ -272,6 +271,11 @@
       void video.play().catch((e: unknown) => {
         console.warn(`[LIVE] viewer: play() after the sound toggle refused (${String(e)})`);
       });
+  }
+
+  /** A tap on the picture only turns the sound ON, never off (owner, 2026-11-10); the speaker mutes. */
+  function onPictureTap() {
+    if (videoSound.muted) toggleSound();
   }
 
   function onKeydown(e: KeyboardEvent) {
@@ -309,7 +313,7 @@
     <video
       bind:this={video}
       use:followVideoSound
-      use:videoGestures={{ onTap: toggleSound, enabled: !terminal }}
+      use:videoGestures={{ onTap: onPictureTap, enabled: !terminal }}
       class="absolute inset-0 h-full w-full object-contain [-webkit-touch-callout:none]"
       class:opacity-40={terminal}
       playsinline

@@ -365,21 +365,27 @@ describe('LiveViewer', () => {
     expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('on');
   });
 
-  /** THE TAP IS THE SOUND ON EVERY VIDEO (owner, 2026-11-09), the live's included, with its glyph. */
-  it('a tap on the picture toggles the sound and shows what it did', async () => {
+  /** A TAP NEVER MUTES (owner, 2026-11-10): it turns a muted sound on, with its glyph. */
+  it('a tap on the picture turns the sound on, shows it, and never turns it off', async () => {
     await render();
     const video = document.querySelector<HTMLVideoElement>('[data-live-video]')!;
-    video.dispatchEvent(
-      new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0 })
-    );
-    video.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
-    video.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
-    flushSync();
+    const tapPicture = () => {
+      video.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0 })
+      );
+      video.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+      video.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+      flushSync();
+    };
+    tapPicture();
     expect(videoSound.muted).toBe(false);
     expect(video.muted).toBe(false);
     expect(document.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
       'sound-on'
     );
+    tapPicture();
+    expect(videoSound.muted, 'a second tap leaves the sound on').toBe(false);
+    expect(video.muted).toBe(false);
   });
 
   it("a dry buffer draws the kit's spinner over the last frame, and the next segment takes it away", async () => {
