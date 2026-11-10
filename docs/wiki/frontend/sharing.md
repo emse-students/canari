@@ -355,7 +355,7 @@ viewer, a post's its page).
 A link to `/posts/<id>` in a conversation or a channel draws `SharedPostCard` (chosen in
 `MessageTextBody`), no longer the generic `LinkPreviewCard`: author avatar and name, the first
 picture decrypted by `PostMedia` (client-side CEK, no new crypto), a video as its ThumbHash with the
-decorative glass play disc (`VideoPlayDisc` without `onclick`), a reel as the 9:16 card with a
+decorative glass play glyph (`VideoGlassGlyph`, no button), a reel as the 9:16 card with a
 "CanaReel" chip and a tap that opens the reels viewer, the caption on three lines.
 - **Wire format unchanged**: the message is still the bare link, so an older app draws its generic card.
 - **Recipient's rights**: `sharedPostPreview.ts` reads `GET /api/posts/:id` under the reader's

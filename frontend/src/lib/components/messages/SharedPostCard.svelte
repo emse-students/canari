@@ -2,7 +2,7 @@
   import { CloudOff, EyeOff } from '@lucide/svelte';
   import PostAuthorAvatar from '$lib/components/posts/PostAuthorAvatar.svelte';
   import SharedReelViewer from '$lib/components/reels/SharedReelViewer.svelte';
-  import VideoPlayDisc from '$lib/components/ui/player/VideoPlayDisc.svelte';
+  import VideoGlassGlyph from '$lib/components/ui/player/VideoGlassGlyph.svelte';
   import { nearViewport } from '$lib/actions/nearViewport';
   import { getToken } from '$lib/stores/auth';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
@@ -256,7 +256,10 @@
                 aria-hidden="true"
               ></div>
             {/if}
-            <VideoPlayDisc />
+            <!-- Decorative: the whole card is the link, so the glass triangle is a picture, not a control. -->
+            <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <VideoGlassGlyph kind="play" size={64} />
+            </div>
           {/if}
         </div>
       {/if}

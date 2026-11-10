@@ -559,10 +559,10 @@ other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
    `MediaSource`; `disableRemotePlayback` set as it requires) - and `isTypeSupported` of
    `LIVE_RECORDER_MIME`, so an engine that cannot play never takes a seat.
 2. `GET /api/lives/:id`: the key and the seat.
-3. The join on the NEWEST `LIVE_PLAYER_JOIN_SEGMENTS` (two) segments. Every segment is SELF-CONTAINED - the recorder's init
+3. The join on the NEWEST `LIVE_PLAYER_JOIN_SEGMENTS` (three, the margin) segments. Every segment is SELF-CONTAINED - the recorder's init
    (`ftyp` + `moov`) then one fragment (`moof` + `mdat`), the [broadcaster's shape](#every-segment-is-self-contained) - so
    their init is appended, then their fragments, then a seek to `end - target`, the
-   [buffer policy's](#the-buffer-policy-l-f1-2026-10-27) target (4 s at the join: the 3 s floor wait plus a poll). Only the newest one is required;
+   [buffer policy's](#the-buffer-policy-l-f1-2026-10-27) target (6 s at the join: [the margin](#the-margin-the-pace-and-the-last-resort-owner-2026-11-09) of three segments, over the 3 s floor wait plus a poll). Only the newest one is required;
    a first segment with no init is "Live indisponible" (`playback`).
 4. A poll every `LIVE_MANIFEST_POLL_MS` from `last + 1`, segments taken in order. **A segment's init
    is appended only when its bytes DIFFER from the last one appended** (a camera re-acquired
@@ -575,9 +575,9 @@ other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
    and a drift past the target plus `LIVE_PLAYER_DRIFT_SLACK_MS` does the same - one seek, never a loop.
    **The jump to the live edge**: a backlog behind the manifest's `nextIndex` whose media would put
    the video past the target plus its slack anyway (`LiveBufferPolicy.isBacklog`, sized by the
-   longest segment measured - four 2 s segments at the floor are played, a fifth is a backlog) asks for the NEWEST window (`?from=` answers the OLDEST ten from that index) and
+   longest segment measured - five 2 s segments at the margin are played, a sixth is a backlog) asks for the NEWEST window (`?from=` answers the OLDEST ten from that index) and
    takes only its newest segment; a STARVED `waiting` since the last segment (never the wait of a
-   seek) re-anchors at the next one, at the policy's target. Each
+   seek) is resumed by the next one, where the picture stopped - [never behind it](#the-margin-the-pace-and-the-last-resort-owner-2026-11-09). Each
    poll that brings media calls `play()` if something paused the video. What was played more than
    `LIVE_PLAYER_KEEP_BEHIND_MS` ago is removed.
 
@@ -642,7 +642,7 @@ of that run is gone). Two defects, each enough to freeze a viewer:
 - **The anchor sits one poll past that wait** (`targetMs`): a delivery's phase against the poll
   moves by up to one poll, so an anchor exactly at the wait would re-anchor on ordinary jitter. 4 s
   at the floor, ~6 s behind a paired producer.
-- **A delivery that leaves less media ahead than the longest wait re-anchors at once**
+- **_SUPERSEDED 2026-11-09 ([the margin](#the-margin-the-pace-and-the-last-resort-owner-2026-11-09)): this seek went BEHIND the playhead and replayed shown media; the pace rebuilds a short margin now._** **A delivery that leaves less media ahead than the longest wait re-anchors at once**
   (`reanchor` -> `short`, a seek line `(short)`), never left to stall. Before, the target grew only
   AFTER a longer gap had drained the buffer, and was applied only at a seek: W4 held 3.99 s after a
   delivery with its target at 4118 ms, the next gap was 4223 ms, and it stalled. A buffer that does
@@ -674,7 +674,7 @@ of that run is gone). Two defects, each enough to freeze a viewer:
 - **An outage is never a cadence** (`interrupt`, typed `LiveCadenceBreak`): a catch-up jump, a
   retried step, a broadcaster the manifest says is quiet. So a 20 s loss of network never leaves a
   viewer 20 s behind.
-- **The join takes the newest two segments**, so the first frame starts with the 4 s anchor ahead.
+- **The join takes the newest three segments** (two until 2026-11-09), so the first frame starts with the 6 s margin ahead.
 
 **The price**: a regular producer (iPhone) is watched 4 s behind its buffer's end (2 s more than
 the first 2 s target), an Android producer delivering in pairs ~6 s; and the first pair costs one
@@ -691,6 +691,75 @@ block, whose cases fail against the old player - the `short` re-anchor among the
 fetch open by hand and fails against the player that snapshotted the latch). **Owed on hardware**: L-F1's reading again on
 the pre-release that carries it - the Mi 9T broadcasting, a phone AND a browser watching, 0
 `stalled` lines past the first delivery gap and no `seek ... (stall)` loop.
+
+### The margin, the pace, and the last resort (owner, 2026-11-09)
+
+**The report** (owner, production, 2026-11-09): with the link bad, probably on the broadcaster's
+side, the viewer REPLAYS THE CURRENT SEGMENT IN A LOOP until the next one arrives. He asked for a
+few seconds of margin to hide it, a slower playback, and a loading screen as the last resort.
+
+**The cause, in `livePlayer.ts` before this fix** (`seekToEdge`, `video.currentTime = Math.max(start,
+end - target / 1000)`, reached from `poll`'s `why = stall ? 'stall' : ... : this.policy.reanchor(...)`):
+two re-anchors put the playhead at `end - target`, which lies BEHIND it whenever the media ahead is
+under the target - and that is exactly when both fired. `short` fired on every delivery that left less
+than the longest wait ahead; `stall` on the first delivery after a dry buffer. A broadcaster on a bad
+link delivers every segment late, so EVERY delivery seeked the viewer back over the ~2 s it had just
+watched: the loop. "The price" above even named it ("one backward seek ... seen video replayed
+once"), counted once, when a late producer makes it per segment. **Reproduced** by
+`livePlayer.test.ts`, "a broadcaster on a bad link": the manifest stands still for three polls, then
+five, the video plays at the wall's pace between polls and every write of `currentTime` before the
+furthest media shown is a replay - **seven replays of ~2 s against the old player, none now**.
+
+**The rule now: a seek goes forward or nowhere** (`liveSeekPoint`, `liveBufferPolicy.ts`, the one
+place the playhead's next position is decided). The anchor `end - target` is taken only when it lies
+AHEAD (a join, a backlog jumped, a drift past the slack, a hole crossed); a playhead with nothing under
+it goes to the first media past it; one with media ahead stays. A frozen engine (its own wait that
+never ended, media ahead) is seeked IN PLACE at worst, which restarts its decoder and shows nothing
+twice. Margin is media not yet shown, so only two things make it: the join's anchor, and the pace.
+
+**The margin** - `LIVE_PLAYER_MARGIN_SEGMENTS` = 3 (`constants.ts`): the target is never under three
+segments of the length the deliveries measure (`LiveBufferPolicy.segmentMs`, 2 s before any), so 6 s
+on a regular producer (4 s before), still `longestWait + poll` when that is larger (a paired producer:
+~6 s, unchanged). Three, not two: two segments is the floor wait plus a poll, which ONE segment a
+second late already drains; the third absorbs a late segment of the producer's own length. More would
+add latency to every viewer for a lateness nobody measured. The join takes three segments
+(`LIVE_PLAYER_JOIN_SEGMENTS`). **Price**: 2 s more latency on a regular producer.
+
+**The pace** (`LiveBufferPolicy.pace`, typed `LivePace`; rates in `constants.ts`): read at every
+manifest poll, the timer the player has anyway - no new one.
+
+| When | Reading | Pace |
+| --- | --- | --- |
+| at a delivery (the media ahead at its peak) | under `target - poll` | `slow`, `LIVE_PLAYER_SLOW_RATE` = 0.9x |
+| at a delivery | over `target + poll` | `fast`, `LIVE_PLAYER_FAST_RATE` = 1.05x |
+| at a delivery, while `slow` / `fast` | crossed `target` itself | `steady`, 1x |
+| between deliveries | under `target - longestWait` (the sawtooth's floor: the producer is later than its own shape) | `slow`, at once |
+
+A band of a poll each side of the target (a delivery's phase against the poll moves its peak by up to
+one), and back to 1x only at the target itself, so jitter never flips the rate; between deliveries the
+pace only slows. One debug line per change (`pace slow (0.9x), A s ahead, target T ms`), never per
+poll. 0.9x rebuilds a tenth of a second per second played - one 2 s segment back in 20 s - with the
+voice kept: the viewer's adapter sets `preservesPitch` with every rate. 1.05x is gentler: being late
+costs latency, never a stall, and a viewer past the drift slack is still seeked forward.
+
+**The last resort - a dry buffer**: a STARVED `waiting` latches the stall as before, and now the player
+tells the screen (`onBuffering(true)`); `LiveViewer` draws the kit's `MediaSpinner` over the frozen last
+frame (no loop, no black) while the state is `playing` ("reconnecting" and the final screens say their
+own thing). The next delivery that leaves media ahead of the playhead resumes it where it stopped,
+`onBuffering(false)`, and ONE info line closes it: `stalled D ms (resumed), from a margin of M ms,
+target T ms` - D from the latch (or from the start of an engine's own wait that never ended) to the
+delivery, M the media ahead the last delivery had left. A stall a final state or a close ends says
+`(ended)`, `(stopped)`, ... in the same line. One line per stall, never per poll: a log export counts
+how often viewers stall and after how much margin. The rig's judge (`liverows.mjs`) skips that line
+(the `stalled at` line before it is what it counts) and forgives the pace line on a viewer.
+
+**Verified by tests** (`liveBufferPolicy.test.ts`: `liveSeekPoint`, the pace thresholds, W4 replayed
+with the pace - no stall, no seek, never under 0.55 s before a delivery; `livePlayer.test.ts`: the
+bad-link loop, the stall told and closed once each, a short margin slowed rather than seeked, a long
+one sped up, a late manifest slowing before it runs dry; `LiveViewer.svelte.test.ts`: the spinner over
+a dry buffer, gone on the next segment, 0.9x with the pitch kept). **Owed on hardware**: the owner's
+case again, a broadcaster on a throttled uplink and a phone watching - no replay, a slower picture, the
+spinner only when the margin is gone, and the `stalled` lines' count in the export.
 
 **Failure -> screen** (`liveFailureOutcome`, one table, tested):
 
@@ -1008,7 +1077,7 @@ and drops the rest; **with reduced motion nothing moves** - one static counter p
 since the viewer opened.
 
 **What a line is (C11, C15).** Text, through `EmojiText` (Noto SVG for each emoji): never markup,
-never a link, never a mention; the name and the text are each a `<bdi>` (the text `dir="auto"`), so a U+202E in a message cannot reverse the line around it. The composer's `maxlength` is the server's `chatMessageMaxChars`
+never a link; a mention is the one exception ([below](#mentions-in-the-chat-owner-2026-11-09)); the name and the text are each a `<bdi>` (the text `dir="auto"`), so a U+202E in a message cannot reverse the line around it. The composer's `maxlength` is the server's `chatMessageMaxChars`
 (read once from `GET /api/lives/limits`), and `send` refuses an empty or longer message before
 sealing. Every string is Paraglide (`live_chat_*`, `live_reaction*`).
 
@@ -1284,3 +1353,31 @@ read that lands after `stop()` writes nothing (`#watchEpoch`).
 **The real count is owed a reading on the Mi 9T and the iPhone 12**: every read logs one greppable line,
 `[CAMERA_COUNT]` (logged once per session, again only if the count changes) `videoinput=N coarsePointer=.. facingMode=.. -> switch hidden|offered`. If a phone says
 `videoinput=1`, the rule is wrong for that browser and the line is the evidence.
+
+### Audio channels: the sound that plays out of one side
+
+The microphone of a live or a reel is asked for ONE channel (`REEL_AUDIO_CONSTRAINTS.channelCount: { ideal: 1 }`,
+`reels/framedCapture.ts`). Raw (no voice processing) a phone mic can answer two channels with an empty second one, which
+`MediaRecorder` wrote as a stereo file playing on one side only (owner, 2026-11-09). Nothing downstream changes the layout
+(the transcode keeps the source's channel count, the player uses no Web Audio splitter or panner). Every capture logs one
+line, `audio layout: mono|stereo|... (ch=N)` (`utils/audioLayout.ts`); a `stereo` answer to the mono request is the case to read
+on the bench phones, see [the backlog entry](../../backlog.d/p2-a-phone-microphone-may-answer-two-channels-with-one-silent.md).
+
+## Mentions in the chat (owner, 2026-11-09)
+
+The composer of `LiveChatPanel` is the shared `MentionComposerInput` (`singleLine`, Enter sends) instead
+of a plain input. `@` opens the ONE picker of the app: its roster is `liveMentionRoster` (the people the
+chat shows, latest speaker first, then the broadcaster) and its `audienceFilter` (`liveAudienceFilter`,
+from the `audienceOf` prop the viewer and the broadcaster's chat pass) tops it up from the name search
+with accounts the server's `mention-audience` lets through; a failed ask offers nobody from the
+directory and warns. The text carries `@[id]` tokens; `LiveChatSession.deliver` reads them from the line
+it drew and sends them as `mentions` beside the sealed text, the same ones on a retry. A line draws
+through `LiveChatLineText` and `LiveChatMention`; `mentionsViewer` tints the line of the account it names.
+Server: [lives](../../services/lives.md#mentions-in-the-live-chat-owner-2026-11-09). Owed: a phone
+reading of the picker over a playing live (the keyboard and the dropdown above the composer), and the
+push on both phones.
+
+**A defect found on the way.** `useMentionAutocomplete.suggestLocally` wrote `suggestions` and read it
+back to set `open`, inside the effect that follows the roster prop: the first `@` of any roster-backed
+picker ended in `effect_update_depth_exceeded` when the component was MOUNTED (no existing test did).
+Fixed by reading the local value; pinned by `MentionComposerInput.roster.svelte.test.ts`.

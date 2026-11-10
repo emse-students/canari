@@ -26,6 +26,7 @@ import {
   repostPersonalRequestedContent,
   coorganiseProposedContent,
   liveStartedContent,
+  liveMentionContent,
   followRequestContent,
   followAcceptedContent,
   birthdayContent,
@@ -332,6 +333,10 @@ export class PostNotificationsService {
       // is the live's title, empty when it has none (owner, 2026-11-07).
       case 'live_started':
         return liveStartedContent(actorName, text, icon);
+      // Someone mentioned the recipient in a live's chat (owner, 2026-11-09). `actorName` is the writer,
+      // `text` the live's title (empty when it has none).
+      case 'live_mention':
+        return liveMentionContent(actorName, text, icon);
       // Follow requests (WP-F2). `actorName` is the ASKER for the first and the person who said
       // yes for the second; neither has text to quote.
       case 'follow_request':

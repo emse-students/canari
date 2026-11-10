@@ -129,12 +129,12 @@ describe('SharedPostCard', () => {
     );
     expect(target.textContent).toContain('Ada');
     expect(target.textContent).toContain('La soirée de rentrée');
-    expect(target.querySelector('[data-video-play-disc]')).toBeNull();
+    expect(target.querySelector('[data-video-glass-glyph]')).toBeNull();
     tap(target);
     await vi.waitFor(() => expect(navigateInAppFromHref).toHaveBeenCalledWith(URL_P));
   });
 
-  it('draws a video post as a poster with the glass play disc, no download', async () => {
+  it('draws a video post as a poster with the decorative glass play glyph, no download', async () => {
     getPost.mockResolvedValue({
       ...base,
       media: [{ type: 'video', mediaId: 'vid-1', width: 1920, height: 1080 }],
@@ -142,9 +142,10 @@ describe('SharedPostCard', () => {
     const target = render();
     await settled(target, 'post');
     expect(target.querySelector('[data-shared-post-media="video"]')).not.toBeNull();
-    const disc = target.querySelector('[data-video-play-disc]')!;
-    expect(disc.tagName).toBe('SPAN');
-    expect(disc.getAttribute('aria-hidden')).toBe('true');
+    const glyph = target.querySelector('[data-video-glass-glyph="play"]')!;
+    expect(glyph.tagName).toBe('SPAN');
+    expect(glyph.getAttribute('aria-hidden')).toBe('true');
+    expect(target.querySelector('[data-video-play-glyph]')).toBeNull();
     expect(target.querySelector('[data-post-media-stub="vid-1"]')).toBeNull();
   });
 
