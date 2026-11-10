@@ -74,7 +74,8 @@ import {
 } from '../spaces/reader-spaces';
 import { isBlockedBetween } from '../common/user-blocks';
 import { acceptedFollowSql } from '../follows/follow-status';
-import { TREND_LIKES_SQL } from './engagement-sql';
+import { sharesActivitySql, TREND_LIKES_SQL } from './engagement-sql';
+import { recipientsWithCategoryOn } from '../push/notification-category';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 import { birthdayDateVisibleToSql } from '../birthdays/birthday-sql';
 import { BIRTHDAY_NOTIFICATION } from '../birthdays/birthday-notification';
@@ -317,6 +318,18 @@ export class NotificationPushFailedError extends Error {
     if (cause instanceof Error && cause.stack) this.stack = cause.stack;
   }
 }
+
+/** The rows of one notice, differing per recipient only by their `meta` (`createNotificationRows`). */
+export type NotificationRowsInput = {
+  type: NotificationType;
+  postId: string;
+  actorId: string;
+  actorName: string;
+  text: string;
+  associationId?: string;
+  associationLogoUrl?: string | null;
+  rows: { recipientId: string; meta: Record<string, unknown> | null }[];
+};
 
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()
@@ -645,6 +658,12 @@ export class PostNotificationsService {
     pushData?: Record<string, string>;
   }) {
     if (data.recipientId === data.actorId) return;
+    // A category the reader switched off writes no row ("Nos principes", owner, 2026-11-10), and so
+    // no push either - chat-delivery would drop it.
+    const [stillOn] = await recipientsWithCategoryOn(this.notifRepo.manager, data.type, [
+      data.recipientId,
+    ]);
+    if (!stillOn) return;
     const { skipPush, pushData, ...notifData } = data;
     const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
     await this.notifRepo.save(this.notifRepo.create({ ...notifData, actorName }));
@@ -713,11 +732,16 @@ export class PostNotificationsService {
      */
     skipPush?: boolean;
   }): Promise<number> {
-    const recipients = [...new Set(data.recipientIds)].filter((id) => id !== data.actorId);
+    // A category the reader switched off writes no row and is not pushed ("Nos principes").
+    const recipients = await recipientsWithCategoryOn(
+      this.notifRepo.manager,
+      data.type,
+      [...new Set(data.recipientIds)].filter((id) => id !== data.actorId)
+    );
     if (recipients.length === 0) return 0;
 
     const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
-    await this.createNotificationRows({
+    await this.saveNotificationRows({
       ...data,
       actorName,
       rows: recipients.map((recipientId) => ({ recipientId, meta: data.meta ?? null })),
@@ -736,19 +760,27 @@ export class PostNotificationsService {
    * The ROWS of a notice whose rows differ per recipient only by their `meta`, in ONE insert, with
    * no push - the caller pushes afterwards ({@link pushNotice}), so a push that fails can never cost
    * a reader their row. A campus trend's rows each keep whom they name (`announceCampusTrend`);
-   * {@link createNotifications} writes through here too. Rows addressed to the actor are dropped.
-   * Answers how many were written.
+   * Rows addressed to the actor, and to a reader who switched the type's category off
+   * (`recipientsWithCategoryOn`, "Nos principes" 2026-11-10: nothing switched off counts in the
+   * badge), are dropped. Answers how many were written.
    */
-  async createNotificationRows(data: {
-    type: NotificationType;
-    postId: string;
-    actorId: string;
-    actorName: string;
-    text: string;
-    associationId?: string;
-    associationLogoUrl?: string | null;
-    rows: { recipientId: string; meta: Record<string, unknown> | null }[];
-  }): Promise<number> {
+  async createNotificationRows(data: NotificationRowsInput): Promise<number> {
+    const addressed = data.rows.filter((r) => r.recipientId !== data.actorId);
+    const on = new Set(
+      await recipientsWithCategoryOn(
+        this.notifRepo.manager,
+        data.type,
+        addressed.map((r) => r.recipientId)
+      )
+    );
+    return this.saveNotificationRows({
+      ...data,
+      rows: addressed.filter((r) => on.has(r.recipientId)),
+    });
+  }
+
+  /** The insert itself, for rows whose recipients are already decided - ONE statement. */
+  private async saveNotificationRows(data: NotificationRowsInput): Promise<number> {
     const rows = data.rows.filter((r) => r.recipientId !== data.actorId);
     if (rows.length === 0) return 0;
     await this.notifRepo.save(
@@ -978,7 +1010,8 @@ export class PostNotificationsService {
    * account's id and the count (`meta.likedBy = {userId, others}`), and the name is served only while
    * the naming still holds, every condition the send path (`campusTrendNamedSql`) asked: the account
    * exists, still LIKES the post (the same list, `TREND_LIKES_SQL`), no block stands either way with
-   * the reader, the account still shares its activity, the reader still follows it (accepted), it is
+   * the reader, the account still shares its activity (`sharesActivitySql`: turned ON, off by
+   * default since 2026-11-10), the reader still follows it (accepted), it is
    * not the post's author, both stand on the same side of the review cohort, and the post's reactors
    * are not withheld from the reader. Served as `{name, others}` (what the client draws); dropped
    * otherwise, so an erasure, a removed like, a block, an unfollow or the share switch turned off
@@ -1009,8 +1042,7 @@ export class PostNotificationsService {
           AND p.reactions ->> u.id IN (${TREND_LIKES_SQL})
           AND ${sameSideOfReviewCohortSql('n."recipientId"', 'u.id')}
           AND NOT ${commentsWithheldFromViewerSql('p', 'n."recipientId"')}
-          AND NOT EXISTS (SELECT 1 FROM user_activity_settings s
-                           WHERE s."userId" = u.id AND NOT s."shareActivity")
+          AND ${sharesActivitySql('u.id')}
           AND NOT EXISTS (SELECT 1 FROM user_blocks b
                            WHERE (b."blockerId" = n."recipientId" AND b."blockedId" = u.id)
                               OR (b."blockedId" = n."recipientId" AND b."blockerId" = u.id))

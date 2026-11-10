@@ -27,7 +27,7 @@ server's ranking, not by `placeSuggestedPosts` (deleted), so L13 no longer appli
 campus-trend notifications were reshaped the same day after the deploy of 1.6.9 announced a backlog
 ([below](#the-deploy-of-2026-11-10-and-what-it-changed)): at most ONE a day per reader, a post past
 the threshold before it was first evaluated never announced, "Suggestion :" wording, their own
-**Suggestions** switch (on by default), and never sent to a build too old to draw them.
+**Suggestions** switch (OFF by default since the charter, [below](#aligned-with-the-charter-owner-2026-11-10)), and never sent to a build too old to draw them.
 
 **Quieter, for 1.6.10 (owner, 2026-11-10, second batch: *"on y est allés un peu fort"*)**: friends'
 activity no longer notifies - a campus trend NAMES the followed people who liked the post instead;
@@ -48,6 +48,27 @@ Context it must respect, and which nothing here changes:
   `forms`, `events`, `bookings`, ...) decides last, after everything on this page, and an
   association mute (`association_push_mutes`) keeps silencing that association's pushes.
 - **Design references**: the feed and CanaReels follow Instagram.
+
+## Aligned with the charter (owner, 2026-11-10)
+
+"Nos principes", the owner's charter of 2026-11-10: **principle 1**, nothing about a person is
+shared or processed for engagement unless they asked; **principle 3**, the reader decides what the
+app takes of their attention and their data - no trap scrolling, a chronological view always
+exists. Each decision below is built in `1.6.10-alpha.2`, and names the principle it applies.
+
+| Decision | Principle | What existing accounts get | Where |
+| --- | --- | --- | --- |
+| **"Suggestions" is OFF by default** (the trend push) | 1 and 3 | **off for every account.** The switch shipped in `1.6.10-alpha.1` stored only the DISABLED categories, so an explicit "on" and "never touched" are the same row: nothing tells them apart, and the privacy-safe answer is off for all - no backfill | chat-delivery migration **047** (plain, `ADD COLUMN "enabledCategories"`): an OPT-IN category (`OPT_IN_CATEGORIES = ['suggestions']`, `push-category.ts`) is on only when listed there; `effectiveDisabledCategories` is the one reader on the push side, `categoryOffSql` (social's `push/notification-category.ts`) on the bell side. An older build, which cannot name the category, keeps it as stored |
+| **ONE "Suggestions" switch for every suggestion** | 3 | off, as above | the server decides: `suggestionsOn` gates `SuggestionsService.suggestionsFor` (the carousel and "Suivez aussi...") and `suggestedPostIds` (the suggested posts of Pour toi, and the legacy `me/suggested-posts`); `suggestionsOnSql` gates the campus-trend candidates; the Settings switch forgets the follow-suggestion read it held (`resetSuggestions`) |
+| **A switched-off category writes NO bell row** | 3 | applies at once | `recipientsWithCategoryOn` filters every `createNotification(s)`/`createNotificationRows` by `NOTIFICATION_TYPE_CATEGORY` (the same filing as chat-delivery's `CATEGORY_BY_CONTENT_KEY`, pinned by `notification-category.spec.ts`); the push cap claims nothing for an off category; the birthday notifier skips a follower with "Anniversaires" off. Types with no category (moderation and admin answers to the person concerned) are always written |
+| **"Partager mon activité" is OFF by default** | 1 | **off for every account that never chose**; an explicit choice is kept. No migration: no row now READS as off (`sharesActivitySql`, the ONE predicate); the column's `DEFAULT true` was never relied on, every write sets the value | `engagement-sql.ts` `sharesActivitySql`, read by `campusTrendNamedSql` and `resolveTrendLikedBy` (who a trend names) and by `GET me/activity-settings`. No feed surface of friends' activity is left to read it (WP-9's push was retired the same day) |
+| **"Défilement infini des CanaReels"**, ON by default | 3 | unchanged (on) | per device (`canari_infinite_reels_enabled`); off, a FEED video opens a viewer that ends at that post (`feedReelLoader` hands it `NO_FURTHER_REELS`, the list a conversation's reel already used); the CanaReels entry is the reader's choice of the stream and is not affected |
+| **"Pour toi / Récents" at the top of CanaReels** | 3 (a chronological view always exists) | Pour toi, as before | `reels/reelOrder.ts`, remembered per device like the feed's tab; Récents asks `feed=reels` WITHOUT `ranked` - the server's newest-first list, paged by offset, no ranking |
+| **"Lecture automatique des vidéos"**: Toujours / Wi-Fi / Jamais, Toujours by default | 3 | unchanged (Toujours) | `video/autoplayPolicy.ts`, asked at the ONE ambient start (`playWhileVisible`'s `tryPlay`); not allowed, the feed video keeps its first frame and draws the play button. Wi-Fi reads `navigator.connection.type`, which only Chromium (the Android app) exposes - **an unknown link is not Wi-Fi**: on iOS, Safari and Firefox "Wi-Fi" behaves as "Jamais", and the setting says so on that device. A full-screen viewer plays whatever the setting; a conversation's video never started by itself |
+| **Register and policy** | 1 | - | [register](compliance/register-of-processing.md) C5 (reels kept one year, `REEL_RETENTION_DAYS` = 365; the opt-in suggestions and activity), C7 (the opt-in categories, no bell row when off), C8 (`form_drafts`, migration 146), **C28 Minesweeper** (challenges, scores, per-promo ranking showing the promo, the profile badge, bans); `/legal/privacy` changed with it |
+
+**Owed**: a reading on both phones of the two settings and the Récents order; a production read,
+after the stable, of how many accounts turn "Suggestions" and "Partager mon activité" on.
 
 ## The owner's decisions of 2026-11-10 - quieter (1.6.10)
 
@@ -992,7 +1013,9 @@ decisions of 2026-11-10, as built:
   post's first picture (read once the row is near the viewport, through the shared-post preview
   cache) or a video's ThumbHash, else lucide `TrendingUp`; the badge is `TrendingUp` too.
 - **Its own switch, "Suggestions"** ("Une publication qui fait réagir votre espace, une fois par jour
-  au plus"), on by default, independent of "Publications": a new member of chat-delivery's closed set
+  au plus"), on by default when it shipped - **OFF by default and opt-in since the charter, and
+  widened to every suggestion surface** ([below](#aligned-with-the-charter-owner-2026-11-10)) -,
+  independent of "Publications": a new member of chat-delivery's closed set
   `NOTIFICATION_CATEGORIES`, which stores only the DISABLED categories, so no migration and on for
   everyone. The three keys are filed under `suggestions`, and so is `campus_trend` in
   `CAPPED_PUSH_TYPES`. **A reader who switched "Publications" off to silence trends hears them again

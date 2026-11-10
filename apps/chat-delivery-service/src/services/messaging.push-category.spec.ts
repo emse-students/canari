@@ -31,7 +31,7 @@ jest.mock('firebase-admin/messaging', () => ({
 describe('MessagingService - notification categories', () => {
   let service: MessagingService;
   /** What the preference row holds for the recipient; null = never set anything. */
-  let disabledRow: { disabledCategories: string[] } | null;
+  let disabledRow: { disabledCategories: string[]; enabledCategories?: string[] } | null;
   /** The recipient's membership row in the conversation; null = no row (reads as `all`). */
   let memberRow: { notifLevel: string } | null;
 
@@ -114,7 +114,18 @@ describe('MessagingService - notification categories', () => {
       expect(JSON.stringify(fcmSend.mock.calls)).not.toContain('minAppVersion');
     });
 
+    it('sends no campus trend to an account that never turned Suggestions on (owner, 2026-11-10)', async () => {
+      const r = await service.sendPushToUser('u1', 't', 'b', {
+        type: 'social',
+        contentKey: 'social_campus_trend',
+      });
+      expect(r).toEqual({ sent: 0, failed: 0 });
+      expect(fcmSend).not.toHaveBeenCalled();
+    });
+
     it('says nothing of the floor when every device meets it (every push key carries one)', async () => {
+      // The reader turned Suggestions on: a trend is theirs to receive.
+      disabledRow = { disabledCategories: [], enabledCategories: ['suggestions'] };
       const log = jest.spyOn(Logger.prototype, 'log');
       unusedRepo.find.mockResolvedValue([
         { userId: 'u1', deviceId: 'pixel', deviceAppVersion: '1.6.10' },

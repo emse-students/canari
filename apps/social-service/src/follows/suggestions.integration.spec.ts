@@ -16,6 +16,10 @@ import type { DataSource } from 'typeorm';
 import { SuggestionsService, SUGGESTION_DISMISS_INVALID } from './suggestions.service';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import { REVIEW_COHORT_ENV } from '../review-cohort';
+import {
+  createNotificationPreferenceTable,
+  turnSuggestionsOn,
+} from '../posts/post-notifications.it-schema';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -141,6 +145,12 @@ maybe('follow suggestions against PostgreSQL (engagement WP-5)', () => {
       [E7, GA]
     );
     await q(migration('155_follow_suggestion_dismissals.sql'));
+    // "Suggestions" is off until turned on (owner, 2026-11-10): every reader here turned it on but p2.
+    await createNotificationPreferenceTable((sql) => q(sql));
+    await turnSuggestionsOn(
+      q,
+      Object.keys(USERS).filter((id) => id !== 'p2')
+    );
 
     for (const f of ['f1', 'f2', 'f3', 'f4', 'f5']) await follow('v', f);
     await follow('v', 'f6', 'pending');
@@ -177,6 +187,16 @@ maybe('follow suggestions against PostgreSQL (engagement WP-5)', () => {
     else process.env[REVIEW_COHORT_ENV] = previousCohort;
     await q(`DROP SCHEMA ${schema} CASCADE`);
     await admin.end();
+  });
+
+  it('serves nothing to a reader who did not turn Suggestions on, but still counts their follows', async () => {
+    await follow('p2', 'p3');
+    expect(await service.suggestionsFor('p2')).toEqual({
+      people: [],
+      entities: [],
+      followingCount: 1,
+    });
+    await q(`DELETE FROM user_follows WHERE "followerUserId" = 'p2'`);
   });
 
   it('ranks by L10 and excludes everything decision 2 excludes', async () => {

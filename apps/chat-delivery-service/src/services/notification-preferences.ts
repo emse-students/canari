@@ -8,19 +8,24 @@ import {
   type GroupUuid,
 } from '../entities/group-member.entity';
 import { cutUserId } from '../utils/log-repeat';
-import { isNotificationCategory, type NotificationCategory } from './push-category';
+import {
+  effectiveDisabledCategories,
+  isOptInCategory,
+  OPT_IN_CATEGORIES,
+  type NotificationCategory,
+} from './push-category';
 
 const logger = new Logger('NotificationPreferences');
 
 /**
- * The categories `userId` has switched off, for the PUSH path. Empty for an account that never set
- * anything.
+ * The categories off for `userId`, for the PUSH path: for an account that never set anything, the
+ * opt-in categories only (`OPT_IN_CATEGORIES`, off until turned on).
  *
- * A READ THAT FAILS ANSWERS "DELIVER", AND SAYS SO: dropping a push because a preference could not
- * be read would lose a message the user wanted to a fault they cannot see. This is the answer of an
- * unset account, not a second code path, and the warning is what makes a broken table visible
- * instead of a silent "everything notifies". The settings route reads through
- * {@link readDisabledCategoriesStrict} instead, which throws.
+ * A READ THAT FAILS ANSWERS AS AN UNSET ACCOUNT, AND SAYS SO: dropping a push because a preference
+ * could not be read would lose a message the user wanted to a fault they cannot see, so every
+ * default-on category delivers - and the opt-in ones stay off, which is what that account would get.
+ * Not a second code path, and the warning is what makes a broken table visible. The settings route
+ * reads through {@link readDisabledCategoriesStrict} instead, which throws.
  */
 export async function readDisabledCategories(
   manager: EntityManager,
@@ -29,8 +34,10 @@ export async function readDisabledCategories(
   try {
     return await readDisabledCategoriesStrict(manager, userId);
   } catch (e) {
-    logger.warn(`[NOTIF_PREF] read failed for user=${userId}: ${String(e)} - delivering`);
-    return new Set();
+    logger.warn(
+      `[NOTIF_PREF] read failed for user=${userId}: ${String(e)} - delivering as an unset account (opt-in categories off)`
+    );
+    return new Set(OPT_IN_CATEGORIES);
   }
 }
 
@@ -40,7 +47,7 @@ export async function readDisabledCategoriesStrict(
   userId: string
 ): Promise<ReadonlySet<NotificationCategory>> {
   const row = await manager.findOne(NotificationPreference, { where: { userId } });
-  return new Set((row?.disabledCategories ?? []).filter(isNotificationCategory));
+  return new Set(effectiveDisabledCategories(row));
 }
 
 /**
@@ -144,12 +151,17 @@ export async function writeGroupCallsAllowed(
 }
 
 /**
- * Replaces the account's disabled set WITH WHAT THE CALLER CAN NAME, and KEEPS the stored choice for
+ * Replaces the account's switches WITH WHAT THE CALLER CAN NAME, and KEEPS the stored choice for
  * every category in `keep` - the ones the caller's build draws no switch for (`categoriesNameableBy`):
- * a `1.6.9` phone saving its switches must not switch "Suggestions" back on, a choice it never
- * showed. ONE statement (`INSERT ... ON CONFLICT DO UPDATE`), so two saves at once each merge
- * against the row the other committed - never a read, then a write over a newer row. Unknown ids
- * are the caller's to refuse. Answers the set now stored.
+ * a `1.6.9` phone saving its switches must not decide "Suggestions", a choice it never showed.
+ *
+ * `disabled` is what the caller draws OFF. An opt-in category (`OPT_IN_CATEGORIES`) the caller can
+ * name and does not list there is one it turned ON, written to `"enabledCategories"` (migration 047);
+ * one in `keep` keeps its stored state, and a first save of a build that cannot name it leaves it off.
+ *
+ * ONE statement (`INSERT ... ON CONFLICT DO UPDATE`), so two saves at once each merge against the row
+ * the other committed - never a read, then a write over a newer row. Unknown ids are the caller's to
+ * refuse. Answers the categories now off (`effectiveDisabledCategories`).
  */
 export async function writeDisabledCategories(
   manager: EntityManager,
@@ -157,9 +169,12 @@ export async function writeDisabledCategories(
   disabled: readonly NotificationCategory[],
   keep: readonly NotificationCategory[] = []
 ): Promise<NotificationCategory[]> {
+  const enabled = OPT_IN_CATEGORIES.filter(
+    (category) => !keep.includes(category) && !disabled.includes(category)
+  );
   const rows = (await manager.query(
-    `INSERT INTO notification_preference ("userId", "disabledCategories", "updatedAt")
-     VALUES ($1, $2::jsonb, now())
+    `INSERT INTO notification_preference ("userId", "disabledCategories", "enabledCategories", "updatedAt")
+     VALUES ($1, $2::jsonb, $4::jsonb, now())
      ON CONFLICT ("userId") DO UPDATE SET
        "disabledCategories" = (
          SELECT COALESCE(jsonb_agg(c ORDER BY c), '[]'::jsonb) FROM (
@@ -169,11 +184,31 @@ export async function writeDisabledCategories(
             WHERE c = ANY($3::text[])
          ) merged
        ),
+       "enabledCategories" = (
+         SELECT COALESCE(jsonb_agg(c ORDER BY c), '[]'::jsonb) FROM (
+           SELECT jsonb_array_elements_text(EXCLUDED."enabledCategories") AS c
+           UNION
+           SELECT c FROM jsonb_array_elements_text(notification_preference."enabledCategories") c
+            WHERE c = ANY($3::text[])
+         ) merged
+       ),
        "updatedAt" = now()
-     RETURNING "disabledCategories" AS disabled`,
+     RETURNING "disabledCategories" AS disabled, "enabledCategories" AS enabled`,
     // Sorted here as the merge sorts, so the stored order never depends on which path wrote it.
-    [userId, JSON.stringify([...new Set(disabled)].sort()), [...new Set(keep)]]
-  )) as Array<{ disabled: unknown }>;
-  const stored = rows[0]?.disabled;
-  return (Array.isArray(stored) ? stored : []).filter(isNotificationCategory);
+    [
+      userId,
+      JSON.stringify([...new Set(disabled)].sort()),
+      [...new Set(keep)],
+      JSON.stringify([...enabled].sort()),
+    ]
+  )) as Array<{ disabled: unknown; enabled: unknown }>;
+  const stored = effectiveDisabledCategories({
+    disabledCategories: rows[0]?.disabled,
+    enabledCategories: rows[0]?.enabled,
+  });
+  logger.debug(
+    `[NOTIF_PREF] user=${cutUserId(userId)} opt-in on=[${OPT_IN_CATEGORIES.filter((c) => !stored.includes(c)).join(',')}]` +
+      (keep.some(isOptInCategory) ? ' (some kept unnamed)' : '')
+  );
+  return stored;
 }

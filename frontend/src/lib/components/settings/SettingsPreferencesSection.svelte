@@ -15,7 +15,16 @@
     Compass,
     Lightbulb,
     Smile,
+    Play,
   } from '@lucide/svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
+  import { Log } from '$lib/utils/Log';
+  import {
+    VIDEO_AUTOPLAY_MODES,
+    networkTypeKnown,
+    parseVideoAutoplay,
+    type VideoAutoplayMode,
+  } from '$lib/video/autoplayPolicy';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { replayGuide } from '$lib/guidance/guidance.svelte';
@@ -34,6 +43,30 @@
     setEmojiStyle,
     type EmojiStyle,
   } from '$lib/utils/emojiStyle';
+
+  /** The label of each autoplay choice, in the order `VIDEO_AUTOPLAY_MODES` lists them. */
+  const VIDEO_AUTOPLAY_LABELS: Record<VideoAutoplayMode, () => string> = {
+    always: m.settings_video_autoplay_always,
+    wifi: m.settings_video_autoplay_wifi,
+    never: m.settings_video_autoplay_never,
+  };
+
+  /** This device's autoplay mode, as the choice draws it. */
+  const autoplayMode = $derived(parseVideoAutoplay(settings.videoAutoplay));
+  /** Whether this engine reports its link - read once mounted; false says "Wi-Fi only" means never here. */
+  let linkKnown = $state(true);
+
+  /** "Lecture automatique des vidéos" (owner, 2026-11-10): kept per device, applied at the next start. */
+  function setVideoAutoplay(mode: VideoAutoplayMode) {
+    Log.d('SETTINGS', `video autoplay: ${mode}`);
+    settings.setVideoAutoplay(mode);
+  }
+
+  /** "Défilement infini des CanaReels" (owner, 2026-11-10): read at the next feed video opened. */
+  function setInfiniteReels(enabled: boolean) {
+    Log.d('SETTINGS', `infinite CanaReels: ${enabled ? 'on' : 'off'}`);
+    settings.setInfiniteReelsEnabled(enabled);
+  }
 
   /** The label of each emoji choice, in the order `EMOJI_STYLES` lists them. */
   const EMOJI_STYLE_LABELS: Record<EmojiStyle, () => string> = {
@@ -68,6 +101,7 @@
   onMount(() => {
     isTouchDevice = isCoarsePointerDevice();
     isPhoneApp = isMobileTauriRuntime();
+    linkKnown = networkTypeKnown();
   });
 </script>
 
@@ -243,6 +277,49 @@
     <RepostConsentSetting />
 
     <ActivitySharingSetting />
+
+    <div data-infinite-reels-setting>
+      <Toggle
+        checked={settings.infiniteReelsEnabled}
+        label={m.settings_infinite_reels_label()}
+        hint={m.settings_infinite_reels_hint()}
+        onchange={setInfiniteReels}
+      />
+    </div>
+
+    <div
+      class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+      data-video-autoplay-setting
+    >
+      <div class="flex items-center gap-3.5">
+        <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
+          <Play size={20} strokeWidth={2.5} />
+        </div>
+        <div>
+          <p class="text-text-main text-sm font-bold">{m.settings_video_autoplay_label()}</p>
+          <p class="text-text-muted mt-0.5 text-xs font-medium">
+            {m.settings_video_autoplay_desc()}
+          </p>
+          {#if autoplayMode === 'wifi' && !linkKnown}
+            <p class="text-text-muted mt-0.5 text-xs font-medium" data-video-autoplay-wifi-unknown>
+              {m.settings_video_autoplay_wifi_unknown()}
+            </p>
+          {/if}
+        </div>
+      </div>
+
+      <SegmentedControl
+        items={VIDEO_AUTOPLAY_MODES.map((mode) => ({
+          key: mode,
+          label: VIDEO_AUTOPLAY_LABELS[mode](),
+        }))}
+        value={autoplayMode}
+        onSelect={setVideoAutoplay}
+        label={m.settings_video_autoplay_label()}
+        tone="yellow"
+        class="w-full shrink-0 sm:w-64"
+      />
+    </div>
 
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3.5">

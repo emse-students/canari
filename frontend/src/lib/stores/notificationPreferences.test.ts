@@ -19,9 +19,15 @@ beforeEach(() => {
 });
 
 describe('notificationPreferences', () => {
-  it('has everything on until the server says otherwise', () => {
+  it('has everything on but Suggestions until the server says otherwise (owner, 2026-11-10)', () => {
     expect(notificationPreferences.isEnabled('messages')).toBe(true);
-    expect(notificationPreferences.disabled).toEqual([]);
+    expect(notificationPreferences.isEnabled('suggestions')).toBe(false);
+    expect(notificationPreferences.disabled).toEqual(['suggestions']);
+  });
+
+  it('a save before the first load never turns Suggestions on by omission', async () => {
+    await notificationPreferences.setEnabled('posts', false);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['suggestions', 'posts'], []);
   });
 
   it('mirrors the server set after a load', async () => {
@@ -53,12 +59,18 @@ describe('notificationPreferences', () => {
     const pending = notificationPreferences.setEnabled('events', false);
     expect(notificationPreferences.isEnabled('events')).toBe(false);
     expect(await pending).toBe(true);
-    expect(api.saveDisabledCategories).toHaveBeenCalledWith(['events'], []);
+    expect(api.saveDisabledCategories).toHaveBeenCalledWith(['suggestions', 'events'], []);
 
     await notificationPreferences.setEnabled('forms', false);
-    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['events', 'forms'], []);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(
+      ['suggestions', 'events', 'forms'],
+      []
+    );
 
     await notificationPreferences.setEnabled('events', true);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['suggestions', 'forms'], []);
+
+    await notificationPreferences.setEnabled('suggestions', true);
     expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['forms'], []);
   });
 
@@ -76,7 +88,7 @@ describe('notificationPreferences', () => {
     // A sign-out forgets them with the rest: the next account never sends another's choice.
     notificationPreferences.reset();
     await notificationPreferences.setEnabled('forms', false);
-    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['forms'], []);
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['suggestions', 'forms'], []);
   });
 
   it('puts the switch back when the server refuses the write', async () => {
@@ -94,6 +106,7 @@ describe('notificationPreferences', () => {
     await notificationPreferences.setEnabled('posts', false);
     notificationPreferences.reset();
     expect(notificationPreferences.isEnabled('posts')).toBe(true);
+    expect(notificationPreferences.isEnabled('suggestions')).toBe(false);
   });
 
   describe('private conversation levels', () => {

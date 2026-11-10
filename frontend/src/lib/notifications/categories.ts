@@ -24,6 +24,15 @@ export const NOTIFICATION_CATEGORIES = [
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
 
+/**
+ * THE CATEGORIES OFF UNTIL THE ACCOUNT TURNS THEM ON (owner, 2026-11-10, "Nos principes" - principle
+ * 3, attention is not for sale): the server's `OPT_IN_CATEGORIES`, pinned by the contract test.
+ * "Suggestions" is the one switch over every suggestion - the trend notifications, the follow
+ * suggestions and the suggested posts of Pour toi. Until the server's answer is read, this client
+ * draws them OFF, as the server holds them for an account that never chose.
+ */
+export const OPT_IN_CATEGORIES: readonly NotificationCategory[] = ['suggestions'];
+
 /** True when `value` is one of the closed set. */
 export function isNotificationCategory(value: unknown): value is NotificationCategory {
   return (

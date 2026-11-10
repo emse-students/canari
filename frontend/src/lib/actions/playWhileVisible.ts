@@ -10,6 +10,7 @@ import { videoSound } from '$lib/stores/videoSound.svelte';
 import { isAppOnScreen } from '$lib/utils/appForeground';
 import { Log } from '$lib/utils/Log';
 import { playRejectionName } from '$lib/utils/videoAutoplay';
+import { feedAutoplayAllowed } from '$lib/video/autoplayPolicy';
 
 /**
  * Plays a video while most of it is on screen and pauses it when it leaves.
@@ -115,7 +116,13 @@ export function isExpectedPlayInterruption(
   return name === 'AbortError' && (!facts.stillVisible || facts.paused || facts.sourceChanged);
 }
 
+/**
+ * The ONE ambient start - a video come into view, or the last one resumed - so the reader's
+ * "Lecture automatique des vidéos" (`video/autoplayPolicy.ts`) is asked here and nowhere else: when
+ * it says no, the video stays on its first frame and the player draws its play button.
+ */
 function tryPlay(video: HTMLVideoElement) {
+  if (!feedAutoplayAllowed()) return;
   const askedSrc = video.currentSrc || video.src;
   video.play().catch((err: unknown) => {
     const name = playRejectionName(err);

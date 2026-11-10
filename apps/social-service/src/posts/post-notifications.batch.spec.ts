@@ -51,12 +51,16 @@ describe('PostNotificationsService.createNotifications', () => {
       // `resolveActorName` reaches the users table through the repository's query runner.
       // The daily cap's claim goes through it too: every reader still has a unit here (the cap
       // itself is proven on PostgreSQL, `engagement-push-cap.integration.spec.ts`).
+      // The bell's category read too: every reader has every category on here (the switch itself
+      // is proven on PostgreSQL, `notification-category.integration.spec.ts`).
       manager: {
         query: (sql: string, params?: unknown[]) =>
           Promise.resolve(
             sql.includes('engagement_push_days')
               ? (params![0] as string[]).map((userId) => ({ userId }))
-              : [{ displayName: 'Claire' }]
+              : sql.includes('unnest($1::varchar[]) r')
+                ? (params![0] as string[]).map((r) => ({ r }))
+                : [{ displayName: 'Claire' }]
           ),
       },
     };

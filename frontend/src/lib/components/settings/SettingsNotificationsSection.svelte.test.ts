@@ -7,6 +7,8 @@ const api = vi.hoisted(() => ({
   saveDisabledCategories: vi.fn(),
 }));
 vi.mock('$lib/notifications/preferencesApi', () => api);
+const suggestions = vi.hoisted(() => ({ resetSuggestions: vi.fn() }));
+vi.mock('$lib/follows/suggestions.svelte', () => suggestions);
 // The reduced-bells list is its own component with its own test; here it only has to be quiet.
 vi.mock('$lib/follows/bell', () => ({
   listReducedBells: vi.fn(() => Promise.resolve([])),
@@ -83,6 +85,16 @@ describe('SettingsNotificationsSection', () => {
     await settle();
     expect(api.saveDisabledCategories).toHaveBeenCalledWith(['reactions'], []);
     expect(switchOf('reactions').getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('a Suggestions change forgets the follow suggestions read for the old choice; another does not', async () => {
+    await render();
+    switchOf('reactions').click();
+    await settle();
+    expect(suggestions.resetSuggestions).not.toHaveBeenCalled();
+    switchOf('suggestions').click();
+    await settle();
+    expect(suggestions.resetSuggestions).toHaveBeenCalledTimes(1);
   });
 
   it('puts the switch back and says so when the write fails', async () => {

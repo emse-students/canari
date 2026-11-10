@@ -65,6 +65,26 @@ describe('a play() aborted by scrolling past', () => {
     (action as { destroy?: () => void }).destroy?.();
   });
 
+  it('Jamais leaves a video come into view on its first frame; Toujours (the default) plays it', async () => {
+    const { settings } = await import('$lib/stores/settingsStore.svelte');
+    settings.setVideoAutoplay('never');
+    const still = document.createElement('video');
+    const stillPlay = vi.spyOn(still, 'play').mockResolvedValue(undefined);
+    const stillAction = playWhileVisible(still);
+    enter(still, true);
+    expect(stillPlay).not.toHaveBeenCalled();
+    (stillAction as { destroy?: () => void }).destroy?.();
+
+    settings.setVideoAutoplay('always');
+    const playing = document.createElement('video');
+    const play = vi.spyOn(playing, 'play').mockResolvedValue(undefined);
+    const action = playWhileVisible(playing);
+    enter(playing, true);
+    expect(play).toHaveBeenCalledTimes(1);
+    (action as { destroy?: () => void }).destroy?.();
+    settings.setVideoAutoplay('');
+  });
+
   it('still warns on a refusal', async () => {
     const video = document.createElement('video');
     vi.spyOn(video, 'play').mockRejectedValue(new DOMException('no', 'NotAllowedError'));

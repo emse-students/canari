@@ -40,6 +40,8 @@
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { PostEntity } from '$lib/posts/api';
   import { REEL_PAGE as PAGE, allReelsLoader, type ReelPageLoader } from '$lib/reels/allReels';
+  import { REEL_ORDERS, type ReelOrder } from '$lib/reels/reelOrder';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
     mergeReelPage,
     mountedReelIndices,
@@ -102,6 +104,13 @@
      * grid (owner, 2026-11-10: a tap on a feed video opens full screen on THAT video). 0 elsewhere.
      */
     startMediaIndex?: number;
+    /**
+     * THE STREAM'S ORDER, "Pour toi" or "Récents" ("Nos principes", owner 2026-11-10: a chronological
+     * view must always exist), drawn at the top - the CanaReels entry's stream only; an opener that
+     * shows one post's media passes none. A change hands this viewer a new `loadPage` and
+     * `startPost`, and the viewer starts over at the top of the new list.
+     */
+    orderChoice?: { value: ReelOrder; busy?: boolean; onChange: (order: ReelOrder) => void };
   }
 
   let {
@@ -113,7 +122,14 @@
     expandOrigin = null,
     onMediaGone,
     startMediaIndex = 0,
+    orderChoice,
   }: Props = $props();
+
+  /** The label of each order, in the order `REEL_ORDERS` lists them. */
+  const REEL_ORDER_LABELS: Record<ReelOrder, () => string> = {
+    ranked: m.reels_order_for_you,
+    recent: m.reels_order_recent,
+  };
 
   /**
    * Touches on these belong to them: the player's bar seeks, a button is pressed, and an EXPANDED
@@ -214,21 +230,62 @@
     void loadMore();
   });
 
+  /**
+   * WHICH LIST IS ON SCREEN: bumped when the opener hands a new loader (another order). A page asked
+   * of the list before the change is dropped when it lands, so it never mixes into the new one.
+   */
+  let listGeneration = 0;
+  let mountedLoader: ReelPageLoader | null = null;
+
+  // A NEW LOADER IS A NEW LIST (the stream's order changed): start over at the top of it, with the
+  // first page the opener read. The first run only records the loader `onMount` started with.
+  $effect(() => {
+    const loader = loadPage;
+    const start = startPost;
+    if (mountedLoader === null) {
+      mountedLoader = loader;
+      return;
+    }
+    if (loader === mountedLoader) return;
+    mountedLoader = loader;
+    listGeneration += 1;
+    console.debug(`[reel-viewer] a new list (generation ${listGeneration}) from ${start.id}`);
+    reels = [start];
+    index = 0;
+    fetched = 0;
+    hasMore = true;
+    loadingMore = false;
+    settledId = null;
+    mediaIndexById = {};
+    offsetX = 0;
+    offsetY = 0;
+  });
+
   async function loadMore() {
     loadingMore = true;
+    const generation = listGeneration;
     try {
       const page = await loadPage(fetched, PAGE);
+      if (generation !== listGeneration) {
+        console.debug('[reel-viewer] a page of the previous list landed - dropped');
+        return;
+      }
       fetched += page.length;
       if (page.length < PAGE) hasMore = false;
       reels = mergeReelPage(reels, page);
       console.debug(`[reel-viewer] page of ${page.length}, ${reels.length} loaded`);
     } catch (err) {
+      if (generation !== listGeneration) {
+        console.debug('[reel-viewer] a page of the previous list failed - its list is gone', err);
+        return;
+      }
       // The reels already loaded stay watchable; the list simply ends here.
       console.error('[reel-viewer] the next reels could not be loaded', err);
       hasMore = false;
       showToast(m.reels_viewer_load_error(), 'error');
     } finally {
-      loadingMore = false;
+      // Only this list's read may clear the flag: the new list may have a read of its own in flight.
+      if (generation === listGeneration) loadingMore = false;
     }
   }
 
@@ -833,6 +890,27 @@
       >
         <X size={26} strokeWidth={2.5} class="drop-shadow-md" />
       </button>
+      {#if orderChoice}
+        <!-- "Pour toi" / "Récents" (owner, 2026-11-10): on a surface of its own, so both labels
+             read on a bright reel and on black alike. The empty box after it balances the X. -->
+        <div
+          class="pointer-events-auto mt-1 rounded-xl bg-(--cn-surface) shadow-md {orderChoice.busy
+            ? 'opacity-70'
+            : ''}"
+          data-reel-order
+        >
+          <SegmentedControl
+            items={REEL_ORDERS.map((key) => ({ key, label: REEL_ORDER_LABELS[key]() }))}
+            value={orderChoice.value}
+            onSelect={(key) => orderChoice.onChange(key)}
+            label={m.reels_order_label()}
+            tone="yellow"
+            activation="manual"
+            class="w-48"
+          />
+        </div>
+        <span class="w-11 shrink-0" aria-hidden="true"></span>
+      {/if}
     </div>
 
     <!-- A pointer has no swipe: the two steps are buttons on a wide screen. -->

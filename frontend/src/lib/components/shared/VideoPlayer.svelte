@@ -30,6 +30,7 @@
     type VideoSoundScope,
   } from '$lib/actions/playWhileVisible';
   import { arbitratePlayback } from '$lib/actions/playbackArbiter';
+  import { feedAutoplayPermitted } from '$lib/video/autoplayPolicy';
   import { captureVideoFrame } from '$lib/utils/videoFrameBackdrop';
   import BlurredBackdrop from './BlurredBackdrop.svelte';
   import { videoSound } from '$lib/stores/videoSound.svelte';
@@ -940,10 +941,11 @@
            read as "tap to play" on a video that was only loading (owner, 2026-10-31). -->
     {/if}
 
-    {#if variant !== 'feed' && paused && !holding && (minimal ? autoplayRefused : frameReady)}
+    {#if (variant !== 'feed' || !feedAutoplayPermitted()) && paused && !holding && (minimal ? autoplayRefused : frameReady)}
       <!-- The one big target while nothing plays; the bar below repeats it for the keyboard. The
            minimal player draws it on a decided outcome only, with or without a first frame; the
-           feed's none - it plays by being on screen, as Instagram's does. -->
+           feed's only when the reader's "Lecture automatique des vidéos" keeps it from starting
+           (`video/autoplayPolicy.ts`) - otherwise it plays by being on screen, as Instagram's does. -->
       <VideoPlayGlyph onclick={togglePlay} size={minimal ? 'lg' : 'md'} tabindex={-1} />
     {/if}
 

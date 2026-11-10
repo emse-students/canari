@@ -19,6 +19,7 @@
   import ReelsEmptyState from './ReelsEmptyState.svelte';
   import type { PostEntity } from '$lib/posts/api';
   import { allReelsLoader, listAllReels } from '$lib/reels/allReels';
+  import { preferredReelOrder, rememberReelOrder, type ReelOrder } from '$lib/reels/reelOrder';
   import { expandFrom, type ExpandOrigin } from '$lib/reels/expandFrom';
   import { showToast } from '$lib/stores/toast.svelte';
   import { isTransportFailure } from '$lib/utils/transportFailure';
@@ -34,8 +35,45 @@
 
   let opening = $state(false);
   let firstPage = $state<PostEntity[] | null>(null);
-  /** ONE loader per opening: it keeps the ranking its pages are asked of (`allReelsLoader`). */
-  const reelLoader = $derived(firstPage ? allReelsLoader(firstPage) : undefined);
+  /**
+   * "Pour toi" or "Récents" (owner, 2026-11-10: a chronological view must exist), chosen at the top
+   * of the stream and remembered on this device (`reelOrder.ts`).
+   */
+  let order = $state<ReelOrder>(preferredReelOrder());
+  /** A change of order is being read: a second tap waits for it. */
+  let reordering = $state(false);
+  /** ONE loader per opening and order: it keeps the ranking its pages are asked of (`allReelsLoader`). */
+  const reelLoader = $derived(firstPage ? allReelsLoader(firstPage, order) : undefined);
+
+  /**
+   * The reader picked another order: its first page is read, then the viewer starts over at its top
+   * with the new loader. A refusal keeps the stream as it was and says so.
+   */
+  async function changeOrder(next: ReelOrder) {
+    if (next === order || reordering) return;
+    reordering = true;
+    console.debug(`[reels-entry] order -> ${next}`);
+    try {
+      const page = await listAllReels(undefined, next);
+      // The same reels in another order: an empty answer means they were all withdrawn meanwhile.
+      if (page.length === 0) {
+        console.warn(`[reels-entry] no reel in the ${next} order - the stream stays as it was`);
+        return;
+      }
+      rememberReelOrder(next);
+      order = next;
+      firstPage = page;
+    } catch (err) {
+      if (isTransportFailure(err)) {
+        console.info('[reels-entry] no answer for the reordered reels - offline', err);
+      } else {
+        console.error('[reels-entry] the server refused the reordered reels', err);
+      }
+      showToast(m.posts_reels_open_error(), 'error');
+    } finally {
+      reordering = false;
+    }
+  }
   let emptyOpen = $state(false);
   let entry = $state<HTMLButtonElement | null>(null);
   /** Where the viewer grows from when the View Transitions API is absent (`expandFrom`). */
@@ -47,7 +85,7 @@
     let handedOff = false;
     console.debug('[reels-entry] opening the viewer at the top of the reels list');
     try {
-      const page = await listAllReels();
+      const page = await listAllReels(undefined, order);
       if (page.length === 0) {
         console.debug('[reels-entry] no reel yet - the empty sheet');
         emptyOpen = true;
@@ -103,6 +141,7 @@
     loadPage={reelLoader}
     likerId={currentUserId() ?? undefined}
     {expandOrigin}
+    orderChoice={{ value: order, busy: reordering, onChange: (next) => void changeOrder(next) }}
     onClose={() => (firstPage = null)}
   />
 {/if}

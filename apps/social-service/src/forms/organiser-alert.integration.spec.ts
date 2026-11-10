@@ -31,6 +31,7 @@ import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { FormsService } from './forms.service';
 import { FormOrganiserAlertService } from './organiser-alert.service';
+import { createNotificationPreferenceTable } from '../posts/post-notifications.it-schema';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -68,6 +69,8 @@ maybe('the organiser alert against PostgreSQL (migration 102)', () => {
     // The table as production has it before this pull request, then the migration itself.
     await q(`ALTER TABLE submissions DROP COLUMN "organiserNotifiedAt"`);
     await q(migration('102_submissions_organiser_notified.sql'));
+    // The bell writes a row only for a reader whose category is on (`recipientsWithCategoryOn`).
+    await createNotificationPreferenceTable((sql) => q(sql));
 
     const none = {} as never;
     const push = {

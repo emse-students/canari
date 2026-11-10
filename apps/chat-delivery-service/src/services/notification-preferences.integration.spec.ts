@@ -36,9 +36,9 @@ maybe('the disabled categories merge (PostgreSQL)', () => {
     await admin.connect();
     await admin.query(`CREATE SCHEMA ${schema}`);
     await admin.query(`SET search_path TO ${schema}`);
-    await admin.query(
-      readFileSync(resolve(__dirname, '../migrations/028_notification_preferences.sql'), 'utf8')
-    );
+    for (const file of ['028_notification_preferences.sql', '047_notification_opt_in.sql']) {
+      await admin.query(readFileSync(resolve(__dirname, '../migrations', file), 'utf8'));
+    }
     ds = new DataSource({
       type: 'postgres',
       url: URL,
@@ -57,10 +57,29 @@ maybe('the disabled categories merge (PostgreSQL)', () => {
 
   it('a first save stores the set, and answers it', async () => {
     expect(await writeDisabledCategories(ds.manager, 'u1', ['posts', 'forms'], [])).toEqual([
-      'forms',
       'posts',
+      'forms',
     ]);
     expect(await stored('u1')).toEqual(['forms', 'posts']);
+  });
+
+  it('an account with no row has Suggestions off, and only that (owner, 2026-11-10)', async () => {
+    expect(await stored('nobody')).toEqual(['suggestions']);
+  });
+
+  it('a first save from a build that cannot name Suggestions leaves it off', async () => {
+    await writeDisabledCategories(ds.manager, 'u0', ['posts'], ['suggestions']);
+    expect(await stored('u0')).toEqual(['posts', 'suggestions']);
+  });
+
+  it('Suggestions turned on survives a later save from a build that cannot name it', async () => {
+    await writeDisabledCategories(ds.manager, 'u6', [], []);
+    expect(await stored('u6')).toEqual([]);
+    await writeDisabledCategories(ds.manager, 'u6', ['forms'], ['suggestions']);
+    expect(await stored('u6')).toEqual(['forms']);
+    // And off again from a build that draws it.
+    await writeDisabledCategories(ds.manager, 'u6', ['suggestions'], []);
+    expect(await stored('u6')).toEqual(['suggestions']);
   });
 
   it("a build that cannot name suggestions keeps the reader's choice of it, and replaces the rest", async () => {
@@ -71,14 +90,15 @@ maybe('the disabled categories merge (PostgreSQL)', () => {
   });
 
   it('a build that names everything replaces everything', async () => {
-    await writeDisabledCategories(ds.manager, 'u3', ['suggestions'], []);
+    await writeDisabledCategories(ds.manager, 'u3', ['suggestions', 'posts'], []);
     await writeDisabledCategories(ds.manager, 'u3', [], []);
     expect(await stored('u3')).toEqual([]);
   });
 
-  it('a kept category that was not stored stays off the list', async () => {
+  it('a kept category keeps its stored state', async () => {
     await writeDisabledCategories(ds.manager, 'u4', ['posts'], []);
     await writeDisabledCategories(ds.manager, 'u4', ['posts'], ['suggestions', 'birthdays']);
+    // Birthdays was on and stays on; Suggestions was turned on by the first save and stays on.
     expect(await stored('u4')).toEqual(['posts']);
   });
 
@@ -99,5 +119,12 @@ maybe('the disabled categories merge (PostgreSQL)', () => {
     await saves;
     // Whichever committed last, the choice neither caller could name survives both.
     expect(await stored('u5')).toContain('suggestions');
+    // The same for Suggestions turned ON: neither 1.6.9 save may switch it back off.
+    await writeDisabledCategories(ds.manager, 'u7', [], []);
+    await Promise.all([
+      writeDisabledCategories(ds.manager, 'u7', ['posts'], ['suggestions']),
+      writeDisabledCategories(ds.manager, 'u7', ['forms'], ['suggestions']),
+    ]);
+    expect(await stored('u7')).not.toContain('suggestions');
   });
 });

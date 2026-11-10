@@ -14,6 +14,10 @@ import { join } from 'path';
 import { Client } from 'pg';
 import type { EntityManager } from 'typeorm';
 import { SUGGESTED_POST_MIN_ENGAGED, suggestedPostIds } from './suggested-posts';
+import {
+  createNotificationPreferenceTable,
+  turnSuggestionsOn,
+} from './post-notifications.it-schema';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -125,6 +129,9 @@ maybe('suggested posts against PostgreSQL (engagement WP-7)', () => {
       await q(`INSERT INTO users (id, campus, cursus) VALUES ($1, $2, $3)`, [id, SE, ICM]);
     }
     await q(`INSERT INTO users (id, campus, cursus) VALUES ('g', $1, $2)`, [GA, ISMIN]);
+    // "Suggestions" is off until turned on (owner, 2026-11-10): every reader here turned it on but m.
+    await createNotificationPreferenceTable((sql) => q(sql));
+    await turnSuggestionsOn(q, ['v', 'a', 'fol', 'pend', 'b1', 'b2', 'g']);
     await follow('v', 'fol');
     await follow('v', 'pend', 'pending');
     await follow('v', 'g');
@@ -177,6 +184,10 @@ maybe('suggested posts against PostgreSQL (engagement WP-7)', () => {
   afterAll(async () => {
     await q(`DROP SCHEMA ${schema} CASCADE`);
     await admin.end();
+  });
+
+  it('suggests nothing to a reader who did not turn Suggestions on ("Nos principes")', async () => {
+    expect(await suggested('m')).toEqual([]);
   });
 
   it("suggests popular posts of the viewer's space, the most engaged first", async () => {

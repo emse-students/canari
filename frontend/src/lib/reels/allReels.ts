@@ -1,5 +1,6 @@
 import { listPosts, type PostEntity } from '$lib/posts/api';
 import { readNextPage, type ListPage } from '$lib/posts/rankedFeeds';
+import { DEFAULT_REEL_ORDER, type ReelOrder } from './reelOrder';
 
 /**
  * THE LIST THE REEL VIEWER SWIPES THROUGH (C7): every live reel the reader may see, and since
@@ -10,7 +11,8 @@ import { readNextPage, type ListPage } from '$lib/posts/rankedFeeds';
  * never the client. ONE list, no tab.
  *
  * RANKED LIKE POUR TOI (owner, 2026-11-10): `ranked=true` orders it by the same freshness and
- * popularity score, from a snapshot paged by `asOf` (`posts/rankedFeeds.ts`). An estate older than
+ * popularity score, from a snapshot paged by `asOf` (`posts/rankedFeeds.ts`) - or NEWEST FIRST with
+ * no ranking when the reader picks "Récents" (`reelOrder.ts`, "Nos principes" the same day). An estate older than
  * `rankedFeeds` is asked the older shape (`feed=all`, newest first), which it reads as `reels`
  * (docs/wiki/legacy-compatibility.md, "`kind=reel` on `feed=all` read as the CanaReels viewer list").
  * Opened from a reel it follows that reel; opened from the CanaReels icon beside the feed's tabs it
@@ -23,8 +25,30 @@ export type ReelPageLoader = (offset: number, limit: number) => Promise<PostEnti
 /** How many reels one page asks for: the viewer's page, and the entry's first read. */
 export const REEL_PAGE = 10;
 
-/** One read of the C7 list: the first page, or the page a snapshot names. */
-function readReels(page: ListPage & { limit: number }): Promise<PostEntity[]> {
+/**
+ * THE LIST THAT ENDS AT THE POST OPENED: no further page. A conversation's reel (its reels are not
+ * the feed's) and a feed video opened with "Défilement infini des CanaReels" off (`infiniteReels.ts`).
+ */
+export const NO_FURTHER_REELS: ReelPageLoader = async () => [];
+
+/**
+ * One read of the C7 list: the first page, or the page a snapshot names. In the `recent` order
+ * (`reels/reelOrder.ts`) nothing is ranked - the server's newest-first list, paged by offset - and
+ * the page's shape is the estate's to say (`rankedFeeds` left to `listPosts`), never the older
+ * `feed=all` shape a page with no ranking facts would otherwise be asked in.
+ */
+function readReels(page: ListPage & { limit: number }, order: ReelOrder): Promise<PostEntity[]> {
+  if (order === 'recent') {
+    return listPosts({
+      kind: 'reel',
+      multiMedia: true,
+      withLinks: true,
+      feed: 'reels',
+      ranked: false,
+      offset: page.offset,
+      limit: page.limit,
+    });
+  }
   return listPosts({
     kind: 'reel',
     multiMedia: true,
@@ -36,8 +60,11 @@ function readReels(page: ListPage & { limit: number }): Promise<PostEntity[]> {
 }
 
 /** The first page of the C7 list - the entry's read, to know whether there is a reel at all. */
-export function listAllReels(limit = REEL_PAGE): Promise<PostEntity[]> {
-  return readReels({ offset: 0, limit });
+export function listAllReels(
+  limit = REEL_PAGE,
+  order: ReelOrder = DEFAULT_REEL_ORDER
+): Promise<PostEntity[]> {
+  return readReels({ offset: 0, limit }, order);
 }
 
 /**
@@ -47,16 +74,20 @@ export function listAllReels(limit = REEL_PAGE): Promise<PostEntity[]> {
  * viewer already holds). With `firstPage` (the entry read it already), the viewer's first page is
  * that one and not a second request for the same rows.
  */
-export function allReelsLoader(firstPage?: PostEntity[]): ReelPageLoader {
+export function allReelsLoader(
+  firstPage?: PostEntity[],
+  order: ReelOrder = DEFAULT_REEL_ORDER
+): ReelPageLoader {
   let served: PostEntity[] = firstPage ? [...firstPage] : [];
+  const read = (page: ListPage & { limit: number }) => readReels(page, order);
   return async (offset, limit) => {
     if (offset === 0) {
       if (firstPage && limit === REEL_PAGE) return firstPage;
-      const page = await readReels({ offset: 0, limit });
+      const page = await read({ offset: 0, limit });
       served = [...page];
       return page;
     }
-    const next = await readNextPage({ shown: served, limit, read: readReels });
+    const next = await readNextPage({ shown: served, limit, read });
     served = next.rows;
     return next.appended;
   };

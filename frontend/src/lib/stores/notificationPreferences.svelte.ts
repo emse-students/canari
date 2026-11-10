@@ -11,7 +11,8 @@
  * for an MLS group or DM, read in the same request and applied by `useMessaging.notifyInbound` to
  * the notifications this client raises itself.
  *
- * Until the first load answers, everything is ON - the account default - and a failed load says so
+ * Until the first load answers, the account default holds - everything ON except the opt-in
+ * categories (`OPT_IN_CATEGORIES`, "Suggestions": off until turned on) - and a failed load says so
  * and keeps that default rather than inventing a state; the next login and every visit to the
  * settings screen load again.
  */
@@ -23,7 +24,7 @@ import {
   saveGroupNotificationLevel,
 } from '$lib/notifications/preferencesApi';
 import { callsAllowedFor } from '$lib/notifications/callPermission';
-import type { NotificationCategory } from '$lib/notifications/categories';
+import { OPT_IN_CATEGORIES, type NotificationCategory } from '$lib/notifications/categories';
 import {
   isConversationNotificationLevel,
   type ConversationNotificationLevel,
@@ -31,7 +32,13 @@ import {
 import { SvelteMap } from 'svelte/reactivity';
 import { Log } from '$lib/utils/Log';
 
-let disabled = $state<NotificationCategory[]>([]);
+/**
+ * The account default: the opt-in categories off. A save made before the first load sends it, so it
+ * can never turn "Suggestions" on by omission.
+ */
+const DEFAULT_DISABLED: readonly NotificationCategory[] = OPT_IN_CATEGORIES;
+
+let disabled = $state<NotificationCategory[]>([...DEFAULT_DISABLED]);
 /** Switched-off ids this build does not know, as read: sent back on every save, never drawn. */
 let unknownDisabled: string[] = [];
 /** Serialises writes: each PUT carries the whole set, so two in flight could land out of order. */
@@ -222,9 +229,9 @@ export const notificationPreferences = {
     return read;
   },
 
-  /** Back to the default (everything on) - on sign-out, so the next account never inherits a set. */
+  /** Back to the account default - on sign-out, so the next account never inherits a set. */
   reset(): void {
-    disabled = [];
+    disabled = [...DEFAULT_DISABLED];
     unknownDisabled = [];
     groupLevels = {};
     groupCalls = {};

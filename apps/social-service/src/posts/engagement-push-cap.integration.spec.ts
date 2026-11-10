@@ -20,7 +20,11 @@ import {
   pruneEngagementPushDays,
 } from './engagement-push-cap';
 import { PostNotificationsService } from './post-notifications.service';
-import { createEngagementPushCapTables, givePushDevices } from './post-notifications.it-schema';
+import {
+  createEngagementPushCapTables,
+  givePushDevices,
+  turnSuggestionsOn,
+} from './post-notifications.it-schema';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import type { NotificationType, PushOnlyNotificationType } from '../push/notification-client-floor';
 
@@ -86,6 +90,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       `INSERT INTO key_package ("userId", "deviceId", "deviceAppVersion") VALUES ('mixed', 'd2', '1.6.10-alpha.1')`
     );
     await givePushDevices(q, ['unknown'], 'garbage');
+    await turnSuggestionsOn(q, ['old', 'mixed', 'unknown', 'none']);
     const allowed = await claimEngagementPushes(
       manager,
       ['old', 'mixed', 'unknown', 'none'],
@@ -125,6 +130,18 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     const allowed = await claimEngagementPushes(manager, ['off', 'other'], 'posts');
     expect([...allowed]).toEqual(['other']);
     expect(await counter('off')).toBeNull();
+  });
+
+  it('Suggestions is off until turned on: only the reader who turned it on spends a unit (owner, 2026-11-10)', async () => {
+    // `other` has a row that says nothing of Suggestions; `fresh` has no row at all.
+    await q(
+      `INSERT INTO notification_preference ("userId", "disabledCategories") VALUES ('other', '[]')`
+    );
+    await turnSuggestionsOn(q, ['full']);
+    const allowed = await claimEngagementPushes(manager, ['other', 'fresh', 'full'], 'suggestions');
+    expect([...allowed]).toEqual(['full']);
+    expect(await counter('fresh')).toBeNull();
+    expect(await counter('other')).toBeNull();
   });
 
   it('the GC deletes the rows older than a week and keeps the rest; the erasure takes a reader', async () => {
@@ -213,8 +230,10 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     /** The fan-out is fire-and-forget: let its sends land. */
     const settle = () => new Promise((r) => setTimeout(r, 20));
 
-    beforeEach(() => {
+    beforeEach(async () => {
       pushed.length = 0;
+      // A trend reaches only a reader who turned Suggestions on (owner, 2026-11-10).
+      await turnSuggestionsOn(q, ['r']);
     });
 
     it('the counted push past the cap reaches the bell only, not the phone', async () => {

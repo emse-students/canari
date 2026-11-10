@@ -264,22 +264,26 @@
       <div>
         <dt>Suggestions et activité de vos abonnements</dt>
         <dd>
-          Des personnes et des associations à suivre vous sont proposées à partir de ce que le
-          service sait déjà (les personnes suivies par celles que vous suivez, vos associations,
-          votre campus, votre formation et votre promotion) ; une suggestion que vous écartez ne
-          revient plus, et ce choix est conservé jusqu'à l'effacement de votre compte. Des
-          publications populaires de personnes de votre espace, que vous voyez déjà, peuvent
-          apparaître dans « Pour toi » marquées « Suggestion » ; cet onglet range les publications
-          selon leur fraîcheur et le nombre de personnes qui y ont réagi ou les ont commentées, sans
-          autre donnée sur vous. Quand une publication de votre espace (votre campus ou votre
-          formation, jamais par un abonnement ou un accès nominatif) fait réagir au moins dix
-          personnes dans les 24 heures qui suivent sa publication, elle peut vous être suggérée par
-          une notification, une fois par jour et deux fois par semaine au plus ; son auteur ne l'est
+          Tout ce qui suit est désactivé tant que vous n'activez pas « Suggestions » dans les
+          réglages des notifications (désactivé par défaut, y compris pour les comptes créés avant
+          le 10 novembre 2026) ; ce seul réglage couvre les comptes à suivre, les publications
+          suggérées dans « Pour toi » et les notifications de tendance. Une fois activé, des
+          personnes et des associations à suivre vous sont proposées à partir de ce que le service
+          sait déjà (les personnes suivies par celles que vous suivez, vos associations, votre
+          campus, votre formation et votre promotion) ; une suggestion que vous écartez ne revient
+          plus, et ce choix est conservé jusqu'à l'effacement de votre compte. Des publications
+          populaires de personnes de votre espace, que vous voyez déjà, peuvent apparaître dans «
+          Pour toi » marquées « Suggestion » ; cet onglet range les publications selon leur
+          fraîcheur et le nombre de personnes qui y ont réagi ou les ont commentées, sans autre
+          donnée sur vous. Quand une publication de votre espace (votre campus ou votre formation,
+          jamais par un abonnement ou un accès nominatif) fait réagir au moins dix personnes dans
+          les 24 heures qui suivent sa publication, elle peut vous être suggérée par une
+          notification, une fois par jour et deux fois par semaine au plus ; son auteur ne l'est
           pas. Cette suggestion peut nommer une personne que vous suivez (abonnement accepté) qui a
           aimé la publication, et dire combien d'autres personnes l'ont aimée ; elle ne nomme jamais
           l'auteur, ni une personne avec qui un blocage existe. Vous pouvez être nommé ainsi auprès
-          de vos abonnés acceptés quand vous aimez une publication qu'ils voient déjà, sauf si vous
-          désactivez « Partager mon activité » dans les réglages (activé par défaut). La
+          de vos abonnés acceptés quand vous aimez une publication qu'ils voient déjà, seulement si
+          vous activez « Partager mon activité » dans les réglages (désactivé par défaut). La
           notification conservée chez votre abonné garde l'identifiant de votre compte, jamais votre
           nom : votre nom n'y est affiché que tant que vous aimez toujours la publication, que le
           partage est activé, qu'il vous suit et qu'aucun blocage n'existe entre vous ; l'effacement
@@ -339,7 +343,10 @@
           Canari. Les fichiers déposés dans un formulaire (par exemple un CV) sont lisibles par
           l'association qui l'a créé. Une image ajoutée à une question par l'auteur d'un formulaire
           est publique : quiconque a le lien du formulaire peut la voir, sans compte. Elle est
-          effacée quand plus aucun formulaire ne l'affiche.
+          effacée quand plus aucun formulaire ne l'affiche. Les modifications d'un formulaire en
+          cours d'écriture sont enregistrées au fur et à mesure comme brouillon (le contenu du
+          formulaire, sans le nom de qui l'a écrit), vidé à la publication ou à l'abandon et
+          supprimé avec le formulaire.
         </dd>
       </div>
       <div>
@@ -513,6 +520,19 @@
           sert aussi à ne vous la rappeler qu'une seule fois, 30 jours plus tard, si vous n'avez
           toujours pas de photo. Une copie est gardée sur l'appareil jusqu'à la suppression du
           compte ou la réinitialisation de l'appareil.
+        </dd>
+      </div>
+      <div>
+        <dt>Démineur</dt>
+        <dd>
+          Une partie « Libre » n'envoie rien. Pour une partie classée : la partie (sa grille, sa
+          taille, ses dates et son état) et, si vous gagnez, votre temps et votre nombre de coups.
+          Les classements, général et par promo, montrent à chaque membre connecté le nom, le
+          meilleur temps et le rang de chaque joueur classé ; le classement par promo montre aussi
+          la promo (l'année d'entrée de votre cursus ; un compte sans cursus n'y figure pas). Votre
+          profil affiche votre rang (badge « Démineur »). La modération peut retirer un score ou
+          exclure un joueur du classement ; l'exclusion garde son motif, l'administrateur qui l'a
+          prononcée et sa date. Tout est supprimé avec votre compte.
         </dd>
       </div>
       <div>
@@ -817,7 +837,13 @@
           </tr>
           <tr>
             <td>Publications, commentaires, médias des publications</td>
-            <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : 30 jours</td>
+            <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : un an</td>
+          </tr>
+          <tr>
+            <td>Démineur : parties classées, scores, exclusions du classement</td>
+            <td
+              >Jusqu'à la suppression du compte ; un score retiré par la modération est supprimé</td
+            >
           </tr>
           <tr>
             <td>

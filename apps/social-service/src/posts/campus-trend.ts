@@ -10,7 +10,12 @@ import {
   postVisibleToUserSql,
   sameSideOfReviewCohortSql,
 } from '../spaces/reader-spaces';
-import { engagedAccountsSql, TREND_LIKES_SQL as LIKES_SQL } from './engagement-sql';
+import {
+  engagedAccountsSql,
+  sharesActivitySql,
+  TREND_LIKES_SQL as LIKES_SQL,
+} from './engagement-sql';
+import { suggestionsOnSql } from '../push/notification-category';
 import { CAMPUS_TREND_NOTIFICATION } from './engagement-push-cap';
 import type { PostNotificationsService } from './post-notifications.service';
 import { SYSTEM_ACTOR_ID } from './post-notifications.service';
@@ -113,6 +118,8 @@ RETURNING id, markdown, images,
  * minus its author, a block either way with the author when the post NAMES it (an anonymous or an
  * association post is exempt, as in the feed - `namedAuthorUnblockedSql`), the other side of the
  * review cohort, and whoever already has a row for it in the ledger or in `post_notifications` (L14).
+ * ONLY A READER WHO TURNED "SUGGESTIONS" ON ("Nos principes", owner 2026-11-10: off by default, and
+ * off writes no bell row) - so a reader who did not spends no slot of their day or week either.
  * Built per call: the cohort is read from the environment.
  */
 export function campusTrendCandidatesSql(): string {
@@ -120,7 +127,8 @@ export function campusTrendCandidatesSql(): string {
   FROM stamped ct_s
   JOIN posts ct_post ON ct_post.id = ct_s.id
   JOIN users ct_user ON ct_user.id <> ct_post."authorId"
- WHERE ${sameSideOfReviewCohortSql('ct_user.id', 'ct_post."authorId"')}
+ WHERE ${suggestionsOnSql('ct_user.id')}
+   AND ${sameSideOfReviewCohortSql('ct_user.id', 'ct_post."authorId"')}
    AND ${namedAuthorUnblockedSql('ct_post', 'ct_user.id')}
    AND EXISTS (SELECT 1 FROM spaces ct_space
                 WHERE ${isReaderSpaceSql('ct_space', 'ct_user')} AND ${postReachesSpaceSql('ct_post', 'ct_space')})
@@ -178,7 +186,7 @@ RETURNING "recipientId"`;
  * notification - the trend names the followed people who liked it instead): for each reader the
  * ledger took, ONE account they follow (accepted) that LIKED the post ({@link TREND_LIKE_REACTIONS}),
  * the smallest id of them (deterministic), under the disclosure rule friends' activity had - the
- * account shares its activity (no `user_activity_settings` row saying otherwise), is not the post's
+ * account shares its activity (`sharesActivitySql`: turned ON - off by default since 2026-11-10), is not the post's
  * author (an anonymous author included: the guard is on the id, whatever the post shows), has no
  * block either way with the reader, stands on the reader's side of the review cohort, and the post's
  * reactors are not withheld from the reader. NULL when no such account exists: the trend then names
@@ -200,8 +208,7 @@ export function campusTrendNamedSql(): string {
      WHERE ct_f."followerUserId" = ct_t."recipientId" AND ${acceptedFollowSql('ct_f')}
        AND ct_np.reactions ->> ct_f."followedUserId" IN (${LIKES_SQL})
        AND ct_f."followedUserId" <> ct_np."authorId"
-       AND NOT EXISTS (SELECT 1 FROM user_activity_settings ct_set
-                        WHERE ct_set."userId" = ct_f."followedUserId" AND NOT ct_set."shareActivity")
+       AND ${sharesActivitySql('ct_f."followedUserId"')}
        AND NOT EXISTS (SELECT 1 FROM user_blocks ct_b
                         WHERE (ct_b."blockerId" = ct_t."recipientId" AND ct_b."blockedId" = ct_f."followedUserId")
                            OR (ct_b."blockedId" = ct_t."recipientId" AND ct_b."blockerId" = ct_f."followedUserId"))

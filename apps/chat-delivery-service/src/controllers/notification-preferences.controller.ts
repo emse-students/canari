@@ -54,7 +54,8 @@ export class NotificationPreferencesController {
   ) {}
 
   /**
-   * The categories this account has switched off (empty = everything on), and every conversation it
+   * The categories off for this account (for one that never saved: the opt-in ones, off until turned
+   * on - `OPT_IN_CATEGORIES`), and every conversation it
    * made quieter than `all` (absent = `all`) - the two things a client needs to gate the
    * notifications it raises itself, in the one read it already makes at sign-in.
    */
@@ -142,8 +143,9 @@ export class NotificationPreferencesController {
   /**
    * Replaces the disabled set for the categories the CALLER'S BUILD names
    * (`X-Canari-Client-Version`, none = a build up to 1.6.9), and keeps the stored choice for every
-   * other one: a build that draws no switch for a category made no choice about it. Unknown ids are
-   * refused: a typo must not read as "saved". Answers the set now stored.
+   * other one: a build that draws no switch for a category made no choice about it. An opt-in
+   * category the caller names and leaves out of `disabled` is turned ON. Unknown ids are refused: a
+   * typo must not read as "saved". Answers the categories now off.
    */
   @UseGuards(HeaderAuthGuard)
   @Put('mls/notification-preferences')

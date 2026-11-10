@@ -5,6 +5,7 @@ import {
   type PushOnlyNotificationType,
 } from '../push/notification-client-floor';
 import type { PushContentKey } from '../push/push-content';
+import { categoryOffSql } from '../push/notification-category';
 
 /**
  * THE GLOBAL DAILY PUSH CAP (engagement WP-8; owner, 2026-11-10: "on y est allés un peu fort";
@@ -176,8 +177,9 @@ const DEVICE_CORE_SQL = `substring(kp."deviceAppVersion" from '^[[:space:]]*([0-
  * reader twice would make `ON CONFLICT DO UPDATE` touch one row twice, which PostgreSQL refuses), in
  * ONE lock order (two concurrent fan-outs over overlapping readers can then never deadlock, and the
  * row lock orders them on each shared reader, so the cap is exact), skipping a reader who switched
- * the type's category off (`notification_preference`, chat-delivery's table in the same database:
- * they are never pushed, so they must not spend the budget), and skipping a reader with no device
+ * the type's category off (`categoryOffSql`: chat-delivery's `notification_preference` in the same
+ * database, an opt-in category such as Suggestions off until turned on - they are never pushed, so
+ * they must not spend the budget), and skipping a reader with no device
  * able to show the push - when the type has a floor (`$4`), chat-delivery drops the tokens of
  * devices KNOWN to run an older build (`key_package."deviceAppVersion"`), keeping a device of
  * unknown build, so this asks the same of the same tables before a unit is spent - one unit of
@@ -189,8 +191,7 @@ const DEVICE_CORE_SQL = `substring(kp."deviceAppVersion" from '^[[:space:]]*([0-
 export const CLAIM_ENGAGEMENT_PUSHES_SQL = `INSERT INTO engagement_push_days ("userId", day, pushed)
 SELECT ids.r, (now() AT TIME ZONE 'Europe/Paris')::date, 1
   FROM (SELECT DISTINCT r FROM unnest($1::varchar[]) r) ids
- WHERE NOT EXISTS (SELECT 1 FROM notification_preference np
-                    WHERE np."userId" = ids.r AND np."disabledCategories" ? $3::text)
+ WHERE NOT ${categoryOffSql('ids.r', '$3::text')}
    AND ($4::text IS NULL OR EXISTS (
          SELECT 1 FROM push_token pt
            LEFT JOIN key_package kp ON kp."userId" = pt."userId" AND kp."deviceId" = pt."deviceId"

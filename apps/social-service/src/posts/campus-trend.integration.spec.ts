@@ -22,6 +22,7 @@ import {
   createEngagementPushCapTables,
   createPostNotificationsTable,
   givePushDevices,
+  turnSuggestionsOn,
 } from './post-notifications.it-schema';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import type { PushContent } from '../push/push-content';
@@ -140,8 +141,11 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
         [postId]
       )
     ).rows.map((r) => r.recipientId);
-  const user = (id: string, campus = SE, cursus = ICM) =>
-    q(`INSERT INTO users (id, campus, cursus) VALUES ($1, $2, $3)`, [id, campus, cursus]);
+  /** A reader - who turned "Suggestions" on, off until turned on since 2026-11-10, unless `suggestions` is false. */
+  const user = async (id: string, campus = SE, cursus = ICM, suggestions = true) => {
+    await q(`INSERT INTO users (id, campus, cursus) VALUES ($1, $2, $3)`, [id, campus, cursus]);
+    if (suggestions) await turnSuggestionsOn(q, [id]);
+  };
 
   beforeAll(async () => {
     admin = new Client({ connectionString: URL });
@@ -193,6 +197,9 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     // a writes; s1, s2, blk, seen, grant share a's space; g is in Gardanne and follows a.
     for (const id of ['a', 's1', 's2', 'blk', 'seen', 'grant']) await user(id);
     await user('g', GA, ISMIN);
+    // nos shares a's space and never turned Suggestions on: told of no trend, ever.
+    await user('nos', SE, ICM, false);
+    await givePushDevices(q, ['nos']);
     // Every reader has a device of unknown build: the push cap's floor keeps it (a trend has one).
     await givePushDevices(q, ['a', 's1', 's2', 'blk', 'seen', 'grant', 'g']);
     await q(
@@ -240,11 +247,14 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
 
     await react(P(1), `e${T - 1}`);
     // s1, s2, grant: they share a's space. Not a (the author), not blk (a block with the author),
-    // not seen (a row for the post already), not g (a follower outside the space).
+    // not seen (a row for the post already), not g (a follower outside the space), not nos (in the
+    // space, but never turned Suggestions on - off by default since 2026-11-10).
     expect(await announceCampusTrend({ manager, notifications }, P(1))).toBe(3);
     const stamp = await stampOf(P(1));
     expect(stamp).not.toBeNull();
     expect(await told(P(1))).toEqual(['grant', 's1', 's2']);
+    // nos spent no slot of the day or the week either.
+    expect((await q(`SELECT 1 FROM campus_trend_weeks WHERE "userId" = 'nos'`)).rows).toEqual([]);
 
     await react(P(1), `e${T}`);
     expect(await announceCampusTrend({ manager, notifications }, P(1))).toBe(0);
@@ -533,10 +543,34 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
       }
     });
 
+    /** "Partager mon activité" is OFF until turned on (owner, 2026-11-10): each named account turns it on. */
+    const shareActivity = (id: string, on: boolean) =>
+      q(
+        `INSERT INTO user_activity_settings ("userId", "shareActivity") VALUES ($1, $2)
+         ON CONFLICT ("userId") DO UPDATE SET "shareActivity" = EXCLUDED."shareActivity"`,
+        [id, on]
+      );
+
+    beforeEach(async () => {
+      for (const id of ['e0', 'e1', 'e2', 'e3']) await shareActivity(id, true);
+    });
+
     afterEach(async () => {
       await q(`DELETE FROM user_follows WHERE "followerUserId" <> 'g'`);
       await q(`DELETE FROM user_activity_settings`);
       await q(`DELETE FROM user_blocks WHERE NOT ("blockerId" = 'a' AND "blockedId" = 'blk')`);
+    });
+
+    it('names nobody who never turned "Partager mon activité" on - no row is off', async () => {
+      await q(`DELETE FROM user_activity_settings`);
+      await follow('s1', 'e0');
+      await post(P(29), 'a', { reactions: { ...likers(T), e0: "J'aime" } });
+      expect(await announceCampusTrend({ manager, notifications }, P(29))).toBe(4);
+      const rows = await q(
+        `SELECT meta FROM post_notifications WHERE "postId" = $1 AND "recipientId" = 's1'`,
+        [P(29)]
+      );
+      expect(rows.rows).toEqual([{ meta: null }]);
     });
 
     it('names, per reader, ONE followed account that LIKED it - its id on the row, its name in the push', async () => {
@@ -546,9 +580,7 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
       // s2 follows e1, who does not share their activity, and e3, who only laughed: nobody.
       await follow('s2', 'e1');
       await follow('s2', 'e3');
-      await q(
-        `INSERT INTO user_activity_settings ("userId", "shareActivity") VALUES ('e1', false)`
-      );
+      await shareActivity('e1', false);
       // grant follows e2, and a block stands between them: nobody.
       await follow('grant', 'e2');
       await q(`INSERT INTO user_blocks VALUES ('e2', 'grant')`);
@@ -629,12 +661,12 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
       expect((await served(P(40))).s1).toEqual({});
       await q(`DELETE FROM user_blocks WHERE "blockerId" = 's1'`);
       expect((await served(P(40))).s1).toEqual(named);
-      // The share switch turned off.
-      await q(
-        `INSERT INTO user_activity_settings ("userId", "shareActivity") VALUES ('e0', false)`
-      );
+      // The share switch turned off - and its row gone, which is off too since 2026-11-10.
+      await shareActivity('e0', false);
       expect((await served(P(40))).s1).toEqual({});
       await q(`DELETE FROM user_activity_settings`);
+      expect((await served(P(40))).s1).toEqual({});
+      await shareActivity('e0', true);
       // The follow gone.
       await q(`DELETE FROM user_follows WHERE "followerUserId" = 's1'`);
       expect((await served(P(40))).s1).toEqual({});

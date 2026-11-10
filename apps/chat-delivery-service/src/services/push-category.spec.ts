@@ -6,8 +6,10 @@ import {
   CATEGORY_MIN_CLIENT,
   categoriesNameableBy,
   categoryOfDataPush,
+  effectiveDisabledCategories,
   isNotificationCategory,
   NOTIFICATION_CATEGORIES,
+  OPT_IN_CATEGORIES,
 } from './push-category';
 import { appVersionAtLeast, HEADERLESS_CLIENT_VERSION } from '../utils/app-version';
 
@@ -170,5 +172,35 @@ describe('CATEGORY_MIN_CLIENT', () => {
     ]);
     expect(categoriesNameableBy('1.6.8')).not.toContain('birthdays');
     expect(categoriesNameableBy('1.6.9')).toContain('birthdays');
+  });
+});
+
+/** "Nos principes" (owner, 2026-11-10): a suggestion is something the reader asks for. */
+describe('effectiveDisabledCategories', () => {
+  it('names suggestions as the one opt-in category', () => {
+    expect(OPT_IN_CATEGORIES).toEqual(['suggestions']);
+  });
+
+  it('answers suggestions off, and nothing else, for an account with no row', () => {
+    expect(effectiveDisabledCategories(null)).toEqual(['suggestions']);
+  });
+
+  it('turns an opt-in category on only from the enabled set, never from its absence', () => {
+    expect(effectiveDisabledCategories({ disabledCategories: [] })).toEqual(['suggestions']);
+    expect(
+      effectiveDisabledCategories({
+        disabledCategories: ['posts'],
+        enabledCategories: ['suggestions'],
+      })
+    ).toEqual(['posts']);
+  });
+
+  it('reads an opt-in category from the enabled set alone, and drops unknown ids', () => {
+    expect(
+      effectiveDisabledCategories({
+        disabledCategories: ['suggestions', 'retired'],
+        enabledCategories: ['suggestions', 'retired'],
+      })
+    ).toEqual([]);
   });
 });

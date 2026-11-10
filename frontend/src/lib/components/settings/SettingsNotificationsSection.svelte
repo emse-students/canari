@@ -7,11 +7,14 @@
   } from '$lib/notifications/categories';
   import { m } from '$lib/paraglide/messages';
   import SettingsAccountBells from './SettingsAccountBells.svelte';
+  import { resetSuggestions } from '$lib/follows/suggestions.svelte';
+  import { Log } from '$lib/utils/Log';
 
   /**
    * One switch per notification category, per ACCOUNT: the choice is stored server-side, which
    * applies it before it sends a push, and this device applies the same set to the notifications it
-   * raises itself. All on by default. Labels are listed here, not derived, so each stays a literal
+   * raises itself. All on by default except the opt-in ones (`OPT_IN_CATEGORIES`: Suggestions,
+   * which also governs the follow suggestions and the suggested posts of Pour toi). Labels are listed here, not derived, so each stays a literal
    * Paraglide call the compiler can see.
    */
   const COPY: Record<NotificationCategory, { label: () => string; desc: () => string }> = {
@@ -46,6 +49,13 @@
       !notificationPreferences.isEnabled(category)
     );
     saveError = !ok;
+    // The Suggestions switch also covers the follow suggestions the feed read once ("Nos principes",
+    // owner 2026-11-10): the read this session holds was answered for the old choice, so it is
+    // forgotten and the next feed asks again.
+    if (ok && category === 'suggestions') {
+      Log.d('SETTINGS', 'suggestions switch changed - the follow suggestions read is forgotten');
+      resetSuggestions();
+    }
   }
 </script>
 
