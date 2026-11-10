@@ -1,5 +1,6 @@
 import type { PostEntity } from '$lib/posts/api';
 import { currentUserId } from '$lib/stores/userState.svelte';
+import { rowsInListShape } from '$lib/posts/rankedFeeds';
 import type { PostFeed } from '$lib/posts/api';
 
 /**
@@ -53,6 +54,13 @@ export function readFeedCache(key: string): FeedCacheEntry | null {
 /** Records what a tab now holds, evicting the oldest entry once the map is full. */
 export function writeFeedCache(key: string, entry: FeedCacheEntry): void {
   entries.delete(key);
+  // Never another list's rows under this tab's key (Pour toi asked in the old `followed` shape):
+  // the tab is then read from the server again, never painted from them.
+  const feed = key.split('|')[1] ?? '';
+  if (!rowsInListShape(feed, entry.posts)) {
+    console.warn(`[FEED-CACHE] ${feed} not kept - its rows were served in another list's shape`);
+    return;
+  }
   entries.set(key, entry);
   while (entries.size > MAX_ENTRIES) {
     const oldest = entries.keys().next();

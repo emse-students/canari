@@ -2,6 +2,7 @@ import { getStorage, type IStorage } from '$lib/db';
 import { FeedPageUnreadableError } from '$lib/db/types';
 import type { PostEntity } from '$lib/posts/api';
 import type { FeedCacheParams } from '$lib/posts/feedCache';
+import { rowsInListShape } from '$lib/posts/rankedFeeds';
 import { currentFeedEpoch, ensureFeedEpoch, forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
 import { getSavedUserId } from '$lib/stores/user';
 import { refusalStatus } from '$lib/utils/apiRefusal';
@@ -174,7 +175,10 @@ export async function readStoredFeedPage(
     payload.key === key &&
     typeof payload.epoch === 'string' &&
     Array.isArray(payload.posts) &&
-    payload.posts.every(isStoredPost);
+    payload.posts.every(isStoredPost) &&
+    // A copy of another list kept under this key (alpha.6 stored the old `followed` rows as Pour
+    // toi): deleted like any page this build would not write.
+    rowsInListShape(params.feed, payload.posts as PostEntity[]);
   if (!valid) {
     console.warn(
       `[FEED-STORE] the stored ${key} page is not one this build wrote for this account - every stored page deleted`
@@ -233,6 +237,11 @@ export async function writeStoredFeedPage(
 ): Promise<void> {
   const key = storedFeedKey(params);
   if (!key) return;
+  if (!rowsInListShape(params.feed, posts)) {
+    // Another list's rows (Pour toi asked in the old `followed` shape): never kept under this key.
+    console.warn(`[FEED-STORE] ${key} not stored - its rows were served in another list's shape`);
+    return;
+  }
   if (epoch.started) await deleteAllPages(storage, 'new epoch');
   if (currentFeedEpoch(access.userId) !== epoch.epoch) {
     console.log(`[FEED-STORE] ${key} not stored - its epoch ended while the write waited`);

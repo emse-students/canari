@@ -527,12 +527,25 @@ the server half is `rankedFeeds: true` in core-service's `GET /api/version`.
 paged with `asOf`. A stable ships both stores before production deploys, and an older social-service
 refuses `feed=foryou` `400` (`@IsIn`) - the tab would be empty for those days.
 **What the client does.** On an estate that says `rankedFeeds: true` it asks the ranked lists; otherwise
-- an older server, or no answer yet - it asks Pour toi as `feed=followed` (the chronological Suivis,
+- an estate that ANSWERED without it - it asks Pour toi as `feed=followed` (the chronological Suivis,
 entities included) and the CanaReels list in its older shape (`feed=all&kind=reel`, newest first),
 with neither `ranked` nor `asOf`; the rows carry no `feedAsOf`, so `nextListPage` pages by the count
-as before. A `Log.d` names the downgrade. **A list keeps the shape its first page was served in**
-until a refresh: `nextListPage` returns `rankedFeeds: false` for rows served without ranking facts,
-so a first launch that asked before `/api/version` answered never asks a ranked page 2 of an
+as before. A `Log.d` names the downgrade. **No answer yet is not "no"** (alpha.6, 2026-11-10): the
+capability is kept in `sessionStorage`, so it is `null` on EVERY cold start until the root layout's
+`/api/version` answers, and the feed's first page is asked before that. Read as "no", Pour toi was
+asked as `followed` on a server that serves it, and that answer - a followed association's post
+included - was drawn and stored on the device as Pour toi, until a manual refresh. Now a RANKED list
+with the capability `null` awaits `refreshAppVersionCheck()` (the layout's own request, deduped)
+and decides on its answer (`rankedFeedsKnown` in `posts/api.ts`); every other list asks at once. The
+wait is one round trip on a cold start (the device's stored copy is drawn meanwhile), and up to the
+probe's retry ladder (~26 s) only when `/api/version` does not answer; it is pinned as a decision in
+`versionProbeOnUnlockPath.test.ts` (an open session, never in front of an unlock).
+And **a list never holds another list's rows**: a Pour toi page whose rows lack `feedAsOf` (the
+`followed` shape) is neither kept in the memory tab cache (`writeFeedCache`) nor stored on the
+device (`writeStoredFeedPage`), and a stored Pour toi copy in that shape - what alpha.6 wrote - is
+not drawn and is deleted on its next read (`rowsInListShape`, `posts/rankedFeeds.ts`). **A list
+keeps the shape its first page was served in** until a refresh: `nextListPage` returns
+`rankedFeeds: false` for rows served without ranking facts, so a ranked page 2 is never asked of an
 unranked page 1 - which the server would refuse `400 RANKING_PAGE_INVALID` (a later ranked page
 without `asOf`).
 **Removal condition:** when no estate older than the release carrying `rankedFeeds` is served (both

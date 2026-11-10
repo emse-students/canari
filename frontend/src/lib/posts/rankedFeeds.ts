@@ -11,6 +11,17 @@ import { Log } from '$lib/utils/Log';
  * number of rows on screen, which a row withdrawn between two pages would shift.
  */
 
+/**
+ * Whether `rows` were served in the shape of the list `feed` names: a page of Pour toi carries the
+ * ranking facts on every row (`feedAsOf`); one without them was the old `followed` list - another
+ * list, associations included - and must never be kept or drawn as Pour toi (alpha.6, 2026-11-10).
+ * Every other list has one shape. An empty page holds no other list's rows.
+ */
+export function rowsInListShape(feed: string, rows: readonly PostEntity[]): boolean {
+  if (feed !== 'foryou') return true;
+  return rows.every((r) => typeof r.feedAsOf === 'string');
+}
+
 /** Where the next page of a list starts, and in which shape it is asked. */
 export interface ListPage {
   offset: number;

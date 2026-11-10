@@ -1,3 +1,4 @@
+import { vi } from 'vitest';
 import { clearFeedCache, feedCacheKey, readFeedCache, writeFeedCache } from './feedCache';
 import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import type { PostEntity } from '$lib/posts/api';
@@ -48,5 +49,20 @@ describe('the feed tab cache', () => {
     }
     expect(readFeedCache(feedCacheKey({ feed: 'all', promo: 2000 }))).toBeNull();
     expect(readFeedCache(feedCacheKey({ feed: 'all', promo: 2039 }))?.posts).toEqual([post('p39')]);
+  });
+});
+
+describe('a tab never holds another list', () => {
+  it('keeps Pour toi rows, and never the old Suivis rows asked in its place', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const key = feedCacheKey({ feed: 'foryou' });
+    const ranked = { id: 'f1', feedAsOf: '2026-11-10T12:00:00.000000Z', feedPosition: 0 };
+    writeFeedCache(key, { posts: [ranked as PostEntity], hasMore: false });
+    expect(readFeedCache(key)?.posts.map((p) => p.id)).toEqual(['f1']);
+    // An answer in the old `followed` shape: not kept, and the older entry is dropped with it.
+    writeFeedCache(key, { posts: [{ id: 'club-randonnee' } as PostEntity], hasMore: false });
+    expect(readFeedCache(key)).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

@@ -153,7 +153,7 @@ export function serverFormDrafts(): boolean | null {
 /**
  * Whether this estate serves the ranked lists (`rankedFeeds`: Pour toi and the ranked CanaReels
  * viewer), as the last `/api/version` answer said - or `null` when no server has ever answered. Read
- * by `rankedFeedRequest` (`posts/rankedFeeds.ts`): only `true` asks them (docs/wiki/legacy-compatibility.md,
+ * by `listPosts` (`posts/api.ts`, `rankedFeedsKnown`, which waits for the answer while it is `null`): only `true` asks them (docs/wiki/legacy-compatibility.md,
  * "a feed client newer than its server"). The cached answer counts, for the reason
  * {@link serverPresencePost} gives.
  */
