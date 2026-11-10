@@ -485,6 +485,30 @@ describe('the legacy sentence and the Android resource say the same thing', () =
       body: androidSlot(fr.get(`notif_${key}_body`) ?? ''),
     });
   });
+
+  // A campus trend naming a followed account who liked it (owner, 2026-11-10): one sentence per
+  // count form, the device choosing by `contentCount` - the legacy body says the same, per form.
+  it.each([
+    [0, 'notif_social_campus_trend_liked_by'],
+    [1, 'notif_social_campus_trend_liked_by_one'],
+    [7, 'notif_social_campus_trend_liked_by_many'],
+  ])('a trend liked by a followed account and %i others reads the same on both', (others, res) => {
+    const fr = androidStrings();
+    for (const media of [null, 'photo', 'video'] as const) {
+      const content = campusTrendContent(media ? '' : ARG, media, { name: ACTOR, others });
+      expect(content.actorName).toBe(ACTOR);
+      expect(pushContentData(content).contentCount).toBe(String(others));
+      expect(content.legacyBody).toBe(
+        (fr.get(res) ?? '').replace('%1$s', ACTOR).replace('%2$d', String(others))
+      );
+    }
+  });
+
+  it('a trend that names nobody carries no count, and its fixed sentence', () => {
+    const content = campusTrendContent(ARG);
+    expect(content.actorName).toBe('');
+    expect('contentCount' in pushContentData(content)).toBe(false);
+  });
 });
 
 describe('markdownToPreviewText', () => {

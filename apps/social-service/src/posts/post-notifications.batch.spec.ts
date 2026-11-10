@@ -49,7 +49,16 @@ describe('PostNotificationsService.createNotifications', () => {
         return Promise.resolve();
       },
       // `resolveActorName` reaches the users table through the repository's query runner.
-      manager: { query: () => Promise.resolve([{ displayName: 'Claire' }]) },
+      // The daily cap's claim goes through it too: every reader still has a unit here (the cap
+      // itself is proven on PostgreSQL, `engagement-push-cap.integration.spec.ts`).
+      manager: {
+        query: (sql: string, params?: unknown[]) =>
+          Promise.resolve(
+            sql.includes('engagement_push_days')
+              ? (params![0] as string[]).map((userId) => ({ userId }))
+              : [{ displayName: 'Claire' }]
+          ),
+      },
     };
     const push = {
       notifyContent: (userId: string, content: PushContent, data?: Record<string, string>) => {

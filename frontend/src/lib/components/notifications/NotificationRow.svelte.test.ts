@@ -420,6 +420,27 @@ describe('NotificationRow sentence', () => {
     }
   });
 
+  it('names the followed account who liked it, one sentence per count form (owner, 2026-11-10)', () => {
+    for (const [others, sentence] of [
+      [0, m.notif_campus_trend_liked_by({ name: 'Léa Martin' })],
+      [1, m.notif_campus_trend_liked_by_one({ name: 'Léa Martin' })],
+      [9, m.notif_campus_trend_liked_by_many({ name: 'Léa Martin', count: 9 })],
+    ] as const) {
+      const row = renderRow(
+        trendRow('Scene ouverte lundi', { likedBy: { name: 'Léa Martin', others } })
+      );
+      expect(row.querySelector('[data-notif-trend-liked-by]')?.textContent).toContain(sentence);
+      // Still a suggestion, never a person's act: no actor name drawn in the title.
+      expect(row.textContent).toContain(m.notif_campus_trend_text());
+      expect(row.querySelector('[aria-label^="Avatar"]')).toBeNull();
+    }
+  });
+
+  it('names nobody when the row carries no likedBy', () => {
+    const row = renderRow(trendRow('Scene ouverte lundi'));
+    expect(row.querySelector('[data-notif-trend-liked-by]')).toBeNull();
+  });
+
   it('reads the post for its picture once the row is near, when the row says it has one', () => {
     sharedPostPreview.fetch.mockClear();
     // Says "near" at once, as the viewport band would for a visible row.

@@ -700,7 +700,7 @@ export class RepostAccountConsentDto {
   allowReposts: boolean;
 }
 
-/** "Share my activity" (engagement decision 9): the person's reactions and comments told to their followers. */
+/** "Share my activity" (engagement decision 9): whether a campus trend may name the person as one who liked it. */
 export class ActivitySettingsDto {
   @IsBoolean()
   shareActivity: boolean;

@@ -1,7 +1,8 @@
 /**
  * THE DAILY CAP ON ENGAGEMENT PUSHES (engagement WP-8) against a REAL PostgreSQL: migration 157 as it
  * ships, chat-delivery's `notification_preference` (its migration 028, the same database), the one
- * claim statement, the seam in `fanOutPush`, the GC and the erasure (docs/wiki/engagement.md, "The
+ * claim statement, its seams (`withinPushBudget`, asked by the fan-out, the singular notice and the
+ * interactions' own pushes), the GC and the erasure (docs/wiki/engagement.md, "The
  * noise budget - a daily cap from a counter row").
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every `*.integration.spec.ts`; CI's
@@ -9,26 +10,21 @@
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- engagement-push-cap.integration
  */
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import { Logger } from '@nestjs/common';
 import { Client, Pool } from 'pg';
 import {
   CAMPUS_TREND_NOTIFICATION,
   ENGAGEMENT_DAILY_PUSH_CAP,
-  FRIEND_COMMENT_NOTIFICATION,
-  FRIEND_REACTION_NOTIFICATION,
   claimEngagementPushes,
   pruneEngagementPushDays,
 } from './engagement-push-cap';
 import { PostNotificationsService } from './post-notifications.service';
+import { createEngagementPushCapTables } from './post-notifications.it-schema';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import type { NotificationType, PushOnlyNotificationType } from '../push/notification-client-floor';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
-
-const migration = (...path: string[]) => readFileSync(join(__dirname, '..', ...path), 'utf8');
 
 maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () => {
   const schema = `cap_it_${Math.random().toString(36).slice(2, 10)}`;
@@ -48,16 +44,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     await admin.connect();
     await q(`CREATE SCHEMA ${schema}`);
     await q(`SET search_path TO ${schema}, public`);
-    await q(migration('migrations', '157_engagement_push_days.sql'));
-    await q(
-      readFileSync(
-        join(
-          __dirname,
-          '../../../chat-delivery-service/src/migrations/028_notification_preferences.sql'
-        ),
-        'utf8'
-      )
-    );
+    await createEngagementPushCapTables((sql) => q(sql));
     pool = new Pool({ connectionString: URL, max: 8, options: `-c search_path=${schema},public` });
   });
 
@@ -74,13 +61,20 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
 
   afterEach(() => jest.restoreAllMocks());
 
-  it('the 6th claim of a day is refused, the first five are taken', async () => {
+  /** `n` times `x`. */
+  const times = <T>(n: number, x: T): T[] => Array.from({ length: n }, () => x);
+
+  it('the claim past the cap is refused, the ones before it are taken', async () => {
     const answers: boolean[] = [];
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i <= ENGAGEMENT_DAILY_PUSH_CAP; i++) {
       answers.push((await claimEngagementPushes(manager, ['r'], 'posts')).has('r'));
     }
-    expect(answers).toEqual([true, true, true, true, true, false]);
+    expect(answers).toEqual([...times(ENGAGEMENT_DAILY_PUSH_CAP, true), false]);
     expect(await counter('r')).toBe(ENGAGEMENT_DAILY_PUSH_CAP);
+  });
+
+  it('is three a day (owner, 2026-11-10)', () => {
+    expect(ENGAGEMENT_DAILY_PUSH_CAP).toBe(3);
   });
 
   it('two dozen concurrent fan-outs over the same readers never exceed the cap', async () => {
@@ -114,8 +108,8 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
   it('the GC deletes the rows older than a week and keeps the rest; the erasure takes a reader', async () => {
     await q(
       `INSERT INTO engagement_push_days ("userId", day, pushed) VALUES
-         ('old', (now() AT TIME ZONE 'Europe/Paris')::date - 8, 5),
-         ('week', (now() AT TIME ZONE 'Europe/Paris')::date - 7, 5),
+         ('old', (now() AT TIME ZONE 'Europe/Paris')::date - 8, 3),
+         ('week', (now() AT TIME ZONE 'Europe/Paris')::date - 7, 3),
          ('today', (now() AT TIME ZONE 'Europe/Paris')::date, 2)`
     );
     expect(await pruneEngagementPushDays(manager)).toBe(1);
@@ -127,7 +121,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     expect(await counter('today')).toBeNull();
   });
 
-  describe('the seam in fanOutPush', () => {
+  describe('the seams: the fan-out, the singular notice, and the interactions', () => {
     const pushed: string[] = [];
 
     function service(): PostNotificationsService {
@@ -158,6 +152,16 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       actorName: 'Actor',
       text: 'hello',
     });
+    /** The singular path (`createNotification`): a reaction, a comment, an opening. */
+    const single = (svc: PostNotificationsService, type: NotificationType) =>
+      svc.createNotification({
+        recipientId: 'r',
+        type,
+        postId: 'p',
+        actorId: 'actor',
+        actorName: 'Actor',
+        text: type === 'reaction' ? 'Rire' : 'hello',
+      });
 
     /** The fan-out is fire-and-forget: let its sends land. */
     const settle = () => new Promise((r) => setTimeout(r, 20));
@@ -166,57 +170,81 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       pushed.length = 0;
     });
 
-    it('the 6th capped push of a day reaches the bell only, not the phone', async () => {
+    it('the counted push past the cap reaches the bell only, not the phone', async () => {
       const svc = service();
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i <= ENGAGEMENT_DAILY_PUSH_CAP; i++) {
         await svc.pushNotice(notice(CAMPUS_TREND_NOTIFICATION, ['r']));
       }
       await settle();
-      expect(pushed).toEqual(['r', 'r', 'r', 'r', 'r']);
-      expect(await counter('r')).toBe(5);
-    });
-
-    it('an association post, a live, an opening and a mention on the same day are never counted', async () => {
-      const svc = service();
-      for (let i = 0; i < 5; i++) await svc.pushNotice(notice(CAMPUS_TREND_NOTIFICATION, ['r']));
-      for (const type of [
-        'association_post',
-        'live_started',
-        'booking_open',
-        'event_open',
-      ] as const) {
-        await svc.pushNotice(notice(type, ['r']));
-      }
-      await svc.pushNotice(notice('mention', ['r']));
-      await settle();
-      // Five capped pushes, then every uncapped one went out, the cap already spent.
-      expect(pushed).toHaveLength(10);
-      expect(await counter('r')).toBe(5);
-    });
-
-    it('friend activity beyond 5 in a day still pushes, and never spends the budget (amended 2026-11-10)', async () => {
-      const svc = service();
-      for (let i = 0; i < 4; i++) {
-        await svc.pushNotice(notice(FRIEND_REACTION_NOTIFICATION, ['r']));
-        await svc.pushNotice(notice(FRIEND_COMMENT_NOTIFICATION, ['r']));
-      }
-      await settle();
-      expect(pushed).toHaveLength(8);
-      expect(await counter('r')).toBeNull();
-      // The followed account's activity left the whole budget to what the reader does not follow.
-      for (let i = 0; i < 6; i++) await svc.pushNotice(notice(CAMPUS_TREND_NOTIFICATION, ['r']));
-      await settle();
-      expect(pushed).toHaveLength(13);
+      expect(pushed).toEqual(times(ENGAGEMENT_DAILY_PUSH_CAP, 'r'));
       expect(await counter('r')).toBe(ENGAGEMENT_DAILY_PUSH_CAP);
     });
 
-    it('an uncapped push never writes a counter row', async () => {
+    it('ONE budget across every counted kind: a trend, a reaction and a comment spend it, an opening finds it gone', async () => {
+      const svc = service();
+      await svc.pushNotice(notice(CAMPUS_TREND_NOTIFICATION, ['r']));
+      await single(svc, 'reaction');
+      await single(svc, 'comment');
+      await single(svc, 'booking_open');
+      await single(svc, 'event_open');
+      await svc.pushNotice(notice('followed_post', ['r']));
+      await svc.pushNotice(notice('member_repost', ['r']));
+      await settle();
+      expect(pushed).toEqual(times(ENGAGEMENT_DAILY_PUSH_CAP, 'r'));
+      expect(await counter('r')).toBe(ENGAGEMENT_DAILY_PUSH_CAP);
+    });
+
+    it('a birthday and an association post beyond the cap still push, and so does every uncounted kind', async () => {
+      const svc = service();
+      for (let i = 0; i < ENGAGEMENT_DAILY_PUSH_CAP; i++) await single(svc, 'reaction');
+      await settle();
+      expect(pushed).toHaveLength(ENGAGEMENT_DAILY_PUSH_CAP);
+      const uncounted = [
+        'birthday',
+        'birthday',
+        'association_post',
+        'association_post',
+        'association_repost',
+        'live_started',
+        'mention',
+        'live_mention',
+        'follow_request',
+        'booking_reminder',
+      ] as const;
+      for (const type of uncounted) await svc.pushNotice(notice(type, ['r']));
+      for (const type of ['reply', 'mention', 'follow_accepted', 'booking_changed'] as const) {
+        await single(svc, type);
+      }
+      await settle();
+      // Every uncounted push went out, the cap already spent, and none of them touched the counter.
+      expect(pushed).toHaveLength(ENGAGEMENT_DAILY_PUSH_CAP + uncounted.length + 4);
+      expect(await counter('r')).toBe(ENGAGEMENT_DAILY_PUSH_CAP);
+    });
+
+    it('an uncounted push never writes a counter row', async () => {
       const svc = service();
       await svc.pushNotice(notice('association_post', ['r', 's']));
-      await svc.pushNotice(notice('mention', ['r']));
+      await svc.pushNotice(notice('birthday', ['r']));
+      await single(svc, 'mention');
       await settle();
-      expect(pushed.sort()).toEqual(['r', 'r', 's']);
+      expect(pushed.sort()).toEqual(['r', 'r', 'r', 's']);
       expect((await q(`SELECT count(*)::int AS n FROM engagement_push_days`)).rows[0].n).toBe(0);
+    });
+
+    it('withinPushBudget answers the readers left, and says each withheld one once at debug level', async () => {
+      const svc = service();
+      const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+      await q(
+        `INSERT INTO engagement_push_days ("userId", day, pushed)
+         VALUES ('full', (now() AT TIME ZONE 'Europe/Paris')::date, $1)`,
+        [ENGAGEMENT_DAILY_PUSH_CAP]
+      );
+      expect(await svc.withinPushBudget('reaction', ['full', 'fresh'])).toEqual(['fresh']);
+      expect(debug).toHaveBeenCalledTimes(1);
+      expect(String(debug.mock.calls[0][0])).toContain('user=full');
+      // An uncounted type is answered untouched, with no statement and no line.
+      expect(await svc.withinPushBudget('birthday', ['full'])).toEqual(['full']);
+      expect(debug).toHaveBeenCalledTimes(1);
     });
 
     it('a failed claim pushes nobody and reaches the caller', async () => {

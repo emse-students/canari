@@ -3,8 +3,9 @@
  * exactly one stamp at the write that crosses `TREND_THRESHOLD` (none below it, none after 24 hours,
  * none twice, one under concurrent writers, NONE for a post already past it when first evaluated -
  * the deploy of 2026-11-10), the space-only audience - never through a follow or a read grant, never
- * the author, never across a block with the author, never a reader already told - and ONE trend per
- * reader per day (docs/wiki/engagement.md, "WP-10 - campus trends").
+ * the author, never across a block with the author, never a reader already told - ONE trend per
+ * reader per day and TWO per Paris week, and the followed account each reader is told liked it
+ * (docs/wiki/engagement.md, "WP-10 - campus trends").
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every `*.integration.spec.ts`; CI's
  * `test-social-integration` sets it. Locally, against any throwaway PostgreSQL:
@@ -15,9 +16,12 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Logger } from '@nestjs/common';
 import { Client, Pool } from 'pg';
-import { TREND_THRESHOLD, announceCampusTrend, trendMediaOf } from './campus-trend';
+import { TREND_THRESHOLD, announceCampusTrend, groupByLikedBy, trendMediaOf } from './campus-trend';
 import { PostNotificationsService } from './post-notifications.service';
-import { createPostNotificationsTable } from './post-notifications.it-schema';
+import {
+  createEngagementPushCapTables,
+  createPostNotificationsTable,
+} from './post-notifications.it-schema';
 import type { PushContent } from '../push/push-content';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -168,22 +172,13 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     await q(migration('078_read_grants.sql'));
     await q(migration('132_read_grant_readers.sql'));
     await q(migration('121_member_reposts.sql'));
-    await q(migration('157_engagement_push_days.sql'));
+    await createEngagementPushCapTables((sql) => q(sql));
     await q(migration('159_friend_activity.sql'));
     await q(migration('160_post_trend_announced_at.sql'));
     // A replay is a no-op (the deploy ledger may run it twice).
     await q(migration('160_post_trend_announced_at.sql'));
     await q(migration('161_campus_trend_calm.sql'));
     await q(migration('161_campus_trend_calm.sql'));
-    await q(
-      readFileSync(
-        join(
-          __dirname,
-          '../../../chat-delivery-service/src/migrations/028_notification_preferences.sql'
-        ),
-        'utf8'
-      )
-    );
     await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'EG', 'eg')`, [EG]);
     await q(
       `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, NULL, $2)`,
@@ -319,7 +314,7 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     expect(await told(P(6))).toEqual(['g']);
   });
 
-  it('a reader already told by friends activity is not told again', async () => {
+  it("a reader already told of the post (a friends' activity row of before 2026-11-10) is not told again", async () => {
     await post(P(7), 'a', { reactions: reactors(T) });
     await q(
       `INSERT INTO post_engagement_notices ("postId", "recipientId", reason) VALUES ($1, 's1', 'friend')`,
@@ -483,6 +478,189 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     expect(new Set(pushes.map((p) => p.content.key))).toEqual(
       new Set(['social_campus_trend_photo'])
     );
+  });
+
+  it('names, per reader, ONE followed account that liked it - under the disclosure rule (owner, 2026-11-10)', async () => {
+    // e0 and e1 react; e2 too. Named outside the audience (Gardanne) so the told set is unchanged.
+    await user('e0', GA, ISMIN);
+    await user('e1', GA, ISMIN);
+    await user('e2', GA, ISMIN);
+    await q(`UPDATE users SET "firstName" = 'Léa', "lastName" = 'Martin' WHERE id = 'e0'`);
+    await q(`UPDATE users SET "firstName" = 'Hugo', "lastName" = 'Petit' WHERE id = 'e1'`);
+    await q(`UPDATE users SET "firstName" = 'Inès', "lastName" = 'Roux' WHERE id = 'e2'`);
+    const follow = (follower: string, followed: string, status = 'accepted') =>
+      q(
+        `INSERT INTO user_follows (id, "followerUserId", "followedUserId", status, "acceptedAt")
+         VALUES (gen_random_uuid(), $1, $2, $3, now())`,
+        [follower, followed, status]
+      );
+    try {
+      // s1 follows e1 and e0: the smallest id, e0, is named.
+      await follow('s1', 'e1');
+      await follow('s1', 'e0');
+      // s2 follows e1, who does not share their activity: nobody.
+      await follow('s2', 'e1');
+      await q(
+        `INSERT INTO user_activity_settings ("userId", "shareActivity") VALUES ('e1', false)`
+      );
+      // grant follows e2, and a block stands between them: nobody.
+      await follow('grant', 'e2');
+      await q(`INSERT INTO user_blocks VALUES ('e2', 'grant')`);
+      // seen asked to follow e0, never accepted: nobody.
+      await follow('seen', 'e0', 'pending');
+
+      await post(P(30), 'a', { reactions: { ...reactors(T), a: 'like' } });
+      expect(await announceCampusTrend({ manager, notifications }, P(30))).toBe(4);
+      const rows = await q(
+        `SELECT "recipientId", meta FROM post_notifications WHERE "postId" = $1 ORDER BY 1`,
+        [P(30)]
+      );
+      // T reactors besides the author: the named one and T - 1 others.
+      expect(rows.rows).toEqual([
+        { recipientId: 'grant', meta: null },
+        { recipientId: 's1', meta: { likedBy: { name: 'Léa Martin', others: T - 1 } } },
+        { recipientId: 's2', meta: null },
+        { recipientId: 'seen', meta: null },
+      ]);
+      await new Promise((r) => setTimeout(r, 20));
+      const byReader = new Map(pushes.map((p) => [p.to, p.content]));
+      expect(byReader.get('s1')).toEqual(
+        expect.objectContaining({
+          key: 'social_campus_trend',
+          actorName: 'Léa Martin',
+          count: T - 1,
+          legacyBody: `Aimée par Léa Martin et ${T - 1} autres`,
+        })
+      );
+      expect(byReader.get('s2')).toEqual(
+        expect.objectContaining({
+          actorName: '',
+          legacyBody: 'Une publication qui fait réagir votre espace',
+        })
+      );
+      expect(byReader.get('s2')?.count).toBeUndefined();
+    } finally {
+      await q(`DELETE FROM user_follows WHERE "followedUserId" IN ('e0', 'e1', 'e2')`);
+      await q(`DELETE FROM user_activity_settings`);
+      await q(`DELETE FROM user_blocks WHERE "blockerId" = 'e2'`);
+      await q(`DELETE FROM users WHERE id IN ('e0', 'e1', 'e2')`);
+    }
+  });
+
+  describe('TWO trends per reader per Paris week (owner, 2026-11-10)', () => {
+    /**
+     * THE DATABASE'S CLOCK, PINNED: a schema of its own holds a `now()` that reads a setting, and a
+     * connection whose search path names it BEFORE `pg_catalog` resolves every unqualified `now()`
+     * there - the statements under test unchanged. No wall clock is asserted: the week is chosen.
+     */
+    const clock = `clock_${Math.random().toString(36).slice(2, 10)}`;
+    let pinned: Client;
+    const at = (paris: string) =>
+      pinned.query(`SELECT set_config('it.now', $1, false)`, [`${paris} Europe/Paris`]);
+    const onClock = {
+      query: async (sql: string, params?: unknown[]) => (await pinned.query(sql, params)).rows,
+    };
+    const clocked = () => notificationsOn(onClock);
+    /** A post published an hour before the pinned instant, past the threshold. */
+    const crossingAt = async (id: string) => {
+      await post(id, 'a', { reactions: reactors(T) });
+      await pinned.query(
+        `UPDATE posts SET "publishedAt" = now() - interval '1 hour' WHERE id = $1`,
+        [id]
+      );
+      return announceCampusTrend({ manager: onClock, notifications: clocked() }, id);
+    };
+
+    beforeAll(async () => {
+      await q(`CREATE SCHEMA ${clock}`);
+      await q(
+        `CREATE FUNCTION ${clock}.now() RETURNS timestamptz LANGUAGE sql STABLE
+           AS $$ SELECT current_setting('it.now')::timestamptz $$`
+      );
+      pinned = new Client({
+        connectionString: URL,
+        options: `-c search_path=${clock},${schema},pg_catalog,public`,
+      });
+      await pinned.connect();
+    });
+
+    afterAll(async () => {
+      await pinned?.end();
+      await q(`DROP SCHEMA IF EXISTS ${clock} CASCADE`);
+    });
+
+    it('the pinned clock is the one the statements read', async () => {
+      await at('2026-11-11 12:00');
+      const day = await pinned.query(`SELECT (now() AT TIME ZONE 'Europe/Paris')::date::text AS d`);
+      expect(day.rows[0].d).toBe('2026-11-11');
+    });
+
+    it('Monday and Tuesday told, Wednesday and Sunday not; the next Monday told again', async () => {
+      await at('2026-11-09 12:00'); // a Monday
+      expect(await crossingAt(P(31))).toBe(4);
+      await at('2026-11-10 12:00');
+      expect(await crossingAt(P(32))).toBe(4);
+      await at('2026-11-11 12:00');
+      expect(await crossingAt(P(33))).toBe(0);
+      // Took off all the same: stamped, so never announced later in a quieter week.
+      expect(await stampOf(P(33))).not.toBeNull();
+      await at('2026-11-15 23:30'); // Sunday evening, Paris: still the same week
+      expect(await crossingAt(P(34))).toBe(0);
+      await at('2026-11-16 00:30'); // Monday, half past midnight Paris (still Sunday in UTC)
+      expect(await crossingAt(P(35))).toBe(4);
+      expect(await told(P(35))).toEqual(['grant', 's1', 's2', 'seen']);
+    });
+
+    it('a reader with one trend this week may still have a second - the cap is per reader', async () => {
+      await at('2026-11-09 12:00');
+      expect(await crossingAt(P(36))).toBe(4);
+      // An anonymous post reaches blk too (no oracle); blk has had no trend this week.
+      await at('2026-11-10 12:00');
+      await post(P(37), 'a', { reactions: reactors(T), anonymous: true });
+      await pinned.query(
+        `UPDATE posts SET "publishedAt" = now() - interval '1 hour' WHERE id = $1`,
+        [P(37)]
+      );
+      expect(await announceCampusTrend({ manager: onClock, notifications: clocked() }, P(37))).toBe(
+        5
+      );
+      await at('2026-11-12 12:00');
+      await post(P(38), 'a', { reactions: reactors(T), anonymous: true });
+      await pinned.query(
+        `UPDATE posts SET "publishedAt" = now() - interval '1 hour' WHERE id = $1`,
+        [P(38)]
+      );
+      expect(await announceCampusTrend({ manager: onClock, notifications: clocked() }, P(38))).toBe(
+        1
+      );
+      expect(await told(P(38))).toEqual(['blk']);
+    });
+  });
+});
+
+describe('groupByLikedBy', () => {
+  const row = (recipientId: string, friendId: string | null, firstName: string | null = null) => ({
+    recipientId,
+    friendId,
+    displayName: null,
+    firstName,
+    lastName: null,
+  });
+
+  it('groups the readers by the account named for them; an account with no name names nobody', () => {
+    const groups = groupByLikedBy(
+      [row('r1', 'f1', 'Léa'), row('r2', null), row('r3', 'f1', 'Léa'), row('r4', 'f2')],
+      10
+    );
+    expect([...groups.values()]).toEqual([
+      { likedBy: { name: 'Léa', others: 9 }, recipients: ['r1', 'r3'] },
+      { likedBy: null, recipients: ['r2', 'r4'] },
+    ]);
+  });
+
+  it('never counts fewer than zero others', () => {
+    const [group] = groupByLikedBy([row('r1', 'f1', 'Léa')], 0).values();
+    expect(group.likedBy).toEqual({ name: 'Léa', others: 0 });
   });
 });
 

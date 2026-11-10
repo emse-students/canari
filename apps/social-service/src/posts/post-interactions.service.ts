@@ -33,7 +33,6 @@ import {
   rowsReleasedBy,
 } from './comment-removal';
 import { forgetCommentNotices, writeComments } from './comment-write';
-import { announceFriendActivity, type FriendAct } from './friend-activity';
 import { announceCampusTrend } from './campus-trend';
 import { COMMENT_DELETE_FORBIDDEN, COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
@@ -117,6 +116,9 @@ export class PostInteractionsService {
             text: reactionType,
             skipPush: true,
           });
+          // THE DAILY CAP (engagement WP-8, owner 2026-11-10): a reaction counts against it.
+          const [pushTo] = await this.notifications.withinPushBudget('reaction', [post.authorId]);
+          if (!pushTo) return;
           // THE ACTOR'S FACE, AND THE EMOJI RATHER THAN THE STORED LABEL: this push carried
           // neither (user, 2026-10-08 - six faceless "a réagi Marteau" for one post).
           await this.push.notifyContent(
@@ -139,36 +141,24 @@ export class PostInteractionsService {
       })();
     }
 
-    // FRIENDS' ACTIVITY (engagement WP-9): a NEW reaction only - changing the emoji is not news.
-    if (isNew) this.tellFriends(post, userId, 'reaction');
+    // A NEW reaction only - changing the emoji is not news: this write may make the post take off.
+    if (isNew) this.evaluateTrend(post.id);
 
     return { ok: true, reactions: post.reactions };
   }
 
   /**
-   * Fire-and-forget: tells `actorId`'s followers what they just did on `post`, under the disclosure
-   * rule (`friend-activity.ts`). The act is already stored; a failure is logged and nothing else.
+   * Fire-and-forget, after a new reaction or a comment is stored: CAMPUS TRENDS (engagement WP-10) -
+   * this write may be the one that makes the post take off. Friends' activity is no longer a
+   * notification of its own (owner, 2026-11-10): the followed people who reacted are NAMED in the
+   * trend instead (`campus-trend.ts`). The act is already stored; a failure is logged, nothing else.
    */
-  private tellFriends(
-    post: Pick<Post, 'id' | 'markdown'>,
-    actorId: string,
-    act: FriendAct,
-    comment?: StoredComment
-  ): void {
-    void announceFriendActivity(
-      { manager: this.postRepo.manager, notifications: this.notifications },
-      { post, actorId, act, comment }
-    ).catch((e: unknown) => {
-      this.logger.warn(
-        `[FRIEND_ACTIVITY] ${act} on post=${post.id.slice(0, 8)} not told: ${String(e)}`
-      );
-    });
-    // CAMPUS TRENDS (engagement WP-10): this write may be the one that makes the post take off.
+  private evaluateTrend(postId: string): void {
     void announceCampusTrend(
       { manager: this.postRepo.manager, notifications: this.notifications },
-      post.id
+      postId
     ).catch((e: unknown) => {
-      this.logger.warn(`[TREND] post=${post.id.slice(0, 8)} not told: ${String(e)}`);
+      this.logger.warn(`[TREND] post=${postId.slice(0, 8)} not told: ${String(e)}`);
     });
   }
 
@@ -323,6 +313,10 @@ export class PostInteractionsService {
           return;
         }
         await notify(recipientId, type);
+        // THE DAILY CAP (engagement WP-8, owner 2026-11-10): a comment counts, a reply and a
+        // mention do not (`PUSH_BUDGET`) - one table answers, so this asks it for every type.
+        const [pushTo] = await this.notifications.withinPushBudget(type, [recipientId]);
+        if (!pushTo) return;
         await this.push.notifyContent(recipientId, pushContentFor[type](actorName, pushPreview), {
           type: 'social',
           postId,
@@ -416,11 +410,9 @@ export class PostInteractionsService {
         }
       }
     })().finally(() => {
-      // FRIENDS' ACTIVITY (engagement WP-9), only once the comment's own notices are written: a
-      // follower of the writer whom this comment answers or mentions has a row for the post by
-      // then, so rule 7 tells them once - the reply or the mention, never also "X a commente". Rule
-      // 8 - only a comment in its writer's own name - is asked of the stored comment inside.
-      this.tellFriends(post, data.userId, 'comment', comment);
+      // Only once the comment's own notices are written: a reader this comment answers or mentions
+      // has a row for the post by then, so a trend it makes is not told to them on top.
+      this.evaluateTrend(post.id);
     });
 
     const [served] = await this.identity.serve([comment], post, {

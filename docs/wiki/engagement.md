@@ -29,6 +29,12 @@ campus-trend notifications were reshaped the same day after the deploy of 1.6.9 
 the threshold before it was first evaluated never announced, "Suggestion :" wording, their own
 **Suggestions** switch (on by default), and never sent to a build too old to draw them.
 
+**Quieter, for 1.6.10 (owner, 2026-11-10, second batch: *"on y est allés un peu fort"*)**: friends'
+activity no longer notifies - a campus trend NAMES the followed people who liked the post instead;
+at most TWO trends a week per reader on top of one a day; and ONE global daily push cap of THREE
+across every engagement-only kind. Every decision and the lead's placements are
+[below](#the-owners-decisions-of-2026-11-10---quieter-1610).
+
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
 (the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); WP-6 BUILT (the surfaces, 2026-11-09, [below](#wp-6---the-surfaces-built)); WP-7 BUILT (suggested posts, 2026-11-09, [below](#wp-7---suggested-posts-built)); WP-8 BUILT (the daily cap, 2026-11-09, [below](#wp-8---the-daily-cap-built)); WP-9 BUILT (friends' activity, 2026-11-09, [below](#wp-9---friends-activity-built)); WP-10 BUILT (campus trends, 2026-11-09, [below](#wp-10---campus-trends-built)) - every work package is built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
 
@@ -42,6 +48,66 @@ Context it must respect, and which nothing here changes:
   `forms`, `events`, `bookings`, ...) decides last, after everything on this page, and an
   association mute (`association_push_mutes`) keeps silencing that association's pushes.
 - **Design references**: the feed and CanaReels follow Instagram.
+
+## The owner's decisions of 2026-11-10 - quieter (1.6.10)
+
+Taken after 1.6.9 reached production, on what its first day pushed. Each is built in the pull request
+stacked on #3312.
+
+1. **Friends' activity is no longer a notification.** `friend_reaction` and `friend_comment` write no
+   bell row and no push any more (`posts/friend-activity.ts` and its spec are deleted); the feed's
+   "X a aimé" is unchanged. **The campus trend names them instead**: per reader, ONE account they
+   follow (accepted) that reacted to the post - the smallest id, so the choice is deterministic -
+   under friends' activity's disclosure rule (rule 0 the account's "Partager mon activité", rule 1
+   accepted, rule 3 reactors not withheld from the reader, rule 4 no block either way, rule 6 not the
+   post's author; rule 2 holds because the reader is a trend candidate), and how many OTHER accounts
+   reacted: "Suggestion : <début> - aimée par Léa et 9 autres". Reactions only - the sentence says
+   "aimée". Read in the trend's own statement (`campusTrendNamedSql`), written on the row as
+   `meta.likedBy = {name, others}`, pushed as `actorName` plus `contentCount`; the three trend keys
+   stay, every native table chooses one of three sentences by the count ("Aimée par Léa", "... et 1
+   autre personne", "... et 9 autres", English "Liked by ..." at parity), and the bell row draws the
+   same through Paraglide. A reader who follows nobody that liked it gets the fixed sentence, as
+   before. Under the **Suggestions** switch like every trend. The client floors do not move: 1.6.10
+   is the first build that draws a trend at all, and the push's legacy body says the same sentence.
+   "Partager mon activité" now governs exactly that naming (its hint rewritten).
+2. **At most TWO trends a week per reader**, on top of one a day: a Monday-to-Sunday week on the
+   Paris calendar, counted from the told-once ledger's own `"trendDay"` rows (`TREND_WEEKLY_CAP`,
+   `campusTrendLedgerSql`). Only rows of EARLIER days of the week are counted, which is what makes
+   the bound exact under concurrency: a past day can no longer be written, so every concurrent writer
+   reads the same count, and today's single row is migration 161's unique index. No clock heuristic,
+   no reset: a new week is a new range of dates. A post that crossed for a reader already at two is
+   stamped all the same, so it is never announced later.
+3. **ONE global daily push cap of THREE per person** for non-essential pushes: the cap of migration
+   157 (`ENGAGEMENT_DAILY_PUSH_CAP`, 5 for trends alone) becomes 3 and widens.
+   - **Counted**: campus trends, reactions and comments on your posts, member reposts, followed
+     accounts' posts (`followed_post`), booking and event openings - and friends' activity, which is
+     no longer written.
+   - **Not counted**: messages and calls (chat-delivery's, never through here), bookings (reminders
+     and changes), follow requests and acceptances, direct mentions and replies, moderation and the
+     organiser workflow, BIRTHDAYS, ASSOCIATION POSTS.
+   - **The lead's placements** (reversible): a live STARTING is not counted (worth only in its moment,
+     and an account's bell already reduces it); a FORM opening is not counted (the reader asked for it
+     by pressing "Me rappeler"); an association's repost is an association post; a repost or
+     co-organisation PROPOSED, a personal-repost request, the event workflow and the payment notices
+     are organiser workflow.
+   - ONE exported table, `PUSH_BUDGET` in `posts/engagement-push-cap.ts`, a `Record` over every
+     notification type (a new type does not compile until it is placed) and a test asserting the same
+     against the bell's and the push-only lists; `CAPPED_PUSH_TYPES` is derived from it.
+   - Above the cap the bell row is still written; each withheld push is said ONCE at debug level.
+   - Every send of a counted type asks `PostNotificationsService.withinPushBudget`: the batch fan-out,
+     the singular `createNotification` (the openings), and the reaction and comment pushes
+     `PostInteractionsService` composes itself.
+4. **Proof**: `campus-trend.integration.spec.ts` on PostgreSQL - the database's `now()` pinned
+   through a schema of its own: Monday and Tuesday told, Wednesday and Sunday evening not, the next
+   Monday (half past midnight Paris, still Sunday in UTC) told again, the cap per reader; the named
+   account (two followed reactors - the smallest id; one that does not share; one behind a block; a
+   pending follow), the row's `meta.likedBy` and the push's `actorName`, `count` and legacy body.
+   `engagement-push-cap.integration.spec.ts` - the 4th counted push refused across a trend, a
+   reaction, a comment, two openings, a followed post and a member repost; two birthdays, two
+   association posts and every other uncounted kind beyond the cap still pushing with no counter row.
+5. **Owed**: a dev pass and a phone reading on both bench phones - a trend liked by an account the
+   bench reader follows reads "Aimée par ..." on the lock screen and in the bell, and a fourth counted
+   push in a day reaches the bell only.
 
 ## The decisions, verbatim
 
@@ -676,6 +742,10 @@ Nothing new to send: (a) is the default level above, "posts and lives", which ev
 
 ### (b) friends' activity - the disclosure rule
 
+**No longer a notification since 2026-11-10** ([quieter](#the-owners-decisions-of-2026-11-10---quieter-1610)):
+the rule below now decides whether a campus trend may NAME X to R as someone who liked P (rules 0,
+1, 3, 4 and 6, for a reaction). It is kept whole as the record of what WP-9 sent.
+
 "X a aimé votre ... / X a commenté un post" sent to R when X reacts to or comments on post P. R is
 told ONLY when ALL of these hold, each a predicate that already exists except rule 0:
 
@@ -718,7 +788,13 @@ Sent at the WRITE (the reaction or comment commits under the post row's lock, `c
 statement for all of X's followers, then pushed through X's bell - not counted by the daily cap
 (decision 11 as amended 2026-11-10: the reader follows X).
 
-### WP-9 - friends' activity (BUILT)
+### WP-9 - friends' activity (BUILT, RETIRED 2026-11-10)
+
+**Retired by the owner on 2026-11-10**: nothing writes `friend_reaction` or `friend_comment` any more,
+`posts/friend-activity.ts` and its spec are deleted, and the trend names the friends instead
+([quieter](#the-owners-decisions-of-2026-11-10---quieter-1610)). The types stay in the client floors,
+`BELL_PUSH_KINDS` and the native tables for the rows already in bells; the ledger's `friend` rows
+keep excluding their readers from a trend of the same post. What follows is the record.
 
 Built 2026-11-09 to the rule above. Migration **159** (`user_activity_settings` and
 `post_engagement_notices`, plain); `posts/friend-activity.ts` holds the one statement.
@@ -798,10 +874,13 @@ Built 2026-11-09 to the rule above, with `TREND_THRESHOLD = 4` as R1 read it the
   of #3285), the other side of the review cohort,
   and whoever has a row for the post in the ledger (friends' activity included) or in
   `post_notifications`; inserted into `post_engagement_notices` with reason `trend`.
-- **Naming nobody**: the row and the push carry the system actor and an empty name - an anonymous
-  post stays anonymous, and a trend is the space's, not a person's. Type `campus_trend`, key
+- **Naming nobody**: the row and the push carry the system actor - an anonymous post stays
+  anonymous, and a trend is the space's, not a person's. **Since 2026-11-10 the body may name a
+  followed account who LIKED it** (never the author;
+  [quieter](#the-owners-decisions-of-2026-11-10---quieter-1610)), and a reader is told of at most
+  two trends a week. Type `campus_trend`, key
   `social_campus_trend` ("Une publication fait réagir votre espace", the post's opening as body),
-  native strings on Android and iOS, in `CAPPED_PUSH_TYPES` under `posts` (the cap applies: nobody chose to follow a trend), in
+  native strings on Android and iOS, counted by the daily cap (`PUSH_BUDGET`, under `suggestions` since 2026-11-10), in
   `POST_BOUND_NOTIFICATION_TYPES`, not in `BELL_PUSH_KINDS` (no account to reduce).
 - **Proof**: `posts/campus-trend.integration.spec.ts` on PostgreSQL - no stamp below the threshold
   (the author's own reaction not counted), exactly one at the crossing write, none at the next one;
@@ -974,6 +1053,10 @@ line of the statement:
 A new day is a new row: nothing resets anything. The daily GC that already prunes notifications
 (`FormReminderScheduler`) deletes rows older than 7 days.
 
+- **Since the second batch of 2026-11-10 the two lists below are superseded** by ONE table,
+  `PUSH_BUDGET`, and a cap of THREE across every engagement-only kind
+  ([quieter](#the-owners-decisions-of-2026-11-10---quieter-1610)); what follows is the record of the
+  first amendment.
 - **Capped types - ONLY accounts the reader does not follow** (decision 11 as amended 2026-11-10;
   `CAPPED_PUSH_TYPES`, one exported map): campus trends (5c), and a push about a suggestion or a
   suggested post if one is ever added (the design adds none: suggestions and suggested posts live in
@@ -999,6 +1082,10 @@ A new day is a new row: nothing resets anything. The daily GC that already prune
   constant moves with that reading, before WP-9 merges.
 
 ### WP-8 - the daily cap (BUILT)
+
+**3 since 2026-11-10, over every type `PUSH_BUDGET` counts, asked by every send through
+`withinPushBudget`** ([quieter](#the-owners-decisions-of-2026-11-10---quieter-1610)); the text below
+is the state of 2026-11-09 and the first amendment.
 
 Built 2026-11-09 to the design above, with the cap at 5 as R2 read it. Migration **157**
 (`engagement_push_days`, plain); `posts/engagement-push-cap.ts` holds the constant, the allowlist

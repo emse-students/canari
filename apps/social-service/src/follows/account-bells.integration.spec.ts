@@ -27,7 +27,10 @@ import { FollowsService } from './follows.service';
 import { FollowRequestsService } from './follow-requests.service';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { PostNotificationsService } from '../posts/post-notifications.service';
-import { createPostNotificationsTable } from '../posts/post-notifications.it-schema';
+import {
+  createEngagementPushCapTables,
+  createPostNotificationsTable,
+} from '../posts/post-notifications.it-schema';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import type { PushContent } from '../push/push-content';
 import type { NotificationType } from '../push/notification-client-floor';
@@ -158,6 +161,8 @@ maybe('the bell against PostgreSQL (engagement WP-3)', () => {
       [CLUB]
     );
     await q(migration('143_account_bells_copy_push_mutes.sql'));
+    // A followed person's post is counted by the daily push cap (owner, 2026-11-10).
+    await createEngagementPushCapTables((sql) => q(sql));
     // Applied twice, as a re-run of a deploy would: nothing changes.
     await q(migration('142_account_bells.sql'));
     await q(migration('143_account_bells_copy_push_mutes.sql'));
@@ -203,6 +208,7 @@ maybe('the bell against PostgreSQL (engagement WP-3)', () => {
   describe('after the copy', () => {
     beforeEach(async () => {
       pushed.length = 0;
+      await q(`DELETE FROM engagement_push_days`);
       await q(`DELETE FROM account_bells; DELETE FROM association_push_mutes;
                DELETE FROM association_follows; DELETE FROM user_follows; DELETE FROM user_blocks;
                DELETE FROM post_notifications; DELETE FROM user_follow_notices`);

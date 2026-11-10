@@ -56,6 +56,7 @@ import {
   previewOf,
   type PushContent,
   type PushIcon,
+  type TrendLikedBy,
   type TrendMedia,
 } from '../push/push-content';
 import {
@@ -211,6 +212,17 @@ export function trendMediaOfMeta(meta: Record<string, unknown> | null | undefine
   return media === 'photo' || media === 'video' ? media : null;
 }
 
+/**
+ * The followed account a campus trend's row names (`meta.likedBy`, written by `announceCampusTrend`
+ * per reader) - its name and how many others reacted; `null` when the row names nobody.
+ */
+export function trendLikedByOfMeta(meta: Record<string, unknown> | null | undefined): TrendLikedBy {
+  const likedBy = meta?.likedBy as { name?: unknown; others?: unknown } | undefined;
+  if (!likedBy || typeof likedBy.name !== 'string' || !likedBy.name) return null;
+  const others = typeof likedBy.others === 'number' ? Math.max(0, Math.floor(likedBy.others)) : 0;
+  return { name: likedBy.name, others };
+}
+
 /** The shape of a uuid, which a varchar column must have before it is cast to one. */
 const UUID_SHAPE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 
@@ -364,7 +376,7 @@ export class PostNotificationsService {
       // Engagement WP-10: a post of the recipient's space took off, told as a suggestion. Nobody
       // acted; `text` is the opening of the post, and `meta.media` what it shows when it has none.
       case CAMPUS_TREND_NOTIFICATION:
-        return campusTrendContent(text, trendMediaOfMeta(meta));
+        return campusTrendContent(text, trendMediaOfMeta(meta), trendLikedByOfMeta(meta));
       // D38b: an association asks the AUTHOR to let it republish their personal post. `actorName`
       // is the ASSOCIATION. Its answers (`repost_personal_accepted` / `_refused`) are in-app only.
       case 'repost_personal_requested':
@@ -636,6 +648,9 @@ export class PostNotificationsService {
     await this.notifRepo.save(this.notifRepo.create({ ...notifData, actorName }));
 
     if (skipPush) return;
+    // THE DAILY CAP (engagement WP-8): a counted type beyond the reader's budget keeps its row only.
+    const [pushTo] = await this.withinPushBudget(data.type, [data.recipientId]);
+    if (!pushTo) return;
 
     // FCM push so every visible notification also triggers a system notification, even with the app closed. Fire-and-forget.
     // THE PICTURE IS THE ACTOR'S, because every type reaching this method is one person acting on
@@ -754,6 +769,43 @@ export class PostNotificationsService {
   }
 
   /**
+   * THE GLOBAL DAILY PUSH CAP (engagement WP-8; owner, 2026-11-10): which of `recipients` may be
+   * PUSHED a notice of `type` today. A type {@link PUSH_BUDGET} does not count answers every one of
+   * them, untouched; a counted one takes one unit of each reader's daily budget in ONE statement
+   * (`claimEngagementPushes`) and answers the readers who got one - a reader past the cap, or who
+   * switched the type's category off, keeps the in-app row and is not pushed, each said once at
+   * debug level. EVERY SEND OF A COUNTED TYPE GOES THROUGH HERE: the batch fan-out, the singular
+   * notice, and the reaction and comment pushes that `PostInteractionsService` composes itself.
+   *
+   * FAIL CLOSED, LOUDLY, as the bell: a failed claim pushes nobody (pushing everyone would ignore the
+   * cap) - it is logged here and rethrown, so the caller's own warning names the notice.
+   */
+  async withinPushBudget(type: string, recipients: readonly string[]): Promise<string[]> {
+    const capped = CAPPED_PUSH_TYPES.get(type);
+    if (!capped || recipients.length === 0) return [...recipients];
+    const allowed = await claimEngagementPushes(
+      this.notifRepo.manager,
+      recipients,
+      capped.category
+    ).catch((e: unknown) => {
+      this.logger.error(
+        `[NOTIFY] engagement cap claim failed for type=${type} - ` +
+          `push NOT sent to ${recipients.length} recipient(s): ${String(e)}`
+      );
+      throw e;
+    });
+    for (const id of recipients) {
+      if (!allowed.has(id)) {
+        this.logger.debug(
+          `[NOTIFY] type=${type} push withheld for user=${id.slice(0, 8)}: ` +
+            `daily cap reached or category ${capped.category} off - the bell row stays`
+        );
+      }
+    }
+    return recipients.filter((id) => allowed.has(id));
+  }
+
+  /**
    * The push half of a notice: the picture, the content, the bell, then the bounded fan-out. Shared
    * by {@link createNotifications} and {@link pushNotice} so neither can drift from the other's
    * mapping or bell. Throws only when the bell lookup fails (fail closed, see below).
@@ -833,33 +885,9 @@ export class PostNotificationsService {
         );
       }
     }
-    // THE DAILY CAP (engagement WP-8, decisions 6 and 11), after the bell so a reader the bell
-    // already silenced never spends a unit: only a type of `CAPPED_PUSH_TYPES` (an allowlist of the
-    // kinds about an account the reader does not follow - a campus trend) is counted, every other push goes out exactly as before. Beyond the cap the
-    // reader keeps the in-app row and gets no push. FAIL CLOSED, LOUDLY, as the bell: a failed claim
-    // pushes nobody (pushing everyone would ignore the cap) and the error reaches the caller.
-    const capped = CAPPED_PUSH_TYPES.get(data.type);
-    if (capped && pushRecipients.length > 0) {
-      const allowed = await claimEngagementPushes(
-        this.notifRepo.manager,
-        pushRecipients,
-        capped.category
-      ).catch((e: unknown) => {
-        this.logger.error(
-          `[NOTIFY] engagement cap claim failed for type=${data.type} - ` +
-            `push NOT sent to ${pushRecipients.length} recipient(s): ${String(e)}`
-        );
-        throw e;
-      });
-      const kept = pushRecipients.length - allowed.size;
-      if (kept > 0) {
-        this.logger.log(
-          `[NOTIFY] type=${data.type} capped: ${kept} of ${pushRecipients.length} kept in the bell ` +
-            `(daily cap reached or category ${capped.category} off)`
-        );
-      }
-      pushRecipients = pushRecipients.filter((id) => allowed.has(id));
-    }
+    // THE DAILY CAP (engagement WP-8), after the bell so a reader the bell already silenced never
+    // spends a unit. FAIL CLOSED: a failed claim throws, and the caller's warning names the notice.
+    pushRecipients = await this.withinPushBudget(data.type, pushRecipients);
     // Fire-and-forget, BOUNDED, and logged PER RECIPIENT. Bounded because `recipients` is as wide
     // as the audience and not as wide as the caller: announcing a post to the whole feed is 356
     // recipients on today's population, and `Promise.all` would open 356 sockets to the delivery

@@ -34,3 +34,27 @@ export async function createPostNotificationsTable(
     await q(readFileSync(join(__dirname, '..', 'migrations', file), 'utf8'));
   }
 }
+
+/**
+ * Builds what the DAILY PUSH CAP reads (engagement WP-8): `engagement_push_days` (migration 157)
+ * and chat-delivery's `notification_preference` (its migration 028, the same database on every
+ * estate), both read from the files the estates ran. Every spec that sends a COUNTED type through
+ * the real notification service needs them since the cap widened (owner, 2026-11-10): without them
+ * the claim fails, and a failed claim pushes nobody.
+ */
+export async function createEngagementPushCapTables(
+  q: (sql: string) => Promise<unknown>
+): Promise<void> {
+  await q(
+    readFileSync(join(__dirname, '..', 'migrations', '157_engagement_push_days.sql'), 'utf8')
+  );
+  await q(
+    readFileSync(
+      join(
+        __dirname,
+        '../../../chat-delivery-service/src/migrations/028_notification_preferences.sql'
+      ),
+      'utf8'
+    )
+  );
+}

@@ -114,6 +114,9 @@
     <string name="notif_social_campus_trend_photo_body">Une publication qui fait réagir votre espace</string>
     <string name="notif_social_campus_trend_video_title">Suggestion : une vidéo</string>
     <string name="notif_social_campus_trend_video_body">Une publication qui fait réagir votre espace</string>
+    <string name="notif_social_campus_trend_liked_by">Aimée par %1$s</string>
+    <string name="notif_social_campus_trend_liked_by_one">Aimée par %1$s et 1 autre personne</string>
+    <string name="notif_social_campus_trend_liked_by_many">Aimée par %1$s et %2$d autres</string>
     <string name="notif_social_repost_proposed_title">%1$s propose de relayer une publication</string>
     <string name="notif_social_repost_proposed_body">Publication à relayer</string>
     <string name="notif_social_repost_personal_requested_title">%1$s demande à relayer votre publication</string>

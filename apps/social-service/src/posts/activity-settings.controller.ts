@@ -12,10 +12,12 @@ export const ACTIVITY_SETTINGS_READS_PER_MINUTE = 60;
 export const ACTIVITY_SETTINGS_WRITES_PER_MINUTE = 10;
 
 /**
- * "SHARE MY ACTIVITY" (engagement decision 9, WP-9): whether the person's reactions and comments
- * are told to their accepted followers (friends' activity, `friend-activity.ts`). ONE row per person
- * who chose, `user_activity_settings`; no row is ON. Turning it off stops every notice not yet sent
- * - the disclosure statement reads the row at each write - and retracts none already sent.
+ * "SHARE MY ACTIVITY" (engagement decision 9): whether a campus trend may NAME the person to their
+ * accepted followers as someone who liked the post (`campus-trend.ts`, `campusTrendNamedSql`) -
+ * friends' activity, which told their reactions and comments as notifications of their own, stopped
+ * on 2026-11-10 (owner). ONE row per person who chose, `user_activity_settings`; no row is ON.
+ * Turning it off stops every naming not yet sent - the trend's statement reads the row at each
+ * announcement - and retracts none already sent.
  */
 @Injectable()
 export class ActivitySettingsService {

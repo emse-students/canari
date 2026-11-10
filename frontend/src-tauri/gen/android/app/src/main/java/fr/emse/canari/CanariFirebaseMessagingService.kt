@@ -5719,6 +5719,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val res = appLocaleContext(this).resources
         val actor = data["actorName"] ?: ""
         val arg = data["contentArg"] ?: ""
+        // A campus trend's body (owner, 2026-11-10): the followed account who liked the post, named
+        // in `actorName`, and how many others reacted in `contentCount` - one sentence per count
+        // form, so the plural is exact; the fixed sentence when the server names nobody.
+        fun trendBody(fallback: Int): String {
+            if (actor.isEmpty()) return res.getString(fallback)
+            val others = (data["contentCount"]?.toIntOrNull() ?: 0).coerceAtLeast(0)
+            return when (others) {
+                0 -> res.getString(R.string.notif_social_campus_trend_liked_by, actor)
+                1 -> res.getString(R.string.notif_social_campus_trend_liked_by_one, actor)
+                else -> res.getString(R.string.notif_social_campus_trend_liked_by_many, actor, others)
+            }
+        }
         return when (key) {
             "social_mention" -> Pair(
                 res.getString(R.string.notif_social_mention_title, actor),
@@ -5866,22 +5878,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_booking_removed_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_booking_removed_body) }
             )
-            // A campus trend, told as a SUGGESTION (engagement WP-10, owner 2026-11-10): nobody
-            // acted; the title is "Suggestion : " and the post's opening - "une publication" when
-            // the server sends none - and the body a fixed sentence. A post with no text but a
-            // picture or a video has its own key, so a colon is never followed by nothing.
+            // A campus trend, told as a SUGGESTION (engagement WP-10, owner 2026-11-10): the title
+            // is "Suggestion : " and the post's opening - "une publication" when the server sends
+            // none - and the body names a followed account who liked it ("Aimée par Léa et 9
+            // autres"), or a fixed sentence when there is none. A post with no text but a picture
+            // or a video has its own key, so a colon is never followed by nothing.
             "social_campus_trend" -> Pair(
                 if (arg.isEmpty()) res.getString(R.string.notif_social_campus_trend_untitled)
                 else res.getString(R.string.notif_social_campus_trend_title, arg),
-                res.getString(R.string.notif_social_campus_trend_body)
+                trendBody(R.string.notif_social_campus_trend_body)
             )
             "social_campus_trend_photo" -> Pair(
                 res.getString(R.string.notif_social_campus_trend_photo_title),
-                res.getString(R.string.notif_social_campus_trend_photo_body)
+                trendBody(R.string.notif_social_campus_trend_photo_body)
             )
             "social_campus_trend_video" -> Pair(
                 res.getString(R.string.notif_social_campus_trend_video_title),
-                res.getString(R.string.notif_social_campus_trend_video_body)
+                trendBody(R.string.notif_social_campus_trend_video_body)
             )
             // The reminder: nobody acted, a fixed title; the body is the place and the time.
             "social_booking_reminder" -> Pair(
