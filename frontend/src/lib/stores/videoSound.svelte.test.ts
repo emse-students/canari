@@ -57,6 +57,25 @@ describe('the store', () => {
     expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('off');
   });
 
+  /**
+   * AN ENGINE'S REFUSAL IS NOT THE READER'S CHOICE: the live viewer, refused an audible start, plays
+   * muted - silent for this session, the stored "on" kept, and a viewer's `volumechange` that follows
+   * writes nothing.
+   */
+  it('a refused audible start silences this session and keeps the stored choice', async () => {
+    vi.stubGlobal('navigator', { ...navigator, userActivation: { hasBeenActive: true } });
+    const store = await freshStore();
+    store.setMuted(false);
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    store.muteForRefusedStart();
+    expect(store.muted).toBe(true);
+    store.setMuted(true);
+    expect(localStorage.getItem(VIDEO_SOUND_KEY), 'the follow-up volumechange').toBe('on');
+
+    vi.resetModules();
+    expect((await freshStore()).muted, 'the next run has the sound back').toBe(false);
+  });
+
   it('a browser with no gesture yet starts muted and keeps the stored "on" for the next tap', async () => {
     localStorage.setItem(VIDEO_SOUND_KEY, 'on');
     vi.stubGlobal('navigator', { ...navigator, userActivation: { hasBeenActive: false } });
