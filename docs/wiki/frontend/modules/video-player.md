@@ -8,6 +8,26 @@ two verbs: two sizes of a solid-amber play disc, a scrim-disc speaker, a bar spe
 a corner speaker. The history of the player before this page (the bar, the fade, resuming, the
 arbiter, the lightbox's zoom) is in [posts](posts.md#a-video-is-canaris-to-play-videoplayer-never-controls-2026-10-01).
 
+
+## A tap in full screen never mutes (owner, 2026-11-10)
+
+*"c'est insupportable que le clic coupe le son en plein ecran ... n'importe quel clic sur l'interface coupe le son."*
+The cause: the `reel` and `lightbox` rows of `utils/videoTapAction.ts` answered `toggle-sound`, so
+every tap meant to raise the bar silenced the video. The rule now follows TikTok, YouTube Shorts and
+Instagram Reels, which all pause on a single tap (Instagram dropped tap-to-mute in March 2026;
+sources: [9to5Google](https://9to5google.com/2026/03/19/instagram-finally-settles-on-pause-for-a-tap-on-reels-instead-of-mute/),
+[Social Media Today](https://www.socialmediatoday.com/news/instagram-adds-ability-to-pause-reels-with-a-single-tap/815150/)):
+
+- In a full-screen viewer (reel, lightbox, conversation, native fullscreen) a single tap PLAYS or
+  PAUSES; it NEVER mutes. A MUTED video's tap turns the sound ON instead (the autoplay-refused case).
+- Sound goes off only through the speaker button or the `m` key.
+- A viewer opens with the app's sound answer. If the engine refuses that audible autoplay, the
+  minimal player plays muted for this session (`videoSound.muteForRefusedStart`, the stored choice
+  kept) and logs a WARN - it replaces the 2026-11-04 rule that left a refused reel paused.
+- A double tap (the Reels like) is no single tap (`videoGestures` reports the pair only), so it leaves
+  playback as it was. The live viewer has no pause: its tap only turns the sound on.
+- The inline feed player is unchanged: muted at start, its tap opens the viewer, its chip is the sound.
+
 ## The owner's decisions (2026-11-09, final)
 
 1. **ONE player for every surface** - feed, CanaReels, chat video, lightbox, live viewer - with a
@@ -18,7 +38,7 @@ arbiter, the lightbox's zoom) is in [posts](posts.md#a-video-is-canaris-to-play-
    not apply an SVG filter to a live `<video>` (Aave, "Building Glass for the Web"), so it cannot be
    the same on the iPhone. **Android is flat until a Mi 9T measurement shows no janky-frame
    regression** ([the glass budget](#the-glass-budget)).
-3. **The gestures, the same everywhere**: a single TAP toggles the SOUND (a speaker glyph pops and
+3. **The gestures, the same everywhere**: a single TAP toggles the SOUND (amended 2026-11-10: in full screen it plays or pauses and never mutes, see below) (a speaker glyph pops and
    fades); a PRESS HELD pauses while held and resumes on release; a DOUBLE TAP likes where likes
    exist (CanaReels, a feed post) and leaves the sound as it was. A small speaker stays visible on
    the video for discoverability (feed: bottom-right, Instagram's ~24 dp). The lightbox and full

@@ -504,6 +504,7 @@
       canOpen: !!onOpen,
       paused: video.paused,
       started,
+      muted: video.muted,
     });
     Log.d('VideoPlayer', `${variant}: tap -> ${action}`);
     switch (action) {
@@ -520,7 +521,21 @@
         toggleMute();
         playNow();
         break;
+      case 'sound-on':
+        turnSoundOn();
+        break;
     }
+  }
+
+  /**
+   * A tap's sound is only ever ON (owner, 2026-11-10): the same write as the speaker's unmute, so the
+   * app's one answer follows the same way (a viewer's `followVideoSound` reads the element's change).
+   * A `silent` video has none to give and only raises the bar.
+   */
+  function turnSoundOn() {
+    if (!video) return;
+    if (video.muted && scope !== 'silent') toggleMute();
+    else showControls();
   }
 
   /**
@@ -695,6 +710,19 @@
           console.debug(
             `[VideoPlayer] autoplay interrupted by a new source (${name}) - its load asks again`
           );
+          return;
+        }
+        if (verdict.cause === 'refused' && !muted && scope !== 'silent') {
+          // A full-screen viewer opens WITH sound where the app may; the engine refused it, so it
+          // plays muted rather than sit paused (owner, 2026-11-10) - and a tap turns the sound on.
+          console.warn(
+            `[VideoPlayer] autoplay with sound refused (${name}) - playing muted, a tap turns the sound on`,
+            err
+          );
+          if (scope === 'app') videoSound.muteForRefusedStart();
+          el.muted = true;
+          sync();
+          askAutoplay(el);
           return;
         }
         autoplayDone = true;
