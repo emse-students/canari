@@ -190,6 +190,40 @@ describe('a file sent as a reply waits for what it quotes', () => {
     await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
     storage.close();
   });
+  it('a failed quote read is an ordinary failed attempt: backed off, the flush survives, another lane goes', async () => {
+    const storage = new IndexedDbStorage(freshName());
+    await storage.init();
+    const { outbox, mlsService, order } = setup(storage);
+    // A weak link: the exclusion windows cannot be read for g1 (a reply never blanks on a failure).
+    mlsService.getGroupExclusions.mockImplementation(async (id: string) => {
+      if (id === 'g1') throw new Error('network down');
+      order.push('quote decided');
+      return new Map();
+    });
+    const uploaded = {
+      kind: MediaKind.MEDIA_KIND_IMAGE,
+      mimeType: 'image/jpeg',
+      size: 3,
+      uploadedRef: { mediaId: 'mid', key: 'aa', iv: 'bb' },
+    };
+    await storage.saveOutboxEntry(photo('B', 200, { replyTo: REPLY, media: uploaded }), KEY);
+    await storage.saveOutboxEntry(
+      photo('C', 300, { conversationId: 'g2', replyTo: REPLY, media: uploaded }),
+      KEY
+    );
+
+    // Resolves: a throw escaping the flush would reject here and stop every lane.
+    await expect(outbox.flush()).resolves.not.toThrow();
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+
+    const queued = await storage.getOutboxQueue(KEY);
+    const b = queued.find((e) => e.id === 'B')!;
+    // B counted an attempt and waits out a backoff; C (another conversation) went.
+    expect(b.attempts).toBeGreaterThanOrEqual(1);
+    expect(b.nextAttemptAt).toBeGreaterThan(Date.now());
+    expect(queued.some((e) => e.id === 'C')).toBe(false);
+    storage.close();
+  });
 });
 
 describe('a file sent as a reply: nothing awaited from the gates to the send', () => {

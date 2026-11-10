@@ -2643,7 +2643,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // a network round trip, and the promise below is NO AWAIT from the gates to the send.
     let decidedMediaQuote: Awaited<ReturnType<typeof decideQuote>> | undefined;
     if (entry.kind === 'media' && entry.media?.uploadedRef) {
-      decidedMediaQuote = await decideQuote(entry);
+      // A FAILED READ THROWS ON PURPOSE (a reply is never blanked on a failure): it is an ordinary
+      // transient failure, settled like the send's own - an attempt, a backoff - and never allowed
+      // to escape the flush, which would skip the settle and stop the whole lane.
+      try {
+        decidedMediaQuote = await decideQuote(entry);
+      } catch (e) {
+        return settleFailure(entry, terminalId, e);
+      }
       await mlsService
         .waitForMessageQueueIdle('outbox media seal', null)
         .catch((e) =>
