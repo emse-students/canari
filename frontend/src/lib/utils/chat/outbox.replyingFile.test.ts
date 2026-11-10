@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A FILE SENT AS A REPLY, IN THE OUTBOX (review of #3307).
  *
@@ -11,7 +12,6 @@
  *    round trip for the exclusion windows) is taken BEFORE the seal barrier, so the gates and the
  *    send follow with nothing awaited in between. Asserted by ORDER, never by a clock.
  */
-// @vitest-environment happy-dom
 import 'fake-indexeddb/auto';
 import { SvelteMap } from 'svelte/reactivity';
 import { afterEach, describe, expect, it, vi } from 'vitest';
