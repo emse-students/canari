@@ -6,7 +6,7 @@ design that answers each one, what each surface reveals and to whom, and the wor
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
-(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); WP-6 BUILT (the surfaces, 2026-11-09, [below](#wp-6---the-surfaces-built)); WP-7 BUILT (suggested posts, 2026-11-09, [below](#wp-7---suggested-posts-built)); everything else DESIGNED, not built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
+(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); WP-6 BUILT (the surfaces, 2026-11-09, [below](#wp-6---the-surfaces-built)); WP-7 BUILT (suggested posts, 2026-11-09, [below](#wp-7---suggested-posts-built)); WP-8 BUILT (the daily cap, 2026-11-09, [below](#wp-8---the-daily-cap-built)); everything else DESIGNED, not built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
 
 Context it must respect, and which nothing here changes:
 
@@ -751,7 +751,7 @@ INSERT INTO engagement_push_days ("userId", day, pushed)
 SELECT r, (now() AT TIME ZONE 'Europe/Paris')::date, 1
   FROM (SELECT DISTINCT r FROM unnest($1::varchar[]) r) ids
  -- the CATEGORY first: a reader who switched it off is never pushed, so must not spend the budget
- WHERE NOT EXISTS (SELECT 1 FROM notification_preferences np
+ WHERE NOT EXISTS (SELECT 1 FROM notification_preference np
                     WHERE np."userId" = ids.r AND np."disabledCategories" ? $3)
  ORDER BY r                                          -- one lock order for every fan-out
 ON CONFLICT ("userId", day) DO UPDATE SET pushed = engagement_push_days.pushed + 1
@@ -767,7 +767,7 @@ line of the statement:
 - **`ORDER BY`**: the `ON CONFLICT DO UPDATE` row locks are taken in the order rows arrive; two
   concurrent fan-outs over overlapping readers in different orders could deadlock. One order, no
   cycle. The lock then orders the two on each shared reader, so the cap is exact, not approximate.
-- **The category before the count**: `notification_preferences` (chat-delivery's, the same database
+- **The category before the count**: `notification_preference` (chat-delivery's, the same database
   the service already reads `user_blocks` from) is read with `$3`, the category the capped type files
   under. chat-delivery still applies it at the send (it stays the one place a push is filtered), and
   `$3` comes from ONE exported map in social-service that a contract test pins against
@@ -795,6 +795,34 @@ A new day is a new row: nothing resets anything. The daily GC that already prune
   stays in the bell. **The number is a constant to re-read**: [R2](#r2---the-cap-check) gives the
   production distribution of what friends' activity WOULD have pushed per reader per day; the
   constant moves with that reading, before WP-9 merges.
+
+### WP-8 - the daily cap (BUILT)
+
+Built 2026-11-09 to the design above, with the cap at 5 as R2 read it. Migration **157**
+(`engagement_push_days`, plain); `posts/engagement-push-cap.ts` holds the constant, the allowlist
+`ENGAGEMENT_PUSH_TYPES` (`friend_activity` and `campus_trend`, both filed under `posts`, L30), the one
+claim statement and the GC statement.
+
+- **The seam** is in `PostNotificationsService.fanOutPush`, AFTER the bell (a reader the bell
+  silenced never spends a unit) and before the bounded fan-out: a type outside the allowlist goes out
+  exactly as before and never touches the table; a capped one pushes only the readers the claim
+  returned, the others keep their in-app row. A failed claim fails CLOSED and loudly, as the bell
+  does: nobody is pushed, an error names the type, and the error reaches the caller.
+- **The table the category is read from** is chat-delivery's `notification_preference` (singular,
+  its migration 028; the design text above said `notification_preferences`).
+- **chat-delivery** files `social_friend_activity` and `social_campus_trend` under `posts` now, so
+  the switch already governs them the day WP-9 and WP-10 send them; `engagement-push-cap.spec.ts`
+  reads chat-delivery's `CATEGORY_BY_CONTENT_KEY` and pins every capped type's category against it.
+- **The GC**: `FormReminderScheduler.purgeEngagementPushDays`, daily at 03:05, rows older than 7
+  days. **The erasure**: the recipient's rows (`account-erasure.ts`).
+- **Proof**: `posts/engagement-push-cap.integration.spec.ts` on PostgreSQL - the 6th claim of a day
+  refused; 24 concurrent fan-outs over overlapping readers (in two orders, one naming a reader twice)
+  never exceed 5 per reader; a reader with `posts` switched off never counted; the GC's 7-day bound
+  and the erasure; through the real `fanOutPush`, the 6th capped push reaching the bell only, an
+  association post, a live, a booking opening, an event opening and a mention on the same day never
+  counted, and a failed claim pushing nobody.
+- **Owed**: nothing of its own on the phones - the cap is first exercised by WP-9's pushes; a dev
+  pass with them.
 
 ## The production readings - the exact queries
 
@@ -954,7 +982,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-5** (BUILT, [above](#wp-5---the-suggestion-query-built)) | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
 | **WP-6** (BUILT, [above](#wp-6---the-surfaces-built)) | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
 | **WP-7** (BUILT, [above](#wp-7---suggested-posts-built)) | Suggested posts (decision 8), through the feed's own block filter (`PostsService.blockedAuthorSql`) as every feed row | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door, and never by an author blocked either way |
-| **WP-8** | The daily cap (decisions 6 and 11): `engagement_push_days`, `ENGAGEMENT_PUSH_TYPES` holding ONLY the new kinds, the statement in `fanOutPush` | `posts/post-notifications.service.ts` | [R2](#r2---the-cap-check) read and written back; integration spec: the 6th capped push of a day is a bell row with no push, two concurrent fan-outs never exceed 5, and an association post, a live, an opening and a mention on the same day are never counted |
+| **WP-8** (BUILT, [above](#wp-8---the-daily-cap-built)) | The daily cap (decisions 6 and 11): `engagement_push_days`, `ENGAGEMENT_PUSH_TYPES` holding ONLY the new kinds, the statement in `fanOutPush` | `posts/post-notifications.service.ts` | [R2](#r2---the-cap-check) read and written back; integration spec: the 6th capped push of a day is a bell row with no push, two concurrent fan-outs never exceed 5, and an association post, a live, an opening and a mention on the same day are never counted |
 | **WP-9** | Friends' activity (5b) with the ledger `post_engagement_notices` and the activity setting (decision 9: `user_activity_settings`, no row = ON, the Settings switch) | `posts/comment-write.ts`, the reaction write | integration spec, one case per rule of the disclosure list, rule 0 included, and for rule 8 one case EACH: an `anonymous` comment, a comment written as an association, and a `removedByModeration` comment, none of which notifies |
 | **WP-10** | Campus trends (5c) | the reaction write | [R1](#r1---the-trend-threshold) read FIRST and written back; integration spec: exactly one stamp at the crossing write, none after 24 hours, the space-only audience |
 

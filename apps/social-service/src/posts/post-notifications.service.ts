@@ -5,6 +5,7 @@ import { PostNotification } from './entities/post-notification.entity';
 import { Post } from './entities/post.entity';
 import { PushService } from '../push/push.service';
 import { AccountBellsService, bellTargetOf } from '../follows/account-bells.service';
+import { ENGAGEMENT_PUSH_TYPES, claimEngagementPushes } from './engagement-push-cap';
 import {
   mentionContent,
   replyContent,
@@ -787,6 +788,33 @@ export class PostNotificationsService {
             `push withheld by the bell from ${withheld.size} of ${recipients.length}`
         );
       }
+    }
+    // THE DAILY CAP (engagement WP-8, decisions 6 and 11), after the bell so a reader the bell
+    // already silenced never spends a unit: only a type of `ENGAGEMENT_PUSH_TYPES` (an allowlist of
+    // the NEW kinds) is counted, every other push goes out exactly as before. Beyond the cap the
+    // reader keeps the in-app row and gets no push. FAIL CLOSED, LOUDLY, as the bell: a failed claim
+    // pushes nobody (pushing everyone would ignore the cap) and the error reaches the caller.
+    const capped = ENGAGEMENT_PUSH_TYPES.get(data.type);
+    if (capped && pushRecipients.length > 0) {
+      const allowed = await claimEngagementPushes(
+        this.notifRepo.manager,
+        pushRecipients,
+        capped.category
+      ).catch((e: unknown) => {
+        this.logger.error(
+          `[NOTIFY] engagement cap claim failed for type=${data.type} - ` +
+            `push NOT sent to ${pushRecipients.length} recipient(s): ${String(e)}`
+        );
+        throw e;
+      });
+      const kept = pushRecipients.length - allowed.size;
+      if (kept > 0) {
+        this.logger.log(
+          `[NOTIFY] type=${data.type} capped: ${kept} of ${pushRecipients.length} kept in the bell ` +
+            `(daily cap reached or category ${capped.category} off)`
+        );
+      }
+      pushRecipients = pushRecipients.filter((id) => allowed.has(id));
     }
     // Fire-and-forget, BOUNDED, and logged PER RECIPIENT. Bounded because `recipients` is as wide
     // as the audience and not as wide as the caller: announcing a post to the whole feed is 356

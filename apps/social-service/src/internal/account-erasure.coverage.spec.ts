@@ -78,6 +78,8 @@ const RAW_TABLES = [
   // Migration 156's replay cap evictions (docs/wiki/live-replays.md): a live id, byte counts and a
   // date, no account - and pruned at 30 days by the live sweep.
   'live_replay_cap_evictions',
+  // Migration 157's daily push counters (engagement WP-8): the recipient's own rows.
+  'engagement_push_days',
 ];
 
 const SRC = join(__dirname, '..');

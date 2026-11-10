@@ -78,6 +78,7 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // reader's dismissal OF this person - the second names the erased account as a `user` target.
   'follow_suggestion_dismissals.userId': { action: 'delete' },
   'follow_suggestion_dismissals.targetId': { action: 'delete' },
+  'engagement_push_days.userId': { action: 'delete' },
   // The member's birthday and visibility (migration 148), and when they last set a date.
   'profile_birthdays.userId': { action: 'delete' },
   'birthday_changes.userId': { action: 'delete' },
@@ -585,6 +586,11 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'follow_suggestion_dismissals',
     sql: `DELETE FROM follow_suggestion_dismissals WHERE "userId" = $1 OR "targetId" = $1`,
+  },
+  // The daily engagement push counters (engagement WP-8): the recipient's own rows.
+  {
+    label: 'engagement_push_days',
+    sql: `DELETE FROM engagement_push_days WHERE "userId" = $1`,
   },
   // The birthday (migration 148): the date, its visibility, the day it was last announced, and
   // when a date was last set. The followers' notices name the member as their actor and go with
