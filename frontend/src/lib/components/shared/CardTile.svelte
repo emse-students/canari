@@ -88,7 +88,7 @@
   <!--
     NO IMAGE IS A DELIBERATE PLACEHOLDER, NOT A FAILED ONE (tour of dev, 2026-11-10): the fallback
     glyph used to sit alone on the right of an empty row in a neutral frame, which read as a logo
-    that did not load. Without a badge it now leads the row (the left edge the title below uses),
+    that did not load. Without a badge or an uploaded logo it now leads the row (the left edge the title below uses),
     in a frame tinted with the card's own accent, like an avatar's initials tile.
 
     Header row: the badge as a pill, and the icon in a frame of its own. The icon used to be a
@@ -111,7 +111,7 @@
         <div
           class="border-cn-border flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border p-1.5 {resolvedIconUrl
             ? 'bg-cn-surface-alt'
-            : 'bg-(--tile-accent)/15'} {trimmedBadge ? 'ml-auto' : ''}"
+            : 'bg-(--tile-accent)/15'} {trimmedBadge || resolvedIconUrl ? 'ml-auto' : ''}"
         >
           {#if resolvedIconUrl}
             <!-- Decorative: the caller renders the name this logo stands for as text in `children`,
