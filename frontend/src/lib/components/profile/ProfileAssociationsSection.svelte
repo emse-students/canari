@@ -30,7 +30,7 @@
         <li>
           <a
             href="/associations/{encodeURIComponent(mb.slug)}"
-            class="border-cn-border hover:border-cn-yellow/30 bg-cn-surface flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors"
+            class="border-cn-border hover:border-accent/30 bg-cn-surface flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors"
           >
             <AssociationAvatar
               id={mb.associationId}

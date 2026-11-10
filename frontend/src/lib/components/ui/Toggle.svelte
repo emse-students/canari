@@ -56,9 +56,7 @@
       onchange={() => onchange?.(checked)}
       class="peer sr-only"
     />
-    <div
-      class="bg-cn-border peer-checked:bg-cn-yellow h-6 w-11 rounded-full transition-colors"
-    ></div>
+    <div class="bg-cn-border peer-checked:bg-accent h-6 w-11 rounded-full transition-colors"></div>
     <div
       class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5"
     ></div>

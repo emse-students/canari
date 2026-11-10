@@ -83,6 +83,21 @@ export type CheckpointSkipMode = 'off' | 'on';
  */
 export const CHECKPOINT_SKIP_MODES: readonly CheckpointSkipMode[] = ['off', 'on'];
 
+/**
+ * The server's switch for live replays (`platform_config.live_replays_mode`, published by
+ * `/api/version` as `liveReplays.mode`): `off` - a live is deleted at its end; `on` - a live started
+ * now is kept three days as a replay. Enforced by social-service at the START of a live, which fixes
+ * it on the live row; this client names it for the admin page (docs/wiki/live-replays.md).
+ */
+export type LiveReplaysMode = 'off' | 'on';
+
+/**
+ * Every value of {@link LiveReplaysMode}. FIVE COPIES of these two strings exist (the SQL CHECK,
+ * core's entity, social-service's reader, this, the admin page through this) and
+ * `liveReplaysModesAgree.test.ts` fails the day one of them drifts.
+ */
+export const LIVE_REPLAYS_MODES: readonly LiveReplaysMode[] = ['off', 'on'];
+
 export type ServerVersionInfo = {
   version: string;
   minClientVersion: string;

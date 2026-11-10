@@ -37,7 +37,7 @@
     },
     {
       id: 'mine',
-      swatch: 'bg-cn-yellow/25 border-cn-yellow/60',
+      swatch: 'bg-accent/25 border-accent/60',
       text: () => m.bookings_cell_mine(),
     },
     {

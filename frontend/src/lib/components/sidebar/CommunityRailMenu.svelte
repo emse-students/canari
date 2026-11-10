@@ -77,7 +77,7 @@
       onMarkRead();
     }}
     class="{ROW} {hasUnread
-      ? 'text-text-main hover:bg-amber-500/10 hover:text-amber-600'
+      ? 'text-text-main hover:bg-accent/10 hover:text-accent-text'
       : 'text-text-muted cursor-not-allowed opacity-60'}"
   >
     <CheckCheck size={16} strokeWidth={2.5} aria-hidden="true" />

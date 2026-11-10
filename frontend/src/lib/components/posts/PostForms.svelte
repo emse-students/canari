@@ -67,16 +67,16 @@
     {#each formInfos as fi (fi.id)}
       <a
         href="/forms/{fi.id}?redirect=/posts"
-        class="group bg-cn-surface relative flex items-center justify-between rounded-2xl border border-black/5 p-4 shadow-sm transition-all duration-300 outline-none hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-4 focus-visible:ring-amber-500/50 dark:border-white/10 {fi.submitted
+        class="group bg-cn-surface focus-visible:ring-accent/50 relative flex items-center justify-between rounded-2xl border border-black/5 p-4 shadow-sm transition-all duration-300 outline-none hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-4 dark:border-white/10 {fi.submitted
           ? 'hover:border-emerald-500/30'
-          : 'hover:border-amber-500/30'}"
+          : 'hover:border-accent/30'}"
       >
         <div class="flex min-w-0 items-center gap-3.5">
           <!-- Icône d'état -->
           <div
             class="shrink-0 rounded-xl p-2.5 transition-colors {fi.submitted
               ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-              : 'bg-amber-500/10 text-amber-600 group-hover:bg-amber-500/20 dark:text-amber-400'}"
+              : 'bg-accent/10 text-accent-text group-hover:bg-accent/20'}"
           >
             {#if fi.submitted}
               <CircleCheck size={20} strokeWidth={2.5} />
@@ -90,7 +90,7 @@
             <h3
               class="text-text-main truncate text-sm font-bold transition-colors {fi.submitted
                 ? 'group-hover:text-emerald-600 dark:group-hover:text-emerald-400'
-                : 'group-hover:text-amber-600 dark:group-hover:text-amber-400'}"
+                : 'group-hover:text-accent-text'}"
             >
               {fi.title || m.post_form_fallback_title()}
             </h3>
@@ -117,7 +117,7 @@
         <div
           class="ml-4 shrink-0 opacity-40 transition-all duration-300 group-hover:translate-x-1 group-hover:opacity-100 {fi.submitted
             ? 'group-hover:text-emerald-500'
-            : 'group-hover:text-amber-500'}"
+            : 'group-hover:text-accent-text'}"
         >
           {#if fi.submitted}
             <ArrowRight size={18} strokeWidth={2.5} />
@@ -135,7 +135,7 @@
           class="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition-colors {subscribed[
             fi.id
           ]
-            ? 'bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 dark:text-amber-400'
+            ? 'bg-accent/10 text-accent-text hover:bg-accent/20'
             : 'text-text-muted hover:text-text-main hover:bg-text-main/10'}"
           title={subscribed[fi.id]
             ? m.post_form_disable_reminder_label()

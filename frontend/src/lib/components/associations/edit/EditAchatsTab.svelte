@@ -427,7 +427,7 @@
   {#if purchasesLoading}
     <div class="flex justify-center py-8">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if filteredPurchases.length === 0}

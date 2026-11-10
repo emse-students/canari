@@ -19,7 +19,7 @@
   <p class="text-text-muted mb-4 text-sm">{m.posts_reels_empty_hint()}</p>
   <a
     href={resolve(CAMERA_PLACE.href)}
-    class="tap-target inline-flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/15 px-4 py-2 text-sm font-semibold text-amber-700 dark:text-amber-400"
+    class="tap-target border-accent/40 bg-accent/15 text-accent-text inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold"
   >
     <Camera size={16} />
     {m.posts_reels_empty_camera()}

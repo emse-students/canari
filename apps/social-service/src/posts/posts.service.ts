@@ -37,7 +37,7 @@ import {
   DAY_MS,
   REEL_EXPIRY_WARNING_DAYS,
   REEL_RETENTION_DAYS,
-  isExpiredReel,
+  isExpiredPost,
   type PostKind,
 } from './reel.constants';
 import { assertReelEditShape } from './reel-rules';
@@ -2264,7 +2264,7 @@ export class PostsService {
 
     // A reel is edited by its caption alone; a post's text-or-media rule is the DTO's.
     if (post.kind === 'reel') {
-      if (isExpiredReel(post)) throw new NotFoundException('Post not found');
+      if (isExpiredPost(post)) throw new NotFoundException('Post not found');
       assertReelEditShape(data);
       post.markdown = data.markdown;
       const saved = await this.postRepo.save(post);

@@ -63,7 +63,7 @@
       bind:value={noteInput}
       placeholder={m.profile_notepad_placeholder()}
       minHeight="140px"
-      class="focus-within:border-cn-yellow/50 focus-within:ring-cn-yellow/30 bg-cn-surface w-full min-w-0 overflow-hidden rounded-2xl border border-black/10 shadow-inner transition-all focus-within:ring-2 dark:border-white/10"
+      class="focus-within:border-accent/50 focus-within:ring-accent/30 bg-cn-surface w-full min-w-0 overflow-hidden rounded-2xl border border-black/10 shadow-inner transition-all focus-within:ring-2 dark:border-white/10"
       editorClass="min-h-[140px] w-full max-w-full px-4 py-3 text-sm text-text-main leading-relaxed"
     />
     <div class="flex items-center justify-end gap-3 pt-3">
@@ -76,7 +76,7 @@
         type="button"
         onclick={saveNote}
         disabled={noteSaving}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
+        class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
       >
         {noteSaving ? m.common_saving_label() : m.common_save_button()}
       </button>

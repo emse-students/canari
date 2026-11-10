@@ -426,7 +426,7 @@
                     aria-checked={opts.cellBorderWidth === width}
                     data-testid="cell-border-width-{width}"
                     onclick={() => (opts.cellBorderWidth = width)}
-                    class="border-cn-border text-text-main aria-checked:bg-cn-yellow aria-checked:text-cn-ink hover:bg-cn-bg min-h-11 flex-1 basis-16 rounded-lg border px-2 text-xs font-semibold transition-colors"
+                    class="border-cn-border text-text-main aria-checked:bg-accent aria-checked:text-cn-ink hover:bg-cn-bg min-h-11 flex-1 basis-16 rounded-lg border px-2 text-xs font-semibold transition-colors"
                   >
                     {borderWidthLabel[width]()}
                   </button>
@@ -446,7 +446,7 @@
                       aria-checked={opts.cellBorderColor === color}
                       data-testid="cell-border-color-{color}"
                       onclick={() => (opts.cellBorderColor = color)}
-                      class="border-cn-border text-text-main aria-checked:bg-cn-yellow aria-checked:text-cn-ink hover:bg-cn-bg min-h-11 flex-1 basis-16 rounded-lg border px-2 text-xs font-semibold transition-colors"
+                      class="border-cn-border text-text-main aria-checked:bg-accent aria-checked:text-cn-ink hover:bg-cn-bg min-h-11 flex-1 basis-16 rounded-lg border px-2 text-xs font-semibold transition-colors"
                     >
                       {borderColorLabel[color]()}
                     </button>
@@ -544,7 +544,7 @@
             {#if loading}
               <div class="flex items-center justify-center py-16">
                 <div
-                  class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+                  class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
                 ></div>
               </div>
             {:else if previewScale > 0}

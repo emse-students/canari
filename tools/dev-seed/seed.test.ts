@@ -240,6 +240,10 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: "checkpoint_skip_mode IN ('off', 'on')",
     holds: oneOf('checkpoint_skip_mode', ['off', 'on']),
   },
+  CHK_platform_config_live_replays_mode: {
+    sql: "live_replays_mode IN ('off', 'on')",
+    holds: oneOf('live_replays_mode', ['off', 'on']),
+  },
   CHK_spaces_campus: {
     sql: "campus IN ('saint-etienne', 'gardanne')",
     holds: oneOf('campus', CAMPUSES),
@@ -273,17 +277,17 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
   },
   // `kind` defaults to 'post'.
   posts_kind_shape: {
-    sql: `(kind = 'post' AND "durationMs" IS NULL AND "expiresAt" IS NULL)
-       OR (kind = 'reel' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL)`,
+    sql: `(kind = 'post' AND "durationMs" IS NULL AND "expiresAt" IS NULL AND "liveId" IS NULL)
+       OR (kind = 'reel' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL
+           AND "liveId" IS NULL)
+       OR (kind = 'replay' AND "durationMs" IS NOT NULL AND "durationMs" > 0 AND "expiresAt" IS NOT NULL
+           AND "liveId" IS NOT NULL)`,
     holds: (r) => {
       const kind = r.kind ?? 'post';
-      if (kind === 'post') return !given(r.durationMs) && !given(r.expiresAt);
-      return (
-        kind === 'reel' &&
-        typeof r.durationMs === 'number' &&
-        r.durationMs > 0 &&
-        given(r.expiresAt)
-      );
+      if (kind === 'post') return !given(r.durationMs) && !given(r.expiresAt) && !given(r.liveId);
+      const timed = typeof r.durationMs === 'number' && r.durationMs > 0 && given(r.expiresAt);
+      if (kind === 'reel') return timed && !given(r.liveId);
+      return kind === 'replay' && timed && given(r.liveId);
     },
   },
 };

@@ -55,7 +55,7 @@ export function statusClass(status: string): string {
     return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
   if (status === 'free') return 'bg-cn-border/40 text-text-muted';
   if (status === 'pending' || status === 'pending_cash')
-    return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300';
+    return 'bg-amber-warn/15 text-amber-warn-text';
   // Settled the other way: nothing to do, and not an error - its own colour, the mockup's blue.
   if (status === 'refunded')
     return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';
