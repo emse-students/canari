@@ -38,7 +38,7 @@
     {
       id: 'mine',
       swatch: 'bg-accent/25 border-accent/60',
-      text: () => m.bookings_cell_mine(),
+      text: () => m.bookings_legend_mine(),
     },
     {
       id: 'blocked',

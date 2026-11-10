@@ -5539,6 +5539,7 @@
   "bookings_cell_booked": "Taken",
   "bookings_cell_mine": "My booking",
   "bookings_cell_invited": "Invited",
+  "bookings_legend_mine": "My booking / Invited",
   "bookings_cell_blocked": "Unavailable",
   "bookings_cell_closed": "Not bookable",
   "bookings_cell_label": "{resource}, {time}: {state}",

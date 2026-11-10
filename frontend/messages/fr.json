@@ -5548,6 +5548,7 @@
   "bookings_cell_booked": "Occupé",
   "bookings_cell_mine": "Ma réservation",
   "bookings_cell_invited": "Invité",
+  "bookings_legend_mine": "Ma réservation / Invité",
   "bookings_cell_blocked": "Indisponible",
   "bookings_cell_closed": "Non réservable",
   "bookings_cell_label": "{resource}, {time} : {state}",
