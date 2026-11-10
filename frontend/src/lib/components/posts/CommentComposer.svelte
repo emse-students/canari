@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { ChevronDown, CornerDownRight, ImageIcon, ImagePlus, Send, X } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { getToken } from '$lib/stores/auth';
@@ -440,14 +441,14 @@
         </div>
         {#if gifLoad.error}
           <span class="text-2xs text-red-500" role="alert">{gifLoad.error}</span>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="compact"
             onclick={() => gifLoad && void handleGifSelected(gifLoad.gif)}
-            class="text-2xs text-accent-text font-semibold underline"
             data-testid="comment-gif-retry"
           >
             {m.chat_gif_retry()}
-          </button>
+          </Button>
         {:else}
           <span class="text-text-muted text-2xs animate-pulse">{m.common_loading_label()}</span>
         {/if}
@@ -455,22 +456,23 @@
     {:else if mediaFailure && !uploadingMedia}
       <div class="mb-2 ml-10 flex items-center gap-2" data-testid="comment-media-failed">
         <span class="text-2xs text-red-500" role="alert">{m.post_comment_media_error()}</span>
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="compact"
           onclick={() => mediaFailure && void stageMediaFile(mediaFailure)}
-          class="text-2xs font-semibold text-amber-600 underline dark:text-amber-400"
           data-testid="comment-media-retry"
         >
           {m.chat_gif_retry()}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="ghost"
+          size="compact"
+          icon
           onclick={() => (mediaFailure = null)}
-          class="tap-target text-text-muted flex h-4 w-4 items-center justify-center rounded-full"
           aria-label={m.post_remove_image_label()}
         >
-          <X size={10} strokeWidth={3} />
-        </button>
+          <X size={12} strokeWidth={3} />
+        </Button>
       </div>
     {:else if pendingPreviewUrl || uploadingMedia}
       <div class="mb-2 ml-10 flex items-center gap-2">
@@ -606,7 +608,7 @@
           title={m.post_comment_add_image_label()}
           aria-label={m.post_comment_add_image_label()}
           data-testid="comment-image-button"
-          class="ui-icon-button text-text-muted shrink-0 transition-colors hover:text-amber-500 disabled:opacity-40"
+          class="ui-icon-button text-text-muted hover:text-accent-text shrink-0 transition-colors disabled:opacity-40"
         >
           <ImagePlus size={18} strokeWidth={2.25} />
         </button>

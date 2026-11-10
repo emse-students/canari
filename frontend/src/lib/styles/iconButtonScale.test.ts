@@ -94,8 +94,8 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     why: 'matched to the height of its own bubble and to the speed pill',
   },
   'lib/components/posts/CommentComposer.svelte': {
-    count: 3,
-    why: '16px cross on an attachment chip (the staged media, and the GIF still arriving) and on the one-line upload failure it dismisses',
+    count: 2,
+    why: '16px cross on an attachment chip (the staged media, and the GIF still arriving)',
   },
   'lib/components/shared/PermissionGrid.svelte': { count: 1, why: 'a cell of a grid' },
   'lib/components/reels/ReelCapture.svelte': {
