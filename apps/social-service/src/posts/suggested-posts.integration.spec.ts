@@ -96,7 +96,7 @@ maybe('suggested posts against PostgreSQL (engagement WP-7)', () => {
         type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
         archived boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid,
-        anonymous boolean NOT NULL DEFAULT false, "studentsOnly" boolean NOT NULL DEFAULT false,
+        anonymous boolean NOT NULL DEFAULT false, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb,
         kind varchar NOT NULL DEFAULT 'post', reactions jsonb NOT NULL DEFAULT '{}',
         comments jsonb NOT NULL DEFAULT '[]', "hiddenByModeration" boolean NOT NULL DEFAULT false,
         "publishedAt" timestamptz NOT NULL DEFAULT now(), "scheduledAt" timestamptz);

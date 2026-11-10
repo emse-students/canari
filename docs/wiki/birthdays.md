@@ -93,6 +93,13 @@ and the ids of the members the viewer may see celebrating; the client holds it i
 visibility only: a tab left open in the foreground over midnight keeps yesterday's ring until it is
 next focused or shown.
 
+**Asked once per Paris day (2026-11-10).** The held answer carries the server's date; a focus or
+visibility refresh asks nothing while that date is still the Paris date (a read per focus was nine in
+five minutes on a slow link). A new day, another account, a failed ask or the reader saving or
+removing their own birthday (`invalidate`, then an immediate ask) reads again. The client only
+compares the held date with the Paris calendar day, as a key; "today" for the ring stays the server's.
+A member who enters a birthday later the same day is drawn from the next day.
+
 ## The day, and 29 February
 
 The day is the Paris calendar date read from the DATABASE, `(now() AT TIME ZONE 'Europe/Paris')::date`

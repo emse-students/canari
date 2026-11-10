@@ -23,7 +23,7 @@
     isBirthdayDate,
   } from '$lib/birthdays/birthdayDate';
   import { ApiRefusalError } from '$lib/utils/apiRefusalError';
-  import { ownBirthday } from '$lib/birthdays/birthdaysToday.svelte';
+  import { birthdaysToday, ownBirthday } from '$lib/birthdays/birthdaysToday.svelte';
   import { currentUserId } from '$lib/stores/user';
   import { showToast } from '$lib/stores/toast.svelte';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -107,6 +107,13 @@
     if (account) ownBirthday.set(account, value !== null);
   }
 
+  /** The reader's own date changed, so today's set (cached for the day) may now include or drop them. */
+  function todayMayHaveChanged() {
+    const account = currentUserId();
+    birthdaysToday.invalidate();
+    if (account) void birthdaysToday.refresh(account);
+  }
+
   onMount(async () => {
     try {
       show(await fetchMyBirthday());
@@ -123,6 +130,7 @@
     busy = true;
     try {
       show(await saveMyBirthday({ month, day, visibility }));
+      todayMayHaveChanged();
       showToast(m.profile_birthday_saved(), 'info');
     } catch (e) {
       Log.d('profile.birthday save failed', e);
@@ -146,6 +154,7 @@
     busy = true;
     try {
       show(await clearMyBirthday());
+      todayMayHaveChanged();
       showToast(m.profile_birthday_removed(), 'info');
     } catch (e) {
       Log.d('profile.birthday remove failed', e);

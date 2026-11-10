@@ -9,6 +9,7 @@ import {
 import { videoSound } from '$lib/stores/videoSound.svelte';
 import { isAppOnScreen } from '$lib/utils/appForeground';
 import { Log } from '$lib/utils/Log';
+import { playRejectionName } from '$lib/utils/videoAutoplay';
 
 /**
  * Plays a video while most of it is on screen and pauses it when it leaves.
@@ -95,12 +96,40 @@ export function holdPlayback(reason: string): () => void {
   };
 }
 
+/**
+ * WHETHER A REJECTED feed `play()` WAS INTERRUPTED BY A DECISION, classified at the throw from facts
+ * the caller reads when the rejection lands (owner's console export, 2026-11-10: ten `AbortError`
+ * lines on a slow link, each a video scrolled past before its first bytes arrived).
+ *
+ * An `AbortError` is the engine saying "a `pause()` or a new load came while this was pending". The
+ * feed itself pauses a video that leaves the screen, and on a weak link a play stays pending for
+ * seconds, so scrolling on aborts it. That is the feed's own decision, not a refusal:
+ * - the video left the viewport (`!stillVisible`) or is paused: the leave (or the arbiter) did it;
+ * - the element's `src` changed: a new load replaced the one asked on.
+ * An `AbortError` with none of those facts is unexplained and stays a warning.
+ */
+export function isExpectedPlayInterruption(
+  name: string,
+  facts: { stillVisible: boolean; paused: boolean; sourceChanged: boolean }
+): boolean {
+  return name === 'AbortError' && (!facts.stillVisible || facts.paused || facts.sourceChanged);
+}
+
 function tryPlay(video: HTMLVideoElement) {
+  const askedSrc = video.currentSrc || video.src;
   video.play().catch((err: unknown) => {
-    console.warn('[video] playWhileVisible: play() refused', {
-      name: err instanceof Error ? err.name : String(err),
-      muted: video.muted,
-    });
+    const name = playRejectionName(err);
+    if (
+      isExpectedPlayInterruption(name, {
+        stillVisible: visibleInline.has(video),
+        paused: video.paused,
+        sourceChanged: (video.currentSrc || video.src) !== askedSrc,
+      })
+    ) {
+      Log.d('VIDEO', `playWhileVisible: play() interrupted (${name}) by a pause or a new load`);
+      return;
+    }
+    console.warn('[video] playWhileVisible: play() refused', { name, muted: video.muted });
   });
 }
 

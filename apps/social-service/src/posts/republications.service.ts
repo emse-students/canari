@@ -17,8 +17,8 @@ import {
   NEWLY_REACHED_BY_REPUBLICATION_SQL,
   newlyReachedByPersonalRepublicationSql,
   postVisibleToViewerSql,
-  studentsOnlyAdmitsUserSql,
-  studentsOnlyAdmitsViewerSql,
+  postPublicAdmitsUserSql,
+  postPublicAdmitsViewerSql,
 } from '../spaces/reader-spaces';
 import {
   ProposalsService,
@@ -278,12 +278,12 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
     );
   }
 
-  /** Of `userIds`, those the "Entre étudiants" gate of post `postId` admits to its text. */
+  /** Of `userIds`, those the reader gates of post `postId` (the switch, an institution's public) admit to its text. */
   private async acceptorsAdmittedToText(postId: string, userIds: string[]): Promise<Set<string>> {
     if (userIds.length === 0) return new Set();
     const rows: { id: string }[] = await this.repo.manager.query(
       `SELECT u.id FROM users u JOIN posts p ON p.id = $1
-        WHERE u.id = ANY($2::varchar[]) AND ${studentsOnlyAdmitsUserSql('p', 'u')}`,
+        WHERE u.id = ANY($2::varchar[]) AND ${postPublicAdmitsUserSql('p', 'u')}`,
       [postId, userIds]
     );
     return new Set(rows.map((r) => r.id));
@@ -311,7 +311,7 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
       associationName: string | null;
     }[] = await this.repo.manager.query(
       `SELECT p.id,
-              CASE WHEN ${studentsOnlyAdmitsViewerSql('p', '$2')} THEN p.markdown END AS markdown,
+              CASE WHEN ${postPublicAdmitsViewerSql('p', '$2')} THEN p.markdown END AS markdown,
               p."publishedAt" AS "createdAt", a.name AS "associationName"
          FROM posts p LEFT JOIN associations a ON a.id = p."associationId"
         WHERE p.id = ANY($1::uuid[])`,

@@ -78,13 +78,16 @@
         </button>
       {:else if view.phase !== 'withdrawing'}
         <span class="flex shrink-0 gap-1">
-          <button
-            type="button"
-            onclick={() => void retryQueuedPost(view.id)}
-            class="banner-action bg-accent text-on-accent hover:bg-accent-hover"
-          >
-            {view.phase === 'paused' ? m.publish_queue_resume() : m.publish_queue_retry()}
-          </button>
+          <!-- A final refusal would be repeated word for word: Delete alone is offered. -->
+          {#if !view.final}
+            <button
+              type="button"
+              onclick={() => void retryQueuedPost(view.id)}
+              class="banner-action bg-accent text-on-accent hover:bg-accent-hover"
+            >
+              {view.phase === 'paused' ? m.publish_queue_resume() : m.publish_queue_retry()}
+            </button>
+          {/if}
           <button
             type="button"
             onclick={() => void remove(view)}

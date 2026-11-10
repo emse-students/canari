@@ -70,7 +70,7 @@ import {
   commentsWithheldFromViewerSql,
   postVisibleToViewerSql,
   sameSideOfReviewCohortSql,
-  studentsOnlyAdmitsViewerSql,
+  postPublicAdmitsViewerSql,
 } from '../spaces/reader-spaces';
 import { isBlockedBetween } from '../common/user-blocks';
 import { acceptedFollowSql } from '../follows/follow-status';
@@ -249,7 +249,7 @@ function asUuidSql(column: string): string {
  * is) to its queue (`postId`, a varchar cast through {@link asUuidSql}), by its
  * actor, whatever its status (a decided proposal's row is still in the bell). FAIL CLOSED (review
  * of #3019): the text is shown only while such a proposal still leads to a post that exists, is not
- * hidden by moderation, and admits the recipient (`studentsOnlyAdmitsViewerSql`), and NO such
+ * hidden by moderation, and admits the recipient (`postPublicAdmitsViewerSql`), and NO such
  * proposal leads to one that refuses them. So a proposal gone with its post (deleted, hidden - which
  * drops its proposals - or its sending association deleted) takes the text with it, and one proposer
  * who sent the same queue several posts is judged on the strictest.
@@ -259,7 +259,7 @@ export function repostProposalTextWithheldSql(n: string): string {
       AND ${prop}."toAssociationId" = ${asUuidSql(`${n}."postId"`)}
       AND ${prop}."fromAssociationId" = ${n}."associationId"
       AND ${prop}."proposedBy" = ${n}."actorId"`;
-  const admitted = (post: string) => studentsOnlyAdmitsViewerSql(post, `${n}."recipientId"`);
+  const admitted = (post: string) => postPublicAdmitsViewerSql(post, `${n}."recipientId"`);
   return `(${n}.type = 'repost_proposed' AND (
     NOT EXISTS (SELECT 1 FROM proposals rpw_ok JOIN posts rpw_ok_post ON rpw_ok_post.id = rpw_ok."subjectId"
       WHERE ${matches('rpw_ok')} AND NOT rpw_ok_post."hiddenByModeration" AND ${admitted('rpw_ok_post')})

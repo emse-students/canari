@@ -606,3 +606,21 @@ from the gallery is a feed post and never expires, even when it is drawn full sc
 earlier draft (#3133, closed) recorded a 90-day answer dated 2026-11-07; the owner's 2026-11-09
 question re-opens it, so it is not a decision either. `REEL_RETENTION_DAYS` is left at 30 and no code
 is written until the owner answers. Live replays are not part of the question: they are 3 days.
+
+## QUESTION - should an institution's Personnel public reach every staff account of its campuses? (2026-11-10)
+
+Met building the owner's 2026-11-10 decision that an institution chooses the reach of each post
+([backlog](backlog.d/institution-post-reach.md)): the public "Personnel" means "only staff (no
+cursus)". But a staff account has NO SPACE (a campus and an empty cursus), so an institution's
+audience rules - which reach readers through their spaces - never reached one, and the read-grant
+decision (6) of 2026-10-07 says "staff without a cursus see nothing more by default, the named ones
+do". As built, "Personnel" therefore reaches the staff who already had a door: the institution's own
+members, the named readers whose grant cell meets a ticked space, and a republisher's or a member
+reposter's staff readers ([as built](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)).
+
+**The question for the owner:** should a "Personnel" (or "Tous") post of an institution ALSO open to
+every staff account whose CAMPUS is one of the ticked spaces' campuses - a new door, staff by campus,
+which would let the School address its staff in the app without naming each one? It widens who
+reads posts, so it is not taken by default. Reversible either way: it only adds a disjunct to the
+institution door and a term to the feed gate (`IN_FEED_AUDIENCE_SQL`), which today refuses a staff
+account with no membership, grant or follow.

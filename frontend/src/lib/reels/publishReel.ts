@@ -12,6 +12,7 @@
  * error as its cause - typed at the throw, so the screen names where it stopped without reading a
  * message (`publishFailureMessage` reads the cause).
  */
+import type { InstitutionReach } from '$lib/posts/institutionReach';
 import {
   MediaService,
   preparePostMedia,
@@ -106,6 +107,8 @@ export interface PublishReelInput {
   identity: string;
   /** "Entre étudiants" (owner, 2026-11-04): set by the step only where it is offered. */
   studentsOnly?: boolean;
+  /** The reach of an institution's post (owner, 2026-11-10): set by the step only where offered. */
+  reach?: InstitutionReach;
   /** The server's cap (`GET /api/posts/reel-limits`). */
   maxDurationMs: number;
   /**
@@ -140,6 +143,8 @@ export interface PublishPhotoInput {
   identity: string;
   /** "Entre étudiants", as on a reel. */
   studentsOnly?: boolean;
+  /** The reach of an institution's post, as on a reel. */
+  reach?: InstitutionReach;
   onStage?: (stage: PublishStage) => void;
 }
 
@@ -238,6 +243,7 @@ export async function publishReel(
         media: [ref],
         ...postIdentityFields(identity),
         ...(input.studentsOnly ? { studentsOnly: true } : {}),
+        ...(input.reach ? { reach: input.reach } : {}),
       });
       console.debug(`[reel-publish] published ${post.id} as a post`);
       return post;
@@ -275,6 +281,7 @@ export async function publishReel(
       media: [ref],
       ...postIdentityFields(identity),
       ...(input.studentsOnly ? { studentsOnly: true } : {}),
+      ...(input.reach ? { reach: input.reach } : {}),
     });
     console.debug(`[reel-publish] published ${post.id}`);
     return post;
@@ -312,6 +319,7 @@ export async function publishCameraPhoto(
       media: [ref],
       ...postIdentityFields(identity),
       ...(input.studentsOnly ? { studentsOnly: true } : {}),
+      ...(input.reach ? { reach: input.reach } : {}),
     });
   } catch (err) {
     throw new ReelPublishError(stage, { cause: err });

@@ -359,6 +359,15 @@ export class CreatePostDto {
   @IsOptional()
   studentsOnly?: boolean;
 
+  /**
+   * An institution's reach (owner, 2026-11-10): `{ spaces: [{formation, campus}], public }`.
+   * MANDATORY on an institution's post and refused on any other; its shape and its spaces are judged
+   * by `resolveInstitutionReachWrite`, which answers each refusal with its own typed `code`.
+   */
+  @IsOptional()
+  @IsObject()
+  reach?: Record<string, unknown>;
+
   @IsOptional()
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
   @IsUUID()
@@ -683,6 +692,14 @@ export class UpdatePostDto {
   @IsBoolean()
   @IsOptional()
   studentsOnly?: boolean;
+
+  /**
+   * An institution's reach, changed after publication, both ways (owner, 2026-11-10). Absent leaves
+   * the stored reach alone; present replaces it, judged as at the publish.
+   */
+  @IsOptional()
+  @IsObject()
+  reach?: Record<string, unknown>;
 }
 
 /**

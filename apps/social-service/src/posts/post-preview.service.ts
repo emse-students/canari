@@ -188,6 +188,10 @@ export class PostPreviewService {
     // "Entre étudiants" (owner, 2026-11-04): read by students and members only, so never by whoever
     // holds the link - read from the row, so turning the switch off gives the preview back.
     if (post.studentsOnly) return null;
+    // An institution's post for its students or its staff only (owner, 2026-11-10) is the same
+    // case: a public chosen on WHO reads, which a link holder is not. Its spaces alone narrow an
+    // audience, as any association's audience does, and leave the preview as it was.
+    if (post.reachPublic === 'students' || post.reachPublic === 'staff') return null;
     // A reel past its month is dead to everyone, an anonymous link preview included.
     if (isExpiredPost(post)) return null;
     if (post.scheduledAt && new Date(post.scheduledAt).getTime() > Date.now()) return null;

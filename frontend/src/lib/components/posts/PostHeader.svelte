@@ -4,6 +4,7 @@
   import PostAuthorAvatar from './PostAuthorAvatar.svelte';
   import RevealedAuthorLine from './RevealedAuthorLine.svelte';
   import StudentsOnlyChip from './StudentsOnlyChip.svelte';
+  import InstitutionReachChip from './InstitutionReachChip.svelte';
   import FollowChip from '$lib/components/follows/FollowChip.svelte';
   import { Pin, Repeat2, Send } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
@@ -140,6 +141,9 @@
         />
       {:else if showFollow && post.authorId && !post.anonymous}
         <FollowChip kind="user" targetId={post.authorId} name={getPostAuthorName()} dotted />
+      {/if}
+      {#if post.reach}
+        <InstitutionReachChip reach={post.reach} />
       {/if}
       {#if republished}
         <!-- One wrapping unit: beside the time and the "Entre etudiants" chip it was squeezed to "Republie par Cl..." on a phone, so it drops to its own line when the three do not fit. -->

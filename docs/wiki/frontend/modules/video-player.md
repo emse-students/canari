@@ -391,9 +391,12 @@ poster and the unplayable notice are the same code.
   the feed tap opens the CanaReels viewer; the conversation viewer is `variant="conversation"`.
 - **`feed`** (`PostMedia`, a post card, a reel card, a post page): plays muted while on screen and
   loops, `#t=0.1` on a decrypted file (never on a stream), the blurred first-frame `backdrop` in the
-  contained bands. **The kit's speaker chip bottom-right, always drawn** (28 px glass in a 44 px
-  target), **the expand chip top-right** (`VideoExpandButton`, the caller's `openLabel`). No bar, no
-  play disc - it plays by being on screen, as Instagram's does. **A tap is the app's sound**,
+  contained bands. **Minimal corners (owner, 2026-11-10, amending the two chips): no expand chip
+  (the tap opens the viewer; the card root carries the caller's `openLabel` as its aria-label and
+  Enter opens, `f` too); the speaker is `VideoSoundButton quiet` - a bare 18 px white glyph with a
+  drop shadow, no chip, no yellow, in a 44 px invisible target - drawn ONLY while the video plays.**
+  The placeholder's glass triangle (`VideoPoster`) is 48 px (36 compact). The CHAT keeps its expand
+  chip. No bar, no play disc - it plays by being on screen, as Instagram's does. **A tap is the app's sound**,
   remembered (`videoSound.setMuted`); inside a post card that likes on double tap it waits for the
   window. **On a video on screen but PAUSED** (an autoplay the engine refused, the reader's own
   pause) the tap gives the sound and then plays it - there is no disc to press. `f` opens the

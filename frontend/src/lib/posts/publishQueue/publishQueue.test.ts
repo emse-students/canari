@@ -23,6 +23,7 @@ import {
   PublishAccountMismatchError,
   PublishQueue,
   classifyPublishFailure,
+  retryCannotCure,
   type PublishUploadArgs,
   type PublishView,
 } from './publishQueue';
@@ -388,6 +389,33 @@ describe('PublishQueue', () => {
     expect(r.published).toEqual(['post-2', 'post-1']);
     // The retry did not upload the media again: its ref was durable.
     expect(r.calls.filter((c) => c.startsWith('upload:'))).toHaveLength(1);
+  });
+
+  it('a refusal a Retry cannot cure (an institution post with no reach) is FINAL: Delete alone, no endless Retry', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 0, 1);
+    r.createPlan.push(async () => {
+      throw new ApiRefusalError(400, 'institution_reach_required', 'no reach');
+    });
+    await r.queue.drain();
+    expect(r.store.posts.get('post-1')!.failure).toEqual({
+      stage: 'createPost',
+      message: 'refused: no reach',
+      final: true,
+    });
+    expect(r.views.find((v) => v.id === 'post-1')).toMatchObject({
+      phase: 'failed',
+      final: true,
+    });
+    // A Retry pressed anyway (another tab, an old banner) sends nothing and keeps the failure.
+    await r.queue.retry('post-1');
+    expect(r.published).toEqual([]);
+    expect(r.store.posts.get('post-1')!.failure?.final).toBe(true);
+    // An ordinary refusal stays curable.
+    expect(retryCannotCure(new ApiRefusalError(400, null, 'bad poll'))).toBe(false);
+    expect(retryCannotCure(new ApiRefusalError(503, 'institution_reach_required', 'x'))).toBe(
+      false
+    );
   });
 
   it('back on screen after a suspension: the transfer in flight is aborted and restarted at once', async () => {

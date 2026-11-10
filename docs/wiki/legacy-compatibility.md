@@ -42,6 +42,25 @@ before the raise). An older figure on this page is the floor at the date its ent
 - **Removal.** Nothing to remove (no shim in the code): the degradation ends when `minClientVersion`
   passes the first stable carrying #3196, and this entry is then deleted.
 
+### A tolerated breakage: an institution post from a build older than the reach (owner, 2026-11-10)
+
+- **What.** An institution's post must carry a reach (migration 162,
+  [profiles-and-access](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)):
+  the server answers a create without one `400 institution_reach_required`. A build that predates the
+  reach sends none, so it **cannot publish as an institution at all**; a personal, association or
+  list post is untouched, and so is an EDIT (absent leaves the stored reach alone).
+- **Who.** Native apps older than the first release carrying the reach (they embed their own
+  frontend), for the officers of an institution only; the web app is always current.
+- **Why accepted knowingly.** The owner's decision is "no default": a server that filled one in for
+  an old client would publish a reach nobody chose, which is the thing decided against. The refusal
+  is typed (the old build, which does not know the code, shows its generic publish failure), and an
+  update or the web publishes.
+- **Where it lands on a current build.** A post queued by an old build and published after the
+  update meets the same refusal; the durable queue holds it as FINAL (`retryCannotCure`) and offers
+  Delete alone, never an endless Retry.
+- **Removal.** Nothing to remove (no shim in the code): the breakage ends when `minClientVersion`
+  passes the first stable carrying the reach, and this entry is then deleted.
+
 ### Entries `1.6.6` retires or unblocks (the owner's raise of 2026-11-08)
 
 "Carried by" is the first stable whose history holds the pull request (`git tag --contains` on its

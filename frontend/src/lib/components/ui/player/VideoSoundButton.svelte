@@ -25,6 +25,11 @@
      * button rather than a fourth copy of it. Otherwise 16px in a chip, 20px in a bar.
      */
     rail?: boolean;
+    /**
+     * `quiet`: the feed card's - a bare 18px white glyph with a drop shadow, no chip, no yellow
+     * (owner, 2026-11-10: Instagram's and CanaReels' minimal corner); the 44px target stays.
+     */
+    quiet?: boolean;
     class?: string;
     /** `data-*` markers of the call site. */
     [data: `data-${string}`]: unknown;
@@ -36,12 +41,14 @@
     glass = true,
     disabled = false,
     rail = false,
+    quiet = false,
     class: klass = '',
     ...markers
   }: Props = $props();
 
-  const glyphSize = $derived(rail ? 26 : glass ? 16 : 20);
-  const shadow = $derived(rail ? 'drop-shadow-md' : 'drop-shadow');
+  const glyphSize = $derived(rail ? 26 : quiet ? 18 : glass ? 16 : 20);
+  const shadow = $derived(rail || quiet ? 'drop-shadow-md' : 'drop-shadow');
+  const accent = $derived(quiet ? '' : 'text-accent ');
 </script>
 
 <VideoChipButton
@@ -49,7 +56,7 @@
   title={rail ? m.video_sound_label() : undefined}
   pressed={!muted}
   onclick={onToggle}
-  glass={glass && !rail}
+  glass={glass && !rail && !quiet}
   {disabled}
   class={klass}
   {...markers}
@@ -60,7 +67,7 @@
     <Volume2
       size={glyphSize}
       strokeWidth={rail ? 2 : 2.25}
-      class="text-accent {shadow}"
+      class="{accent}{shadow}"
       data-video-sound="on"
     />
   {/if}
