@@ -487,6 +487,22 @@ rule was gated on `input[type='text'|'password'|'email']`, so a field with no `t
 `.pf-c-form-control`. Fixed by matching `input`/`textarea`/`select` by tag rather than by `type`,
 the same "stop scoping, cover the whole flow" fix already applied to the submit button above.
 
+**The same report came back on 2026-11-10, and its cause was the THEME, not a selector.** The brand
+had no `attributes.settings.theme.base`, so authentik ran `automatic`: a browser in a LIGHT colour
+scheme got PatternFly's light tokens, and every component this CSS does not name kept the light ink
+`#151515` on the dark page. Measured on a throwaway instance built from the real blueprints (the
+enrolment prompt stages bound to a preview flow, nothing created on production): the campus radios,
+the four status checkboxes and the five formation radios at **1.02:1** on the phone page and 1.10:1
+on the card; the locale icon 1.02:1; in BOTH schemes the required asterisk (`#c9190b`) at 3.09:1 and
+the promo placeholder at 3.43:1 (3.31:1 on the card). A dark scheme read every label at 17:1, which
+is why the 2026-09-25 fix looked complete from a dark-mode phone. The fix is `theme.base: dark` on
+the brand (this CSS draws a dark page and nothing else, so authentik is told so, and every present
+and future component gets its dark ink), plus `--mc-danger` for the asterisk and the muted token for
+placeholders. After: 0 elements under threshold on both prompt stages, light and dark, phone and
+desktop; labels 17.17:1, asterisk 7.26:1, placeholder 6.72:1 at worst (the card). **The rule: check a flow page in BOTH colour schemes** (`emulate` over CDP), since
+a dark design over an `automatic` theme breaks only in the scheme its author was not using. The pin
+also darkens the admin interface, which is the same brand.
+
 **`.pf-c-login` is a GRID in this Authentik, and overriding its display is what clips the card on a
 phone** (measured on the Mi 9T, 2026-09-25). The `display: flex` above turned `ak-locale-select`,
 the header, the card and the footer into ONE ROW; on the error page that row outgrew a 393 px
