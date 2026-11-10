@@ -47,6 +47,13 @@
    * content box, so it also follows a sideways scroll) and moved by `transform` alone. Hidden until
    * the first measure, which is also drawn with no transition, so it never slides in from nowhere.
    * The duration and easing are the motion scale's; reduced motion is the global rule's.
+   *
+   * THE LABELS ARE ABOVE THE PILL BY AN EXPLICIT STACKING ORDER, NEVER BY DOM ORDER ALONE (iPhone 12,
+   * `1.6.9-alpha.4`: the opaque yellow pill hid its own label, while Android drew it). The pill is a
+   * plain 2D `translateX` at rest - a `translate3d` made it a permanent compositing layer, and iOS
+   * WebKit, in this masked (`scrollFades`) overflow scroller, drew that layer over the later,
+   * uncomposited labels; while the pill was a 20 % tint the same overpaint only tinted them. The
+   * scroller isolates its own stacking context, the pill is `z-0`, every label `z-1`.
    */
   let pill = $state<{ x: number; w: number } | null>(null);
   let pillAnimated = $state(false);
@@ -157,7 +164,7 @@
   >
     <div
       bind:this={tabs}
-      class="no-scrollbar relative flex min-w-0 flex-1 gap-1 overflow-x-auto"
+      class="no-scrollbar relative isolate flex min-w-0 flex-1 gap-1 overflow-x-auto"
       data-feed-tabs
       use:scrollFades
     >
@@ -165,13 +172,13 @@
         <span
           aria-hidden="true"
           data-feed-tab-pill
-          class="bg-accent pointer-events-none absolute inset-y-0 left-0 rounded-full"
+          class="bg-accent pointer-events-none absolute inset-y-0 left-0 z-0 rounded-full"
           ontransitionend={(e) => {
             if (e.propertyName === 'transform') settled = feed;
           }}
           ontransitioncancel={() => (settled = null)}
           style:width="{pill.w}px"
-          style:transform="translate3d({pill.x}px, 0, 0)"
+          style:transform="translateX({pill.x}px)"
           style:transition={pillAnimated
             ? 'transform var(--motion-slow) var(--motion-ease-out), width var(--motion-slow) var(--motion-ease-out)'
             : 'none'}
@@ -184,7 +191,7 @@
           use:guideAnchor={`posts.tab.${tab.feed}`}
           onclick={() => onFeed(tab.feed)}
           aria-pressed={feed === tab.feed}
-          class="tap-target focus-visible:ring-accent-icon relative flex-1 shrink-0 rounded-full px-3.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:outline-none {feed ===
+          class="tap-target focus-visible:ring-accent-icon relative z-1 flex-1 shrink-0 rounded-full px-3.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:outline-none {feed ===
           tab.feed
             ? settled === tab.feed
               ? 'text-on-accent font-semibold'
