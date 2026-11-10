@@ -359,7 +359,7 @@
   });
 
   const statusClass: Record<ContentReport['status'], string> = {
-    pending: 'bg-amber-100 text-amber-700',
+    pending: 'bg-amber-warn/15 text-amber-warn-text',
     reviewed: 'bg-green-100 text-green-700',
     dismissed: 'bg-gray-100 text-text-muted',
   };
@@ -494,7 +494,7 @@
                 {contentTypeLabel[report.contentType]}
               </span>
               <span
-                class="text-amber-warn bg-amber-warn/10 text-2xs rounded-full px-2 py-0.5 font-semibold"
+                class="text-amber-warn-text bg-amber-warn/10 text-2xs rounded-full px-2 py-0.5 font-semibold"
               >
                 {reasonLabel[report.reason] ?? report.reason}
               </span>
@@ -586,7 +586,7 @@
                 <button
                   type="button"
                   onclick={() => openPostPreview(report.contentId)}
-                  class="text-cn-yellow text-2xs ml-auto flex items-center gap-1 font-semibold hover:underline"
+                  class="text-accent-text text-2xs ml-auto flex items-center gap-1 font-semibold hover:underline"
                   title={m.moderation_preview_post_label()}
                 >
                   <Eye size={11} />
@@ -753,7 +753,7 @@
               <button
                 type="button"
                 onclick={() => openPostPreview(report.contentId)}
-                class="text-cn-yellow text-2xs flex shrink-0 items-center gap-1 hover:underline"
+                class="text-accent-text text-2xs flex shrink-0 items-center gap-1 hover:underline"
                 title={m.moderation_preview_post_label()}
               >
                 <Eye size={11} />

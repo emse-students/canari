@@ -239,7 +239,7 @@
     void selectTab(active).catch(logFailure('select'));
   });
 
-  // The theme decides both colours (the text colour, and `amber-600` / `amber-400`), so a theme
+  // The theme decides both colours (the text colour, and `accent-icon`), so a theme
   // change redraws the glyphs and reconfigures the bar. The first run is the mount's own.
   let tintedForDark: boolean | null = null;
   $effect(() => {

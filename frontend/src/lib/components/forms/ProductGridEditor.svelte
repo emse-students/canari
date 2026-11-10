@@ -277,7 +277,7 @@
       on ? 'bg-cn-surface text-text-main font-bold shadow-sm' : 'text-text-muted font-medium'
     }`;
   const priceBoxClass =
-    'border-cn-border bg-cn-surface focus-within:border-cn-yellow flex items-center rounded-lg border px-2';
+    'border-cn-border bg-cn-surface focus-within:border-accent-icon flex items-center rounded-lg border px-2';
   const priceInputClass =
     'text-text-main min-h-9 pointer-coarse:min-h-11 w-14 min-w-0 border-0 bg-transparent text-right text-sm font-bold outline-none';
 </script>
@@ -419,7 +419,7 @@
               data-tier-tab={tierId}
               onclick={() => (selectedTier = tierId)}
               class="min-h-11 border-b-3 px-4 text-sm {activeTier === tierId
-                ? 'border-cn-yellow text-text-main font-bold'
+                ? 'border-accent-icon text-text-main font-bold'
                 : 'text-text-muted border-transparent font-semibold'}">{tierName(tierId)}</button
             >
           {/each}
@@ -534,7 +534,7 @@
           title={closed ? m.form_pgrid_cell_reopen_title() : m.form_pgrid_cell_close_title()}
           class="flex h-11 w-full min-w-18 items-center justify-center rounded-lg text-xs transition-colors max-sm:min-w-0 {closed
             ? 'border-text-muted bg-cn-surface-alt text-text-main border border-dashed font-bold line-through'
-            : 'bg-cn-surface text-text-muted hover:bg-cn-yellow/15 border border-black/10 font-semibold dark:border-white/10'}"
+            : 'bg-cn-surface text-text-muted hover:bg-accent/15 border border-black/10 font-semibold dark:border-white/10'}"
           ><span class="max-sm:hidden"
             >{closed ? m.form_pgrid_cell_closed() : cellPriceLabel(row.id, column.id)}</span
           >{#if closed}<X size={14} class="sm:hidden" aria-hidden="true" />{/if}</button

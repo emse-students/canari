@@ -78,7 +78,7 @@
   // THE RING KEEPS A BUTTON VISIBLE OVER A BRIGHT FRAME: a translucent black disc alone vanishes on
   // a light scene (the pencil read as losing its left third on the Mi 9T, 2026-10-06).
   const roundButton =
-    'ui-icon-button rounded-full bg-black/40 ring-1 ring-white/30 outline-none hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-amber-500';
+    'ui-icon-button rounded-full bg-black/40 ring-1 ring-white/30 outline-none hover:bg-black/60 focus-visible:ring-2 focus-visible:ring-accent-icon';
 </script>
 
 <div class="absolute inset-0 z-10 bg-black text-white" data-reel-review>
@@ -130,7 +130,7 @@
       {#if !isImage && soundRemoval}
         <button
           type="button"
-          class="{roundButton} {soundRemoved ? 'text-cn-yellow' : ''}"
+          class="{roundButton} {soundRemoved ? 'text-accent' : ''}"
           aria-label={soundRemoved ? m.reels_review_sound_restore() : m.reels_review_sound_remove()}
           title={soundRemoved ? m.reels_review_sound_restore() : m.reels_review_sound_remove()}
           aria-pressed={soundRemoved}
@@ -171,7 +171,7 @@
   >
     <button
       type="button"
-      class="text-cn-ink pointer-events-auto inline-flex items-center gap-2 rounded-full bg-amber-500 px-5 py-3 text-sm font-bold outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-white"
+      class="text-on-accent bg-accent hover:bg-accent-hover pointer-events-auto inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
       onclick={onnext}
       data-reel-next
     >

@@ -322,7 +322,7 @@
               closeAll();
             }}
             class="flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none transition-transform hover:scale-125 active:scale-95 {isActive
-              ? 'bg-cn-yellow/20 ring-cn-yellow ring-1'
+              ? 'bg-accent/20 ring-accent-icon ring-1'
               : 'hover:bg-black/5 dark:hover:bg-white/10'}"
             aria-label={m.msg_react_with_emoji({ emoji })}
             aria-pressed={isActive}

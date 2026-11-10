@@ -48,10 +48,10 @@
 
   <!-- FingerprintPattern icon (animated) -->
   <div class="mb-5 flex justify-center">
-    <div class="relative rounded-full bg-amber-500/10 p-5">
-      <FingerprintPattern size={52} strokeWidth={1.5} class="text-amber-500" />
+    <div class="bg-accent/10 relative rounded-full p-5">
+      <FingerprintPattern size={52} strokeWidth={1.5} class="text-accent-text" />
       <!-- Pulsing ring -->
-      <span class="absolute inset-0 animate-ping rounded-full border-2 border-amber-500/40"></span>
+      <span class="border-accent/40 absolute inset-0 animate-ping rounded-full border-2"></span>
     </div>
   </div>
 

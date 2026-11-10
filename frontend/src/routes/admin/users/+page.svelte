@@ -132,7 +132,7 @@
     type="search"
     bind:value={searchQuery}
     placeholder={m.admin_users_search_placeholder()}
-    class="bg-cn-surface w-full rounded-xl border border-black/10 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
+    class="bg-cn-surface focus:ring-accent/50 w-full rounded-xl border border-black/10 px-4 py-3 text-sm outline-none focus:ring-2 dark:border-white/10"
   />
 
   {#if loading}
@@ -147,7 +147,7 @@
         >
           <div class="flex min-w-0 items-center gap-3">
             {#if user.admin}
-              <Shield size={16} class="shrink-0 text-amber-500" strokeWidth={2.5} />
+              <Shield size={16} class="text-accent-text shrink-0" strokeWidth={2.5} />
             {:else}
               <Shield size={16} class="text-text-muted shrink-0 opacity-30" strokeWidth={2} />
             {/if}
@@ -191,7 +191,7 @@
               onclick={() => toggleAdmin(user)}
               disabled={saving[user.id]}
               class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 {user.admin
-                ? 'bg-amber-500'
+                ? 'bg-accent'
                 : 'bg-black/10 dark:bg-white/20'}"
               role="switch"
               aria-checked={user.admin ?? false}

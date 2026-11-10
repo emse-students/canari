@@ -18,9 +18,11 @@
     CALLS_MODES,
     CHECKPOINT_SKIP_MODES,
     LIVES_MODES,
+    LIVE_REPLAYS_MODES,
     type CallsMode,
     type CheckpointSkipMode,
     type LivesMode,
+    type LiveReplaysMode,
   } from '$lib/utils/appVersion';
   import { PUSH_MODES, type PushMode } from '$lib/admin/pushMode';
 
@@ -35,6 +37,7 @@
     livesMode: LivesMode;
     pushMode: PushMode;
     checkpointSkipMode: CheckpointSkipMode;
+    liveReplaysMode: LiveReplaysMode;
   };
 
   /**
@@ -60,6 +63,7 @@
   let livesMode = $state<LivesMode>('off');
   let pushMode = $state<PushMode>('full');
   let checkpointSkipMode = $state<CheckpointSkipMode>('off');
+  let liveReplaysMode = $state<LiveReplaysMode>('off');
   /** One label per mode, typed so a fourth mode cannot reach the picker unlabelled. */
   const CALLS_MODE_LABELS: Record<CallsMode, () => string> = {
     off: m.admin_platform_calls_mode_off,
@@ -95,6 +99,14 @@
       value: mode,
       label: CHECKPOINT_SKIP_MODE_LABELS[mode](),
     }))
+  );
+  /** One label per live replays mode, typed so a new mode cannot reach the picker unlabelled. */
+  const LIVE_REPLAYS_MODE_LABELS: Record<LiveReplaysMode, () => string> = {
+    off: m.admin_platform_live_replays_mode_off,
+    on: m.admin_platform_live_replays_mode_on,
+  };
+  const LIVE_REPLAYS_MODE_OPTIONS: PickerOption[] = $derived(
+    LIVE_REPLAYS_MODES.map((mode) => ({ value: mode, label: LIVE_REPLAYS_MODE_LABELS[mode]() }))
   );
   /** A product name, which reads the same in every locale, and the localized "off" switch. */
   const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = $derived([
@@ -231,6 +243,7 @@
     livesMode = data.livesMode;
     pushMode = data.pushMode;
     checkpointSkipMode = data.checkpointSkipMode;
+    liveReplaysMode = data.liveReplaysMode;
   }
 
   /**
@@ -249,6 +262,7 @@
       livesMode,
       pushMode,
       checkpointSkipMode,
+      liveReplaysMode,
     };
     return Object.fromEntries(
       (Object.keys(form) as (keyof PlatformConfig)[])
@@ -356,9 +370,7 @@
 
 <div class="space-y-6">
   <header class="flex items-start gap-3">
-    <span
-      class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl"
-    >
+    <span class="bg-accent/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl">
       <Wrench size={20} />
     </span>
     <div>
@@ -372,7 +384,7 @@
   {#if loading}
     <div class="flex justify-center py-16">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else}
@@ -387,7 +399,7 @@
         <input
           type="checkbox"
           bind:checked={maintenanceEnabled}
-          class="border-cn-border text-cn-yellow focus:ring-cn-yellow mt-1 h-4 w-4 rounded"
+          class="border-cn-border text-accent-text focus:ring-accent-icon mt-1 h-4 w-4 rounded"
         />
         <span>
           <span class="text-text-main block text-sm font-bold"
@@ -409,7 +421,7 @@
           rows="3"
           maxlength="2000"
           placeholder={m.admin_platform_message_placeholder()}
-          class="border-cn-border text-text-main placeholder:text-text-muted focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+          class="border-cn-border text-text-main placeholder:text-text-muted focus:ring-accent/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
         ></textarea>
       </div>
 
@@ -423,7 +435,7 @@
           bind:value={minClientVersion}
           pattern="^\d+\.\d+\.\d+$"
           required
-          class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full max-w-xs rounded-xl border bg-transparent px-3 py-2 font-mono text-sm focus:ring-2 focus:outline-none"
+          class="border-cn-border text-text-main focus:ring-accent/40 w-full max-w-xs rounded-xl border bg-transparent px-3 py-2 font-mono text-sm focus:ring-2 focus:outline-none"
         />
         <p class="text-text-muted text-xs">
           {m.admin_platform_min_version_hint_prefix()} <code>major.minor.patch</code>
@@ -440,7 +452,7 @@
           value={paymentProvider}
           options={PAYMENT_PROVIDER_OPTIONS}
           label={m.admin_platform_payment_provider_label()}
-          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          triggerClass="border-cn-border text-text-main focus-visible:ring-accent/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
           onValueChange={(v) => {
             if (v === 'lydia' || v === 'disabled') paymentProvider = v;
           }}
@@ -472,7 +484,7 @@
           value={callsMode}
           options={CALLS_MODE_OPTIONS}
           label={m.admin_platform_calls_mode_label()}
-          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          triggerClass="border-cn-border text-text-main focus-visible:ring-accent/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
           onValueChange={(v) => {
             const mode = CALLS_MODES.find((known) => known === v);
             if (mode) callsMode = mode;
@@ -492,7 +504,7 @@
           value={livesMode}
           options={LIVES_MODE_OPTIONS}
           label={m.admin_platform_lives_mode_label()}
-          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          triggerClass="border-cn-border text-text-main focus-visible:ring-accent/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
           onValueChange={(v) => {
             const mode = LIVES_MODES.find((known) => known === v);
             if (mode) livesMode = mode;
@@ -512,7 +524,7 @@
           value={pushMode}
           options={PUSH_MODE_OPTIONS}
           label={m.admin_platform_push_mode_label()}
-          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          triggerClass="border-cn-border text-text-main focus-visible:ring-accent/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
           onValueChange={(v) => {
             const mode = PUSH_MODES.find((known) => known === v);
             if (mode) pushMode = mode;
@@ -532,7 +544,7 @@
           value={checkpointSkipMode}
           options={CHECKPOINT_SKIP_MODE_OPTIONS}
           label={m.admin_platform_checkpoint_skip_mode_label()}
-          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          triggerClass="border-cn-border text-text-main focus-visible:ring-accent/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
           onValueChange={(v) => {
             const mode = CHECKPOINT_SKIP_MODES.find((known) => known === v);
             if (mode) checkpointSkipMode = mode;
@@ -540,6 +552,26 @@
         />
         <p class="text-text-muted text-xs">
           {m.admin_platform_checkpoint_skip_mode_hint()}
+        </p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="live-replays-mode" class="text-text-main text-sm font-bold">
+          {m.admin_platform_live_replays_mode_label()}
+        </label>
+        <Picker
+          id="live-replays-mode"
+          value={liveReplaysMode}
+          options={LIVE_REPLAYS_MODE_OPTIONS}
+          label={m.admin_platform_live_replays_mode_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-accent/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            const mode = LIVE_REPLAYS_MODES.find((known) => known === v);
+            if (mode) liveReplaysMode = mode;
+          }}
+        />
+        <p class="text-text-muted text-xs">
+          {m.admin_platform_live_replays_mode_hint()}
         </p>
       </div>
 
@@ -571,7 +603,7 @@
     >
       <header class="flex items-start gap-3">
         <span
-          class="bg-cn-yellow/15 text-cn-dark flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
+          class="bg-accent/15 text-cn-dark flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
         >
           <Megaphone size={18} />
         </span>
@@ -600,7 +632,7 @@
             type="text"
             bind:value={titleFr}
             maxlength="200"
-            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+            class="border-cn-border text-text-main focus:ring-accent/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           />
         </div>
         <div class="space-y-1.5">
@@ -612,7 +644,7 @@
             type="text"
             bind:value={titleEn}
             maxlength="200"
-            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+            class="border-cn-border text-text-main focus:ring-accent/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           />
         </div>
         <div class="space-y-1.5">
@@ -624,7 +656,7 @@
             bind:value={bodyFr}
             rows="5"
             maxlength="4000"
-            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+            class="border-cn-border text-text-main focus:ring-accent/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           ></textarea>
         </div>
         <div class="space-y-1.5">
@@ -636,7 +668,7 @@
             bind:value={bodyEn}
             rows="5"
             maxlength="4000"
-            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+            class="border-cn-border text-text-main focus:ring-accent/40 w-full rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
           ></textarea>
         </div>
       </div>
@@ -653,7 +685,7 @@
             bind:value={annMinVersion}
             pattern="^(\d+\.\d+\.\d+)?$"
             placeholder="0.15.0"
-            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 font-mono text-sm focus:ring-2 focus:outline-none"
+            class="border-cn-border text-text-main focus:ring-accent/40 w-full rounded-xl border bg-transparent px-3 py-2 font-mono text-sm focus:ring-2 focus:outline-none"
           />
         </div>
         <div class="space-y-1.5">
@@ -666,7 +698,7 @@
             bind:value={annMaxVersion}
             pattern="^(\d+\.\d+\.\d+)?$"
             placeholder="0.15.9"
-            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full rounded-xl border bg-transparent px-3 py-2 font-mono text-sm focus:ring-2 focus:outline-none"
+            class="border-cn-border text-text-main focus:ring-accent/40 w-full rounded-xl border bg-transparent px-3 py-2 font-mono text-sm focus:ring-2 focus:outline-none"
           />
         </div>
       </div>
