@@ -145,12 +145,17 @@ export interface ChannelDto {
    * Whether the viewer may POST here, as the server decided it - `writePolicy` applied to the
    * viewer's own roles in this community.
    *
-   * The policy itself is deliberately NOT carried: a client holds no roles to apply it to, so it
-   * would need a second copy of the rule and half of its inputs. Optional for the same reason as
-   * `viewerHasAccess` - the create routes answer with the row they just wrote - and absent means
-   * "yes", which is also the server's default policy.
+   * Optional for the same reason as `viewerHasAccess` - the create routes answer with the row they
+   * just wrote - and absent means "yes", which is also the server's default policy.
    */
   viewerCanWrite?: boolean;
+  /**
+   * The salon's write policy. NEVER applied here - a client holds no roles to apply it to. It is
+   * kept on the row for two LOOKUPS: the read-only line says who may write, and a
+   * `workspace.role.changed` carries the server's verdict for every policy (`canWriteByPolicy`), in
+   * which the row finds its own.
+   */
+  writePolicy?: ChannelWritePolicy;
 }
 
 export type CreateChannelResultDto = ChannelDto;
@@ -225,6 +230,42 @@ export interface ChannelAccessState {
   allowedUsers: string[];
   writePolicy: ChannelWritePolicy;
   accessRevision: number;
+  /**
+   * The community's roles each restricted policy lets write, as the SERVER decided from what each
+   * role grants (never its name). Sent by the access read only; absent on a write's answer and from
+   * an older server.
+   */
+  writerRoles?: Record<Exclude<ChannelWritePolicy, 'everyone'>, ChannelWriterRole[]>;
+}
+
+/** A role named by {@link ChannelAccessState.writerRoles}: its identity and the community's label. */
+export interface ChannelWriterRole {
+  id: string;
+  name: string;
+  displayLabel: string | null;
+}
+
+/**
+ * The server's write verdict for EVERY policy, for one member - what `workspace.role.changed`
+ * carries as `canWriteByPolicy`, so a salon row looks its own policy up instead of re-deriving it.
+ */
+export type WriteVerdicts = Record<ChannelWritePolicy, boolean>;
+
+/**
+ * The 403 codes of a salon post the salon's `writePolicy` refused - one per restricted policy, so the
+ * client says WHO may write from the type and never from prose.
+ */
+export const CHANNEL_WRITE_REQUIRES_MODERATION = 'CHANNEL_WRITE_REQUIRES_MODERATION';
+/** See {@link CHANNEL_WRITE_REQUIRES_MODERATION}: the `admins` policy's refusal. */
+export const CHANNEL_WRITE_REQUIRES_ADMIN = 'CHANNEL_WRITE_REQUIRES_ADMIN';
+
+/** The policy a write-policy refusal code names, or null for any other code. */
+export function writePolicyOfRefusal(
+  code: string | null | undefined
+): Exclude<ChannelWritePolicy, 'everyone'> | null {
+  if (code === CHANNEL_WRITE_REQUIRES_ADMIN) return 'admins';
+  if (code === CHANNEL_WRITE_REQUIRES_MODERATION) return 'admins_moderators';
+  return null;
 }
 
 /** Server-visible poll state (no labels) carried on a channel message. */

@@ -215,6 +215,8 @@ export interface MessagingContext {
    * a context without one simply never signals rather than failing.
    */
   signalChannelRead?: (channelId: string) => void;
+  /** See `SendMessageDeps.onChannelWriteRefused`. Optional: a context without it keeps the row. */
+  onChannelWriteRefused?: SendMessageDeps['onChannelWriteRefused'];
 }
 
 /**
@@ -827,6 +829,7 @@ export function useMessaging() {
       patchSalonEcho: (key, id, change) =>
         void applySalonEchoChange(ctx.conversations, key, id, change, ctx.log),
       log: ctx.log,
+      onChannelWriteRefused: ctx.onChannelWriteRefused,
     };
   }
 

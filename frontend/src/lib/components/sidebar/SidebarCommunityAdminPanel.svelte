@@ -353,18 +353,18 @@
       applyListedRoles(wsData.roles ?? []);
       const roles = workspaceRoles;
 
+      // A ROLE WHOSE PERMISSIONS COULD NOT BE READ IS NOT A ROLE THAT GRANTS NOTHING. A failed read
+      // used to be drawn as an empty row, silently - the grid then showed a role stripped of every
+      // permission it held, which is indistinguishable from the real thing (a Moderateur role
+      // emptied by hand, production 2026-11-10). It now fails the whole load, out loud, below.
       const perms: Record<string, string[]> = {};
       for (const role of roles) {
-        try {
-          const data = await channelService.getRolePermissions(role.id);
-          perms[role.id] = data.permissions ?? [];
-        } catch {
-          perms[role.id] = [];
-        }
+        const data = await channelService.getRolePermissions(role.id);
+        perms[role.id] = data.permissions ?? [];
       }
       globalChannels.setRolePermissions(perms);
     } catch (e) {
-      Log.d('communityAdmin.loadRolesAndPermissions failed', e);
+      console.warn('[COMMUNITY] roles and permissions not loaded - the grid is not drawn', e);
       rolesError = m.chat_community_load_members_error();
     } finally {
       rolesLoading = false;

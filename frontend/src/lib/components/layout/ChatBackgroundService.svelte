@@ -152,7 +152,11 @@
     isChannelConversationId,
   } from '$lib/utils/chat/channelCrypto';
   import { setGraineRepairListener } from '$lib/utils/graine/runtime';
-  import { channelService } from '$lib/services/ChannelService';
+  import {
+    channelService,
+    type ChannelWritePolicy,
+    type WriteVerdicts,
+  } from '$lib/services/ChannelService';
   import {
     drainNativePendingCallAccept,
     listenForNativeCallAccept,
@@ -986,6 +990,7 @@
       playReadTone: globalNotifs.playReadTone,
       sendSystemNotification: globalNotifs.sendSystemNotification,
       signalChannelRead: (channelId: string) => void channelService.markChannelRead(channelId),
+      onChannelWriteRefused: globalChannels.handleChannelWriteRefused,
     };
   }
 
@@ -1298,7 +1303,12 @@
             : `[ROLE] ${event.roleId.slice(0, 8)} now grants ${event.permissions.length} permission(s)`
         );
       },
-      onChannelUpdated: (event: { channelId: string; name?: string; viewerCanWrite?: boolean }) => {
+      onChannelUpdated: (event: {
+        channelId: string;
+        name?: string;
+        viewerCanWrite?: boolean;
+        writePolicy?: ChannelWritePolicy;
+      }) => {
         if (!event.channelId) return;
         const channelConversationId = `channel_${event.channelId}`;
         // ONE PASS FOR BOTH FACTS, and each applied only when the event carried it: a rename sends
@@ -1316,12 +1326,13 @@
                     ...(typeof event.viewerCanWrite === 'boolean'
                       ? { canWrite: event.viewerCanWrite }
                       : {}),
+                    ...(event.writePolicy ? { writePolicy: event.writePolicy } : {}),
                   }
                 : ch
             ),
           }));
           appendLog(
-            `[CHANNEL] #${event.name ?? event.channelId} updated - canWrite=${String(event.viewerCanWrite ?? 'unchanged')}`
+            `[CHANNEL] #${event.name ?? event.channelId} updated - canWrite=${String(event.viewerCanWrite ?? 'unchanged')} writePolicy=${event.writePolicy ?? 'unchanged'}`
           );
         }
         const convo = globalConvs.conversations.get(channelConversationId);
@@ -1380,11 +1391,13 @@
         canManage: boolean;
         canManageChannels?: boolean;
         canModerate?: boolean;
+        canWriteByPolicy?: WriteVerdicts;
         permissions: string[];
       }) => {
         globalChannels.handleWorkspaceRoleChanged(event);
+        const writes = event.canWriteByPolicy;
         appendLog(
-          `[WORKSPACE] my role in ${event.workspaceId.slice(0, 8)} is now "${event.roleName}" (canManage=${event.canManage} canManageChannels=${event.canManageChannels ?? 'unchanged'} canModerate=${event.canModerate ?? 'unchanged'})`
+          `[WORKSPACE] my role in ${event.workspaceId.slice(0, 8)} is now "${event.roleName}" (canManage=${event.canManage} canManageChannels=${event.canManageChannels ?? 'unchanged'} canModerate=${event.canModerate ?? 'unchanged'} canWrite=${writes ? `admins_moderators:${writes.admins_moderators},admins:${writes.admins}` : 'unchanged'})`
         );
       },
       onWorkspaceDeleted: (event: { workspaceId: string }) => {

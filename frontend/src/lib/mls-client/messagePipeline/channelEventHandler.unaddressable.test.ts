@@ -151,3 +151,46 @@ describe('the tail that was already there', () => {
     expect(said()).toContain('Unhandled channel event type');
   });
 });
+
+/**
+ * THE WRITE VERDICTS AND THE POLICY TRAVEL TO THE STORE (2026-11-10). Kept beside the address tests
+ * because it is the same dispatcher and the same harness: what is asserted is what reaches the
+ * callback, and that an absent or partial field is passed on as "unchanged", never as a verdict.
+ */
+describe('what a role or access change hands the store about writing', () => {
+  it('passes a complete verdict table, and nothing for a partial one', async () => {
+    const onWorkspaceRoleChanged = vi.fn();
+    const table = { everyone: true, admins_moderators: false, admins: false };
+    await handleChannelEvent(
+      {
+        type: 'workspace.role.changed',
+        data: { workspaceId: 'ws1', canManage: false, canWriteByPolicy: table },
+      },
+      ctx({ onWorkspaceRoleChanged })
+    );
+    expect(onWorkspaceRoleChanged.mock.calls[0][0].canWriteByPolicy).toEqual(table);
+
+    await handleChannelEvent(
+      {
+        type: 'workspace.role.changed',
+        data: { workspaceId: 'ws1', canManage: false, canWriteByPolicy: { everyone: true } },
+      },
+      ctx({ onWorkspaceRoleChanged })
+    );
+    expect(onWorkspaceRoleChanged.mock.calls[1][0].canWriteByPolicy).toBeUndefined();
+  });
+
+  it('passes the salon write policy of an access change, and only a known one', async () => {
+    const onChannelUpdated = vi.fn();
+    await handleChannelEvent(
+      { type: 'channel.updated', data: { channelId: 'c1', writePolicy: 'admins' } },
+      ctx({ onChannelUpdated })
+    );
+    await handleChannelEvent(
+      { type: 'channel.updated', data: { channelId: 'c1', writePolicy: 'nobody' } },
+      ctx({ onChannelUpdated })
+    );
+    expect(onChannelUpdated.mock.calls[0][0].writePolicy).toBe('admins');
+    expect(onChannelUpdated.mock.calls[1][0].writePolicy).toBeUndefined();
+  });
+});

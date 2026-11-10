@@ -172,13 +172,18 @@
    * mistake costs the person the ability to speak. The server refuses a forbidden post either way -
    * this only decides whether the product offers a control it would refuse.
    */
-  const canWriteToSelectedChannel = $derived(
-    !isSelectedChannel ||
-      (channels.channelWorkspaces
-        .flatMap((ws) => ws.channels)
-        .find((ch) => ch.id === convs.selectedContact)?.canWrite ??
-        true)
+  const selectedChannelRow = $derived(
+    isSelectedChannel
+      ? channels.channelWorkspaces
+          .flatMap((ws) => ws.channels)
+          .find((ch) => ch.id === convs.selectedContact)
+      : undefined
   );
+  const canWriteToSelectedChannel = $derived(
+    !isSelectedChannel || (selectedChannelRow?.canWrite ?? true)
+  );
+  /** The open salon's write policy, for the read-only line's "who may write" (never decided here). */
+  const selectedChannelWritePolicy = $derived(selectedChannelRow?.writePolicy);
 
   /** Member user IDs of the currently selected channel, for scoping @mention suggestions. */
   let selectedChannelMemberIds = $state<string[]>([]);
@@ -463,6 +468,7 @@
       playReadTone: notifs.playReadTone,
       sendSystemNotification: notifs.sendSystemNotification,
       signalChannelRead: (channelId: string) => void channelService.markChannelRead(channelId),
+      onChannelWriteRefused: channels.handleChannelWriteRefused,
     };
   }
 
@@ -1698,6 +1704,7 @@
           pendingInvites={convs.pendingGroupInvites}
           mentionRoster={composerMentionRoster}
           canWrite={canWriteToSelectedChannel}
+          writePolicy={selectedChannelWritePolicy}
           sendError={convs.sendError}
           onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
           onGroupSetImage={(mediaId) => void convs.handleSetGroupImage(mediaId, convCtx())}

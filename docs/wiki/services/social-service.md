@@ -241,13 +241,29 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
 - **Write policy.** Independent of read access, `channels.writePolicy` (migration 031) gates
   posting: `everyone` (default), `admins_moderators` (roles with `channel.moderate` or
   `workspace.manage`), or `admins` (`workspace.manage` only). Enforced in `sendMessage` via
-  `canWriteToChannel`; used for announcement-style channels. Set from the channel settings "Accès" tab.
-  **`writePolicyAllows` in `permissions.ts` is the only definition of the rule**, and three callers
-  read it: `canWriteToChannel` per message, `getWorkspaceBySlug` for the `viewerCanWrite` it projects
-  on every channel, and `writeDecisionsFor` when the policy changes. The client is sent the DECISION
-  and never the policy - it holds no roles to apply one - and `ChatArea` replaces the composer with
-  `chat_channel_read_only` when the answer is no. Absent means YES, deliberately: a client too old to
-  be sent the field fails open onto the server's refusal, which is the guarantee.
+  `writeStandingIn`; used for announcement-style channels. Set from the channel settings "Accès" tab.
+  **`writePolicyAllows` in `permissions.ts` is the only definition of the rule**, and every caller
+  reads it: `writeStandingIn` per message, `getWorkspaceBySlug` for the `viewerCanWrite` it projects
+  on every channel, `writeDecisionsFor` when the policy changes, `writeVerdicts` on a role change and
+  `rolesQualifyingFor` for the access panel. The client is sent DECISIONS and never applies the
+  policy - it holds no roles to apply one - and `ChatArea` replaces the composer with the line saying
+  WHO may write (`writePolicyLine`) when the answer is no. Absent means YES, deliberately: a client
+  too old to be sent the field fails open onto the server's refusal, which is the guarantee.
+- **A refused post is TYPED and LOGGED (2026-11-10).** Production: a member of a community's
+  Moderateur role, in an "admins and moderators" salon, had a composer and every post came back
+  "no permission"; the role had been emptied of every permission (each revoke is one grid click,
+  logged `[ROLE] revoked <key> role=<id>`), so the rule was right and nothing said so. Now each
+  `ForbiddenException` of `sendMessage` logs one `[SEND] refused` WARN naming the cause (not a
+  member, no access, or `write policy <policy>` with the sender's role ids and
+  `grantsModeration`/`grantsManage`); the policy refusal carries `CHANNEL_WRITE_REQUIRES_MODERATION`
+  or `CHANNEL_WRITE_REQUIRES_ADMIN`, which the client maps to "only admins (and moderators) can post
+  here" and uses to take the stale composer away (`handleChannelWriteRefused`).
+  `workspace.role.changed` carries `canWriteByPolicy` (the verdict for each of the three policies),
+  and every salon row keeps its `writePolicy` (listing, `channel.updated`) to look its own verdict
+  up - before this, a role edit moved the three cached flags and left every composer where it was.
+  The access read (`getChannelAccess`) carries `writerRoles`, the roles each restricted policy admits
+  by what they grant; the panel names them under the select and warns when "admins and moderators"
+  admits the administrators alone.
 - **A change is ANNOUNCED, split by the answer.** A listing is fetched once, so `viewerCanWrite`
   alone left everyone already in the salon holding a stale composer until their next full load -
   COMM-7 failed twice for this, the second time on the fix for the first. `updateChannelAccess` now
@@ -1337,7 +1353,7 @@ The social-service publishes to `chat:channel_events`:
 | `channel.member.removed` | `removeMemberFromChannel` |
 | `channel.member.removal-released` | `releaseWorkspaceRemoval`, `releaseChannelRemoval` - to the scope's remaining members, never the actor; carries `releasedBy` and `releasedByDevice` |
 | `channel.message.created` / `.deleted` | send, delete |
-| `channel.updated` / `.deleted` | rename, **access change** (carries `viewerCanWrite`, one publish per verdict), delete |
+| `channel.updated` / `.deleted` | rename, **access change** (carries `viewerCanWrite` and `writePolicy`, one publish per verdict), delete |
 | `workspace.updated` / `.deleted` | cover image change, soft delete |
 | `workspace.role.permissions` | a role's permission set changed - addressed to the MEMBERSHIP, since every open grid draws it |
 

@@ -14,7 +14,12 @@ import {
   TransientAnswerError,
 } from '$lib/stores/auth';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
-import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
+import type {
+  WorkspaceDto,
+  ChannelDto,
+  ChannelWritePolicy,
+  WriteVerdicts,
+} from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
@@ -120,6 +125,12 @@ export interface ChannelSidebarItem {
    * whether the product OFFERS the control, never whether the message is accepted.
    */
   canWrite?: boolean;
+  /**
+   * The salon's write policy, from the listing and from `channel.updated`. Never applied on this
+   * side: it is the key under which a role change's `canWriteByPolicy` holds this row's verdict,
+   * and what the read-only line names ("only admins can write").
+   */
+  writePolicy?: ChannelWritePolicy;
 }
 
 /** One workspace (community) shown in the sidebar, containing its channels. */
@@ -546,6 +557,7 @@ export function useChannelWorkspaces() {
         isPrivate,
         hasAccess: viewerHasAccess,
         canWrite: channel.viewerCanWrite !== false,
+        ...(channel.writePolicy ? { writePolicy: channel.writePolicy } : {}),
       });
 
       // AN UNJOINED SALON GETS NO CONVERSATION, and that is the point: a conversation row is what
@@ -2585,8 +2597,10 @@ export function useChannelWorkspaces() {
     canManage: boolean;
     canManageChannels?: boolean;
     canModerate?: boolean;
+    canWriteByPolicy?: WriteVerdicts;
     permissions: string[];
   }) {
+    const verdicts = event.canWriteByPolicy;
     channelWorkspaces = channelWorkspaces.map((ws) =>
       ws.workspaceDbId === event.workspaceId
         ? {
@@ -2596,9 +2610,36 @@ export function useChannelWorkspaces() {
               ? {}
               : { viewerCanManageChannels: event.canManageChannels }),
             ...(event.canModerate === undefined ? {} : { viewerCanModerate: event.canModerate }),
+            // EVERY SALON'S COMPOSER FOLLOWS THE NEW ROLE, looked up from the server's table by the
+            // salon's own policy. Until 2026-11-10 only the three flags above moved, so a moderator
+            // whose role lost its moderation grant kept a composer in every "admins and moderators"
+            // salon until the next full load, and each post came back a 403.
+            channels: verdicts
+              ? ws.channels.map((ch) => ({
+                  ...ch,
+                  canWrite: verdicts[ch.writePolicy ?? 'everyone'],
+                }))
+              : ws.channels,
           }
         : ws
     );
+  }
+
+  /**
+   * The server refused a post in this salon by its write policy: the row's `canWrite` was stale.
+   * The refusal IS the server's verdict for this viewer, so the composer goes, replaced by the line
+   * saying who may write - instead of offering again a control the next post would be refused by.
+   */
+  function handleChannelWriteRefused(
+    channelConversationId: string,
+    policy: Exclude<ChannelWritePolicy, 'everyone'>
+  ) {
+    channelWorkspaces = channelWorkspaces.map((ws) => ({
+      ...ws,
+      channels: ws.channels.map((ch) =>
+        ch.id === channelConversationId ? { ...ch, canWrite: false, writePolicy: policy } : ch
+      ),
+    }));
   }
 
   /**
@@ -2782,6 +2823,8 @@ export function useChannelWorkspaces() {
     refreshChannelOrder,
     /** Applies an incoming real-time workspace-updated event (cover image change). */
     handleWorkspaceRoleChanged,
+    /** Takes the composer from a salon whose post the server refused by its write policy. */
+    handleChannelWriteRefused,
     /** What each workspace role grants right now, keyed by role id - see the state's own note. */
     get rolePermissions() {
       return rolePermissions;

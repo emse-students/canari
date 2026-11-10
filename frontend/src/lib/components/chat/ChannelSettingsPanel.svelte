@@ -33,6 +33,7 @@
   import { admitSalonGrantee } from '$lib/utils/graine/admitNewcomer';
   import { commitSalonRevoke, committingDeviceId } from '$lib/utils/graine/commitRemoval';
   import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
+  import { summarizeWriterRoles } from '$lib/utils/chat/channelWritePolicy';
 
   interface ChannelSidebarItem {
     id: string;
@@ -130,6 +131,10 @@
   let addingUserId = $state('');
   let memberAdding = $state(false);
   let writePolicy = $state<ChannelWritePolicy>('everyone');
+  /** The server's lists of roles each restricted policy admits (by what they grant), from the read. */
+  let writerRoles = $state<ChannelAccessState['writerRoles']>(undefined);
+  /** Which roles the selected policy currently admits, and whether that is the admins alone. */
+  const writerSummary = $derived(summarizeWriterRoles(writePolicy, writerRoles));
   /**
    * The server's revision of the access on screen, sent as the BASE of every write here. The list
    * this panel holds is the one it read; a grant made since by someone else is absent from it, and
@@ -240,6 +245,9 @@
     accessIsPrivate = state.isPrivate;
     accessAllowedUserIds = state.allowedUsers ?? [];
     writePolicy = state.writePolicy ?? 'everyone';
+    // Only the READ carries the lists; a write's answer leaves the ones on screen, which a write to
+    // this salon's access does not change.
+    if (state.writerRoles) writerRoles = state.writerRoles;
     accessRevision = state.accessRevision;
   }
 
@@ -765,6 +773,18 @@
                   <Loader size={16} class="text-text-muted animate-spin" />
                 {/if}
               </div>
+              <!-- WHO THE POLICY ADMITS, BY ROLE: decided by what each role grants, never by its
+                   name - "Admins and moderators" read as if a role called Moderateur counted. -->
+              {#if writerSummary}
+                <p class="text-text-muted text-xs">
+                  {m.chat_channel_write_roles_qualifying({ roles: writerSummary.names.join(', ') })}
+                </p>
+                {#if writerSummary.onlyAdmins}
+                  <p class="text-red-err text-xs font-medium" role="alert">
+                    {m.chat_channel_write_no_moderator_role_warning()}
+                  </p>
+                {/if}
+              {/if}
             </div>
 
             <!-- ═══ Member allowlist (only once the SERVER holds the salon private) ═══ -->

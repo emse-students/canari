@@ -871,6 +871,67 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
     expect(store.channelWorkspaces[0].viewerCanModerate).toBe(false);
   });
 
+  // Production 2026-11-10: a moderator's role lost its moderation grant, the three flags moved, and
+  // the composer of every "admins and moderators" salon stayed open - each post came back a 403.
+  it('redraws every salon composer from the event, by the salon own policy', async () => {
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'One', 'one')]);
+    listChannels.mockResolvedValue([
+      { ...makeChannelDto('open', 'general'), writePolicy: 'everyone', viewerCanWrite: true },
+      {
+        ...makeChannelDto('mods', 'bureau'),
+        writePolicy: 'admins_moderators',
+        viewerCanWrite: true,
+      },
+      { ...makeChannelDto('adm', 'annonces'), writePolicy: 'admins', viewerCanWrite: false },
+    ]);
+
+    const store = useChannelWorkspaces();
+    const promise = store.loadChannelWorkspacesFromBackend(makeContext());
+    await tick();
+    await promise;
+    const canWrite = () =>
+      Object.fromEntries(store.channelWorkspaces[0].channels.map((c) => [c.id, c.canWrite]));
+    expect(canWrite()).toEqual({ channel_open: true, channel_mods: true, channel_adm: false });
+
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Modérateur',
+      canManage: false,
+      canModerate: false,
+      canWriteByPolicy: { everyone: true, admins_moderators: false, admins: false },
+      permissions: [],
+    });
+    expect(canWrite()).toEqual({ channel_open: true, channel_mods: false, channel_adm: false });
+
+    // An older server sends no table: every composer stays where the last listing put it.
+    store.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'Administrateur',
+      canManage: true,
+      permissions: ['workspace.manage'],
+    });
+    expect(canWrite()).toEqual({ channel_open: true, channel_mods: false, channel_adm: false });
+  });
+
+  it('takes the composer from a salon whose post was refused by its write policy', async () => {
+    listUserWorkspaces.mockResolvedValue([makeWorkspaceDto('ws1', 'One', 'one')]);
+    listChannels.mockResolvedValue([
+      { ...makeChannelDto('mods', 'bureau'), writePolicy: 'everyone', viewerCanWrite: true },
+    ]);
+
+    const store = useChannelWorkspaces();
+    const promise = store.loadChannelWorkspacesFromBackend(makeContext());
+    await tick();
+    await promise;
+
+    store.handleChannelWriteRefused('channel_mods', 'admins_moderators');
+
+    expect(store.channelWorkspaces[0].channels[0]).toMatchObject({
+      canWrite: false,
+      writePolicy: 'admins_moderators',
+    });
+  });
+
   // An event for a community this device does not hold must change nothing at all - not throw, and
   // not create a phantom entry in the sidebar.
   it('ignores a role change for a community it does not have', async () => {

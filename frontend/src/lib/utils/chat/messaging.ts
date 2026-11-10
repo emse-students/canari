@@ -59,7 +59,12 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { forgetOwedSalonWrite, oweSalonWrite } from './salonOwed';
 import { salonRepeatIsSafe, whenSalonRepeatIsSafe } from './salonRepeatProof';
-import { CHANNEL_MESSAGE_DELETED } from '$lib/services/ChannelService';
+import {
+  CHANNEL_MESSAGE_DELETED,
+  writePolicyOfRefusal,
+  type ChannelWritePolicy,
+} from '$lib/services/ChannelService';
+import { writePolicyLine } from './channelWritePolicy';
 import { flushDmReadMarks } from './salonReadMarkQueue';
 import { MessagePairWriteError, MessageWrittenError } from './messageWrittenError';
 import { readWatermarkFrameData, readWatermarkFrameMark } from './readState';
@@ -98,6 +103,15 @@ export interface SendMessageDeps {
   /** Moves a salon echo along (in flight, failed, settled) - see `salonEcho.ts`. */
   patchSalonEcho: (conversationKey: string, messageId: string, change: SalonEchoChange) => void;
   log: (msg: string) => void;
+  /**
+   * The server refused a salon post by the salon's write policy: the composer this device offered
+   * was stale. Takes it away (`handleChannelWriteRefused`). Optional - a caller without a channel
+   * store still gets the precise sentence.
+   */
+  onChannelWriteRefused?: (
+    conversationKey: string,
+    policy: Exclude<ChannelWritePolicy, 'everyone'>
+  ) => void;
 }
 
 /**
@@ -495,6 +509,16 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
       `[SEND] channel send ${messageId.slice(0, 8)}… refused (status=${status}): ${String(error)}`
     );
     deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'error' });
+    // REFUSED BY THE SALON'S WRITE POLICY - a TYPE, so the line says who may write here rather than
+    // a generic "no permission", and the composer that offered the post goes: it was stale.
+    const refusedBy = writePolicyOfRefusal(refusalCode(error));
+    if (refusedBy) {
+      deps.log(
+        `[SEND] channel send ${messageId.slice(0, 8)}… refused by the write policy ${refusedBy}: the composer was stale, taken away`
+      );
+      deps.onChannelWriteRefused?.(send.conversationKey, refusedBy);
+      return writePolicyLine(refusedBy);
+    }
     return (
       describeApiRefusal(status, m.channel_action_message_send()) ?? m.chat_send_error_generic()
     );

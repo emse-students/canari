@@ -1,4 +1,5 @@
 import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
+import type { ChannelWritePolicy, WriteVerdicts } from '$lib/services/ChannelService';
 import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
 import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
 import { openChannelMessageProving } from '$lib/utils/graine/channelSeal';
@@ -288,6 +289,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         typeof data.canManageChannels === 'boolean' ? data.canManageChannels : undefined,
       // Same shape: absent leaves `viewerCanModerate` where the last listing put it.
       canModerate: typeof data.canModerate === 'boolean' ? data.canModerate : undefined,
+      // Same shape: absent leaves every salon's `canWrite` where the last listing put it.
+      canWriteByPolicy: writeVerdictsOf(data.canWriteByPolicy),
       permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],
     });
     return;
@@ -320,6 +323,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       // reading an absent field as `false` would silence the composer of everyone in a salon
       // somebody renamed. Absent means unchanged, and the handler must treat it that way.
       viewerCanWrite: typeof data.viewerCanWrite === 'boolean' ? data.viewerCanWrite : undefined,
+      writePolicy: isWritePolicy(data.writePolicy) ? data.writePolicy : undefined,
     });
     return;
   }
@@ -605,4 +609,26 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
   // informs, and it can never fire on a matched pair.
   log(`[ERROR] Unhandled channel event type: ${event?.type}`);
   console.error('[Channel Event] no handler for type', event?.type);
+}
+
+/** Whether `value` is one of the three salon write policies. */
+function isWritePolicy(value: unknown): value is ChannelWritePolicy {
+  return value === 'everyone' || value === 'admins_moderators' || value === 'admins';
+}
+
+/**
+ * The `canWriteByPolicy` table of a `workspace.role.changed`, or undefined unless it states a
+ * boolean for EVERY policy - a partial table would leave some salons judged and others not.
+ */
+export function writeVerdictsOf(value: unknown): WriteVerdicts | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  if (
+    typeof v.everyone !== 'boolean' ||
+    typeof v.admins_moderators !== 'boolean' ||
+    typeof v.admins !== 'boolean'
+  ) {
+    return undefined;
+  }
+  return { everyone: v.everyone, admins_moderators: v.admins_moderators, admins: v.admins };
 }

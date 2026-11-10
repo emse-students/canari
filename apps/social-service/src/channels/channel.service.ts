@@ -69,7 +69,11 @@ import {
   roleGrantsChannelManagement,
   roleGrantsModeration,
   roleGrantsRoleManagement,
+  rolesQualifyingFor,
+  standingOfPermissions,
   writePolicyAllows,
+  writeRefusalCode,
+  writeVerdicts,
 } from './permissions';
 import { narrowAdmissionVoucher } from './admission-voucher';
 import { ChatReelMediaClient } from './chat-reel-media.client';
@@ -450,7 +454,7 @@ export class ChannelService implements OnApplicationBootstrap {
    * That fallback went with the per-salon distribution group (see the rule's own header), which
    * makes this both stricter and cheaper: no database at all.
    *
-   * Reading/joining is independent of who may write (see canWriteToChannel).
+   * Reading/joining is independent of who may write (see writeStandingIn).
    */
   private canAccessChannel(channel: Channel, _member: ChannelMember, userId?: string): boolean {
     if (!channel.isPrivate) return true;
@@ -483,35 +487,49 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
-   * Whether `userId` may post in `channel`, per its writePolicy:
+   * Whether `member` may post in `channel`, per its writePolicy:
    *  - `everyone` (default) → any member (access is checked separately);
    *  - `admins_moderators` → roles carrying channel.moderate or workspace.manage;
    *  - `admins` → roles carrying workspace.manage.
+   *
+   * Returns the verdict WITH what it was decided from (the roles held, and whether any of them
+   * grants moderation or management), so a refusal can log its cause: until 2026-11-10 a refused
+   * post logged nothing, and a moderator whose role had been emptied read a generic 403 that no line
+   * on the server explained.
    */
-  private async canWriteToChannel(channel: Channel, userId: string): Promise<boolean> {
+  private async writeStandingIn(
+    channel: Channel,
+    member: ChannelMember
+  ): Promise<{
+    allowed: boolean;
+    policy: ChannelWritePolicy;
+    roleIds: string[];
+    canModerate: boolean;
+    canManage: boolean;
+  }> {
     const policy: ChannelWritePolicy = channel.writePolicy ?? 'everyone';
-    if (policy === 'everyone') return true;
-    const member = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId },
-    });
-    if (!member?.roleIds?.length) return false;
-    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
+    if (policy === 'everyone') {
+      return { allowed: true, policy, roleIds: [], canModerate: false, canManage: false };
+    }
+    const roleIds = member.roleIds ?? [];
+    if (roleIds.length === 0) {
+      return { allowed: false, policy, roleIds, canModerate: false, canManage: false };
+    }
+    const roles = await this.roleRepo.find({ where: { id: In(roleIds) } });
     // THE RULE IS IN `writePolicyAllows` AND NOWHERE ELSE - the listing decides the same thing for
     // the same viewer and must reach the same answer. What is resolved here is only who the viewer
     // IS, which is the part that costs a query.
     //
-    // `roleGrantsModeration` rather than a second list of keys: this branch used to check
-    // `channel.moderate` and `workspace.manage` and to omit `channel.manage`, which the listing's
-    // own `viewerCanModerate` has always counted - so a role holding only `channel.manage` was a
-    // moderator everywhere except here.
-    return writePolicyAllows(policy, {
-      canManage: roles.some((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)),
-      canModerate: roles.some((r) => roleGrantsModeration(r.permissions)),
-    });
+    // `standingOfPermissions` (so `roleGrantsModeration`) rather than a second list of keys: this
+    // branch used to check `channel.moderate` and `workspace.manage` and to omit `channel.manage`,
+    // which the listing's own `viewerCanModerate` has always counted - so a role holding only
+    // `channel.manage` was a moderator everywhere except here.
+    const standing = standingOfPermissions(roles.flatMap((r) => r.permissions));
+    return { allowed: writePolicyAllows(policy, standing), policy, roleIds, ...standing };
   }
 
   /**
-   * Who, among `userIds`, may write in `channel` - the same decision {@link canWriteToChannel}
+   * Who, among `userIds`, may write in `channel` - the same decision {@link writeStandingIn}
    * enforces and the workspace listing answers, computed for a whole audience at once.
    *
    * TWO QUERIES WHATEVER THE AUDIENCE'S SIZE, because the roles are a property of the workspace and
@@ -3416,7 +3434,23 @@ export class ChannelService implements OnApplicationBootstrap {
       );
     }
 
-    return channelAccessState(channel);
+    // WHICH ROLES EACH RESTRICTED POLICY LETS WRITE, by what they grant and never by their name: the
+    // access panel shows them under its write-policy select. "Admins and moderators" read as if the
+    // role CALLED Moderateur counted, and a community whose Moderateur role had been emptied had no
+    // way to see that its moderators could no longer write.
+    const roles = await this.roleRepo.find({ where: { workspaceId: channel.workspaceId } });
+    const named = (r: ChannelRole) => ({
+      id: r.id,
+      name: r.name,
+      displayLabel: r.displayLabel ?? null,
+    });
+    return {
+      ...channelAccessState(channel),
+      writerRoles: {
+        admins_moderators: rolesQualifyingFor('admins_moderators', roles).map(named),
+        admins: rolesQualifyingFor('admins', roles).map(named),
+      },
+    };
   }
 
   /**
@@ -3636,6 +3670,9 @@ export class ChannelService implements OnApplicationBootstrap {
           channelId,
           workspaceId: channel.workspaceId,
           isPrivate: channel.isPrivate,
+          // The policy travels WITH the verdict so the client's row keeps it current: a later
+          // `workspace.role.changed` redraws the composer from it (`canWriteByPolicy`).
+          writePolicy: channel.writePolicy ?? 'everyone',
           viewerCanWrite: mayWrite,
         },
         half
@@ -4658,6 +4695,9 @@ export class ChannelService implements OnApplicationBootstrap {
           canManage: written.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
           canManageChannels: roleGrantsChannelManagement(written.permissions),
           canModerate: roleGrantsModeration(written.permissions),
+          // The write verdict for EVERY policy, so the client redraws each salon's composer from
+          // that salon's policy - the rule stays here, the client only looks the policy up.
+          canWriteByPolicy: writeVerdicts(standingOfPermissions(written.permissions)),
           changedBy: actorUserId,
         },
         [targetUserId]
@@ -4921,14 +4961,36 @@ export class ChannelService implements OnApplicationBootstrap {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: input.senderId },
     });
-    if (!member) throw new ForbiddenException('Not a member of this workspace');
+    // EVERY REFUSAL BELOW LOGS ITS CAUSE AT WARN. Until 2026-11-10 none did: a moderator refused by
+    // the write policy (their role had been emptied of every permission) read a generic 403, and
+    // the server had nothing to say about why.
+    const sender = input.senderId.slice(0, 8);
+    if (!member) {
+      this.logger.warn(
+        `[SEND] refused channel=${channelId.slice(0, 8)} sender=${sender}: not a member of the community`
+      );
+      throw new ForbiddenException('Not a member of this workspace');
+    }
     if (!this.canAccessChannel(channel, member, input.senderId)) {
+      this.logger.warn(
+        `[SEND] refused channel=${channelId.slice(0, 8)} sender=${sender}: no access to this private salon`
+      );
       throw new ForbiddenException('Not allowed to access this channel');
     }
     // Read access is not enough: the channel's writePolicy may restrict posting
     // (e.g. an announcements channel where only admins/moderators can write).
-    if (!(await this.canWriteToChannel(channel, input.senderId))) {
-      throw new ForbiddenException('Not allowed to post in this channel');
+    const write = await this.writeStandingIn(channel, member);
+    if (!write.allowed && write.policy !== 'everyone') {
+      this.logger.warn(
+        `[SEND] refused channel=${channelId.slice(0, 8)} sender=${sender}: write policy ${write.policy} ` +
+          `roles=[${write.roleIds.map((id) => id.slice(0, 8)).join(',')}] ` +
+          `grantsModeration=${write.canModerate} grantsManage=${write.canManage}`
+      );
+      // TYPED, so the client says who may write here instead of a generic "no permission".
+      throw new ForbiddenException({
+        code: writeRefusalCode(write.policy),
+        message: 'Not allowed to post in this channel',
+      });
     }
     // A message names the Graine session that opens it, and which key of that session. The server
     // holds no seed and can supply neither, so a message missing one is a message NOBODY can ever
@@ -6812,6 +6874,7 @@ export class ChannelService implements OnApplicationBootstrap {
             canManage,
             canManageChannels,
             canModerate,
+            canWriteByPolicy: writeVerdicts({ canManage, canModerate }),
           },
           to
         );

@@ -1,4 +1,5 @@
 import type { IMlsService } from '../IMlsService';
+import type { ChannelWritePolicy, WriteVerdicts } from '$lib/services/ChannelService';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import type { IStorage } from '$lib/db';
 import type {
@@ -102,6 +103,8 @@ export interface MessageHandlerDeps {
     workspaceId?: string;
     /** The server's verdict on whether THIS device may post here. Absent = unchanged. */
     viewerCanWrite?: boolean;
+    /** The salon's write policy, sent with an access change. Absent = unchanged. */
+    writePolicy?: ChannelWritePolicy;
   }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
   onWorkspaceUpdated?: (event: {
@@ -124,6 +127,11 @@ export interface MessageHandlerDeps {
      * server) = unchanged.
      */
     canModerate?: boolean;
+    /**
+     * The server's write verdict for every salon policy, for this member's new standing - each salon
+     * row looks its own policy up. Absent (an older server) = every `canWrite` unchanged.
+     */
+    canWriteByPolicy?: WriteVerdicts;
     permissions: string[];
   }) => void;
   onWorkspaceDeleted?: (event: { workspaceId: string; deletedBy?: string }) => void;
