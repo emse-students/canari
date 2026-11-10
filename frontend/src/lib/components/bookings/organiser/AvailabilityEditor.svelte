@@ -417,7 +417,7 @@
       type="button"
       onclick={save}
       disabled={blocked || saving}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+      class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
     >
       <Save size={16} />
       {saving ? m.form_saving_label() : m.bookings_avail_save()}

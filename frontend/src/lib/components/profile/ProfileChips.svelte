@@ -13,7 +13,7 @@
   const cursus = $derived(profile.cursus ?? []);
   const posts = $derived(profile.posts ?? []);
   const chip =
-    'bg-cn-yellow/10 border-cn-yellow/20 text-cn-dark inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold shadow-sm';
+    'bg-accent/10 border-accent/20 text-cn-dark inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold shadow-sm';
 </script>
 
 {#if cursus.length || posts.length || profile.campus}

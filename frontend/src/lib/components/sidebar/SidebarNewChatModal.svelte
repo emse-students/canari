@@ -173,7 +173,7 @@
                 <button
                   type="button"
                   onclick={() => onPickPeer?.(peer.peerId)}
-                  class="text-text-main w-full rounded-xl px-2 py-2.5 text-left text-sm font-medium transition-colors outline-none hover:bg-amber-100/50 focus-visible:bg-amber-100/50 dark:hover:bg-amber-900/30 dark:focus-visible:bg-amber-900/30"
+                  class="text-text-main hover:bg-accent/20 focus-visible:bg-accent/20 w-full rounded-xl px-2 py-2.5 text-left text-sm font-medium transition-colors outline-none"
                 >
                   <EmojiText text={peer.displayName} />
                 </button>
@@ -196,7 +196,7 @@
             value={groupName}
             oninput={(e) => onGroupNameChange(e.currentTarget.value)}
             placeholder={m.chat_modal_group_name_placeholder()}
-            class="placeholder:text-text-muted/70 bg-cn-surface w-full rounded-xl border border-white/60 px-4 py-2.5 text-sm transition-all outline-none focus:border-amber-400/50 focus:ring-2 focus:ring-amber-400/45 dark:border-white/10"
+            class="placeholder:text-text-muted/70 bg-cn-surface focus:border-accent/50 focus:ring-accent/45 w-full rounded-xl border border-white/60 px-4 py-2.5 text-sm transition-all outline-none focus:ring-2 dark:border-white/10"
             autocomplete="off"
           />
         </div>

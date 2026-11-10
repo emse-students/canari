@@ -1658,7 +1658,7 @@
             <button
               type="button"
               onclick={reset}
-              class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold"
+              class="text-on-accent bg-accent rounded-xl px-4 py-2 text-sm font-semibold"
             >
               {m.common_retry_button()}
             </button>

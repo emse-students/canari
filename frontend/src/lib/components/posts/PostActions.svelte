@@ -65,7 +65,7 @@
    * the same fact only competes with the post.
    */
   const ACTION =
-    'flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg px-2.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500';
+    'flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg px-2.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent-icon';
 
   let reactButton = $state<HTMLElement | null>(null);
 
@@ -201,7 +201,7 @@
           onclick={() => onReactionSelect(reaction.type)}
           class="flex h-11 min-w-0 flex-1 items-center justify-center rounded-full text-2xl leading-none transition-transform hover:scale-110 active:scale-95 sm:w-11 sm:flex-none {userReaction ===
           reaction.type
-            ? 'bg-cn-yellow/20 ring-cn-yellow ring-2'
+            ? 'bg-accent/20 ring-accent-icon ring-2'
             : ''}"
           title={reactionTypeToLabel(reaction.type)}
           aria-label={reactionTypeToLabel(reaction.type)}

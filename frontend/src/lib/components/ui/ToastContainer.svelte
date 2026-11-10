@@ -26,7 +26,7 @@
         'error'
           ? 'text-red-err border-red-500/20 bg-red-500/10 dark:text-red-400'
           : toast.type === 'warning'
-            ? 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+            ? 'border-amber-warn/25 bg-amber-warn/10 text-amber-warn-text'
             : 'border-cn-border text-text-main bg-cn-surface '}"
       >
         <span class="mt-0.5 shrink-0">

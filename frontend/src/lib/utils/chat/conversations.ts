@@ -30,14 +30,8 @@ import { mergeMessagePage } from './messageMerge';
 import { isUnreadForUser, readPointFor } from './readState';
 import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
+import { isUuidLike } from '$lib/utils/uuidShape';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** True when `value` is a single user/group UUID (not a canonical direct key). */
-export function isUuidLike(value: string): boolean {
-  return UUID_RE.test(value.trim());
-}
 
 const HEX_ID_RE = /^[0-9a-f]{40,}$/i;
 

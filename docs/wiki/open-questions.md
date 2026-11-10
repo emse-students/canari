@@ -592,3 +592,17 @@ acted on (the hourly commit-log hole report on the server, the shortfall report 
 client). The question is whether the USER should ever see that a frame was dropped on their device: the
 "SECURISE & SYNC" shield that did so lied, and was removed by the user's choice to stop exposing the
 machinery. **Nothing is blocked on it**, and it is a product decision, not a measurement.
+
+## QUESTION - should CanaReels cover every short or vertical video, and for how long? (owner, 2026-11-09)
+
+Asked by the owner on 2026-11-09 while deciding the live replays ([live-replays](live-replays.md)):
+*"un truc général pour toutes les vidéos du genre ? 90 s et vidéos verticales ?"* - whether camera
+CanaReels should move from 30 days to one year, or whether every vertical video of 90 s or less posted
+in the feed should become a CanaReel (and expire like one).
+
+**No such decision exists in the repository.** What holds today: a camera reel is at most 90 s
+([reels C4](services/reels.md)) and is kept **30 days** (`REEL_RETENTION_DAYS`, C6); a video posted
+from the gallery is a feed post and never expires, even when it is drawn full screen in CanaReels. An
+earlier draft (#3133, closed) recorded a 90-day answer dated 2026-11-07; the owner's 2026-11-09
+question re-opens it, so it is not a decision either. `REEL_RETENTION_DAYS` is left at 30 and no code
+is written until the owner answers. Live replays are not part of the question: they are 3 days.

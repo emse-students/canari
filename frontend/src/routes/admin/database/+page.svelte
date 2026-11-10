@@ -46,17 +46,17 @@
 
 <section class="space-y-5">
   <header class="flex items-center gap-3">
-    <Database size={22} class="text-cn-yellow" />
+    <Database size={22} class="text-accent-icon" />
     <h1 class="text-text-main text-xl font-bold">{m.admin_database_title()}</h1>
   </header>
 
   <p class="text-text-muted text-sm leading-relaxed">{m.admin_database_intro()}</p>
 
   <div
-    class="flex gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm"
+    class="border-amber-warn/40 bg-amber-warn/10 flex gap-3 rounded-xl border p-4 text-sm"
     role="note"
   >
-    <TriangleAlert size={18} class="mt-0.5 shrink-0 text-amber-600" />
+    <TriangleAlert size={18} class="text-amber-warn-text mt-0.5 shrink-0" />
     <p class="text-text-main leading-relaxed">{m.admin_database_warning()}</p>
   </div>
 
@@ -74,7 +74,7 @@
       type="button"
       onclick={open}
       disabled={opening}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-60"
+      class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-60"
     >
       <ExternalLink size={16} strokeWidth={2.5} />
       {m.admin_database_open()}

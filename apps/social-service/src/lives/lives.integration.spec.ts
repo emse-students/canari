@@ -99,6 +99,11 @@ const CHAT_MENTIONS = readFileSync(
   join(__dirname, '..', 'migrations', '154_live_chat_mentions.sql'),
   'utf8'
 );
+const REELS = readFileSync(join(__dirname, '..', 'migrations', '069_posts_reels.sql'), 'utf8');
+const LIVE_REPLAYS = readFileSync(
+  join(__dirname, '..', 'migrations', '156_live_replays.sql'),
+  'utf8'
+);
 /** The secret live keys are sealed under in this file (migration 110). */
 const KEY_SECRET = 'live-key-it-throwaway-secret-0123456789abcdef';
 
@@ -413,11 +418,26 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     await q(POSTER_PREVIOUS);
     await q(CHAT_MENTIONS);
     await q(CHAT_MENTIONS);
+    // Core's switch (its migration 021), in the column the start reads, and the `posts` table
+    // migration 156 extends with the replay shape - applied TWICE, as every file here.
+    await q(
+      `CREATE TABLE platform_config (id int PRIMARY KEY,
+         live_replays_mode varchar(16) NOT NULL DEFAULT 'off')`
+    );
+    await q(`INSERT INTO platform_config (id) VALUES (1)`);
+    await q(`CREATE TABLE posts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "authorId" varchar(255) NOT NULL)`);
+    await q(REELS);
+    await q(LIVE_REPLAYS);
+    await q(LIVE_REPLAYS);
     process.env.LIVE_ENABLED = 'true';
     process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV] = KEY_SECRET;
   });
 
   beforeEach(async () => {
+    // A replay post names its live with no cascade (migration 156): it goes first.
+    await q(`DELETE FROM posts`);
+    await q(`UPDATE platform_config SET live_replays_mode = 'off'`);
     await q(`DELETE FROM lives`);
     await q(`DELETE FROM live_starts`);
     await q(`DELETE FROM user_blocks`);
@@ -611,6 +631,61 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         status: HttpStatus.NOT_FOUND,
         code: 'LIVE_NOT_FOUND',
       });
+    });
+  });
+
+  describe('the live replays switch, fixed at the start (WP-R1, migrations 156 and core 021)', () => {
+    const keeps = async (id: string) =>
+      (await q(`SELECT "keepsReplay" FROM lives WHERE id = $1`, [id]))[0].keepsReplay;
+
+    it('a live started while the switch is off keeps no replay; on, it does - and a flip mid-live changes neither', async () => {
+      const before = await start();
+      expect(before.keepsReplay).toBe(false);
+      await q(`UPDATE platform_config SET live_replays_mode = 'on'`);
+      expect(await keeps(before.id)).toBe(false);
+      await lives.end(ALICE, before.id);
+
+      const after = await start(BOB);
+      expect(after.keepsReplay).toBe(true);
+      await q(`UPDATE platform_config SET live_replays_mode = 'off'`);
+      expect(await keeps(after.id)).toBe(true);
+      // The viewer reads the same fact the broadcaster was answered with.
+      await expect(lives.get(CAROL, after.id)).resolves.toMatchObject({ keepsReplay: true });
+    });
+
+    it('a value outside the two refuses the start rather than keep media under it', async () => {
+      // The CHECK of core 021 forbids it; the reader throws if it is ever there.
+      await q(`UPDATE platform_config SET live_replays_mode = 'always'`);
+      await expect(start()).rejects.toThrow(/unknown value/);
+      await expect(q(`SELECT id FROM lives WHERE "broadcasterId" = $1`, [ALICE])).resolves.toEqual(
+        []
+      );
+    });
+
+    it('posts_kind_shape refuses a replay stated in pieces, and the unique index allows ONE replay per live', async () => {
+      const live = await start();
+      const insert = (kind: string, liveId: string | null, durationMs: number | null) =>
+        q(
+          `INSERT INTO posts ("authorId", kind, "durationMs", "expiresAt", "liveId")
+           VALUES ($1, $2, $3, now() + interval '3 days', $4)`,
+          [ALICE, kind, durationMs, liveId]
+        );
+      const code = async (p: Promise<unknown>) =>
+        p.then(
+          () => 'inserted',
+          (e: { code?: string }) => e.code
+        );
+      // 23514: the CHECK; 23503: the foreign key; 23505: the unique index.
+      expect(await code(insert('replay', null, 60_000))).toBe('23514');
+      expect(await code(insert('replay', live.id, null))).toBe('23514');
+      expect(await code(insert('reel', live.id, 60_000))).toBe('23514');
+      expect(await code(insert('replay', '00000000-0000-4000-8000-000000000000', 60_000))).toBe(
+        '23503'
+      );
+      expect(await code(insert('replay', live.id, 60_000))).toBe('inserted');
+      expect(await code(insert('replay', live.id, 60_000))).toBe('23505');
+      // NO CASCADE: a live cannot be deleted under its replay - the purge must wait for the post.
+      expect(await code(q(`DELETE FROM lives WHERE id = $1`, [live.id]))).toBe('23503');
     });
   });
 

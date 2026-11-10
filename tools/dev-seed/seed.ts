@@ -583,6 +583,10 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
         // to `on` by hand at `/admin/platform` for the readings of WP-CHECKPOINT-SKIP, and a reset
         // puts it back.
         checkpoint_skip_mode: 'off',
+        // Dev starts with live replays OFF like every estate (core migration 021); it is moved to
+        // `on` by hand at `/admin/platform` for the readings of docs/wiki/live-replays.md, and a
+        // reset puts it back.
+        live_replays_mode: 'off',
       },
     ],
     users,

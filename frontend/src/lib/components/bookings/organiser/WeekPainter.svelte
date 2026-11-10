@@ -207,7 +207,7 @@
               selected.start === start &&
               selected.end === end}
             <div
-              class="bg-cn-yellow/30 border-cn-yellow/60 absolute inset-x-0 rounded-md border {isSelected
+              class="bg-accent/30 border-accent/60 absolute inset-x-0 rounded-md border {isSelected
                 ? 'ring-text-main ring-2'
                 : ''}"
               style:top="{(start / dayMin) * 100}%"
@@ -237,7 +237,7 @@
       {#if preview}
         <div
           class="pointer-events-none absolute rounded-md border-2 {preview.mode === 'open'
-            ? 'bg-cn-yellow/40 border-cn-yellow'
+            ? 'bg-accent/40 border-accent-icon'
             : 'bg-red-err/15 border-red-err border-dashed'}"
           style:left="{preview.left}%"
           style:width="{preview.width}%"
@@ -281,7 +281,7 @@
       <button
         type="button"
         onclick={() => (picked = null)}
-        class="border-cn-border text-text-main hover:border-cn-yellow/40 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+        class="border-cn-border text-text-main hover:border-accent/40 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
       >
         {m.bookings_avail_run_close()}
       </button>

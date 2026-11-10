@@ -75,6 +75,7 @@ import {
   type StoredLiveKey,
 } from './live-key-at-rest';
 import { derivePosterKey } from './live-poster-key';
+import { readLiveReplaysMode } from './live-replays-mode';
 
 /** A live as its viewers read it: the key included (L2, Q4). */
 export interface LiveView {
@@ -87,6 +88,11 @@ export interface LiveView {
   key: string;
   /** The live's optional title (owner, 2026-11-07), plain text, or null. */
   title: string | null;
+  /**
+   * Whether this live is kept three days as a replay at its end (docs/wiki/live-replays.md), fixed
+   * at its start from `live_replays_mode`: the broadcaster's end screen and a viewer can say so.
+   */
+  keepsReplay: boolean;
 }
 
 /**
@@ -279,10 +285,30 @@ interface LiveRow extends StoredLiveKey {
   endedAt: Date | null;
   endReason: LiveEndReason | null;
   title: string | null;
+  keepsReplay: boolean;
 }
 
 const LIVE_COLUMNS = `id, "broadcasterId", "associationId", ${storedLiveKeyColumns()}, "startedAt",
-  "lastSegmentAt", "nextIndex", "endedAt", "endReason", "title"`;
+  "lastSegmentAt", "nextIndex", "endedAt", "endReason", "title", "keepsReplay"`;
+
+/**
+ * What an end line says of the live it ends - how long it lasted (start to its last segment, the
+ * database's clock), how many segments it sent and how many bytes it holds - so lives per day and
+ * their length are measurable from the log BEFORE any replay is kept (WP-R1; nothing else keeps a
+ * record of a past live). An `UPDATE ... RETURNING` list, read by {@link endFacts}.
+ */
+const END_FACTS_SQL = `(EXTRACT(EPOCH FROM (COALESCE("lastSegmentAt", "startedAt") - "startedAt")) * 1000)::bigint AS "durationMs",
+  "nextIndex" AS segments, "storedBytes" AS "storedBytes", "keepsReplay" AS "keepsReplay"`;
+
+/** The end line's tail, from the columns {@link END_FACTS_SQL} returns. */
+function endFacts(r: {
+  durationMs: string | number;
+  segments: number;
+  storedBytes: string | number;
+  keepsReplay: boolean;
+}): string {
+  return `duration=${Math.round(Number(r.durationMs) / 1000)}s segments=${r.segments} stored=${Number(r.storedBytes)}B replay=${r.keepsReplay ? 'kept' : 'none'}`;
+}
 
 /** How many plaintext keys one query of the backfill takes; it loops until none is left. */
 const PLAINTEXT_KEY_BATCH = 100;
@@ -395,6 +421,8 @@ export class LivesService implements OnModuleDestroy {
       await this.assertAssociationNotArchived(broadcasterId, associationId);
     }
     await this.assertRulesAccepted(broadcasterId, input.acceptedRulesVersion);
+    // FIXED HERE, ON THE ROW, for the live's whole life: a flip mid-live never makes half a replay.
+    const keepsReplay = (await readLiveReplaysMode(this.db.manager, this.logger)) === 'on';
     let row: LiveRow;
     try {
       row = await this.db.transaction(async (tx) => {
@@ -436,9 +464,17 @@ export class LivesService implements OnModuleDestroy {
         const id = randomUUID();
         const sealed = sealLiveKey(id, key);
         const rows: LiveRow[] = await tx.query(
-          `INSERT INTO lives (id, "broadcasterId", "associationId", "liveKeyCiphertext", "liveKeyVersion", "title")
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${LIVE_COLUMNS}`,
-          [id, broadcasterId, associationId, sealed.liveKeyCiphertext, sealed.liveKeyVersion, title]
+          `INSERT INTO lives (id, "broadcasterId", "associationId", "liveKeyCiphertext", "liveKeyVersion", "title", "keepsReplay")
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ${LIVE_COLUMNS}`,
+          [
+            id,
+            broadcasterId,
+            associationId,
+            sealed.liveKeyCiphertext,
+            sealed.liveKeyVersion,
+            title,
+            keepsReplay,
+          ]
         );
         await tx.query(`INSERT INTO live_starts ("broadcasterId") VALUES ($1)`, [broadcasterId]);
         return rows[0];
@@ -452,7 +488,7 @@ export class LivesService implements OnModuleDestroy {
     }
     // The title's length, never its text: a log line is no place for what a member wrote.
     this.logger.log(
-      `[LIVE] ${row.id} started by ${short(broadcasterId)}, title ${title === null ? 'none' : `${[...title].length} chars`}`
+      `[LIVE] ${row.id} started by ${short(broadcasterId)}, title ${title === null ? 'none' : `${[...title].length} chars`}, replay ${keepsReplay ? 'kept' : 'none'}`
     );
     // The broadcaster's own key, just sealed: answered as received, nothing to open.
     return toView(row, key);
@@ -1391,10 +1427,18 @@ export class LivesService implements OnModuleDestroy {
     const [rows] = (await this.db.query(
       `UPDATE lives SET "endedAt" = now(), "endReason" = 'broadcaster'
         WHERE id = $1 AND "broadcasterId" = $2 AND "endedAt" IS NULL
-        RETURNING id, "endedAt", "endReason"`,
+        RETURNING id, "endedAt", "endReason", ${END_FACTS_SQL}`,
       [liveId, broadcasterId]
-    )) as [{ id: string; endedAt: Date; endReason: LiveEndReason }[], number];
-    let ended = rows[0];
+    )) as [
+      ({ id: string; endedAt: Date; endReason: LiveEndReason } & Parameters<typeof endFacts>[0])[],
+      number,
+    ];
+    const first = rows[0];
+    let ended: { id: string; endedAt: Date; endReason: LiveEndReason } | undefined = first && {
+      id: first.id,
+      endedAt: first.endedAt,
+      endReason: first.endReason,
+    };
     if (!ended) {
       const current: LiveRow[] = await this.db.query(
         `SELECT ${LIVE_COLUMNS} FROM lives WHERE id = $1`,
@@ -1419,7 +1463,7 @@ export class LivesService implements OnModuleDestroy {
       ended = { id: row.id, endedAt: row.endedAt!, endReason: row.endReason! };
       this.logger.debug(`[LIVE] end of ${liveId} repeated (${row.endReason})`);
     } else {
-      this.logger.log(`[LIVE] ${liveId} ended by its broadcaster`);
+      this.logger.log(`[LIVE] ${liveId} ended by its broadcaster, ${endFacts(first)}`);
     }
     await this.purgeBestEffort(liveId, 'at end');
     return ended;
@@ -1877,11 +1921,13 @@ export class LivesService implements OnModuleDestroy {
               "endReason" = 'dropped'
         WHERE "endedAt" IS NULL
           AND COALESCE("lastSegmentAt", "startedAt") + $1 * interval '1 millisecond' <= now()
-        RETURNING id, "endReason"`,
+        RETURNING id, "endReason", ${END_FACTS_SQL}`,
       [LIVE_RECONNECT_WINDOW_MS]
-    )) as [{ id: string; endReason: LiveEndReason }[], number];
-    for (const r of rows) this.logger.log(`[LIVE] ${r.id} ended by the sweep: ${r.endReason}`);
-    return rows;
+    )) as [({ id: string; endReason: LiveEndReason } & Parameters<typeof endFacts>[0])[], number];
+    for (const r of rows) {
+      this.logger.log(`[LIVE] ${r.id} ended by the sweep: ${r.endReason}, ${endFacts(r)}`);
+    }
+    return rows.map((r) => ({ id: r.id, endReason: r.endReason }));
   }
 
   /**
@@ -2425,6 +2471,7 @@ function toView(row: LiveRow, key: string): LiveView {
     nextIndex: row.nextIndex,
     key,
     title: row.title,
+    keepsReplay: row.keepsReplay,
   };
 }
 

@@ -73,12 +73,12 @@
     <div class="mt-1 flex flex-wrap items-center gap-2 text-sm">
       <a
         href={resolve('/settings/[section]', { section: 'security' })}
-        class="bg-cn-surface-alt text-text-main hover:bg-cn-yellow/30 inline-flex min-h-11 items-center rounded-full px-4 font-semibold"
+        class="bg-cn-surface-alt text-text-main hover:bg-accent/30 inline-flex min-h-11 items-center rounded-full px-4 font-semibold"
         onclick={() => dismissDeviceNotice(notice.key)}>{m.device_notice_view()}</a
       >
       <button
         type="button"
-        class="bg-cn-surface-alt text-text-main hover:bg-cn-yellow/30 inline-flex min-h-11 items-center rounded-full px-4 font-semibold disabled:opacity-50"
+        class="bg-cn-surface-alt text-text-main hover:bg-accent/30 inline-flex min-h-11 items-center rounded-full px-4 font-semibold disabled:opacity-50"
         disabled={revoking}
         data-device-notice-not-me
         onclick={notMe}>{m.device_notice_not_me()}</button
@@ -92,6 +92,6 @@
     </div>
   </div>
   {#if unread}
-    <span class="mt-2 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true"></span>
+    <span class="bg-accent mt-2 h-2.5 w-2.5 shrink-0 rounded-full" aria-hidden="true"></span>
   {/if}
 </div>
