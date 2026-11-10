@@ -112,3 +112,22 @@ describe('AccountBell', () => {
     expect(api.setBellLevel).not.toHaveBeenCalled();
   });
 });
+
+describe('AccountBell, icon only (a profile header)', () => {
+  it('draws the glyph alone, keeps the level in its name, and opens the same three-level menu', async () => {
+    component = mount(AccountBell, {
+      target: document.body,
+      props: { kind: 'user', targetId: 'u-bob', iconOnly: true },
+    });
+    await settle();
+    expect(bell().textContent?.trim()).toBe('');
+    expect(trigger().getAttribute('aria-label')).toContain(m.bell_label());
+    expect(trigger().getAttribute('aria-label')).toContain(m.bell_level_all());
+    trigger().click();
+    await settle();
+    expect(document.querySelectorAll('[role="option"]')).toHaveLength(3);
+    option(m.bell_level_none()).click();
+    await settle();
+    expect(api.setBellLevel).toHaveBeenCalledWith('user', 'u-bob', 'none');
+  });
+});

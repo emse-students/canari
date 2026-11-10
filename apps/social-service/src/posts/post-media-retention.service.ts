@@ -1,4 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  OnModuleInit,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -7,6 +13,7 @@ import { applyMediaRetentionClass } from '../internal/media-retention-class';
 import {
   deleteNeverCitedMedia,
   claimReelMedia,
+  refusedMediaOf,
   purgeReelMedia,
   type ReelPurgeOutcome,
   type ReelPurgeReason,
@@ -134,6 +141,38 @@ export class PostMediaRetentionService implements OnModuleInit {
     this.logger.log(
       `Reel backfill: ${rows.length} live reel blob(s), ${refused} refused, ${failed} not reached`
     );
+  }
+
+  /**
+   * Proves that every picture a COMMENT or a POST cites is the writer's own upload, or throws.
+   *
+   * Ids are not secrets (every reader of a post sees its media ids) and what a citing row's delete
+   * does to a blob (`release`: the idle clock, then the sweep) is destructive, so a writer who cites
+   * SOMEBODY ELSE'S blob would be able to get it deleted from under its real owner by deleting
+   * their own row. A refused id (not theirs, unknown, purged, stored before ownership was recorded)
+   * is a `400`; the media service being unreachable is a `503` - never stored on trust.
+   */
+  async assertOwnMedia(writerId: string, mediaIds: string[], what: 'comment' | 'post') {
+    if (mediaIds.length === 0) return;
+    let refused: string[];
+    try {
+      refused = await refusedMediaOf(this.httpService, mediaIds, writerId);
+    } catch (e) {
+      this.logger.warn(
+        `[MEDIA-OWNER] ${what} media could not be verified for ${writerId.slice(0, 8)}: ${
+          e instanceof Error ? e.message : String(e)
+        }`
+      );
+      throw new ServiceUnavailableException(
+        `The ${what}'s picture could not be verified, try again`
+      );
+    }
+    if (refused.length > 0) {
+      this.logger.warn(
+        `[MEDIA-OWNER] ${what} by ${writerId.slice(0, 8)} refused: ${refused.length} of ${mediaIds.length} cited object(s) are not theirs`
+      );
+      throw new BadRequestException(`a ${what}'s pictures must be files you uploaded yourself`);
+    }
   }
 
   /**

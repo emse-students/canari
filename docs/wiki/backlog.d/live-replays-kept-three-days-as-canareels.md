@@ -36,3 +36,13 @@ repost, a moderation deletion without strike, no "Entre étudiants" for now): th
 (#3234 kept, #3133 closed). WP-R1 built; WP-R2 (server) and WP-R3 (out of the backup) next; the client
 (WP-R4, WP-R5) and the texts (WP-R6) owed. The CanaReel retention question the owner raised on the way
 is [an open question](../open-questions.md#question---should-canareels-cover-every-short-or-vertical-video-and-for-how-long-owner-2026-11-09), not a decision.
+
+**Decided by the owner, 2026-11-09/10 (D1-D8):**
+
+- Storage cap for replays: **20 GB**. When it is reached, the OLDEST replay is deleted early and the
+  association's admins are notified.
+- A replay is **never republished**.
+- A moderation removal of a replay is a plain deletion, **with no strike**.
+- **Every vertical video of 90 s or less posted is a CanaReel, and a CanaReel lives 1 year**
+  (see [reels](../frontend/modules/reels.md)).
+- Old app versions that show raw mention tokens in the live chat: **accepted, no shim**.

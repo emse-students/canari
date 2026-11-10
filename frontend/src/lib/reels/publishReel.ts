@@ -33,6 +33,7 @@ import {
 import type { ReelClip } from './reelCapture';
 import { firstFramePlaceholder } from './reelFirstFrame';
 import { EncoderLeaseAbortedError, withEncoderLease } from '$lib/video/encoderLease';
+import { isReelFrame, type ReelRule } from './reelRule';
 
 /** What the publish step needs from the outside world. */
 export interface PublishReelDeps {
@@ -40,7 +41,13 @@ export interface PublishReelDeps {
   getToken: () => Promise<string>;
   uploadLimits: () => Promise<{ maxPlaintextBytes: number } | null>;
   prepare: (source: Blob, options: PrepareVideoOptions) => Promise<PreparedVideo>;
-  upload: (file: File, token: string, dims: ImageDimensions) => Promise<MediaRef>;
+  /** Uploads under `retentionClass`: {@link FEED_REEL_UPLOAD_CLASS} for a reel, `archive` for a post. */
+  upload: (
+    file: File,
+    token: string,
+    dims: ImageDimensions,
+    retentionClass: MediaRetentionClass
+  ) => Promise<MediaRef>;
   /**
    * The ThumbHash of the prepared file's FIRST FRAME (`MediaRef.placeholder`), or `null`: every
    * reader paints it while the reel loads, since the server makes no thumbnail. Never throws.
@@ -65,8 +72,8 @@ export function defaultPublishReelDeps(): PublishReelDeps {
     getToken,
     uploadLimits: () => media.uploadLimits(),
     prepare: prepareVideoForUpload,
-    upload: (file, token, dims) =>
-      media.encryptAndUpload(file, token, dims, FEED_REEL_UPLOAD_CLASS),
+    upload: (file, token, dims, retentionClass) =>
+      media.encryptAndUpload(file, token, dims, retentionClass),
     placeholder: firstFramePlaceholder,
     createPost,
   };
@@ -101,6 +108,11 @@ export interface PublishReelInput {
   studentsOnly?: boolean;
   /** The server's cap (`GET /api/posts/reel-limits`). */
   maxDurationMs: number;
+  /**
+   * The served vertical rule (`reelRuleOf`), or `null` from an estate older than it - whose door
+   * refuses no landscape reel, so the take publishes as a reel as it did there.
+   */
+  rule: ReelRule | null;
   /** Progress and cancel for the re-encode (`VideoPreparationState.optionsFor`). */
   video: Pick<PrepareVideoOptions, 'onProgress' | 'signal'>;
   /** Told each step as it starts, so the screen can name it. */
@@ -203,15 +215,45 @@ export async function publishReel(
       throw e;
     });
 
+    // THE RULE ON THE PREPARED FRAME (owner, 2026-11-09): a CanaReel is vertical, and this frame -
+    // rotation baked in - is the one the server is told. The pick was checked on what the engine
+    // DISPLAYED; reaching here with a wide frame means that check could not read it, or read it
+    // otherwise, so the take becomes what the rule says it is - an ordinary post video - and the
+    // line accuses the miss.
+    if (input.rule && !isReelFrame(prepared.width, prepared.height, input.rule)) {
+      console.warn(
+        `[reel-publish] the prepared take is ${prepared.width}x${prepared.height}, not vertical: published as a post, not a reel` +
+          (input.onUploaded ? ' (its chat sends upload their own file)' : '')
+      );
+      enter('mediaUpload');
+      const ref = await deps.upload(
+        prepared.file,
+        token,
+        { width: prepared.width, height: prepared.height },
+        'archive'
+      );
+      enter('createPost');
+      const post = await deps.createPost({
+        markdown: caption,
+        media: [ref],
+        ...postIdentityFields(identity),
+        ...(input.studentsOnly ? { studentsOnly: true } : {}),
+      });
+      console.debug(`[reel-publish] published ${post.id} as a post`);
+      return post;
+    }
+
     // Decoded from the very file uploaded, so the blur is of the frame every reader will see first.
     const placeholder = await deps.placeholder(prepared.file);
     if (!placeholder) console.warn('[reel-publish] published without a first-frame placeholder');
 
     enter('mediaUpload');
-    const uploaded = await deps.upload(prepared.file, token, {
-      width: prepared.width,
-      height: prepared.height,
-    });
+    const uploaded = await deps.upload(
+      prepared.file,
+      token,
+      { width: prepared.width, height: prepared.height },
+      FEED_REEL_UPLOAD_CLASS
+    );
     const ref: MediaRef = placeholder ? { ...uploaded, placeholder } : uploaded;
     const durationMs = declaredReelDurationMs(prepared.durationSeconds, maxDurationMs);
     // THE CHATS ADOPT THIS FILE BEFORE THE POST EXISTS (15.5): written durably now, so whatever the

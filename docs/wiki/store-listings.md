@@ -222,3 +222,9 @@ every PNG against the checklist of section 4 before it leaves the scratchpad. No
 1. User reviews the two drafts and answers 8.3.
 2. A fictional dev dataset exists (section 5), then capture on the bench phone, user views every frame.
 3. `tools/store-listings/play.mjs` dry-run; apply only on the user's word.
+
+## Decided by the owner, 2026-11-09/10
+
+- The two CC BY-SA photos in the store screenshots are replaced by CC0 photos.
+- Apple age rating **13+** (the youngest students are 16); the store UGC answers and register entry C19 no longer say "adults" ([store-ugc-answers](store-ugc-answers.md)).
+- The deleted dev demo communities stay deleted.

@@ -786,6 +786,7 @@
   "report_user_dialog_title": "Signaler cette personne",
   "profile_report_btn": "Signaler",
   "profile_block_btn": "Bloquer",
+  "profile_more_actions": "Plus d'actions sur ce profil",
   "profile_unblock_btn": "Débloquer",
   "profile_block_confirm": "Bloquer {name} ? Vous ne vous trouverez plus dans la recherche, et aucun de vous deux ne pourra ouvrir une discussion avec l'autre ni l'inviter dans un groupe ou un salon. Vos conversations, groupes et communautés existants ne changent pas. La personne n'en est pas informée.",
   "profile_block_done": "Personne bloquée.",
@@ -907,6 +908,7 @@
   "post_comments_sheet_title": "Commentaires",
   "post_comment_load_older_label": "Voir les commentaires plus anciens",
   "post_comment_as_association_caption": "Commentaire au nom de {name}",
+  "post_comment_add_image_label": "Ajouter une image",
   "post_comment_media_error": "Impossible de joindre ce média au commentaire.",
   "post_media_expired_label": "Média expiré.",
   "post_image_alt": "Image de la publication",
@@ -4729,6 +4731,7 @@
   "reels_capture_photo_error": "La photo a échoué. Réessayez.",
   "reels_capture_not_a_video": "Ce fichier n'est pas une vidéo.",
   "reels_capture_too_long": "Un CanaReel dure {seconds} secondes au plus.",
+  "reels_capture_not_vertical": "Un CanaReel est une vidéo verticale. Publiez-la depuis « Nouvelle publication », comme post.",
   "reels_capture_take_refused": "Cette prise n'a pas pu être gardée. Réessayez.",
   "reels_capture_pick_before_limits": "La durée maximale d'un CanaReel n'a pas encore pu être lue. Réessayez dans un instant.",
   "reels_capture_limits_error": "Canari est injoignable - toucher pour réessayer",
@@ -4847,9 +4850,28 @@
   "reels_publish_uploading": "Envoi...",
   "reels_publish_done": "CanaReel publié",
   "reels_publish_error": "Le CanaReel n'a pas pu être publié. Réessayez.",
-  "reels_publish_expiry_note": "Visible {days} jours, puis supprimé automatiquement. Vous pourrez l'enregistrer dans votre galerie d'ici là.",
-  "reels_publish_from_composer_notice": "CanaReel : supprimé au bout de {days} jours. Pour garder la vidéo, gardez-la comme post.",
-  "reels_publish_keep_as_post": "Garder comme post",
+  "reels_publish_expiry_note": "Visible {lifetime}, puis supprimé automatiquement. Vous pourrez l'enregistrer dans votre galerie d'ici là.",
+  "reels_lifetime_years": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} an",
+        "countPlural=other": "{count} ans"
+      }
+    }
+  ],
+  "reels_lifetime_days": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} jour",
+        "countPlural=other": "{count} jours"
+      }
+    }
+  ],
+  "reels_publish_from_composer_notice": "Une vidéo verticale de {seconds} secondes au plus est un CanaReel : supprimé au bout de {lifetime}.",
   "reels_viewer_label": "CanaReels",
   "reels_viewer_close": "Fermer les CanaReels",
   "reels_viewer_prev": "CanaReel précédent",
