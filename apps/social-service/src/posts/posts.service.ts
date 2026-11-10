@@ -56,7 +56,7 @@ import { STUDENTS_ONLY_NOT_OFFERED, assertStudentsOnlyOffered } from './students
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { readPostOpenVerdict } from './post-openable';
-import { readReplayRowFacts } from '../lives/replay-row-facts';
+import { readReplayRowFacts, type ReplayRowFacts } from '../lives/replay-row-facts';
 import { pageComments, type CommentOrder } from './comment-page';
 import { CommentIdentityService } from './comment-identity';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
@@ -1668,17 +1668,21 @@ export class PostsService {
     // stored under the generation it started in and never served (`readPostListPage`). No stamp
     // (Redis unreachable) means no page is stored either.
     let stamp: string | null = null;
+    let cachedPage: unknown = undefined;
     try {
       const cached = (await Promise.race([
         readPostListPage(this.redis, cacheKey, viewerUserId),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 100)),
       ])) as { page: unknown; stamp: string };
       stamp = cached.stamp;
-      // The stored page is what this method returned before, parsed: as untyped as JSON.parse was.
-      if (cached.page !== undefined) return await this.withReplayRowFacts(cached.page as any);
+      cachedPage = cached.page;
     } catch {
       // Redis miss or error - fall through to DB
     }
+    // OUTSIDE the cache's try: only a Redis failure falls through to the database, never a failure
+    // of what is served on top of the page. The stored page is what this method returned before,
+    // parsed: as untyped as JSON.parse was.
+    if (cachedPage !== undefined) return await this.withReplayRowFacts(cachedPage as any);
 
     const rawPosts = await this.listPostRows(params);
 
@@ -1770,6 +1774,7 @@ export class PostsService {
    * the feed card draws the time left without the phone's clock (`readReplayRowFacts`). Added at
    * serve time on the cached and the computed page alike, never stored with the page. A page with no
    * replay - every page while `live_replays_mode` is off - reads nothing and is returned as it is.
+   * A read that fails is logged at ERROR and the rows go out without the facts - never a 500.
    */
   private async withReplayRowFacts<T>(page: T): Promise<T> {
     if (!Array.isArray(page)) return page;
@@ -1777,7 +1782,17 @@ export class PostsService {
       .filter((p: any) => p?.kind === 'replay' && typeof p.liveId === 'string')
       .map((p: any) => p.liveId as string);
     if (liveIds.length === 0) return page;
-    const facts = await readReplayRowFacts(this.postRepo.manager, liveIds);
+    let facts: Map<string, ReplayRowFacts>;
+    try {
+      facts = await readReplayRowFacts(this.postRepo.manager, liveIds);
+    } catch (e) {
+      // A MISSING COVER NEVER FAILS THE FEED: the rows go out with no cover and no server clock
+      // (the card then draws neither), and the cause is named here.
+      this.logger.error(
+        `[LIVE_REPLAY] ${liveIds.length} replay row(s) served without cover or clock: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return page;
+    }
     return page.map((p: any) => {
       const f = p?.kind === 'replay' ? facts.get(p.liveId) : undefined;
       if (p?.kind === 'replay' && !f) {

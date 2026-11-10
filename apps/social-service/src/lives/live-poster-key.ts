@@ -90,3 +90,41 @@ export function closePosterKeyOutage(liveId: string): void {
     `[LIVE_KEY] ${liveId}: purged with its key still unreadable (${failed} list read(s))`
   );
 }
+
+/**
+ * The SQL of a live's preview AGE, in ms on the database's clock (`now() - posterAt`): NULL when the
+ * live never stored one. Selected as `"posterAgeMs"` beside `"posterName"` by every reader that serves
+ * a preview (the open-lives list, a replay's row), so the age means the same thing on both.
+ */
+export function posterAgeMsSql(alias: string): string {
+  return `floor(extract(epoch FROM now() - ${alias}."posterAt") * 1000)::float8`;
+}
+
+/** The preview columns a serving reader selected: the name, its age ({@link posterAgeMsSql}), the key. */
+export interface StoredPoster extends StoredLiveKey {
+  posterName: string | null | undefined;
+  posterAgeMs: number | null | undefined;
+}
+
+/**
+ * THE ONE ANSWER a reader serves about a live's preview: the image's name and age with the key that
+ * opens it alone ({@link posterKeyOf}), or neither. No name, no age, or a key that does not open is
+ * no preview - never an age of 0 standing for an unknown one. A name without an age is a row the
+ * poster's confirm step never writes (it stamps both together): served without a picture, at WARN
+ * naming the live.
+ */
+export function servedPoster(
+  liveId: string,
+  row: StoredPoster
+): { poster: { name: string; ageMs: number } | null; posterKey: string | null } {
+  const { posterName, posterAgeMs } = row;
+  if (!posterName) return { poster: null, posterKey: null };
+  const age = posterAgeMs === null || posterAgeMs === undefined ? NaN : Number(posterAgeMs);
+  if (!Number.isFinite(age)) {
+    logger.warn(`[LIVE_POSTER] ${liveId}: a preview name without its time - served without it`);
+    return { poster: null, posterKey: null };
+  }
+  const posterKey = posterKeyOf(liveId, row);
+  if (posterKey === null) return { poster: null, posterKey: null };
+  return { poster: { name: posterName, ageMs: Math.max(0, age) }, posterKey };
+}

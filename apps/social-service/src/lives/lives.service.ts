@@ -79,7 +79,7 @@ import {
   storedLiveKeyColumns,
   type StoredLiveKey,
 } from './live-key-at-rest';
-import { closePosterKeyOutage, posterKeyOf } from './live-poster-key';
+import { closePosterKeyOutage, posterAgeMsSql, servedPoster } from './live-poster-key';
 import { readLiveReplaysMode } from './live-replays-mode';
 import { readPostOpenVerdict } from '../posts/post-openable';
 import { invalidatePostListCache } from '../posts/post-list-cache';
@@ -629,8 +629,7 @@ export class LivesService implements OnModuleDestroy {
       await this.db.query(
         `SELECT l.id, l."broadcasterId", l."associationId", l."startedAt", l."title",
               ${bdeModeratesContentSql('$1', 'l."associationId"', 'l."broadcasterId"')} AS "viewerModerates",
-              l."posterName",
-              floor(extract(epoch FROM now() - l."posterAt") * 1000)::float8 AS "posterAgeMs",
+              l."posterName", ${posterAgeMsSql('l')} AS "posterAgeMs",
               ${storedLiveKeyColumns('l')}
          FROM lives l
         WHERE l."endedAt" IS NULL
@@ -648,18 +647,18 @@ export class LivesService implements OnModuleDestroy {
       const { posterName, posterAgeMs, liveKey, liveKeyCiphertext, liveKeyVersion, ...rest } = r;
       // The DERIVED preview key, never the live key: it opens the picture and nothing else. A key
       // that does not open leaves THIS live without a picture (reported once per outage).
-      const posterKey =
-        posterName !== null
-          ? posterKeyOf(r.id, { liveKey, liveKeyCiphertext, liveKeyVersion })
-          : null;
+      const { poster, posterKey } = servedPoster(r.id, {
+        posterName,
+        posterAgeMs,
+        liveKey,
+        liveKeyCiphertext,
+        liveKeyVersion,
+      });
       return {
         ...rest,
         viewerModerates: rest.viewerModerates === true,
         viewers: counts?.get(r.id) ?? null,
-        poster:
-          posterName !== null && posterKey !== null
-            ? { name: posterName, ageMs: Math.max(0, Number(posterAgeMs)) }
-            : null,
+        poster,
         posterKey,
       };
     });

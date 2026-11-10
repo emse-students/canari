@@ -15,8 +15,8 @@
  */
 import { Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
-import { storedLiveKeyColumns, type StoredLiveKey } from './live-key-at-rest';
-import { posterKeyOf } from './live-poster-key';
+import { storedLiveKeyColumns } from './live-key-at-rest';
+import { posterAgeMsSql, servedPoster, type StoredPoster } from './live-poster-key';
 
 const logger = new Logger('LiveReplayRow');
 
@@ -31,7 +31,8 @@ export interface ReplayRowFacts {
 }
 
 /**
- * The facts of the given lives' replays, by live id, in ONE query. A live id with no row left
+ * The facts of the given lives' replays, by live id, in ONE query. A failure THROWS: the caller
+ * (`PostsService.withReplayRowFacts`) owns isolating it from the page. A live id with no row left
  * (a broadcaster's erasure met it first) still answers its `serverNow`, with no cover.
  */
 export async function readReplayRowFacts(
@@ -41,41 +42,16 @@ export async function readReplayRowFacts(
   const ids = [...new Set(liveIds)];
   const facts = new Map<string, ReplayRowFacts>();
   if (ids.length === 0) return facts;
-  const rows: (StoredLiveKey & {
-    liveId: string;
-    serverNow: Date;
-    posterName: string | null;
-    posterAgeMs: number | null;
-  })[] = await manager.query(
-    `SELECT ids.id::text AS "liveId", now() AS "serverNow", l."posterName",
-            floor(extract(epoch FROM now() - l."posterAt") * 1000)::float8 AS "posterAgeMs",
+  const rows: (StoredPoster & { liveId: string; serverNow: Date })[] = await manager.query(
+    `SELECT ids.id::text AS "liveId", now() AS "serverNow",
+            l."posterName", ${posterAgeMsSql('l')} AS "posterAgeMs",
             ${storedLiveKeyColumns('l')}
        FROM unnest($1::uuid[]) AS ids(id)
        LEFT JOIN lives l ON l.id = ids.id`,
     [ids]
   );
   for (const r of rows) {
-    const {
-      liveId,
-      serverNow,
-      posterName,
-      posterAgeMs,
-      liveKey,
-      liveKeyCiphertext,
-      liveKeyVersion,
-    } = r;
-    const posterKey =
-      posterName !== null && posterName !== undefined
-        ? posterKeyOf(liveId, { liveKey, liveKeyCiphertext, liveKeyVersion })
-        : null;
-    facts.set(liveId, {
-      poster:
-        posterName && posterKey !== null
-          ? { name: posterName, ageMs: Math.max(0, Number(posterAgeMs)) }
-          : null,
-      posterKey: posterName && posterKey !== null ? posterKey : null,
-      serverNow,
-    });
+    facts.set(r.liveId, { ...servedPoster(r.liveId, r), serverNow: r.serverNow });
   }
   logger.debug(
     `[LIVE_REPLAY] row facts for ${ids.length} replay(s): ${[...facts.values()].filter((f) => f.poster).length} with a cover`
