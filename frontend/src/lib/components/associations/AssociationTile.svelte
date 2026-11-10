@@ -185,9 +185,7 @@
       -->
         {#if association.role}
           <div class="mt-auto pt-1">
-            <span
-              class="text-cn-dark bg-cn-yellow/20 rounded-full px-2 py-0.5 text-xs font-semibold"
-            >
+            <span class="text-cn-dark bg-accent/20 rounded-full px-2 py-0.5 text-xs font-semibold">
               {association.role}
             </span>
           </div>

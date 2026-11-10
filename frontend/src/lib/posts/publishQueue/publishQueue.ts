@@ -49,6 +49,7 @@
  * broadcast, and hand their Retry, Pause and Delete to it ({@link PublishQueue.nudge}).
  */
 import type { CreatePostPayload, PostMediaRef } from '$lib/posts/api';
+import { reelDeclarationFor, type ReelRule } from '$lib/reels/reelRule';
 import type { ImageDimensions, MediaRef } from '$lib/media';
 import type { OutboxResumableUpload } from '$lib/db/types';
 import type { ResumableBlobEncoding } from '$lib/utils/resumableUpload';
@@ -111,7 +112,13 @@ export interface PublishQueueDeps {
     file: File,
     onProgress: (fraction: number) => void,
     signal: AbortSignal
-  ) => Promise<{ file: File; dims?: ImageDimensions }>;
+  ) => Promise<{ file: File; dims?: ImageDimensions; durationMs?: number }>;
+  /**
+   * The served CanaReel rule (`reelRuleOf` of `GET /api/posts/reel-limits`), or `null` from an estate
+   * older than it - then no post becomes a reel, as there. A failure to ask is a failure of the
+   * create step (waited out or retried like any), never a post published without the rule.
+   */
+  reelRule: () => Promise<ReelRule | null>;
   /** The blob format of a prepared file (`writesSegmented`: a video, when the writer is on). */
   encodingFor: (mimeType: string) => ResumableBlobEncoding;
   upload: (args: PublishUploadArgs) => Promise<MediaRef>;
@@ -491,6 +498,40 @@ export class PublishQueue {
     if (stoppedHere()) throw new StepAbortedError();
   }
 
+  /**
+   * `{ kind: 'reel', durationMs }` when the post is a CanaReel by the served rule, `null` when it is a
+   * post. Logged either way for a single video, the one case the rule reads.
+   */
+  private async reelDeclaration(
+    post: QueuedPost
+  ): Promise<{ kind: 'reel'; durationMs: number } | null> {
+    if (post.media.length !== 1 || !post.media[0].prepared?.type.startsWith('video/')) return null;
+    const rule = await this.deps.reelRule();
+    if (!rule) {
+      this.deps.log(
+        `[PUBLISH-QUEUE] ${post.id} one video, but the estate serves no reel rule: a post`
+      );
+      return null;
+    }
+    const prepared = post.media[0].prepared;
+    const reel = reelDeclarationFor(
+      post.payload,
+      [
+        {
+          type: prepared.type,
+          width: prepared.width,
+          height: prepared.height,
+          durationMs: prepared.durationMs,
+        },
+      ],
+      rule
+    );
+    this.deps.log(
+      `[PUBLISH-QUEUE] ${post.id} one video ${prepared.width ?? '?'}x${prepared.height ?? '?'}, ${prepared.durationMs ?? '?'} ms: ${reel ? 'a CanaReel' : 'a post'}`
+    );
+    return reel;
+  }
+
   /** Takes one post as far as it can go. */
   private async process(post: QueuedPost): Promise<Outcome> {
     const abort = new AbortController();
@@ -514,7 +555,11 @@ export class PublishQueue {
           const original = await this.deps.store.readFile(post.id, i);
           // Durations are logged only: the measurement the weak-network page quotes, never a bound.
           const preparedAt = performance.now();
-          const { file: prepared, dims } = await this.deps.prepare(
+          const {
+            file: prepared,
+            dims,
+            durationMs,
+          } = await this.deps.prepare(
             new File([original.bytes], original.name, { type: original.type }),
             (f) => this.setView(post, { phase: 'preparing', index: i, step: f }),
             abort.signal
@@ -526,6 +571,7 @@ export class PublishQueue {
             size: file.bytes.byteLength,
             ...(dims?.width ? { width: dims.width } : {}),
             ...(dims?.height ? { height: dims.height } : {}),
+            ...(durationMs ? { durationMs } : {}),
           };
           if (!(await this.deps.store.update(post, { index: i, file }))) return 'gone';
           this.deps.log(
@@ -589,8 +635,12 @@ export class PublishQueue {
         post.createSent = true;
         if (!(await this.deps.store.update(post))) return 'gone';
       }
+      // EVERY VERTICAL VIDEO OF 90 S OR LESS IS A CANAREEL (owner, 2026-11-09): decided here, on the
+      // PREPARED frame and length - what the server is told - for a post whose only content is it.
+      const reel = await this.reelDeclaration(post);
       await this.deps.createPost({
         ...post.payload,
+        ...reel,
         id: post.id,
         media: post.media.map((m) => m.ref!),
       });

@@ -492,7 +492,7 @@
   "src/lib/components/live/LiveChatPanel.svelte": {
     "button": 7,
     "select": 0,
-    "input": 1
+    "input": 0
   },
   "src/lib/components/live/LiveFeedCard.svelte": {
     "button": 1,
@@ -860,7 +860,7 @@
     "input": 3
   },
   "src/lib/components/reels/CameraOverlayStub.test-helper.svelte": {
-    "button": 2,
+    "button": 1,
     "select": 0,
     "input": 0
   },
@@ -1301,11 +1301,6 @@
   },
   "src/routes/profile/(me)/+page.svelte": {
     "button": 1,
-    "select": 0,
-    "input": 0
-  },
-  "src/routes/profile/[id]/+page.svelte": {
-    "button": 4,
     "select": 0,
     "input": 0
   },

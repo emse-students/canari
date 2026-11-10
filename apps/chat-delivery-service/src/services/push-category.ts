@@ -72,6 +72,7 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // reader (WP-L7; widened 2026-11-07, docs/wiki/engagement.md): a publication like that account's
   // posts, so the switch that silences those posts silences its lives too.
   social_live_started: 'posts',
+  social_live_mention: 'mentions',
   // A follow request and its acceptance (WP-F4): a category of their own, which the settings screen
   // draws a switch for. Off, the request still waits in the inbox - only the push is not sent.
   social_follow_request: 'follows',

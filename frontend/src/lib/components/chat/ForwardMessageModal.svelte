@@ -117,7 +117,7 @@
         bind:value={query}
         placeholder={m.chat_search_discussion_placeholder()}
         aria-label={m.chat_search_discussion_label()}
-        class="border-cn-border text-text-main focus:border-cn-yellow w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
+        class="border-cn-border text-text-main focus:border-accent-icon w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
       />
     </div>
 
@@ -131,7 +131,7 @@
             onclick={() => pick(cand)}
             aria-current={isPreselected(cand) ? 'true' : undefined}
             class="flex items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5
- {isPreselected(cand) ? 'ring-cn-yellow bg-cn-yellow/10 ring-2' : ''}"
+ {isPreselected(cand) ? 'ring-accent-icon bg-accent/10 ring-2' : ''}"
           >
             {#if cand.conversation.conversationType === 'direct'}
               <Avatar

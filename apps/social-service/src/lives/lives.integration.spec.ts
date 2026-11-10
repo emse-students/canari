@@ -97,6 +97,10 @@ const POSTER_PREVIOUS = readFileSync(
   join(__dirname, '..', 'migrations', '141_live_poster_previous.sql'),
   'utf8'
 );
+const CHAT_MENTIONS = readFileSync(
+  join(__dirname, '..', 'migrations', '154_live_chat_mentions.sql'),
+  'utf8'
+);
 const REELS = readFileSync(join(__dirname, '..', 'migrations', '069_posts_reels.sql'), 'utf8');
 const LIVE_REPLAYS = readFileSync(
   join(__dirname, '..', 'migrations', '156_live_replays.sql'),
@@ -420,6 +424,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     await q(TITLE_AND_POSTER);
     await q(POSTER_PREVIOUS);
     await q(POSTER_PREVIOUS);
+    await q(CHAT_MENTIONS);
+    await q(CHAT_MENTIONS);
     // Core's switch (its migration 021), in the column the start reads, and the `posts` table
     // migration 156 extends with the replay shape - applied TWICE, as every file here.
     await q(
@@ -2939,7 +2945,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         {
           isUserMuted: async (userId: string) => muted.has(userId),
         } as unknown as ModerationService,
-        lives
+        lives,
+        notifications
       );
     });
 
@@ -2968,6 +2975,154 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         `UPDATE ${table} SET "createdAt" = "createdAt" - $2 * interval '1 millisecond' WHERE "${column}" = $1`,
         [who, ms]
       );
+
+    describe('mentions in the chat (owner, 2026-11-09, migration 154)', () => {
+      // A name for every author: the outer stub names ALICE only (an announcement test needs it so).
+      beforeEach(() => {
+        chat = new LiveChatService(
+          ds,
+          { isUserMuted: async () => false } as unknown as ModerationService,
+          lives,
+          {
+            resolveDisplayName: async (id: string) => 'Name of ' + id.slice(0, 1),
+            pushNotice: (data: Parameters<PostNotificationsService['pushNotice']>[0]) =>
+              notifications.pushNotice(data),
+          } as unknown as PostNotificationsService
+        );
+      });
+      /** As the controller does it, with the candidates a client declares. */
+      const sayTo = async (who: string, liveId: string, mentions: string[], clientId = uuid()) => {
+        await lives.mayChat(who, liveId);
+        return chat.post(who, liveId, { clientId, sealed: sealed('hi'), mentions });
+      };
+      const mentionNotices = () => notices.filter((n) => n.type === 'live_mention');
+
+      it('tells ONE person per mention, once - a retried send tells nobody twice', async () => {
+        const live = await start();
+        const clientId = uuid();
+        await sayTo(BOB, live.id, [CAROL, DAVE], clientId);
+        await sayTo(BOB, live.id, [CAROL, DAVE], clientId);
+        expect(mentionNotices()).toHaveLength(1);
+        expect([...mentionNotices()[0].recipientIds].sort((a, b) => a.localeCompare(b))).toEqual([
+          CAROL,
+          DAVE,
+        ]);
+        expect(mentionNotices()[0]).toMatchObject({
+          actorId: BOB,
+          pushData: expect.objectContaining({ liveId: live.id }),
+        });
+        const [row] = await q(
+          'SELECT "mentionedUserIds" FROM live_chat_messages WHERE "liveId" = $1',
+          [live.id]
+        );
+        expect(
+          [...row.mentionedUserIds].sort((a: string, b: string) => a.localeCompare(b))
+        ).toEqual([CAROL, DAVE]);
+      });
+
+      it('tells nobody who cannot see the live, or the author, and a line with none tells nobody', async () => {
+        const live = await start();
+        // FRANK shares no space with ALICE and follows nobody: outside the audience.
+        await sayTo(BOB, live.id, [FRANK, BOB, '9'.repeat(64)]);
+        expect(mentionNotices()).toEqual([]);
+        const [row] = await q('SELECT "mentionedUserIds" FROM live_chat_messages');
+        expect(row.mentionedUserIds).toEqual([]);
+        await say(BOB, live.id, 'no mention');
+        expect(mentionNotices()).toEqual([]);
+      });
+
+      it('never tells someone removed from the live, or blocked either way with the author or the broadcaster', async () => {
+        const live = await start();
+        await lives.removeViewer(ALICE, live.id, CAROL);
+        await q('INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)', [DAVE, BOB]);
+        await q('INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)', [ALICE, EVE]);
+        await sayTo(BOB, live.id, [CAROL, DAVE, EVE]);
+        expect(mentionNotices()).toEqual([]);
+      });
+
+      it('the broadcaster can be mentioned', async () => {
+        const live = await start();
+        await sayTo(BOB, live.id, [ALICE]);
+        expect(mentionNotices()).toHaveLength(1);
+        expect(mentionNotices()[0].recipientIds).toEqual([ALICE]);
+      });
+
+      it('tells the same person once a minute per author, by the rows - then again', async () => {
+        const live = await start();
+        await sayTo(BOB, live.id, [CAROL]);
+        await sayTo(BOB, live.id, [CAROL, DAVE]);
+        expect(mentionNotices().map((n) => n.recipientIds)).toEqual([[CAROL], [DAVE]]);
+        // The window is the rows': moving them back by the database clock opens it again.
+        await age('live_chat_messages', 'authorId', BOB, 61_000);
+        await sayTo(BOB, live.id, [CAROL]);
+        expect(mentionNotices().map((n) => n.recipientIds)).toEqual([[CAROL], [DAVE], [CAROL]]);
+      });
+
+      it('another author is a window of its own', async () => {
+        const live = await start();
+        await sayTo(BOB, live.id, [CAROL]);
+        await sayTo(DAVE, live.id, [CAROL]);
+        expect(mentionNotices()).toHaveLength(2);
+      });
+
+      it('answers which of the candidates a picker may suggest: the audience, no block with the author', async () => {
+        const live = await start();
+        await q('INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)', [EVE, BOB]);
+        const ids = await chat.mentionAudience(BOB, live.id, [CAROL, EVE, FRANK, BOB]);
+        expect(ids).toEqual([CAROL]);
+        // It is the same rule with no window: a person just mentioned is still suggested.
+        await sayTo(BOB, live.id, [CAROL]);
+        expect(await chat.mentionAudience(BOB, live.id, [CAROL])).toEqual([CAROL]);
+      });
+
+      it('the suggestion says nothing about a third party: a removal, a block with the broadcaster', async () => {
+        const live = await start();
+        // DAVE removed by the broadcaster, CAROL and the broadcaster blocked: facts between OTHER
+        // people, which an answer for ids the caller chose would hand any viewer (review of #3233).
+        await lives.removeViewer(ALICE, live.id, DAVE);
+        await q('INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)', [
+          CAROL,
+          ALICE,
+        ]);
+        const ids = await chat.mentionAudience(BOB, live.id, [CAROL, DAVE]);
+        expect([...ids].sort((a, b) => a.localeCompare(b))).toEqual([CAROL, DAVE]);
+        // And a line still tells neither of them.
+        await sayTo(BOB, live.id, [CAROL, DAVE]);
+        expect(mentionNotices()).toEqual([]);
+      });
+
+      it('refuses a malformed list of mentions, and stores nothing for it', async () => {
+        const live = await start();
+        for (const mentions of ['x', [1], ['not-an-id'], Array(21).fill(CAROL)]) {
+          await lives.mayChat(BOB, live.id);
+          expect(
+            await refusal(
+              chat.post(BOB, live.id, { clientId: uuid(), sealed: sealed('hi'), mentions })
+            )
+          ).toMatchObject({ status: HttpStatus.BAD_REQUEST });
+        }
+        expect(await q('SELECT 1 FROM live_chat_messages')).toEqual([]);
+      });
+
+      it('a failed push is logged and the line stands', async () => {
+        const live = await start();
+        const failing = new LiveChatService(
+          ds,
+          { isUserMuted: async () => false } as unknown as ModerationService,
+          lives,
+          {
+            resolveDisplayName: async () => {
+              throw new Error('names are down');
+            },
+            pushNotice: async () => 0,
+          } as unknown as PostNotificationsService
+        );
+        await lives.mayChat(BOB, live.id);
+        await expect(
+          failing.post(BOB, live.id, { clientId: uuid(), sealed: sealed('hi'), mentions: [CAROL] })
+        ).resolves.toMatchObject({ authorId: BOB });
+      });
+    });
 
     it('orders messages by a server sequence, and a cursor continues exactly where it stopped', async () => {
       const live = await start();
@@ -3708,7 +3863,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         {
           isUserMuted: async (userId: string) => muted.has(userId),
         } as unknown as ModerationService,
-        lives
+        lives,
+        notifications
       );
     });
     afterAll(() => {

@@ -969,11 +969,11 @@
   {#if channelInvite}
     <!-- Channel invite card with Join button -->
     <div
-      class="inline-flex max-w-xs flex-col gap-2.5 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 shadow-sm dark:bg-amber-500/10 {shouldAnimate
+      class="border-accent/20 bg-accent/5 inline-flex max-w-xs flex-col gap-2.5 rounded-2xl border px-4 py-3 shadow-sm {shouldAnimate
         ? 'animate-rise-in'
         : ''}"
     >
-      <div class="flex items-center gap-2 text-amber-700 dark:text-amber-400">
+      <div class="text-accent-text flex items-center gap-2">
         <!-- The community's own logo, falling back to its initials (GroupAvatar) rather than a
              generic building icon. -->
         <div class="h-5 w-5 shrink-0 overflow-hidden rounded-md">
@@ -1004,7 +1004,7 @@
         <button
           onclick={() => onJoinChannel?.(channelInvite.channelId)}
           type="button"
-          class="text-cn-ink inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold shadow-sm shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95"
+          class="text-on-accent bg-accent shadow-accent/20 hover:bg-accent-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold shadow-sm transition-all active:scale-95"
         >
           <Building2 size={12} strokeWidth={3} />
           {m.msg_channel_invite_join_button()}
@@ -1054,7 +1054,7 @@
       -->
         <div
           class="text-cn-ink pointer-events-none absolute top-1/2 z-0 flex h-9 w-9 items-center justify-center rounded-full shadow-md transition-[background-color,box-shadow] duration-100
- {replyArmed ? 'bg-amber-400 ring-2 ring-amber-200' : 'bg-amber-400/70'}
+ {replyArmed ? 'bg-accent ring-accent/40 ring-2' : 'bg-accent/70'}
  {isOwn ? 'right-1' : 'left-1'}"
           style:opacity={0.35 + 0.65 * replyHintOpacity}
           style:transform={`translateY(-50%) scale(${replyArmed ? 1.15 : 0.6 + 0.4 * replyHintOpacity})`}
@@ -1153,7 +1153,7 @@
               : isOwn
                 ? 'text-bubble-out-text bg-bubble-out'
                 : 'text-text-main bg-bubble-in'} {isHighlighted
-              ? 'animate-pulse ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent'
+              ? 'ring-accent/80 animate-pulse ring-2 ring-offset-2 ring-offset-transparent'
               : ''} {shouldAnimate ? 'animate-rise-in' : ''}"
           >
             {#if pollEnvelope && pollSpec && pollMeta}

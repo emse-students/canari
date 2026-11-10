@@ -36,7 +36,7 @@
     <MessageMentionChip userId={part.userId} />
   {:else if part.type === 'hashtag'}
     <!-- IT TAKES THE BUBBLE'S OWN COLOUR, because the bubble is the only thing that knows what it
-         is filled with. `text-amber-600/80 dark:text-amber-400/70` was 1.68:1 on the outgoing
+         is filled with. `text-accent-text` was 1.68:1 on the outgoing
          yellow in light mode and 1.13:1 in dark - *"les # ne sont pas forcement visibles (jaune sur
          jaune)"* (user, 2026-09-20), measured against the four bubble fills. `currentColor` is
          10.35:1 and 12.10:1 there and the body contrast everywhere else, by construction rather

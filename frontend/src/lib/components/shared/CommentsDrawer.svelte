@@ -246,7 +246,7 @@
         </h2>
         <button
           type="button"
-          class="ui-icon-button rounded-full outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-white/10"
+          class="ui-icon-button focus-visible:ring-accent-icon rounded-full outline-none hover:bg-black/5 focus-visible:ring-2 dark:hover:bg-white/10"
           aria-label={m.reels_comments_close()}
           title={m.reels_comments_close()}
           onclick={closeAnimated}

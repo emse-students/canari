@@ -214,7 +214,7 @@
       type="file"
       accept="image/jpeg,image/png,image/webp"
       onchange={onPickFile}
-      class="text-text-main file:bg-cn-yellow file:text-cn-ink text-sm file:mr-2 file:rounded-lg file:border-0 file:px-3 file:py-1.5 file:text-sm file:font-bold"
+      class="text-text-main file:bg-accent file:text-cn-ink text-sm file:mr-2 file:rounded-lg file:border-0 file:px-3 file:py-1.5 file:text-sm file:font-bold"
     />
     {#if pickedName}
       <span class="text-text-muted max-w-[200px] truncate text-xs">{pickedName}</span>
@@ -255,7 +255,7 @@
           style="left: {geo.boxLeft}px; top: {geo.boxTop}px; width: {boxSize}px; height: {boxSize}px;"
         >
           <div
-            class="bg-cn-yellow pointer-events-auto absolute -right-2 -bottom-2 h-5 w-5 cursor-nwse-resize touch-none rounded-full border-2 border-white"
+            class="bg-accent pointer-events-auto absolute -right-2 -bottom-2 h-5 w-5 cursor-nwse-resize touch-none rounded-full border-2 border-white"
             role="slider"
             aria-label={m.asso_logo_resize_handle_aria()}
             aria-valuenow={Math.round(boxSize)}
@@ -283,7 +283,7 @@
         step="0.02"
         value={zoom}
         oninput={onZoomInput}
-        class="accent-cn-yellow flex-1"
+        class="accent-accent flex-1"
       />
     </div>
 
@@ -304,7 +304,7 @@
         type="button"
         onclick={exportBlob}
         disabled={!loaded}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+        class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
       >
         {m.asso_logo_use_image_button()}
       </button>
