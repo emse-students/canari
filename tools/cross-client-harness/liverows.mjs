@@ -52,6 +52,9 @@ const STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S} stalled at [\d.]+(?: \
 const STALL_SEEK = new RegExp(String.raw`^\[LIVE\] viewer ${S}: seek to the live edge \(stall\) at [\d.]+(?:, \d+ ms behind)?$`);
 const NOT_A_STALL = new RegExp(String.raw`^\[LIVE\] viewer ${S}: waiting while seeking at [\d.]+ - not a stall$`);
 const SAYS_STALL = /^\[LIVE\] viewer .*stall/;
+// THE ONE INFO LINE A STALL ENDS WITH (owner, 2026-11-09): its duration and the margin it started from.
+// The stall is already counted by its `stalled at` line; this line only closes it.
+const STALL_END = new RegExp(String.raw`^\[LIVE\] viewer ${S}: stalled \d+ ms \([a-z-]+\), from a margin of (?:\d+|-) ms, target \d+ ms$`);
 // The engine's own wait (media buffered ahead): opened by `waiting at`, closed by `ended by itself`
 // with how long it held the picture, or by a `stalled at` line when it did not end.
 const HELD = new RegExp(String.raw`^\[LIVE\] viewer ${S}: waiting at [\d.]+ with [\d.]+ s buffered ahead \[[\d. -]*\] - the engine's own wait$`);
@@ -118,7 +121,8 @@ export function stallsOf(lines) {
       // the gap is counted after on its own and still fails the row.
       const of = unresolved.length ? unresolved.shift() : after;
       out[of ? 'stallSeeksAfter' : 'stallSeeksBefore']++;
-    } else if (SAYS_STALL.test(s) && !NOT_A_STALL.test(s)) out.unread.push(s);
+    } else if (STALL_END.test(s)) continue;
+    else if (SAYS_STALL.test(s) && !NOT_A_STALL.test(s)) out.unread.push(s);
   }
   if (answered) out.strayEndAnswers++; // an end answer as the very last line stopped nothing
   if (holding) out.heldOpen++; // never read again: no proof it ended
@@ -288,13 +292,16 @@ const VIEWER = [
   at(D, String.raw`\[LiveChat\] \{"op":"key","liveId":"${S}"\}`),
   at(D, String.raw`\[LiveCrypto\] \{"op":"open","index":${N},"sealedBytes":${N}\}`),
   at(D, String.raw`\[LIVE\] viewer ${S}: no segment yet, waiting`),
-  // `join`, `stall` and `short` only: `catch-up`, `drift` and `time gap` are a viewer behind or a
+  // `join` and `stall` only: `catch-up`, `drift` and `time gap` are a viewer behind or a
   // broadcaster re-acquiring its camera, none of them the steady path, so each stays dirt until a
-  // reading explains it. `short` IS the steady path since #2689: the media ahead would not outlast the
-  // longest wait for the next delivery, so the viewer re-anchors before that wait drains it - and says
-  // so when its buffer cannot hold the target yet (read on LIVE-STALL-1 and LIVE-WEB-2, `1.5.1-alpha.8`).
-  at(D, String.raw`\[LIVE\] viewer ${S}: seek to the live edge \((join|stall|short)\) at ${F}, ${N} ms behind`),
-  at(D, String.raw`\[LIVE\] viewer ${S}: ${F} s buffered, under the ${N} ms target - no seek \(short\)`),
+  // reading explains it. The `short` re-anchor of #2689 is GONE (owner, 2026-11-09): it seeked BEHIND
+  // the playhead and replayed shown media; a short margin is now the PACE's, one line per change.
+  at(D, String.raw`\[LIVE\] viewer ${S}: seek to the live edge \((join|stall)\) at ${F}, ${N} ms behind`),
+  // A join whose anchor is where the playhead already stands (the buffer starts at 0).
+  at(D, String.raw`\[LIVE\] viewer ${S}: at ${F}, the anchor is not ahead in ${R} - no seek \(join\)`),
+  at(D, String.raw`\[LIVE\] viewer ${S}: pace (slow|steady|fast) \(${F}x\), ${F} s ahead, target ${N} ms`),
+  // The stall's end, forgiven as narration: the `stalled at` line before it is what the judge counts.
+  at(L, String.raw`\[LIVE\] viewer ${S}: stalled ${N} ms \(resumed\), from a margin of (?:${N}|-) ms, target ${N} ms`),
   // The seat given back on leaving, so the host's cap frees now rather than at the lease (#2689).
   at(D, String.raw`\[LIVE\] leave ${S}`),
   at(L, String.raw`\[LIVE\] viewer joined ${S} at segment ${N}`),

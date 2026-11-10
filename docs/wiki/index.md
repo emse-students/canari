@@ -77,6 +77,7 @@
 - [Sharing into and out of Canari](frontend/sharing.md) - the OS share sheet both ways: the Android SEND filter, the native copy and its handoff file, the "Envoyer a..." picker, and the lots left (share out, the iOS extension, suggestions)
 - [App icons](frontend/app-icons.md) — one drawing, the bird at half of what is seen, four generators
 - [Android / iOS parity audit](frontend/android-ios-parity.md) - where the two native projects DISAGREE, read from source 2026-08-28
+- [Screen orientation](frontend/screen-orientation.md) - portrait everywhere, rotation on the video and camera screens: the one store, Android `requestedOrientation`, the iOS root-controller hook, the lock
 - [MLS WASM client](frontend/mls-wasm.md) — openmls compiled to WASM, key management, sync engine
 - [Backup and restore](frontend/backup.md) — the `.canari` file, and why a refusal is a code rather than a sentence
 - [Auth module](frontend/modules/auth.md) — Login flow, PIN, biometrics, device registration
