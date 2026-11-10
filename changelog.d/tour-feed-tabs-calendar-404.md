@@ -1,1 +1,3 @@
-Fixed three defects of the dev page tour: the feed switch no longer clips "Mon espace" at 360-390 px, the agenda's event chips wrap at word boundaries and a pending one is readable, the "Ouvrir la file" link stays on one line, and the error page shows a localized message per status instead of the raw English one.
+### Fixed
+
+- The feed switch no longer clips "Mon espace" on a narrow phone, agenda chips wrap at word boundaries and a pending one is readable, "Ouvrir la file" stays on one line, and the error page shows a localized message instead of the raw English one.
