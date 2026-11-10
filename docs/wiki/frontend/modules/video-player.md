@@ -448,3 +448,23 @@ judge) and it is not a clip with a duration - and takes the kit around it:
 | C | CanaReels (`variant="reel"`): tap = sound, hold = pause, the rail's speaker is the kit's | built - readings owed (a reel tap, a hold, a double-tap like on both phones) |
 | D | feed (`variant="feed"`) and chat (`variant="chat"`); `InlineVideo` deleted | built - readings owed (a feed tap and the expand chip, a chat disc, a hold that opens no sheet) |
 | E | the live viewer: the kit's speaker, tap = sound, no hold; a refused audible start no longer remembered as "off" | built - readings owed (a live tap and the speaker on both phones) |
+
+## The lookahead of a paced stream follows the measured link (2026-11-10)
+
+A paced stream (`utils/segmentedMediaStream.ts`) used to hold at a FIXED lookahead (10 s for a feed
+card, 30 s for the viewer). On a link where a 1 MiB segment took about 4 s, against a reel that plays
+a segment in about 3.3 s, the hold was the wrong rule: the link cannot keep up, so waiting until the
+buffer dips under 10 s only guarantees a stall (the owner's console export: 29 `waiting for data`).
+
+`adaptiveAheadSeconds` reads two MEASURED rates, no timer: the feed's smoothed download rate (taken
+where the fetch is made, so a segment a second consumer finds in the feed is never counted as
+instant; segment 0 and fetches under 64 KiB are not samples) and the media's bytes per second (file
+size over declared length, else bytes appended over buffered time). Link slower than 0.8x the media:
+fetch continuously up to the cap (30 s and 12 MiB of media, never below the configured base). Link
+faster: ask while the buffer holds 1.5 landing times of one segment, never below the base. No rate
+yet: the base. The existing eviction (`appendSegmentEvicting`) and the engine's quota still apply on
+top; the seek floor, `trimmedBefore` and the head-only `mvhd` patch are untouched.
+
+Two segments in flight were considered and NOT built: on a bandwidth-bound link (162 ms latency, 4 s
+per MiB) a second request only splits the same bandwidth. The feed already dedupes by segment, so
+it is a small addition if a latency-bound link is ever measured.

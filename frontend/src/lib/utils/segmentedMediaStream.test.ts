@@ -20,6 +20,7 @@ const {
   openSegmentedStream,
   FEED_STREAM_PACING,
   VIEWER_STREAM_PACING,
+  adaptiveAheadSeconds,
   streamProgressOf,
   streamSeekFloor,
 } = await import('./segmentedMediaStream');
@@ -290,7 +291,11 @@ describe('openSegmentedStream', () => {
   });
 
   /** A sealed video of `segments` default-sized segments, served by a fetch that records ranges. */
-  async function servedVideo(segments: number, hangFromRequest = Infinity) {
+  async function servedVideo(
+    segments: number,
+    hangFromRequest = Infinity,
+    onServe?: (bytes: number) => void
+  ) {
     const n = segments * SEGMENTED_MEDIA_SEGMENT_BYTES;
     const { ciphertext, keyHex, ivHex } = await encryptSegmentedMedia(new Uint8Array(n).buffer);
     const sealed = new Uint8Array(ciphertext);
@@ -300,6 +305,7 @@ describe('openSegmentedStream', () => {
       vi.fn((url: string, init: RequestInit) => {
         const [, a, b] = /bytes=(\d+)-(\d+)/.exec((init.headers as Record<string, string>).Range)!;
         const part = sealed.slice(Number(a), Math.min(Number(b) + 1, sealed.byteLength));
+        onServe?.(part.byteLength);
         requests.push({
           mediaId: decodeURIComponent(url.split('/').pop()!),
           bytes: part.byteLength,
@@ -404,6 +410,76 @@ describe('openSegmentedStream', () => {
     expect(blob.size).toBe(6 * SEGMENTED_MEDIA_SEGMENT_BYTES);
     expect(requests).toHaveLength(6);
     handle.close();
+  });
+
+  describe('the lookahead follows the measured link (console export, 2026-11-10)', () => {
+    const MEDIA = 312_500; // a 2.5 Mb/s reel, bytes per second
+    const KIB = 1024;
+
+    it('keeps the configured lookahead until both rates are known, and on a fast link', () => {
+      expect(
+        adaptiveAheadSeconds(10, { downloadBytesPerSecond: null, mediaBytesPerSecond: MEDIA })
+      ).toBe(10);
+      expect(
+        adaptiveAheadSeconds(10, { downloadBytesPerSecond: 5_000_000, mediaBytesPerSecond: MEDIA })
+      ).toBe(10);
+    });
+
+    it('asks while the buffer still holds the segment landing time, with headroom', () => {
+      // 1 MiB at 500 KB/s lands in ~2.1 s; the buffer must hold 1.5x that, above a 2 s base.
+      expect(
+        adaptiveAheadSeconds(2, { downloadBytesPerSecond: 500_000, mediaBytesPerSecond: 100_000 })
+      ).toBeCloseTo((1024 * KIB * 1.5) / 500_000, 5);
+    });
+
+    it('fetches to the cap when the link cannot keep up, bounded in seconds and in bytes', () => {
+      const slow = { downloadBytesPerSecond: 256 * KIB, mediaBytesPerSecond: MEDIA };
+      expect(adaptiveAheadSeconds(10, slow)).toBe(30);
+      // A heavy 12 MB/s file: 12 MiB is about one second of it, never below the base.
+      expect(
+        adaptiveAheadSeconds(10, {
+          downloadBytesPerSecond: 256 * KIB,
+          mediaBytesPerSecond: 12_000_000,
+        })
+      ).toBe(10);
+    });
+
+    /** A stream over a reel whose link delivers `bytesPerSecond`, on a clock the fetch advances. */
+    async function playingOver(bytesPerSecond: number) {
+      let clockMs = 0;
+      const served = await servedVideo(8, Infinity, (bytes) => {
+        clockMs += (bytes / bytesPerSecond) * 1000;
+      });
+      const base = served.ref('r');
+      const ref = { ...base, durationMs: (base.size / MEDIA) * 1000 };
+      const handle = openSegmentedStream(
+        ref,
+        'https://media.test',
+        STREAM,
+        FEED_STREAM_PACING,
+        () => clockMs
+      );
+      const element = new FakeElement();
+      handle.attach(element);
+      await vi.waitFor(() => expect(served.requests).toHaveLength(2));
+      element.paused = false;
+      element.bufferedEnd = 12; // past the fixed 10 s: the old rule holds here
+      element.dispatchEvent(new Event('play'));
+      await settle();
+      return { handle, requests: served.requests };
+    }
+
+    it('keeps fetching past 10 s ahead when a segment takes longer than it plays', async () => {
+      const { handle, requests } = await playingOver(256 * 1024);
+      expect(requests.length).toBeGreaterThan(2);
+      handle.close();
+    });
+
+    it('still holds at the configured lookahead on a link that outruns the media', async () => {
+      const { handle, requests } = await playingOver(20 * 1024 * 1024);
+      expect(requests).toHaveLength(2);
+      handle.close();
+    });
   });
 
   /**

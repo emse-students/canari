@@ -61,7 +61,7 @@
  *   bound it.
  */
 
-import { SEGMENTED_MEDIA_ENCODING } from '$lib/mediaSegmented';
+import { SEGMENTED_MEDIA_ENCODING, SEGMENTED_MEDIA_SEGMENT_BYTES } from '$lib/mediaSegmented';
 import type { MediaRef } from '$lib/media';
 import { httpRangeSource, openSegmentedMedia } from './segmentedMediaReader';
 import { isMp4Type, writeMvhdDuration } from './mp4Duration';
@@ -119,6 +119,55 @@ export interface StreamPacing {
  * phones (2026-10-01) - and 10 s ahead while it plays, ~3 MB at the reel's 2.5 Mb/s.
  */
 export const FEED_STREAM_PACING: StreamPacing = { headSegments: 2, aheadSeconds: 10 };
+
+/** The most a slow link may run ahead of its playhead, in seconds - the viewer's own bound. */
+export const ADAPTIVE_AHEAD_MAX_SECONDS = 30;
+
+/** The most a slow link may hold ahead of its playhead, in bytes: well under any MSE quota. */
+export const ADAPTIVE_AHEAD_MAX_BYTES = 12 * 1024 * 1024;
+
+/** A link slower than this share of the media's own bitrate cannot be trusted to keep up. */
+export const SUSTAIN_RATIO = 0.8;
+
+/** Headroom over one segment's measured landing time before the buffer may be allowed to run dry. */
+export const LANDING_SAFETY = 1.5;
+
+/** The measured rates the lookahead adapts to; `null` while one is not known yet. */
+export interface LinkRates {
+  /** Bytes per second the segment fetches actually achieved (smoothed over the last ones). */
+  downloadBytesPerSecond: number | null;
+  /** Bytes per second of media the element consumes while playing. */
+  mediaBytesPerSecond: number | null;
+}
+
+/**
+ * HOW FAR AHEAD OF ITS PLAYHEAD A PACED STREAM MUST BE, from measured rates and no timer (owner's
+ * console export, 2026-11-10: on a link where a 1 MiB segment took ~4 s the feed held at "10 s ahead"
+ * and the element starved 29 times).
+ *
+ * The fixed lookahead assumes the link outruns the media. Read against the two measured rates:
+ * - the link delivers at least the media's bitrate with headroom (download time per media second
+ *   below {@link SUSTAIN_RATIO}): the next segment must LAND before the buffer empties, so the
+ *   stream asks while the buffer still holds {@link LANDING_SAFETY} landing times - never less than
+ *   the configured `baseSeconds`;
+ * - the link cannot keep up: holding back only guarantees a stall, so the stream fetches
+ *   continuously, up to the cap;
+ * - a rate not measured yet: the configured `baseSeconds`.
+ * The cap is the smaller of {@link ADAPTIVE_AHEAD_MAX_SECONDS} and {@link ADAPTIVE_AHEAD_MAX_BYTES}
+ * of media, and never below `baseSeconds`: the engine's quota and the stream's own eviction
+ * (`appendSegmentEvicting`) still apply on top.
+ */
+export function adaptiveAheadSeconds(baseSeconds: number, rates: LinkRates): number {
+  const { downloadBytesPerSecond: download, mediaBytesPerSecond: media } = rates;
+  if (!download || !media || download <= 0 || media <= 0) return baseSeconds;
+  const cap = Math.max(
+    baseSeconds,
+    Math.min(ADAPTIVE_AHEAD_MAX_SECONDS, ADAPTIVE_AHEAD_MAX_BYTES / media)
+  );
+  if (media / download >= SUSTAIN_RATIO) return cap;
+  const landing = SEGMENTED_MEDIA_SEGMENT_BYTES / download;
+  return Math.min(cap, Math.max(baseSeconds, landing * LANDING_SAFETY));
+}
 
 /** What a paced stream reads of its element - an `HTMLMediaElement`, or a test's stand-in. */
 export type PacingElement = Pick<
@@ -315,10 +364,28 @@ interface SegmentFeed {
   count(): Promise<number>;
   /** Segment `index`, fetched and verified the first time it is asked for. */
   segment(index: number): Promise<Blob>;
+  /**
+   * What the fetches of this media achieved, bytes per second, smoothed over the last ones - `null`
+   * before one full segment has landed. MEASURED HERE, where the fetch is made, so a segment a
+   * second consumer finds already in the feed is never counted as instant.
+   */
+  downloadBytesPerSecond(): number | null;
 }
 
+/** Weight of the newest fetch in {@link SegmentFeed.downloadBytesPerSecond}. */
+const RATE_SMOOTHING = 0.5;
+
+/** A fetch shorter than this says nothing about the link (the closing segment, a cached range). */
+const MIN_MEASURED_BYTES = 64 * 1024;
+
 /** A feed over `ref`; every read is aborted with `signal` (the root stream's close). */
-function createSegmentFeed(ref: MediaRef, baseUrl: string, signal: AbortSignal): SegmentFeed {
+function createSegmentFeed(
+  ref: MediaRef,
+  baseUrl: string,
+  signal: AbortSignal,
+  clock: () => number
+): SegmentFeed {
+  let rate: number | null = null;
   let reader: ReturnType<typeof openSegmentedMedia> | null = null;
   // A FAILURE IS NOT MEMOISED: a transient range error on the card's read must not be handed to the
   // viewer forever - the next consumer asks again (a closed root rejects them all anyway).
@@ -346,7 +413,17 @@ function createSegmentFeed(ref: MediaRef, baseUrl: string, signal: AbortSignal):
         // Each segment is kept as a BLOB, never as the `ArrayBuffer` it was decrypted into: the
         // buffer is dropped once read, and what the final file needs sits in the engine's blob
         // store instead of the JS heap, beside the MSE buffer.
-        pending = open().then(async (r) => new Blob([await r.readSegment(index, signal)]));
+        // Segment 0 comes with the opening read (the header): its time is not the link's.
+        pending = open().then(async (r) => {
+          const startedAt = clock();
+          const plain = await r.readSegment(index, signal);
+          const seconds = (clock() - startedAt) / 1000;
+          if (index > 0 && plain.byteLength >= MIN_MEASURED_BYTES && seconds > 0) {
+            const sample = plain.byteLength / seconds;
+            rate = rate === null ? sample : RATE_SMOOTHING * sample + (1 - RATE_SMOOTHING) * rate;
+          }
+          return new Blob([plain]);
+        });
         segments.set(index, pending);
         const asked = pending;
         asked.catch(() => {
@@ -355,6 +432,7 @@ function createSegmentFeed(ref: MediaRef, baseUrl: string, signal: AbortSignal):
       }
       return pending;
     },
+    downloadBytesPerSecond: () => rate,
   };
 }
 
@@ -367,15 +445,17 @@ function createSegmentFeed(ref: MediaRef, baseUrl: string, signal: AbortSignal):
  * @param playback That choice, carrying the constructor to use.
  * @param pacing   Fetch only what the attached element is about to play ({@link StreamPacing});
  *   absent, the whole file is fetched as fast as it comes.
+ * @param clock    Milliseconds, for measuring the link; a test's stand-in drives it.
  */
 export function openSegmentedStream(
   ref: MediaRef,
   baseUrl: string,
   playback: Extract<SegmentedPlayback, { kind: 'stream' }>,
-  pacing?: StreamPacing
+  pacing?: StreamPacing,
+  clock: () => number = () => performance.now()
 ): SegmentedStreamHandle {
   const rootAbort = new AbortController();
-  const feed = createSegmentFeed(ref, baseUrl, rootAbort.signal);
+  const feed = createSegmentFeed(ref, baseUrl, rootAbort.signal, clock);
   return openConsumer(ref, feed, playback, pacing, rootAbort, 'stream');
 }
 
@@ -463,6 +543,8 @@ function openConsumer(
   let closed = false;
   let paced = !!pacing;
   let element: PacingElement | null = null;
+  /** The lookahead last logged: a change of it is one line, a steady one is none. */
+  let lastAhead = pacing?.aheadSeconds ?? 0;
   /** Wakes a fetch loop waiting for demand; replaced on every wait. */
   let wake: (() => void) | null = null;
   const poke = () => wake?.();
@@ -488,7 +570,38 @@ function openConsumer(
     // A seek past what is buffered on a PAUSED element is a demand too: without it the picture
     // stays black until the reader presses play (`seeking` is true until the data is in).
     if (element.paused && !(element as { seeking?: boolean }).seeking) return false;
-    return bufferedAhead(element) < pacing.aheadSeconds;
+    return bufferedAhead(element) < aheadTarget(pacing);
+  }
+
+  /** The lookahead this link needs now ({@link adaptiveAheadSeconds}), logged when it changes. */
+  function aheadTarget(current: StreamPacing): number {
+    const target = adaptiveAheadSeconds(current.aheadSeconds, {
+      downloadBytesPerSecond: feed.downloadBytesPerSecond(),
+      mediaBytesPerSecond: mediaBytesPerSecond(),
+    });
+    if (Math.round(target) !== Math.round(lastAhead)) {
+      lastAhead = target;
+      console.debug(
+        `[media-seg] stream ${ref.mediaId}: looking ${target.toFixed(0)} s ahead (link ${Math.round((feed.downloadBytesPerSecond() ?? 0) / 1024)} KiB/s, media ${Math.round((mediaBytesPerSecond() ?? 0) / 1024)} KiB/s)`
+      );
+    }
+    return target;
+  }
+
+  /**
+   * Bytes of media per second played: the file's size over its declared length, else what the
+   * stream has appended over what the element buffers (only while nothing was cut from its start).
+   */
+  function mediaBytesPerSecond(): number | null {
+    if (ref.durationMs && ref.durationMs > 0 && ref.size > 0) {
+      return ref.size / (ref.durationMs / 1000);
+    }
+    const ranges = element?.buffered;
+    if (!ranges || ranges.length === 0 || progress.trimmedBefore > 0 || progress.bytes <= 0) {
+      return null;
+    }
+    const seconds = ranges.end(ranges.length - 1) - ranges.start(0);
+    return seconds > 0 ? progress.bytes / seconds : null;
   }
 
   /** Resolves once segment `index` is wanted; rejects when the stream is closed meanwhile. */
