@@ -24,7 +24,10 @@ export type VideoTapAction =
   | 'toggle-sound'
   /** Full screen, a muted video: the sound comes on and the controls rise. Never the other way. */
   | 'sound-on'
-  /** The sound, then play: a feed video on screen but paused has no button to press. */
+  /**
+   * The sound, then play: a feed video on screen but paused has no button to press, and a full-screen
+   * video muted AND paused gets both from one tap (its toggle can only turn the sound on).
+   */
   | 'toggle-sound-and-play';
 
 export interface VideoTapState {
@@ -56,6 +59,9 @@ export function videoTapAction({
     case 'conversation':
     case 'reel':
     case 'lightbox':
-      return muted ? 'sound-on' : 'toggle-play';
+      // Muted AND paused (an autoplay refused even muted, its play disc up): ONE tap gives both,
+      // never a tap for the sound and a second for the picture.
+      if (muted) return paused ? 'toggle-sound-and-play' : 'sound-on';
+      return 'toggle-play';
   }
 }

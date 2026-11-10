@@ -31,6 +31,10 @@ describe('videoTapAction - the owner decisions of 2026-11-10', () => {
   it('in full screen a MUTED video tap turns the sound on', () => {
     for (const variant of ['reel', 'lightbox'] as const) {
       expect(videoTapAction({ ...base, variant, muted: true })).toBe('sound-on');
+      // Muted and paused: one tap for the sound and the picture, not two.
+      expect(videoTapAction({ ...base, variant, muted: true, paused: true })).toBe(
+        'toggle-sound-and-play'
+      );
     }
   });
 
