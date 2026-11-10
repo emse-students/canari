@@ -56,19 +56,19 @@
   <button
     type="button"
     onclick={handleMentionClick}
-    class="inline-flex cursor-pointer items-center rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[0.88em] leading-none font-semibold text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+    class="bg-accent/10 text-accent-text hover:bg-accent/20 inline-flex cursor-pointer items-center rounded-full px-1.5 py-0.5 text-[0.88em] leading-none font-semibold transition-colors"
   >
     @{mentionLabel}
   </button>
 {:else if isHashtag}
-  <!-- THE MENTION CHIP'S OWN PAIR, and not a fainter cousin of it. `amber-600/80` measured 2.51:1
-       on the light post surface, under the 4.5:1 floor and for no reason: the chip a few lines up
-       has used `amber-700 / dark:amber-400` since it was written, which is 5.02:1 and 11.22:1. A
-       post's surface is FIXED, which is why this one may carry an accent at all - the chat bubble's
-       is not, so its hashtag inherits instead (`MessageTextBody`). -->
-  <span class="font-semibold text-amber-700 dark:text-amber-400">#{hashtagName}</span>
+  <!-- THE MENTION CHIP'S OWN TOKEN, and not a fainter cousin of it: a translucent accent text
+       measured 2.51:1 on the light post surface, under the 4.5:1 floor and for no reason. `accent-text`
+       is 5.05:1 in light and 13.2:1 in dark. A post's surface is FIXED, which is why this one may
+       carry an accent at all - the chat bubble's is not, so its hashtag inherits instead
+       (`MessageTextBody`). -->
+  <span class="text-accent-text font-semibold">#{hashtagName}</span>
 {:else if isPublicAppLink}
-  <AppLink {href} {title} class="hover:text-amber-500">
+  <AppLink {href} {title} class="hover:text-accent-text">
     {@render children?.()}
   </AppLink>
 {:else}
@@ -77,7 +77,7 @@
     {title}
     target="_blank"
     rel="noopener noreferrer external"
-    class="text-amber-700 underline underline-offset-2 transition-colors hover:text-amber-500 dark:text-amber-400"
+    class="text-accent-text hover:text-accent-text underline underline-offset-2 transition-colors"
   >
     {@render children?.()}
   </a>

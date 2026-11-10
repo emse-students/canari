@@ -171,3 +171,66 @@ export async function withdrawFollowRequest(userId: string): Promise<void> {
   Log.d('follows', `withdraw ${userId.slice(0, 8)}`);
   await socialRequest<{ ok: boolean }>(`${user(userId)}/follow-request`, { method: 'DELETE' });
 }
+
+/** One suggested person (engagement WP-5): "N en commun" and up to three faces the reader follows. */
+export interface SuggestedPerson {
+  userId: string;
+  mutual: number;
+  faces: string[];
+}
+
+/** One suggested entity: an association, a list or an institution the reader's audience rules reach. */
+export interface SuggestedEntity {
+  id: string;
+  name: string;
+  slug: string;
+  logoUrl: string | null;
+  type: string;
+}
+
+/** The reader's follow suggestions, and how many accounts they follow (L12, the onboarding banner). */
+export interface FollowSuggestions {
+  people: SuggestedPerson[];
+  entities: SuggestedEntity[];
+  followingCount: number;
+}
+
+/** What a dismissal names. */
+export type SuggestionKind = 'user' | 'association';
+
+/**
+ * The reader's suggestions. `exclude` drops the account just followed ("Suivez aussi...", L15: the
+ * READER's own ranking, never the followed account's follows); `limit` caps the people (at most 20).
+ */
+export async function getFollowSuggestions(
+  opts: { limit?: number; exclude?: string } = {}
+): Promise<FollowSuggestions> {
+  const query = new URLSearchParams();
+  if (opts.limit !== undefined) query.set('limit', String(opts.limit));
+  if (opts.exclude) query.set('exclude', opts.exclude);
+  const qs = query.toString();
+  const answer = await socialRequest<Partial<FollowSuggestions>>(
+    `/api/posts/me/suggestions${qs ? `?${qs}` : ''}`
+  );
+  Log.d(
+    'follows',
+    `suggestions: ${answer.people?.length ?? 0} people, ${answer.entities?.length ?? 0} entities`
+  );
+  return {
+    people: answer.people ?? [],
+    entities: answer.entities ?? [],
+    followingCount: answer.followingCount ?? 0,
+  };
+}
+
+/** Never suggests `targetId` again - permanent, like Instagram's X. */
+export async function dismissFollowSuggestion(
+  kind: SuggestionKind,
+  targetId: string
+): Promise<void> {
+  Log.d('follows', `dismiss a ${kind} suggestion`);
+  await socialRequest<{ ok: true }>('/api/posts/me/suggestions/dismiss', {
+    method: 'POST',
+    body: JSON.stringify({ kind, targetId }),
+  });
+}

@@ -171,7 +171,7 @@
 {#snippet cellNote(key: string)}
   {#if key === guestFreeKey}
     <span
-      class="line-clamp-2 min-w-0 text-xs leading-tight font-bold text-amber-900 dark:text-amber-100"
+      class="text-accent-text line-clamp-2 min-w-0 text-xs leading-tight font-bold"
       title={m.form_grid_guest_free()}
       data-testid="guest-free">{m.form_grid_guest_free()}</span
     >
@@ -427,7 +427,7 @@
   {#if guestCellLabel}
     <p
       role="status"
-      class="border-amber-warn/30 bg-amber-warn/10 flex items-start gap-2 rounded-xl border-2 px-3 py-2 text-xs font-semibold text-amber-900 dark:text-amber-100"
+      class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn-text flex items-start gap-2 rounded-xl border-2 px-3 py-2 text-xs font-semibold"
     >
       <TriangleAlert size={13} class="mt-0.5 shrink-0" />
       {m.form_grid_guest_free_status({ cell: guestCellLabel })}

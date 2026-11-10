@@ -14,6 +14,7 @@ import {
   type CallsMode,
   type CheckpointSkipMode,
   type LivesMode,
+  type LiveReplaysMode,
   type PushMode,
 } from './entities/platform-config.entity';
 import { UpdatePlatformConfigDto } from './dto/update-platform-config.dto';
@@ -35,6 +36,7 @@ export type PlatformConfigPublic = {
   livesMode: LivesMode;
   pushMode: PushMode;
   checkpointSkipMode: CheckpointSkipMode;
+  liveReplaysMode: LiveReplaysMode;
 };
 
 /**
@@ -67,6 +69,7 @@ const DEFAULT_ROW: PlatformConfig = {
   livesMode: 'off',
   pushMode: 'full',
   checkpointSkipMode: 'off',
+  liveReplaysMode: 'off',
 };
 
 /** Reads and updates the singleton platform configuration row in PostgreSQL. */
@@ -200,6 +203,16 @@ export class PlatformService implements OnModuleInit {
       }
       changes.checkpointSkipMode = dto.checkpointSkipMode;
     }
+    if (dto.liveReplaysMode !== undefined) {
+      // Whether the lives started from now on are kept three days turns on it - a retention the
+      // register and the privacy policy describe - so who moved it, and when, is a warn line.
+      if (dto.liveReplaysMode !== row.liveReplaysMode) {
+        this.logger.warn(
+          `liveReplaysMode ${row.liveReplaysMode} -> ${dto.liveReplaysMode} by=${by}`
+        );
+      }
+      changes.liveReplaysMode = dto.liveReplaysMode;
+    }
 
     if (Object.keys(changes).length > 0) {
       const updated = await this.repo.update({ id: 1 }, changes);
@@ -213,7 +226,7 @@ export class PlatformService implements OnModuleInit {
     }
     const saved = await this.repo.findOneOrFail({ where: { id: 1 } });
     this.logger.debug(
-      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode}`
+      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode} liveReplaysMode=${saved.liveReplaysMode}`
     );
     if (dto.paymentProvider !== undefined) {
       if (dto.paymentProvider === 'disabled') {
@@ -305,5 +318,6 @@ function toPublic(row: PlatformConfig): PlatformConfigPublic {
     livesMode: row.livesMode,
     pushMode: row.pushMode,
     checkpointSkipMode: row.checkpointSkipMode,
+    liveReplaysMode: row.liveReplaysMode,
   };
 }

@@ -178,7 +178,7 @@
                     type="button"
                     disabled={downloading !== null}
                     onclick={() => download(fileId, answer.text)}
-                    class="border-cn-border text-text-main hover:border-cn-yellow/40 flex w-full min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors disabled:opacity-50"
+                    class="border-cn-border text-text-main hover:border-accent/40 flex w-full min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors disabled:opacity-50"
                     title={answer.text}
                     aria-label={`${m.form_answer_file_download()} - ${answer.text}`}
                   >

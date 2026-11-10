@@ -6,7 +6,7 @@ import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { AssociationsService } from '../associations/associations.service';
 import { mediaUrl } from '../internal/service-urls';
-import { isExpiredReel } from './reel.constants';
+import { isExpiredPost } from './reel.constants';
 import { POST_CARD_CONTENT_TYPE, renderPostCard } from './post-card-image';
 import { PostCardCache } from './post-card-cache';
 
@@ -189,7 +189,7 @@ export class PostPreviewService {
     // holds the link - read from the row, so turning the switch off gives the preview back.
     if (post.studentsOnly) return null;
     // A reel past its month is dead to everyone, an anonymous link preview included.
-    if (isExpiredReel(post)) return null;
+    if (isExpiredPost(post)) return null;
     if (post.scheduledAt && new Date(post.scheduledAt).getTime() > Date.now()) return null;
 
     // `findById` throws NotFoundException on a miss; here an absent association is one more reason

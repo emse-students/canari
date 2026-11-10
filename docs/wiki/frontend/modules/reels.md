@@ -1521,3 +1521,34 @@ and every pass fires `seeking` / `waiting` / `seeked` at 0, no `ended`, never pa
 over audio (~100 ms per loop on this take). **Not fixed**: the ~210 ms audio pre-roll at each wrap -
 a seek-free loop (re-appending the segments to MSE) is a design of its own, not built.
 A manual `currentTime = 0` on `ended` would seek too and pre-roll the same way.
+
+### A reel's video fills its frame (owner, 2026-11-09)
+
+Owner, web desktop: *"Certains posts ont des bords noirs, ils ne sont pas etires."* Two screenshots: a
+near-square clip and a 16:9 clip, each drawn SMALLER than the dark reel frame, with bands on all four
+sides (about 180 px left and right, 100 px top and bottom on a ~1900 px window).
+
+**Cause: `VideoPlayer.svelte`, the `<video>` carried `max-h-full max-w-full object-contain` and no
+width or height.** An element with no size is drawn at its INTRINSIC size and only capped by the box,
+so a clip smaller than its frame (1280x720 in a 1777x1000 frame) floats in the middle; `object-contain`
+cannot help, it fits inside an element that is itself too small. The frame (`ReelFrame`) was right:
+since 2026-10-11 it is the clip's own ratio, contained whole in the stage over the blurred backdrop.
+Not the cause: object-fit (contain was the intent), a wrapper max-width (none), bars baked into files
+(not checked per file; if a clip carries its own bars, a trim at upload is a backlog item, never a blind
+crop).
+
+**The rule (`reelVideoFit`, pure, in `reels/reelFrame.ts`).** The reel's video is the WHOLE frame
+(`absolute inset-0 h-full w-full`) and is fitted by comparing the file's `videoWidth/videoHeight` (read
+at `loadedmetadata`) with the frame's box: `cover` (Instagram, TikTok) whenever it crops at most 20 %
+of either dimension (`REEL_COVER_MAX_CROP`), `contain` (letterboxed) only when the shape is clearly
+different, and `cover` while the shape is unknown. The frame is drawn at the clip's own ratio, so a
+reel normally fills it exactly; `contain` is the exception (metadata that disagrees with the file).
+Pinned by `reelFrame.test.ts` (the function) and `VideoPlayer.svelte.test.ts` (the element fills).
+
+**The desktop frame stays the clip's own ratio, not a 9:16 column (decided by the lead, reversible).**
+A landscape reel (owner, 2026-11-09: landscape CanaReels are shown letterboxed in the vertical pager)
+sits in a WIDE frame over the blurred backdrop, as the one-frame rule of the editor says ("what is
+captured is what is published"). The alternative - a fixed 9:16 column with the clip letterboxed inside,
+as Instagram and Shorts do on desktop - is one change in `ReelSlide`'s `ratio` (clamp it to
+`REEL_FRAME_RATIO` on a wide stage); it is NOT taken here because a letterboxed clip would then be
+black inside a column rather than the blurred backdrop, and that is a design decision for the owner.

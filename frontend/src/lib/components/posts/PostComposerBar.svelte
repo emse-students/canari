@@ -180,9 +180,9 @@
    * drawn has room.
    */
   const chipClass =
-    'relative flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-amber-500/50 active:scale-95';
+    'relative flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent/50 has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-accent/50 active:scale-95';
   const idleChip = 'border-cn-border text-text-main hover:bg-black/5 dark:hover:bg-white/10';
-  const activeChip = 'border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-400';
+  const activeChip = 'border-accent/40 bg-accent/15 text-accent-text';
 
   const DOCUMENT_ACCEPT =
     'audio/*,.pdf,.doc,.docx,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.rtf,.zip,.epub';
@@ -284,7 +284,7 @@
           aria-pressed={pollActive}
           onclick={onTogglePoll}
         >
-          <ChartColumn size={16} strokeWidth={2.25} class="text-amber-600 dark:text-amber-400" />
+          <ChartColumn size={16} strokeWidth={2.25} class="text-accent-text" />
           {m.post_poll_section_title()}
         </button>
         <button
@@ -344,7 +344,7 @@
     <button
       type="button"
       class="ui-icon-button shrink-0 rounded-full transition-colors {formatting
-        ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+        ? 'bg-accent/15 text-accent-text'
         : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
       aria-pressed={formatting}
       aria-label={m.post_composer_formatting()}
@@ -356,7 +356,7 @@
     </button>
     <span
       class="text-2xs min-w-0 flex-1 truncate font-semibold {full
-        ? 'text-amber-700 dark:text-amber-400'
+        ? 'text-accent-text'
         : 'text-text-muted'}"
       data-attachment-counter={attachmentCount > 0 ? '' : undefined}>{statusLine}</span
     >

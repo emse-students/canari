@@ -281,7 +281,7 @@
         bind:this={notice}
         role="note"
         tabindex="-1"
-        class="bg-amber-warn/10 text-amber-warn mb-4 flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold outline-none"
+        class="bg-amber-warn/10 text-amber-warn-text mb-4 flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold outline-none"
         data-reel-publish-composer-notice
       >
         <Clock size={16} strokeWidth={2.5} class="mt-0.5 shrink-0" />

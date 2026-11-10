@@ -385,7 +385,7 @@
       </div>
       <button
         type="submit"
-        class="ui-icon-button bg-cn-yellow text-cn-ink shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
+        class="ui-icon-button bg-accent text-on-accent shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
         aria-label={m.live_chat_send()}
         title={m.live_chat_send()}
         disabled={draft.trim() === ''}
@@ -437,7 +437,7 @@
   .live-chat-host {
     display: inline-block;
     border-radius: 999px;
-    background: var(--color-cn-yellow);
+    background: var(--color-accent);
     color: var(--color-cn-ink);
     padding: 0 0.375rem;
     font-size: var(--text-xs);

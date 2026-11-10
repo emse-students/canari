@@ -3,6 +3,8 @@
   import GifEmbed from './GifEmbed.svelte';
   import AppLink from '../shared/AppLink.svelte';
   import LinkPreviewCard from './LinkPreviewCard.svelte';
+  import SharedPostCard from './SharedPostCard.svelte';
+  import { parseCanariLinkTarget } from '$lib/utils/canariLinkPreviewFormat';
   import MessageInlineText from './MessageInlineText.svelte';
   import EmojiText from '../shared/EmojiText.svelte';
 
@@ -54,7 +56,7 @@
       {:else}
         {#each splitWithHighlight(segment.value, normalizedSearchTerm) as part, pIndex (`${pIndex}-${part.text}`)}
           {#if part.hit}
-            <mark class="rounded bg-amber-300/60 px-0.5 text-inherit"
+            <mark class="bg-accent/20 rounded px-0.5 text-inherit"
               ><EmojiText text={part.text} /></mark
             >
           {:else}
@@ -72,6 +74,12 @@
        order of magnitude; the feed's `PostContent` mounts the card without this wrapper and keeps the
        post's own column. -->
   <div class="w-full max-w-sm">
-    <LinkPreviewCard url={firstLink} standalone={isLinkOnly} />
+    <!-- A link to a post or a CanaReel draws the Instagram-style share card; the message bytes are
+         the same link, so an older app keeps its generic card. -->
+    {#if parseCanariLinkTarget(firstLink)?.kind === 'post'}
+      <SharedPostCard url={firstLink} standalone={isLinkOnly} />
+    {:else}
+      <LinkPreviewCard url={firstLink} standalone={isLinkOnly} />
+    {/if}
   </div>
 {/if}

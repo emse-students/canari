@@ -857,7 +857,7 @@
       {#if rules.gallery}
         <button
           type="button"
-          class="inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+          class="focus-visible:ring-accent-icon inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2 disabled:opacity-40"
           disabled={!limits}
           data-reel-fault-gallery
           onclick={openGallery}
@@ -873,7 +873,7 @@
           {#if !recording && rules.gallery}
             <button
               type="button"
-              class="flex h-11 w-11 items-center justify-center rounded-lg border-2 border-white/80 bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+              class="focus-visible:ring-accent-icon flex h-11 w-11 items-center justify-center rounded-lg border-2 border-white/80 bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 disabled:opacity-40"
               aria-label={m.reels_capture_gallery()}
               title={m.reels_capture_gallery()}
               disabled={!limits}
@@ -907,7 +907,7 @@
         <div class="mt-3 flex justify-center" role="alert" data-reel-limits-fault={limitsFault}>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-full bg-black/50 px-4 py-2 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            class="focus-visible:ring-accent-icon inline-flex items-center gap-2 rounded-full bg-black/50 px-4 py-2 text-xs font-semibold outline-none focus-visible:ring-2"
             onclick={() => void loadLimits()}
           >
             <RefreshCcw size={14} strokeWidth={2.5} />

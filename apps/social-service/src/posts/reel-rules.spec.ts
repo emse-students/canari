@@ -15,7 +15,7 @@ import {
   REEL_MAX_ASPECT_RATIO,
   REEL_MAX_DURATION_MS,
   REEL_RETENTION_DAYS,
-  isExpiredReel,
+  isExpiredPost,
   isReelFrame,
   reelLimits,
 } from './reel.constants';
@@ -166,19 +166,22 @@ describe('assertReelEditShape - the caption is the only thing an edit may change
   });
 });
 
-describe('isExpiredReel', () => {
+describe('isExpiredPost', () => {
   const now = Date.parse('2026-11-01T00:00:00Z');
 
   it('is true for a reel at or past its expiry, false before it', () => {
-    expect(isExpiredReel({ kind: 'reel', expiresAt: new Date(now - 1) }, now)).toBe(true);
-    expect(isExpiredReel({ kind: 'reel', expiresAt: new Date(now) }, now)).toBe(true);
-    expect(isExpiredReel({ kind: 'reel', expiresAt: new Date(now + 1) }, now)).toBe(false);
+    expect(isExpiredPost({ kind: 'reel', expiresAt: new Date(now - 1) }, now)).toBe(true);
+    expect(isExpiredPost({ kind: 'reel', expiresAt: new Date(now) }, now)).toBe(true);
+    expect(isExpiredPost({ kind: 'reel', expiresAt: new Date(now + 1) }, now)).toBe(false);
+    // A live replay expires by the same column (docs/wiki/live-replays.md).
+    expect(isExpiredPost({ kind: 'replay', expiresAt: new Date(now) }, now)).toBe(true);
+    expect(isExpiredPost({ kind: 'replay', expiresAt: new Date(now + 1) }, now)).toBe(false);
   });
 
   it('is never true for a post, whatever its columns say', () => {
-    expect(isExpiredReel({ kind: 'post', expiresAt: new Date(0) }, now)).toBe(false);
-    expect(isExpiredReel({ expiresAt: new Date(0) }, now)).toBe(false);
-    expect(isExpiredReel({ kind: 'reel', expiresAt: null }, now)).toBe(false);
+    expect(isExpiredPost({ kind: 'post', expiresAt: new Date(0) }, now)).toBe(false);
+    expect(isExpiredPost({ expiresAt: new Date(0) }, now)).toBe(false);
+    expect(isExpiredPost({ kind: 'reel', expiresAt: null }, now)).toBe(false);
   });
 });
 

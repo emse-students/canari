@@ -14,6 +14,7 @@
     recordPersonStatus,
     withdrawPerson,
   } from '$lib/follows/followState.svelte';
+  import FollowAlsoSuggestions from '$lib/components/suggestions/FollowAlsoSuggestions.svelte';
   import AccountBell from '$lib/components/follows/AccountBell.svelte';
   import {
     describeFollowRefusal,
@@ -68,6 +69,8 @@
   /** Where the reader stands with this person: a request, a follow, or neither (WP-F4). */
   let followStatus = $state<FollowStatus | null>(null);
   let followLoading = $state(false);
+  /** The person the reader followed or asked on THIS visit: "Suivez aussi..." follows it (WP-6). */
+  let followedHereId = $state<string | null>(null);
   let memberships = $state<UserMembershipRow[]>([]);
   let roleHistory = $state<UserRoleHistoryRow[]>([]);
   let parrainage = $state<SkyEntourage | null>(null);
@@ -221,7 +224,10 @@
     actionMessage = '';
     Log.d('profile.handleFollowToggle', `${action} from ${was ?? 'none'}`);
     try {
-      if (action === 'ask') followStatus = await askPerson(profile.id);
+      if (action === 'ask') {
+        followStatus = await askPerson(profile.id);
+        followedHereId = profile.id;
+      }
       // A withdraw answers where the pair stands NOW: a request accepted meanwhile stays a follow.
       else if (action === 'withdraw') followStatus = await withdrawPerson(profile.id);
       else await leavePerson(profile.id);
@@ -305,7 +311,7 @@
   <div class="space-y-6 md:space-y-8">
     {#if loading}
       <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-32" in:fade>
-        <LoaderCircle size={32} class="text-cn-yellow animate-spin" strokeWidth={2.5} />
+        <LoaderCircle size={32} class="text-accent-icon animate-spin" strokeWidth={2.5} />
         <span class="text-sm font-bold">{m.profile_public_loading()}</span>
       </div>
     {:else if error}
@@ -349,9 +355,9 @@
             onclick={handleFollowToggle}
             disabled={followLoading}
             data-follow-status={followStatus ?? 'none'}
-            class="focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-60 {followStatus
+            class="focus-visible:ring-accent/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-60 {followStatus
               ? 'text-text-main bg-cn-surface border border-black/10 hover:border-red-500/20 hover:bg-red-500/10 hover:text-red-600 dark:border-white/10 '
-              : 'bg-cn-yellow/10 border-cn-yellow/20 dark:text-cn-yellow hover:bg-cn-yellow/20 border text-amber-700'}"
+              : 'bg-accent/10 border-accent/20 dark:text-accent-text hover:bg-accent/20 text-accent-text border'}"
           >
             {#if followStatus === 'accepted'}
               <UserCheck size={18} strokeWidth={2.5} />
@@ -371,7 +377,7 @@
           {/if}
           <button
             onclick={handleSendMessage}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95"
+            class="bg-accent text-on-accent hover:bg-accent-hover shadow-accent/20 focus-visible:ring-accent/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95"
           >
             <MessageCircle size={18} strokeWidth={2.5} />
             {m.profile_public_message_btn()}
@@ -416,6 +422,14 @@
         >
           {m.profile_blocked_notice()}
         </p>
+      {/if}
+
+      <!--
+        "SUIVEZ AUSSI..." (engagement WP-6, L15): right after a follow or a request made here, the
+        READER's own suggestions minus this person - never this person's follows.
+      -->
+      {#if followedHereId === profile.id && followStatus}
+        <FollowAlsoSuggestions exclude={profile.id} />
       {/if}
 
       <!-- Bio section -->

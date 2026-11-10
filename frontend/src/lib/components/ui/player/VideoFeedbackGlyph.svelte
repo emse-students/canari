@@ -62,7 +62,7 @@
       {#if live.kind === 'pause' || live.kind === 'play'}
         <VideoGlassGlyph kind={live.kind} size={64} />
       {:else if live.kind === 'sound-on'}
-        <Volume2 size={22} strokeWidth={2.25} class="text-cn-yellow drop-shadow" />
+        <Volume2 size={22} strokeWidth={2.25} class="text-accent drop-shadow" />
       {:else}
         <VolumeX size={22} strokeWidth={2.25} class="drop-shadow" />
       {/if}
