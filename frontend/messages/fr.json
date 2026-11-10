@@ -4705,6 +4705,8 @@
   "reels_camera_retry": "Réessayer",
   "reels_camera_close": "Fermer la caméra",
   "reels_camera_switch": "Changer de caméra",
+  "screen_rotate_landscape": "Passer en paysage",
+  "screen_rotate_portrait": "Revenir en portrait",
   "reels_camera_torch_on": "Allumer le flash",
   "reels_camera_torch_off": "Éteindre le flash",
   "reels_shutter_capture": "Photo (toucher) ou vidéo (maintenir)",
