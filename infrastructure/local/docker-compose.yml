@@ -320,6 +320,9 @@ services:
       FORM_SERVICE_URL: http://social-service:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
+      # TEMPORARY (owner, 2026-11-10): who is offered the profile-photo prompt, as FORMATION:campus pairs
+      # (docs/wiki/frontend/guided-help.md). Unset: nobody; a value that does not parse: nobody + boot error.
+      PROFILE_PHOTO_PROMPT_SPACES: ${PROFILE_PHOTO_PROMPT_SPACES:-}
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
       # Empty by design (env-from-prod.sh BLANK): this stack signs in through the PRODUCTION MiConnect,
