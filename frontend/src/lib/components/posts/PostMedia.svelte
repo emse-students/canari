@@ -179,6 +179,13 @@
   const feedPoster = $derived(
     reelPosterUrl(media.mediaId) ?? placeholderDataUrl(media.placeholder)
   );
+  /**
+   * How the poster sits in its box: EXACTLY as the video will (`videoClass` below), so a grid cell's
+   * cropped frame replaces a cropped poster and nothing changes stage (review of #3311).
+   */
+  const posterFit = $derived<'contain' | 'cover'>(
+    letterbox && videoFit === 'cover' ? 'cover' : 'contain'
+  );
 
   // A failed download is decided: the caller stops waiting on this media.
   $effect(() => {
@@ -623,7 +630,7 @@
             src={feedPoster}
             alt=""
             aria-hidden="true"
-            class="pointer-events-none absolute inset-0 h-full w-full select-none {videoFit ===
+            class="pointer-events-none absolute inset-0 h-full w-full select-none {posterFit ===
             'cover'
               ? 'object-cover'
               : 'object-contain'}"
@@ -728,6 +735,7 @@
         openLabel={m.post_fullscreen_label()}
         positionKey={media.mediaId}
         poster={feedPoster}
+        {posterFit}
         backdrop={letterbox && videoFit === 'contain'}
         class={letterbox
           ? videoFit === 'contain'

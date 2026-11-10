@@ -156,6 +156,49 @@ it('feed: the viewer it opened hands back its time as it closes, and the feed vi
   expect(feed.video.currentTime).toBe(19);
 });
 
+/**
+ * A STREAMED CARD TAKES THE VIEWER'S TIME ONLY IF IT HOLDS IT (review of #3311): sought outside its
+ * buffer it would fetch every segment up to there - a third copy of the clip - or stall behind a cut.
+ */
+it('feed: a STREAMED card takes the handed-back time only inside what it buffers', () => {
+  const feed = mountVariant('feed', { positionKey: 'media-s', src: 'blob:card', streamed: true });
+  let ranges: Array<[number, number]> = [[0, 12]];
+  Object.defineProperty(feed.video, 'buffered', {
+    configurable: true,
+    get: () => ({
+      length: ranges.length,
+      start: (i: number) => ranges[i][0],
+      end: (i: number) => ranges[i][1],
+    }),
+  });
+  feed.video.currentTime = 2;
+  const openAndHandBack = (seconds: number) => {
+    feed.openButton().click();
+    flushSync();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const viewer = mount(VideoPlayer, {
+      target,
+      props: { src: 'blob:viewer', variant: 'reel', positionKey: 'media-s' },
+    });
+    flushSync();
+    const viewerVideo = target.querySelector('video')!;
+    Object.defineProperty(viewerVideo, 'duration', { configurable: true, get: () => 40 });
+    viewerVideo.dispatchEvent(new Event('loadedmetadata'));
+    viewerVideo.currentTime = seconds;
+    viewerVideo.dispatchEvent(new Event('timeupdate'));
+    flushSync();
+    unmount(viewer);
+  };
+
+  openAndHandBack(30);
+  expect(feed.video.currentTime, '30 s is not buffered here: the card stays').toBe(2);
+
+  ranges = [[0, 35]];
+  openAndHandBack(30);
+  expect(feed.video.currentTime, 'now held: taken').toBe(30);
+});
+
 it('a viewer that was opened from nowhere hands back into nothing', () => {
   const feed = mountVariant('feed', { positionKey: 'media-2' });
   feed.video.currentTime = 3;
@@ -188,6 +231,17 @@ it('feed: draws the first-frame picture and its blurred bands before the video h
   expect(video.className).not.toContain('opacity-0');
   expect(captureVideoFrame).not.toHaveBeenCalled();
   expect(target.querySelector('[data-video-first-frame-poster]')).toBeNull();
+});
+
+it('feed: a cropped grid cell crops its poster as it will crop its frame', () => {
+  const contained = mountVariant('feed', { poster: 'data:image/png;base64,p' });
+  expect(
+    contained.target.querySelector('[data-video-first-frame-poster]')!.getAttribute('class')
+  ).toContain('object-contain');
+  const cell = mountVariant('feed', { poster: 'data:image/png;base64,p', posterFit: 'cover' });
+  const poster = cell.target.querySelector('[data-video-first-frame-poster]')!;
+  expect(poster.getAttribute('class')).toContain('object-cover');
+  expect(poster.getAttribute('class')).not.toContain('object-contain');
 });
 
 it("feed: the speaker is the kit's glass chip, yellow only when the sound is on", () => {

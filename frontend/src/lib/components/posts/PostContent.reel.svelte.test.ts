@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import PostContent from './PostContent.svelte';
+import { awaitVideoHandBack, handBackVideoPosition } from '$lib/utils/videoResume';
 
 vi.mock('./PostMedia.svelte', async () => ({
   default: (await import('./PostMediaOpenStub.test-helper.svelte')).default,
@@ -138,6 +139,25 @@ describe('PostContent, a tap on a feed video', () => {
     target.querySelector<HTMLButtonElement>('[data-media-id="img"]')!.click();
     flushSync();
     expect(viewer()).toBeNull();
+  });
+
+  /**
+   * THE WAIT ENDS WITH THE VIEWER (review of #3311): its players hand back as they are destroyed,
+   * then the post ends the wait - a later viewer of the same media must not move this card.
+   */
+  it('closing the viewer ends the hand-back wait, after the viewer handed back', async () => {
+    const got: number[] = [];
+    awaitVideoHandBack('m-1', (s) => got.push(s));
+    const target = await renderPost({ media: [video] });
+    target.querySelector<HTMLButtonElement>('[data-post-media-open]')!.click();
+    flushSync();
+    document.querySelector<HTMLButtonElement>('[data-reel-viewer-close]')!.click();
+    await tick();
+    await tick();
+    expect(viewer()).toBeNull();
+    expect(got, 'the teardown handed back first').toEqual([9]);
+    handBackVideoPosition('m-1', 5);
+    expect(got, 'then the wait was over').toEqual([9]);
   });
 
   it('a video beside a poll is not a CanaReels page: no viewer is opened from it', async () => {

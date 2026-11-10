@@ -41,7 +41,8 @@ export function takeVideoPosition(src: string): number {
  * clock: the hand-back is the viewer's teardown itself. A viewer of a video nobody opened from inline
  * (the reels' next pages) hands back into nothing, which is said at debug.
  *
- * The waiter stays until the inline player opens a viewer again or goes, so a viewer that hands back
+ * The waiter stays until the inline player opens a viewer again or goes, or the viewer's owner ends it
+ * once the viewer is gone ({@link endVideoHandBack}), so a viewer that hands back
  * twice (its slide swiped away and back, then closed) leaves the inline video at the LAST place.
  */
 const waiters = new Map<string, (seconds: number) => void>();
@@ -52,6 +53,14 @@ export function awaitVideoHandBack(key: string, apply: (seconds: number) => void
   return () => {
     if (waiters.get(key) === apply) waiters.delete(key);
   };
+}
+
+/**
+ * Ends the wait on `key` once the viewer it was for is gone (its players handed back as they were
+ * destroyed): a later viewer of the same media opened from elsewhere must not move this card.
+ */
+export function endVideoHandBack(key: string): void {
+  if (waiters.delete(key)) Log.d('videoResume', 'the viewer is gone - the hand-back wait ends');
 }
 
 /** A viewer's player leaves: where it got to goes back to the inline player that opened it, if any. */

@@ -10,7 +10,8 @@
   import { extractFirstUrl } from '$lib/utils/chat/messageDisplay';
   import { watchClampOverflow } from '$lib/utils/posts/clampOverflow';
   import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import { endVideoHandBack } from '$lib/utils/videoResume';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import { postAuthorName } from '$lib/posts/postAuthorName';
   import {
@@ -192,6 +193,16 @@
     reelViewerOpen = true;
   }
 
+  /**
+   * Closes the viewer, then ends this post's hand-back waits once its players are destroyed - their
+   * `onDestroy` IS the hand-back, so the wait ends after it, never before (`videoResume`).
+   */
+  async function closeReelViewer() {
+    reelViewerOpen = false;
+    await tick();
+    for (const media of postMedia) endVideoHandBack(media.mediaId);
+  }
+
   /** What a tap on a video of this post opens: the CanaReels viewer, else `undefined` (the media viewer). */
   function videoOpener(media: PostMediaRef, index: number): (() => void) | undefined {
     if (resolveMediaType(media) !== 'video') return undefined;
@@ -355,7 +366,7 @@
     startMediaIndex={reelStartIndex}
     {authToken}
     {likerId}
-    onClose={() => (reelViewerOpen = false)}
+    onClose={closeReelViewer}
   />
 {/if}
 

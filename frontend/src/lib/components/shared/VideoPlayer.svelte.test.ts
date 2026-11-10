@@ -729,14 +729,14 @@ it('the reel variant draws its video over the WHOLE box, never at its intrinsic 
 
 // ------------------------------------------------------- a conversation's viewer (owner, 2026-11-10)
 
-function mountConversation(src = 'blob:conv') {
+function mountConversation(src = 'blob:conv', streamed = false) {
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   const target = document.createElement('div');
   document.body.appendChild(target);
   const component = mount(VideoPlayer, {
     target,
-    props: { src, variant: 'conversation', soundScope: 'local' },
+    props: { src, variant: 'conversation', soundScope: 'local', streamed },
   });
   mounted.push(() => unmount(component));
   flushSync();
@@ -802,4 +802,32 @@ it('the line seeks where it is pressed once the duration is known, and not befor
   flushSync();
   press(150);
   expect(video.currentTime).toBe(30);
+});
+
+/**
+ * A STREAM NEVER APPENDS A SEGMENT TWICE (review of #3311): a declared duration makes the whole clip
+ * seekable to the engine, but what was evicted behind the playhead is gone, and a seek there would
+ * wait for ever. The line lands on the earliest time still held instead.
+ */
+it('a streamed video is never sought before what it still buffers', () => {
+  const { target, video } = mountConversation('blob:streamed-conv', true);
+  Object.defineProperty(video, 'buffered', {
+    configurable: true,
+    get: () => ({ length: 1, start: () => 12, end: () => 36 }),
+  });
+  const slider = target.querySelector<HTMLElement>('[role="slider"]')!;
+  slider.getBoundingClientRect = () => ({ left: 0, width: 200, top: 0, height: 32 }) as DOMRect;
+  const press = (x: number) => {
+    slider.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: x, pointerId: 1 })
+    );
+    slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+  };
+  withDuration(video, 40);
+  video.dispatchEvent(new Event('durationchange'));
+  flushSync();
+  press(20);
+  expect(video.currentTime, '4 s was evicted: clamped to 12 s').toBe(12);
+  press(150);
+  expect(video.currentTime, 'inside what is held: exact').toBe(30);
 });

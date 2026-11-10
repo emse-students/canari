@@ -120,13 +120,16 @@ function readTracks(view: DataView, moov: Box): Map<number, TrackFacts> {
 
 /**
  * The end time of one `traf`, in its track's timescale: `start` (its `tfdt`, else where the track's
- * previous fragment ended) plus the durations of its samples.
+ * previous fragment ended) plus the durations of its samples. The track's FIRST start is kept in
+ * `starts`: a track whose decode time does not begin at 0 (an edit, a cut from a longer recording)
+ * lasts `end - firstStart`, not `end`.
  */
 function trafEnd(
   view: DataView,
   traf: Box,
   tracks: Map<number, TrackFacts>,
-  ends: Map<number, number>
+  ends: Map<number, number>,
+  starts: Map<number, number>
 ): void {
   const tfhd = child(view, traf, 'tfhd');
   if (!tfhd) return;
@@ -144,6 +147,7 @@ function trafEnd(
     const wide = view.getUint8(tfdt.body) === 1;
     time = wide ? Number(view.getBigUint64(tfdt.body + 4)) : view.getUint32(tfdt.body + 4);
   }
+  if (!starts.has(trackId)) starts.set(trackId, time);
   for (const trun of childBoxes(view, traf.body, traf.end).filter((b) => b.type === 'trun')) {
     const trunFlags = view.getUint32(trun.body) & 0xffffff;
     const count = view.getUint32(trun.body + 4);
@@ -172,6 +176,42 @@ export interface Mp4DurationReading {
   samplesSeconds: number | null;
   /** What its `mvhd` declares, in seconds (`0` when undeclared), or `null` without one. */
   declaredSeconds: number | null;
+  /**
+   * Whether the top-level boxes tile the bytes exactly. A truncated file (a prefix, a damaged size)
+   * does not: its fragments say how long the PART lasts, which is not the movie's length.
+   */
+  complete: boolean;
+}
+
+/** The top-level boxes of `bytes`, and whether they end exactly where the bytes do. */
+function topLevel(view: DataView, length: number): { boxes: Box[]; complete: boolean } {
+  const boxes = childBoxes(view, 0, length);
+  const complete = boxes.length > 0 && boxes[boxes.length - 1].end === length;
+  return { boxes, complete };
+}
+
+/**
+ * Writes `want` (in the header's timescale) into the `mvhd` duration field of `view`, when the field
+ * says less and can hold it. Returns whether it wrote.
+ */
+function setMovieDuration(
+  view: DataView,
+  header: MovieHeader,
+  want: number,
+  what: string
+): boolean {
+  if (!Number.isFinite(want) || want <= 0 || header.duration >= want) return false;
+  if (header.wide) {
+    view.setBigUint64(header.durationAt, BigInt(want));
+    return true;
+  }
+  if (want <= 0xffffffff) {
+    view.setUint32(header.durationAt, want);
+    return true;
+  }
+  // A u32 header cannot hold it (over ~20 h at 57600/s): a clip Canari never writes. Said, not hidden.
+  console.warn(`[mp4-duration] ${what} does not fit a v0 mvhd`);
+  return false;
 }
 
 /**
@@ -181,30 +221,36 @@ export interface Mp4DurationReading {
 export function readMp4Duration(bytes: Uint8Array): Mp4DurationReading {
   try {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const top = childBoxes(view, 0, bytes.byteLength);
+    const { boxes: top, complete } = topLevel(view, bytes.byteLength);
     const moov = top.find((b) => b.type === 'moov');
     const mvhd = moov ? child(view, moov, 'mvhd') : undefined;
     const header = mvhd ? readMovieHeader(view, mvhd) : null;
     const declaredSeconds =
       header && header.timescale > 0 ? header.duration / header.timescale : null;
     const moofs = top.filter((b) => b.type === 'moof');
-    if (!moov || moofs.length === 0) return { samplesSeconds: null, declaredSeconds };
+    if (!moov || moofs.length === 0) return { samplesSeconds: null, declaredSeconds, complete };
     const tracks = readTracks(view, moov);
     const ends = new Map<number, number>();
+    const starts = new Map<number, number>();
     for (const moof of moofs) {
       for (const traf of childBoxes(view, moof.body, moof.end).filter((b) => b.type === 'traf')) {
-        trafEnd(view, traf, tracks, ends);
+        trafEnd(view, traf, tracks, ends, starts);
       }
     }
     let longest = 0;
     for (const [id, end] of ends) {
       const timescale = tracks.get(id)?.timescale ?? 0;
-      if (timescale > 0) longest = Math.max(longest, end / timescale);
+      const length = end - (starts.get(id) ?? 0);
+      if (timescale > 0 && length > 0) longest = Math.max(longest, length / timescale);
     }
-    return { samplesSeconds: longest > 0 ? longest : null, declaredSeconds };
+    return {
+      samplesSeconds: Number.isFinite(longest) && longest > 0 ? longest : null,
+      declaredSeconds,
+      complete,
+    };
   } catch (e) {
     Log.d('mp4Duration', `the container could not be walked: ${String(e)}`);
-    return { samplesSeconds: null, declaredSeconds: null };
+    return { samplesSeconds: null, declaredSeconds: null, complete: false };
   }
 }
 
@@ -224,24 +270,55 @@ export type Mp4DurationOutcome =
  */
 export function declareMp4Duration(bytes: Uint8Array): Mp4DurationOutcome {
   const reading = readMp4Duration(bytes);
-  if (reading.samplesSeconds === null || reading.declaredSeconds === null) {
+  // A TRUNCATED file is never written: its fragments measure the part, not the movie.
+  if (!reading.complete || reading.samplesSeconds === null || reading.declaredSeconds === null) {
     return { kind: 'not-fragmented' };
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const moov = childBoxes(view, 0, bytes.byteLength).find((b) => b.type === 'moov')!;
-  const header = readMovieHeader(view, child(view, moov, 'mvhd')!)!;
+  const header = movieHeaderOf(view, bytes.byteLength);
+  if (!header) return { kind: 'not-fragmented' };
   const want = Math.round(reading.samplesSeconds * header.timescale);
   if (header.duration >= want) return { kind: 'declared', seconds: reading.declaredSeconds };
-  if (header.wide) {
-    view.setBigUint64(header.durationAt, BigInt(want));
-  } else if (want <= 0xffffffff) {
-    view.setUint32(header.durationAt, want);
-  } else {
-    // A u32 header cannot hold it (over ~20 h at 57600/s): a clip Canari never writes. Said, not hidden.
-    console.warn(`[mp4-duration] ${reading.samplesSeconds.toFixed(1)} s does not fit a v0 mvhd`);
+  if (!setMovieDuration(view, header, want, `${reading.samplesSeconds.toFixed(1)} s`)) {
     return { kind: 'not-fragmented' };
   }
   return { kind: 'written', seconds: reading.samplesSeconds, was: reading.declaredSeconds };
+}
+
+/** The `mvhd` of the `moov` among the top-level boxes of `[0, length)`, when it can be read. */
+function movieHeaderOf(view: DataView, length: number): MovieHeader | null {
+  const moov = childBoxes(view, 0, length).find((b) => b.type === 'moov');
+  const mvhd = moov ? child(view, moov, 'mvhd') : undefined;
+  const header = mvhd ? readMovieHeader(view, mvhd) : null;
+  return header && header.timescale > 0 ? header : null;
+}
+
+/**
+ * A COPY of a file's HEAD - its first bytes, holding the `moov` - with `seconds` written into its
+ * `mvhd` duration when the header says less; `null` when there is nothing to write (no complete
+ * `moov` in the head, a header that already says it, a length that is not a positive number).
+ *
+ * The stream builds the whole file from its segments (`segmentedMediaStream.ts`) and patches only
+ * this head, so the rest of the file stays the engine's spilled `Blob`s and is never copied into the
+ * JS heap. The length comes from what was played (the source's `duration` after `endOfStream`, or the
+ * sender's declared one), not from the fragments, which the head does not hold. Never throws.
+ */
+export function writeMvhdDuration(
+  head: Uint8Array,
+  seconds: number
+): Uint8Array<ArrayBuffer> | null {
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  try {
+    const copy = new Uint8Array(head);
+    const view = new DataView(copy.buffer, copy.byteOffset, copy.byteLength);
+    const header = movieHeaderOf(view, copy.byteLength);
+    if (!header) return null;
+    const want = Math.round(seconds * header.timescale);
+    return setMovieDuration(view, header, want, `${seconds.toFixed(1)} s`) ? copy : null;
+  } catch (e) {
+    Log.d('mp4Duration', `the head could not be walked: ${String(e)}`);
+    return null;
+  }
 }
 
 /** Whether a MIME type names an MP4 container - the only one {@link declareMp4Duration} reads. */

@@ -52,6 +52,11 @@
     type AutoplayBlockCause,
   } from '$lib/utils/videoAutoplay';
   import VideoPoster from './VideoPoster.svelte';
+  import {
+    isTimeBuffered,
+    streamProgressOf,
+    streamSeekFloor,
+  } from '$lib/utils/segmentedMediaStream';
   import { Log } from '$lib/utils/Log';
   import { reelVideoFit } from '$lib/reels/reelFrame';
   import { m } from '$lib/paraglide/messages';
@@ -195,6 +200,11 @@
      */
     poster?: string | null;
     /**
+     * How {@link poster} sits in the box: the caller's `videoClass` fit, so a cropped grid cell
+     * (`cover`) shows a cropped poster and never changes stage when its frame arrives.
+     */
+    posterFit?: 'contain' | 'cover';
+    /**
      * Told once when this video will NOT play by itself and the reader has to act: the engine
      * refused the autoplay (`refused`), something paused it while it was asked (`interrupted`), it
      * failed otherwise (`errored`) - the play button is shown for each (`videoAutoplay.ts`) - or the
@@ -215,6 +225,7 @@
     safeBottom = true,
     variant = 'lightbox',
     poster = null,
+    posterFit = 'contain',
     onPlaybackBlocked,
     streamed = false,
     onOpen,
@@ -294,6 +305,17 @@
     stopAwaiting?.();
     stopAwaiting = awaitVideoHandBack(resumeKey, (seconds) => {
       if (!video) return;
+      // A STREAMED CARD TAKES THE TIME ONLY IF IT HOLDS IT (review of #3311): the viewer is its own
+      // download, and a card sought outside its buffer fetches every segment up to there - a third
+      // copy of the clip - or stalls behind a cut. It stays where it was instead. A whole file seeks
+      // for free.
+      if (streamed && !isTimeBuffered(video.buffered, seconds)) {
+        Log.d(
+          'VideoPlayer',
+          `${variant}: the viewer's ${seconds.toFixed(1)} s is not buffered here - kept at ${video.currentTime.toFixed(1)} s`
+        );
+        return;
+      }
       Log.d(
         'VideoPlayer',
         `${variant}: resumes at ${seconds.toFixed(1)} s, where the viewer left it`
@@ -538,9 +560,18 @@
     });
   }
 
+  /**
+   * Seeks within the clip. A STREAM IS CLAMPED TO WHAT IT STILL HOLDS (`streamSeekFloor`): its
+   * declared duration makes the whole clip seekable to the engine, but a segment trimmed or evicted
+   * behind the playhead is never appended again, and a seek there would stall for ever.
+   */
   function seekTo(seconds: number) {
     if (!video || !Number.isFinite(video.duration)) return;
-    video.currentTime = Math.min(video.duration, Math.max(0, seconds));
+    const floor = streamed ? streamSeekFloor(streamProgressOf(src), video.buffered) : 0;
+    if (seconds < floor) {
+      Log.d('VideoPlayer', `seek to ${seconds.toFixed(1)} s clamped to ${floor.toFixed(1)} s`);
+    }
+    video.currentTime = Math.min(video.duration, Math.max(floor, seconds));
     currentTime = video.currentTime;
   }
 
@@ -855,13 +886,16 @@
   {:else}
     {#if !frameReady}
       {#if poster}
-        <!-- The first frame's picture, in the place the frame will take (`object-contain` in the
-             same box), so the frame replaces it without a jump. -->
+        <!-- The first frame's picture, in the place the frame will take (fitted as the video is,
+             `posterFit`, in the same box), so the frame replaces it without a jump. -->
         <img
           src={poster}
           alt=""
           aria-hidden="true"
-          class="pointer-events-none absolute inset-0 h-full w-full object-contain select-none"
+          class="pointer-events-none absolute inset-0 h-full w-full select-none {posterFit ===
+          'cover'
+            ? 'object-cover'
+            : 'object-contain'}"
           data-video-first-frame-poster
         />
       {:else if !minimal}
