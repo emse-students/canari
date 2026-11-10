@@ -21,7 +21,7 @@
 <article
   lang="fr"
   data-principles-document
-  class="border-cn-border [&_h2]:text-text-main [&_p]:text-text-main [&_ul]:text-text-main rounded-2xl border bg-(--cn-surface) p-6 shadow-sm md:p-8 [&_h2]:mt-8 [&_h2]:mb-2 [&_h2]:text-lg [&_h2]:leading-snug [&_h2]:font-bold [&_h2:first-child]:mt-0 [&_li]:mt-1 [&_p]:mt-3 [&_p]:text-sm [&_p]:leading-relaxed [&_p:first-child]:mt-0 [&_strong]:font-bold [&_ul]:mt-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:text-sm [&_ul]:leading-relaxed"
+  class="post-markdown border-cn-border [&_h2]:text-text-main [&_p]:text-text-main [&_ul]:text-text-main rounded-2xl border bg-(--cn-surface) p-6 shadow-sm md:p-8 [&_h2]:mt-8 [&_h2]:mb-2 [&_h2]:text-lg [&_h2]:leading-snug [&_h2]:font-bold [&_h2:first-child]:mt-0 [&_li]:mt-1 [&_p]:mt-3 [&_p]:text-sm [&_p]:leading-relaxed [&_p:first-child]:mt-0 [&_strong]:font-bold [&_ul]:text-sm [&_ul]:leading-relaxed"
 >
   <SvelteMarkdown source={body} options={{ gfm: true, breaks: false }} />
 </article>
