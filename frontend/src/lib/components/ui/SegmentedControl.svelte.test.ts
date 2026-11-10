@@ -87,3 +87,14 @@ it('underline variant keeps the tablist contract: roving tabindex, aria-controls
   tabs()[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
   expect(onSelect).toHaveBeenCalledWith('b');
 });
+
+it('manual activation moves focus on an arrow key and selects nothing', () => {
+  const { tabs, onSelect } = render({ activation: 'manual' });
+  tabs()[0].dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+  );
+  expect(document.activeElement).toBe(tabs()[1]);
+  expect(onSelect).not.toHaveBeenCalled();
+  tabs()[1].click();
+  expect(onSelect).toHaveBeenCalledWith('b');
+});
