@@ -710,6 +710,7 @@
                     },
                   ]}
                   value={accessIsPrivate ? 'restricted' : 'public'}
+                  activation="manual"
                   onSelect={(key) => void handleSetPrivacy(key === 'restricted')}
                   class={privacySaving ? 'pointer-events-none opacity-50' : ''}
                 />

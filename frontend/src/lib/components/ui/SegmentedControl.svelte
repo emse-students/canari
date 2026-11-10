@@ -35,6 +35,12 @@
      * rule, the active one marked by a brand underline (the bookings dashboard's phone tabs).
      */
     variant?: 'pill' | 'underline';
+    /**
+     * `auto` (default): arrows move AND select, for panels that load lazily on select. `manual`:
+     * arrows only move focus, Enter/Space selects - for a choice whose selection is a committed
+     * write (a confirmation dialog must not open on an arrow keypress).
+     */
+    activation?: 'auto' | 'manual';
     class?: string;
   }
 
@@ -46,6 +52,7 @@
     tone = 'amber',
     idPrefix,
     variant = 'pill',
+    activation = 'auto',
     class: extra = '',
   }: Props = $props();
 
@@ -71,7 +78,7 @@
     else if (event.key === 'End') next = last;
     if (next < 0) return;
     event.preventDefault();
-    onSelect(items[next].key);
+    if (activation === 'auto') onSelect(items[next].key);
     buttons[next]?.focus();
   }
 </script>

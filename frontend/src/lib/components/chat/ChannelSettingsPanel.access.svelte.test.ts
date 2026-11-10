@@ -214,6 +214,17 @@ describe('ChannelSettingsPanel - access tab', () => {
     expect(admitSalonGrantee).toHaveBeenCalledWith('salon-a', 'peer', expect.any(Function));
   });
 
+  it('moves focus on an arrow key without opening the confirmation or writing', async () => {
+    await mountOnAccessTab('public-salon');
+    accessChoice('public').dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+    );
+    await settle();
+    expect(document.activeElement).toBe(accessChoice('restricted'));
+    expect(showConfirmMock).not.toHaveBeenCalled();
+    expect(service.updateChannelAccess).not.toHaveBeenCalled();
+  });
+
   it('selects Restreint for a restricted salon, and writing nothing when the current one is picked again', async () => {
     await mountOnAccessTab('salon-a');
     expect(accessChoice('restricted').getAttribute('aria-selected')).toBe('true');
