@@ -3421,6 +3421,7 @@
   "nav_dashboard_label": "Tableau de bord",
   "nav_settings_desc": "Préférences, sécurité, appareils",
   "nav_dashboard_desc": "Vue d'ensemble de l'application",
+  "error_not_found_message": "Cette page est introuvable.",
   "error_unexpected_message": "Une erreur inattendue est survenue.",
   "error_back_home": "Retour à l'accueil",
   "auth_callback_authenticating": "Authentification en cours…",
