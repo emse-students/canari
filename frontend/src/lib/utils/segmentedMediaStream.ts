@@ -54,7 +54,8 @@
  * - A range the ENGINE EVICTS from the buffer is not fetched again: segments go in once, in order. A
  *   `ManagedMediaSource` (iPhone) may evict under memory pressure and stall there - the pacing
  *   honours its `streaming` flag, but re-fetching an evicted range needs the time-to-segment index
- *   above. Not observed on a device.
+ *   above. Not observed on a device. Until then a seek before the cut is CLAMPED to what is still
+ *   buffered ({@link streamSeekFloor}, read by `VideoPlayer.seekTo`) rather than left to stall.
  * - Nothing is trimmed BEHIND the playhead: a feed video LOOPS from its own buffer, which trimming
  *   would break (the loop would need a re-fetch), so the engine's own buffer quota and eviction
  *   bound it.
@@ -63,6 +64,7 @@
 import { SEGMENTED_MEDIA_ENCODING } from '$lib/mediaSegmented';
 import type { MediaRef } from '$lib/media';
 import { httpRangeSource, openSegmentedMedia } from './segmentedMediaReader';
+import { isMp4Type, writeMvhdDuration } from './mp4Duration';
 
 /** The constructor MSE offers on this engine: the standard one, or Safari's managed one. */
 export type MediaSourceConstructor = {
@@ -171,6 +173,32 @@ export interface StreamProgress {
   appended: number;
   /** Plaintext bytes appended. */
   bytes: number;
+  /**
+   * Where the stream CUT its own buffer to take a segment (`appendSegmentEvicting`), in seconds -
+   * `0` while nothing was cut. Segments go in once and in order, so nothing before this point will
+   * ever be buffered again: a seek there would wait for ever ({@link streamSeekFloor}).
+   */
+  trimmedBefore: number;
+}
+
+/**
+ * THE EARLIEST TIME A STREAMED ELEMENT CAN STILL BE SOUGHT TO. A declared duration makes the
+ * engine's `seekable` range the whole clip, but a stream appends each segment once and never goes
+ * back: what its own trim removed ({@link StreamProgress.trimmedBefore}) or the engine evicted
+ * (Safari's `ManagedMediaSource` under pressure, Chromium's quota) is gone, and a seek before it
+ * stalls with no byte coming. The floor is the later of the stream's cut and the start of what the
+ * element still buffers.
+ *
+ * @param progress The stream's progress ({@link streamProgressOf}); `undefined` for a whole file.
+ * @param buffered The element's `buffered` ranges.
+ */
+export function streamSeekFloor(
+  progress: Pick<StreamProgress, 'trimmedBefore'> | undefined,
+  buffered: Pick<TimeRanges, 'length' | 'start'>
+): number {
+  const cut = progress?.trimmedBefore ?? 0;
+  const head = buffered.length > 0 ? buffered.start(0) : 0;
+  return Math.max(cut, head);
 }
 
 /** Every open stream's progress, by its MSE URL - the one name the element and its owner share. */
@@ -224,7 +252,8 @@ async function appendSegmentEvicting(
   buffer: SourceBuffer,
   bytes: ArrayBuffer,
   element: () => PacingElement | null,
-  mediaId: string
+  mediaId: string,
+  progress: StreamProgress
 ): Promise<void> {
   try {
     await appendSegment(buffer, bytes);
@@ -234,11 +263,28 @@ async function appendSegmentEvicting(
     const cut = (el?.currentTime ?? 0) - QUOTA_KEEP_BEHIND_SECONDS;
     if (!isQuota || !el || cut <= 0) throw err;
     console.warn(`[media-seg] stream ${mediaId}: buffer full, trimming before ${cut.toFixed(1)} s`);
+    // Said BEFORE the removal: a seek decided meanwhile must already see the floor.
+    progress.trimmedBefore = Math.max(progress.trimmedBefore, cut);
     await settled(buffer);
     buffer.remove(0, cut);
     await settled(buffer);
     await appendSegment(buffer, bytes);
   }
+}
+
+/**
+ * Whether `seconds` lies in what the element buffers. A stream appends each segment once, so a time
+ * outside every range is either ahead (fetched in order, at the cost of every segment before it) or
+ * behind a cut (never again) - a hand-over seek is only free inside one.
+ */
+export function isTimeBuffered(
+  buffered: Pick<TimeRanges, 'length' | 'start' | 'end'>,
+  seconds: number
+): boolean {
+  for (let i = 0; i < buffered.length; i++) {
+    if (buffered.start(i) <= seconds && seconds <= buffered.end(i)) return true;
+  }
+  return false;
 }
 
 /** Seconds buffered past the element's playhead - 0 when the playhead is in no buffered range. */
@@ -334,6 +380,63 @@ export function openSegmentedStream(
 }
 
 /**
+ * THE STREAM KNOWS HOW LONG IT LASTS BEFORE ITS FIRST BYTE (owner, 2026-11-10: "on ne peut plus
+ * avancer dans les videos"). A file written before its writer declared its length (`mp4Duration.ts`)
+ * gives the MSE parser an init segment with no duration, so the element reads `Infinity` until the
+ * LAST segment is appended - which a paced stream never does - and its `seekable` range ends at what
+ * is buffered: the scrubber has nothing to map onto, a resume is clamped to the buffered head. The
+ * sender's DECLARED length (`MediaRef.durationMs`: a conversation's video, a reel's post) is set on
+ * the source as soon as it opens, before any buffer exists - the one moment the spec allows it with
+ * nothing to truncate. Undeclared, the file's own header answers (every upload since the fix).
+ */
+function declareStreamDuration(
+  source: MediaSource,
+  ref: MediaRef,
+  label: string,
+  closed: boolean
+): void {
+  const ms = ref.durationMs;
+  if (!ms || ms <= 0) return;
+  // A stream closed before its source opened (a card scrolled past at once) has nothing to declare:
+  // the ordinary close, not a refusal worth a warning.
+  if (closed || source.readyState !== 'open') return;
+  try {
+    source.duration = ms / 1000;
+    console.debug(`[media-seg] ${label} ${ref.mediaId}: declared duration ${ms} ms`);
+  } catch (e) {
+    // Only an engine that broke the spec (an open source with no buffer) lands here: said, loudly.
+    console.warn(`[media-seg] ${label} ${ref.mediaId}: the declared duration was refused`, e);
+  }
+}
+
+/**
+ * The whole file the segments make, its movie duration declared when it was not (`mp4Duration.ts`).
+ * ONLY THE HEAD IS COPIED: the segments stay the engine's `Blob`s (spilled to disk), and the first
+ * one - the `moov` is in it - is read, patched in a copy and put in front. Reading every segment
+ * back into one `Uint8Array` held 2-3x a 35 MB reel in the JS heap on the Mi 9T (review of #3311).
+ *
+ * @param seconds How long the stream played to its end: the source's `duration` after
+ *   `endOfStream`, or the sender's declared length.
+ */
+async function wholeFile(ref: MediaRef, parts: Blob[], seconds: number): Promise<Blob> {
+  if (ref.type !== 'video' || !isMp4Type(ref.mimeType) || parts.length === 0) {
+    return new Blob(parts, { type: ref.mimeType });
+  }
+  const patched = writeMvhdDuration(new Uint8Array(await parts[0].arrayBuffer()), seconds);
+  if (!patched) return new Blob(parts, { type: ref.mimeType });
+  console.info(
+    `[media-seg] ${ref.mediaId}: undeclared movie duration - ${seconds.toFixed(2)} s written into its head`
+  );
+  return new Blob([patched, ...parts.slice(1)], { type: ref.mimeType });
+}
+
+/** How long a finished stream lasts: what the engine measured, else what the sender declared. */
+function playedSeconds(source: MediaSource, ref: MediaRef): number {
+  if (Number.isFinite(source.duration) && source.duration > 0) return source.duration;
+  return ref.durationMs && ref.durationMs > 0 ? ref.durationMs / 1000 : 0;
+}
+
+/**
  * One MSE consumer of a feed: its own `MediaSource`, URL and pacing. The root consumer owns the
  * feed's abort; a fork's close stops only itself.
  */
@@ -355,7 +458,7 @@ function openConsumer(
   }
   const source = new playback.MediaSourceCtor();
   const url = URL.createObjectURL(source);
-  const progress: StreamProgress = { segmentCount: null, appended: 0, bytes: 0 };
+  const progress: StreamProgress = { segmentCount: null, appended: 0, bytes: 0, trimmedBefore: 0 };
   progressByUrl.set(url, progress);
   let closed = false;
   let paced = !!pacing;
@@ -405,22 +508,26 @@ function openConsumer(
     await new Promise<void>((resolve) =>
       source.addEventListener('sourceopen', () => resolve(), { once: true })
     );
+    declareStreamDuration(source, ref, label, closed);
     const buffer = source.addSourceBuffer(ref.mimeType);
     const segmentCount = await feed.count();
     progress.segmentCount = segmentCount;
+    // The segments are kept as the feed's BLOBS: the `ArrayBuffer` read for the append is dropped
+    // once appended, so the whole file never sits in the JS heap (see `wholeFile`).
     const parts: Blob[] = [];
     for (let i = 0; i < segmentCount; i++) {
       await demand(i);
-      const part = await feed.segment(i);
+      const segment = await feed.segment(i);
+      const part = await segment.arrayBuffer();
       if (closed) throw new DOMException('stream closed', 'AbortError');
-      await appendSegmentEvicting(buffer, await part.arrayBuffer(), () => element, ref.mediaId);
+      await appendSegmentEvicting(buffer, part, () => element, ref.mediaId, progress);
       progress.appended += 1;
-      progress.bytes += part.size;
-      parts.push(part);
+      progress.bytes += part.byteLength;
+      parts.push(segment);
     }
     if (source.readyState === 'open') source.endOfStream();
     console.debug(`[media-seg] ${label} ${ref.mediaId}: ${segmentCount} segment(s) appended`);
-    return new Blob(parts, { type: ref.mimeType });
+    return wholeFile(ref, parts, playedSeconds(source, ref));
   })();
 
   // NOT LOGGED HERE: `done` is handed to the consumer, which logs the failure by its cause - a range

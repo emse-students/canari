@@ -1,6 +1,6 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
-  import ProfileChips from '$lib/components/profile/ProfileChips.svelte';
+  import ProfileSummaryLine from '$lib/components/profile/ProfileSummaryLine.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -49,7 +49,6 @@
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
   import ProfileMinesweeperBadge from '$lib/components/profile/ProfileMinesweeperBadge.svelte';
-  import ProfileBirthdayLine from '$lib/components/profile/ProfileBirthdayLine.svelte';
   import type { UserMembershipRow, UserRoleHistoryRow, SkyEntourage } from '$lib/profile/api';
   import { readProfileWithExtras } from '$lib/profile/profileExtras';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -334,9 +333,8 @@
       {@const p = profile}
       <ProfileHeader userId={p.id} name={displayFallbackName}>
         {#snippet details()}
+          <ProfileSummaryLine userId={p.id} profile={p} />
           <ProfileMinesweeperBadge userId={p.id} />
-          <ProfileChips profile={p} />
-          <ProfileBirthdayLine userId={p.id} />
         {/snippet}
         {#snippet actions()}
           <!-- ONE accent button: "Suivre" until the reader follows, then "Message". -->

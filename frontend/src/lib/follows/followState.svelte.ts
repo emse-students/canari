@@ -64,6 +64,16 @@ const failedPersons = new Set<string>();
 /** Taps in flight, by id: a second tap on the same chip while the first is out does nothing. */
 // eslint-disable-next-line svelte/prefer-svelte-reactivity -- bookkeeping of taps in flight, nothing renders from it
 const tapping = new Set<string>();
+/**
+ * The same taps, REACTIVE: a surface that must not react to the optimistic flip (a suggestion card
+ * stays drawn until the server has answered, so a refusal never makes it vanish and come back)
+ * reads {@link isTapSettling}.
+ */
+const settling = new SvelteSet<string>();
+/** Whether a tap on `id` is still out: the server has not answered yet. */
+export function isTapSettling(id: string): boolean {
+  return settling.has(id);
+}
 const queue: string[] = [];
 let flushQueued = false;
 
@@ -97,6 +107,7 @@ function voidReads(): void {
   failedPersons.clear();
   // A tap still out belongs to the reader who made it; the next one is not blocked by it.
   tapping.clear();
+  settling.clear();
   queue.length = 0;
   flushQueued = false;
   followedAssociations.clear();
@@ -395,46 +406,61 @@ export async function unfollowAssociationLedgered(associationId: string): Promis
  * on a refusal, whose sentence is the profile's. A withdraw that raced the other side ends in what
  * the server says now (a follow, or none) - no toast, no stuck state. If the reader changed while
  * it was out, nothing is rolled back and nothing is said: that ledger is not this tap's.
+ *
+ * Answers the status the SERVER returned for an ask (`pending`, or `accepted` if the account took it
+ * at once), `null` for anything else (a withdraw, a refusal, a changed reader). It toasts only a
+ * refusal: the confirmation is the surface's to word (`FollowChip`), `FollowBackButton` shows its own.
  */
-export async function tapPerson(userId: string): Promise<void> {
-  if (tapping.has(userId)) return;
+export async function tapPerson(userId: string): Promise<FollowStatus | null> {
+  if (tapping.has(userId)) return null;
   const was = persons.get(userId) ?? null;
   const action = followActionOf(was);
-  if (action === 'unfollow') return; // an accepted follow is never a chip: unfollowing asks first, on the profile
+  if (action === 'unfollow') return null; // an accepted follow is never a chip: unfollowing asks first, on the profile
   const at = epoch;
   tapping.add(userId);
+  settling.add(userId);
   persons.set(userId, optimisticStatusAfter(action));
   Log.d('followState.tapPerson', `${action} from ${was ?? 'none'}`);
   try {
-    if (action === 'ask') await askPerson(userId);
-    else await withdrawPerson(userId);
+    if (action !== 'ask') {
+      await withdrawPerson(userId);
+      return null;
+    }
+    const status = await askPerson(userId);
+    return at === epoch ? status : null;
   } catch (err) {
     Log.d('followState.tapPerson failed', err);
     if (at === epoch) {
       persons.set(userId, was);
       showToast(describeFollowRefusal(refusalCode(err)));
     }
+    return null;
   } finally {
     tapping.delete(userId);
+    settling.delete(userId);
   }
 }
 
-/** The tap on an association's chip: follows at once, goes back on a failure. */
-export async function tapAssociation(associationId: string): Promise<void> {
-  if (tapping.has(associationId) || followedAssociations.has(associationId)) return;
+/** The tap on an association's chip: follows at once, goes back on a failure. True once followed. */
+export async function tapAssociation(associationId: string): Promise<boolean> {
+  if (tapping.has(associationId) || followedAssociations.has(associationId)) return false;
   const at = epoch;
   tapping.add(associationId);
+  settling.add(associationId);
   recordAssociationFollowed(associationId, true);
   Log.d('followState.tapAssociation', associationId.slice(0, 8));
   try {
     await followAssociationLedgered(associationId);
+    return at === epoch;
   } catch (err) {
     Log.d('followState.tapAssociation failed', err);
     if (at === epoch) {
       recordAssociationFollowed(associationId, false);
       showToast(m.common_generic_error_label());
     }
+    return false;
   } finally {
     tapping.delete(associationId);
+    settling.delete(associationId);
   }
 }

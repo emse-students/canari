@@ -4,7 +4,6 @@
   import ProfileCard from '$lib/components/profile/ProfileCard.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Select from '$lib/components/ui/Select.svelte';
-  import { CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
   import type { PickerOption } from '$lib/components/ui/picker';
   import {
     BIRTHDAY_CHANGE_TOO_SOON,
@@ -37,27 +36,24 @@
    * entry point; the one-time prompt card opens it. Saving and removing are each one request, and
    * the state the server answers is what the form shows next.
    *
+   * Minimal on purpose (owner, 2026-11-10): one date row, one "Visible par" choice, one sentence.
+   *
    * A NEW date counts from the next day and cannot change again for 30 days (a removal then a new
    * date included): said before the first save, and while the window is open the date selects are
    * locked with the day it opens - the server's `changeOpensOn`, so the form never learns it by
    * being refused. Who sees the date, and removing it, stay free.
    */
 
-  /** Each choice's label and one-line consequence, listed so each stays a literal Paraglide call. */
-  const VISIBILITY_COPY: Record<BirthdayVisibility, { label: () => string; hint: () => string }> = {
-    school: {
-      label: m.profile_birthday_visibility_school,
-      hint: m.profile_birthday_visibility_school_hint,
-    },
-    followers: {
-      label: m.profile_birthday_visibility_followers,
-      hint: m.profile_birthday_visibility_followers_hint,
-    },
-    nobody: {
-      label: m.profile_birthday_visibility_nobody,
-      hint: m.profile_birthday_visibility_nobody_hint,
-    },
+  /** Each choice's label, listed so each stays a literal Paraglide call. */
+  const VISIBILITY_LABEL: Record<BirthdayVisibility, () => string> = {
+    school: m.profile_birthday_visibility_school,
+    followers: m.profile_birthday_visibility_followers,
+    nobody: m.profile_birthday_visibility_nobody,
   };
+  const visibilityOptions: PickerOption[] = BIRTHDAY_VISIBILITIES.map((choice) => ({
+    value: choice,
+    label: VISIBILITY_LABEL[choice](),
+  }));
 
   const monthNames = birthdayMonthNames(getLocale());
   /** The twelve months, January first; the value is the month number. */
@@ -161,8 +157,6 @@
 </script>
 
 <ProfileCard icon={Cake} heading={m.profile_birthday_heading()} {loading}>
-  <p class="text-text-muted mb-5 text-sm">{m.profile_birthday_intro()}</p>
-
   {#if loadFailed}
     <p class="text-sm font-medium text-red-600 dark:text-red-400" role="alert">
       {m.profile_birthday_load_error()}
@@ -189,45 +183,29 @@
       />
     </div>
 
-    <fieldset class="mt-5">
-      <legend class={CONTROL_LABEL_CLASS}>{m.profile_birthday_visibility_label()}</legend>
-      <div class="space-y-2">
-        {#each BIRTHDAY_VISIBILITIES as choice (choice)}
-          <label
-            class="border-cn-border flex cursor-pointer items-start gap-3 rounded-xl border p-3 {visibility ===
-            choice
-              ? 'bg-accent/10'
-              : ''}"
-          >
-            <input
-              type="radio"
-              name="birthday-visibility"
-              value={choice}
-              bind:group={visibility}
-              disabled={busy}
-              class="accent-accent mt-1"
-            />
-            <span>
-              <span class="text-text-main block text-sm font-bold">
-                {VISIBILITY_COPY[choice].label()}
-              </span>
-              <span class="text-text-muted block text-xs">{VISIBILITY_COPY[choice].hint()}</span>
-            </span>
-          </label>
-        {/each}
-      </div>
-    </fieldset>
+    <Select
+      class="mt-3"
+      id="birthday-visibility"
+      label={m.profile_birthday_visibility_label()}
+      value={visibility}
+      options={visibilityOptions}
+      disabled={busy}
+      onValueChange={(v) => (visibility = v as BirthdayVisibility)}
+    />
 
-    <p class="text-text-muted mt-4 text-xs">{m.profile_birthday_ring_note()}</p>
+    <!-- ALWAYS VISIBLE: who is told and what everyone sees, whatever the choice (decision 3). -->
+    <p class="text-text-muted mt-3 text-xs" data-testid="birthday-ring-note">
+      {m.profile_birthday_ring_note()}
+    </p>
     {#if opensLabel}
-      <p class="text-text-muted mt-2 text-xs" data-testid="birthday-change-opens">
+      <p class="text-text-muted mt-3 text-xs" data-testid="birthday-change-opens">
         {m.profile_birthday_change_opens({ date: opensLabel })}
       </p>
     {:else}
-      <p class="text-text-muted mt-2 text-xs">{m.profile_birthday_takes_effect()}</p>
+      <p class="text-text-muted mt-3 text-xs">{m.profile_birthday_takes_effect()}</p>
     {/if}
 
-    <div class="mt-5 flex flex-wrap gap-2">
+    <div class="mt-4 flex flex-wrap gap-2">
       <Button
         onclick={() => void save()}
         disabled={!valid || unchanged || (dateLocked && !stored)}

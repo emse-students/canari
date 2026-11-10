@@ -17,6 +17,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { createPost, getReelLimits, withdrawPost } from '$lib/posts/api';
 import { reelRuleOf } from '$lib/reels/reelRule';
+import { firstFramePlaceholder } from '$lib/reels/reelFirstFrame';
 import { MediaService, preparePostMedia } from '$lib/media';
 import { SEGMENTED_MEDIA_ENCODING, writesSegmented } from '$lib/mediaSegmented';
 import { assertNotMuted } from '$lib/moderation/muteCheck';
@@ -121,8 +122,20 @@ export function startPublishQueue(userId: string): void {
   const queue = new PublishQueue({
     store,
     prepare: async (file, onProgress, signal) => {
-      const limits = file.type.startsWith('video/') ? await media.uploadLimits() : null;
-      return preparePostMedia(file, { maxBytes: limits?.maxPlaintextBytes, onProgress, signal });
+      const isVideo = file.type.startsWith('video/');
+      const limits = isVideo ? await media.uploadLimits() : null;
+      const prepared = await preparePostMedia(file, {
+        maxBytes: limits?.maxPlaintextBytes,
+        onProgress,
+        signal,
+      });
+      if (!isVideo) return prepared;
+      // THE FIRST FRAME TRAVELS WITH THE VIDEO (owner, 2026-11-10): a reader's feed draws it before
+      // a byte arrives. Made from the PREPARED file, the one readers play. Missing, it is said.
+      const placeholder = await firstFramePlaceholder(prepared.file);
+      if (!placeholder)
+        console.warn('[PUBLISH-QUEUE] a video is published without a first-frame placeholder');
+      return placeholder ? { ...prepared, placeholder } : prepared;
     },
     reelRule: async () => reelRuleOf(await getReelLimits()),
     encodingFor: (mimeType) =>

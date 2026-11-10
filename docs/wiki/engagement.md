@@ -538,7 +538,10 @@ per-reader state), `components/suggestions/` (`SuggestionCard`, `SuggestionCarou
   from the answer's `followingCount`: accepted person follows plus entity follows, one server count) -
   the banner at the top; otherwise once, after the third post.
 - **The cards.** A person: photo, name, "N en commun" with up to three faces (only when N > 0 - never
-  "0 en commun"), the WP-2 `FollowChip` (a request turns it "Demande envoyée" and the card stays); an
+  "0 en commun"), the WP-2 `FollowChip` in its `soft` variant; a follow OR a request removes the card
+  (owner, 2026-11-10): it shrinks away, the next cards slide into its place (`animate:flip`, none under
+  reduced motion) and the next person the read carried (up to 20, ten drawn) joins the end of the row,
+  a toast confirming; an
   entity: logo, name, the chip (it follows at once and the card leaves). An X on each, dismissing for
   good (`POST me/suggestions/dismiss`) - optimistic, back with a toast on a refusal - and the row
   disappears once no card is left OPEN (every one followed, requested or dismissed). No reason line
@@ -581,7 +584,8 @@ Built 2026-11-09 to decision 8 and L13. The server is `GET /api/posts/me/suggest
   score as the followed posts, in their own band after the followed posts under 48 h, with no quota,
   served with `feedSuggested` ([posts](frontend/modules/posts.md#pour-toi---the-ranked-tab-owner-2026-11-10)).
   The client's `placeSuggestedPosts` and its per-reader read are DELETED, and so is Campus's slot.
-  Marked "Suggestion" by the same corner badge as "Nouveau" (`suggestion_post_badge`).
+  Marked "Suggestion" as plain small muted text on the post header's meta line
+  (`suggestion_post_badge`, `PostHeader`), no longer a yellow corner badge (owner, 2026-11-10).
 - **`GET /posts/me/suggested-posts` stays** for the installed clients (1.6.8 and older), which still
   interleave it in their Mon espace ([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-feed-client-newer-than-its-server---rankedfeeds-2026-11-10)).
 - **Proof**: `posts/suggested-posts.integration.spec.ts` on PostgreSQL (visible by the space rule;
@@ -1099,13 +1103,22 @@ then WP-9). Shipping it earlier would guard nothing.
 
 ### WP-2 - Suivre everywhere (BUILT)
 
-One component, `components/follows/FollowChip.svelte` (on `ui/Button`, compact, with a 44 px hit area),
-drawn in three places: the post header (`PostHeader`: the association of an association post, the
-author of a personal post, nothing on an anonymous one - a revealed author included - and nothing in
-the moderation preview, `showFollow={false}`; icon-only below `sm` so the name keeps its row), the
-directory rows, and `AssociationTile` (the chip is a sibling of the link, in its own row under the
-card, never over its text). It is NEVER drawn for yourself, a blocked account, a person already
-followed or requested-and-accepted, an association already followed, an ARCHIVED association, or one
+**QUIET BY RULE (owner, 2026-11-10, after reading 1.6.9: "Suivre agresse trop").** One component,
+`components/follows/FollowChip.svelte`, in two variants and never solid yellow (solid yellow is the
+primary action of a screen). `link` (default): a bare accent TEXT, no fill, no icon, on a meta line -
+the post header (`PostHeader`: `19 h . Suggestion . Suivre`; the association of an association post,
+the author of a personal post, nothing on an anonymous one - a revealed author included - and nothing
+in the moderation preview, `showFollow={false}`), the directory rows (on the line under the name, the
+row being a stretched link) and `AssociationTile` (`7 membres . Suivre`, matching `18 membres . Membre`).
+`soft`: a neutral light-grey secondary button with no icon, for the "Suggestions pour vous" cards only.
+A tap follows at once and the control GOES AWAY (a request already sent draws nothing; it is withdrawn
+from the profile or the sent-requests list), with a NAMED toast worded from the status the SERVER
+returned, by `FollowChip` (never `followState`, so `FollowBackButton` does not toast): "Demande de suivi
+envoyee a {name}" for a request (every personal account is private), "Vous suivez {name}" for a follow.
+The `soft` look is `ui/Button`'s own variant (`cn-surface-alt`). The link is outside the meta line's
+dimming (each muted item carries its own `opacity-80`) with a 44 px hit area. It
+is NEVER drawn for yourself, a blocked account, a person already
+followed or requested, an association already followed, an ARCHIVED association, or one
 the reader is a MEMBER of (lead decision), and it draws nothing while its answer is unknown.
 A post header does not know whether its association is archived (the feed payloads do not carry it), so an archived association's post still shows the chip - accepted for now.
 
@@ -1157,9 +1170,13 @@ follow of the reader's, so it writes nothing.
   for the session: fail-closed for the BDE flags, which is right for them); the ledger asks
   `didMyAssociationsProbeFail()` and offers nothing on any association when membership is unknown.
 - **A tap** flips the state at once, is guarded by a per-id in-flight set (a second tap does nothing),
-  and puts the state back with a toast on a refusal (the profile's sentences). A withdraw that
-  raced the other side ends in what the server says now - a follow (409) or none (404) - with no
-  toast and no stuck state. An association follows at once and the chip goes away.
+  and puts the state back with a toast on a refusal (the profile's sentences); `tapPerson`
+  answers the server's status (`tapAssociation` a boolean), which the chip words and hands to
+  `onFollowed`; a card stays drawn while its tap is out (`isTapSettling`) and leaves only on success,
+  so a refusal never makes it vanish and come back. A withdraw
+  (`withdrawPerson`, from the profile) that raced the other side ends in what the server says now - a
+  follow (409) or none (404) - with no toast and no stuck state. An association follows at once and
+  the chip goes away.
 
 Proof: `follow-requests.integration.spec.ts` on PostgreSQL (statuses; one statement; caller side
 only; a stranger's private account; blocks both ways; agreement with `follow-status`; the withdraw

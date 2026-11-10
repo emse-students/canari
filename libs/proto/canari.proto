@@ -382,6 +382,11 @@ message MediaMsg {
   // the tile can draw its tombstone without a request: the media service's clock is the authority
   // and a 410 is the truth. 0 = not declared.
   int64 expires_at_ms = 16;
+  // The message this one ANSWERS, when the sender replied to a message and attached a file: the
+  // same reference a `ReplyMsg` carries, so a photo or a clip sent as a reply reads as one on both
+  // sides. Absent (and on every message written before it) is a plain attachment; a reader that does
+  // not know the field shows the file without the quote - softer than the promise, never broken.
+  ReplyRef reply_to = 17;
 }
 
 enum MediaIntent {

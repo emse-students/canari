@@ -84,9 +84,10 @@ button for the glass pill), all built by `profileHref` (`utils/users/profileHref
 - **A direct header**: desktop - the peer's avatar and name are links, the gear stays. Phone glass - the
   centre pill opens the profile; **settings stay one tap away in the "..." menu** (they already had an
   entry there, so nothing became unreachable). A group or salon pill still opens its settings.
-  **The pill takes all the free width** (`w-full`, 2026-11-09): its web rect IS the native pill, and a
-  pill hugging the web text was narrower than the native system font needs, cutting a name at 186 pt
-  with 70 pt of bar empty.
+  **The pill fits its content and is centred** (owner, 2026-11-10: the full-width pill of 1.6.9 was
+  reverted); a long name truncates. **This reintroduces design-audit M5 as a cost the owner accepted**:
+  the native glass pill is drawn at the web button's rect, and its (wider) native system font clipped
+  "Canari Test Alpha" at 186 pt with 70 pt of the bar empty. Owed: one iPhone reading of a long name.
 - **A deleted or erased account gets no link**, and a pill with no page behind it falls back to settings:
   `isAbsentUser` (`displayName.ts`) is a reactive set filled when the server answers 404/deleted, so a
   link drawn before the answer is withdrawn when it lands. `false` means "not known gone". The profile
@@ -1294,6 +1295,16 @@ onglet." banner is gone, and every gesture a follower tab refused is possible fr
 still never commits - its MLS state is a copy loaded once ([mls-protocol](../../protocols/mls-protocol.md#a-follower-tab-hands-its-commits-to-the-leader-2026-11-08))
 and `FollowerTabCommitError` stays at the service as the guard - but it no longer stops there: it
 HANDS THE GESTURE to the leader, exactly as it hands its sends (above). `tabCommitDelegation.ts`.
+
+**The follower's connection pill (`tabLeaderLink.svelte.ts`, fixed 2026-11-10).** A follower holds no
+socket, so its pill reads the leader's, which the leader publishes on the tab-messages channel. Every
+event is stamped with the account and a receiver drops another account's. The follower's query used to
+go out once at module start with `currentUserId() ?? ''`, before the user id was known: the leader dropped
+it as another account's and the second tab read "Hors-ligne" while the account was online. Now nothing is
+sent before the account is known, and `announce()` runs when the account becomes known AND when the
+election is decided, in either order: a follower asks, a leader republishes its socket (so a follower whose
+query the leader could not answer still hears it). A promotion reloads the page, which runs it again.
+Pinned in `tabLeaderLink.svelte.test.ts` by the boot order (no account, then the account).
 
 | Gesture in a follower tab | Handed over as | Run by the leader as |
 | --- | --- | --- |
@@ -4940,6 +4951,12 @@ take the key from the caller (`MainChatPage` passes `convs.selectedContact`), an
 entry of `ctx.selectedContact`. No clear-on-change effect is needed - nothing is shared, so nothing leaks.
 Returning to the DM shows its reply again, like a draft. Each decision logs `[REPLY]`.
 Test: `useMessaging.replyScope.svelte.test.ts`.
+
+### A reply survives attaching a file (2026-11-10)
+
+Owner report (1.6.9): reply to a message, attach a photo, and the photo went out as a plain message. Attaching never touched the armed reply; the loss was at the SEND. `handleSendChat` takes the reply out of `replyByConversation` at the tap, but only the text path (`sendChatMessage`) used it - the media path never read it - and the wire could not carry it anyway: `MediaMsg` had no reference, unlike `ReplyMsg`.
+
+Now the reply rides the FIRST file, like the caption (several files: the others are plain attachments). `quoteReference` (`utils/chat/messaging.ts`) builds the quote once for the text and the media send. The reference is written to the outbox entry's `replyTo` (the entry stays `kind: 'media'`; the encrypted payload already stored `replyTo` for any kind), to the placeholder envelope and row, and, once the upload names the blob, to `MediaMsg.reply_to` (proto field 17, a `ReplyRef`) and the stored media envelope (`buildMediaMessage(..., replyTo)`). A salon attachment takes the same path through `startSalonAttachment({ replyTo })`. The receiver rebuilds the envelope's `replyTo` in `appMsgToEnvelope`; `MessageBubble` already drew a media envelope's quote. The exclusion-window rule is the text reply's: `decideQuote` also covers a `media` entry carrying a quote (its preview is blanked for a reader outside the window), taken BEFORE the seal barrier so nothing is awaited between the gates and the send (the promise of review #2874 L1 stays true). **How a quoted file is held:** `dependsOnAny` cannot see it - the queue read leaves a media row's encrypted payload undecoded, so `replyTo` is unknown there. `flushOne` takes the lane's `heldBack` set and, once the full row is loaded, answers `uploading` (held, not failed) for a file whose quoted message is still unsent in that pass; the lane re-evaluates it on its next pass. A voice note armed with a reply carries it the same way (it goes through the same send path as the first file). If the first file is refused and re-staged, the reply is re-armed with it (`[REPLY] re-armed`). Older clients ignore the new field and show the file without the quote. The native notification scanner (`proto_fields.rs`) does not read it: a notification of such a photo names the photo, not the reply. Tests: `useMessaging.replyWithAttachment.svelte.test.ts`, and `utils/chat/outbox.replyingFile.test.ts` (real IndexedDB queue read: the hold, and the order quote decided -> barrier -> gates -> send).
 
 ### A refused salon send gives the draft back (WP-OFF-1, 2026-10-09)
 

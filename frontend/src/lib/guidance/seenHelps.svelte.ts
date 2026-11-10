@@ -73,6 +73,8 @@ export class SeenHelps {
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- nothing renders what is owed
   #owed = new Set<HelpId>();
   #ready = $state(false);
+  /** Whether the server offers this account the profile-photo prompt (TEMPORARY gate, see below). */
+  #profilePhotoPromptEligible = $state(false);
   /** Moves on with every account change, so an answer for the previous account is dropped. */
   #generation = 0;
   #stopReconnect: (() => void) | null = null;
@@ -82,6 +84,15 @@ export class SeenHelps {
   /** Whether the server's set has been merged for the current account. */
   get ready(): boolean {
     return this.#ready;
+  }
+
+  /**
+   * Whether the server offers the current account the profile-photo prompt - TEMPORARY (owner,
+   * 2026-11-10): only the spaces named by the server's `PROFILE_PHOTO_PROMPT_SPACES`. Decided on the
+   * server and read with the seen set, so widening it needs no release; `false` until it answers.
+   */
+  get profilePhotoPromptEligible(): boolean {
+    return this.#profilePhotoPromptEligible;
   }
 
   /** Whether the current account has seen `id` (server or local copy). Reactive. */
@@ -137,7 +148,11 @@ export class SeenHelps {
         console.error(`[seenHelps] the seen-help route refused: HTTP ${res.status}`);
         return;
       }
-      const body = (await res.json()) as { seen?: unknown; ageSeconds?: unknown } | null;
+      const body = (await res.json()) as {
+        seen?: unknown;
+        ageSeconds?: unknown;
+        profilePhotoPromptEligible?: unknown;
+      } | null;
       if (generation !== this.#generation) return;
       const server = Array.isArray(body?.seen) ? body.seen.filter(isHelpId) : [];
       const ages = (body?.ageSeconds ?? {}) as Record<string, unknown>;
@@ -150,6 +165,7 @@ export class SeenHelps {
         // The server holds it already: whatever this device owed for it is settled.
         this.#owed.delete(id);
       }
+      this.#profilePhotoPromptEligible = body?.profilePhotoPromptEligible === true;
       this.#persist();
       this.#ready = true;
       Log.d('seenHelps', `server answered: ${server.length} seen, ${this.#owed.size} owed`);
@@ -258,6 +274,7 @@ export class SeenHelps {
     this.#ageSeconds.clear();
     this.#owed.clear();
     this.#ready = false;
+    this.#profilePhotoPromptEligible = false;
     this.#loading = null;
     this.#stopReconnect?.();
     this.#stopReconnect = null;

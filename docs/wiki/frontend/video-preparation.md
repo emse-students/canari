@@ -41,6 +41,15 @@ prepareVideoForUpload(source: Blob, {
 original to upload: an untranscoded upload is a second format every reader then carries for ever,
 and the exact server cost C3 refused.
 
+### The movie declares its length (2026-11-10)
+
+The muxer's fragmented output says duration 0 in its `mvhd` (it writes the `moov` before the first
+fragment) and carries no `mehd`, so every player read 0/`Infinity` and could not seek. The seam now
+writes the samples' own length into the `mvhd`, in place, after the muxer finishes
+(`utils/mp4Duration.ts`, `declareMp4Duration`); readers do the same to a file uploaded before. The
+cause, the measurement and the reader half are in
+[video-player](modules/video-player.md#why-seeking-stopped---the-cause-measured).
+
 ## The numbers (`videoEncodingPlan.ts`, the only copy)
 
 | | Value | Why |

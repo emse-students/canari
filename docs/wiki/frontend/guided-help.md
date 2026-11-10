@@ -438,6 +438,20 @@ visit after the update, ahead of the contextual hints (one help per visit, so th
   (`HelpSeenService.seenWithAges`), so no device clock decides "30 days". A first showing still owed
   to the server has no age, hence no reminder until it is recorded. Additive: an old client ignores
   the field, and a new client against an old server has no age and never reminds.
+
+- **TEMPORARILY OFFERED ONLY TO ICM AT SAINT-ETIENNE (owner, 2026-11-10).** Who is offered the
+  prompt is decided on the SERVER, so widening it needs no release: core-service reads
+  `PROFILE_PHOTO_PROMPT_SPACES`, a comma-separated list of `FORMATION:campus` pairs in the spaces'
+  own spelling (`ICM:saint-etienne` on both estates, a literal row of `env-manifest.tsv`), and
+  `GET /api/users/me/help-seen` answers `profilePhotoPromptEligible` beside `seen` and `ageSeconds`
+  (`HelpSeenService.profilePhotoPromptEligible`, `platform/profile-photo-prompt-spaces.ts`). An
+  account is in a space by the `readerSpaces` rule: its campus is the pair's and one of its cursus
+  formations is the pair's; staff with no cursus and review accounts are in none. The client shows
+  neither the card nor the reminder unless the field is `true` (`seenHelps.profilePhotoPromptEligible`,
+  `false` until the server answers, or from an older server). **Unset or empty: nobody. A value that
+  does not parse: nobody, and an error line at boot** - a typo never widens it. Core-service logs
+  what the variable resolved to once at boot (`[PROFILE_PHOTO_PROMPT]`). **Remove the gate** (module,
+  variable, manifest row, compose and template lines, the field) the day the prompt opens to all.
 - **The rule is one pure function**, `profilePhotoPromptStage` (`guides/profilePhotoPromptStage.ts`):
   no photo + never shown -> first; shown, under 30 days -> nothing; 30 days or more and still none
   -> reminder; reminder shown -> never; a photo, or no answer -> never. Each help's `eligible` asks
@@ -449,14 +463,15 @@ visit after the update, ahead of the contextual hints (one help per visit, so th
 
 ## The birthday prompt (2026-11-09)
 
-`prompt-birthday` (`guides/birthdayPrompt.ts`) is the same shape as the photo card: ONE centred
-step on `/posts`, declared after the two photo helps (an account missing both meets the photo first,
-the birthday on a later visit), its button opening Profile > Anniversaire. **Shown once, with NO
-reminder** - a birthday is personal data the member may not want to give; the reasoning is on
-[birthdays](../birthdays.md#the-entry-point-and-the-prompt-card). `eligible` reads
-`ownBirthday.hasBirthday` (`birthdays/birthdaysToday.svelte.ts`, loaded by `GuideOverlay.svelte`
-beside the photo fact, set by the settings section on load and save): `null` shows nothing. Pinned
-by `guides/birthdayPrompt.test.ts`.
+`prompt-birthday` is **no longer a guide** (owner, 2026-11-10: the self-opening modal was too
+aggressive and its button overflowed a phone). It is a small dismissible card at the top of the feed,
+`components/posts/BirthdayFeedCard.svelte`, that still records itself under the help id
+`prompt-birthday` in `seenHelps`: the cross and "Ajouter" both mark it seen, so it never returns.
+**Shown once, with NO reminder** - a birthday is personal data the member may not want to give; the
+reasoning is on [birthdays](../birthdays.md#the-entry-point-and-the-prompt-card). It reads
+`ownBirthday.hasBirthday` (`birthdays/birthdaysToday.svelte.ts`, still loaded by `GuideOverlay.svelte`
+beside the photo fact, set by the settings section on load and save): `null` shows nothing. Pinned by
+`BirthdayFeedCard.svelte.test.ts`.
 
 ## The server store
 

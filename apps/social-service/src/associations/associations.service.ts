@@ -181,6 +181,7 @@ import {
   associationVisibleToViewerSql,
   eventVisibleToViewerSql,
   READER_PROFILE_SQL,
+  AGENDA_REACHED_SPACES_SQL,
   READER_SPACES_SQL,
   campusWideReaderCampus,
   type SpacePair,
@@ -3498,6 +3499,18 @@ export class AssociationsService {
       });
     }
     return { sig: signAgendaSelection({ ...selection, associationId }) };
+  }
+
+  /**
+   * The spaces the reader's agenda reaches (`AGENDA_REACHED_SPACES_SQL`), as pairs: what the
+   * agenda's space filter offers. A view aid; it grants nothing.
+   */
+  async listAgendaReachedSpaces(userId: string): Promise<SpacePair[]> {
+    const rows = (await this.assoRepo.manager.query(AGENDA_REACHED_SPACES_SQL, [
+      userId,
+    ])) as SpacePair[];
+    this.logger.debug(`[AGENDA] ${userId.slice(0, 8)} reaches ${rows.length} space(s)`);
+    return rows;
   }
 
   /**

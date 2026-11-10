@@ -5,7 +5,7 @@
 
 ## Responsibilities
 
-- News feed with three tabs: Associations, Pour toi (ranked) and Campus (since 1.6.9).
+- News feed with three tabs: Organisations (renamed from "Associations", 2026-11-10: the tab mixes associations, lists and institutions), Pour toi (ranked) and Campus (since 1.6.9).
 - Post creation with rich content: Markdown, image, poll, embedded form.
 - Reactions (emoji), comments, post sharing.
 - Search within the feed.
@@ -16,7 +16,7 @@
 
 | Tab (`feed=`) | Content |
 |---|---|
-| Associations (`associations`, the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication. Chronological, pins on top. An entity followed OUTSIDE the reader's spaces adds nothing here: an entity follow opens no visibility door (`postVisibleToUserSql`), so every entity row the old Suivis showed was already in this tab |
+| Organisations (`associations`, was "Associations", the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication. Chronological, pins on top. An entity followed OUTSIDE the reader's spaces adds nothing here: an entity follow opens no visibility door (`postVisibleToUserSql`), so every entity row the old Suivis showed was already in this tab |
 | Pour toi (`foryou`, "Suivis" / `followed` until 1.6.9) | What PEOPLE the reader follows write or repost - an association's or an entity's post a followed person reposted included, with its "X a repartage" header (decision A) - and the suggested posts of people (engagement WP-7), RANKED - [below](#pour-toi---the-ranked-tab-owner-2026-11-10). No pin. The only tab with the "Comptes a suivre" carousel |
 | Campus (`all`, "Mon espace" until 1.6.9, "Tout" until 1.6; the identifier is unchanged) | Every post the reader may see through their spaces, campus and formation. Chronological, pins on top, NOTHING inserted between posts (no suggestion, no carousel) |
 
@@ -31,8 +31,12 @@ a remembered `followed`, like a `?feed=followed` link, now opens Pour toi (`pars
    on top - no ranking, nothing interleaved (*"un des problemes de Facebook est de trouver les
    informations"*; *"ca n'a pas de sens dans Campus, parce que tout y est deja"*).
 2. **Pour toi replaces Suivis**: what the people the reader follows publish or repost, PLUS the
-   suggested posts (WP-7's rules: popular, last 7 days, not followed, Suivre in the header, the
-   "Suggestion" badge). Suggestions leave Campus entirely.
+   suggested posts (WP-7's rules: popular, last 7 days, not followed; the header's meta line reads
+   `19 h . Suggestion . Suivre`, "Suggestion" a muted word and "Suivre" a quiet text link - no yellow
+   badge, no button, only the "..." on the right, owner 2026-11-10 -
+   [engagement](../../engagement.md#wp-2---suivre-everywhere-built)). Suggestions leave Campus
+   entirely. **Switching feed tab opens the new list at its top** (`resetPageScroll`, before and after
+   the navigation; re-pressing the open tab leaves the scroll alone).
 3. **Pour toi is ordered by freshness and popularity**, not by date alone.
 4. **Tab order**: Associations (default) / Pour toi / Campus.
 5. **The feed opens on the last tab the reader opened** (per device; first run = Associations).

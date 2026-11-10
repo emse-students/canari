@@ -89,6 +89,19 @@ describe('SeenHelps', () => {
     expect(store.ageSeconds('prompt-profile-photo')).toBeNull();
   });
 
+  it('reads the profile-photo-prompt offer the server makes: false until true, false after a reset', async () => {
+    expect(store.profilePhotoPromptEligible).toBe(false);
+    apiFetch.mockResolvedValueOnce(json(200, { seen: [], profilePhotoPromptEligible: true }));
+    await store.load('u1');
+    expect(store.profilePhotoPromptEligible).toBe(true);
+    store.reset();
+    expect(store.profilePhotoPromptEligible).toBe(false);
+    // An older server that does not say, or a non-boolean, is "not offered".
+    apiFetch.mockResolvedValueOnce(json(200, { seen: [], profilePhotoPromptEligible: 'yes' }));
+    await store.load('u1');
+    expect(store.profilePhotoPromptEligible).toBe(false);
+  });
+
   it('owes an unanswered write to the reconnect, and delivers it there', async () => {
     apiFetch.mockResolvedValueOnce(json(200, { seen: [] }));
     await store.load('u1');

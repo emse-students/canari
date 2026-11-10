@@ -58,11 +58,7 @@ vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'me' }));
 import FollowChip from './FollowChip.svelte';
 import { resetFollowState } from '$lib/follows/followState.svelte';
 import { forgetReaderCaches } from '$lib/utils/sharedCache';
-import {
-  FOLLOW_BLOCKED,
-  FOLLOW_REQUEST_ANSWERED,
-  FOLLOW_REQUEST_NOT_FOUND,
-} from '$lib/follows/api';
+import { FOLLOW_BLOCKED } from '$lib/follows/api';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { m } from '$lib/paraglide/messages';
 
@@ -107,22 +103,84 @@ describe('a person', () => {
     chip()!.click();
     await settle();
     expect(api.askToFollow).toHaveBeenCalledWith('u1');
-    expect(chip()?.dataset.followChipState).toBe('pending');
-    expect(chip()?.textContent).toContain(m.profile_follow_requested_btn());
+    // The control goes away at once and a toast says what happened (owner, 2026-11-10).
+    expect(chip()).toBeNull();
+    expect(toast.showToast).toHaveBeenCalledWith(
+      m.follow_toast_requested_named({ name: 'X' }),
+      'info'
+    );
   });
 
-  it('a tap on the request withdraws it', async () => {
-    api.getFollowStatuses.mockResolvedValue({ u1: 'pending' });
-    api.withdrawFollowRequest.mockResolvedValue(undefined);
+  it('words the toast from the status the SERVER returned: an account that took it at once is a follow', async () => {
+    api.getFollowStatuses.mockResolvedValue({});
+    api.askToFollow.mockResolvedValue('accepted');
     await render('user', 'u1');
-    expect(chip()?.getAttribute('aria-label')).toBe(m.follow_chip_withdraw_named({ name: 'X' }));
-    // label in name: the accessible name holds the visible text
-    expect(chip()!.getAttribute('aria-label')).toContain(m.profile_follow_requested_btn());
     chip()!.click();
     await settle();
-    expect(api.withdrawFollowRequest).toHaveBeenCalledWith('u1');
-    expect(api.leaveFollow).not.toHaveBeenCalled();
-    expect(chip()?.dataset.followChipState).toBe('ask');
+    expect(toast.showToast).toHaveBeenCalledWith(
+      m.follow_toast_following_named({ name: 'X' }),
+      'info'
+    );
+  });
+
+  it('a refusal says the refusal only - no confirmation, no onFollowed', async () => {
+    api.getFollowStatuses.mockResolvedValue({});
+    api.askToFollow.mockRejectedValue(new ApiRefusalError(403, FOLLOW_BLOCKED, 'x'));
+    const onFollowed = vi.fn();
+    component = mount(FollowChip, {
+      target: document.body,
+      props: { kind: 'user', targetId: 'u1', name: 'X', onFollowed },
+    });
+    await settle();
+    chip()!.click();
+    await settle();
+    expect(toast.showToast).toHaveBeenCalledTimes(1);
+    expect(toast.showToast).toHaveBeenCalledWith(m.refusal_follow_blocked());
+    expect(onFollowed).not.toHaveBeenCalled();
+  });
+
+  it('is a bare accent text link: no icon, no fill, the label in the accessible name', async () => {
+    api.getFollowStatuses.mockResolvedValue({});
+    await render('user', 'u1');
+    const el = chip()!;
+    expect(el.dataset.followChipVariant).toBe('link');
+    expect(el.querySelector('svg')).toBeNull();
+    expect(el.className).toContain('text-accent-text');
+    expect(el.className).not.toMatch(/\bbg-/);
+    expect(el.textContent?.trim()).toBe(m.profile_public_follow_btn());
+    expect(el.getAttribute('aria-label')).toContain(m.profile_public_follow_btn());
+  });
+
+  it('the soft variant is a neutral secondary button, never solid yellow, with no icon', async () => {
+    api.getFollowStatuses.mockResolvedValue({});
+    component = mount(FollowChip, {
+      target: document.body,
+      props: { kind: 'user', targetId: 'u1', name: 'X', variant: 'soft' },
+    });
+    await settle();
+    const el = chip()!;
+    expect(el.dataset.followChipVariant).toBe('soft');
+    expect(el.querySelector('svg')).toBeNull();
+    expect(el.className).not.toContain('bg-accent');
+  });
+
+  it('draws nothing for a request already sent, and tells onFollowed after a tap', async () => {
+    api.getFollowStatuses.mockResolvedValue({ u1: 'pending' });
+    await render('user', 'u1');
+    expect(chip()).toBeNull();
+    unmount(component!);
+    resetFollowState();
+    api.getFollowStatuses.mockResolvedValue({});
+    api.askToFollow.mockResolvedValue('pending');
+    const onFollowed = vi.fn();
+    component = mount(FollowChip, {
+      target: document.body,
+      props: { kind: 'user', targetId: 'u2', onFollowed },
+    });
+    await settle();
+    chip()!.click();
+    await settle();
+    expect(onFollowed).toHaveBeenCalledOnce();
   });
 
   it('draws nothing for an accepted follow, yourself, a blocked account, or while unknown', async () => {
@@ -168,41 +226,19 @@ describe('a person', () => {
   });
 });
 
-describe('a withdraw that raced the other side', () => {
-  it('an acceptance meanwhile leaves a FOLLOW: the chip goes away, no toast, nothing unfollowed', async () => {
-    api.getFollowStatuses.mockResolvedValue({ u1: 'pending' });
-    api.withdrawFollowRequest.mockRejectedValue(
-      new ApiRefusalError(409, FOLLOW_REQUEST_ANSWERED, 'x')
-    );
-    await render('user', 'u1');
-    chip()!.click();
-    await settle();
-    expect(chip()).toBeNull();
-    expect(toast.showToast).not.toHaveBeenCalled();
-    expect(api.leaveFollow).not.toHaveBeenCalled();
-  });
-
-  it('a refusal by the other side leaves none: Suivre again, no toast, no stuck state', async () => {
-    api.getFollowStatuses.mockResolvedValue({ u1: 'pending' });
-    api.withdrawFollowRequest.mockRejectedValue(
-      new ApiRefusalError(404, FOLLOW_REQUEST_NOT_FOUND, 'x')
-    );
-    await render('user', 'u1');
-    chip()!.click();
-    await settle();
-    expect(chip()?.dataset.followChipState).toBe('ask');
-    expect(toast.showToast).not.toHaveBeenCalled();
-  });
-
-  it('a second tap while the first is out does nothing', async () => {
+describe('a tap in flight', () => {
+  it('hides the control at once, so a second tap cannot ask twice, and toasts nothing yet', async () => {
     api.getFollowStatuses.mockResolvedValue({});
     api.askToFollow.mockReturnValue(new Promise(() => {}));
     await render('user', 'u1');
-    chip()!.click();
+    const el = chip()!;
+    el.click();
     await settle();
-    chip()!.click();
+    el.click(); // a stale reference to the removed control
     await settle();
+    expect(chip()).toBeNull();
     expect(api.askToFollow).toHaveBeenCalledTimes(1);
+    expect(toast.showToast).not.toHaveBeenCalled();
   });
 });
 
@@ -337,17 +373,15 @@ describe('another account', () => {
   });
 });
 
-describe('the name of a pending chip', () => {
-  it('never renders with an empty name: a nameless label, not the visible text alone', async () => {
-    api.getFollowStatuses.mockResolvedValue({ u1: 'pending' });
+describe('the name of the chip', () => {
+  it('never renders with an empty name: a nameless label, not "Suivre " with a hole', async () => {
+    api.getFollowStatuses.mockResolvedValue({});
     component = mount(FollowChip, {
       target: document.body,
       props: { kind: 'user', targetId: 'u1' },
     });
     await settle();
-    const label = chip()!.getAttribute('aria-label')!;
-    expect(label).toBe(m.follow_chip_withdraw());
-    expect(label).toContain(m.profile_follow_requested_btn());
+    expect(chip()!.getAttribute('aria-label')).toBe(m.profile_public_follow_btn());
   });
 });
 
@@ -360,7 +394,8 @@ describe('batching', () => {
     await settle();
     expect(api.getFollowStatuses).toHaveBeenCalledTimes(1);
     expect(api.getFollowStatuses).toHaveBeenCalledWith(['u1', 'u2', 'u3']);
-    expect(document.querySelectorAll('[data-follow-chip-state="pending"]').length).toBe(1);
+    // u2's request is already sent: nothing is drawn for it, the other three mounts draw "Suivre".
+    expect(document.querySelectorAll('[data-follow-chip]').length).toBe(3);
     mounts.forEach((c) => unmount(c));
   });
 

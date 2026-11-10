@@ -51,6 +51,8 @@ export const ACCOUNT_KEY = {
    * group, the token of the acquisition, cleared when its release is answered.
    */
   addLockMarkers: (userId: string) => `mls_add_lock_markers:v1:${userId}`,
+  /** `calendar/agendaSpaceFilter.ts`: the space the account last narrowed its agenda view to. */
+  agendaSpaceFilter: (userId: string) => `canari_agenda_space_filter:v1:${userId}`,
   /** `postComposerDraft.ts`: the account's unsent post (its text and choices, never its media). */
   postComposerDraft: (userId: string) => `canari_post_composer_draft:${userId}`,
   /** `postCommentDraft.ts`: the account's unsent comment on one post. */
@@ -236,6 +238,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.archivedConversations(userId),
     ACCOUNT_KEY.unopenableHidden(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),
+    ACCOUNT_KEY.agendaSpaceFilter(userId),
     ACCOUNT_KEY.postComposerDraft(userId),
     ACCOUNT_KEY.workspaceSnapshot(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),

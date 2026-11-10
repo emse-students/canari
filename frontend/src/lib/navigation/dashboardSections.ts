@@ -24,6 +24,7 @@ import {
   CalendarDays,
   ClipboardList,
   FolderOpen,
+  Gamepad2,
   Landmark,
   LogOut,
   Settings,
@@ -176,6 +177,15 @@ const ENTRIES: readonly DashboardEntry[] = [
     label: () => m.nav_bookings_label(),
     summary: () => m.nav_bookings_desc(),
     icon: CalendarClock,
+  },
+  {
+    // Open to every account (owner, 2026-11-10): the Minesweeper and its rankings.
+    key: 'games',
+    group: 'explore',
+    target: '/games',
+    label: () => m.nav_games_label(),
+    summary: () => m.nav_games_desc(),
+    icon: Gamepad2,
   },
   {
     key: 'notifications',

@@ -225,39 +225,53 @@
       {:else}
         <ul class="space-y-2">
           {#each results as user (user.id)}
-            <li class="flex items-center gap-2">
-              <a
-                href="/profile/{encodeURIComponent(user.id)}"
-                class="border-cn-border hover:border-accent/40 bg-cn-surface flex min-w-0 flex-1 items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
-              >
-                <div class="h-11 w-11 shrink-0 overflow-hidden rounded-full">
-                  <Avatar userId={user.id} fill shape="circle" />
-                </div>
-                <div class="min-w-0 flex-1">
-                  <p class="text-text-main truncate text-sm font-bold">{displayName(user)}</p>
-                  <p
-                    class="text-text-muted mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs"
+            <!--
+              The row is a STRETCHED link (the name's anchor paints an `after` layer over the card) so
+              "Suivre" can be a quiet text link on the meta line, as a sibling of that anchor and above
+              its layer (`relative z-10`): a button inside a link is invalid (owner, 2026-11-10).
+            -->
+            <li
+              class="border-cn-border hover:border-accent/40 bg-cn-surface relative flex min-w-0 items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
+            >
+              <div class="h-11 w-11 shrink-0 overflow-hidden rounded-full">
+                <Avatar userId={user.id} fill shape="circle" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <p class="text-text-main truncate text-sm font-bold">
+                  <a
+                    href="/profile/{encodeURIComponent(user.id)}"
+                    class="after:absolute after:inset-0 after:content-['']">{displayName(user)}</a
                   >
-                    {#each user.cursus as entry (entry.formation + entry.promo)}
-                      <span class="inline-flex items-center gap-1">
-                        <GraduationCap size={12} />
-                        {entry.formation}
-                        {m.directory_user_promo({ year: entry.promo })}
-                      </span>
-                    {/each}
-                    {#each user.posts as post (post)}
-                      <span>{postLabel(post)}</span>
-                    {/each}
-                    {#if user.campus}
-                      <span>{campusLabel(user.campus)}</span>
-                    {/if}
-                  </p>
-                  {#if user.bio?.trim()}
-                    <p class="text-text-muted mt-1 line-clamp-1 text-xs">{user.bio}</p>
+                </p>
+                <p
+                  class="text-text-muted mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs"
+                >
+                  {#each user.cursus as entry (entry.formation + entry.promo)}
+                    <span class="inline-flex items-center gap-1">
+                      <GraduationCap size={12} />
+                      {entry.formation}
+                      {m.directory_user_promo({ year: entry.promo })}
+                    </span>
+                  {/each}
+                  {#each user.posts as post (post)}
+                    <span>{postLabel(post)}</span>
+                  {/each}
+                  {#if user.campus}
+                    <span>{campusLabel(user.campus)}</span>
                   {/if}
-                </div>
-              </a>
-              <FollowChip kind="user" targetId={user.id} name={displayName(user)} />
+                  <span class="relative z-10 flex items-center gap-x-2 empty:hidden">
+                    <FollowChip
+                      kind="user"
+                      targetId={user.id}
+                      name={displayName(user)}
+                      dotted={user.cursus.length > 0 || user.posts.length > 0 || !!user.campus}
+                    />
+                  </span>
+                </p>
+                {#if user.bio?.trim()}
+                  <p class="text-text-muted mt-1 line-clamp-1 text-xs">{user.bio}</p>
+                {/if}
+              </div>
             </li>
           {/each}
         </ul>

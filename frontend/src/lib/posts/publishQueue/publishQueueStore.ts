@@ -54,6 +54,11 @@ export interface QueuedMedia {
     height?: number;
     /** A video's prepared length in whole ms: with the frame, what makes the post a CanaReel. */
     durationMs?: number;
+    /**
+     * A video's first frame as a ThumbHash (`MediaRef.placeholder`), made from the PREPARED file:
+     * what a reader's feed draws before a byte of the video arrives (owner, 2026-11-10).
+     */
+    placeholder?: string;
   };
   /** The resumable session of this media's upload, written before its first part leaves. */
   upload?: OutboxResumableUpload;

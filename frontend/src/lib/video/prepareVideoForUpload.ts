@@ -43,6 +43,7 @@ import {
   type AudioHoleStep,
   type DecodedChunk,
 } from './audioTimeline';
+import { declareMp4Duration } from '$lib/utils/mp4Duration';
 
 /**
  * How far past `maxSeconds` a source may run and still be accepted. A recorder told to stop at 90 s
@@ -430,6 +431,17 @@ export async function prepareVideoForUpload(
       throw new VideoPrepareError(
         'too-large',
         `video: ${buffer.byteLength} bytes is over the ${maxBytes}-byte ceiling`
+      );
+    }
+    // THE MOVIE SAYS HOW LONG IT LASTS (owner, 2026-11-10): the muxer wrote the `moov` before the
+    // first fragment, with duration 0, so every player read 0/Infinity and could not seek. The
+    // samples' own length goes into `mvhd`, in place (`mp4Duration.ts`).
+    const declared = declareMp4Duration(new Uint8Array(buffer));
+    if (declared.kind === 'written') {
+      console.debug(`[video-prep] movie duration declared: ${declared.seconds.toFixed(3)} s`);
+    } else if (declared.kind === 'not-fragmented') {
+      console.warn(
+        '[video-prep] the muxer output has no fragments to measure - duration left as is'
       );
     }
     const mimeType = await output.getMimeType();

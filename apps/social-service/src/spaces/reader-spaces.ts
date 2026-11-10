@@ -918,6 +918,40 @@ export async function readInFeedAudience(
 export const READER_SPACES_SQL = `SELECT s.formation, s.campus FROM spaces s JOIN users u ON u.id = $1
   WHERE ${isReaderSpaceSql('s', 'u')} ORDER BY s.campus, s.formation`;
 
+/**
+ * THE SPACES A READER'S AGENDA REACHES (owner, 2026-11-10: a reader whose agenda shows several
+ * spaces narrows the VIEW by space): their OWN spaces; every space the rules of an association they
+ * are a MEMBER of address (a BDE's, an association spanning formations); and, for a read grant, the
+ * spaces of a ticked cell that some association addresses. A student with no wider role therefore
+ * reaches exactly one space and is offered no filter - an association merely VISIBLE to them through
+ * its rules adds nothing, or a campus-wide association would give every student five formations.
+ * THE (NULL, NULL) "EVERYONE" RULE ADDRESSES NO SPACE HERE: an institution speaking to everyone is
+ * visible to all and reaches every space, which would offer every reader every option. Only the
+ * rules that name a campus or a formation count (lead's decision, 2026-11-10).
+ * It is the vocabulary the feed's `campus` / `formation` narrowing (`eventReachesSpaceMatchingSql`)
+ * speaks, so an option offered matches events the reader may see. A reading aid, never access.
+ */
+function addressesSpaceSpecificallySql(association: string, space: string): string {
+  return `EXISTS (SELECT 1 FROM association_audiences ag_rule
+    WHERE ag_rule."associationId" = ${association}
+      AND (ag_rule.formation IS NOT NULL OR ag_rule.campus IS NOT NULL)
+      AND ${ruleReachesSpaceSql('ag_rule', space)})`;
+}
+
+/** The spaces of user `$1`'s agenda, as described above `addressesSpaceSpecificallySql`. */
+export const AGENDA_REACHED_SPACES_SQL = `SELECT s.formation, s.campus FROM spaces s
+  JOIN users ag_user ON ag_user.id = $1
+  WHERE ${isReaderSpaceSql('s', 'ag_user')}
+    OR EXISTS (SELECT 1 FROM associations ag_member
+      WHERE ${isMemberSql('ag_member.id', 'ag_user')}
+        AND ${addressesSpaceSpecificallySql('ag_member.id', 's')})
+    OR (EXISTS (SELECT 1 FROM read_grants ag_grant
+        WHERE ag_grant.user_id = ag_user.id AND ag_grant.campus = s.campus
+          AND (ag_grant.formation IS NULL OR ag_grant.formation = s.formation))
+      AND EXISTS (SELECT 1 FROM associations ag_granted
+        WHERE ${addressesSpaceSpecificallySql('ag_granted.id', 's')}))
+  ORDER BY s.campus, s.formation`;
+
 /** The profile facts of user `$1`, for `campusWideReaderCampus` (asked for a reader with no space). */
 export const READER_PROFILE_SQL = `SELECT id, campus, cursus FROM users WHERE id = $1`;
 

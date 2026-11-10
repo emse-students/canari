@@ -7,6 +7,7 @@
     formatTimeRange,
     isOfferedStart,
     unitText,
+    isInvitedUnit,
   } from '$lib/bookings/grid';
   import type { GridRun } from '$lib/bookings/gridRuns';
   import type { PlanningDay } from '$lib/bookings/planning';
@@ -134,6 +135,11 @@
                   <HolderAvatar {unit} />
                 {/if}
                 <span class="min-w-0 flex-1 truncate font-semibold">{text}</span>
+                {#if isInvitedUnit(unit)}
+                  <span class="text-text-muted text-2xs shrink-0" data-invited
+                    >{m.bookings_cell_invited()}</span
+                  >
+                {/if}
                 {#if takeable}
                   <Plus size={18} aria-hidden="true" />
                 {/if}
