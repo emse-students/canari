@@ -74,8 +74,9 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   social_live_started: 'posts',
   // Engagement (docs/wiki/engagement.md, L30): an account the reader follows reacted to or commented
   // on a post (WP-9), and a post of the reader's space took off (WP-10) - news about somebody else's
-  // post, so the switch that silences posts silences them. social-service's `ENGAGEMENT_PUSH_TYPES`
-  // reads the same category before it counts the daily cap; its contract spec pins the two.
+  // post, so the switch that silences posts silences them. social-service's `CAPPED_PUSH_TYPES`
+  // reads the same category before it counts the daily cap (campus trends only since 2026-11-10);
+  // its contract spec pins the two.
   social_friend_reaction: 'posts',
   social_friend_comment: 'posts',
   social_campus_trend: 'posts',

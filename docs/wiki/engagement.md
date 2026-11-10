@@ -77,6 +77,12 @@ Context it must respect, and which nothing here changes:
     trends, suggestions and suggested content. It never applies to shotgun openings or association
     posts, and nothing that exists today changes. Messages, mentions, replies, calls and comments or
     reactions on your own content are never capped either (L5 stands).
+    **Amended by the owner on 2026-11-10:** *"On ne plafonne que les suggestions des gens que l'on ne
+    suit pas."* Following an account is the reader's own choice and, by default (decision 10), means
+    hearing from it - so the cap applies ONLY to notifications about accounts the reader does NOT
+    follow: today `campus_trend` (5c). Friends' activity (5b) names an account the reader follows and
+    is no longer capped: it pushes like that account's post, still reduced by its bell, the `posts`
+    switch and the told-once ledger (L14).
 12. **"X a rejoint" in a live's chat** is visible to every viewer, rate-limited. This is for the
     live-chat work, so just record it here as a decision.
 13. **Shipping.** Each engagement WP ships to production on its own after an adversarial review, a
@@ -95,7 +101,7 @@ and is recorded here only; no package on this page builds it.
 | L1 | An association live keeps excluding either side of a block with the broadcasting MEMBER and a viewer the broadcaster removed, though an entity post's announcement excludes neither. | The live audience is "exactly who `assertMayWatch` lets in", and the watch path refuses both; a push to a live that answers 404 is the defect L10 was built to avoid. |
 | L2 | The `[LIVE_ANNOUNCE] ... followers=<n>` log field keeps its name although an association's count is now its whole audience. | `tools/cross-client-harness/srvlog.mjs` matches the line; renaming is a two-file change for no reader's gain. A comment at the log call says it. |
 | L3 | The bell has THREE states, and only the two reductions are stored: no row = "posts and lives" (decision 10, today's behaviour), `lives`, `none`. A follow that COMES INTO BEING deletes the reader's row for that account, in the SAME statement, and only then: a data-modifying CTE on the write that creates it - the `association_follows` `INSERT ... ON CONFLICT DO NOTHING RETURNING`, or for a person the acceptance `UPDATE user_follows SET status = 'accepted' WHERE status = 'pending' RETURNING` - with the `DELETE FROM account_bells` reading that CTE's rows. A retried follow, a double tap or a re-sent acceptance returns no row and touches no bell. **Following a muted association again therefore UNMUTES it** (an unfollow then a follow is a new follow). Choosing "posts and lives" again deletes the row too. | The absent row is what every account has, so it needs no backfill; a stored `all` would be a second spelling of the default. Re-checked against decision 10 (2026-11-07): it matches. Tied to the creating write so that "a follow happened" is the row's own fact, never a guess from a request that may be a retry. |
-| L4 | The bell and the daily cap never meet: the cap counts only the NEW kinds of decision 11 (friends' activity, trends, suggestions, suggested content), none of which is a post or a live OF the account whose bell it is. | Rewritten after decision 11: the first version exempted a bell set to `all` from a cap that covered posts and lives; decision 11 takes those out of the cap altogether, so there is nothing left to exempt. |
+| L4 | The bell and the daily cap never meet: the cap counts only notifications about an account the reader does NOT follow (decision 11 as amended 2026-11-10 - campus trends today), and a bell exists only on an account the reader follows. Friends' activity meets the bell only. | Rewritten after decision 11: the first version exempted a bell set to `all` from a cap that covered posts and lives; decision 11 takes those out of the cap altogether, so there is nothing left to exempt. |
 | L5 | Comments on and reactions to the reader's OWN content are not capped, like replies and mentions. | They are about the reader's own words, not discovery; the cap targets what the reader did not write. |
 | L6 | The cap's day is the Paris calendar date read from the DATABASE (`(now() AT TIME ZONE 'Europe/Paris')::date`), first come first served within it. | A date key is durable state, not a timer: no job resets anything, a new day is a new row. No priority between sources - priorities would be a ranking nobody can explain from the bell. |
 | L7 | The bell is offered on a person the viewer follows (accepted) and on any entity the viewer can see; a person not followed shows Suivre instead. | Instagram's shape; a bell on a person whose posts the reader is not announced would be a second, silent follow. |
@@ -679,7 +685,8 @@ already open. Taking back the reaction does not retract a sent notice (Instagram
 links to P, whose own predicate is re-asked on open.
 
 Sent at the WRITE (the reaction or comment commits under the post row's lock, `comment-write.ts`), one
-statement for all of X's followers, then counted by the cap like any engagement push.
+statement for all of X's followers, then pushed through X's bell - not counted by the daily cap
+(decision 11 as amended 2026-11-10: the reader follows X).
 
 ### WP-9 - friends' activity (BUILT)
 
@@ -689,14 +696,15 @@ Built 2026-11-09 to the rule above. Migration **159** (`user_activity_settings` 
 - **Two notice types, not one**: `friend_reaction` and `friend_comment`, each with its own push key
   (`social_friend_reaction`, `social_friend_comment`) and native sentence ("X a réagi à une
   publication" / "X a commenté une publication"), since a native table states one fixed sentence per
-  key. Both are in `ENGAGEMENT_PUSH_TYPES` under `posts` (WP-8's cap and the category apply), in
+  key. Both file under `posts` in chat-delivery (the category applies), are NOT capped since
+  2026-11-10 (decision 11 amended: the reader follows X, so X's activity pushes like X's post), are in
   `BELL_PUSH_KINDS` as a post (an account's reduced bell reduces its activity too), and in
   `POST_BOUND_NOTIFICATION_TYPES` (the bell row is shown only while its reader still sees the post).
   The row's text and the push's body are the POST's opening, never the comment or the reaction.
 - **One statement at the write** (`friendActivityLedgerSql`): rules 0-7 and the review cohort, the
   ledger insert `ON CONFLICT DO NOTHING RETURNING`, one lock order. Rule 8 is asked of the stored
   comment before it (`commentSpeaksAsWriter`). Then `createNotifications` writes the rows and pushes
-  through the bell and the cap. Called after a NEW reaction (changing the emoji is not news) and
+  through the bell (never the cap since 2026-11-10). Called after a NEW reaction (changing the emoji is not news) and
   after every comment (`PostInteractionsService.tellFriends`, fire-and-forget, a failure logged) -
   a comment's only once its own comment, reply and mention rows are written, so a follower it
   answers or mentions is told once by rule 7, never twice by a race (review of #3281).
@@ -760,7 +768,7 @@ Built 2026-11-09 to the rule above, with `TREND_THRESHOLD = 4` as R1 read it. Mi
 - **Naming nobody**: the row and the push carry the system actor and an empty name - an anonymous
   post stays anonymous, and a trend is the space's, not a person's. Type `campus_trend`, key
   `social_campus_trend` ("Une publication fait réagir votre espace", the post's opening as body),
-  native strings on Android and iOS, in `ENGAGEMENT_PUSH_TYPES` under `posts` (the cap applies), in
+  native strings on Android and iOS, in `CAPPED_PUSH_TYPES` under `posts` (the cap applies: nobody chose to follow a trend), in
   `POST_BOUND_NOTIFICATION_TYPES`, not in `BELL_PUSH_KINDS` (no account to reduce).
 - **Proof**: `posts/campus-trend.integration.spec.ts` on PostgreSQL - no stamp below the threshold
   (the author's own reaction not counted), exactly one at the crossing write, none at the next one;
@@ -850,15 +858,19 @@ line of the statement:
 A new day is a new row: nothing resets anything. The daily GC that already prunes notifications
 (`FormReminderScheduler`) deletes rows older than 7 days.
 
-- **Capped types - ONLY the new kinds** (decision 11; `ENGAGEMENT_PUSH_TYPES`, one exported set
-  beside `MUTABLE_PUSH_TYPES`): friends' activity (5b), campus trends (5c), and a push about a
-  suggestion or a suggested post if one is ever added (the design adds none: suggestions and
-  suggested posts live in the feed, not in a push).
+- **Capped types - ONLY accounts the reader does not follow** (decision 11 as amended 2026-11-10;
+  `CAPPED_PUSH_TYPES`, one exported map): campus trends (5c), and a push about a suggestion or a
+  suggested post if one is ever added (the design adds none: suggestions and suggested posts live in
+  the feed, not in a push). **Friends' activity (5b) is no longer capped**: it names an account the
+  reader follows, and following is the choice to hear from it (decision 10).
 - **Never capped** - everything that exists today, unchanged: association posts and reposts,
   followed posts, member reposts, lives, shotgun openings of every origin (5d), messages and channel
   messages, mentions, replies and comments, reactions to the reader's own content (L5), calls,
+  friends' activity (since 2026-11-10),
   follow requests and acceptances, bookings, events, forms and money notices, moderation notices.
-- **Why 5 to start.** The cap now guards only what is new and what the reader did not ask for: an
+- **Why 5 to start.** (Written when friends' activity was capped; since 2026-11-10 the cap guards
+  campus trends alone, which are at most one per campus per day, so it is a guard for kinds yet to
+  come rather than a bound that binds today.) The cap guarded only what is new and what the reader did not ask for: an
   account's activity on someone else's post, and a post that took off. Trends are at most one per
   campus per day by construction (R1), so friends' activity is what can grow: it scales with
   (accounts followed) x (their reactions and comments), and the most social readers - the ones a
@@ -873,8 +885,9 @@ A new day is a new row: nothing resets anything. The daily GC that already prune
 
 Built 2026-11-09 to the design above, with the cap at 5 as R2 read it. Migration **157**
 (`engagement_push_days`, plain); `posts/engagement-push-cap.ts` holds the constant, the allowlist
-`ENGAGEMENT_PUSH_TYPES` (`friend_reaction`, `friend_comment` since WP-9, and `campus_trend`, all filed under `posts`, L30), the one
-claim statement and the GC statement.
+`CAPPED_PUSH_TYPES` (`campus_trend` alone, filed under `posts`, L30; `friend_reaction` and
+`friend_comment` were in it from WP-9 until the owner's amendment of decision 11 on 2026-11-10), the
+one claim statement and the GC statement.
 
 - **The seam** is in `PostNotificationsService.fanOutPush`, AFTER the bell (a reader the bell
   silenced never spends a unit) and before the bounded fan-out: a type outside the allowlist goes out
@@ -884,7 +897,7 @@ claim statement and the GC statement.
 - **The table the category is read from** is chat-delivery's `notification_preference` (singular,
   its migration 028; the design text above said `notification_preferences`).
 - **chat-delivery** files `social_friend_reaction`, `social_friend_comment` and `social_campus_trend` under `posts` now, so
-  the switch already governs them the day WP-9 and WP-10 send them; `engagement-push-cap.spec.ts`
+  the switch governs all three, capped or not; `engagement-push-cap.spec.ts`
   reads chat-delivery's `CATEGORY_BY_CONTENT_KEY` and pins every capped type's category against it.
 - **The GC**: `FormReminderScheduler.purgeEngagementPushDays`, daily at 03:05, rows older than 7
   days. **The erasure**: the recipient's rows (`account-erasure.ts`).
@@ -893,8 +906,9 @@ claim statement and the GC statement.
   never exceed 5 per reader; a reader with `posts` switched off never counted; the GC's 7-day bound
   and the erasure; through the real `fanOutPush`, the 6th capped push reaching the bell only, an
   association post, a live, a booking opening, an event opening and a mention on the same day never
-  counted, and a failed claim pushing nobody.
-- **Owed**: nothing of its own on the phones - the cap is first exercised by WP-9's pushes; a dev
+  counted, and a failed claim pushing nobody; since 2026-11-10, eight friend-activity pushes in a
+  day all going out without a counter row, the five trend pushes after them still taken in full.
+- **Owed**: nothing of its own on the phones - the cap is exercised by WP-10's trend pushes; a dev
   pass with them.
 
 ## The production readings - the exact queries
@@ -1055,7 +1069,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-5** (BUILT, [above](#wp-5---the-suggestion-query-built)) | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
 | **WP-6** (BUILT, [above](#wp-6---the-surfaces-built)) | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
 | **WP-7** (BUILT, [above](#wp-7---suggested-posts-built)) | Suggested posts (decision 8), through the feed's own block filter (`PostsService.blockedAuthorSql`) as every feed row | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door, and never by an author blocked either way |
-| **WP-8** (BUILT, [above](#wp-8---the-daily-cap-built)) | The daily cap (decisions 6 and 11): `engagement_push_days`, `ENGAGEMENT_PUSH_TYPES` holding ONLY the new kinds, the statement in `fanOutPush` | `posts/post-notifications.service.ts` | [R2](#r2---the-cap-check) read and written back; integration spec: the 6th capped push of a day is a bell row with no push, two concurrent fan-outs never exceed 5, and an association post, a live, an opening and a mention on the same day are never counted |
+| **WP-8** (BUILT, [above](#wp-8---the-daily-cap-built)) | The daily cap (decisions 6 and 11, amended 2026-11-10): `engagement_push_days`, `CAPPED_PUSH_TYPES` holding ONLY the kinds about an account the reader does not follow (`campus_trend`), the statement in `fanOutPush` | `posts/post-notifications.service.ts` | [R2](#r2---the-cap-check) read and written back; integration spec: the 6th capped push of a day is a bell row with no push, two concurrent fan-outs never exceed 5, and an association post, a live, an opening and a mention on the same day are never counted |
 | **WP-9** (BUILT, [above](#wp-9---friends-activity-built)) | Friends' activity (5b) with the ledger `post_engagement_notices` and the activity setting (decision 9: `user_activity_settings`, no row = ON, the Settings switch) | `posts/comment-write.ts`, the reaction write | integration spec, one case per rule of the disclosure list, rule 0 included, and for rule 8 one case EACH: an `anonymous` comment, a comment written as an association, and a `removedByModeration` comment, none of which notifies |
 | **WP-10** (BUILT, [above](#wp-10---campus-trends-built)) | Campus trends (5c) | the reaction write | [R1](#r1---the-trend-threshold) read FIRST and written back; integration spec: exactly one stamp at the crossing write, none after 24 hours, the space-only audience |
 
