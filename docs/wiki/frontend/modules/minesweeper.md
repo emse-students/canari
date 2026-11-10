@@ -104,6 +104,27 @@ the effect depend on it, and every later move reset the game - the board is read
 **NOT measured:** a before/after Performance profile on a phone, and how the gestures and the settings
 feel - owed on the Mi 9T and the iPhone (`device-verification.md`).
 
+## The Games page and the per-promo ranking (owner, 2026-11-10)
+
+`/games` (`routes/games/+page.svelte`, a row of the dashboard's Explorer, open to every signed-in
+account; the 5 taps on the settings title still open the game) carries **"Jouer"** (opens the same
+`MinesweeperModal`), the reader's own record (`GET minesweeper/me`) and the ranking in two tabs: overall
+and **per promo**. Moderation of scores stays in the game's own sheet; the page only reads.
+
+- **Server**: `GET minesweeper/leaderboard?promo=<year>` narrows the board to one entry year, ranks
+  counted inside it (`pu.promo = $1` through `users.promo`); a value that is not a year is a 400.
+  `GET minesweeper/promos` answers `{ promos: [{ promo, players }], mine }` (newest first, `mine` = the
+  caller's promo or `null`). **Only an account with a cursus appears in a promo ranking**: `users.promo`
+  IS the cursus' entry year and the one column populated in production (`cursus->0->>'promo'` is NULL),
+  so `promo IS NOT NULL` is the rule. **No migration**: both reads are over `minesweeper_scores` joined
+  to `users`. Banned players and the other side of the review cohort stay out, as on the overall board.
+- **Client**: the promo tab opens on the reader's own promo when it has a ranking, else the newest; a
+  fresh load drops the answer of a tab or promo left behind (`generation`). The profile's
+  "Demineur #16" badge links here, the time being only its tooltip.
+- Proofs: `minesweeper.promo.spec.ts` (the SQL's shape and parameters; PostgreSQL itself is not available
+  to the unit suite), `routes/games/page.svelte.test.ts`, `ProfileMinesweeperBadge.svelte.test.ts`.
+- **Owed**: one read of the page on a phone with real scores in two promos.
+
 ## Moderation: remove a score, ban a player (2026-10-02)
 
 *"ajoute le fait de pouvoir retirer un score sur demineur, et bannir un utilisateur"* (user). **Global

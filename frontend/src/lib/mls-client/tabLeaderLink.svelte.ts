@@ -13,7 +13,11 @@
  * next change or the follower's next query.
  */
 import { currentUserId } from '$lib/stores/userState.svelte';
-import { getIsTabLeader } from '$lib/mls-client/tabLeader';
+import {
+  getIsTabLeader,
+  getTabLeadership,
+  whenTabLeadershipDecided,
+} from '$lib/mls-client/tabLeader';
 
 const CHANNEL = 'canari-tab-messages';
 
@@ -65,9 +69,34 @@ export function handleLeaderLinkEvent(event: TabLeaderLinkEvent): void {
 }
 
 /**
- * Starts listening and asks the leader for its state, once per document. A tab that is the leader
- * ignores the answers; a follower records them. The query goes out whatever the role, since the
- * election may not have decided yet - only a leader answers it.
+ * Says where this tab stands, once the two facts that make the message meaningful are known: WHO the
+ * account is (every event is stamped with it and a receiver drops another account's) and WHICH side
+ * of the election this tab is on. A follower asks the leader; the leader publishes its socket, so a
+ * follower whose query it could not answer (its own account was not known yet) still hears it.
+ */
+function announce(): void {
+  const account = currentUserId();
+  if (!account || getTabLeadership() === 'undecided') return;
+  if (getIsTabLeader()) {
+    publishLeaderLink(ownConnected);
+    return;
+  }
+  console.debug('[TAB] leader link asked');
+  ensureChannel()?.postMessage({
+    type: 'leader_link_query',
+    account,
+  } satisfies TabLeaderLinkEvent);
+}
+
+/**
+ * Starts listening, once per document. A tab that is the leader ignores the answers; a follower
+ * records them.
+ *
+ * THE QUERY MUST NOT OUTRUN THE ACCOUNT (a second tab read "Hors-ligne" while the account was
+ * online): this ran at module start with `currentUserId() ?? ''`, before the user id was known, and
+ * the leader dropped it as another account's - so no answer ever came until its socket changed.
+ * {@link announce} now runs when the account becomes known AND when the election is decided, in
+ * whichever order those happen.
  */
 export function startLeaderLink(): () => void {
   const ch = ensureChannel();
@@ -77,11 +106,17 @@ export function startLeaderLink(): () => void {
     if (t === 'leader_link' || t === 'leader_link_query') handleLeaderLinkEvent(ev.data);
   };
   ch.addEventListener('message', onMessage);
-  ch.postMessage({
-    type: 'leader_link_query',
-    account: currentUserId() ?? '',
-  } satisfies TabLeaderLinkEvent);
-  return () => ch.removeEventListener('message', onMessage);
+  const stopEffect = $effect.root(() => {
+    $effect(() => {
+      // The account is the one reactive input; the role is read inside `announce` once decided.
+      if (currentUserId()) announce();
+    });
+  });
+  void whenTabLeadershipDecided().then(announce);
+  return () => {
+    stopEffect();
+    ch.removeEventListener('message', onMessage);
+  };
 }
 
 /** Test seam: back to a document no leader has answered. */

@@ -134,16 +134,24 @@ notice is for followers (decision 4).
 ## The entry point and the prompt card
 
 - **Profile > Anniversaire** (`profileSections.ts`, section `birthday`; `ProfileBirthdaySection.svelte`):
-  day and month selects, the three visibility choices with their consequence, save and remove. It
-  says before the first save that a date counts from tomorrow and holds 30 days, and while the window
-  is open it locks the date and names the day it opens. The `nobody` choice says the truth: the date
-  is hidden and nobody is told, but the ring still shows on the day to everyone (decision 3).
-- **The prompt card** `prompt-birthday` (`guides/birthdayPrompt.ts`, built on the profile-photo
-  prompt's engine): ONE card on the feed for an account with no birthday, seen once per ACCOUNT
-  (`help_seen`). **Why a card**: the field is empty for every existing account, and the ring and the
-  notice exist only for a member who entered a date - a settings row nobody opens would leave the
-  feature invisible. **Why no reminder**, unlike the photo: a birthday is personal data the member may
-  simply not want to give, and asking twice is pressure; the profile section stays the way back.
+  **minimal since 2026-11-10 (owner)**: one day + month row, one "Visible par" choice (a `Select`, no
+  per-choice explanation), ONE sentence (a date counts from tomorrow and holds 30 days; while the
+  window is open, the day it opens instead), save and remove. The `nobody` option carries the truth in
+  its label: the festive ring still shows on the day to everyone (decision 3).
+- **The prompt card** `prompt-birthday` (`components/posts/BirthdayFeedCard.svelte`): since 2026-11-10 a
+  SMALL QUIET CARD at the top of the feed - "🎂 Ton anniversaire ?", an "Ajouter" action, a cross - for
+  an account with no birthday. It replaced the self-opening modal of 1.6.9 (too insistent; its button
+  overflowed a phone). **Dismissed means gone**: the cross and "Ajouter" both record the help in the
+  account's `help_seen` (`seenHelps`, the profile-photo prompt's store), so it never returns on any
+  device - durable state, no timer. It shows only once `seenHelps.ready` and
+  `ownBirthday.hasBirthday === false`. The help id `prompt-birthday` is kept (the server lists it) but
+  no guide declares it any more. **Why a card**: the field is empty for every existing account, and the
+  ring and the notice exist only for a member who entered a date. **Why no reminder**: a birthday is
+  personal data the member may not want to give; the profile section stays the way back.
+- **On a profile** (`ProfileSummaryLine.svelte`): ONE muted line under the name,
+  "ICM · Saint-Etienne · 🎂 18 juillet" (formations, posts, campus, the birthday when the visibility
+  rule lets the reader see it - no pill, no "Anniversaire le" sentence), plus the "birthday today"
+  line on the day itself.
 
 ## Erasure
 
@@ -165,6 +173,6 @@ account; the coverage spec asserts both columns. The bell rows naming the member
 - Frontend: `birthdayDate.test.ts`, `ProfileBirthdaySection.svelte.test.ts` (the note before the
   first save, the date locked while the window is open, a refusal from another device),
   `Avatar.birthday.svelte.test.ts` (the ring on initials and photo,
-  nobody else's, gone at sign-out, never invented offline), `birthdayPrompt.test.ts`,
+  nobody else's, gone at sign-out, never invented offline), `BirthdayFeedCard.svelte.test.ts`,
   `NotificationRow.svelte.test.ts`, `notificationTarget.test.ts`, and the native and category
   contract tests.

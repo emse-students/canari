@@ -70,6 +70,7 @@
   import { readNextPage, type ListPage } from '$lib/posts/rankedFeeds';
   import { initialScrollDirection, nextScrollDirection } from '$lib/utils/scrollDirection';
   import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
+  import BirthdayFeedCard from '$lib/components/posts/BirthdayFeedCard.svelte';
   import LiveViewer from '$lib/components/live/LiveViewer.svelte';
   import { livesAvailable } from '$lib/utils/livesAvailability';
   import { serverLivesMode } from '$lib/stores/appVersionCheck.svelte';
@@ -1026,6 +1027,10 @@
         openLive = live;
       }}
     />
+  {/if}
+  <!-- THE BIRTHDAY CARD: quiet, dismissed once for good, only while the own birthday is empty. -->
+  {#if userId && !searchQuery}
+    <BirthdayFeedCard />
   {/if}
   {#if livesShown && openLive}
     {#key openLive.id}

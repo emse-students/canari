@@ -5,7 +5,7 @@
 
 ## Responsibilities
 
-- News feed with three tabs: Associations, Pour toi (ranked) and Campus (since 1.6.9).
+- News feed with three tabs: Organisations (renamed from "Associations", 2026-11-10: the tab mixes associations, lists and institutions), Pour toi (ranked) and Campus (since 1.6.9).
 - Post creation with rich content: Markdown, image, poll, embedded form.
 - Reactions (emoji), comments, post sharing.
 - Search within the feed.
@@ -16,7 +16,7 @@
 
 | Tab (`feed=`) | Content |
 |---|---|
-| Associations (`associations`, the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication. Chronological, pins on top. An entity followed OUTSIDE the reader's spaces adds nothing here: an entity follow opens no visibility door (`postVisibleToUserSql`), so every entity row the old Suivis showed was already in this tab |
+| Organisations (`associations`, was "Associations", the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication. Chronological, pins on top. An entity followed OUTSIDE the reader's spaces adds nothing here: an entity follow opens no visibility door (`postVisibleToUserSql`), so every entity row the old Suivis showed was already in this tab |
 | Pour toi (`foryou`, "Suivis" / `followed` until 1.6.9) | What PEOPLE the reader follows write or repost - an association's or an entity's post a followed person reposted included, with its "X a repartage" header (decision A) - and the suggested posts of people (engagement WP-7), RANKED - [below](#pour-toi---the-ranked-tab-owner-2026-11-10). No pin. The only tab with the "Comptes a suivre" carousel |
 | Campus (`all`, "Mon espace" until 1.6.9, "Tout" until 1.6; the identifier is unchanged) | Every post the reader may see through their spaces, campus and formation. Chronological, pins on top, NOTHING inserted between posts (no suggestion, no carousel) |
 

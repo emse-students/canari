@@ -102,8 +102,7 @@ describe('the birthday settings', () => {
     expect(opens()?.textContent).toContain('2026');
     expect(select('birthday-day').disabled).toBe(true);
     expect(select('birthday-month').disabled).toBe(true);
-    const radios = [...document.querySelectorAll('input[type="radio"]')] as HTMLInputElement[];
-    expect(radios.every((r) => !r.disabled)).toBe(true);
+    expect(select('birthday-visibility').disabled).toBe(false);
   });
 
   it('meets a refusal from another device with its message and the server state', async () => {
@@ -124,5 +123,16 @@ describe('the birthday settings', () => {
     expect(toasts.showToast).toHaveBeenCalledWith(m.profile_birthday_change_too_soon());
     expect(select('birthday-day').disabled).toBe(true);
     expect(opens()).not.toBeNull();
+  });
+});
+
+describe('the birthday settings are minimal (owner, 2026-11-10)', () => {
+  it('draws one date row, one Visible par choice and ONE sentence, no hints', async () => {
+    api.fetchMyBirthday.mockResolvedValue({ birthday: null, changeOpensOn: null });
+    await render();
+    expect(document.querySelectorAll('input[type="radio"]')).toHaveLength(0);
+    expect(select('birthday-visibility')).not.toBeNull();
+    expect(document.body.textContent).toContain(m.profile_birthday_visibility_label());
+    expect(document.querySelectorAll('p')).toHaveLength(1);
   });
 });
