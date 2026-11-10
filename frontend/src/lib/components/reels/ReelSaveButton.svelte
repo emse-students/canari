@@ -57,8 +57,8 @@
   <button
     type="button"
     class={rail
-      ? 'ui-icon-button rounded-full text-white outline-none focus-visible:ring-2 focus-visible:ring-amber-500'
-      : 'inline-flex items-center gap-2 rounded-full bg-black/50 px-3 py-2 text-xs font-semibold text-white outline-none hover:bg-black/70 focus-visible:ring-2 focus-visible:ring-amber-500'}
+      ? 'ui-icon-button focus-visible:ring-accent-icon rounded-full text-white outline-none focus-visible:ring-2'
+      : 'focus-visible:ring-accent-icon inline-flex items-center gap-2 rounded-full bg-black/50 px-3 py-2 text-xs font-semibold text-white outline-none hover:bg-black/70 focus-visible:ring-2'}
     aria-label={rail ? m.reels_open_settings() : undefined}
     title={rail ? m.reels_open_settings() : undefined}
     onclick={settings}
@@ -74,7 +74,7 @@
 {:else}
   <button
     type="button"
-    class="ui-icon-button rounded-full text-white outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-60 {rail
+    class="ui-icon-button focus-visible:ring-accent-icon rounded-full text-white outline-none focus-visible:ring-2 disabled:opacity-60 {rail
       ? ''
       : 'bg-black/40 hover:bg-black/60'}"
     aria-label={m.reels_save()}

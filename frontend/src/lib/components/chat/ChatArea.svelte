@@ -1634,7 +1634,7 @@
             onclick={() => (showPolls = !showPolls)}
             class="chat-chrome-bar border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
           >
-            <ChartColumn size={14} class="text-cn-yellow shrink-0" />
+            <ChartColumn size={14} class="text-accent-icon shrink-0" />
             <span class="font-semibold"
               >{m.chat_active_polls_count({ activePolls: activePolls.length })}</span
             >
@@ -1672,7 +1672,7 @@
             onclick={() => (showPinned = !showPinned)}
             class="chat-chrome-bar border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
           >
-            <Pin size={14} class="shrink-0 text-amber-500" />
+            <Pin size={14} class="text-accent-text shrink-0" />
             <span class="font-semibold"
               >{m.chat_pinned_messages_count({ pinnedIds: pinnedIds.length })}</span
             >
@@ -1899,7 +1899,7 @@
         </span>
         {#if unreadBelowCount > 0}
           <span
-            class="text-cn-ink text-2xs pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1 font-bold shadow-sm shadow-amber-500/30"
+            class="text-on-accent text-2xs bg-accent shadow-accent/30 pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1 font-bold shadow-sm"
             aria-hidden="true"
           >
             {unreadBelowCount > 99 ? '99+' : unreadBelowCount}
@@ -1935,7 +1935,7 @@
           {#if (conversation?.conversationType ?? 'group') === 'group'}
             <button
               onclick={() => onStartAgainWithSamePeople?.()}
-              class="rounded-lg bg-amber-500/15 px-4 py-1.5 text-sm font-medium transition-all hover:bg-amber-500/25 active:scale-95"
+              class="bg-accent/15 hover:bg-accent/25 rounded-lg px-4 py-1.5 text-sm font-medium transition-all active:scale-95"
             >
               {m.chat_unopenable_start_again()}
             </button>

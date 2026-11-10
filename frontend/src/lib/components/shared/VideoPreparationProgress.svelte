@@ -34,7 +34,7 @@
       aria-valuemax={100}
       aria-valuenow={percent}
     >
-      <div class="bg-cn-yellow h-full rounded-full" style:width="{percent}%"></div>
+      <div class="bg-accent h-full rounded-full" style:width="{percent}%"></div>
     </div>
   </div>
   <button

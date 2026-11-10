@@ -105,6 +105,21 @@ export class Live {
   storedBytes: string;
 
   /**
+   * Whether this live is kept three days as a replay at its end (migration 156,
+   * docs/wiki/live-replays.md): fixed at the start from `platform_config.live_replays_mode`, so a
+   * flip of the switch mid-live never makes half a replay.
+   */
+  @Column({ type: 'boolean', default: false })
+  keepsReplay: boolean;
+
+  /**
+   * When this live's replay post was created (migration 156), set in the same transaction: a live
+   * whose replay is gone is purged, never given a second one.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  replayPostedAt: Date | null;
+
+  /**
    * THE RESERVATION of index `nextIndex` by an ingest whose store is in flight: the name it stores
    * under, the bytes' digest and when it was taken (all three or none). Written in a committed step
    * BEFORE the store, so no database connection is held across the call to media-service; cleared

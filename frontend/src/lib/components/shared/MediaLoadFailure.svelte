@@ -82,7 +82,7 @@
     <button
       type="button"
       onclick={retry}
-      class="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-xs font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {buttonClass}"
+      class="focus-visible:ring-accent-icon inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-xs font-bold transition-colors outline-none focus-visible:ring-2 {buttonClass}"
     >
       <RotateCw size={14} strokeWidth={2.5} />
       {m.media_retry_button()}

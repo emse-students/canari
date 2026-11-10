@@ -146,7 +146,7 @@
   {#if loading}
     <div class="flex justify-center py-10" aria-busy="true">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if count === 0}

@@ -719,7 +719,7 @@
             ev.associationSlug,
             'calendar'
           )}?fromPost={encodeURIComponent(localPost.id)}"
-          class="inline-flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
+          class="border-accent/25 bg-accent/10 text-accent-text hover:bg-accent/20 inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition-colors"
         >
           <CalendarCheck size={14} strokeWidth={2.5} />
           <span>

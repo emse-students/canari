@@ -60,7 +60,7 @@
     <Volume2
       size={glyphSize}
       strokeWidth={rail ? 2 : 2.25}
-      class="text-cn-yellow {shadow}"
+      class="text-accent {shadow}"
       data-video-sound="on"
     />
   {/if}

@@ -37,7 +37,7 @@ import { announceFriendActivity, type FriendAct } from './friend-activity';
 import { announceCampusTrend } from './campus-trend';
 import { COMMENT_DELETE_FORBIDDEN, COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
-import { isExpiredReel } from './reel.constants';
+import { isExpiredPost } from './reel.constants';
 import {
   reactionContent,
   reactionTypeToEmoji,
@@ -91,7 +91,7 @@ export class PostInteractionsService {
     const post = opened ?? (await this.postRepo.findOne({ where: { id: postId } }));
     // A reel past its expiry is dead to every reader until the worker removes it; a reaction on it
     // would be content nobody can ever see.
-    if (!post || isExpiredReel(post)) throw new NotFoundException('Post not found');
+    if (!post || isExpiredPost(post)) throw new NotFoundException('Post not found');
     const reactions = this.sanitizeReactions(post.reactions);
     const isNew = !reactions[userId];
     reactions[userId] = reactionType;
@@ -211,7 +211,7 @@ export class PostInteractionsService {
     isGlobalAdmin = false
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
-    if (!post || isExpiredReel(post)) throw new NotFoundException('Post not found');
+    if (!post || isExpiredPost(post)) throw new NotFoundException('Post not found');
 
     const { anonymous, associationId } = commentIdentityOf(data);
     const masked = anonymous || !!associationId;

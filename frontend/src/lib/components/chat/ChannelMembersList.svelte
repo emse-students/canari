@@ -123,7 +123,7 @@
   {#if admins.length > 0}
     <div class="animate-in fade-in slide-in-from-bottom-2 duration-300">
       <h3 class="text-text-muted text-2xs mb-3 flex items-center gap-2 px-2 font-bold">
-        <ShieldAlert size={14} class="text-amber-500" strokeWidth={2.5} />
+        <ShieldAlert size={14} class="text-accent-icon" strokeWidth={2.5} />
         {m.chat_admins_count_label({ admins: admins.length })}
       </h3>
       <div class="space-y-1.5">
@@ -144,7 +144,7 @@
             <UserName
               userId={member.userId}
               scope={nicknameScope}
-              class="text-text-main truncate text-sm font-bold transition-colors group-hover:text-amber-600 dark:group-hover:text-amber-400"
+              class="text-text-main group-hover:text-accent-text truncate text-sm font-bold transition-colors"
             />
           </div>
         {/each}
@@ -180,7 +180,7 @@
             <UserName
               userId={member.userId}
               scope={nicknameScope}
-              class="text-text-main truncate text-sm font-medium transition-colors group-hover:text-amber-600 dark:group-hover:text-amber-400"
+              class="text-text-main group-hover:text-accent-text truncate text-sm font-medium transition-colors"
             />
           </div>
         {/each}

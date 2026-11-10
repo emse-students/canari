@@ -209,7 +209,7 @@
         <p class="text-text-muted text-sm">{m.shop_login_required_desc()}</p>
         <a
           href={resolve('/login')}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-opacity"
+          class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-opacity"
         >
           {m.shop_login_button()}
         </a>
@@ -217,7 +217,7 @@
     {:else if loading}
       <div class="flex justify-center py-16">
         <div
-          class="border-cn-border border-t-cn-accent h-8 w-8 animate-spin rounded-full border-4"
+          class="border-cn-border border-t-accent-icon h-8 w-8 animate-spin rounded-full border-4"
         ></div>
       </div>
     {:else if error}
@@ -231,7 +231,7 @@
           'paid'
             ? 'text-emerald-700 dark:text-emerald-400'
             : checkoutReturn === 'declined' || checkoutReturn === 'notCompleted'
-              ? 'text-amber-700 dark:text-amber-400'
+              ? 'text-accent-text'
               : 'text-text-muted'}"
         >
           {CHECKOUT_RETURN_TEXT[checkoutReturn]()}
@@ -272,7 +272,7 @@
                   <div>
                     <a
                       href="/associations/{asso.slug}"
-                      class="text-text-main hover:text-cn-accent font-bold transition-colors"
+                      class="text-text-main hover:text-accent-text font-bold transition-colors"
                     >
                       {asso.name}
                     </a>
@@ -327,7 +327,7 @@
                 <div>
                   <a
                     href="/associations/{asso.slug}"
-                    class="text-text-main hover:text-cn-accent font-bold transition-colors"
+                    class="text-text-main hover:text-accent-text font-bold transition-colors"
                   >
                     {asso.name}
                   </a>

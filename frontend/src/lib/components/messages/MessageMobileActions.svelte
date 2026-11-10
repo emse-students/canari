@@ -161,7 +161,7 @@
         key: 'pin',
         label: pinned ? m.msg_unpin_label() : m.msg_pin_label(),
         icon: pinned ? PinOff : Pin,
-        tone: 'text-amber-600 hover:bg-amber-500/10 dark:text-amber-500',
+        tone: 'text-accent-text hover:bg-accent/10',
         run: onPin,
       });
     if (isOwn && !hasMedia && canEdit)
@@ -292,7 +292,7 @@
             <button
               type="button"
               class="flex h-11 w-11 items-center justify-center rounded-full text-2xl leading-none transition-transform active:scale-75 {isActive
-                ? 'bg-amber-400/20 ring-2 ring-amber-400'
+                ? 'bg-accent/20 ring-accent-icon ring-2'
                 : 'hover:bg-black/5 dark:hover:bg-white/10'}"
               aria-label={m.msg_react_with_emoji({ emoji })}
               aria-pressed={isActive}

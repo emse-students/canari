@@ -94,7 +94,7 @@
   use:nearViewport={{ onnear: () => onnear?.() }}
   class="group relative isolate overflow-hidden {standalone
     ? ''
-    : 'mt-3'} flex items-center gap-3.5 rounded-2xl border border-black/5 bg-gradient-to-br from-amber-100/50 via-white/45 to-rose-100/40 p-3 pr-2.5 transition-all duration-300 hover:border-amber-500/40 hover:shadow-lg hover:shadow-amber-500/10 dark:border-white/10 dark:from-amber-400/10 dark:via-black/25 dark:to-fuchsia-400/10 dark:hover:shadow-amber-400/5"
+    : 'mt-3'} from-accent/20 hover:border-accent/40 hover:shadow-accent/10 dark:from-accent/10 flex items-center gap-3.5 rounded-2xl border border-black/5 bg-gradient-to-br via-white/45 to-rose-100/40 p-3 pr-2.5 transition-all duration-300 hover:shadow-lg dark:border-white/10 dark:via-black/25 dark:to-fuchsia-400/10"
 >
   <!-- The cover's own colours, blurred out of legibility, under a scrim -->
   {#if coverUrl}
@@ -140,7 +140,7 @@
   <!-- Text metadata -->
   <div class="flex min-w-0 flex-1 flex-col justify-center gap-1">
     <span
-      class="text-2xs inline-flex max-w-full items-center gap-1 self-start truncate rounded-md bg-amber-500/15 px-1.5 py-0.5 font-bold text-amber-800 dark:bg-amber-400/12 dark:text-amber-300"
+      class="text-2xs bg-accent/15 text-accent-text inline-flex max-w-full items-center gap-1 self-start truncate rounded-md px-1.5 py-0.5 font-bold"
     >
       <Images size={11} strokeWidth={2.5} />
       {siteLabel}
@@ -151,7 +151,7 @@
       <div class="h-2.5 w-1/2 animate-pulse rounded bg-black/6 dark:bg-white/6"></div>
     {:else}
       <p
-        class="text-text-main line-clamp-2 text-sm leading-snug font-bold transition-colors duration-300 group-hover:text-amber-700 dark:group-hover:text-amber-300"
+        class="text-text-main group-hover:text-accent-text line-clamp-2 text-sm leading-snug font-bold transition-colors duration-300"
       >
         {preview?.title || fallbackTitle}
       </p>
@@ -164,7 +164,7 @@
   </div>
 
   <div
-    class="mt-0.5 shrink-0 self-start rounded-full bg-amber-500/0 p-1.5 text-amber-700/60 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:bg-amber-500/15 group-hover:text-amber-700 dark:text-amber-300/60 dark:group-hover:text-amber-300"
+    class="bg-accent/0 text-accent-text group-hover:bg-accent/15 group-hover:text-accent-text mt-0.5 shrink-0 self-start rounded-full p-1.5 transition-all duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
   >
     <ArrowUpRight size={16} strokeWidth={2.5} />
   </div>

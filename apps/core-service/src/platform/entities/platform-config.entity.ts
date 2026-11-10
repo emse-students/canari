@@ -74,6 +74,18 @@ export class PlatformConfig {
     default: 'off',
   })
   checkpointSkipMode!: CheckpointSkipMode;
+
+  /**
+   * Whether a live started now keeps a three-day replay (migration 021, WP-R1 of the live replays).
+   * Read by social-service at a live's start and fixed on the live row; published by `GET /api/version`.
+   */
+  @Column({
+    name: 'live_replays_mode',
+    type: 'varchar',
+    length: 16,
+    default: 'off',
+  })
+  liveReplaysMode!: LiveReplaysMode;
 }
 
 /**
@@ -125,3 +137,15 @@ export type CheckpointSkipMode = 'off' | 'on';
 
 /** Every {@link CheckpointSkipMode}, for the DTO's validation. */
 export const CHECKPOINT_SKIP_MODES: readonly CheckpointSkipMode[] = ['off', 'on'];
+
+/**
+ * Whether a finished live is kept three days as a replay (docs/wiki/live-replays.md). `off` is today's
+ * behaviour (a live is deleted at its end); `on` makes every live STARTED while it holds keep its last
+ * three hours and publish a replay at its end. Read by social-service at the start
+ * (`lives/live-replays-mode.ts`, the same two values, held together by the column's CHECK and
+ * `liveReplaysModesAgree.test.ts`).
+ */
+export type LiveReplaysMode = 'off' | 'on';
+
+/** Every {@link LiveReplaysMode}, for the DTO's validation. */
+export const LIVE_REPLAYS_MODES: readonly LiveReplaysMode[] = ['off', 'on'];

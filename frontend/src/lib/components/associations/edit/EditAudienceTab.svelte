@@ -198,7 +198,7 @@
           data-audience-preset={option}
           onclick={() => (preset = option)}
           class="flex w-full flex-col items-start gap-0.5 rounded-xl border px-4 py-3 text-left transition-colors
- {on ? 'border-cn-yellow bg-cn-yellow/15' : 'border-cn-border hover:bg-cn-bg'}"
+ {on ? 'border-accent-icon bg-accent/15' : 'border-cn-border hover:bg-cn-bg'}"
         >
           <span class="text-text-main text-sm font-bold">{presetCopy[option].label}</span>
           <span class="text-text-muted text-xs">{presetCopy[option].desc}</span>
@@ -277,7 +277,7 @@
       type="button"
       disabled={!canSave}
       onclick={save}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
+      class="bg-accent text-on-accent hover:bg-accent-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
     >
       {m.audience_save()}
     </button>

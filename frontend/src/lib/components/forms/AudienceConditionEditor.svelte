@@ -135,7 +135,7 @@
   />
 
   {#if isEmpty}
-    <p class="text-xs font-semibold text-amber-900 dark:text-amber-100">
+    <p class="text-accent-text text-xs font-semibold">
       {m.form_condition_empty()}
     </p>
   {/if}

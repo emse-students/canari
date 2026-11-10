@@ -974,7 +974,7 @@
       value={searchQuery}
       oninput={onSearchInput}
       placeholder={m.posts_search_placeholder()}
-      class="ui-search-own-clear border-cn-border text-text-main placeholder:text-text-muted/70 bg-cn-surface w-full rounded-2xl border py-2.5 pr-10 pl-10 text-sm font-medium transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20"
+      class="ui-search-own-clear border-cn-border text-text-main placeholder:text-text-muted/70 bg-cn-surface focus:border-accent/50 focus:ring-accent/20 w-full rounded-2xl border py-2.5 pr-10 pl-10 text-sm font-medium transition-all outline-none focus:ring-2"
     />
     <!--
       ONE BUTTON FOR TWO WIDTHS, because the two gestures are the same gesture. From `md` up the
