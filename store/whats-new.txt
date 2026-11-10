@@ -1,3 +1,3 @@
-version: 1.6.9
+version: 1.6.10
 
-Le fil a trois onglets, Associations, Pour toi et Campus, et se rouvre sur le dernier utilisé. Suivez une association ou une personne d'un geste partout, avec des suggestions de comptes. Anniversaires sur les profils, surnoms en conversation, nouveau lecteur vidéo, choix du style des emojis. Corrigé : un plantage pendant la recherche de GIF, le son d'un live dans une seule oreille.
+Toucher une vidéo du fil l'ouvre en plein écran dans les CanaReels, sans repartir de zéro, et on peut de nouveau avancer dans les vidéos. Moins de notifications : les suggestions sont plus rares et se coupent dans les réglages. Les institutions choisissent qui voit chaque publication. L'agenda se filtre par campus ou formation, et le démineur a sa page Jeux. Corrigé : une réponse perdue en joignant une photo, des lenteurs sur une connexion faible.
