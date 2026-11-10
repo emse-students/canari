@@ -40,6 +40,7 @@ import {
   repostPersonalRequestedContent,
   coorganiseProposedContent,
   liveStartedContent,
+  liveMentionContent,
   followRequestContent,
   followAcceptedContent,
   birthdayContent,
@@ -85,6 +86,7 @@ describe('push content', () => {
     ['repostPersonalRequested', repostPersonalRequestedContent('BDE', 'hello')],
     ['coorganiseProposed', coorganiseProposedContent('BDE', 'Gala')],
     ['liveStarted', liveStartedContent('Claire', '')],
+    ['liveMention', liveMentionContent('Claire', '')],
     ['followRequest', followRequestContent('Claire')],
     ['followAccepted', followAcceptedContent('Claire')],
     ['liveCut', liveCutContent()],
@@ -118,6 +120,20 @@ describe('push content', () => {
       actorName: '',
       contentArg: '',
     });
+  });
+
+  it('a live mention names the writer, and the live title is the body, or the fixed sentence (owner, 2026-11-09)', () => {
+    const titled = liveMentionContent('Claire', 'Gala');
+    expect(pushContentData(titled)).toEqual({
+      contentKey: 'social_live_mention',
+      actorName: 'Claire',
+      contentArg: 'Gala',
+    });
+    expect([titled.legacyTitle, titled.legacyBody]).toEqual([
+      'Claire vous a mentionné dans un live',
+      'Gala',
+    ]);
+    expect(liveMentionContent('Claire', '').legacyBody).toBe('Appuyez pour rejoindre le live');
   });
 
   it("a live's title is the body of its push; without one, the fixed sentence (owner, 2026-11-07)", () => {
@@ -413,6 +429,7 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_repost_personal_requested', repostPersonalRequestedContent(ACTOR, '')],
     ['social_coorganise_proposed', coorganiseProposedContent(ACTOR, '')],
     ['social_live_started', liveStartedContent(ACTOR, '')],
+    ['social_live_mention', liveMentionContent(ACTOR, '')],
     ['social_follow_request', followRequestContent(ACTOR)],
     ['social_follow_accepted', followAcceptedContent(ACTOR)],
     ['social_birthday', birthdayContent(ACTOR)],

@@ -37,6 +37,7 @@ export type PushContentKey =
   | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
   | 'social_live_started'
+  | 'social_live_mention'
   | 'social_follow_request'
   | 'social_follow_accepted'
   | 'social_birthday'
@@ -137,6 +138,7 @@ export type PushContent = {
    * - `social_reaction`: the reaction itself (an emoji)
    * - `social_association_post` / `social_followed_post`: the opening of the post's own text
    * - `social_live_started`: nothing, always empty
+   * - `social_live_mention`: the live's title, empty when it has none
    * - the three live moderation keys (`social_live_cut`, `_suspended`, `_withdrawn`): nothing, always
    *   empty - the reason is a WORD, so it stays on the in-app row, which the client words
    * - the two form reminder keys: nothing, always empty
@@ -852,6 +854,23 @@ export function liveStartedContent(
     arg: title,
     legacyTitle: `${broadcasterName} est en live`,
     legacyBody: title || 'Appuyez pour regarder',
+  };
+}
+
+/**
+ * Someone mentioned the recipient in a live's chat (owner, 2026-11-09). `actorName` is the person who
+ * wrote the line; `arg` is the live's TITLE, empty when it has none - the body is then the fixed
+ * sentence, as for `social_live_started`. Its own key rather than `social_mention`, whose fixed body
+ * says "in a comment"; it takes the same `mentions` category (chat-delivery's `push-category.ts`).
+ */
+export function liveMentionContent(actorName: string, title: string, icon?: PushIcon): PushContent {
+  return {
+    key: 'social_live_mention',
+    icon,
+    actorName,
+    arg: title,
+    legacyTitle: `${actorName} vous a mentionné dans un live`,
+    legacyBody: title || 'Appuyez pour rejoindre le live',
   };
 }
 

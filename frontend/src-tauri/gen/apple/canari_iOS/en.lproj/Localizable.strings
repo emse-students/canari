@@ -48,6 +48,8 @@
 "notif.social.coorganise_proposed.body" = "An event to co-organise";
 "notif.social.live_started.title" = "%@ is live";
 "notif.social.live_started.body" = "Tap to watch";
+"notif.social.live_mention.title" = "%@ mentioned you in a live";
+"notif.social.live_mention.body" = "Tap to join the live";
 "notif.social.follow_request.title" = "%@ asks to follow you";
 "notif.social.follow_request.body" = "Tap to answer";
 "notif.social.join_ask.title" = "%@ wants to join";

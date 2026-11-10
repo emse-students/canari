@@ -103,6 +103,30 @@ export function readGifPage(body: unknown): GifPage {
 }
 
 /** How long a page of results may take before it counts as failed. */
+/**
+ * Appends `incoming` to `existing`, keeping the FIRST occurrence of each id. KLIPY may repeat an item
+ * across two pages (or inside one), and the grid keys its tiles by id: a repeat would be a Svelte
+ * `each_key_duplicate` and crash the page. Unique by construction here, so no key is ever shared.
+ * Logs how many were dropped, at debug level, once per call (that is once per page).
+ */
+export function mergeGifPages(existing: GifResult[], incoming: GifResult[]): GifResult[] {
+  const seen = new Set(existing.map((g) => g.id));
+  const merged = [...existing];
+  let dropped = 0;
+  for (const gif of incoming) {
+    if (seen.has(gif.id)) {
+      dropped += 1;
+      continue;
+    }
+    seen.add(gif.id);
+    merged.push(gif);
+  }
+  if (dropped > 0) {
+    Log.d('GifSearch', `dropped ${dropped} of ${incoming.length} repeated results of a page`);
+  }
+  return merged;
+}
+
 export const GIF_SEARCH_TIMEOUT_MS = 10_000;
 
 /**

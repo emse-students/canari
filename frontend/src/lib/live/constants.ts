@@ -64,7 +64,7 @@ export const LIVE_MANIFEST_POLL_MS = 1_000;
  * 3 s at which the WP-L1 Mi 9T viewer played 21 min with 0 stalls. The policy raises it from the
  * deliveries it sees (`liveBufferPolicy.ts`): an Android recorder that hands its fragments over in
  * pairs (L-F1, LIVE-STALL-1) waits up to two segments plus a poll, ~5 s. The player ANCHORS one poll
- * past that wait, 4 s at this floor.
+ * past that wait, and never under {@link LIVE_PLAYER_MARGIN_SEGMENTS} segments: 6 s at this floor.
  */
 export const LIVE_PLAYER_MIN_TARGET_BUFFER_MS = LIVE_SEGMENT_MS + LIVE_MANIFEST_POLL_MS;
 
@@ -76,13 +76,43 @@ export const LIVE_PLAYER_MIN_TARGET_BUFFER_MS = LIVE_SEGMENT_MS + LIVE_MANIFEST_
 export const LIVE_PLAYER_CADENCE_WINDOW = 30;
 
 /**
- * How many of the newest segments the join appends: enough to hold the anchor at the floor
- * ({@link LIVE_PLAYER_MIN_TARGET_BUFFER_MS} plus one poll, 4 s) ahead of the first frame (two), so a
- * viewer does not start on one segment and run dry before the second arrives.
+ * THE MARGIN A VIEWER HOLDS, in segments of media behind its newest buffered media: three, 6 s at
+ * {@link LIVE_SEGMENT_MS} (owner, 2026-11-09: *"hold a few seconds of margin"*, after a viewer
+ * behind a broadcaster on a bad link saw its picture stop at every late segment). The buffer
+ * policy's target is never under it (`LiveBufferPolicy.targetMs`), so a late segment is absorbed
+ * by the media already held, the playback rate rebuilds what a late one took
+ * ({@link LIVE_PLAYER_SLOW_RATE}), and only a broadcaster later than the whole margin stalls the
+ * picture. Three, not two: two segments (the 4 s anchor of before) is the floor wait plus a poll,
+ * which ONE segment arriving a second late already drains; a third segment absorbs a late
+ * segment of the producer's own length. More would add latency to every viewer for a lateness
+ * nobody measured - the stall line (`stalled N ms ... from a margin of M ms`) is what says whether it
+ * is enough. Sized by the segment length the deliveries measure, {@link LIVE_SEGMENT_MS} before any.
  */
-export const LIVE_PLAYER_JOIN_SEGMENTS = Math.ceil(
-  (LIVE_PLAYER_MIN_TARGET_BUFFER_MS + LIVE_MANIFEST_POLL_MS) / LIVE_SEGMENT_MS
-);
+export const LIVE_PLAYER_MARGIN_SEGMENTS = 3;
+
+/**
+ * How many of the newest segments the join appends: the margin's worth, so the first frame starts
+ * {@link LIVE_PLAYER_MARGIN_SEGMENTS} segments behind the edge rather than on one segment that runs
+ * dry before the second arrives.
+ */
+export const LIVE_PLAYER_JOIN_SEGMENTS = LIVE_PLAYER_MARGIN_SEGMENTS;
+
+/**
+ * The playback rate while the margin is short (a late segment took some of it, or a stall ended on
+ * one segment): 0.9x, the audio's pitch preserved (`preservesPitch`). Each second played rebuilds a
+ * tenth of a second of margin, so one 2 s segment lost is back in 20 s - slow enough that speech
+ * stays natural, fast enough that the margin is whole again before the next minute. The ONLY way
+ * margin is ever rebuilt: a backward seek would show the reader media already shown (the loop the
+ * owner reported, 2026-11-09).
+ */
+export const LIVE_PLAYER_SLOW_RATE = 0.9;
+
+/**
+ * The playback rate while the viewer sits more than a poll past its margin (a large delivery after a
+ * stall of the broadcaster's): 1.05x, pitch preserved. Gentler than the slow side: being late costs
+ * latency only, never a stall, and a viewer past the drift slack is seeked forward anyway.
+ */
+export const LIVE_PLAYER_FAST_RATE = 1.05;
 
 /**
  * Below this battery level (0..1) the pre-live screen warns, where the engine has the Battery API
