@@ -15,7 +15,7 @@ Owed, then this file and its queue line are deleted:
 
 - a two-tab reading on dev: the follower logs `[RESTORE] Follower tab - stored pages drawn` and no
   `checkpoint persisted`, the leader no `REFUSED as stale`, over a login and a conversation open in
-  the follower;
+  the follower, and a message the leader's replay added drawn in the open follower;
 - whether the owner's account carries a stale `mls.bin` from the follower writes of `1.6.9`: a load
   that met a frame it could not read after 2026-11-10 is the sign, and the existing recovery path
   (re-Welcome) is the repair.

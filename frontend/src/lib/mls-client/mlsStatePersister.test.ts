@@ -272,6 +272,21 @@ describe('createMlsStatePersister', () => {
     expect(persistCheckpoint).toHaveBeenCalledTimes(2);
   });
 
+  it('a checkpoint refused for want of the leader copy does NOT stay dirty: asked again, nothing runs', async () => {
+    // Review of #3326: re-raising the flag made every visibility change in a follower ask again,
+    // which turned the refusal said once into a refusal said per flush.
+    const persistCheckpoint = vi
+      .fn()
+      .mockRejectedValue(new MlsStateWriteRefusedError('not-leader'));
+    const persister = createMlsStatePersister({ mlsService: { persistCheckpoint } as any });
+
+    persister.scheduleDeferred();
+    await expect(persister.flushEncrypted()).rejects.toBeInstanceOf(MlsStateWriteRefusedError);
+    await persister.flushEncrypted();
+
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
   it('scheduleOutboundMlsPersist is a no-op without a registered persister', () => {
     expect(() => scheduleOutboundMlsPersist()).not.toThrow();
   });

@@ -20,6 +20,7 @@ import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
 import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { noteMlsStateLoaded, resetStateAuthorityForTests } from '$lib/mls-client/stateAuthority';
+import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 
 /**
  * THE REPAIR THAT RUNS BEFORE ANYTHING CAN SEND, AND THE EPOCH IT RUNS IN.
@@ -232,6 +233,28 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
       expect(follower.svc.skipSendGenerations).not.toHaveBeenCalled();
       expect(follower.svc.persistCheckpoint).not.toHaveBeenCalled();
       expect(sendRatchetEntries(U)).toEqual(ledger);
+    } finally {
+      resetStateAuthorityForTests();
+    }
+  });
+
+  /**
+   * Review of #3326: a leader promoted in place keeps the copy it loaded as a follower until its
+   * reload, and a send from it re-issued a generation the peer had consumed - dropped at the peer,
+   * and counted in the account's ledger from the wrong copy.
+   */
+  it('a tab without the leader copy seals nothing, posts nothing and counts nothing', async () => {
+    const peer = new Peer();
+    const disk = { state: { epoch: 4, next: {} } as ModelState };
+    noteMlsStateLoaded(false);
+    try {
+      const promoted = session(new RatchetModel(disk.state), peer, disk);
+
+      await expect(promoted.send()).rejects.toBeInstanceOf(FollowerTabSendError);
+
+      expect(promoted.svc.encryptForSend).not.toHaveBeenCalled();
+      expect(promoted.svc.delivery.postApplicationMessage).not.toHaveBeenCalled();
+      expect(sendRatchetEntries(U)).toEqual([]);
     } finally {
       resetStateAuthorityForTests();
     }

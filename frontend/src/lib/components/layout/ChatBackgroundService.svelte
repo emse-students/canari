@@ -40,7 +40,7 @@
     serverPinSaltFingerprint,
     settleUnsettledPinReset,
   } from '$lib/composables/session/pinReset';
-  import { MlsResetRefusedError } from '$lib/utils/hex';
+  import { isLeaderCopyRefusal, MlsResetRefusedError } from '$lib/utils/hex';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
@@ -1936,7 +1936,11 @@
           .catch((e) => {
             // Loud, and the release still happens: holding the guard on a failed flush would
             // strand background delivery entirely, which is a worse failure than the one above.
-            console.error('[MLS] Checkpoint before backgrounding failed:', e);
+            if (isLeaderCopyRefusal(e)) {
+              console.debug('[MLS] Checkpoint before backgrounding skipped - no leader copy here');
+            } else {
+              console.error('[MLS] Checkpoint before backgrounding failed:', e);
+            }
           })
           .finally(() => invokeNative('pause_mls_foreground'));
         return;

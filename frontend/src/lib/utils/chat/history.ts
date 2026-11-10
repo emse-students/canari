@@ -42,6 +42,8 @@ import { mergeReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { holdsGroupState } from './groupUsability';
 import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
+import { publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
+import { advanceLastMessageAt, tabSeed } from './messageOrder';
 import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { editSupersedes } from './editPrecedence';
@@ -778,13 +780,37 @@ export function shouldFlagStaleEpochGap(
   return groupWasLocal && sawEpochGap && epochAfter === epochBefore;
 }
 
+/**
+ * Tells the follower tabs what an archive replay just added to a conversation (2026-11-10).
+ *
+ * A follower decrypts no archive (below), so it learns of the rows the LEADER's replay stored only
+ * from this: the live path's `messages_batch`, on the same channel and with the same merge on the
+ * other side (deduplicated by id). Without it an open follower kept the page it drew before the
+ * replay - incomplete until its next load. Called by each caller once the replayed page is read back
+ * from the store; leader-gated by `publishTabMessageUpdate`, so a call anywhere else posts nothing.
+ *
+ * @param before the row as it stood before the replay, for the seed to advance from
+ * @param added the rows the replay brought that the row did not show
+ * @param unreadCount the leader's count for the row after the replay
+ */
+export function announceReplayedRows(
+  conversationId: string,
+  before: Pick<Conversation, 'lastMessageAt'> | undefined,
+  added: ChatMessage[],
+  unreadCount: number
+): void {
+  if (added.length === 0) return;
+  publishTabMessageUpdate({
+    type: 'messages_batch',
+    conversationId,
+    messages: added,
+    ...tabSeed(advanceLastMessageAt(before?.lastMessageAt, added)),
+    unreadCount,
+  });
+}
+
 /** {@link replayConversationHistory} has accused a replay asked of a tab without the leader copy. */
 let saidReplayRefusedHere = false;
-
-/** Test seam: the accusation above is said again. */
-export function resetReplayRefusalForTests(): void {
-  saidReplayRefusedHere = false;
-}
 
 export async function replayConversationHistory(params: {
   mlsService: IMlsService;

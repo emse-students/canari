@@ -338,6 +338,23 @@ export class FollowerTabCommitError extends Error {
 }
 
 /**
+ * A send was asked of a tab whose copy of the MLS state is not the leader's (a follower, or a leader
+ * promoted in place before its reload), and refused before anything was sealed: that copy's send
+ * ratchet is behind every generation the leader already put on the wire, so the frame would re-use
+ * one the peer consumed and be dropped. Same fact as {@link FollowerTabCommitError}
+ * (`refusesCommitsHere`). The outbox keeps the entry queued for the leader.
+ */
+export class FollowerTabSendError extends Error {
+  constructor(readonly groupId: string) {
+    super(
+      `a send to ${groupId.slice(0, 8)}... was asked of a tab without the leader copy - only the ` +
+        'leader tab encrypts, so nothing was sealed'
+    );
+    this.name = 'FollowerTabSendError';
+  }
+}
+
+/**
  * A key package was asked of a tab whose copy of the MLS state is not the leader's (a follower, or
  * a leader promoted in place before its reload), and refused before anything was minted: a key
  * package's private half would live only in that copy, so a peer's Welcome to it could never be

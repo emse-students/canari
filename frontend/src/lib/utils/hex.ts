@@ -261,6 +261,15 @@ export class MlsStateWriteRefusedError extends Error {
 }
 
 /**
+ * Whether a checkpoint failure is the EXPECTED refusal of a document without the leader copy. Its
+ * accusation is said once, by `persistCheckpoint`; a flush caller that meets it again logs it at
+ * debug, because repeating it per flush is noise that teaches the reader to skip the real failures.
+ */
+export function isLeaderCopyRefusal(e: unknown): boolean {
+  return e instanceof MlsStateWriteRefusedError && e.outcome === 'not-leader';
+}
+
+/**
  * A checkpoint that failed where NOTHING can have been stored: the snapshot did not export or seal,
  * or the IndexedDB transaction that carried it failed (a transaction is atomic - one that does not
  * complete stored nothing). Thrown by the web checkpoint, whose store has no other path; a native

@@ -216,6 +216,7 @@ import {
   AcceptedCommitNotMergedError,
   CommitStageNotSavedError,
   FollowerTabCommitError,
+  FollowerTabSendError,
   FollowerTabKeyPackageError,
   PreviousCommitUnresolvedError,
   StagedCommitPendingError,
@@ -3957,13 +3958,16 @@ export abstract class BaseMlsService implements IMlsService {
           throw e;
         }
         let abandoned: string;
+        const idBeforeRotation = this.deviceId;
         try {
           abandoned = await this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side');
         } catch (refused) {
           // The caller of this round logs and carries on (`syncConnectionAfterWsOpen`), so ending
           // the document is HERE or nowhere: the client in memory is the fresh, unrecorded one.
           if (refused instanceof MlsStateWriteRefusedError) {
-            this.endDocumentAfterRefusedRotation();
+            // Refused BEFORE it moved anything (a tab without the leader copy, the id unchanged):
+            // there is no fresh client to end, and the refused-rotation reload is not owed.
+            if (this.deviceId !== idBeforeRotation) this.endDocumentAfterRefusedRotation();
           } else {
             // ANY OTHER FAILURE ENDS THE LIVE SESSION ON THIS DEVICE TOO, into the PIN gate. The
             // rotation moved this client's device id before its load, while the id on disk is still
@@ -4280,6 +4284,17 @@ export abstract class BaseMlsService implements IMlsService {
    * @returns the id that was abandoned, for the caller to log.
    */
   protected async rotateDeviceIdentity(deviceKeyB64: string, reason: string): Promise<string> {
+    // A TAB WITHOUT THE LEADER COPY DOES NOT ROTATE, refused before anything moves (2026-11-10). The
+    // device id, the send ledger and the server's device row are the account's, shared with the
+    // leader tab, and the checkpoint below would be refused anyway - which used to latch the document
+    // and send it into the refused-rotation reload. Nothing has changed here, so nothing is ended:
+    // the login reports the other tab (`savedStateFailure`), and the leader decides on its own load.
+    if (refusesCommitsHere()) {
+      console.warn(
+        `[MLS] Device identity rotation NOT started (${reason}): this tab does not hold the leader copy - ${sanitizeForLog(this.deviceId)} is kept, the leader tab decides`
+      );
+      throw new MlsStateWriteRefusedError('not-leader');
+    }
     const oldDeviceId = this.deviceId;
     console.warn(`[MLS] Rotating device identity (${reason}), abandoning ${oldDeviceId}`);
     this.deviceId = this.generateDeviceId(this.userId);
@@ -6926,6 +6941,15 @@ export abstract class BaseMlsService implements IMlsService {
     activeEpoch: number
   ): Promise<'current' | DistributionGapVerdict> {
     const short = groupId.slice(0, 8);
+    // THE CATCH-UP REPLAYS THE COMMIT LOG INTO THIS COPY (`attemptCommitReplay`), so a tab without
+    // the leader copy runs none: the leader checks the same group on its own load. Nothing is
+    // concluded here, so no verdict reaches the listener and no check is registered.
+    if (refusesCommitsHere()) {
+      console.debug(
+        `[GRAINE] epoch check of key group ${short}... not run in a tab without the leader copy - the leader tab checks it`
+      );
+      return Promise.resolve('current');
+    }
     const check = (async (): Promise<'current' | DistributionGapVerdict> => {
       // AFTER THE DRAIN, BECAUSE BEFORE IT "BEHIND" IS NOT A FACT. The server's epoch was read while
       // this device's own queue may still hold every commit it is missing - production 2026-09-28
@@ -8604,6 +8628,10 @@ export abstract class BaseMlsService implements IMlsService {
     _messageId?: string,
     frameDelivery: FrameDelivery = DELIVERY.visible
   ): Promise<SentFrame> {
+    // ONLY THE LEADER COPY SEALS (`refusesCommitsHere`): a follower's copy, or a leader promoted in
+    // place before its reload, is behind every generation the leader sent, so its frame is a drop at
+    // the peer and its ledger count is written from the wrong copy. Refused before anything moves.
+    if (refusesCommitsHere()) throw new FollowerTabSendError(groupId);
     await this.waitForCatchUpIdle();
     // NOTHING IS SEALED ON TOP OF A COMMIT WHOSE OUTCOME IS UNKNOWN: whether this device is at N or
     // N+1 is exactly what that outcome decides, so it is asked first, by the same resubmission.
@@ -8683,6 +8711,9 @@ export abstract class BaseMlsService implements IMlsService {
     messageBytes: Uint8Array,
     frameDelivery: FrameDelivery
   ): Promise<SentFrame> {
+    // AGAIN AFTER THE AWAITS ABOVE (the catch-up, the settle, the barrier): the lead can leave this
+    // document while they run, and nothing after this line awaits before the seal.
+    if (refusesCommitsHere()) throw new FollowerTabSendError(groupId);
     const {
       sealed: encryptedBytes,
       authorProof,

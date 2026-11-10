@@ -9,6 +9,7 @@ import { m } from '$lib/paraglide/messages';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import type { IStorage, ConversationMeta } from '$lib/db';
 import {
+  announceReplayedRows,
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
   replayConversationHistory,
@@ -1260,6 +1261,13 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, mine.stamped, mine.server)
           ).length;
           ctx.conversations.set(meta.id, { ...current, messages, unreadCount: newUnreadCount });
+          // A follower decrypts no archive: what this replay stored reaches it here.
+          announceReplayedRows(
+            meta.id,
+            current,
+            refreshedMsgs.filter((m) => !preReplayMsgIds.has(m.id)),
+            newUnreadCount
+          );
           for (const m of refreshedMsgs) {
             if (m.reactions && m.reactions.length > 0) {
               ctx.messageReactions.set(m.id, m.reactions);

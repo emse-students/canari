@@ -6,10 +6,19 @@
  * and seen marks. Production `1.6.9` ran it in a follower, whose copy was then checkpointed over the
  * leader's. The restore and the open no longer call it there; this is the last line, for a caller
  * that forgot, and it says so once.
+ *
+ * Each case loads a FRESH module graph (`vi.resetModules`), so the "said once" flag and the load
+ * fact start clean without a test seam - and the cases exercise the behaviour on any build.
  */
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
-import { noteMlsStateLoaded, resetStateAuthorityForTests } from '$lib/mls-client/stateAuthority';
-import { replayConversationHistory, resetReplayRefusalForTests } from './history';
+
+async function fresh(loadedAsLeader: boolean) {
+  vi.resetModules();
+  const authority = await import('$lib/mls-client/stateAuthority');
+  const history = await import('./history');
+  authority.noteMlsStateLoaded(loadedAsLeader);
+  return history;
+}
 
 function service() {
   return createMlsServiceStub({
@@ -19,8 +28,8 @@ function service() {
   });
 }
 
-const replay = (mlsService: ReturnType<typeof service>) =>
-  replayConversationHistory({
+const replay = (history: typeof import('./history'), mlsService: ReturnType<typeof service>) =>
+  history.replayConversationHistory({
     mlsService,
     id: 'g-1',
     contactName: 'peer',
@@ -37,30 +46,26 @@ describe('replayConversationHistory in a tab without the leader copy', () => {
   let error: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     localStorage.clear();
-    resetReplayRefusalForTests();
     error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
-  afterEach(() => {
-    error.mockRestore();
-    resetStateAuthorityForTests();
-  });
+  afterEach(() => error.mockRestore());
 
   it('asks the server for nothing, opens no decrypt session and commits nothing', async () => {
-    noteMlsStateLoaded(false);
+    const history = await fresh(false);
     const mlsService = service();
 
-    await expect(replay(mlsService)).resolves.toBeUndefined();
+    await expect(replay(history, mlsService)).resolves.toBeUndefined();
 
     expect(mlsService.fetchHistory).not.toHaveBeenCalled();
     expect(mlsService.createDecryptSession).not.toHaveBeenCalled();
   });
 
   it('accuses the caller once, however often it is asked', async () => {
-    noteMlsStateLoaded(false);
+    const history = await fresh(false);
     const mlsService = service();
 
-    await replay(mlsService);
-    await replay(mlsService);
+    await replay(history, mlsService);
+    await replay(history, mlsService);
 
     const accusations = error.mock.calls.filter((c: unknown[]) =>
       String(c[0]).includes('without the leader copy')
@@ -69,10 +74,10 @@ describe('replayConversationHistory in a tab without the leader copy', () => {
   });
 
   it('the leader copy still asks the server for the archive', async () => {
-    noteMlsStateLoaded(true);
+    const history = await fresh(true);
     const mlsService = service();
 
-    await replay(mlsService);
+    await replay(history, mlsService);
 
     expect(mlsService.fetchHistory).toHaveBeenCalled();
   });

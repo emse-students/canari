@@ -3243,12 +3243,45 @@ promoted in place whose reload is owed.
   against its copy and neither forgets nor resets the ledger, which is one per account.
 - `mayPull` and the mailbox barrier read the same fact instead of the role alone, so a leader promoted
   in place pulls nothing until its reload.
+- **Sends** (review of #3326): `sendMessage` and `emitFrame` refuse typed (`FollowerTabSendError`,
+  `commitSubmission.ts`) before they seal or post, so a leader promoted in place no longer re-issues a
+  generation from its follower copy. The outbox skips its flush in such a tab and treats the typed
+  refusal as `skip`: the entry stays queued for the page the promotion reload starts. A direct send
+  from a follower (media forward, call signalling) now fails typed where a peer used to drop it.
+- **Graine key groups**: `ensureDistributionGroupFor`, `verifyDistributionEpoch` and
+  `rejoinBehindDistributionGroup` answer from what the copy holds, with one `debug` line, and never
+  reach the commit replay (`catchUpDistributionGroup` -> `processIncomingMessage`) in such a tab.
+  Commits were already refused (`FollowerTabCommitError`); live frames reach only the leader's socket.
+- **The follower still redraws what the replay added**: the leader's restore and its opening of a
+  conversation publish a `messages_batch` on `canari-tab-messages` with the rows the replay added
+  (`announceReplayedRows`, `history.ts`), so an open follower does not draw an incomplete
+  conversation until its next load.
+- **Said once means once**: the persister does not raise its dirty flag again on a `not-leader`
+  refusal (`startFlight`), so a follower is not asked to flush on every visibility change; the two
+  flush callers that log (`ChatBackgroundService`, the logout's final flush) log it at `debug`
+  (`isLeaderCopyRefusal`, `hex.ts`).
+- **A device identity rotation is refused before it moves anything** (`rotateDeviceIdentity`, typed
+  `not-leader`, one `warn`): it used to meet the refusal at its checkpoint after moving the id, which
+  latched the document and sent it into the refused-rotation reload with a misleading toast. The
+  revocation path ends the document only when the id really moved.
+
+**The leader's own unload, decided.** `holdLeaderLockUntilUnload` flips the role to follower in
+`beforeunload` and releases the lock there, so a checkpoint in flight at that moment is refused AT THE
+PUT. That is kept deliberately: the released lock can be granted to another tab at once, and its load
+reads the disk; a put landing after that read would put the disk ahead of the new leader's loaded copy,
+which is the divergence this section closes, reversed. Holding the role while a put is in flight would
+need an await `beforeunload` cannot make. What the refused put held is recovered by mechanisms that
+already exist: sent generations by the send ledger and its reconcile burn, received frames by the
+archive replay, commits by the commit replay and the unresolved-commit settle. A put started during a
+page teardown rarely completes anyway.
 
 `changeDeviceKey` is not gated: a PIN change from a follower still re-seals the copy it loaded, under
 the device-key gate, and is refused by the version guard when the leader wrote since. Guarded by
 `BaseMlsService.checkpointLedgers.test.ts`, `hex.mlsVersion.test.ts`, `restoreFollower.test.ts`,
 `history.followerRefused.test.ts`, `useConversations.loadHistory.svelte.test.ts`,
-`BaseMlsService.sendRatchet.test.ts` and `BaseMlsService.mailboxBarrier.test.ts`. Owed: a two-tab
+`BaseMlsService.sendRatchet.test.ts`, `BaseMlsService.mailboxBarrier.test.ts` and
+`distributionGroup.test.ts`. **This does not fix an own image left on its ThumbHash placeholder in a
+follower** - that is #3321. Owed: a two-tab
 reading on dev showing no `checkpoint persisted` in the follower and no `REFUSED as stale` in the
 leader ([backlog](../backlog.d/p1-a-follower-tab-wrote-its-mls-copy-over-the-leaders.md)).
 

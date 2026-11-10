@@ -126,6 +126,11 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     inFlightUrgent = urgentAtStart;
     inFlightEncrypted = runSaveEncrypted(skippedAtStart, framesAtStart)
       .catch((e) => {
+        // A TAB WITHOUT THE LEADER COPY OWES NOTHING (`not-leader`): its state is not the account's,
+        // so the refused write is not a debt the next trigger must pay. Raising the dirty flag again
+        // made every later hide and the sign-out retry it and report a failure each time. Still
+        // rejected, so no waiter declares anything durable; said once, by `persistCheckpoint`.
+        if (e instanceof MlsStateWriteRefusedError && e.outcome === 'not-leader') throw e;
         urgentSinceCheckpoint = urgentSinceCheckpoint || urgentAtStart;
         framesSinceCheckpoint += framesAtStart;
         skippedDrainsSinceCheckpoint += skippedAtStart;

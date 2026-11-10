@@ -71,7 +71,7 @@ import {
   type IMlsService,
   type VaultRefusal,
 } from '$lib/mls-client';
-import { MlsStateWriteRefusedError } from '$lib/utils/hex';
+import { isLeaderCopyRefusal, MlsStateWriteRefusedError } from '$lib/utils/hex';
 import {
   MlsResetUnsettledError,
   MlsSlotMoveUnfinishedError,
@@ -3583,7 +3583,11 @@ export function tearDownLiveSession(
     // Dispose after the final flush: flushEncrypted relies on the encrypt worker. NEVER REJECTS:
     // the caller chains the MLS client's retirement, and the next login's wait, on it.
     finalWrite = flushActiveMlsStateEncrypted()
-      .catch((e) => console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`))
+      .catch((e) =>
+        isLeaderCopyRefusal(e)
+          ? console.debug('[LOGOUT] Final MLS checkpoint skipped - this tab holds no leader copy')
+          : console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`)
+      )
       .then(releasePersister);
   } else {
     // NO FINAL FLUSH FOR A REVOKED DEVICE. Persisting the state the next step deletes is precisely

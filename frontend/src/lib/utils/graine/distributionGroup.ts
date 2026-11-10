@@ -12,6 +12,7 @@ import { releaseRequestsHeldForKeyGroup, requestCommunityHistory } from './repai
 import { reconcileDistributionGroupRoster } from './rosterReconcile';
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 
 /**
  * Joining a Graine key-distribution group, on first use - a community's, or a private salon's.
@@ -77,6 +78,19 @@ export function ensureDistributionGroupFor(
   // saying it was done once, which would be a second bookkeeping layer able to lag the tree. The
   // entry is removed in `finally`, so nothing survives the call and a later join is unaffected.
   const key = scopeLabel(scope);
+  // A TAB WITHOUT THE LEADER COPY ENTERS, CHECKS AND CATCHES UP NOTHING (2026-11-10). Every branch
+  // below moves this device's copy - a join or a forget, a roster commit, an epoch check that replays
+  // the commit log into it - and only the leader's copy is the account's (`refusesCommitsHere`). The
+  // leader runs this same entry on its own load, and a member's gesture is handed to it
+  // (`enterKeyGroupOnGesture`). The answer is the fact this copy already holds.
+  if (refusesCommitsHere()) {
+    const known = mlsService.distributionGroupFor(scope);
+    const held = !!known && holdsGroupState(mlsService, known);
+    console.debug(
+      `[GRAINE] ${key}: not entered in a tab without the leader copy - the leader tab enters and catches it up (held in this copy: ${held})`
+    );
+    return Promise.resolve(held);
+  }
   const running = inFlight.get(key);
   if (running) {
     log(`[GRAINE] ${key}: a join is already in flight for this scope - awaiting it`);
@@ -459,6 +473,13 @@ export async function rejoinBehindDistributionGroup(
     .distributionScopes()
     .find((s) => mlsService.distributionGroupFor(s) === groupId);
   if (!scope) return null;
+  // The forget below drops a tree from this copy: only the leader's copy is the account's.
+  if (refusesCommitsHere()) {
+    console.debug(
+      `[GRAINE] ${scopeLabel(scope)}: key group ${groupId.slice(0, 8)}... not re-joined in a tab without the leader copy - the leader tab re-joins it`
+    );
+    return false;
+  }
   // A join already running for this scope finishes first: forgetting under it would have it
   // report a group this device no longer holds.
   await inFlight.get(scopeLabel(scope))?.catch(() => false);

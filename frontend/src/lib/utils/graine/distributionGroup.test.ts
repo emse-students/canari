@@ -7,6 +7,7 @@ import {
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { setGraineRuntime } from './runtime';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
+import { noteMlsStateLoaded, resetStateAuthorityForTests } from '$lib/mls-client/stateAuthority';
 
 const reconcile = vi.fn().mockResolvedValue([]);
 vi.mock('./rosterReconcile', () => ({
@@ -1138,5 +1139,48 @@ describe('a held key group whose own leaf is gone', () => {
 
     await vi.waitFor(() => expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1));
     expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
+  });
+});
+
+/**
+ * A TAB WITHOUT THE LEADER COPY ENTERS, CHECKS AND CATCHES UP NOTHING (review of #3326). The held
+ * branch scheduled `verifyDistributionEpoch`, whose catch-up replays the commit log into this copy -
+ * a follower decrypting into its own copy by another door than the archive replay.
+ */
+describe('a key group in a tab without the leader copy', () => {
+  afterEach(() => resetStateAuthorityForTests());
+
+  it('asks the server nothing and moves nothing in its copy, answering what the copy holds', async () => {
+    noteMlsStateLoaded(false);
+    const mls = makeHeldMls();
+    const channels = makeChannels();
+
+    await expect(run(mls, channels)).resolves.toBe(true);
+
+    expect(channels.getDistributionGroup).not.toHaveBeenCalled();
+    expect(mls.verifyDistributionEpoch).not.toHaveBeenCalled();
+    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
+    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it('re-joins nothing behind its server either', async () => {
+    noteMlsStateLoaded(false);
+    const mls = makeHeldMls({
+      distributionScopes: vi.fn().mockReturnValue([workspaceScope('ws-1')]),
+    });
+
+    await expect(
+      rejoinBehindDistributionGroup(
+        mls as never,
+        makeChannels() as never,
+        'g-1',
+        'a test',
+        () => {}
+      )
+    ).resolves.toBe(false);
+
+    expect(mls.forgetDistributionGroupById).not.toHaveBeenCalled();
+    expect(mls.ensureDistributionGroup).not.toHaveBeenCalled();
   });
 });

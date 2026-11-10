@@ -134,6 +134,7 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 /** Salons whose "decoded after entry was decided" decision was already logged this session. */
 const salonEntryDecisionNoted = new SvelteSet<string>();
 import {
+  announceReplayedRows,
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
   replayConversationHistory,
@@ -661,6 +662,7 @@ export function useConversations() {
       // once a checkpoint that started after the replay LANDED, and never when that checkpoint
       // fails. The page below is drawn without waiting for the disk.
       try {
+        const beforeReplay = conversations.get(contactName);
         await withMlsBulkIngest(
           ctx.ensureMls(),
           () =>
@@ -680,7 +682,15 @@ export function useConversations() {
           (commit) => commit()
         );
         // Reload from DB so display reflects the latest saved state
-        await renderStoredPage(contactName, id, ctx, undefined, drawnFirst);
+        const replayedPage = await renderStoredPage(contactName, id, ctx, undefined, drawnFirst);
+        // A follower decrypts no archive: what this replay stored reaches it here.
+        const shownBefore = new SvelteSet((beforeReplay?.messages ?? []).map((m) => m.id));
+        announceReplayedRows(
+          contactName,
+          beforeReplay,
+          replayedPage.filter((m) => !shownBefore.has(m.id)),
+          conversations.get(contactName)?.unreadCount ?? 0
+        );
       } catch (e) {
         // Previously unhandled: this call is fired with `void` by every caller, so a throw here
         // (network hiccup, decrypt error, IndexedDB contention - all realistic during a

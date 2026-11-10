@@ -22,6 +22,12 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: vi.fn(),
 }));
 
+const publishTabMessageUpdate = vi.hoisted(() => vi.fn());
+vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/tabMessageSync')>()),
+  publishTabMessageUpdate,
+}));
+
 const replay = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('./history', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./history')>()),
@@ -53,8 +59,13 @@ function mls() {
   };
 }
 
+/** What the replay of g-1 stored, read back after it. */
+const REPLAYED = { ...STORED, id: 'replayed-1', content: 'from the archive', timestamp: 2_000 };
+
 function restore(conversations: SvelteMap<string, Conversation>, service: ReturnType<typeof mls>) {
   const log = vi.fn();
+  // g-1's page before its replay, then the page the replay left in the store.
+  let g1Reads = 0;
   const done = loadExistingConversations({
     onArchiveReplaysSkipped: vi.fn(),
     storage: {
@@ -63,7 +74,11 @@ function restore(conversations: SvelteMap<string, Conversation>, service: Return
         { id: 'g-2', name: 'Autre', lifecycle: 'active' },
       ]),
       saveConversation: vi.fn(async () => {}),
-      getMessagesPage: vi.fn(async (id: string) => (id === 'g-1' ? [STORED] : [])),
+      getMessagesPage: vi.fn(async (id: string) => {
+        if (id !== 'g-1') return [];
+        g1Reads += 1;
+        return g1Reads === 1 ? [STORED] : [STORED, REPLAYED];
+      }),
       deleteMessagesForConversation: vi.fn(async () => {}),
       getMessages: vi.fn(async () => []),
       deleteConversation: vi.fn(async () => {}),
@@ -82,7 +97,10 @@ function restore(conversations: SvelteMap<string, Conversation>, service: Return
 }
 
 describe('the restore in a tab without the leader copy', () => {
-  beforeEach(() => replay.mockClear());
+  beforeEach(() => {
+    replay.mockClear();
+    publishTabMessageUpdate.mockClear();
+  });
   afterEach(() => resetStateAuthorityForTests());
 
   it('draws the stored pages, replays no archive and opens no bulk window', async () => {
@@ -115,5 +133,27 @@ describe('the restore in a tab without the leader copy', () => {
     expect(service.fetchHistoryBatch).toHaveBeenCalledTimes(1);
     expect(service.beginBulkIngest).toHaveBeenCalledTimes(1);
     expect(service.endBulkIngest).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * THE FOLLOWER'S ONLY SOURCE FOR WHAT THE LEADER'S REPLAY STORED (review of #3326): before this PR
+   * a follower replayed for itself; now it draws the store once, so an open follower kept a page the
+   * replay had made incomplete until its next load.
+   */
+  it('the leader tells the follower tabs what its replay added, on the live batch event', async () => {
+    noteMlsStateLoaded(true);
+    const conversations = new SvelteMap<string, Conversation>();
+
+    await restore(conversations, mls()).done;
+
+    const batches = publishTabMessageUpdate.mock.calls.map((c: unknown[]) => c[0]);
+    expect(batches).toEqual([
+      expect.objectContaining({
+        type: 'messages_batch',
+        conversationId: 'g-1',
+        messages: [expect.objectContaining({ id: 'replayed-1' })],
+        lastMessageAt: 2_000,
+      }),
+    ]);
   });
 });

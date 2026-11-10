@@ -97,6 +97,8 @@ import {
   getTabLeadership,
   whenTabLeadershipDecided,
 } from '$lib/mls-client/tabLeader';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
+import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 import {
   requestLeaderOutboxFlush,
   publishOutboxEntrySent,
@@ -2890,6 +2892,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     terminalId: string,
     e: unknown
   ): Promise<FlushOutcome> {
+    // THE LEAD LEFT THIS DOCUMENT'S COPY BETWEEN THE GATE AND THE SEAL (`FollowerTabSendError`): not a
+    // failure of the entry, so no attempt is counted and no backoff armed - it stays queued, intact,
+    // for the leader tab that drains the shared queue.
+    if (e instanceof FollowerTabSendError) {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… not sent here: this tab lost the leader copy during the send - it stays queued for the leader`
+      );
+      return 'skip';
+    }
     // EVICTED: permanent, and the second place it can be learnt rather than the first. The Remove
     // commit named this device when it merged, and `retireIfEvicted` acts on it there - so
     // reaching here means the commit never arrived (a device offline across the whole removal,
@@ -3232,6 +3243,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (!getIsTabLeader()) {
       log('[OUTBOX] Flush skipped - follower tab; asking the leader to drain the shared queue.');
       requestLeaderOutboxFlush();
+      return;
+    }
+    // A LEADER PROMOTED IN PLACE STILL HOLDS THE COPY IT LOADED AS A FOLLOWER (`refusesCommitsHere`),
+    // behind every generation the old leader sealed: a send from it is the WP-MULTITAB-1 drop above.
+    // Its promotion reload is already scheduled, and the page it starts drains the queue.
+    if (refusesCommitsHere()) {
+      log(
+        '[OUTBOX] Flush skipped - this tab leads on a copy it loaded as a follower; the queue is kept for the page its promotion reload starts.'
+      );
       return;
     }
     // THE TAKE RECORDS ARE THE LEADER'S, kept once per page life at its first flush (L2, L3).

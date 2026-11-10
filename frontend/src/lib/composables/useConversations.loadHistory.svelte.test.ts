@@ -17,6 +17,12 @@ vi.mock('$lib/utils/chat/history', async (importOriginal) => {
   return { ...actual, replayConversationHistory, readHistoryStreamCursor };
 });
 
+const publishTabMessageUpdate = vi.hoisted(() => vi.fn());
+vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/tabMessageSync')>()),
+  publishTabMessageUpdate,
+}));
+
 vi.mock('$lib/mls-client/mlsBulkIngest', () => ({
   // Transparent passthrough: runs the replay and propagates whatever it does (resolve or throw).
   withMlsBulkIngest: async (_mls: unknown, fn: () => unknown) => fn(),
@@ -272,5 +278,30 @@ describe('loadHistoryForConversation - a tab without the leader copy', () => {
     expect(mls.fetchHistory).not.toHaveBeenCalled();
     expect(convs.conversations.get(DM)?.messages.map((m) => m.id)).toEqual(['m1']);
     expect(log).toHaveBeenCalledWith(expect.stringContaining('without the leader copy'));
+  });
+
+  it("the leader's open tells the follower tabs what its replay added", async () => {
+    noteMlsStateLoaded(true);
+    publishTabMessageUpdate.mockClear();
+    const convs = useConversations();
+    convs.conversations.set(DM, conversation());
+    convs.selectConversation(DM);
+    readHistoryStreamCursor.mockReturnValue(null);
+    replayConversationHistory.mockResolvedValue(undefined);
+    const { ctx } = makeCtx();
+    const row = { conversationId: GROUP_ID, senderId: 'peer', content: 'from the archive' };
+    const storage = {
+      getMessagesPage: vi.fn().mockResolvedValue([{ ...row, id: 'r1', timestamp: 3_000 }]),
+    };
+
+    await convs.loadHistoryForConversation(DM, GROUP_ID, { ...(ctx as object), storage } as never);
+
+    expect(publishTabMessageUpdate).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        type: 'messages_batch',
+        conversationId: DM,
+        messages: [expect.objectContaining({ id: 'r1' })],
+      })
+    );
   });
 });

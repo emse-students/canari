@@ -191,4 +191,36 @@ describe('BaseMlsService.persistCheckpoint in a tab without the leader copy', ()
 
     expect(atThePut).toBe(true);
   });
+
+  /**
+   * Review of #3326: the rotation used to meet `not-leader` at its checkpoint, after it had moved the
+   * id and loaded a fresh client - which latched the document and sent it into the refused-rotation
+   * reload. Refused before anything moves, there is nothing to end.
+   */
+  it('refuses a device identity rotation before it moves anything', async () => {
+    noteMlsStateLoaded(false);
+    const ctx = {
+      ...makeCtx(),
+      deviceId: 'dev-kept',
+      stateWritesEnded: false,
+      generateDeviceId: vi.fn(() => 'dev-fresh'),
+      loadFreshStateReplacingUnopened: vi.fn(),
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(
+      (
+        BaseMlsService.prototype as unknown as {
+          rotateDeviceIdentity(key: string, reason: string): Promise<string>;
+        }
+      ).rotateDeviceIdentity.call(ctx, 'k', 'a test')
+    ).rejects.toEqual(new MlsStateWriteRefusedError('not-leader'));
+    warn.mockRestore();
+
+    expect(ctx.deviceId).toBe('dev-kept');
+    expect(ctx.generateDeviceId).not.toHaveBeenCalled();
+    expect(ctx.loadFreshStateReplacingUnopened).not.toHaveBeenCalled();
+    expect(ctx.stateWritesEnded).toBe(false);
+    expect(ctx.writeCheckpoint).not.toHaveBeenCalled();
+  });
 });

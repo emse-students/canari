@@ -29,21 +29,21 @@ export function installMlsStatePersisterLifecycle(persister: MlsStatePersister):
   }
   installedFor = persister;
 
+  // Nobody awaits these: a failure is said by the persister itself (and a version-guard or a
+  // leader-copy refusal by its own one line), so the rejection stops here instead of reaching the
+  // window as an unhandled one.
+  const flushOnLeaving = () => void persister.flushEncrypted().catch(() => {});
   visibilityHandler = () => {
-    if (document.visibilityState === 'hidden') {
-      void persister.flushEncrypted();
-    }
+    if (document.visibilityState === 'hidden') flushOnLeaving();
   };
-  pageHideHandler = () => {
-    void persister.flushEncrypted();
-  };
+  pageHideHandler = flushOnLeaving;
 
   document.addEventListener('visibilitychange', visibilityHandler, { passive: true });
   window.addEventListener('pagehide', pageHideHandler, { capture: true });
   foregroundUnsubscribe = onAppForegroundChange((foreground) => {
     if (foreground) return;
     console.debug('[MLS] app sent to the background - flushing the encrypted checkpoint');
-    void persister.flushEncrypted();
+    flushOnLeaving();
   });
 }
 
