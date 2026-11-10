@@ -265,7 +265,7 @@ export async function callPreflightThroughLeaderTab(
   return { answer: answer.reason === 'leader-gone' ? 'failed' : answer.reason, releaseHold: none };
 }
 
-/** The two methods the leader half needs of its MLS client. */
+/** What the leader half needs of its MLS client. */
 export interface LeaderMls {
   sendMessage(
     groupId: string,
@@ -279,6 +279,8 @@ export interface LeaderMls {
     context: Uint8Array,
     keyLen: number
   ): Promise<Uint8Array>;
+  /** Resolves once a leaf refresh of `groupId` running here has settled; never rejects. */
+  leafRefreshSettled(groupId: string): Promise<void>;
 }
 
 /** A failure of the leader's run, as the answer that carries it. */
@@ -343,10 +345,16 @@ export function delegatedSendExecutors(
       }
     },
     // Reached only through the delegation's own gates: this leader serves (a live session, this
-    // account, a state it loaded as leader). That IS the answer. The call's epoch is held by the
-    // asker's own lock, which every leaf refresh reads in the browser's lock table
-    // (`callHoldLockHeld`) - here, and in whichever document leads after a handover.
-    'call-preflight': async () => 'ready',
+    // account, a state it loaded as leader). That IS the answer - once a refresh of the group
+    // already running here has settled. The call's epoch is held by the asker's own lock, taken
+    // before it asked, which every leaf refresh reads in the browser's lock table (`callHoldLockHeld`,
+    // at its decision and again under the MLS lock) - here, and in whichever document leads after a
+    // handover. A refresh decided BEFORE the lock existed may still commit: `ready` waits for it, so
+    // the keys this call exports next are read at the epoch it leaves.
+    'call-preflight': async ({ groupId }) => {
+      await (await mls()).leafRefreshSettled(groupId);
+      return 'ready';
+    },
   };
 }
 

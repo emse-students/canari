@@ -835,12 +835,15 @@ describe('a peer-to-peer call, client side', () => {
       let answer!: () => void;
       tabRole.preflightGate = new Promise((r) => (answer = r));
       vi.mocked(fakeMls.exportSecret).mockClear();
+      order.length = 0;
 
       const accepted = service.acceptCall('group-1', 'room-1');
       await settle();
       expect(tabRole.preflightAsked).toBe(1);
-      // No key is read before the leader has answered - and so before the hold is in place.
+      // No key is read before the leader has answered - and so before the hold is in place - and
+      // no step that could announce the answer has started.
       expect(fakeMls.exportSecret).not.toHaveBeenCalled();
+      expect(order).toEqual([]);
 
       answer();
       await settle();
@@ -856,7 +859,7 @@ describe('a peer-to-peer call, client side', () => {
       expect(tabRole.holdReleased).toBe(1);
     });
 
-    it('a follower answering a call its leader cannot carry reads no key and ends the call, said', async () => {
+    it('a follower answering a call its leader cannot carry reads no key, announces nothing and leaves it ringing, said', async () => {
       const service = new CallService(fakeMls);
       await ringingCallee(service);
       tabRole.refuses = true;
@@ -865,12 +868,17 @@ describe('a peer-to-peer call, client side', () => {
       vi.mocked(fakeMls.exportSecret).mockClear();
       const { showToast } = await import('$lib/stores/toast.svelte');
       vi.mocked(showToast).mockClear();
+      order.length = 0;
 
       await service.acceptCall('group-1', 'room-1');
 
       expect(fakeMls.exportSecret).not.toHaveBeenCalled();
+      // Sixth review of #3326: refused BEFORE this device answered anything - no room token, no
+      // "answered" notice to the other devices, no end of the server's ring, no hangup: the call
+      // still rings, for the main tab (or another device) to answer.
+      expect(order).toEqual([]);
       expect(showToast).toHaveBeenCalledWith(m.call_no_leader_tab(), 'warning');
-      expect(get(service.callState)).not.toBe('incall');
+      expect(get(service.callState)).toBe('incoming');
       expect(tabRole.holdReleased).toBe(0);
     });
   });

@@ -1310,6 +1310,31 @@ export class CallService {
         appendLog(refusedCallReport(callId, currentEngine()));
         throw new CallE2eUnsupportedError();
       }
+      // FROM A FOLLOWER TAB, THE LEADER SAYS YES FIRST, as for `startCall`, while the call still
+      // rings: the keys are its export, so its epoch is held before they are read - or a refresh
+      // there between the two ends' exports keys them from different epochs - and a leader that
+      // cannot carry the call refuses it before this device answers anything. Nothing is announced,
+      // ended or hung up: the ring goes on, here and on every other device.
+      if (refusesCommitsHere()) {
+        let releaseHold: (() => void) | null;
+        try {
+          releaseHold = await this.timedStep('leader-hold', () =>
+            this.holdTheLeadersEpoch(groupId, 'acceptCall')
+          );
+        } catch (e) {
+          showToast(describeCallFailure(e), 'warning');
+          return;
+        }
+        if (seq !== this.callSetupSeq || get(this.callState) !== 'incoming') {
+          // Answered by another tap, or ended, while the leader answered.
+          appendLog(
+            '[Call] acceptCall: the call moved on during the leader preflight - hold released'
+          );
+          releaseHold?.();
+          return;
+        }
+        this.releaseLeaderLeafRefreshHold = releaseHold;
+      }
       this.callState.set('incall');
       this.markAnswered('this device answered');
       // FOUR STEPS SIDE BY SIDE, joined before the room: none needs another's result. Serial, they
@@ -1332,21 +1357,7 @@ export class CallService {
         token,
         this.timedStep('ice-servers', () => this.fetchIceServers(groupId, callId)),
         this.timedStep('media', () => this.setupMedia(useVideo, seq)),
-        // From a follower tab, the keys are the LEADER's export: its epoch is held before it is
-        // read, as on the caller's side, or a refresh there between the two ends' exports keys them
-        // from different epochs.
-        this.timedStep('keys', async () => {
-          const releaseHold = await this.holdTheLeadersEpoch(groupId, 'acceptCall');
-          if (releaseHold) {
-            if (!this.setupLive(seq)) {
-              // Ended while the leader answered: `syncLeafRefreshHold` already ran for it.
-              releaseHold();
-              this.assertSetupLive(seq, 'after the leader preflight');
-            }
-            this.releaseLeaderLeafRefreshHold = releaseHold;
-          }
-          await this.setupEncryption(groupId, callId, 'callee', seq);
-        }),
+        this.timedStep('keys', () => this.setupEncryption(groupId, callId, 'callee', seq)),
       ]);
       this.assertSetupLive(seq, 'after the parallel setup');
       this.adoptIceServers(ice);

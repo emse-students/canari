@@ -71,7 +71,9 @@ import {
 import { sealedFrameEpoch } from '$lib/mls-client/sealedFrameEpoch';
 import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import {
+  browserLockTable,
   callHoldLockHeld,
+  LeafRefreshHeldError,
   noteOwnLeafRefreshed,
   refreshLeafIfDue,
 } from '$lib/mls-client/leafRefresh';
@@ -8496,8 +8498,27 @@ export abstract class BaseMlsService implements IMlsService {
     const assertOnBranch = await this.assertOnPublishedBranch(groupId, 'leaf refresh');
     await this.runCommitTransaction(groupId, async (intent) => {
       await assertOnBranch();
+      // THE CALL HOLDS ARE READ AGAIN HERE, UNDER THE MLS LOCK: the decision read them before the
+      // base fetch, and a follower's call may have taken its hold since - its keys exported at this
+      // epoch would then meet a commit moving the group past it.
+      if (await this.callHeldByAnotherTab(groupId)) throw new LeafRefreshHeldError(groupId);
       return this.stageSelfUpdate(groupId, intent);
     });
+  }
+
+  /** Whether a follower tab's call holds `groupId` now, read from the browser's lock table. */
+  private callHeldByAnotherTab(groupId: string): Promise<boolean> {
+    return callHoldLockHeld(groupId, browserLockTable());
+  }
+
+  /**
+   * Resolves once the leaf refresh of `groupId` running in this tab, if any, has settled - asked by
+   * a follower's call preflight (`tabSendDelegation.ts`), whose hold was taken BEFORE it asked: a
+   * refresh decided before the hold may still commit, and the call's keys must not be exported until
+   * it has. A refresh decided after it reads the hold and does not commit. Never rejects.
+   */
+  async leafRefreshSettled(groupId: string): Promise<void> {
+    await this.leafRefreshInFlight.get(groupId);
   }
 
   /**
@@ -8579,11 +8600,7 @@ export abstract class BaseMlsService implements IMlsService {
         isInEpochGap,
         isGroupActive: (g) => this.isGroupActive(g),
         getEpoch: (g) => this.getEpoch(g),
-        heldByAnotherTabsCall: (g) =>
-          callHoldLockHeld(
-            g,
-            typeof navigator !== 'undefined' && navigator.locks ? navigator.locks : null
-          ),
+        heldByAnotherTabsCall: (g) => this.callHeldByAnotherTab(g),
         ownLeafMintedAt: (g) => this.ownLeafMintedAt(g),
         ownLeafKey: (g) => this.ownLeafKey(g),
         refreshOwnLeaf: (g) => this.refreshOwnLeaf(g),

@@ -3278,12 +3278,19 @@ promoted in place whose reload is owed.
   it is the key a call placed from the leader tab would have: the callee derives at its own current
   epoch, exactly as for any call - the guarantee is the leader's, not a stronger one. **The epoch is
   held where commits are made**: before its preflight - placing a call (`startCall`) or answering one
-  (`acceptCall`, before its `keys` step) - the follower takes a Web Lock
-  `canari.call-leaf-hold.<groupId>.<uuid>` (`callHoldLockName`) and keeps it for the call's life. Every
-  leaf refresh reads the browser's lock table (`callHoldLockHeld`, `LockManager.query`) and skips a
-  group a lock names, so the hold binds WHICHEVER tab leads - the one asked, or one elected after a
-  handover - with nothing copied into any leader's memory. It ends with the lock: the hang-up
-  (`syncLeafRefreshHold`), or the browser when the follower dies. A hold in the follower's own document
+  (`acceptCall`, while it still rings, before anything is announced; a refusal leaves it ringing) -
+  the follower takes a Web Lock `canari.call-leaf-hold.<groupId>.<uuid>` (`callHoldLockName`) and
+  keeps it for the call's life. Every leaf refresh reads the browser's lock table (`callHoldLockHeld`,
+  `LockManager.query`) at its decision AND again under the MLS lock right before staging
+  (`LeafRefreshHeldError`), and skips a group a lock names, so the hold binds WHICHEVER tab leads -
+  the one asked, or one elected after a handover - with nothing copied into any leader's memory. A
+  refresh decided before the lock existed may still be on its way to its commit: the leader's
+  `ready` waits for it (`leafRefreshSettled`), so the keys exported next are read at the epoch it
+  leaves; any refresh decided after the lock reads it. It ends with the lock: the hang-up
+  (`syncLeafRefreshHold`), or the browser when the follower dies. **Without Web Locks nothing is
+  held, by construction** - no follower can carry a call there (`not-delegable`). A table that
+  exists and cannot be read (`CallHoldUnreadableError`) makes no commit: one WARN naming
+  `LockManager.query`, the attempt recorded for that epoch, asked again when the epoch moves. A hold in the follower's own document
   held nothing (the leader's refresh between its export and the other end's keyed them from two
   epochs), and a hold in the asked leader's memory died with that leader (fifth review of #3326).
   Incoming calls ring in the leader tab only: a follower opens no socket and decrypts nothing, so an

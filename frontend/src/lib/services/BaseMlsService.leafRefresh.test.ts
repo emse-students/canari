@@ -10,7 +10,13 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
 
 import { BaseMlsService } from './BaseMlsService';
 import { DELIVERY, addressedKeyMaterial, type FrameDelivery } from '$lib/mls-client/frameDelivery';
-import { readLeafRefreshLedger } from '$lib/mls-client/leafRefresh';
+import {
+  LEAF_REFRESH_INTERVAL_MS,
+  LeafRefreshHeldError,
+  callHoldLockName,
+  noteLeafObserved,
+  readLeafRefreshLedger,
+} from '$lib/mls-client/leafRefresh';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
@@ -154,6 +160,10 @@ describe('the commits no person asks for - staged only on the branch the server 
         .groupInfoChannel,
       freshEpoch: vi.fn().mockResolvedValue(5),
       ownContextMatchesBase: vi.fn().mockResolvedValue(opts.matches ?? true),
+      // The real read: no follower tab holds a call here.
+      callHeldByAnotherTab: (
+        BaseMlsService.prototype as unknown as { callHeldByAnotherTab: unknown }
+      ).callHeldByAnotherTab,
       runCommitTransaction: run,
       stageSelfUpdate: vi.fn().mockResolvedValue(stagedCommit),
       stageRemoveMembersByDevice: vi.fn().mockResolvedValue(stagedCommit),
@@ -241,6 +251,92 @@ describe('the commits no person asks for - staged only on the branch the server 
       expect(error).toHaveBeenCalledTimes(reason === 'diverged' ? 1 : 0);
       error.mockRestore();
     });
+  });
+});
+
+/**
+ * A FOLLOWER TAB'S CALL HOLD, READ THROUGH THE REAL WIRING (sixth review of #3326). The browser's
+ * lock table is stubbed on `navigator.locks`; everything between it and the decision is the
+ * service's own.
+ */
+describe("a follower tab's call holds the refresh, through the service's own reads", () => {
+  const G = 'g-held';
+  const held: Array<{ name: string }> = [];
+  beforeEach(() => {
+    held.length = 0;
+    Object.defineProperty(navigator, 'locks', {
+      value: { query: async () => ({ held: [...held] }) },
+      configurable: true,
+    });
+  });
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'locks');
+    vi.restoreAllMocks();
+  });
+
+  const proto = BaseMlsService.prototype as unknown as Record<string, unknown>;
+
+  it('a hold taken AFTER the decision is met under the MLS lock, before anything is staged', async () => {
+    const stageSelfUpdate = vi.fn().mockResolvedValue({});
+    const ctx = {
+      delivery: {
+        // The base is fetched between the decision and the lock: the follower takes its hold then.
+        fetchGroupInfo: vi.fn(async () => {
+          held.push({ name: callHoldLockName(G) });
+          return { groupInfo: 'Zm9v', baseEpoch: 5, activeEpoch: 5 };
+        }),
+      },
+      distributionScopeByGroup: new Map(),
+      knownDistributionGroups: new Set(),
+      groupInfoChannel: proto.groupInfoChannel,
+      assertOnPublishedBranch: proto.assertOnPublishedBranch,
+      callHeldByAnotherTab: proto.callHeldByAnotherTab,
+      freshEpoch: vi.fn().mockResolvedValue(5),
+      ownContextMatchesBase: vi.fn().mockResolvedValue(true),
+      runCommitTransaction: vi.fn(async (_g: string, stage: (i: Uint8Array) => Promise<unknown>) =>
+        stage(INTENT)
+      ),
+      stageSelfUpdate,
+    };
+    const refresh = proto.refreshOwnLeaf as (this: object, g: string) => Promise<void>;
+    await expect(refresh.call(ctx, G)).rejects.toBeInstanceOf(LeafRefreshHeldError);
+    expect(stageSelfUpdate).not.toHaveBeenCalled();
+  });
+
+  it('the decision reads the lock table through the service: a held group is never handed to the commit', async () => {
+    const now = Date.now();
+    noteLeafObserved(U, D, G, 5, 'k-leaf', now - LEAF_REFRESH_INTERVAL_MS);
+    const refreshOwnLeaf = vi.fn(async () => {});
+    const ctx = {
+      userId: U,
+      deviceId: D,
+      isDistributionGroup: () => false,
+      isGroupActive: async () => true,
+      getEpoch: () => 5,
+      ownLeafMintedAt: async () => Math.floor((now - 8 * 24 * 60 * 60 * 1000) / 1000),
+      ownLeafKey: async () => 'k-leaf',
+      refreshOwnLeaf,
+      callHeldByAnotherTab: proto.callHeldByAnotherTab,
+      leafRefreshAttempts: new Map(),
+      leafRefreshNoOwnLeafReports: new Map(),
+      leafRefreshInFlight: new Map<string, Promise<unknown>>(),
+      leafRefreshSettled: proto.leafRefreshSettled,
+    };
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const schedule = proto.scheduleLeafRefresh as (this: object, g: string) => void;
+    const settled = proto.leafRefreshSettled as (this: object, g: string) => Promise<void>;
+
+    held.push({ name: callHoldLockName(G) });
+    schedule.call(ctx, G);
+    await settled.call(ctx, G);
+    expect(refreshOwnLeaf).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join(' | ')).toContain('a call in another tab');
+
+    // Control: the hang-up drops the lock, and the same decision commits.
+    held.length = 0;
+    schedule.call(ctx, G);
+    await settled.call(ctx, G);
+    expect(refreshOwnLeaf).toHaveBeenCalledExactlyOnceWith(G);
   });
 });
 

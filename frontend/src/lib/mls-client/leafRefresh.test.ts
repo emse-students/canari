@@ -3,6 +3,8 @@ import type { Mock } from 'vitest';
 import {
   LEAF_REFRESH_INTERVAL_MS,
   LEAF_REFRESH_LEDGER_MAX_GROUPS,
+  CallHoldUnreadableError,
+  LeafRefreshHeldError,
   callHoldLockHeld,
   callHoldLockName,
   decideLeafRefresh,
@@ -526,6 +528,47 @@ describe('refreshLeafIfDue', () => {
     held.pop();
     expect(await refreshLeafIfDue(d, G)).toBe('refreshed');
     expect(await callHoldLockHeld(G, null)).toBe(false);
+  });
+
+  it('a lock table that cannot be read refreshes nothing, says so naming the query, once per epoch', async () => {
+    // Sixth review of #3326: the throw reached the generic "decision failed", unbounded per send.
+    let reads = 0;
+    const table = {
+      query: async (): Promise<{ held: Array<{ name: string }> }> => {
+        reads += 1;
+        throw new Error('SecurityError');
+      },
+    };
+    const d = dueAdmitted({ heldByAnotherTabsCall: (g) => callHoldLockHeld(g, table) });
+    expect(await refreshLeafIfDue(d, G)).toBe('hold-unreadable');
+    expect(refreshOwnLeaf).not.toHaveBeenCalled();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('LockManager.query');
+    // The next send at the same epoch neither reads the table again nor says it again.
+    expect(await refreshLeafIfDue(d, G)).toBe('already-tried');
+    expect(reads).toBe(1);
+    expect(warnings).toHaveLength(1);
+    // The epoch moved: asked again.
+    epoch += 1;
+    expect(await refreshLeafIfDue(d, G)).toBe('hold-unreadable');
+    expect(reads).toBe(2);
+  });
+
+  it('a hold met by the check inside the MLS lock is "held", and asked again at the same epoch', async () => {
+    refreshOwnLeaf.mockRejectedValueOnce(new LeafRefreshHeldError(G));
+    const d = dueAdmitted();
+    expect(await refreshLeafIfDue(d, G)).toBe('held');
+    expect(lines.join(' | ')).toContain('a call in another tab');
+    // Not a failure: no attempt is recorded, so the next send after the hang-up refreshes.
+    expect(await refreshLeafIfDue(d, G)).toBe('refreshed');
+  });
+
+  it('the in-lock check that cannot read the table is the same bounded answer', async () => {
+    refreshOwnLeaf.mockRejectedValueOnce(new CallHoldUnreadableError(G, 'SecurityError'));
+    const d = dueAdmitted();
+    expect(await refreshLeafIfDue(d, G)).toBe('hold-unreadable');
+    expect(await refreshLeafIfDue(d, G)).toBe('already-tried');
+    expect(warnings).toHaveLength(1);
   });
 
   it('a release is idempotent and lifts only its own hold', () => {

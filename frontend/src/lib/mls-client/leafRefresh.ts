@@ -359,8 +359,41 @@ export interface HeldLocksQuery {
 }
 
 /**
- * Whether a document of this origin holds a call hold on `groupId` right now. `null` locks (an engine
- * without Web Locks) hold nothing: no follower there can take one, since it delegates nothing.
+ * The lock table could not be read (`LockManager.query` threw): whether a call in another tab holds
+ * the group is UNKNOWN, so the refresh is not made - classified here, where it is thrown.
+ */
+export class CallHoldUnreadableError extends Error {
+  constructor(
+    readonly groupId: string,
+    cause: unknown
+  ) {
+    super(
+      `the Web Locks table could not be read (LockManager.query): ${String(cause).slice(0, 120)}`
+    );
+    this.name = 'CallHoldUnreadableError';
+  }
+}
+
+/**
+ * A call in another tab took its hold on `groupId` after the refresh was decided: found by the check
+ * INSIDE the MLS lock, before anything is staged. Not a failure - the refresh is asked again later.
+ */
+export class LeafRefreshHeldError extends Error {
+  constructor(readonly groupId: string) {
+    super(`the leaf refresh of ${groupId.slice(0, 8)}... met a call hold taken after its decision`);
+    this.name = 'LeafRefreshHeldError';
+  }
+}
+
+/**
+ * Whether a document of this origin holds a call hold on `groupId` right now.
+ *
+ * **WITHOUT WEB LOCKS (`null`), NOTHING IS HELD - A FACT, NOT A FALLBACK.** A hold exists only for a
+ * call carried from a follower tab, and an engine without Web Locks carries none: the follower half
+ * refuses every call there (`leaderTabCarriesSends`, `callPreflightThroughLeaderTab`: `not-delegable`)
+ * because nothing could prove its leader dead. So the refresh is free exactly as in a single tab.
+ * A table that EXISTS and cannot be read is the opposite case: a call may hold the group, and
+ * {@link CallHoldUnreadableError} says so.
  */
 export async function callHoldLockHeld(
   groupId: string,
@@ -368,8 +401,18 @@ export async function callHoldLockHeld(
 ): Promise<boolean> {
   if (!locks) return false;
   const prefix = `${CALL_HOLD_LOCK_PREFIX}${groupId}.`;
-  const { held = [] } = await locks.query();
+  let held: Array<{ name?: string }>;
+  try {
+    held = (await locks.query()).held ?? [];
+  } catch (e) {
+    throw new CallHoldUnreadableError(groupId, e);
+  }
   return held.some((lock) => lock.name?.startsWith(prefix) === true);
+}
+
+/** The browser's lock table, or `null` in an engine without Web Locks. */
+export function browserLockTable(): HeldLocksQuery | null {
+  return typeof navigator !== 'undefined' && navigator.locks ? navigator.locks : null;
 }
 
 /** What one {@link refreshLeafIfDue} call did. */
@@ -382,6 +425,7 @@ export type LeafRefreshOutcome =
   | 'not-due'
   | 'epoch-gap'
   | 'held'
+  | 'hold-unreadable'
   | 'already-tried'
   | 'unverified'
   | 'unresolved'
@@ -397,13 +441,21 @@ export interface LeafRefreshDeps {
   isInEpochGap(groupId: string): boolean;
   isGroupActive(groupId: string): Promise<boolean>;
   getEpoch(groupId: string): number;
-  /** Whether another tab holds a call on `groupId` whose keys this one exports ({@link callHoldLockHeld}). */
+  /**
+   * Whether another tab holds a call on `groupId` whose keys this one exports ({@link callHoldLockHeld}).
+   * Read here, at the decision, and AGAIN by {@link refreshOwnLeaf} inside the MLS lock.
+   * @throws {CallHoldUnreadableError}
+   */
   heldByAnotherTabsCall(groupId: string): Promise<boolean>;
   /** `own_leaf_minted_at`: Unix seconds for a KeyPackage-dated leaf, `null` for a refreshed one. */
   ownLeafMintedAt(groupId: string): Promise<number | null>;
   /** `own_leaf_encryption_key` as hex - what names the current leaf - or `null` with no own leaf. */
   ownLeafKey(groupId: string): Promise<string | null>;
-  /** Stages, submits and merges the refresh; throws on a refusal (the ledger is written inside). */
+  /**
+   * Stages, submits and merges the refresh; throws on a refusal (the ledger is written inside), and
+   * {@link LeafRefreshHeldError} / {@link CallHoldUnreadableError} from its check of the call holds
+   * INSIDE the MLS lock, before staging.
+   */
   refreshOwnLeaf(groupId: string): Promise<void>;
   /** The structural checkpoint, awaited. */
   checkpoint(): Promise<boolean>;
@@ -512,14 +564,29 @@ export async function refreshLeafIfDue(
     );
     return 'held';
   }
-  if (await deps.heldByAnotherTabsCall(groupId)) {
-    deps.log(
-      `[LEAF_REFRESH] ${short}... due (${ageDays} d, ${decision.basis}) but held (a call in another tab) - ` +
-        'asked again at the next send after that tab hangs up'
-    );
-    return 'held';
-  }
+  // BEFORE the lock table is read: a table that could not be read at this epoch is not asked again
+  // (nor said again) by every send until the epoch moves.
   if (deps.attemptedAtEpoch.get(groupId) === epoch) return 'already-tried';
+  const heldInAnotherTab = (): string =>
+    `[LEAF_REFRESH] ${short}... due (${ageDays} d, ${decision.basis}) but held (a call in another tab) - ` +
+    'asked again at the next send after that tab hangs up';
+  const unreadable = (e: CallHoldUnreadableError): 'hold-unreadable' => {
+    deps.attemptedAtEpoch.set(groupId, epoch);
+    deps.warn(
+      `[LEAF_REFRESH] ${short}... NOT refreshed at epoch ${epoch}: ${e.message} - a call in another ` +
+        'tab cannot be ruled out, so no commit; not asked again before the epoch moves'
+    );
+    return 'hold-unreadable';
+  };
+  try {
+    if (await deps.heldByAnotherTabsCall(groupId)) {
+      deps.log(heldInAnotherTab());
+      return 'held';
+    }
+  } catch (e) {
+    if (e instanceof CallHoldUnreadableError) return unreadable(e);
+    throw e;
+  }
 
   deps.log(
     `[LEAF_REFRESH] ${short}... leaf is ${ageDays} d old (${decision.basis}) at epoch ${epoch} - refreshing`
@@ -527,6 +594,13 @@ export async function refreshLeafIfDue(
   try {
     await deps.refreshOwnLeaf(groupId);
   } catch (e) {
+    // The same two answers as the decision's, from the check inside the MLS lock: a hold taken
+    // between the two reads stops the commit before anything is staged.
+    if (e instanceof LeafRefreshHeldError) {
+      deps.log(heldInAnotherTab());
+      return 'held';
+    }
+    if (e instanceof CallHoldUnreadableError) return unreadable(e);
     deps.attemptedAtEpoch.set(groupId, epoch);
     if (e instanceof UnpublishedBranchError) {
       // Nothing was staged. `diverged` is the one that accuses, and it was handed to the recovery

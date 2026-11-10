@@ -484,6 +484,7 @@ describe('a follower tab hands its sends to the leader tab', () => {
         async () => ({
           sendMessage: mls.sendMessage ?? vi.fn(),
           exportSecret: mls.exportSecret ?? noExport,
+          leafRefreshSettled: mls.leafRefreshSettled ?? (async () => {}),
         }),
         () => key
       )
@@ -760,6 +761,42 @@ describe('a follower tab hands its sends to the leader tab', () => {
     preflight.releaseHold();
     await settle();
     expect(await callHoldLockHeld('g-handover', w.locks)).toBe(false);
+  });
+
+  /**
+   * Sixth review of #3326: a refresh DECIDED before the follower took its hold read no hold, and was
+   * still on its way to its commit when the preflight answered - the keys exported next were read at
+   * the epoch that commit then left. `ready` waits for that refresh to settle.
+   */
+  it('a preflight is not answered while a refresh decided before the hold is still running', async () => {
+    const w = makeWorld();
+    let refreshDone!: () => void;
+    const running = new Promise<void>((r) => (refreshDone = r));
+    const asked: string[] = [];
+    sendingLeader('L', w, {
+      leafRefreshSettled: async (groupId) => {
+        asked.push(groupId);
+        await running;
+      },
+    });
+    const follower = tab('F', w, { leader: false });
+
+    let answered = false;
+    const preflight = callPreflightThroughLeaderTab('g-racing', fromFollower(follower)).then(
+      (p) => {
+        answered = true;
+        return p;
+      }
+    );
+    await settle();
+    expect(asked).toEqual(['g-racing']);
+    // The hold is already in the table - any refresh decided from here on reads it - and the answer waits.
+    expect(await callHoldLockHeld('g-racing', w.locks)).toBe(true);
+    expect(answered).toBe(false);
+
+    refreshDone();
+    expect((await preflight).answer).toBe('ready');
+    (await preflight).releaseHold();
   });
 });
 

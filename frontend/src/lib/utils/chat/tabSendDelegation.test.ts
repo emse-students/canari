@@ -161,6 +161,7 @@ describe('a send handed to the leader tab, at rest', () => {
             return { sealed: new Uint8Array([1]), authorProof: new Uint8Array([2]), receivedAt: 9 };
           },
           exportSecret: async () => new Uint8Array(),
+          leafRefreshSettled: async () => {},
         }),
         () => deviceKey
       )

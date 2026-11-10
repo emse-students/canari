@@ -1147,6 +1147,11 @@ export interface IMlsService {
     context: Uint8Array,
     keyLen: number
   ): Promise<Uint8Array>;
+  /**
+   * Resolves once the leaf refresh of `groupId` running in this tab, if any, has settled - so a
+   * follower's call preflight answers only after a refresh decided before its hold. Never rejects.
+   */
+  leafRefreshSettled(groupId: string): Promise<void>;
 
   // Networking
   /**
