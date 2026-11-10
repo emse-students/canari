@@ -91,6 +91,11 @@ try {
     'wait'
   );
   eq(
+    'a preview video still PROCESSING holds the set',
+    classifyAssetStates([asset('PROCESSING')]).action,
+    'wait'
+  );
+  eq(
     'FAILED is refused',
     classifyAssetStates([asset('UPLOAD_COMPLETE'), asset('FAILED')]).action,
     'fail'

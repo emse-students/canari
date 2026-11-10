@@ -125,9 +125,11 @@ const BUILD_TERMINAL_BAD = new Set(['INVALID', 'FAILED']);
  * with `409 ... Asset Library validation error: Asset is being processed` (`v1.6.9`, 2026-11-10:
  * the store screenshots were replaced an hour before the stable). `AWAITING_UPLOAD` is a reserved
  * slot nobody filled and `FAILED` a rejected file - neither ever completes, so neither is waited on.
+ * A preview is read by its `videoDeliveryState` (which adds `PROCESSING` while the video transcodes)
+ * because its `assetDeliveryState` can say `COMPLETE` while the video is not.
  */
 const ASSET_READY = 'COMPLETE';
-const ASSET_PROCESSING = 'UPLOAD_COMPLETE';
+const ASSET_PROCESSING = new Set(['UPLOAD_COMPLETE', 'PROCESSING']);
 const ASSET_TERMINAL_BAD = new Set(['FAILED', 'AWAITING_UPLOAD']);
 
 /**
@@ -312,7 +314,7 @@ export function classifyAssetStates(assets) {
   let pending = 0;
   for (const { name, state } of assets) {
     if (state === ASSET_READY) continue;
-    if (state === ASSET_PROCESSING) {
+    if (ASSET_PROCESSING.has(state)) {
       pending++;
       continue;
     }
@@ -632,11 +634,15 @@ export class ApiError extends Error {
 }
 
 /**
- * @type {(token: string) => (method: string, path: string, body?: unknown,
+ * A TOKEN IS MINTED PER REQUEST, not once per run: Apple caps one at 20 minutes and the build and
+ * store-media waits poll for longer, so a token minted at the start would turn their last polls
+ * into flat 401s. Signing is microseconds; the run's length is then bounded by its waits alone.
+ *
+ * @type {(mint: () => string) => (method: string, path: string, body?: unknown,
  *   opts?: {appleRefusesDuplicate?: boolean}) => Promise<any>}
  */
 const client =
-  (token) =>
+  (mint) =>
   async (method, path, body, opts = {}) => {
     const { appleRefusesDuplicate = false } = opts;
     for (let attempt = 1; ; attempt++) {
@@ -646,7 +652,7 @@ const client =
         res = await fetch(`${API}${path}`, {
           method,
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${mint()}`,
             ...(body ? { 'Content-Type': 'application/json' } : {}),
           },
           ...(body ? { body: JSON.stringify(body) } : {}),
@@ -803,7 +809,7 @@ async function main() {
   const dryRun = process.env.DRY_RUN === '1';
 
   const privateKey = Buffer.from(need('ASC_API_KEY_P8'), 'base64').toString('utf8');
-  const api = client(mintToken({ keyId, issuerId, privateKey }));
+  const api = client(() => mintToken({ keyId, issuerId, privateKey }));
 
   log(
     `App Store submission - ${bundleId} ${versionString} (build ${buildNumber})${dryRun ? ' [DRY RUN]' : ''}`
@@ -969,16 +975,21 @@ async function main() {
           ['appScreenshotSets', 'appScreenshots'],
           ['appPreviewSets', 'appPreviews'],
         ]) {
-          const res = await api(
+          // The set, then its members, each through its own documented relationship - no
+          // `include` whose per-relationship limit would silently truncate a full set.
+          const setList = await api(
             'GET',
-            `/v1/appStoreVersionLocalizations/${loc.id}/${sets}?include=${kind}&limit=50&limit[${kind}]=50`
+            `/v1/appStoreVersionLocalizations/${loc.id}/${sets}?limit=50`
           );
-          for (const a of res?.included ?? []) {
-            if (a?.type !== kind) continue;
-            assets.push({
-              name: `${loc.attributes?.locale}/${a.attributes?.fileName ?? a.id}`,
-              state: a.attributes?.assetDeliveryState?.state,
-            });
+          for (const set of setList?.data ?? []) {
+            const members = await api('GET', `/v1/${sets}/${set.id}/${kind}?limit=50`);
+            for (const a of members?.data ?? []) {
+              assets.push({
+                name: `${loc.attributes?.locale}/${a.attributes?.fileName ?? a.id}`,
+                state: (a.attributes?.videoDeliveryState ?? a.attributes?.assetDeliveryState)
+                  ?.state,
+              });
+            }
           }
         }
       }
