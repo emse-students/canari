@@ -657,7 +657,7 @@
   {#if dropActive}
     <div
       transition:fade={{ duration: 150 }}
-      class="border-cn-accent bg-cn-surface/80 pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-lg border-2 border-dashed"
+      class="border-accent-icon bg-cn-surface/80 pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-lg border-2 border-dashed"
     >
       <span class="text-cn-ink flex items-center gap-2 text-sm font-bold">
         <CloudUpload size={18} strokeWidth={2.5} />
@@ -679,7 +679,7 @@
           for="post-linked-calendar-event"
           class="text-text-muted text-2xs mb-1 flex items-center gap-1.5 font-semibold"
         >
-          <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
+          <CalendarCheck size={14} strokeWidth={2.5} class="text-accent-text" />
           {m.post_create_link_event_label()}
         </label>
         <Picker
@@ -705,10 +705,10 @@
 
     {#if draftRestored}
       <div
-        class="mt-3 flex items-center justify-between gap-3 rounded-lg bg-amber-500/10 px-3 py-2"
+        class="bg-accent/10 mt-3 flex items-center justify-between gap-3 rounded-lg px-3 py-2"
         transition:slide={{ duration: 200 }}
       >
-        <span class="text-2xs font-semibold text-amber-700 dark:text-amber-400">
+        <span class="text-2xs text-accent-text font-semibold">
           {m.post_create_draft_restored_label()}
           <span class="font-medium opacity-70"
             >{draftRestoredMedia
@@ -730,7 +730,7 @@
             draftRestored = false;
             draftRestoredMedia = false;
           }}
-          class="text-2xs shrink-0 font-bold text-amber-700 outline-none hover:underline focus-visible:underline dark:text-amber-400"
+          class="text-2xs text-accent-text shrink-0 font-bold outline-none hover:underline focus-visible:underline"
         >
           {m.post_create_clear_draft_label()}
         </button>

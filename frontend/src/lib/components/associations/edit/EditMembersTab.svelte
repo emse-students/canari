@@ -253,7 +253,7 @@
         ondragend={onDragEnd}
         class="flex items-start gap-2 rounded-2xl transition-opacity {draggedIdx === idx
           ? 'opacity-40'
-          : ''} {dragOverIdx === idx && draggedIdx !== idx ? 'ring-cn-yellow/60 ring-2' : ''}"
+          : ''} {dragOverIdx === idx && draggedIdx !== idx ? 'ring-accent/60 ring-2' : ''}"
       >
         <button
           type="button"
@@ -318,7 +318,7 @@
       <button
         type="submit"
         disabled={addingMember || !newMemberUserId.trim()}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
+        class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
       >
         {addingMember ? '…' : m.common_add_button()}
       </button>

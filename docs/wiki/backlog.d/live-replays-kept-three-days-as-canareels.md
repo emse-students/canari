@@ -1,4 +1,4 @@
-## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07, design not written)
+## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09, WP-R1 built)
 
 Asked by the owner on 2026-11-07, every question answered the same day:
 
@@ -25,6 +25,17 @@ the audience, report, staff and broadcaster deletion; a durable-state sweep at t
 privacy texts (CGU, privacy page, register C19 "supprimé peu après sa fin"); the work packages,
 each migration marked plain or held. A first design run was stopped at the pause of 2026-11-07
 before it wrote anything.
+
+**DESIGNED AND DECIDED 2026-11-09: [live-replays](../live-replays.md)** - the measured cost (0.9-1.4
+GB per hour of live), the mechanism (the live's own segments kept and served as a `kind = 'replay'`
+post, no new file written), the three days as `posts."expiresAt"`, the audience, the CanaReels audit.
+**The owner decided the eight questions on 2026-11-09** (the last 3 hours at most, never in backups,
+the time left shown, 30 s at least, a 20 GB total cap that evicts the oldest and signals admins, no
+repost, a moderation deletion without strike, no "Entre étudiants" for now): the table is
+[on the page](../live-replays.md#the-owners-decisions-of-2026-11-09). Two drafts were reconciled into it
+(#3234 kept, #3133 closed). WP-R1 built; WP-R2 (server) and WP-R3 (out of the backup) next; the client
+(WP-R4, WP-R5) and the texts (WP-R6) owed. The CanaReel retention question the owner raised on the way
+is [an open question](../open-questions.md#question---should-canareels-cover-every-short-or-vertical-video-and-for-how-long-owner-2026-11-09), not a decision.
 
 **Decided by the owner, 2026-11-09/10 (D1-D8):**
 

@@ -30,7 +30,7 @@ import { PostRepublication } from './entities/post-republication.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { invalidatePostListCache } from './post-list-cache';
 import { lockPostRow, REPUBLISHING_ASSOCIATION_TYPES } from './republication-sql';
-import { isExpiredReel, type PostKind } from './reel.constants';
+import { isExpiredPost, type PostKind } from './reel.constants';
 
 /** The columns of a post a republication decides on. */
 export interface PostRow {
@@ -51,7 +51,7 @@ export interface PostRow {
  */
 export function isWithheldPost(post: PostRow): boolean {
   const unpublished = !!post.scheduledAt && new Date(post.scheduledAt).getTime() > Date.now();
-  return post.hiddenByModeration || unpublished || isExpiredReel(post);
+  return post.hiddenByModeration || unpublished || isExpiredPost(post);
 }
 
 /** An association as a republication needs it. */

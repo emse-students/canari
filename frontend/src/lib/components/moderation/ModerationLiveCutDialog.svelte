@@ -99,9 +99,9 @@
         {#each reasons as option (option.value)}
           <button
             type="button"
-            class="border-cn-border text-text-main w-full rounded-xl border px-3 py-2.5 text-left text-sm transition-colors hover:border-amber-400 disabled:opacity-40 {reason ===
+            class="border-cn-border text-text-main hover:border-accent-icon w-full rounded-xl border px-3 py-2.5 text-left text-sm transition-colors disabled:opacity-40 {reason ===
             option.value
-              ? 'border-amber-400 bg-amber-400/10'
+              ? 'border-accent-icon bg-accent/10'
               : ''}"
             onclick={() => (reason = option.value)}
             aria-pressed={reason === option.value}
@@ -119,7 +119,7 @@
           bind:value={details}
           rows="3"
           maxlength={LIVE_CUT_DETAILS_MAX}
-          class="border-cn-border text-text-main focus:border-cn-yellow focus:ring-cn-yellow/20 bg-cn-surface w-full resize-y rounded-xl border px-3 py-2.5 text-sm outline-none focus:ring-2"
+          class="border-cn-border text-text-main focus:border-accent-icon focus:ring-accent/20 bg-cn-surface w-full resize-y rounded-xl border px-3 py-2.5 text-sm outline-none focus:ring-2"
           data-live-cut-details></textarea>
       </label>
     {:else}

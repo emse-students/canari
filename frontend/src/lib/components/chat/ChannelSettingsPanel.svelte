@@ -593,7 +593,7 @@
             <div class="flex gap-2">
               <input
                 id="channel-name"
-                class="bg-cn-surface w-full rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
+                class="bg-cn-surface focus:ring-accent/50 w-full rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:ring-2 dark:border-white/10"
                 bind:value={channelNameInput}
                 onkeydown={(e) => e.key === 'Enter' && handleRenameChannel()}
                 placeholder={m.chat_channel_name_placeholder()}
@@ -700,7 +700,7 @@
             <div class="flex items-center justify-between gap-4">
               <div class="flex items-center gap-3">
                 {#if accessIsPrivate}
-                  <div class="text-amber-warn rounded-xl bg-amber-500/10 p-2">
+                  <div class="text-amber-warn-text bg-amber-warn/10 rounded-xl p-2">
                     <Lock size={18} strokeWidth={2.5} />
                   </div>
                   <div>
@@ -731,7 +731,7 @@
                   onclick={() => void handleTogglePrivacy()}
                   disabled={privacySaving}
                   class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 {accessIsPrivate
-                    ? 'bg-amber-500'
+                    ? 'bg-accent'
                     : 'bg-black/10 dark:bg-white/20'}"
                   role="switch"
                   aria-checked={accessIsPrivate}
@@ -754,7 +754,7 @@
             <!-- ═══ Qui peut écrire ? ═══ -->
             <div class="space-y-2 border-t border-black/5 pt-4 dark:border-white/10">
               <div class="flex items-center gap-2">
-                <MessageSquareText size={16} class="text-amber-500" strokeWidth={2.5} />
+                <MessageSquareText size={16} class="text-accent-icon" strokeWidth={2.5} />
                 <p class="text-text-muted text-xs font-bold">
                   {m.chat_channel_who_can_write()}
                 </p>
@@ -766,7 +766,7 @@
                   options={writePolicyOptions}
                   disabled={writePolicySaving || !canManage}
                   onValueChange={(v) => void setWritePolicy(v as ChannelWritePolicy)}
-                  triggerClass="bg-cn-surface text-text-main flex w-full items-center justify-between gap-2 rounded-xl border border-black/10 px-4 py-3 text-left text-sm font-semibold transition-all outline-none focus:ring-2 focus:ring-amber-500/50 disabled:opacity-50 dark:border-white/10"
+                  triggerClass="bg-cn-surface text-text-main flex w-full items-center justify-between gap-2 rounded-xl border border-black/10 px-4 py-3 text-left text-sm font-semibold transition-all outline-none focus:ring-2 focus:ring-accent/50 disabled:opacity-50 dark:border-white/10"
                 />
                 {#if writePolicySaving}
                   <Loader size={16} class="text-text-muted animate-spin" />

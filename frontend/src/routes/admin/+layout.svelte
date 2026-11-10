@@ -78,7 +78,7 @@
 {#if !ready}
   <div class="flex justify-center py-24">
     <div
-      class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+      class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
     ></div>
   </div>
 {:else}
@@ -107,7 +107,7 @@
 
       <header class="flex items-start gap-3">
         <span
-          class="bg-cn-yellow/20 text-cn-dark flex h-11 w-11 items-center justify-center rounded-2xl"
+          class="bg-accent/20 text-cn-dark flex h-11 w-11 items-center justify-center rounded-2xl"
         >
           <Shield size={22} />
         </span>

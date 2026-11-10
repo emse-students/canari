@@ -56,7 +56,7 @@
   >
     <div class="flex gap-3">
       <span
-        class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+        class="bg-accent/15 text-cn-dark flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
       >
         <Megaphone size={20} />
       </span>

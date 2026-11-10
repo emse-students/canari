@@ -100,7 +100,7 @@
     disabled={busy !== null}
     aria-haspopup="menu"
     aria-expanded={open}
-    class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors disabled:opacity-50"
+    class="ui-icon-button border-cn-border text-text-main hover:border-accent/40 rounded-xl border-2 bg-(--cn-surface) transition-colors disabled:opacity-50"
     aria-label={m.form_list_export_button()}
     title={m.form_list_export_button()}
     data-testid="form-export-menu"

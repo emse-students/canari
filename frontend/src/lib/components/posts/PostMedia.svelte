@@ -637,7 +637,7 @@
       <button
         type="button"
         onclick={handleClick}
-        class="group/img block h-full w-full cursor-zoom-in outline-none focus-visible:z-10 focus-visible:ring-4 focus-visible:ring-amber-500/50"
+        class="group/img focus-visible:ring-accent/50 block h-full w-full cursor-zoom-in outline-none focus-visible:z-10 focus-visible:ring-4"
         aria-label={m.post_zoom_image_label()}
         data-double-tap-defers
       >
@@ -785,7 +785,7 @@
         {formatFileSize(media.size)}
       </p>
       {#if saveReady}
-        <p class="text-2xs font-semibold text-amber-700 dark:text-amber-400" data-save-ready-hint>
+        <p class="text-2xs text-accent-text font-semibold" data-save-ready-hint>
           {m.post_file_ready_to_save()}
         </p>
       {/if}
@@ -806,7 +806,7 @@
         <button
           type="button"
           onclick={openPdfViewer}
-          class="flex min-w-0 flex-1 cursor-pointer items-center gap-3.5 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+          class="focus-visible:ring-accent-icon flex min-w-0 flex-1 cursor-pointer items-center gap-3.5 rounded-xl outline-none focus-visible:ring-2"
           aria-label={m.pdf_open_document_label()}
         >
           {@render fileRowContent()}
@@ -820,7 +820,7 @@
           e.stopPropagation();
           activate('download');
         }}
-        class="ui-icon-button rounded-xl transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-white/10"
+        class="ui-icon-button focus-visible:ring-accent-icon rounded-xl transition-all outline-none hover:bg-black/10 focus-visible:ring-2 dark:hover:bg-white/10"
         aria-label={m.post_download_label()}
       >
         {#if busy}
@@ -835,7 +835,7 @@
             size={18}
             strokeWidth={2.5}
             class="{saveReady
-              ? 'text-amber-700 dark:text-amber-400'
+              ? 'text-accent-text'
               : 'opacity-70'} transition-opacity group-hover/file:opacity-100"
           />
         {/if}

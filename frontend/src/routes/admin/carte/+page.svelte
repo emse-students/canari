@@ -121,9 +121,7 @@
 {#if ready}
   <div class="space-y-8">
     <header class="flex items-start gap-3">
-      <span
-        class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl"
-      >
+      <span class="bg-accent/15 text-cn-dark flex h-10 w-10 items-center justify-center rounded-xl">
         <Map size={20} />
       </span>
       <div>
@@ -139,7 +137,7 @@
     {#if loading}
       <div class="flex justify-center py-16">
         <div
-          class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+          class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else}
