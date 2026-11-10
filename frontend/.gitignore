@@ -14,3 +14,6 @@ package-lock.json
 yarn.lock
 pnpm-lock.yaml
 /.paraglide-test
+
+# Paraglide/inlang plugin cache, rewritten by every compile.
+project.inlang/cache/

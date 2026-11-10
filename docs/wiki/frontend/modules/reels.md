@@ -1514,3 +1514,8 @@ captured is what is published"). The alternative - a fixed 9:16 column with the 
 as Instagram and Shorts do on desktop - is one change in `ReelSlide`'s `ratio` (clamp it to
 `REEL_FRAME_RATIO` on a wide stage); it is NOT taken here because a letterboxed clip would then be
 black inside a column rather than the blurred backdrop, and that is a design decision for the owner.
+
+## Decided by the owner, 2026-11-09/10
+
+Every vertical video of 90 s or less that is posted is a CanaReel, and a CanaReel lives 1 year.
+Live replays follow the same shape ([live replays](../../backlog.d/live-replays-kept-three-days-as-canareels.md)).
