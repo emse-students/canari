@@ -225,14 +225,16 @@
     >
       {index + 1}
     </span>
-    <span class="text-text-main text-base leading-snug font-bold">
+    <span class="text-text-main text-base leading-snug font-bold whitespace-pre-line">
       {item.label}
       {#if item.required}<span class="text-red-err ml-0.5" aria-hidden="true">*</span>{/if}
     </span>
   </label>
 
   {#if item.description}
-    <p class="text-text-muted mb-3 ml-6 text-xs leading-relaxed">{item.description}</p>
+    <p class="text-text-muted mb-3 ml-6 text-xs leading-relaxed whitespace-pre-line">
+      {item.description}
+    </p>
   {/if}
 
   {#if questionImageSrc}

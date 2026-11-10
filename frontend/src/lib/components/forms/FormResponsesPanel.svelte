@@ -349,7 +349,7 @@
         {@const closed = new Set(view.item.productGrid.closedCells ?? [])}
         <section class="border-cn-border rounded-2xl border p-4" data-testid="grid-totals">
           <header class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-            <h3 class="text-text-main font-bold">{view.item.label}</h3>
+            <h3 class="text-text-main font-bold whitespace-pre-line">{view.item.label}</h3>
             <span class="text-text-muted text-sm font-semibold">
               {units(view.totals.total.units)} · {formatAmount(view.totals.total.cents)}
             </span>
@@ -413,7 +413,7 @@
       {#each choices as result (result.item.id)}
         {@const max = Math.max(1, ...result.bars.map((bar) => bar.count))}
         <section class="border-cn-border rounded-2xl border p-4" data-testid="choice-result">
-          <h3 class="text-text-main font-bold">{result.item.label}</h3>
+          <h3 class="text-text-main font-bold whitespace-pre-line">{result.item.label}</h3>
           <p class="text-text-muted mb-3 text-xs">
             {m.form_responses_summary_answers({ count: result.answered })}
           </p>
