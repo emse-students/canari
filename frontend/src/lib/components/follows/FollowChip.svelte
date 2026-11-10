@@ -132,17 +132,17 @@
     <!-- The dot and the link are ONE unit, so they never split across a wrapped line. -->
     <span class="inline-flex shrink-0 items-center gap-1.5">
       {#if dotted}<span aria-hidden="true">&#183;</span>{/if}
-      <button
-        type="button"
+      <Button
+        variant="link"
         onclick={onTap}
         aria-label={label}
-        class="text-accent-text relative shrink-0 font-semibold before:absolute before:-inset-x-2 before:-inset-y-4 before:content-[''] hover:underline focus-visible:underline"
+        class="shrink-0"
         data-follow-chip={kind}
         data-follow-chip-state="ask"
         data-follow-chip-variant="link"
       >
         {followLabel(null)}
-      </button>
+      </Button>
     </span>
   {/if}
 {/if}
