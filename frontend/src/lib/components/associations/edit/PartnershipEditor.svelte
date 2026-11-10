@@ -346,7 +346,7 @@
     <button
       type="submit"
       disabled={saving || incomplete}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
+      class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
     >
       {#if saving}
         {isNew ? m.asso_partnership_creating() : m.common_saving_label()}
@@ -385,7 +385,7 @@
             type="button"
             onclick={() => void handleAddCodes()}
             disabled={savingCodes || !codesPaste.trim()}
-            class="bg-cn-yellow text-cn-ink rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50"
+            class="bg-accent text-on-accent rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50"
           >
             {m.asso_partnership_codes_add_button()}
           </button>

@@ -40,7 +40,7 @@
         value={searchQuery}
         oninput={(e) => onSearchQueryChange((e.target as HTMLInputElement).value)}
         placeholder={m.chat_search_placeholder()}
-        class="bg-control-fill text-text-main placeholder:text-text-muted focus:ring-cn-yellow/40 h-10 w-full rounded-full border-0 pr-4 pl-10 text-sm outline-none focus:ring-2"
+        class="bg-control-fill text-text-main placeholder:text-text-muted focus:ring-accent/40 h-10 w-full rounded-full border-0 pr-4 pl-10 text-sm outline-none focus:ring-2"
       />
     </div>
 

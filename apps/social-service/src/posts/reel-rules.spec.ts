@@ -13,12 +13,15 @@ import { assertCreateKindShape, assertReelEditShape } from './reel-rules';
 import {
   CHAT_REEL_MAX_DURATION_MS,
   CHAT_REEL_MAX_TARGETS,
+  REEL_MAX_ASPECT_RATIO,
   REEL_MAX_DURATION_MS,
+  REEL_RETENTION_DAYS,
   isExpiredPost,
+  isReelFrame,
   reelLimits,
 } from './reel.constants';
 
-const video = { type: 'video', mimeType: 'video/mp4' };
+const video = { type: 'video', mimeType: 'video/mp4', width: 720, height: 1280 };
 const reel = (extra: Record<string, unknown> = {}) => ({
   kind: 'reel',
   durationMs: 41_250,
@@ -75,6 +78,56 @@ describe('assertCreateKindShape - a reel', () => {
     expect(() =>
       assertCreateKindShape(reel({ polls: [], forms: [], attachedFormId: null, scheduledAt: null }))
     ).not.toThrow();
+  });
+});
+
+describe('assertCreateKindShape - a reel is a VERTICAL video (owner, 2026-11-09)', () => {
+  const framed = (width?: number, height?: number) =>
+    reel({ media: [{ type: 'video', mimeType: 'video/mp4', width, height }] });
+
+  it.each([
+    ['9:16, a phone held upright', 720, 1280],
+    ['3:4, the iOS system camera', 360, 480],
+    ['4:5 exactly, the widest a reel may be', 1080, 1350],
+  ])('accepts %s', (_label, width, height) => {
+    expect(() => assertCreateKindShape(framed(width, height))).not.toThrow();
+  });
+
+  it.each([
+    ['one pixel wider than 4:5', 1081, 1350],
+    ['a square', 1080, 1080],
+    ['landscape 16:9', 1280, 720],
+    ['no dimensions', undefined, undefined],
+    ['a width only', 720, undefined],
+    ['a zero height', 720, 0],
+  ])('refuses %s', (_label, width, height) => {
+    expect(() => assertCreateKindShape(framed(width, height))).toThrow(BadRequestException);
+  });
+
+  it('leaves an ordinary post alone whatever its video is: a landscape video stays a post', () => {
+    expect(() =>
+      assertCreateKindShape({
+        markdown: '',
+        media: [{ type: 'video', mimeType: 'video/mp4', width: 1280, height: 720 }],
+      })
+    ).not.toThrow();
+  });
+});
+
+describe('isReelFrame', () => {
+  it('reads width / height against the served 4:5', () => {
+    expect(REEL_MAX_ASPECT_RATIO).toBe(0.8);
+    expect(isReelFrame(800, 1000)).toBe(true);
+    expect(isReelFrame(801, 1000)).toBe(false);
+  });
+
+  it.each([
+    ['strings', '720', '1280'],
+    ['NaN', Number.NaN, 1280],
+    ['Infinity', 720, Number.POSITIVE_INFINITY],
+    ['a negative width', -720, 1280],
+  ])('is false on %s', (_label, width, height) => {
+    expect(isReelFrame(width, height)).toBe(false);
   });
 });
 
@@ -141,6 +194,11 @@ describe('reelLimits - the numbers a client reads', () => {
     });
     expect(CHAT_REEL_MAX_DURATION_MS).toBe(60_000);
     expect(CHAT_REEL_MAX_DURATION_MS).toBeLessThan(REEL_MAX_DURATION_MS);
+  });
+
+  it('serves the vertical rule and the one-year lifetime (owner, 2026-11-09)', () => {
+    expect(reelLimits()).toMatchObject({ maxAspectRatio: 0.8, retentionDays: 365 });
+    expect(REEL_RETENTION_DAYS).toBe(365);
   });
 
   it('serves the target cap of one "Envoyer à..." press (15.2), so no client carries it', () => {

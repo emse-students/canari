@@ -205,7 +205,7 @@
         class="transition-all duration-150 {dragIndex === i
           ? 'scale-[0.98] opacity-40'
           : ''} {dropIndex === i && dragIndex !== i
-          ? 'ring-cn-yellow/60 rounded-4xl ring-2 ring-offset-1'
+          ? 'ring-accent/60 rounded-4xl ring-2 ring-offset-1'
           : ''}"
       >
         <FormBuilder
@@ -251,7 +251,7 @@
     type="button"
     onclick={() => openWizard(null)}
     aria-haspopup="dialog"
-    class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-cn-dark hover:bg-cn-yellow/5 flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed py-3 text-sm font-bold transition-all"
+    class="border-cn-border text-text-muted hover:border-accent-icon hover:text-cn-dark hover:bg-accent/5 flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed py-3 text-sm font-bold transition-all"
   >
     <Plus size={18} />
     {m.form_add_question_button()}

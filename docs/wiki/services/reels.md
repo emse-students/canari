@@ -1,4 +1,4 @@
-# CanaReels - the server half (R3: decisions C2, C3, C4, C6)
+# CanaReels - the server half (R3: decisions C2, C3, C4, C6; the rule and the year of 2026-11-09)
 
 Decided by the user on 2026-09-29 and built from 2026-10-01
 ([backlog](../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken)).
@@ -18,7 +18,8 @@ under the 50 MB ciphertext cap) and the server stores the bytes.
 | Longest reel sent in a chat | 60 000 ms (D-size, 2026-10-09; served as `chatMaxDurationMs`, absent from an older server) | `CHAT_REEL_MAX_DURATION_MS`, same file | `GET /api/posts/reel-limits` |
 | Conversations one "Envoyer à..." press may reach | 15 ([reels-in-chat 15.2](../frontend/modules/reels-in-chat.md#152-the-outbox-one-take-n-sends); served as `chatReelMaxTargets` since RC-14, absent from an older server) | `CHAT_REEL_MAX_TARGETS`, same file | `GET /api/posts/reel-limits` |
 | Longest reel | 90 000 ms (C4) | `REEL_MAX_DURATION_MS`, `posts/reel.constants.ts` | `GET /api/posts/reel-limits` |
-| Kept for | 30 days (C6) | `REEL_RETENTION_DAYS`, same file | same route, and every row's `expiresAt` |
+| Widest reel | `width / height` <= 0.8, i.e. 4:5 (owner, 2026-11-09; served as `maxAspectRatio`, absent from an older server) | `REEL_MAX_ASPECT_RATIO`, same file | same route |
+| Kept for | **365 days** (owner, 2026-11-09; was 30, C6) | `REEL_RETENTION_DAYS`, same file | same route, and every row's `expiresAt` |
 | "About to expire" window | 7 days | `REEL_EXPIRY_WARNING_DAYS`, same file | same route, and `my-reels` |
 | Blob ceiling | 50 MB of ciphertext | media-service `MEDIA_MAX_SIZE_MB` | `GET /api/media/limits` (unchanged) |
 
@@ -31,8 +32,50 @@ says why for the 50 MB), so the camera asks the box before it arms its ring time
 ### `GET /api/posts/reel-limits` (JWT)
 
 ```json
-{ "maxDurationMs": 90000, "chatMaxDurationMs": 60000, "chatReelMaxTargets": 15, "retentionDays": 30, "warningWindowDays": 7 }
+{ "maxDurationMs": 90000, "chatMaxDurationMs": 60000, "chatReelMaxTargets": 15, "maxAspectRatio": 0.8, "retentionDays": 365, "warningWindowDays": 7 }
 ```
+
+### The rule: what is a CanaReel (owner, 2026-11-09)
+
+**Decided by the owner, 2026-11-09: every VERTICAL video of 90 s or less is a CanaReel** - filmed in
+the CanaReels tab or imported from the gallery into a post composer alike. It is published as a reel
+(`kind: 'reel'`), so it is read in the reel pager and lives the reel's lifetime. **Every other video
+(landscape, square, longer than 90 s) stays an ordinary post video.** And **a CanaReel lives ONE
+YEAR** (was C6's month); the reels already published were moved to the year by migration 158.
+
+- **"Vertical" is defined ONCE**, here: `isReelFrame` in `posts/reel.constants.ts`, `width / height
+  <= REEL_MAX_ASPECT_RATIO` (4:5 = 0.8), on the PREPARED file's frame - `prepareVideoForUpload`
+  bakes the container's rotation into the frames, so the declared `width`/`height` are the frame
+  as shown. **Why 4:5 and not "height > width"**: 4:5 is Instagram's tallest feed format, the
+  boundary between "a portrait post" and "a vertical video"; it keeps 9:16 (a phone held upright,
+  0.5625) and the iOS system camera's 3:4 medium quality (0.75, the 360x480 video of the
+  2026-10-19 report) in, and a near-square crop (1080x1100) out - a frame the full-screen reel
+  frame would show with wide bands. The number is served as `maxAspectRatio`, so the client's
+  classifier (`frontend/src/lib/reels/reelRule.ts`) reads the same one the door refuses against.
+- **The client decides, the door refuses.** The server cannot see inside the ciphertext, so it
+  cannot classify a post on its own: the client declares the kind, the duration and the frame,
+  and the server refuses a declared reel that breaks the rule (below). It does NOT refuse a
+  `kind: 'post'` carrying one vertical short video: a post declares no duration (the field is a
+  reel's), so the server has nothing to read it from, and every installed client older than the
+  rule publishes such posts.
+- **Where the client applies it**: the publish queue of the post composers decides at the create
+  step, on the prepared frame and length (`reelDeclarationFor`); the CanaReels tab refuses a
+  landscape or square gallery pick at once (`reels_capture_not_vertical`) and, should a prepared
+  take still come out wide, publishes it as a post with a WARN. **A post carrying something a reel
+  cannot** (a poll, an attached form, a linked event, a schedule, a second attachment) **stays a
+  post** whatever its video is - the door refuses each on a reel. "Garder comme post" is gone from
+  the composer camera's publish step: a filmed take is vertical and short, so it IS a reel.
+- **An estate older than the rule** serves no `maxAspectRatio`: the client then keeps that estate's
+  behaviour (the composer's video a post, the tab's take a reel) and logs it - the days between the
+  stores and the production deploy.
+- **An app older than the rule** still offers a gallery pick of ANY frame in the CanaReels tab and
+  publishes it as `kind: 'reel'`: a landscape or square pick is now refused at this door with its
+  `400` ("a reel's video must be vertical"), and that app shows its generic publish error. Deliberate
+  - the door is the rule - and bounded: on a phone those apps' filmed takes are vertical (the
+  capture saves the portrait preview box's frame, `framedCapture.ts`), and the member can still
+  publish the video as a post from "Nouvelle publication".
+- **Existing posts are not converted**: a vertical video published as a post before the rule stays a
+  post (it already shows in the pager through `singleMedia`, below, and never expires).
 
 ### Publishing: `POST /api/posts` with `kind: "reel"`
 
@@ -61,6 +104,7 @@ deleted by this feature.
 | Condition | Why |
 | --- | --- |
 | `durationMs` missing, not an integer, `< 1` or `> maxDurationMs` | C4 |
+| the video's `width`/`height` missing, or `width / height > maxAspectRatio` (4:5) | the rule of 2026-11-09: a reel is vertical |
 | `durationMs` present on a post that is not a reel | one fact, not two |
 | `media` is not exactly ONE entry of `type: "video"` with a `video/*` MIME type | a reel is one video |
 | `polls`, `forms`, `attachedFormId`, `linkedCalendarEventId` or `scheduledAt` present | none has a meaning on a reel that expires; a scheduled reel would also start its month before anybody could see it |
@@ -70,7 +114,7 @@ deleted by this feature.
 `503`, never a reel stored without its blob.
 
 The response is the created post, now carrying `kind`, `durationMs`, `expiresAt`
-(`createdAt + 30 days`, set ONCE at creation).
+(`createdAt + 365 days`, set ONCE at creation; 30 days before 2026-11-09).
 
 **Editing** (`PATCH /api/posts/:id`): a reel's caption is the only thing that can change. A payload
 naming `media`, `images`, `polls`, `attachedFormId`, `linkedCalendarEventId` or `scheduledAt` on a
@@ -210,8 +254,8 @@ admin). For a reel it also deletes the blob at once (below) rather than leaving 
 `POST /api/moderation/reports` with `contentType: "post"` and the reel's id; the threshold hides it
 exactly as it hides a post (`hiddenByModeration`), and a moderator's hide/unhide/delete are the same
 routes ([moderation-and-blocking](../moderation-and-blocking.md)). **One consequence to know**: a
-hidden reel still expires at 30 days and is purged with its row, so a pending report on a reel
-nobody reviewed in a month is left pointing at a post that no longer exists - the same state as a
+hidden reel still expires at its year and is purged with its row, so a pending report on a reel
+nobody reviewed in that time is left pointing at a post that no longer exists - the same state as a
 report on any deleted post.
 
 ## What the server can verify about a 90-second cap, and what it cannot
@@ -228,7 +272,7 @@ post row, and the service stores bytes. So:
   the blob (a reel can only cite what its author uploaded), that it is ONE video (type and MIME as
   declared), and the expiry, which is the server's own clock at creation.
 - **So the cap's real bound is storage, not time**: whatever the declared duration, a reel is at most
-  50 MB and is gone in 30 days. The 90 s is the product's shape, enforced by the app and honoured by
+  50 MB and is gone in a year (30 days before 2026-11-09). The 90 s is the product's shape, enforced by the app and honoured by
   the server's refusal of every declaration beyond it. Honest, and deliberate: re-encoding on the
   server would cost the CPU C3 forbids.
 
@@ -313,6 +357,36 @@ read - the same reasoning as the media sweep's own `overdueCount`.
   kept and logged, then deleted on the next run; a reel deleted by hand loses its blob at once.
 - **Not run**: the cron firing itself (a unit-tested one-line `@Cron`), and a real blob refusing
   deletion (simulated at the store boundary only).
+
+## Migration 158: the reels already published move to the year (2026-11-09)
+
+`158_reels_live_one_year.sql` re-dates every LIVE reel to `"createdAt" + 365 days`, the stamp the
+create path writes under the new rule. Its `WHERE` is an allowlist: `kind = 'reel'` (never a post,
+**never a live replay** - `kind = 'replay'` keeps its own three days, [live replays](../backlog.d/live-replays-kept-three-days-as-canareels.md)),
+`"expiresAt" > now()` (a reel already past its month is dead to every read and may have lost its blob
+to a `failed` purge, so it is left to the worker rather than brought back), and an expiry earlier than
+the year (it only moves FORWARD, so a re-run changes nothing). Data only, row locks on the live reels,
+not held (an `UPDATE` backfill is plain to the judge). The hourly worker needs no change: it deletes by
+the stored `expiresAt`, whichever lifetime wrote it. Pinned by
+`reels-one-year-migration.integration.spec.ts` (a live reel moves; a replay, a post, a dead reel and a
+reel already on the year do not; the second run updates 0 rows; the interval equals
+`REEL_RETENTION_DAYS`), mutation-checked by widening the `WHERE` to `replay`.
+
+**What it costs** is read on production (read-only, `BEGIN READ ONLY` / `ROLLBACK`): the live reels,
+their bytes as each row's `media[0].size` declares them (media-service keeps no SQL table of sizes),
+and the daily publish rate of the last 30 days - the storage a year holds is roughly that rate x 365
+x the mean size.
+
+**Measured by the lead on production, 2026-11-09 (read-only, numbers only):**
+
+| What | Value |
+| --- | --- |
+| Live reels today | 9, 31 MB in total (mean 3.5 MB), the oldest from 2026-10-19 |
+| Publish rate, last 30 days | 0.3 reel/day, about 1 MB/day |
+| A year of reels at that rate | about 110 reels, 373 MB |
+| Upper bound of what the vertical-video rule adds (the composer's single-video posts, last 30 days) | 15 posts (0.5/day), 184 MB in 30 days - at most about 2.2 GB a year, if every one were vertical and 90 s or less |
+
+**Conclusion: the one-year lifetime costs a few GB a year at most - not a storage concern.**
 
 ## The migration: `069_posts_reels.sql`
 

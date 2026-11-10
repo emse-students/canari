@@ -1,12 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
-import { REEL_MAX_DURATION_MS } from './reel.constants';
+import { REEL_MAX_ASPECT_RATIO, REEL_MAX_DURATION_MS, isReelFrame } from './reel.constants';
 
 /** What the create request says about a post's KIND, as `CreatePostDto` carries it. */
 interface KindedCreateBody {
   kind?: string;
   durationMs?: number | null;
   markdown?: string;
-  media?: Array<{ type?: string; mimeType?: string }>;
+  media?: Array<{ type?: string; mimeType?: string; width?: number; height?: number }>;
   images?: unknown[];
   polls?: unknown[];
   forms?: unknown[];
@@ -23,8 +23,9 @@ const present = (value: unknown): boolean =>
  *
  * Every refusal is a `400`: a status is an ANSWER about the request, never retried. What the server
  * can and cannot know about a reel is on docs/wiki/services/reels.md - in short it enforces the
- * DECLARED duration and the structure, and cannot look inside the ciphertext, so it neither
- * verifies the duration nor the codec.
+ * DECLARED duration, the DECLARED frame (vertical: `isReelFrame`, owner 2026-11-09) and the
+ * structure, and cannot look inside the ciphertext, so it neither verifies the duration, the frame nor
+ * the codec.
  *
  * A post that is not a reel keeps the text-or-media rule the DTO states (`PostBodyOrMediaConstraint`)
  * and may not carry a `durationMs`: the two fields are one fact.
@@ -61,6 +62,13 @@ export function assertCreateKindShape(body: KindedCreateBody): void {
   if (video.type !== 'video' || !(video.mimeType ?? '').toLowerCase().startsWith('video/')) {
     throw new BadRequestException(
       'a reel\'s media must be a video (type "video", mimeType "video/*")'
+    );
+  }
+  // THE RULE (owner, 2026-11-09): a reel is a VERTICAL video. The dimensions are the prepared file's,
+  // rotation baked in, as the client declared them - the same kind of declaration as the duration.
+  if (!isReelFrame(video.width, video.height)) {
+    throw new BadRequestException(
+      `a reel's video must be vertical: width and height declared, width / height at most ${REEL_MAX_ASPECT_RATIO} (4:5)`
     );
   }
 

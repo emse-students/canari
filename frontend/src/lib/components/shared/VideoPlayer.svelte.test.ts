@@ -344,7 +344,7 @@ it('draws one glass bar whose buttons wear no blur of their own, and a glass pla
   expect(target.querySelector('[data-video-bar]')!.className).toContain('glass-video');
   const glyph = target.querySelector('[data-video-play-glyph]')!;
   expect(glyph.querySelector('.glass-video-shape'), 'the triangle is the glass').not.toBeNull();
-  expect(glyph.className).not.toMatch(/glass-video|rounded-full|bg-cn-yellow/);
+  expect(glyph.className).not.toMatch(/glass-video|rounded-full|bg-accent/);
 });
 
 it('marks its box, which is what the viewer reads to leave the tap to it', () => {
@@ -710,4 +710,19 @@ it('minimal: the sound follows the app-wide answer changed elsewhere (the rail)'
   videoSound.setMuted(false);
   flushSync();
   expect(video.muted).toBe(false);
+});
+
+it('the reel variant draws its video over the WHOLE box, never at its intrinsic size (owner, 2026-11-09)', () => {
+  vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const component = mount(VideoPlayer, { target, props: { src: 'blob:clip', variant: 'reel' } });
+  mounted.push(() => unmount(component));
+  flushSync();
+  const video = target.querySelector('video')!;
+  expect(video.classList.contains('h-full')).toBe(true);
+  expect(video.classList.contains('w-full')).toBe(true);
+  expect(video.className).not.toContain('max-h-full');
+  expect(video.style.objectFit).toBe('cover');
+  expect(video.dataset.reelVideoFit).toBe('cover');
 });

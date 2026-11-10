@@ -28,6 +28,7 @@ function makeService(existing?: Partial<Post>) {
       ),
     },
   };
+  const retention = { release: jest.fn(), assertOwnMedia: jest.fn() };
   const service = new PostsService(
     postRepo as unknown as Repository<Post>,
     {
@@ -43,9 +44,9 @@ function makeService(existing?: Partial<Post>) {
       mayActOnAny: () => Promise.resolve(new Set()),
     } as unknown as AssociationsService,
     { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,
-    { release: jest.fn() } as unknown as PostMediaRetentionService
+    retention as unknown as PostMediaRetentionService
   );
-  return { service, saved };
+  return { service, saved, retention };
 }
 
 const items = (n: number) =>
@@ -166,5 +167,31 @@ describe('createPost with both `media` and `images`', () => {
         false
       )
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('updatePost and the uploader of what an edit adds', () => {
+  const stored = (): Partial<Post> => ({
+    id: 'p1',
+    authorId: 'a',
+    markdown: 'x',
+    media: items(2),
+    createdAt: new Date(),
+    publishedAt: new Date(),
+  });
+
+  it('asks the media service about the ids the edit ADDS, for the author, never the ones already there', async () => {
+    const { service, retention } = makeService(stored());
+    await service.updatePost('p1', 'a', { markdown: 'x', media: items(4) });
+    expect(retention.assertOwnMedia).toHaveBeenCalledWith('a', ['m2', 'm3'], 'post');
+  });
+
+  it('stores nothing when a cited picture is not one the editor uploaded', async () => {
+    const { service, saved, retention } = makeService(stored());
+    retention.assertOwnMedia.mockRejectedValueOnce(new BadRequestException('not yours'));
+    await expect(
+      service.updatePost('p1', 'a', { markdown: 'x', media: items(3) })
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(saved).toHaveLength(0);
   });
 });

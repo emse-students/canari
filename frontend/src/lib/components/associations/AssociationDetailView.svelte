@@ -25,6 +25,7 @@
   } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import AccountBell from '$lib/components/follows/AccountBell.svelte';
+  import FollowAlsoSuggestions from '$lib/components/suggestions/FollowAlsoSuggestions.svelte';
   import {
     followAssociationLedgered,
     readAssociationFollowed,
@@ -331,6 +332,9 @@
     }
   }
 
+  /** The association followed on THIS visit: "Suivez aussi..." follows it (engagement WP-6). */
+  let followedHereId = $state<string | null>(null);
+
   async function toggleFollow() {
     if (!asso || !userId) return;
     // Same rule as the profile's follow button: the state is local, so it moves on the tap and
@@ -340,7 +344,10 @@
     followLoading = true;
     try {
       if (wasFollowing) await unfollowAssociationLedgered(asso.id);
-      else await followAssociationLedgered(asso.id);
+      else {
+        await followAssociationLedgered(asso.id);
+        followedHereId = asso.id;
+      }
     } catch (err) {
       Log.d('AssociationDetailView.toggleFollow failed', err);
       following = wasFollowing;
@@ -398,7 +405,7 @@
   {#if loading}
     <div class="flex items-center justify-center py-20">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if error && !asso}
@@ -466,7 +473,7 @@
             {/if}
             {#if kind === 'list' && asso.promo}
               <span
-                class="text-cn-dark bg-cn-yellow/20 mt-2 inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
+                class="text-cn-dark bg-accent/20 mt-2 inline-block rounded-full px-2 py-0.5 text-xs font-semibold"
               >
                 {m.list_campaigns_heading({ year: asso.promo })}
               </span>
@@ -506,7 +513,7 @@
               <a
                 href="{base}/{encodeURIComponent(slug)}/edit"
                 use:guideAnchor={'asso.manage'}
-                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
+                class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
               >
                 <Settings size={16} />
                 {wordingFor(asso.type).manageButton()}
@@ -515,6 +522,11 @@
           </div>
         </div>
       </div>
+    {/if}
+
+    <!-- "Suivez aussi..." (engagement WP-6, L15): the READER's own suggestions, after a follow made here. -->
+    {#if asso && followedHereId === asso.id && following}
+      <FollowAlsoSuggestions exclude={asso.id} />
     {/if}
 
     {#if error}

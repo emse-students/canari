@@ -54,7 +54,7 @@
   class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-md font-mono text-xs font-bold select-none sm:text-sm {tone} {numberColor}"
 >
   {#if cell.state === 'flagged'}
-    <Flag size={14} class="dark:text-cn-yellow text-amber-700" />
+    <Flag size={14} class="dark:text-accent-icon text-accent-text" />
   {:else if cell.state === 'revealed' && cell.mine}
     <Bomb size={14} class="text-white" />
   {:else if cell.state === 'revealed' && cell.adjacent > 0}

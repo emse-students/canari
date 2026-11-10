@@ -78,6 +78,8 @@
     <string name="notif_social_coorganise_proposed_body">An event to co-organise</string>
     <string name="notif_social_live_started_title">%1$s is live</string>
     <string name="notif_social_live_started_body">Tap to watch</string>
+    <string name="notif_social_live_mention_title">%1$s mentioned you in a live</string>
+    <string name="notif_social_live_mention_body">Tap to join the live</string>
     <string name="notif_social_follow_request_title">%1$s asks to follow you</string>
     <string name="notif_social_follow_request_body">Tap to answer</string>
     <string name="notif_chat_join_ask_title">%1$s wants to join</string>

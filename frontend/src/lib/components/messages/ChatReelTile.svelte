@@ -166,7 +166,7 @@
       }}
       onpointerdown={(e) => e.stopPropagation()}
       aria-label={label}
-      class="focus-visible:ring-cn-yellow absolute inset-0 flex flex-col items-center justify-center gap-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-inset"
+      class="focus-visible:ring-accent-icon absolute inset-0 flex flex-col items-center justify-center gap-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-inset"
       data-reel-tile
     >
       <span

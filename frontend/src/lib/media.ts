@@ -382,13 +382,16 @@ export async function readImageDimensions(file: File): Promise<ImageDimensions |
  * strip with a grey band under it. The size now comes from the encoder's own output, rotation
  * already applied.
  *
+ * A video also reports its prepared LENGTH (`durationMs`): the publish queue reads it with the frame
+ * to decide whether the post is a CanaReel (owner, 2026-11-09, `reels/reelRule.ts`).
+ *
  * @param video The bounds, progress and cancel for a video; ignored for anything else.
  * @throws {VideoPrepareError} when a video cannot be prepared - typed, so the screen names why.
  */
 export async function preparePostMedia(
   file: File,
   video: PrepareVideoOptions = {}
-): Promise<{ file: File; dims?: ImageDimensions }> {
+): Promise<{ file: File; dims?: ImageDimensions; durationMs?: number }> {
   if (file.type.startsWith('image/')) {
     const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
     const compressed = await compressImage(file, maxWidth, maxHeight, quality);
@@ -396,7 +399,11 @@ export async function preparePostMedia(
   }
   if (file.type.startsWith('video/')) {
     const prepared = await prepareVideoForUpload(file, video);
-    return { file: prepared.file, dims: { width: prepared.width, height: prepared.height } };
+    return {
+      file: prepared.file,
+      dims: { width: prepared.width, height: prepared.height },
+      durationMs: Math.round(prepared.durationSeconds * 1000),
+    };
   }
   return { file };
 }

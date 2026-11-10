@@ -83,8 +83,8 @@
           aria-checked={on}
           aria-label={m.settings_notif_switch_aria({ category: COPY[category].label() })}
           onclick={() => void toggle(category)}
-          class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
- {on ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+          class="focus-visible:ring-accent-icon relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+ {on ? 'bg-accent' : 'bg-black/20 dark:bg-white/15'}"
         >
           <span
             class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200

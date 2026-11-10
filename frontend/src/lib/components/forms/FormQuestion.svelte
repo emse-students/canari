@@ -206,7 +206,7 @@
       <Ban size={11} />{m.form_grid_cell_unavailable()}
     </span>
   {:else if optionModifier(item, opt) !== 0}
-    <span class="text-cn-dark bg-cn-yellow/20 shrink-0 rounded-full px-2 py-0.5 text-xs font-bold">
+    <span class="text-cn-dark bg-accent/20 shrink-0 rounded-full px-2 py-0.5 text-xs font-bold">
       {optionModifier(item, opt) > 0 ? '+' : ''}{formatAmount(optionModifier(item, opt), currency)}
     </span>
   {/if}
@@ -252,7 +252,7 @@
   {#if item.type === 'short_text'}
     <input
       type="text"
-      class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+      class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-accent-icon w-full rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
       bind:value
       maxlength={ANSWER_MAX_TEXT_LENGTH}
       placeholder={m.form_view_answer_placeholder()}
@@ -262,7 +262,7 @@
     <!-- The server's bound, told before the send (D2): a cover letter past it was an English 400. -->
     <textarea
       rows="4"
-      class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full resize-y rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+      class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-accent-icon w-full resize-y rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
       bind:value
       maxlength={ANSWER_MAX_TEXT_LENGTH}
       aria-describedby={`count-${formId}-${item.id}`}
@@ -286,7 +286,7 @@
       label={item.label}
       placeholder={m.form_view_select_placeholder()}
       {disabled}
-      triggerClass="border-cn-border text-text-main bg-cn-bg focus-visible:border-cn-yellow flex w-full items-center justify-between gap-2 rounded-2xl border-2 px-4 py-3 text-left text-sm transition-all outline-none focus-visible:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+      triggerClass="border-cn-border text-text-main bg-cn-bg focus-visible:border-accent-icon flex w-full items-center justify-between gap-2 rounded-2xl border-2 px-4 py-3 text-left text-sm transition-all outline-none focus-visible:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
       onValueChange={(v) => (value = v)}
     />
   {:else if item.type === 'single_choice' || item.type === 'multiple_choice'}
@@ -296,8 +296,8 @@
         {@const selected = multiple ? (value ?? []).includes(opt.id) : value === opt.id}
         <label
           class="flex cursor-pointer items-center gap-3 rounded-2xl border-2 px-4 py-3 transition-all select-none {selected
-            ? 'border-cn-yellow bg-cn-yellow/8'
-            : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'} {disabled || optionClosed(opt)
+            ? 'border-accent-icon bg-accent/8'
+            : 'border-cn-border hover:border-accent/60 bg-cn-bg'} {disabled || optionClosed(opt)
             ? 'cursor-not-allowed opacity-60'
             : ''}"
         >
@@ -306,7 +306,7 @@
               type="checkbox"
               value={opt.id}
               bind:group={value}
-              class="accent-cn-yellow h-4 w-4 shrink-0 rounded"
+              class="accent-accent h-4 w-4 shrink-0 rounded"
               disabled={disabled || optionClosed(opt)}
             />
           {:else}
@@ -315,7 +315,7 @@
               name={`radio-${formId}-${item.id}`}
               value={opt.id}
               bind:group={value}
-              class="accent-cn-yellow h-4 w-4 shrink-0"
+              class="accent-accent h-4 w-4 shrink-0"
               disabled={disabled || optionClosed(opt)}
             />
           {/if}
@@ -336,7 +336,7 @@
         {#each scaleValues as val (val)}
           <label
             class="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1.5 py-3 transition-all select-none
- {value === val ? 'bg-cn-yellow/15' : 'hover:bg-cn-border/30'}
+ {value === val ? 'bg-accent/15' : 'hover:bg-cn-border/30'}
  {disabled ? 'cursor-not-allowed opacity-60' : ''}"
           >
             <input
@@ -344,7 +344,7 @@
               name={`scale-${formId}-${item.id}`}
               value={val}
               bind:group={value}
-              class="accent-cn-yellow h-4 w-4"
+              class="accent-accent h-4 w-4"
               {disabled}
             />
             <span class="text-text-muted text-xs font-bold">{val}</span>
@@ -380,7 +380,7 @@
                       name={`matrix-${formId}-${item.id}-${rowIndex}`}
                       value={col.id}
                       bind:group={value[row]}
-                      class="accent-cn-yellow h-4 w-4"
+                      class="accent-accent h-4 w-4"
                       {disabled}
                     />
                   {:else}
@@ -388,7 +388,7 @@
                       type="checkbox"
                       value={col.id}
                       bind:group={value[row]}
-                      class="accent-cn-yellow h-4 w-4"
+                      class="accent-accent h-4 w-4"
                       {disabled}
                     />
                   {/if}
@@ -422,7 +422,7 @@
         </div>
       {/if}
       <label
-        class="border-cn-border hover:border-cn-yellow/60 bg-cn-bg text-text-main flex cursor-pointer items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-4 py-3 text-sm font-semibold transition-all {disabled ||
+        class="border-cn-border hover:border-accent/60 bg-cn-bg text-text-main flex cursor-pointer items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-4 py-3 text-sm font-semibold transition-all {disabled ||
         uploading
           ? 'cursor-not-allowed opacity-60'
           : ''}"
@@ -460,7 +460,7 @@
       {/if}
     </div>
   {:else}
-    <div class="bg-cn-yellow/10 text-text-main border-cn-yellow/30 rounded-xl border p-3 text-xs">
+    <div class="bg-accent/10 text-text-main border-accent/30 rounded-xl border p-3 text-xs">
       <!-- A type this build does not know (the coming product_grid): never an empty card. -->
       {m.form_view_update_app_to_answer()}
     </div>

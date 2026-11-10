@@ -1513,6 +1513,17 @@ the console line separates the causes the shared message cannot: a refused conne
 `TypeError`, a served error throws `HTTP <status>`. Before that, a failed attachment was a
 `console.error` and nothing else, which is why a blocked host read as a dead button for weeks.
 
+## Reply with an imported image (2026-11-09)
+
+Owner, 2026-11-09: *"Est-ce qu'on pourrait repondre a un post avec une image ? Comme un gif, mais importe."* The comment already carried one image or GIF (above), so the lead's decisions (reversible) were small:
+
+- **One image per comment, optional text, no video.** An image button (`ImagePlus`, 44 px, label `post_comment_add_image_label`) sits beside "GIF" in `CommentComposer`. On the iOS app it opens the native library (`pickNatively('library')`, as the post composer does); elsewhere a hidden `<input accept="image/*">`. Both feed the SAME `stageMediaFile` as paste, the GIF picker and the keyboard: `IMAGE_COMPRESS_PRESETS.comment`, client-side CEK, class `archive`, shown in the thread exactly where a GIF shows (`CommentMedia`, same media viewer).
+- **Not published before its picture is up**: the send button waits on `uploadingMedia`. A failed upload keeps its file and shows a row with "Retry" (`comment-media-failed`), no second pick.
+- **No camera button** in this step: the in-app `CameraOverlay` is bound to the post destinations; a photo is taken in the OS camera app and picked from the library.
+- **Server**: `AddCommentDto.media` was `@IsObject()` alone, so any shape was stored. It is now `CommentMediaDto` (`dto/post.dto.ts`): optional `type` that must be `image`, `mimeType` matching `image/*`, `size` 1..16 MiB (`COMMENT_MEDIA_MAX_BYTES`), bounded `mediaId`/`key`/`iv`/`fileName`, integer dimensions, base64 `placeholder`; `encoding` is not declared so `whitelist` drops it. Pinned by `comment-media-dto.spec.ts`. The uploader is NOT checked at write, as for a post's media (only a reel's blob is claimed); the media service deletes only an object whose recorded uploader matches (`commentMediaOwners`), so a cited foreign blob cannot be deleted through a comment.
+- **Deletion and moderation need nothing new**: a deleted comment, its tombstone and its subtree release their media (`commentMediaIds` in `deleteComment`), the idle sweep and erasure already count a comment's media, and a reported comment is served with its `media` like any other. No migration.
+- **The picture must be the writer's own upload** (review, 2026-11-09): ids are not secrets, and deleting a row that cites a blob releases it to the idle sweep, so a comment or a post citing SOMEBODY ELSE'S id could get that blob deleted under its owner. `PostMediaRetentionService.assertOwnMedia` asks the media service (`POST media/internal/owned`, read-only, `MediaService.ownedBy`: unknown, purged, public, form-file and pre-ownership objects are refused like a reel claim) before `addComment` and the non-reel branch of `createPost`: `400` when refused, `503` when the media service cannot say. `updatePost` checks the same way, for the editor (the post's author alone may edit) and only the media ids the edit adds (ones already on the post are not asked again).
+
 ## Routes
 
 | Route | Description |

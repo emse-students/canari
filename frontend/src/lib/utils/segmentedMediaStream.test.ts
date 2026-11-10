@@ -13,8 +13,13 @@ import { flushMacrotask } from '../../test/flush';
 
 vi.mock('$lib/stores/auth', () => ({ getToken: () => Promise.resolve('token') }));
 
-const { chooseSegmentedPlayback, openSegmentedStream, FEED_STREAM_PACING, streamProgressOf } =
-  await import('./segmentedMediaStream');
+const {
+  chooseSegmentedPlayback,
+  openSegmentedStream,
+  FEED_STREAM_PACING,
+  VIEWER_STREAM_PACING,
+  streamProgressOf,
+} = await import('./segmentedMediaStream');
 
 const WEBM = 'video/webm;codecs=vp9,opus';
 
@@ -338,6 +343,119 @@ describe('openSegmentedStream', () => {
     expect(blob.size).toBe(6 * SEGMENTED_MEDIA_SEGMENT_BYTES);
     expect(requests).toHaveLength(6);
     handle.close();
+  });
+
+  /**
+   * THE VIEWER NEVER WAITS FOR THE WHOLE FILE, AND NEVER DOWNLOADS IT TWICE (owner, 2026-11-09: 26 s
+   * before the viewer of a 33 MB video played, the card already playing). The viewer is a fork: its
+   * own MediaSource over the card's segment feed.
+   */
+  it('a viewer fork starts on its head before the last segment, and the file is fetched once', async () => {
+    const { ref, requests } = await servedVideo(8);
+    const card = openSegmentedStream(ref('v'), 'https://media.test', STREAM, FEED_STREAM_PACING);
+    card.attach(new FakeElement());
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    const cardSource = FakeMediaSource.last!;
+
+    const viewer = card.fork();
+    const viewerSource = FakeMediaSource.last!;
+    expect(viewerSource).not.toBe(cardSource);
+    expect(viewer.url).toBe('blob:stream');
+    const element = new FakeElement();
+    viewer.attach(element);
+
+    // Its head is appended from what the card already fetched: no request, and 2 of 8 segments.
+    await vi.waitFor(() => expect(viewerSource.buffer.appended).toHaveLength(2));
+    await settle();
+    expect(requests).toHaveLength(2);
+    expect(viewerSource.buffer.appended).toHaveLength(2);
+    expect(viewerSource.ended).toBeNull();
+
+    // Playing with a full buffer ahead: it holds - the viewer never runs to the end on its own.
+    element.paused = false;
+    element.bufferedEnd = 60;
+    element.dispatchEvent(new Event('play'));
+    await settle();
+    expect(requests).toHaveLength(2);
+    expect(viewerSource.buffer.appended).toHaveLength(2);
+
+    // The buffer runs low: it asks for more, and the card's feed serves it.
+    element.bufferedEnd = 0;
+    element.dispatchEvent(new Event('timeupdate'));
+    await vi.waitFor(() => expect(requests.length).toBeGreaterThan(2));
+
+    // Closing the viewer leaves the card alone; reading to the end fetches each segment ONCE.
+    viewer.close();
+    expect(cardSource.readyState).toBe('open');
+    const second = card.fork();
+    second.fetchAll();
+    const blob = await second.done;
+    expect(blob.size).toBe(8 * SEGMENTED_MEDIA_SEGMENT_BYTES);
+    expect(requests).toHaveLength(8);
+    card.close();
+  });
+
+  it('closing the card stops a fork it fed', async () => {
+    const { ref } = await servedVideo(8);
+    const card = openSegmentedStream(ref('v'), 'https://media.test', STREAM, FEED_STREAM_PACING);
+    const viewer = card.fork();
+    viewer.attach(new FakeElement());
+    const failed = viewer.done.then(
+      () => 'resolved',
+      (e: Error) => e.name
+    );
+    await settle();
+    card.close();
+    expect(await failed).toBe('AbortError');
+  });
+
+  it('a seek on a PAUSED element is a demand: the viewer fills the gap without a press on play', async () => {
+    const { ref, requests } = await servedVideo(8);
+    const viewer = openSegmentedStream(
+      ref('v'),
+      'https://media.test',
+      STREAM,
+      VIEWER_STREAM_PACING
+    );
+    const element = Object.assign(new FakeElement(), { seeking: false });
+    viewer.attach(element);
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    await settle();
+    expect(requests).toHaveLength(2);
+
+    // Paused and seeking past the buffer: segments come, still in order, until the data is in.
+    element.seeking = true;
+    element.dispatchEvent(new Event('seeking'));
+    await vi.waitFor(() => expect(requests.length).toBeGreaterThan(2));
+    viewer.close();
+  });
+
+  it('a full buffer is trimmed behind the playhead and the segment appended again, once', async () => {
+    const { ref } = await servedVideo(3);
+    const card = openSegmentedStream(ref('v'), 'https://media.test', STREAM, VIEWER_STREAM_PACING);
+    const buffer = FakeMediaSource.last!.buffer as FakeSourceBuffer & {
+      remove?: (a: number, b: number) => void;
+    };
+    const removed: Array<[number, number]> = [];
+    buffer.remove = (a, b) => removed.push([a, b]);
+    let appends = 0;
+    const real = buffer.appendBuffer.bind(buffer);
+    buffer.appendBuffer = (bytes: ArrayBuffer) => {
+      appends++;
+      if (appends === 2) throw new DOMException('full', 'QuotaExceededError');
+      real(bytes);
+    };
+    const element = new FakeElement();
+    element.currentTime = 42;
+    element.paused = false;
+    element.bufferedEnd = 5;
+    card.attach(element);
+    const blob = await card.done;
+    expect(removed).toEqual([[0, 32]]);
+    // Three segments, the second appended twice (the first refusal, then the retry).
+    expect(appends).toBe(4);
+    expect(blob.size).toBe(3 * SEGMENTED_MEDIA_SEGMENT_BYTES);
+    card.close();
   });
 
   it('stops for good when closed - the segment in flight is aborted and nothing more is asked', async () => {

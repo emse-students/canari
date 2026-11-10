@@ -1,4 +1,4 @@
-## P2 - rotation on the video and camera screens only (owner, 2026-11-09): the mechanism built, the camera and the broadcaster next, two viewers owed after the video-player stack
+## P2 - rotation on the video and camera screens only (owner, 2026-11-09): the mechanism, the camera and the broadcaster built, two viewers owed after the video-player stack
 
 The owner's decisions and the mechanism are in [screen-orientation](../frontend/screen-orientation.md):
 portrait everywhere; the full-screen video viewer, the live viewer, the live broadcaster and the
@@ -18,7 +18,8 @@ is letterboxed in the vertical pager.
 3. **The surfaces not being rewritten by the video-player stack**: the camera (`CameraScreen`: the
    frame follows the screen, a take freezes it, the rotate button) and the live broadcaster (chosen in
    the preview, frozen on air, the rotate button; and the owner's double tap on the preview to switch
-   the lens, 2026-11-09).
+   the lens, 2026-11-09). The button is `ui/player/RotateButton.svelte`, the sides' padding
+   `utils/sideSafeArea.ts` - both for step 4 to reuse.
 4. **Owed after the stack lands** (#3201 rewrites `MediaLightbox.svelte` and the player kit, #3202
    `LiveViewer.svelte`; neither may be edited under them):
    - **`LiveViewer.svelte`**: `const orientation = useScreenOrientation('live-viewer')` for its whole

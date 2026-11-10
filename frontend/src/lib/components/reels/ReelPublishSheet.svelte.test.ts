@@ -79,7 +79,8 @@ async function render(d: PublishReelDeps, onclose = vi.fn(), extra: Record<strin
         limits: {
           maxDurationMs: 90_000,
           chatMaxDurationMs: 60_000,
-          retentionDays: 30,
+          maxAspectRatio: 0.8,
+          retentionDays: 365,
           warningWindowDays: 7,
         },
         onclose,
@@ -224,16 +225,20 @@ describe('ReelPublishSheet reached from the new-post composer (one camera, one b
   function composer() {
     return {
       start: { caption: 'from the composer', identity: '', studentsOnly: false },
-      onkeep: vi.fn(),
       onpublished: vi.fn(),
     };
   }
 
-  it('says BEFORE publishing that the CanaReel is deleted after its days, and starts from the text', async () => {
+  it('says BEFORE publishing that the CanaReel is deleted after its year, and starts from the text', async () => {
     const c = composer();
     const { target } = await render(deps(), vi.fn(), { composer: c });
     const notice = target.querySelector('[data-reel-publish-composer-notice]');
-    expect(notice?.textContent?.trim()).toBe(m.reels_publish_from_composer_notice({ days: 30 }));
+    expect(notice?.textContent?.trim()).toBe(
+      m.reels_publish_from_composer_notice({
+        seconds: 90,
+        lifetime: m.reels_lifetime_years({ count: 1 }),
+      })
+    );
     expect(target.querySelector<HTMLTextAreaElement>('[data-reel-caption]')!.value).toBe(
       'from the composer'
     );
@@ -252,22 +257,12 @@ describe('ReelPublishSheet reached from the new-post composer (one camera, one b
     expect(goto).not.toHaveBeenCalled();
   });
 
-  it('"Garder comme post" hands the video back and publishes nothing', async () => {
-    const d = deps();
-    const c = composer();
-    const { target } = await render(d, vi.fn(), { composer: c });
-    const keep = target.querySelector<HTMLButtonElement>('[data-reel-keep-as-post]')!;
-    expect(keep.textContent?.trim()).toBe(m.reels_publish_keep_as_post());
-    keep.click();
-    await settle();
-    expect(c.onkeep).toHaveBeenCalledTimes(1);
-    expect(d.createPost).not.toHaveBeenCalled();
-  });
-
-  it('on the CanaReels tab there is neither the notice nor the way back to a post', async () => {
+  it('on the CanaReels tab there is no composer notice, and from the composer no way back to a post', async () => {
     const { target } = await render(deps());
     expect(target.querySelector('[data-reel-publish-composer-notice]')).toBeNull();
-    expect(target.querySelector('[data-reel-keep-as-post]')).toBeNull();
+    // Owner, 2026-11-09: a vertical take of 90 s or less IS a CanaReel, so "Garder comme post" is gone.
+    const fromComposer = await render(deps(), vi.fn(), { composer: composer() });
+    expect(fromComposer.target.querySelector('[data-reel-keep-as-post]')).toBeNull();
   });
 });
 
@@ -315,32 +310,10 @@ describe('ReelPublishSheet - review of #2124', () => {
     expect(onclose).toHaveBeenCalledTimes(1);
   });
 
-  it('"Garder comme post" hands back the caption and identity AS EDITED in the step', async () => {
-    const onkeep = vi.fn();
-    const { target } = await render(deps(), vi.fn(), {
-      composer: {
-        start: { caption: 'start', identity: '', studentsOnly: false },
-        onkeep,
-        onpublished: vi.fn(),
-      },
-    });
-    const caption = target.querySelector<HTMLTextAreaElement>('[data-reel-caption]')!;
-    caption.value = 'edited here';
-    caption.dispatchEvent(new Event('input', { bubbles: true }));
-    flushSync();
-    target.querySelector<HTMLButtonElement>('[data-reel-keep-as-post]')!.click();
-    expect(onkeep).toHaveBeenCalledWith({
-      caption: 'edited here',
-      identity: '',
-      studentsOnly: false,
-    });
-  });
-
   it('from the composer the deletion notice is a note and takes the focus as the step opens', async () => {
     const { target } = await render(deps(), vi.fn(), {
       composer: {
         start: { caption: '', identity: '', studentsOnly: false },
-        onkeep: vi.fn(),
         onpublished: vi.fn(),
       },
     });
@@ -362,7 +335,6 @@ describe('ReelPublishSheet - review of #2124', () => {
     const { target } = await render(deps(), vi.fn(), {
       composer: {
         start: { caption: '', identity: 'asso-1', studentsOnly: false },
-        onkeep: vi.fn(),
         onpublished: vi.fn(),
       },
     });
@@ -371,13 +343,12 @@ describe('ReelPublishSheet - review of #2124', () => {
 });
 
 describe('ReelPublishSheet - "Entre étudiants" both ways with the composer (review of #3010)', () => {
-  it('starts from the composer switch, and "Garder comme post" hands it back as edited here', async () => {
+  it('starts from the composer switch, and publishes it as edited here', async () => {
     postAs.list = [{ id: 'list-1', name: 'Liste Kraken', logoUrl: null, type: 'list' }];
-    const onkeep = vi.fn();
-    const { target } = await render(deps(), vi.fn(), {
+    const d = deps();
+    const { target, submit } = await render(d, vi.fn(), {
       composer: {
         start: { caption: 'x', identity: 'list-1', studentsOnly: true },
-        onkeep,
         onpublished: vi.fn(),
       },
     });
@@ -387,7 +358,8 @@ describe('ReelPublishSheet - "Entre étudiants" both ways with the composer (rev
     expect(toggle.checked).toBe(true);
     toggle.click();
     flushSync();
-    target.querySelector<HTMLButtonElement>('[data-reel-keep-as-post]')!.click();
-    expect(onkeep).toHaveBeenCalledWith({ caption: 'x', identity: 'list-1', studentsOnly: false });
+    submit().click();
+    await settle();
+    expect(d.createPost).toHaveBeenCalledWith(expect.not.objectContaining({ studentsOnly: true }));
   });
 });

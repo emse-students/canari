@@ -121,7 +121,7 @@ it("feed: the speaker is the kit's glass chip, yellow only when the sound is on"
   soundButton()!.click();
   flushSync();
   expect(target.querySelector('[data-video-sound="on"]')!.getAttribute('class')).toContain(
-    'text-cn-yellow'
+    'text-accent'
   );
 });
 

@@ -75,6 +75,7 @@ function makeService(opts: {
     },
   };
   const retention = {
+    assertOwnMedia: jest.fn(() => Promise.resolve()),
     release: jest.fn(() => Promise.resolve()),
     claimReelFor: jest.fn(opts.claim ?? (() => Promise.resolve({ refused: [] }))),
     purgeReelBlobs: jest.fn(opts.purge ?? (() => Promise.resolve({}))),

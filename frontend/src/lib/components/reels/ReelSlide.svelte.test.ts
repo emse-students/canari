@@ -331,7 +331,7 @@ it('a neighbour draws the publisher first-frame ThumbHash, not a play glyph', ()
   expect(q('[data-video-first-frame-poster]')!.getAttribute('src')).toBe(
     'data:image/png;thumbhash,HASH'
   );
-  expect(q('.bg-cn-yellow')).toBeNull();
+  expect(q('.bg-accent')).toBeNull();
 });
 
 it('the sharp first frame this device decoded wins over the ThumbHash', () => {
@@ -350,7 +350,7 @@ it('the reel on screen hands its first frame to the player while it loads', () =
 it('an old reel with no picture of its frame draws the black frame, not a play glyph', () => {
   const { q } = render(reel(), false);
   expect(q('[data-video-first-frame-poster]')).toBeNull();
-  expect(q('.bg-cn-yellow')).toBeNull();
+  expect(q('.bg-accent')).toBeNull();
 });
 
 it("tells the opener its file is GONE on a 410 only - a conversation's reel records it (RC-6)", () => {
