@@ -3,7 +3,6 @@ import {
   createDelegationClient,
   createDelegationServer,
   type DelegatedCommitExecutors,
-  type DelegatedCommitOp,
   type DelegationEnv,
   type DelegationLocks,
   type DelegationReadiness,
@@ -12,16 +11,25 @@ import {
 } from './tabCommitDelegation';
 import type { TabCommitStore } from './tabCommitStore';
 import {
-  delegatedSendExecutor,
+  callPreflightThroughLeaderTab,
+  delegatedSendExecutors,
+  exportSecretThroughLeaderTab,
   sendThroughLeaderTab,
-  type LeaderSender,
+  type LeaderMls,
+  type ThroughLeaderDeps,
 } from './tabSendDelegation';
 import {
   addressedHistoryAnswer,
   DELIVERY,
   type FrameDelivery,
 } from '$lib/mls-client/frameDelivery';
-import { DelegatedSendFailedError, FollowerTabSendError } from '$lib/mls-client/commitSubmission';
+import {
+  DelegatedSendFailedError,
+  DelegatedSendOutcomeUnknownError,
+  FollowerTabSendError,
+} from '$lib/mls-client/commitSubmission';
+import { toBase64 } from '$lib/utils/hex';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
  * A FOLLOWER TAB'S COMMIT, DONE BY THE LEADER - two tabs simulated in one realm.
@@ -256,6 +264,14 @@ function recordingExecutors() {
       runs.push(`send:${groupId}`);
       return { status: 'sent', sealed: '', authorProof: '', receivedAt: 1 };
     },
+    'export-secret': async ({ groupId }) => {
+      runs.push(`export:${groupId}`);
+      return { status: 'exported', secret: { iv: '', cipherText: '' } };
+    },
+    'call-preflight': async ({ groupId }) => {
+      runs.push(`preflight:${groupId}`);
+      return 'ready';
+    },
   };
   return { runs, executors };
 }
@@ -449,17 +465,32 @@ describe('a follower is answered by a leader that lives', () => {
  */
 describe('a follower tab hands its sends to the leader tab', () => {
   const bytes = new Uint8Array([7, 8, 9]);
+  const key = toBase64(crypto.getRandomValues(new Uint8Array(32)));
+  const noExport = async (): Promise<Uint8Array> => new Uint8Array();
 
-  function sendingLeader(doc: string, w: ReturnType<typeof makeWorld>, sender: LeaderSender) {
-    const leader = tab(doc, w, { leader: true });
+  function sendingLeader(
+    doc: string,
+    w: ReturnType<typeof makeWorld>,
+    mls: Partial<LeaderMls>,
+    role: Partial<Role> = {}
+  ) {
+    const leader = tab(doc, w, { leader: true, ...role });
     leader.server.listen();
-    leader.server.register(delegatedSendExecutor(async () => sender));
+    leader.server.register(
+      delegatedSendExecutors(
+        async () => ({
+          sendMessage: mls.sendMessage ?? vi.fn(),
+          exportSecret: mls.exportSecret ?? noExport,
+        }),
+        () => key
+      )
+    );
     return leader;
   }
 
-  const fromFollower = (follower: ReturnType<typeof tab>) => ({
-    leadership: () => 'follower' as const,
-    delegate: (op: Extract<DelegatedCommitOp, { kind: 'send' }>) => follower.delegate(op),
+  const fromFollower = (follower: ReturnType<typeof tab>): ThroughLeaderDeps => ({
+    leadership: () => 'follower',
+    delegate: (op) => follower.delegate(op as never) as never,
   });
 
   it('the leader seals and posts it on its own copy, and the follower gets the frame back', async () => {
@@ -472,7 +503,13 @@ describe('a follower tab hands its sends to the leader tab', () => {
     sendingLeader('L', w, { sendMessage });
     const follower = tab('F', w, { leader: false });
 
-    const sent = await sendThroughLeaderTab('g1', bytes, DELIVERY.mutation, fromFollower(follower));
+    const sent = await sendThroughLeaderTab(
+      'g1',
+      bytes,
+      DELIVERY.mutation,
+      key,
+      fromFollower(follower)
+    );
 
     expect(sent).toEqual({
       sealed: new Uint8Array([1, 2]),
@@ -508,17 +545,18 @@ describe('a follower tab hands its sends to the leader tab', () => {
       'g1',
       bytes,
       addressedHistoryAnswer('bob:d1'),
+      key,
       fromFollower(follower)
     );
 
     expect((sendMessage.mock.calls[0] as unknown[])[3]).toEqual(addressedHistoryAnswer('bob:d1'));
   });
 
-  it("the leader's own failure reaches the caller typed, as its send failing", async () => {
+  it("the leader's own failure reaches the caller by CLASS, never by name", async () => {
     const w = makeWorld();
     sendingLeader('L', w, {
       sendMessage: async () => {
-        throw new TypeError('Failed to fetch');
+        throw new TransportFailureError(new TypeError('Failed to fetch'));
       },
     });
     const follower = tab('F', w, { leader: false });
@@ -528,26 +566,26 @@ describe('a follower tab hands its sends to the leader tab', () => {
       'g1',
       bytes,
       DELIVERY.visible,
+      key,
       fromFollower(follower)
     ).catch((e: unknown) => e);
     warn.mockRestore();
 
     expect(failure).toBeInstanceOf(DelegatedSendFailedError);
-    expect((failure as DelegatedSendFailedError).leaderErrorName).toBe('TypeError');
+    expect((failure as DelegatedSendFailedError).errorClass).toBe('transport');
   });
 
   it('a leader at its PIN gate refuses it, typed, and seals nothing', async () => {
     const w = makeWorld();
     const sendMessage = vi.fn();
-    const leader = tab('L', w, { leader: true, readiness: 'unavailable' });
-    leader.server.listen();
-    leader.server.register(delegatedSendExecutor(async () => ({ sendMessage })));
+    sendingLeader('L', w, { sendMessage }, { readiness: 'unavailable' });
     const follower = tab('F', w, { leader: false });
 
     const failure = await sendThroughLeaderTab(
       'g1',
       bytes,
       DELIVERY.visible,
+      key,
       fromFollower(follower)
     ).catch((e: unknown) => e);
 
@@ -559,7 +597,7 @@ describe('a follower tab hands its sends to the leader tab', () => {
   it('NO LEADER REACHABLE (leading on a follower copy): refused before any hand-over', async () => {
     const delegate = vi.fn();
 
-    const failure = await sendThroughLeaderTab('g1', bytes, DELIVERY.visible, {
+    const failure = await sendThroughLeaderTab('g1', bytes, DELIVERY.visible, key, {
       leadership: () => 'leader',
       delegate,
     }).catch((e: unknown) => e);
@@ -584,6 +622,7 @@ describe('a follower tab hands its sends to the leader tab', () => {
       'g1',
       bytes,
       DELIVERY.visible,
+      key,
       fromFollower(follower)
     ).catch((e: unknown) => e);
     await settle();
@@ -594,10 +633,68 @@ describe('a follower tab hands its sends to the leader tab', () => {
     const next = vi.fn();
     sendingLeader('L2', w, { sendMessage: next });
 
+    // The dead leader may have posted it: an UNKNOWN outcome, never "nothing was sealed".
     const failure = await answer;
-    expect(failure).toBeInstanceOf(FollowerTabSendError);
-    expect((failure as FollowerTabSendError).reason).toBe('leader-gone');
+    expect(failure).toBeInstanceOf(DelegatedSendOutcomeUnknownError);
+    expect(failure).not.toBeInstanceOf(FollowerTabSendError);
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it("a follower's call keys are the leader's export, at the leader's epoch: only the secret comes back", async () => {
+    const w = makeWorld();
+    const exportSecret = vi.fn(async (_g: string, label: string, context: Uint8Array) =>
+      new TextEncoder().encode(`${label}|${[...context].join(',')}|epoch-of-the-leader`)
+    );
+    sendingLeader('L', w, { exportSecret });
+    const follower = tab('F', w, { leader: false });
+
+    const secret = await exportSecretThroughLeaderTab(
+      'g1',
+      'canari-call',
+      new Uint8Array([4, 5]),
+      32,
+      key,
+      fromFollower(follower)
+    );
+
+    expect(new TextDecoder().decode(secret)).toBe('canari-call|4,5|epoch-of-the-leader');
+    expect(exportSecret).toHaveBeenCalledWith('g1', 'canari-call', new Uint8Array([4, 5]), 32);
+    await settle();
+    expect(w.databases.ids()).toEqual([]);
+  });
+
+  it('a payload sealed under another device key is answered unreadable, and nothing is sent', async () => {
+    const w = makeWorld();
+    const sendMessage = vi.fn();
+    sendingLeader('L', w, { sendMessage });
+    const follower = tab('F', w, { leader: false });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const failure = await sendThroughLeaderTab(
+      'g1',
+      bytes,
+      DELIVERY.visible,
+      toBase64(crypto.getRandomValues(new Uint8Array(32))),
+      fromFollower(follower)
+    ).catch((e: unknown) => e);
+    warn.mockRestore();
+
+    expect((failure as DelegatedSendFailedError).errorClass).toBe('unreadable');
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('the call preflight: ready from a serving leader, its refusal from one at the PIN gate', async () => {
+    const ready = makeWorld();
+    sendingLeader('L', ready, {});
+    const asked = tab('F', ready, { leader: false });
+    expect(await callPreflightThroughLeaderTab('g1', fromFollower(asked))).toBe('ready');
+
+    const locked = makeWorld();
+    sendingLeader('L', locked, {}, { readiness: 'unavailable' });
+    const refused = tab('F', locked, { leader: false });
+    expect(await callPreflightThroughLeaderTab('g1', fromFollower(refused))).toBe(
+      'leader-unavailable'
+    );
   });
 });
 

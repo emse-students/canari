@@ -3243,29 +3243,52 @@ promoted in place whose reload is owed.
   against its copy and neither forgets nor resets the ledger, which is one per account.
 - `mayPull` and the mailbox barrier read the same fact instead of the role alone, so a leader promoted
   in place pulls nothing until its reload.
-- **Sends are sealed by the leader** (review of #3326). In such a tab `sendMessage` hands the
+- **Sends are sealed by the leader** (reviews of #3326). In such a tab `sendMessage` hands the
   plaintext to the leader tab over the commit delegation (`tabCommitDelegation.ts`, kind `send`;
   `tabSendDelegation.ts`): the leader runs its own `sendMessage` and answers the frame
   (`sealed`, `authorProof`, `receivedAt`, base64 across the boundary) or its failure as data
-  (`DelegatedSendFailedError`). The delivery crosses BY NAME, so the leader passes the same
-  `DELIVERY` constant its identity checks read. Every direct caller (a call's invite and hangup, a
-  media forward, a scroll-back request, a notice, a salon invitation card) works unchanged from a
-  follower. **Termination is the delegation's, never a clock**: a serving leader answers, a leader
-  at its PIN gate or on another account refuses typed, a leader that dies while running it is proven
-  dead by its free run lock (`leader-gone`, never re-sent); an unclaimed request waits for the next
-  leader that loaded its state as leader, and the only other candidate is this document, whose
-  promotion reload ends the wait with it.
-- **`FollowerTabSendError` is left for the cases no leader can carry**: a document leading on a
-  copy it loaded as a follower (`no-leader`, refused before any hand-over), the delegation's
-  refusals, and `lead-lost` - the lead left the document in the middle of its own send (`emitFrame`,
-  after the awaits). That one is refused, never handed over: a send that started in the leader may be
+  (`DelegatedSendFailedError`, its class a closed set `DelegatedErrorClass` - `transport`,
+  `refused`, `commit-outcome-unknown`, `lead-lost`, `unreadable`, `other` - never a name matched
+  as a string). The delivery crosses BY NAME, so the leader passes the same `DELIVERY` constant its
+  identity checks read. Every direct caller (a call's invite and hangup, a media forward, a
+  scroll-back request, a notice, a salon invitation card) works unchanged from a follower.
+- **The plaintext never rests in the clear.** The delegation's store is unsealed on purpose (it
+  holds ids), so a request's secret part - the message, which can be a media key or Graine key
+  material, its delivery, an exporter label and context - is its own `payload`, sealed under the
+  device key with `encryptData` (the cipher of every encrypted row). The claim DROPS the payload
+  from the record in the same transaction (it lives in the leader's memory for the run), and no
+  answered record keeps one, a refusal of a pending request included (`withoutPayload`). A payload
+  sealed under another key (a PIN change in between) is answered `unreadable`. Pinned against the
+  RAW IndexedDB records in `tabSendDelegation.test.ts`.
+- **Termination is the delegation's, never a clock**: a serving leader answers, a leader at its PIN
+  gate or on another account refuses typed, a leader that dies while running it is proven dead by
+  its free run lock (`leader-gone`, never re-run); an unclaimed request waits for the next leader
+  that loaded its state as leader, and the only other candidate is this document, whose promotion
+  reload ends the wait with it. **`leader-gone` on a send is an UNKNOWN outcome**
+  (`DelegatedSendOutcomeUnknownError`): the leader may have posted the frame before it died. A media
+  forward says "maybe sent" (`chat_forward_maybe_sent`) instead of offering a blind retry; a visible
+  notice and a salon invitation card are handled as sent (their own copy drawn; a digest diff
+  settles a notice that never left).
+- **A call's media keys are the leader's.** `exportSecret` is concrete in `BaseMlsService`: in such
+  a tab it asks the leader (kind `export-secret`, sealed both ways, ONLY the secret comes back),
+  else it reads `exportSecretHere`, the platform's. The follower's frozen copy holds an epoch behind
+  every commit since its load, so a key exported there matched no member's. Exported by the leader,
+  it is the key a call placed from the leader tab would have: the callee derives at its own current
+  epoch, exactly as for any call - the guarantee is the leader's, not a stronger one.
+- **`FollowerTabSendError` is left for the cases that PROVE nothing ran** (`NoLeaderReason`): a
+  document leading on a copy it loaded as a follower (`no-leader`, refused before any hand-over), no
+  device key to seal with, the delegation's refusals other than `leader-gone`, and `lead-lost` - the
+  lead left the document in the middle of its own send (`emitFrame`, after the awaits). That one is refused, never handed over: a send that started in the leader may be
   an outbox entry, and the new leader drains the same shared queue, so handing it over would send it
   twice. For the same reason the outbox never hands an entry to another tab: it skips its flush in a
   leader promoted in place, re-reads `refusesCommitsHere()` with no await before its `sendMessage`
   call, and treats the typed refusal as `skip` (no attempt counted, the entry kept for the leader).
-- **A call needs a leader to carry its frames**: with none (`refusesCommitsHere()` and not
-  `leaderTabCarriesSends()`), `startCall` refuses with `CallNoLeaderTabError` BEFORE the initiate,
-  so nothing rings, and the toast says the tab is restarting (`call_no_leader_tab`).
+- **A call needs a leader that can carry it, asked before anything is created**: with none leading
+  elsewhere (`refusesCommitsHere()` and not `leaderTabCarriesSends()`), or a leader answering the
+  one delegated preflight (kind `call-preflight`) with a refusal - its PIN gate, another account -
+  `startCall` refuses with `CallNoLeaderTabError` BEFORE the initiate, the call still `idle`, so
+  nothing rings and no ghost missed call reaches the callee (`call_no_leader_tab` tells the member
+  to unlock or call from the main tab).
 - **Graine key groups**: `ensureDistributionGroupFor`, `verifyDistributionEpoch` and
   `rejoinBehindDistributionGroup` answer from what the copy holds, with one `debug` line, and never
   reach the commit replay (`catchUpDistributionGroup` -> `processIncomingMessage`) in such a tab.

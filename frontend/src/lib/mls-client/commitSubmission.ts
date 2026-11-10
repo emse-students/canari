@@ -40,6 +40,7 @@ import { SessionExpiredError } from '$lib/stores/auth';
 import { toBase64 } from '$lib/utils/hex';
 import { DEADLINE_MS } from '$lib/utils/requestDeadline';
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import type { DelegatedErrorClass } from '$lib/utils/chat/tabCommitDelegation';
 
 /** One submission: everything needed to send exactly the same request again. */
 export interface CommitSubmission {
@@ -338,42 +339,69 @@ export class FollowerTabCommitError extends Error {
 }
 
 /**
- * A send was asked of a tab whose copy of the MLS state is not the leader's, and NO LEADER COULD
- * CARRY IT: nothing was sealed. A follower hands its sends to the leader tab
- * (`tabSendDelegation.ts`); this is what is left - a leader promoted in place before its reload
- * (`no-leader`: it is the leader, on a copy behind every generation the old one sent), an engine
- * without Web Locks, a leader at its PIN gate or signed in to another account, or a leader that died
- * while running it (the delegation's refusals) - or `lead-lost`: the lead left this document in the
- * middle of its own send, which is refused rather than handed over, since an outbox entry handed to
- * the new leader would be sent twice (it drains the same queue). The outbox keeps such an entry
- * queued for the leader.
+ * Why no leader tab carried an operation a document without the leader copy handed over: `no-leader`
+ * (this document leads on a copy it loaded as a follower, its reload owed), `lead-lost` (the lead
+ * left this document in the middle of its own send), `no-device-key` (nothing to seal the payload
+ * with), or one of the delegation's refusals that PROVE nothing ran (`leader-unavailable`,
+ * `not-delegable`, `failed`). `leader-gone` is never one: see {@link DelegatedSendOutcomeUnknownError}.
+ */
+export type NoLeaderReason =
+  | 'no-leader'
+  | 'lead-lost'
+  | 'no-device-key'
+  | 'leader-unavailable'
+  | 'not-delegable'
+  | 'failed';
+
+/**
+ * A send (or an exporter read) was asked of a tab whose copy of the MLS state is not the leader's,
+ * and NO LEADER CARRIED IT: nothing was sealed. A follower hands its sends to the leader tab
+ * (`tabSendDelegation.ts`); this is what is left ({@link NoLeaderReason}). `lead-lost` is refused
+ * rather than handed over, since an outbox entry handed to the new leader would be sent twice (it
+ * drains the same queue). The outbox keeps such an entry queued for the leader.
  */
 export class FollowerTabSendError extends Error {
   constructor(
     readonly groupId: string,
-    readonly reason: string = 'no-leader'
+    readonly reason: NoLeaderReason = 'no-leader'
   ) {
     super(
       `a send to ${groupId.slice(0, 8)}... was asked of a tab without the leader copy and no leader ` +
-        `tab could carry it (${reason}) - nothing was sealed`
+        `tab carried it (${reason}) - nothing was sealed`
     );
     this.name = 'FollowerTabSendError';
   }
 }
 
 /**
- * A send a follower handed to the leader tab, which RAN it and failed (a refused POST, an unresolved
- * commit, the network). The leader's own error does not cross the tab boundary as a class, so its
- * name and message are carried for the log; the caller treats it as its own send failing.
+ * A send handed to the leader tab whose leader DIED WHILE RUNNING IT (`leader-gone`, proven by its
+ * released run lock): it may have sealed and posted the frame before it died, or not. Never "not
+ * sent" - a blind retry may deliver it twice - and never "sent": the caller says "maybe sent", or
+ * reconciles by the frame's message id.
+ */
+export class DelegatedSendOutcomeUnknownError extends Error {
+  constructor(readonly groupId: string) {
+    super(
+      `the leader tab died while sending to ${groupId.slice(0, 8)}... - the frame may or may not have left`
+    );
+    this.name = 'DelegatedSendOutcomeUnknownError';
+  }
+}
+
+/**
+ * An operation handed to the leader tab, which RAN it and failed. The leader's error crosses the tab
+ * boundary as {@link DelegatedErrorClass}, a closed set a caller may branch on; its message is for
+ * the log only.
  */
 export class DelegatedSendFailedError extends Error {
   constructor(
     readonly groupId: string,
-    readonly leaderErrorName: string,
-    leaderMessage: string
+    readonly errorClass: DelegatedErrorClass,
+    leaderMessage: string,
+    readonly operation: 'send' | 'export-secret' = 'send'
   ) {
     super(
-      `the leader tab's send to ${groupId.slice(0, 8)}... failed: ${leaderErrorName}: ${leaderMessage}`
+      `the leader tab's ${operation} in ${groupId.slice(0, 8)}... failed (${errorClass}): ${leaderMessage}`
     );
     this.name = 'DelegatedSendFailedError';
   }

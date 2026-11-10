@@ -14,10 +14,14 @@
  * posted, and every state change is a read-check-write inside ONE `readwrite` transaction
  * ({@link TabCommitStore.update}), which IndexedDB serialises across tabs.
  *
- * NOT SEALED BY THE DEVICE KEY, deliberately and like the publish queue: a record holds what the
- * gesture carries - a group's name, user ids - which the conversation rows of `CanariDB_<userId>`
- * hold in the clear already, and it lives only until the request is answered and read. Sealing would
- * make a PIN change strand every record in flight.
+ * THE RECORD IS NOT SEALED BY THE DEVICE KEY, deliberately and like the publish queue: it holds what
+ * a commit gesture carries - a group's name, user ids - which the conversation rows of
+ * `CanariDB_<userId>` hold in the clear already, and it lives only until the request is answered and
+ * read. Sealing it would make a PIN change strand every record in flight. A SECRET a request carries
+ * (a send's plaintext, an exporter read and its answer: `tabSendDelegation.ts`) is the exception: it
+ * is its own `payload` field, sealed under the device key, and the delegation drops it from the
+ * record the moment a leader claims it - an answered record never holds one. A PIN change between
+ * the two only makes that one request answer `unreadable`.
  */
 import { idbCommitted, idbRequest } from '$lib/db/outboxBlob';
 

@@ -55,7 +55,12 @@ vi.mock('$lib/users/blocks', async (importOriginal) => ({
   isBlockedWith: vi.fn(async () => false),
 }));
 /** Whether this tab holds the leader copy, and whether a leader tab carries its sends; per test. */
-const tabRole = vi.hoisted(() => ({ refuses: false, leaderCarries: false }));
+const tabRole = vi.hoisted(() => ({
+  refuses: false,
+  leaderCarries: false,
+  preflight: 'ready' as string,
+  preflightAsked: 0,
+}));
 vi.mock('$lib/mls-client/stateAuthority', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/mls-client/stateAuthority')>()),
   refusesCommitsHere: () => tabRole.refuses,
@@ -63,6 +68,10 @@ vi.mock('$lib/mls-client/stateAuthority', async (importOriginal) => ({
 vi.mock('$lib/utils/chat/tabSendDelegation', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/chat/tabSendDelegation')>()),
   leaderTabCarriesSends: () => tabRole.leaderCarries,
+  callPreflightThroughLeaderTab: async () => {
+    tabRole.preflightAsked += 1;
+    return tabRole.preflight;
+  },
 }));
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
@@ -742,6 +751,31 @@ describe('a peer-to-peer call, client side', () => {
     afterEach(() => {
       tabRole.refuses = false;
       tabRole.leaderCarries = false;
+      tabRole.preflight = 'ready';
+      tabRole.preflightAsked = 0;
+    });
+
+    it('a leader that cannot carry it (its PIN gate, another account) refuses it before any request: nothing rings', async () => {
+      tabRole.refuses = true;
+      tabRole.leaderCarries = true;
+      tabRole.preflight = 'leader-unavailable';
+      const service = new CallService(fakeMls);
+      const { apiFetch } = await import('$lib/utils/apiFetch');
+      vi.mocked(apiFetch).mockClear();
+      vi.mocked(fakeMls.sendMessage).mockClear();
+      const error = vi.spyOn(console, 'error');
+
+      const failure = await service.startCall('group-1', false).catch((e: unknown) => e);
+
+      expect(failure).toBeInstanceOf(CallNoLeaderTabError);
+      expect((failure as CallNoLeaderTabError).reason).toBe('leader-unavailable');
+      expect(tabRole.preflightAsked).toBe(1);
+      expect(apiFetch).not.toHaveBeenCalled();
+      expect(fakeMls.sendMessage).not.toHaveBeenCalled();
+      expect(get(service.callState)).toBe('idle');
+      // An expected refusal: logged, never an error line.
+      expect(error).not.toHaveBeenCalled();
+      error.mockRestore();
     });
 
     it('with no leader tab to carry its frames, refuses before any request: nothing rings', async () => {
@@ -769,6 +803,7 @@ describe('a peer-to-peer call, client side', () => {
 
       await callerJoined(service);
 
+      expect(tabRole.preflightAsked).toBe(1);
       expect(get(service.callState)).toBe('calling');
       const invites = vi
         .mocked(fakeMls.sendMessage)

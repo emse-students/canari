@@ -1828,7 +1828,7 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /** Tauri-native `invoke` wrapper - calls `exporter_secret` in Rust to derive a keying-material export for channel encryption. */
-  async exportSecret(
+  protected async exportSecretHere(
     groupId: string,
     label: string,
     context: Uint8Array,

@@ -43,7 +43,10 @@ import {
   TURN_DISABLED_CODE,
 } from '$lib/utils/callFailure';
 import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
-import { leaderTabCarriesSends } from '$lib/utils/chat/tabSendDelegation';
+import {
+  callPreflightThroughLeaderTab,
+  leaderTabCarriesSends,
+} from '$lib/utils/chat/tabSendDelegation';
 import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -1087,11 +1090,24 @@ export class CallService {
       throw new CallE2eUnsupportedError();
     }
     // A tab without the leader copy places a call through the leader, which seals its invite and
-    // its hangup (`tabSendDelegation.ts`). With no leader to carry them, the invite could never
-    // leave AFTER the ring - so the call is refused here, before anything rings.
+    // its hangup and reads its media keys (`tabSendDelegation.ts`). With no leader to carry them, the
+    // invite could never leave AFTER the ring - so the call is refused here, before anything rings.
     if (refusesCommitsHere() && !leaderTabCarriesSends()) {
       appendLog('[Call] startCall refused - no leader tab can carry its frames (reload owed)');
-      throw new CallNoLeaderTabError();
+      throw new CallNoLeaderTabError('no-leader');
+    }
+    // THE LEADER SAYS YES BEFORE ANYTHING IS CREATED: a leader at its PIN gate or signed in to
+    // another account holds the lock but cannot carry the call, and a call it cannot carry would
+    // ring the callee into a ghost missed call. Asked once, on the delegation channel; the call
+    // stays `idle` until the answer, so a refusal leaves nothing to end.
+    if (refusesCommitsHere()) {
+      const preflight = await callPreflightThroughLeaderTab(groupId);
+      if (preflight !== 'ready') {
+        appendLog(`[Call] startCall refused - the leader tab cannot carry it (${preflight})`);
+        throw new CallNoLeaderTabError(preflight);
+      }
+      // A second tap answered while this one waited: that call is the one placed.
+      if (get(this.callState) !== 'idle') return;
     }
 
     this.currentGroupId = groupId;

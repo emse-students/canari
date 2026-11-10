@@ -210,7 +210,10 @@ import {
   ADMIT_REFUSED_REASON,
 } from '$lib/mls-client/CommitRefusedError';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
-import { sendThroughLeaderTab } from '$lib/utils/chat/tabSendDelegation';
+import {
+  exportSecretThroughLeaderTab,
+  sendThroughLeaderTab,
+} from '$lib/utils/chat/tabSendDelegation';
 import { commitRateLimitRemainingMs, noteCommitRateLimited } from '$lib/mls-client/commitRateLimit';
 import {
   CommitOutcomeUnknownError,
@@ -8633,7 +8636,9 @@ export abstract class BaseMlsService implements IMlsService {
     // place before its reload, is behind every generation the leader sent, so its frame is a drop at
     // the peer and its ledger count is written from the wrong copy. Such a document hands the send to
     // the leader tab, which seals it on its own copy (`tabSendDelegation.ts`); nothing moves here.
-    if (refusesCommitsHere()) return sendThroughLeaderTab(groupId, messageBytes, frameDelivery);
+    if (refusesCommitsHere()) {
+      return sendThroughLeaderTab(groupId, messageBytes, frameDelivery, this.currentDeviceKeyB64);
+    }
     await this.waitForCatchUpIdle();
     // NOTHING IS SEALED ON TOP OF A COMMIT WHOSE OUTCOME IS UNKNOWN: whether this device is at N or
     // N+1 is exactly what that outcome decides, so it is asked first, by the same resubmission.
@@ -8744,7 +8749,31 @@ export abstract class BaseMlsService implements IMlsService {
     messageBytes: Uint8Array,
     envelope?: EnvelopeSender
   ): Promise<DecryptedApplication | null>;
-  abstract exportSecret(
+  /**
+   * An MLS exporter secret of `groupId` (a call's media keys). ONLY THE LEADER COPY IS READ: a
+   * document without it holds an epoch frozen at its load, behind every commit since, so a key
+   * exported there is not the one any member derives. Such a document asks the leader tab, which
+   * answers the secret alone, sealed (`tabSendDelegation.ts`).
+   */
+  exportSecret(
+    groupId: string,
+    label: string,
+    context: Uint8Array,
+    keyLen: number
+  ): Promise<Uint8Array> {
+    if (refusesCommitsHere()) {
+      return exportSecretThroughLeaderTab(
+        groupId,
+        label,
+        context,
+        keyLen,
+        this.currentDeviceKeyB64
+      );
+    }
+    return this.exportSecretHere(groupId, label, context, keyLen);
+  }
+  /** The platform's exporter read, on THIS document's live client. */
+  protected abstract exportSecretHere(
     groupId: string,
     label: string,
     context: Uint8Array,

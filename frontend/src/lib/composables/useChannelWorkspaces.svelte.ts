@@ -43,6 +43,7 @@ import {
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
 import { currentUserId } from '$lib/stores/userState.svelte';
+import { DelegatedSendOutcomeUnknownError } from '$lib/mls-client/commitSubmission';
 import { getSavedUserId } from '$lib/stores/user';
 import { applyChannelEdit, revertChannelEdit } from '$lib/utils/chat/channelEdit';
 import { deliverSalonWrite, nothingLeftTheDevice } from '$lib/utils/chat/salonOwed';
@@ -2009,7 +2010,16 @@ export function useChannelWorkspaces() {
                 )
               );
               try {
-                await mlsService.sendMessage(directConvo[1].id, invitationMsg);
+                try {
+                  await mlsService.sendMessage(directConvo[1].id, invitationMsg);
+                } catch (sendError) {
+                  // Handed to a leader tab that died sending it: it may have reached the invitee,
+                  // so the card is NOT treated as unsent - this device's copy is drawn below.
+                  if (!(sendError instanceof DelegatedSendOutcomeUnknownError)) throw sendError;
+                  console.warn(
+                    '[Channel Invite] invitation outcome unknown (the leader tab died sending it) - drawn as sent'
+                  );
+                }
                 // MLS never hands a device back its own application message, so the inviter's
                 // copy of the card would never appear on THIS device. Insert it locally; their
                 // other devices build the same envelope from the incoming event.

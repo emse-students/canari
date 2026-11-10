@@ -33,6 +33,8 @@ import type { AuthoredFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { noteMlsStateLoaded, resetStateAuthorityForTests } from '$lib/mls-client/stateAuthority';
 import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
+import { toBase64 } from '$lib/utils/hex';
+import { sealTabPayload } from '$lib/utils/chat/tabSendDelegation';
 
 /**
  * THE REPAIR THAT RUNS BEFORE ANYTHING CAN SEND, AND THE EPOCH IT RUNS IN.
@@ -285,6 +287,7 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
     });
     try {
       const follower = session(new RatchetModel(disk.state), peer, disk);
+      Object.assign(follower.svc, { currentDeviceKeyB64: toBase64(new Uint8Array(32).fill(7)) });
 
       const sent = await follower.send();
 
@@ -294,12 +297,54 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
         receivedAt: 42,
       });
       expect(delegateCommitToLeader).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 'send', groupId: G, delivery: { named: 'visible' } })
+        // The plaintext and its delivery travel SEALED, never as readable fields.
+        {
+          kind: 'send',
+          groupId: G,
+          payload: { iv: expect.any(String), cipherText: expect.any(String) },
+        }
       );
       // Nothing sealed, posted or counted on the follower's own copy.
       expect(follower.svc.encryptForSend).not.toHaveBeenCalled();
       expect(follower.svc.delivery.postApplicationMessage).not.toHaveBeenCalled();
       expect(sendRatchetEntries(U)).toEqual([]);
+    } finally {
+      election.role = null;
+      delegateCommitToLeader.mockReset();
+      resetStateAuthorityForTests();
+    }
+  });
+
+  it("a follower's exporter read (a call's keys) is the leader's, never its frozen copy's", async () => {
+    const key = toBase64(new Uint8Array(32).fill(7));
+    noteMlsStateLoaded(false);
+    election.role = 'follower';
+    delegateCommitToLeader.mockResolvedValueOnce({
+      status: 'done',
+      value: {
+        status: 'exported',
+        secret: await sealTabPayload(toBase64(new Uint8Array([9, 9])), key),
+      },
+    });
+    try {
+      const svc = Object.create(BaseMlsService.prototype) as Record<string, unknown>;
+      const exportSecretHere = vi.fn();
+      Object.assign(svc, { currentDeviceKeyB64: key, exportSecretHere });
+
+      const secret = await (svc as unknown as BaseMlsService).exportSecret(
+        G,
+        'canari-call',
+        new Uint8Array([1]),
+        32
+      );
+
+      expect([...secret]).toEqual([9, 9]);
+      expect(exportSecretHere).not.toHaveBeenCalled();
+      expect(delegateCommitToLeader).toHaveBeenCalledWith({
+        kind: 'export-secret',
+        groupId: G,
+        payload: { iv: expect.any(String), cipherText: expect.any(String) },
+      });
     } finally {
       election.role = null;
       delegateCommitToLeader.mockReset();

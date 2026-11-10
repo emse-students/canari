@@ -1640,7 +1640,7 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** WASM client wrapper - calls `this.client.export_secret` to derive keying material for channel encryption. */
-  async exportSecret(
+  protected async exportSecretHere(
     groupId: string,
     label: string,
     context: Uint8Array,

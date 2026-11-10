@@ -174,6 +174,7 @@ import {
 } from '$lib/notifications/conversationLevel';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
+import { DelegatedSendOutcomeUnknownError } from '$lib/mls-client/commitSubmission';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -3549,6 +3550,12 @@ export function useMessaging() {
       if (!text) return { success: false, error: m.chat_forward_error_nothing_to_forward() };
       return await sendChatMessage(text, targetName, null, makeSendDeps(ctx, convo));
     } catch (e) {
+      // A FORWARD HANDED TO A LEADER TAB THAT DIED WHILE SENDING IT may have left: never offered
+      // as "failed, try again" - a blind retry would deliver it twice. Said as "maybe sent".
+      if (e instanceof DelegatedSendOutcomeUnknownError) {
+        ctx.log(`[FORWARD] MLS forward to "${targetName}": outcome unknown - ${String(e)}`);
+        return { success: false, error: m.chat_forward_maybe_sent() };
+      }
       // Same as the channel branch above, and for the same reason.
       ctx.log(`[FORWARD] MLS forward failed for "${targetName}": ${String(e)}`);
       return { success: false, error: m.chat_forward_error_fallback() };

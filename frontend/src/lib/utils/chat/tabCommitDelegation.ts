@@ -75,25 +75,58 @@ export type DelegatedCommitOp =
   | { kind: 'enter-community-key-group'; workspaceId: string }
   /** A salon's own key group, entered by a member who has access (`enterPrivateSalonGroup`). */
   | { kind: 'enter-salon-group'; workspaceId: string; channelId: string; isPrivate: boolean }
-  /** One application frame, sealed and posted by the leader (`tabSendDelegation.ts`). */
-  | {
-      kind: 'send';
-      groupId: string;
-      /** The plaintext, base64: a record is plain data JSON carries too. */
-      message: string;
-      /** A `DELIVERY` constant by NAME (identity is what the leader reads), or an addressed one. */
-      delivery: DelegatedDelivery;
-    };
+  /**
+   * One application frame, sealed and posted by the leader (`tabSendDelegation.ts`). The plaintext
+   * and its delivery are in `payload`, SEALED under the device key ({@link SealedTabPayload}).
+   */
+  | { kind: 'send'; groupId: string; payload?: SealedTabPayload }
+  /** One MLS exporter secret of `groupId` at the leader's epoch (a call's media keys); sealed. */
+  | { kind: 'export-secret'; groupId: string; payload?: SealedTabPayload }
+  /** Whether the leader can carry a call's frames right now - asked before anything rings. */
+  | { kind: 'call-preflight'; groupId: string };
 
-/** A frame's delivery across the tab boundary - see {@link DelegatedCommitOp}'s `send`. */
-export type DelegatedDelivery =
-  | { named: 'visible' | 'mutation' | 'transport' | 'keyMaterial' }
-  | { silent: boolean; durable: boolean; recipients?: string[] };
+/**
+ * A request's or an answer's secret part, AES-256-GCM under the device key (`encryptData`, the
+ * cipher every encrypted row of this device uses), base64 so a record stays plain data. It is
+ * DROPPED from the record the moment a leader claims the request, and never written into an
+ * answered one ({@link withoutPayload}): the store holds it only while it waits.
+ */
+export interface SealedTabPayload {
+  iv: string;
+  cipherText: string;
+}
+
+/**
+ * The leader's own error, carried by CLASS as a closed set (never by its name or message, which
+ * only the log reads): `transport` (the request never got an answer), `refused` (the server answered
+ * a refusal), `commit-outcome-unknown` (a commit of the group is unresolved, nothing sealed),
+ * `lead-lost` (the leader lost the lead itself), `unreadable` (the sealed payload did not open under
+ * the leader's device key), `other` (a class no caller branches on).
+ */
+export type DelegatedErrorClass =
+  | 'transport'
+  | 'refused'
+  | 'commit-outcome-unknown'
+  | 'lead-lost'
+  | 'unreadable'
+  | 'other';
 
 /** What the leader's send came to: the frame, or its own failure carried as data. */
 export type DelegatedSendResult =
   | { status: 'sent'; sealed: string; authorProof: string; receivedAt: number | null }
-  | { status: 'failed'; name: string; message: string };
+  | { status: 'failed'; errorClass: DelegatedErrorClass; message: string };
+
+/** What the leader's export came to: the secret, sealed like the request, or its failure. */
+export type DelegatedExportResult =
+  | { status: 'exported'; secret: SealedTabPayload }
+  | { status: 'failed'; errorClass: DelegatedErrorClass; message: string };
+
+/** The op as it may be kept in a record: without its sealed payload. */
+export function withoutPayload(op: DelegatedCommitOp): DelegatedCommitOp {
+  if (!('payload' in op)) return op;
+  const { payload: _dropped, ...rest } = op;
+  return rest as DelegatedCommitOp;
+}
 
 export type DelegatedCommitKind = DelegatedCommitOp['kind'];
 
@@ -116,6 +149,8 @@ export interface DelegatedCommitResults {
   'enter-community-key-group': 'entered';
   'enter-salon-group': 'entered';
   send: DelegatedSendResult;
+  'export-secret': DelegatedExportResult;
+  'call-preflight': 'ready';
 }
 
 /** Why the leader did not answer the gesture itself (see the module comment). */
@@ -203,6 +238,10 @@ function describe(op: DelegatedCommitOp): string {
       return `salon group ${op.channelId.slice(0, 8)}...`;
     case 'send':
       return `send to ${op.groupId.slice(0, 8)}...`;
+    case 'export-secret':
+      return `exporter secret of ${op.groupId.slice(0, 8)}...`;
+    case 'call-preflight':
+      return `call preflight in ${op.groupId.slice(0, 8)}...`;
   }
 }
 
@@ -368,8 +407,11 @@ export function createDelegationServer(env: DelegationEnv) {
     from: 'pending' | 'running',
     outcome: DelegatedOutcome<DelegatedCommitKind>
   ): Promise<void> {
+    // An answered record never keeps a sealed payload - a refusal of a still-pending one included.
     const after = await store.update(record.id, (current) =>
-      current?.state === from ? { ...current, state: 'done', outcome } : null
+      current?.state === from
+        ? { ...current, op: withoutPayload(current.op), state: 'done', outcome }
+        : null
     );
     if (after?.state === 'done') {
       env.post({ type: 'tab_commit_settled', id: record.id, account: record.account });
@@ -477,10 +519,16 @@ export function createDelegationServer(env: DelegationEnv) {
         await settle(store, current, 'pending', { status: 'refused', reason: 'not-delegable' });
         return 'answered';
       }
-      const claimed = await store.update(id, (r) =>
-        r?.state === 'pending' ? { ...r, state: 'running' } : null
-      );
-      if (claimed?.state !== 'running') return 'settled';
+      // THE CLAIM DROPS THE SEALED PAYLOAD from the record, in the same transaction: from here it
+      // lives only in this document's memory, for the run.
+      let toRun = null as DelegatedCommitOp | null;
+      const claimed = await store.update(id, (r) => {
+        if (r?.state !== 'pending') return null;
+        toRun = r.op;
+        return { ...r, op: withoutPayload(r.op), state: 'running' };
+      });
+      if (claimed?.state !== 'running' || toRun === null) return 'settled';
+      const op: DelegatedCommitOp = toRun;
       // RE-READ AFTER THE CLAIM'S AWAIT, right before the run: a sign-out (or a demotion) landing
       // between the decision and here must not run the gesture against a session that is ending -
       // an executor reaching for MLS then would build a client for nobody.
@@ -496,7 +544,7 @@ export function createDelegationServer(env: DelegationEnv) {
         return 'answered';
       }
       env.log(`${tag} run for a follower tab`);
-      await settle(store, claimed, 'running', await runExecutor(claimed.op));
+      await settle(store, claimed, 'running', await runExecutor(op));
       return 'served';
     });
   }

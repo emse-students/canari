@@ -87,14 +87,16 @@ export class CallE2eUnsupportedError extends Error {
 }
 
 /**
- * A call asked of a tab that does not hold the leader copy, while NO LEADER TAB CAN CARRY ITS SENDS
- * (a leader promoted in place, its reload owed; an engine without Web Locks): REFUSED before any
- * request, so nothing rings. A follower with a leader places the call normally - its invite and its
- * hangup are sealed by the leader (`tabSendDelegation.ts`).
+ * A call asked of a tab that does not hold the leader copy, while NO LEADER TAB CAN CARRY IT: none
+ * leads elsewhere (`no-leader`: this tab was promoted in place, its reload owed), or the leader
+ * answered the preflight that it cannot (`leader-unavailable`: its PIN gate or no session;
+ * `not-delegable`: another account, or no Web Locks; `failed`). REFUSED before any request, so
+ * nothing rings. A follower whose leader answers `ready` places the call normally - its invite, its
+ * hangup and its media keys go through the leader (`tabSendDelegation.ts`).
  */
 export class CallNoLeaderTabError extends Error {
-  constructor() {
-    super("no leader tab can carry this call's frames - refused before the ring");
+  constructor(readonly reason: string) {
+    super(`no leader tab can carry this call (${reason}) - refused before the ring`);
     this.name = 'CallNoLeaderTabError';
   }
 }

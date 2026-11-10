@@ -23,6 +23,8 @@ import { noticeText, noticeUserIds } from './noticeText';
 import type { AddMessageToChatOptions } from '$lib/types';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { SYSTEM_SENDER_ID } from './messageUtils';
+import { DelegatedSendOutcomeUnknownError } from '$lib/mls-client/commitSubmission';
+import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
 
 /** The visible events whose notice every member's device draws, the actor's included. */
 export type VisibleNoticeEvent =
@@ -179,7 +181,19 @@ export async function sendVisibleNotice(
   const frame = mkVisibleSystem(event, JSON.stringify(payload));
   const noOwnRow = event === 'memberLeft' || event === 'groupDeleted' || !own;
   const text = noOwnRow ? null : await visibleNoticeContent(event, payload, own.actor);
-  const sent = await mlsService.sendMessage(groupId, encodeAppMessage(frame));
+  // A NOTICE HANDED TO A LEADER TAB THAT DIED WHILE SENDING IT may have reached every member: it is
+  // not a failed send, so the caller is not told "lost" - the own row is written, undated by the
+  // server, and a digest diff settles it if the frame never left.
+  let sent: SentFrame | null;
+  try {
+    sent = await mlsService.sendMessage(groupId, encodeAppMessage(frame));
+  } catch (e) {
+    if (!(e instanceof DelegatedSendOutcomeUnknownError)) throw e;
+    console.warn(
+      `[NOTICE] ${event} in ${groupId.slice(0, 8)}… outcome unknown (the leader tab died sending it) - handled as sent`
+    );
+    sent = null;
+  }
   if (noOwnRow) return;
   if (text === null) {
     console.warn(
@@ -191,7 +205,8 @@ export async function sendVisibleNotice(
   // text row gets it from its send (`patchServerTimestamp` in the outbox): MLS never hands this
   // device its frame back, so the send's answer is the only place it can come from. Without it the
   // row was ordered by `sentAt` on this device and by the server's acceptance everywhere else.
-  if (sent.receivedAt === null) {
+  const receivedAt = sent?.receivedAt ?? null;
+  if (sent !== null && receivedAt === null) {
     console.error(
       `[NOTICE] ${event} sent in ${groupId.slice(0, 8)}… but the server answered no receive time - this device's own row ${frame.messageId.slice(0, 8)} is ordered by its sentAt alone, unlike every member's copy`
     );
@@ -201,7 +216,7 @@ export async function sendVisibleNotice(
       isSystem: true,
       messageId: frame.messageId,
       timestamp: new Date(frame.sentAt),
-      ...(sent.receivedAt !== null ? { serverTimestamp: sent.receivedAt } : {}),
+      ...(receivedAt !== null ? { serverTimestamp: receivedAt } : {}),
       // Never deferred into a drain's buffer: nothing will ever write this row again.
       soleWriter: true,
     });
