@@ -2,8 +2,8 @@
   import { ArrowUpRight, ExternalLink, Globe } from '@lucide/svelte';
   import CanariLinkPreviewMedia from '$lib/components/shared/CanariLinkPreviewMedia.svelte';
   import EcosystemCoverPreview from '$lib/components/messages/EcosystemCoverPreview.svelte';
+  import SharedReelViewer from '$lib/components/reels/SharedReelViewer.svelte';
   import { getToken } from '$lib/stores/auth';
-  import { currentUserId } from '$lib/stores/user';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
   import { fetchCanariLinkPreview, type CanariLinkPreview } from '$lib/utils/canariLinkPreview';
   import { CANARI_BADGE_LABEL } from '$lib/utils/canariLinkPreviewFormat';
@@ -320,31 +320,11 @@
   });
 
   /**
-   * A REEL'S CARD OPENS THE REEL, NOT ITS PAGE (user, 2026-10-23, sharing lot S6): the reels viewer,
-   * started on that reel and continuing with the others, as Instagram opens a shared reel. Loaded on
-   * the tap, like `PostMedia` above - most cards are never a reel. A tap before the card has read
-   * its post still opens the page: the card does not yet know it is a reel.
+   * A REEL'S CARD OPENS THE REEL, NOT ITS PAGE (user, 2026-10-23, sharing lot S6), through
+   * `SharedReelViewer` - the one opener this card and the chat's `SharedPostCard` share. A tap
+   * before the card has read its post still opens the page: the card does not yet know it is a reel.
    */
-  let ReelViewer = $state<typeof import('$lib/components/reels/ReelViewer.svelte').default | null>(
-    null
-  );
-  let reelViewerToken = $state('');
   let openReel = $state<NonNullable<CanariLinkPreview['reelPost']> | null>(null);
-
-  async function openReelViewer(reel: NonNullable<CanariLinkPreview['reelPost']>) {
-    Log.d('LINK_PREVIEW', `opening the shared reel ${reel.id.slice(0, 8)} in the viewer`);
-    try {
-      const [token, mod] = await Promise.all([
-        getToken(),
-        import('$lib/components/reels/ReelViewer.svelte'),
-      ]);
-      reelViewerToken = token;
-      ReelViewer = mod.default;
-      openReel = reel;
-    } catch (error) {
-      console.error('[LINK_PREVIEW] the reels viewer did not open', error);
-    }
-  }
 
   async function handleClick(e: MouseEvent) {
     e.stopPropagation();
@@ -352,7 +332,7 @@
       e.preventDefault();
       const reel = canariPreview?.reelPost;
       if (reel) {
-        await openReelViewer(reel);
+        openReel = reel;
         return;
       }
       await navigateInAppFromHref(url);
@@ -472,11 +452,4 @@
   </a>
 {/if}
 
-{#if ReelViewer && openReel}
-  <ReelViewer
-    startPost={openReel}
-    authToken={reelViewerToken}
-    likerId={currentUserId() ?? undefined}
-    onClose={() => (openReel = null)}
-  />
-{/if}
+<SharedReelViewer reel={openReel} logTag="LINK_PREVIEW" onClose={() => (openReel = null)} />
