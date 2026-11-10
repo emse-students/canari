@@ -18,9 +18,11 @@
     CALLS_MODES,
     CHECKPOINT_SKIP_MODES,
     LIVES_MODES,
+    LIVE_REPLAYS_MODES,
     type CallsMode,
     type CheckpointSkipMode,
     type LivesMode,
+    type LiveReplaysMode,
   } from '$lib/utils/appVersion';
   import { PUSH_MODES, type PushMode } from '$lib/admin/pushMode';
 
@@ -35,6 +37,7 @@
     livesMode: LivesMode;
     pushMode: PushMode;
     checkpointSkipMode: CheckpointSkipMode;
+    liveReplaysMode: LiveReplaysMode;
   };
 
   /**
@@ -60,6 +63,7 @@
   let livesMode = $state<LivesMode>('off');
   let pushMode = $state<PushMode>('full');
   let checkpointSkipMode = $state<CheckpointSkipMode>('off');
+  let liveReplaysMode = $state<LiveReplaysMode>('off');
   /** One label per mode, typed so a fourth mode cannot reach the picker unlabelled. */
   const CALLS_MODE_LABELS: Record<CallsMode, () => string> = {
     off: m.admin_platform_calls_mode_off,
@@ -95,6 +99,14 @@
       value: mode,
       label: CHECKPOINT_SKIP_MODE_LABELS[mode](),
     }))
+  );
+  /** One label per live replays mode, typed so a new mode cannot reach the picker unlabelled. */
+  const LIVE_REPLAYS_MODE_LABELS: Record<LiveReplaysMode, () => string> = {
+    off: m.admin_platform_live_replays_mode_off,
+    on: m.admin_platform_live_replays_mode_on,
+  };
+  const LIVE_REPLAYS_MODE_OPTIONS: PickerOption[] = $derived(
+    LIVE_REPLAYS_MODES.map((mode) => ({ value: mode, label: LIVE_REPLAYS_MODE_LABELS[mode]() }))
   );
   /** A product name, which reads the same in every locale, and the localized "off" switch. */
   const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = $derived([
@@ -231,6 +243,7 @@
     livesMode = data.livesMode;
     pushMode = data.pushMode;
     checkpointSkipMode = data.checkpointSkipMode;
+    liveReplaysMode = data.liveReplaysMode;
   }
 
   /**
@@ -249,6 +262,7 @@
       livesMode,
       pushMode,
       checkpointSkipMode,
+      liveReplaysMode,
     };
     return Object.fromEntries(
       (Object.keys(form) as (keyof PlatformConfig)[])
@@ -540,6 +554,26 @@
         />
         <p class="text-text-muted text-xs">
           {m.admin_platform_checkpoint_skip_mode_hint()}
+        </p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="live-replays-mode" class="text-text-main text-sm font-bold">
+          {m.admin_platform_live_replays_mode_label()}
+        </label>
+        <Picker
+          id="live-replays-mode"
+          value={liveReplaysMode}
+          options={LIVE_REPLAYS_MODE_OPTIONS}
+          label={m.admin_platform_live_replays_mode_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            const mode = LIVE_REPLAYS_MODES.find((known) => known === v);
+            if (mode) liveReplaysMode = mode;
+          }}
+        />
+        <p class="text-text-muted text-xs">
+          {m.admin_platform_live_replays_mode_hint()}
         </p>
       </div>
 
