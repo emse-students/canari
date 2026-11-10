@@ -37,6 +37,7 @@ import {
 } from '$lib/mls-client/commitSubmission';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { callHoldLockName } from '$lib/mls-client/leafRefresh';
+import type { CallPreflightRefusal } from '$lib/utils/callFailure';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -235,7 +236,7 @@ export async function exportSecretThroughLeaderTab(
 
 /** What a call preflight came to, and the hold it leaves for the call's life. */
 export interface CallPreflight {
-  answer: 'ready' | 'no-leader' | 'leader-unavailable' | 'not-delegable' | 'failed';
+  answer: 'ready' | CallPreflightRefusal;
   /**
    * Lifts the hold on the group's leaf refresh (idempotent): called at the call's end. A document
    * that dies without calling it releases it all the same - its lock goes with it.
@@ -249,7 +250,9 @@ export interface CallPreflight {
  * for the call's life. The hold is a Web Lock THIS document holds, taken before the question, which
  * every leaf refresh reads in the browser's lock table (`callHoldLockHeld`): it binds the leader
  * that commits - the one asked, or any elected after a handover - so a refresh between this call's
- * export and the other end's never keys the two ends from different epochs.
+ * export and the other end's never keys the two ends from different epochs. The leader answers
+ * `ready` only once the group holds no staged commit (`settleForCallKeys`): `commit-unresolved`
+ * otherwise. Never rejects - every failure is an answer naming its cause.
  */
 export async function callPreflightThroughLeaderTab(
   groupId: string,
@@ -258,10 +261,21 @@ export async function callPreflightThroughLeaderTab(
   const none = () => {};
   if (deps.leadership() !== 'follower') return { answer: 'no-leader', releaseHold: none };
   if (!deps.locks) return { answer: 'not-delegable', releaseHold: none };
-  const hold = await takeHoldLock(groupId, deps.locks);
+  let hold: { release: () => void };
+  try {
+    hold = await takeHoldLock(groupId, deps.locks);
+  } catch (e) {
+    console.warn(
+      `[TAB-SEND] the call hold lock on ${groupId.slice(0, 8)}... could not be taken: ${String(e).slice(0, 120)}`
+    );
+    return { answer: 'hold-lock-failed', releaseHold: none };
+  }
   const answer = await deps.delegate<'call-preflight'>({ kind: 'call-preflight', groupId });
-  if (answer.status === 'done') return { answer: 'ready', releaseHold: hold.release };
+  if (answer.status === 'done' && answer.value === 'ready') {
+    return { answer: 'ready', releaseHold: hold.release };
+  }
   hold.release();
+  if (answer.status === 'done') return { answer: answer.value, releaseHold: none };
   return { answer: answer.reason === 'leader-gone' ? 'failed' : answer.reason, releaseHold: none };
 }
 
@@ -279,8 +293,11 @@ export interface LeaderMls {
     context: Uint8Array,
     keyLen: number
   ): Promise<Uint8Array>;
-  /** Resolves once a leaf refresh of `groupId` running here has settled; never rejects. */
-  leafRefreshSettled(groupId: string): Promise<void>;
+  /**
+   * Resolves once `groupId` sits at a settled epoch: a leaf refresh running here has finished, and
+   * no staged commit is left. @throws {CommitOutcomeUnknownError} when one is still unanswered.
+   */
+  settleForCallKeys(groupId: string): Promise<void>;
 }
 
 /** A failure of the leader's run, as the answer that carries it. */
@@ -349,10 +366,21 @@ export function delegatedSendExecutors(
     // already running here has settled. The call's epoch is held by the asker's own lock, taken
     // before it asked, which every leaf refresh reads in the browser's lock table (`callHoldLockHeld`,
     // at its decision and again under the MLS lock) - here, and in whichever document leads after a
-    // handover. A refresh decided BEFORE the lock existed may still commit: `ready` waits for it, so
-    // the keys this call exports next are read at the epoch it leaves.
+    // handover. A refresh decided BEFORE the lock existed may still commit, and a commit staged here
+    // and not yet answered (an unknown outcome, or one this leader inherited) merges at the next
+    // send: `ready` waits for the first and settles the second, so the keys this call exports next
+    // are read at the epoch the group stays at. A commit still unanswered after its settlement is
+    // `commit-unresolved` - no keys at an epoch nobody knows.
     'call-preflight': async ({ groupId }) => {
-      await (await mls()).leafRefreshSettled(groupId);
+      try {
+        await (await mls()).settleForCallKeys(groupId);
+      } catch (e) {
+        if (!(e instanceof CommitOutcomeUnknownError)) throw e;
+        console.warn(
+          `[TAB-SEND] a follower's call in ${groupId.slice(0, 8)}... refused: a staged commit is still unanswered after its settlement`
+        );
+        return 'commit-unresolved';
+      }
       return 'ready';
     },
   };

@@ -37,6 +37,7 @@ import {
   CallE2eUnsupportedError,
   CallInitiateError,
   CallNoLeaderTabError,
+  type CallPreflightRefusal,
   CallRelayWithheldError,
   CallSignallingRefusedError,
   describeCallFailure,
@@ -240,6 +241,16 @@ function currentEngine(): string {
   const shell = isAndroidTauriRuntime() ? 'android' : isIosTauriRuntime() ? 'ios' : null;
   return callReportEngine(typeof navigator === 'undefined' ? '' : navigator.userAgent, shell);
 }
+
+/** The cause a refused follower preflight is logged with - the three the review asked to tell apart. */
+const PREFLIGHT_CAUSE: Record<CallPreflightRefusal, string> = {
+  'hold-lock-failed': 'this tab could not take its hold lock, nothing was asked of the leader',
+  failed: 'the delegation to the leader failed (it died while answering)',
+  'no-leader': 'refused: no tab leads elsewhere (this one was promoted in place)',
+  'leader-unavailable': 'refused by the leader (its PIN gate, or no session)',
+  'not-delegable': 'refused by the leader (another account, or no Web Locks)',
+  'commit-unresolved': 'refused by the leader (a staged commit of the group is still unanswered)',
+};
 
 /** The suffix of an unjudged kind with packets and no frame yet: its verdict is the next check. */
 const CARRIED_NO_FRAME_YET = ' carried packets, no frame yet';
@@ -751,7 +762,9 @@ export class CallService {
     if (!refusesCommitsHere()) return null;
     const preflight = await callPreflightThroughLeaderTab(groupId);
     if (preflight.answer !== 'ready') {
-      appendLog(`[Call] ${step} refused - the leader tab cannot carry it (${preflight.answer})`);
+      appendLog(
+        `[Call] WARN ${step} refused before anything rang or answered - ${PREFLIGHT_CAUSE[preflight.answer]} (${preflight.answer})`
+      );
       throw new CallNoLeaderTabError(preflight.answer);
     }
     return preflight.releaseHold;
@@ -1298,8 +1311,6 @@ export class CallService {
 
     this.currentGroupId = groupId;
     this.currentCallId = callId;
-    // Answered: the server's deadline, not this timer, now decides (a late token is a 410).
-    this.clearRingTimer();
     this.tapAt = performance.now();
     // `incomingHasVideo` is already false on an audio-only build; an explicit `video` is held too.
     const useVideo = CALLS_VIDEO_ENABLED && (video ?? this.incomingHasVideo);
@@ -1314,7 +1325,9 @@ export class CallService {
       // rings: the keys are its export, so its epoch is held before they are read - or a refresh
       // there between the two ends' exports keys them from different epochs - and a leader that
       // cannot carry the call refuses it before this device answers anything. Nothing is announced,
-      // ended or hung up: the ring goes on, here and on every other device.
+      // ended or hung up, and the ring is left EXACTLY as it was - its window timer included, so a
+      // caller that drops without a hangup still ends it here - since the toast tells the member to
+      // answer from the main tab, where the same call is ringing.
       if (refusesCommitsHere()) {
         let releaseHold: (() => void) | null;
         try {
@@ -1322,6 +1335,13 @@ export class CallService {
             this.holdTheLeadersEpoch(groupId, 'acceptCall')
           );
         } catch (e) {
+          // A refusal was said, with its cause, where it was answered (`holdTheLeadersEpoch`); any
+          // other throw is said here.
+          if (!(e instanceof CallNoLeaderTabError)) {
+            appendLog(
+              `[Call] WARN acceptCall: the leader preflight threw - the call keeps ringing: ${String(e).slice(0, 160)}`
+            );
+          }
           showToast(describeCallFailure(e), 'warning');
           return;
         }
@@ -1335,6 +1355,8 @@ export class CallService {
         }
         this.releaseLeaderLeafRefreshHold = releaseHold;
       }
+      // Answered: the server's deadline, not this timer, now decides (a late token is a 410).
+      this.clearRingTimer();
       this.callState.set('incall');
       this.markAnswered('this device answered');
       // FOUR STEPS SIDE BY SIDE, joined before the room: none needs another's result. Serial, they

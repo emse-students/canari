@@ -484,7 +484,7 @@ describe('a follower tab hands its sends to the leader tab', () => {
         async () => ({
           sendMessage: mls.sendMessage ?? vi.fn(),
           exportSecret: mls.exportSecret ?? noExport,
-          leafRefreshSettled: mls.leafRefreshSettled ?? (async () => {}),
+          settleForCallKeys: mls.settleForCallKeys ?? (async () => {}),
         }),
         () => key
       )
@@ -774,7 +774,7 @@ describe('a follower tab hands its sends to the leader tab', () => {
     const running = new Promise<void>((r) => (refreshDone = r));
     const asked: string[] = [];
     sendingLeader('L', w, {
-      leafRefreshSettled: async (groupId) => {
+      settleForCallKeys: async (groupId) => {
         asked.push(groupId);
         await running;
       },
@@ -797,6 +797,30 @@ describe('a follower tab hands its sends to the leader tab', () => {
     refreshDone();
     expect((await preflight).answer).toBe('ready');
     (await preflight).releaseHold();
+  });
+
+  /**
+   * Seventh review of #3326: a staged commit still unanswered after its settlement (a refresh with an
+   * unknown outcome, or one a previous leader left) would merge at the call's first send, AFTER the
+   * keys were read. No keys then: the answer is `commit-unresolved`, and the hold is released.
+   */
+  it('a leader whose staged commit is still unanswered after its settlement answers commit-unresolved', async () => {
+    const w = makeWorld();
+    const { CommitOutcomeUnknownError } = await import('$lib/mls-client/commitSubmission');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    sendingLeader('L', w, {
+      settleForCallKeys: async (groupId) => {
+        throw new CommitOutcomeUnknownError(groupId, 5, 'still no answer');
+      },
+    });
+    const follower = tab('F', w, { leader: false });
+
+    const preflight = await callPreflightThroughLeaderTab('g-pending', fromFollower(follower));
+
+    expect(preflight.answer).toBe('commit-unresolved');
+    await settle();
+    expect(await callHoldLockHeld('g-pending', w.locks)).toBe(false);
+    vi.restoreAllMocks();
   });
 });
 

@@ -3290,7 +3290,16 @@ promoted in place whose reload is owed.
   (`syncLeafRefreshHold`), or the browser when the follower dies. **Without Web Locks nothing is
   held, by construction** - no follower can carry a call there (`not-delegable`). A table that
   exists and cannot be read (`CallHoldUnreadableError`) makes no commit: one WARN naming
-  `LockManager.query`, the attempt recorded for that epoch, asked again when the epoch moves. A hold in the follower's own document
+  `LockManager.query`, the attempt recorded for that epoch, asked again when the epoch moves. **The
+  known, accepted limit:** that record lives in the session's memory, so in a quiet group one failed
+  read holds the refresh until the epoch moves or the page reloads - a delayed healing, never a blind
+  commit. **A staged commit is settled before the keys too**: the leader's `ready` comes from
+  `settleForCallKeys` - the running refresh, then `settleBeforeSend`, the path every send takes - so a
+  commit kept with an unknown outcome (or inherited from a previous leader) is merged or cleared
+  before the export, never by the call's first signalling send after it; one still unanswered is
+  `commit-unresolved`, and no key is read. A refused ANSWER (`acceptCall`) leaves the ring exactly as
+  it was, its window timer included, and logs a WARN naming the cause (hold lock, delegation, or the
+  leader's refusal). A hold in the follower's own document
   held nothing (the leader's refresh between its export and the other end's keyed them from two
   epochs), and a hold in the asked leader's memory died with that leader (fifth review of #3326).
   Incoming calls ring in the leader tab only: a follower opens no socket and decrypts nothing, so an

@@ -154,7 +154,8 @@ export interface DelegatedCommitResults {
   'enter-salon-group': 'entered';
   send: DelegatedSendResult;
   'export-secret': DelegatedExportResult;
-  'call-preflight': 'ready';
+  /** `commit-unresolved`: the group still holds a staged commit after its settlement - no keys yet. */
+  'call-preflight': 'ready' | 'commit-unresolved';
 }
 
 /** Why the leader did not answer the gesture itself (see the module comment). */

@@ -570,6 +570,10 @@ export async function refreshLeafIfDue(
   const heldInAnotherTab = (): string =>
     `[LEAF_REFRESH] ${short}... due (${ageDays} d, ${decision.basis}) but held (a call in another tab) - ` +
     'asked again at the next send after that tab hangs up';
+  // THE KNOWN, ACCEPTED LIMIT: the attempt is recorded in this session's memory, at this epoch, so in
+  // a quiet group ONE failed read holds the refresh until the epoch moves (anyone's commit) or the
+  // page reloads - a delay of the healing, never a commit made blind. Retrying per send instead
+  // would read and warn at every send while the table stays unreadable.
   const unreadable = (e: CallHoldUnreadableError): 'hold-unreadable' => {
     deps.attemptedAtEpoch.set(groupId, epoch);
     deps.warn(

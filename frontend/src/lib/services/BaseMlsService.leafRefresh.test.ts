@@ -18,7 +18,10 @@ import {
   readLeafRefreshLedger,
 } from '$lib/mls-client/leafRefresh';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
-import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
+import {
+  CommitOutcomeUnknownError,
+  FollowerTabCommitError,
+} from '$lib/mls-client/commitSubmission';
 import { clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { recordingStage } from '../../test/recordingStage';
 import { sealedFrame } from '$lib/mls-client/test/sealedFrame';
@@ -337,6 +340,79 @@ describe("a follower tab's call holds the refresh, through the service's own rea
     schedule.call(ctx, G);
     await settled.call(ctx, G);
     expect(refreshOwnLeaf).toHaveBeenCalledExactlyOnceWith(G);
+  });
+});
+
+/**
+ * THE EPOCH A FOLLOWER'S CALL KEYS ARE READ AT (seventh review of #3326): a commit kept with an
+ * unknown outcome merges at the next send - the call's first signalling frame, AFTER its keys - so
+ * the leader settles it first, by the path every send takes. The same holds for a leader that
+ * inherited the staged commit from the one before it.
+ */
+describe('settleForCallKeys - no call key is read over a staged commit', () => {
+  const G = 'g-call';
+  const proto = BaseMlsService.prototype as unknown as Record<string, unknown>;
+  const settleForCallKeys = proto.settleForCallKeys as (this: object, g: string) => Promise<void>;
+
+  /** A leader whose state holds `pending`, and whose settlement leaves `afterSettle` staged. */
+  function leader(opts: {
+    index: Set<string> | null;
+    pending: string[];
+    afterSettle: string[];
+    inFlight?: Promise<unknown>;
+  }) {
+    const order: string[] = [];
+    const ctx = {
+      order,
+      state: { pending: opts.pending },
+      unresolvedGroups: opts.index,
+      leafRefreshInFlight: new Map(opts.inFlight ? [[G, opts.inFlight]] : []),
+      leafRefreshSettled: proto.leafRefreshSettled,
+      settleBeforeSend: proto.settleBeforeSend,
+      knownUnresolvedGroups: proto.knownUnresolvedGroups,
+      getEpoch: () => 5,
+      groupsWithPendingCommit: async () => ctx.state.pending,
+      // The existing settlement, reduced to its effect on the state and the index.
+      settleUnresolvedCommits: vi.fn(async () => {
+        order.push('settled');
+        ctx.state.pending = opts.afterSettle;
+        ctx.unresolvedGroups = new Set(opts.afterSettle);
+      }),
+    };
+    return ctx;
+  }
+
+  it('a refresh that ended with an unknown outcome is settled BEFORE the keys, after the refresh', async () => {
+    let refreshEnds!: () => void;
+    const inFlight = new Promise<void>((r) => (refreshEnds = r));
+    const ctx = leader({ index: new Set(), pending: [], afterSettle: [], inFlight });
+    const ready = settleForCallKeys.call(ctx, G).then(() => ctx.order.push('ready'));
+    await Promise.resolve();
+    expect(ctx.order).toEqual([]);
+    // The refresh's commit was kept, outcome unknown: the index names the group.
+    ctx.state.pending = [G];
+    ctx.unresolvedGroups!.add(G);
+    refreshEnds();
+    await ready;
+    expect(ctx.order).toEqual(['settled', 'ready']);
+    expect(ctx.settleUnresolvedCommits).toHaveBeenCalledExactlyOnceWith([G]);
+  });
+
+  it('a leader that INHERITED a staged commit (no index yet) settles it the same way', async () => {
+    const ctx = leader({ index: null, pending: [G], afterSettle: [] });
+    await settleForCallKeys.call(ctx, G);
+    expect(ctx.order).toEqual(['settled']);
+  });
+
+  it('a staged commit still unanswered after its settlement refuses the keys, typed', async () => {
+    const ctx = leader({ index: null, pending: [G], afterSettle: [G] });
+    await expect(settleForCallKeys.call(ctx, G)).rejects.toBeInstanceOf(CommitOutcomeUnknownError);
+  });
+
+  it('a group with no staged commit is ready at once, settling nothing', async () => {
+    const ctx = leader({ index: null, pending: [], afterSettle: [] });
+    await settleForCallKeys.call(ctx, G);
+    expect(ctx.settleUnresolvedCommits).not.toHaveBeenCalled();
   });
 });
 

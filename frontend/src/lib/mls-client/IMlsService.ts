@@ -1148,10 +1148,11 @@ export interface IMlsService {
     keyLen: number
   ): Promise<Uint8Array>;
   /**
-   * Resolves once the leaf refresh of `groupId` running in this tab, if any, has settled - so a
-   * follower's call preflight answers only after a refresh decided before its hold. Never rejects.
+   * Brings `groupId` to a settled epoch before a follower's call keys are exported from it: waits for
+   * a leaf refresh running in this tab, then settles any staged commit by the existing resubmission.
+   * @throws {CommitOutcomeUnknownError} when a staged commit is still unanswered after it.
    */
-  leafRefreshSettled(groupId: string): Promise<void>;
+  settleForCallKeys(groupId: string): Promise<void>;
 
   // Networking
   /**

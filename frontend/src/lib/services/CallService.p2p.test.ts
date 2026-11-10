@@ -879,6 +879,13 @@ describe('a peer-to-peer call, client side', () => {
       expect(order).toEqual([]);
       expect(showToast).toHaveBeenCalledWith(m.call_no_leader_tab(), 'warning');
       expect(get(service.callState)).toBe('incoming');
+      // Seventh review: the ring's window timer is still armed, so a caller that drops without a
+      // hangup still ends this ring when the window closes - never a ring forever.
+      expect((service as unknown as { ringTimer: number | null }).ringTimer).not.toBeNull();
+      const { appendLog } = await import('$lib/utils/sessionLog');
+      expect(vi.mocked(appendLog).mock.calls.flat().join(' | ')).toContain(
+        'WARN acceptCall refused before anything rang or answered - refused by the leader'
+      );
       expect(tabRole.holdReleased).toBe(0);
     });
   });

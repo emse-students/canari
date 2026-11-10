@@ -86,16 +86,28 @@ export class CallE2eUnsupportedError extends Error {
   }
 }
 
+/** Why a follower tab's call preflight did not come back `ready` - see {@link CallNoLeaderTabError}. */
+export type CallPreflightRefusal =
+  | 'no-leader'
+  | 'leader-unavailable'
+  | 'not-delegable'
+  | 'failed'
+  /** This tab could not take the call's hold lock: nothing was asked of the leader. */
+  | 'hold-lock-failed'
+  /** The leader still holds a staged commit of the group after settling it: its epoch is not known. */
+  | 'commit-unresolved';
+
 /**
  * A call asked of a tab that does not hold the leader copy, while NO LEADER TAB CAN CARRY IT: none
  * leads elsewhere (`no-leader`: this tab was promoted in place, its reload owed), or the leader
  * answered the preflight that it cannot (`leader-unavailable`: its PIN gate or no session;
- * `not-delegable`: another account, or no Web Locks; `failed`). REFUSED before any request, so
- * nothing rings. A follower whose leader answers `ready` places the call normally - its invite, its
- * hangup and its media keys go through the leader (`tabSendDelegation.ts`).
+ * `not-delegable`: another account, or no Web Locks; `failed`; `commit-unresolved`), or this tab
+ * could not take its hold (`hold-lock-failed`). REFUSED before any request, so nothing rings. A
+ * follower whose leader answers `ready` places the call normally - its invite, its hangup and its
+ * media keys go through the leader (`tabSendDelegation.ts`).
  */
 export class CallNoLeaderTabError extends Error {
-  constructor(readonly reason: string) {
+  constructor(readonly reason: CallPreflightRefusal) {
     super(`no leader tab can carry this call (${reason}) - refused before the ring`);
     this.name = 'CallNoLeaderTabError';
   }
@@ -182,7 +194,12 @@ export class CallRelayWithheldError extends Error {
  */
 export function describeCallFailure(error: unknown): string {
   if (error instanceof CallE2eUnsupportedError) return m.call_e2e_unsupported();
-  if (error instanceof CallNoLeaderTabError) return m.call_no_leader_tab();
+  if (error instanceof CallNoLeaderTabError) {
+    // A commit of the conversation still unanswered is no matter of tabs: "try again", as a call
+    // from the leader tab itself meets it (its send waits for the same resubmission).
+    if (error.reason === 'commit-unresolved') return m.chat_call_error_generic();
+    return m.call_no_leader_tab();
+  }
   if (error instanceof CallE2eBypassedError) return m.call_e2e_bypassed();
   if (error instanceof CallE2eSetupError) return m.call_e2e_setup_failed();
   if (error instanceof CallRelayWithheldError) {

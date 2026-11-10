@@ -8517,8 +8517,20 @@ export abstract class BaseMlsService implements IMlsService {
    * refresh decided before the hold may still commit, and the call's keys must not be exported until
    * it has. A refresh decided after it reads the hold and does not commit. Never rejects.
    */
-  async leafRefreshSettled(groupId: string): Promise<void> {
+  private async leafRefreshSettled(groupId: string): Promise<void> {
     await this.leafRefreshInFlight.get(groupId);
+  }
+
+  /**
+   * See {@link IMlsService.settleForCallKeys}. The refresh first ({@link leafRefreshSettled}), then
+   * the staged commit it - or any other own commit, or the one a previous leader left in the shared
+   * state - may have kept with an unknown outcome: settled by {@link settleBeforeSend}, the path every
+   * send takes, so the commit is merged or cleared BEFORE the call's keys are read, never by the call's
+   * first signalling send after them.
+   */
+  async settleForCallKeys(groupId: string): Promise<void> {
+    await this.leafRefreshSettled(groupId);
+    await this.settleBeforeSend(groupId);
   }
 
   /**
