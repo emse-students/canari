@@ -4,6 +4,7 @@ import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
 import { cachedCommitInstants, type ServerInstant } from '$lib/mls-client/serverInstant';
 import type {
   IMlsService,
+  DismissedGroupsRead,
   GroupMeta,
   UserGroupRow,
   MlsInitOptions,
@@ -4880,7 +4881,7 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.getGroupServerStatus(groupId);
   }
 
-  async getDismissedGroups(): Promise<string[]> {
+  async getDismissedGroups(): Promise<DismissedGroupsRead> {
     return this.delivery.getDismissedGroups();
   }
 

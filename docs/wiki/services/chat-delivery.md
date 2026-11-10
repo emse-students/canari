@@ -1693,14 +1693,14 @@ those groups' first pages itself, which is the path every group took before the 
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/mls/push/register` | JWT | Register/refresh FCM push token (+ iOS `voipToken`: a token, or `null` from a build without the native ring, which clears it; + the wake it understands: `wakeVersion` (0, 1 MLS frames, 2 envelopes; capped at 2) or the step-1 `wake: true` (= 1) - `push_token.wakeVersion`, written 0 when absent, `wakeCapable` beside it for a rollback). Then deletes every `push_envelope` of the device: the app is open ([content-free-push](../protocols/content-free-push.md#32-everything-sent-through-sendpushtouser---no-durable-row-exists-so-one-is-written)) |
+| POST | `/api/mls/push/register` | JWT, 10/min per user (`UserThrottlerGuard`; the stock guard keyed on nginx's address, one bucket for the estate, until 2026-11-10: [audit](../frontend/weak-network-audit-2026-11-10.md)) | Register/refresh FCM push token (+ iOS `voipToken`: a token, or `null` from a build without the native ring, which clears it; + the wake it understands: `wakeVersion` (0, 1 MLS frames, 2 envelopes; capped at 2) or the step-1 `wake: true` (= 1) - `push_token.wakeVersion`, written 0 when absent, `wakeCapable` beside it for a rollback). Then deletes every `push_envelope` of the device: the app is open ([content-free-push](../protocols/content-free-push.md#32-everything-sent-through-sendpushtouser---no-durable-row-exists-so-one-is-written)) |
 | DELETE | `/api/mls/push/unregister/:deviceId` | JWT | Unregister push token |
 | GET / PUT | `/api/mls/notification-preferences` | JWT | The account's switched-off notification categories (`{ disabled: string[] }`); PUT replaces the set and refuses an unknown id |
 | GET | `/api/mls/push/fetch-proto` | PushSecret | Fetch proto for background push service |
 | GET | `/api/mls/push/wake` | PushSecret (`PushSecretGuard` on the query, then `PushSecretThrottlerGuard`, 600/min) | What a content-free wake-up push left here. `?messageId=&silent=` (an MLS frame): `{status: 'frame', fields, presentation}` (the full push's data map, `describeQueuedFrame`, ciphertext inline) or `{status: 'gone'}`; `silent` is the bit the wake carried. `?envelopeId=` (a `sendPushToUser` push, migration 046): `{status: 'push', fields, presentation}` (exactly what the full push handed this platform, inline group always in) or `gone`; serving never deletes (`served again times=n`), another registration's id is `foreign` and answered `gone`. `presentation` is what iOS's `aps` would have said (title, body, thread, sound). One `[PUSH_WAKE] served|gone` line per fetch ([design](../protocols/content-free-push.md)) |
 | GET | `/api/mls/push/avatar/:targetUserId` | PushSecret | Get avatar URL for notification display |
 | GET | `/api/mls/push/media/:mediaId` | PushSecret | Proxy encrypted media ciphertext (2 MB cap) for a notification thumbnail |
-| POST | `/api/mls/push/channel-read` | PushSecret | A shut phone's "Mark as read" on a SALON notification: forwarded to social-service's internal read-mark route ([social-service](social-service.md)); 403 when the user cannot read the salon, 502/503 when social-service refuses or is down |
+| POST | `/api/mls/push/channel-read` | PushSecret, 10/min per user once the secret is proven (`PushSecretGuard`, then `PushSecretThrottlerGuard`) | A shut phone's "Mark as read" on a SALON notification: forwarded to social-service's internal read-mark route ([social-service](social-service.md)); 403 when the user cannot read the salon, 502/503 when social-service refuses or is down |
 | POST | `/api/mls/push/refresh-token` | PushSecret | Refresh FCM token and/or PushKit `voipToken` |
 | POST | `/api/mls/push/membership-active` | PushSecret | Mark membership active after push-triggered add |
 | POST | `/api/mls/push/acquire-add-lock` | PushSecret | Acquire add-lock from background service |
@@ -1712,7 +1712,7 @@ those groups' first pages itself, which is the path every group took before the 
 | POST | `/api/mls/push/key-group-join` | PushSecret, then 64 per user per minute (429, its own bucket) | That phone's external commit into the key group. External commits into key groups only (400 / 403 otherwise), then `validateCommit` unchanged; admits, removes and excludes are not taken here |
 | POST | `/api/mls/push/send` | PushSecret | Send message from background service |
 | POST | `/api/mls/push/broadcast-test` | JWT | Test push to all devices of caller |
-| POST | `/api/mls/push/unavailable` | JWT | A device reporting that it CANNOT obtain a push token (writes nothing - see below) |
+| POST | `/api/mls/push/unavailable` | JWT, 10/min per user (`UserThrottlerGuard`) | A device reporting that it CANNOT obtain a push token (writes nothing - see below) |
 
 #### A device that cannot get a push token at all
 

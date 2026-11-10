@@ -23,7 +23,7 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { MessagingService } from '../services/messaging.service';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { sanitizeQueryValue, sanitizeOptionalQueryValue } from '../utils/sanitize';
 import {
   mintGifMediaTicket,
@@ -136,7 +136,7 @@ export class SecurityController {
    * side that knows the salt changed, so it says so, as a status, and the client asks again.
    * `salt` is optional: a client that does not send it is answered exactly as before.
    */
-  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @UseGuards(HeaderAuthGuard, UserThrottlerGuard)
   @Post('mls/security/pin-check')
   async checkPinVerifier(
     @Body() body: { userId: string; verifier: string; deviceId?: string; salt?: string },

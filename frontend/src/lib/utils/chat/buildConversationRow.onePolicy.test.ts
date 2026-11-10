@@ -108,7 +108,7 @@ function mls(overrides: Record<string, unknown> = {}) {
     persistCheckpoint: vi.fn(async () => {}),
     undismissGroup: vi.fn(async () => {}),
     isDistributionGroup: vi.fn(() => false),
-    getDismissedGroups: vi.fn(async () => []),
+    getDismissedGroups: vi.fn(async () => ({ kind: 'listed' as const, groupIds: [] })),
     ...overrides,
   } as never;
 }

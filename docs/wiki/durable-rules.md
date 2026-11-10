@@ -965,6 +965,10 @@ after its deploy - build the run that DISCRIMINATES, and assert the build id, ne
 - **An allowlist is a DESCRIPTION OF THE CODE**, so it has a test that fails when the code calls a host it does not name. [edge](infrastructure/cloudflare-edge.md)
 - **A page's script policy is written by whoever knows its scripts' hashes - SvelteKit, not nginx** - a hashless second policy on a page is intersected with it and refuses every inline script, so the page blocks carry only `frame-ancestors`. And an inline script must be FIXED text: one that embeds a per-build value cannot be hashed in advance, so the value goes in an attribute it reads. [edge](infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)
 
+**Who a request is from, behind nginx**
+
+- **A SERVICE BEHIND NGINX NEVER THROTTLES ON THE STOCK `ThrottlerGuard`: it keys on `req.ip`, which is nginx's container for every request, so its quota is ONE bucket for the whole estate.** `push/register` sat on it until 2026-11-10 - the cold-start `429` the owner's log showed. A throttler counts on the key the guard BEFORE it proved: a session route per user (`HeaderAuthGuard`, then `UserThrottlerGuard`), a shut phone's route per user (`PushSecretGuard`, then `PushSecretThrottlerGuard`), and only a route proving nobody per address (`ClientIpThrottlerGuard`, `X-Real-IP`); every refusal leaves a `[THROTTLE] REFUSED` line, and `throttle-keys.spec.ts` asserts all of it over every controller `AppModule` mounts ([audit](frontend/weak-network-audit-2026-11-10.md#36-fixed-server---post-mlspushregister-shared-one-rate-limit-bucket-with-the-whole-estate)).
+
 **Topology**
 
 - **The account is the unit of audit, not the ZONE - and a second hostname can name the same destination.** The tunnel INGRESS table is the only listing that shows it; a DNS listing shows names alone. [edge](infrastructure/cloudflare-edge.md)

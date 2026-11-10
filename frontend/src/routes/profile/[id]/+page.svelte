@@ -49,14 +49,8 @@
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
   import ProfileMinesweeperBadge from '$lib/components/profile/ProfileMinesweeperBadge.svelte';
-  import {
-    fetchUserMemberships,
-    fetchUserRoleHistory,
-    fetchUserParrainage,
-    type UserMembershipRow,
-    type UserRoleHistoryRow,
-    type SkyEntourage,
-  } from '$lib/profile/api';
+  import type { UserMembershipRow, UserRoleHistoryRow, SkyEntourage } from '$lib/profile/api';
+  import { readProfileWithExtras } from '$lib/profile/profileExtras';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { Building2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -89,8 +83,10 @@
   /** Loads a profile and its extras, ignoring the result if a newer load has since started. */
   async function loadProfile(userId: string, token: number) {
     const readAt = followEpoch();
-    try {
-      const [prof, status, blocks] = await Promise.all([
+    // THE EXTRAS LEAVE WITH THE PROFILE, NOT AFTER IT (`readProfileWithExtras`): they used to wait
+    // for the profile's answer and then for each other. They are APPLIED once the profile is in.
+    const { profile: profileRead, extras } = readProfileWithExtras(userId, () =>
+      Promise.all([
         fetchUserProfile(userId),
         getFollowStatus(userId)
           .then((read) => {
@@ -110,32 +106,34 @@
           Log.d('profile.loadBlocks failed', e);
           return [];
         }),
-      ]);
+      ])
+    );
+    try {
+      const [prof, status, blocks] = await profileRead;
       if (token !== loadToken) return;
       profile = prof;
       followStatus = status;
       blocked = blocks.some((b) => b.userId === userId);
       extrasLoading = true;
-      try {
-        const rows = await fetchUserMemberships(userId);
-        if (token === loadToken) memberships = rows;
-      } catch {
-        if (token === loadToken) memberships = [];
-      }
-      try {
-        const rows = await fetchUserRoleHistory(userId);
-        if (token === loadToken) roleHistory = rows;
-      } catch {
-        if (token === loadToken) roleHistory = [];
-      }
-      try {
-        const entourage = await fetchUserParrainage(userId);
-        if (token === loadToken) parrainage = entourage;
-      } catch {
-        if (token === loadToken) parrainage = null;
-      } finally {
-        if (token === loadToken) extrasLoading = false;
-      }
+      const [rows, history, entourage] = await Promise.all([
+        extras.memberships.then((v) => {
+          if (token === loadToken) memberships = v;
+          return v;
+        }),
+        extras.roleHistory.then((v) => {
+          if (token === loadToken) roleHistory = v;
+          return v;
+        }),
+        extras.parrainage.then((v) => {
+          if (token === loadToken) parrainage = v;
+          return v;
+        }),
+      ]);
+      Log.d(
+        'profile.extras',
+        `${rows.length} membership(s), ${history.length} role(s), entourage ${entourage ? 'read' : 'none'}`
+      );
+      if (token === loadToken) extrasLoading = false;
     } catch (err) {
       Log.d('profile.load failed', err);
       if (token !== loadToken) return;
