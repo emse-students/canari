@@ -752,6 +752,7 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // A live started (WP-L7): the broadcaster - a person or an association - names the title, and
     // the body is always the fixed sentence (the server sends no fragment).
     @"social_live_started" : @"live_started",
+    @"social_live_mention" : @"live_mention",
     // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
     @"social_follow_request" : @"follow_request",
     @"social_follow_accepted" : @"follow_accepted",

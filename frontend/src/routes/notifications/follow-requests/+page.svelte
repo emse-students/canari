@@ -7,6 +7,9 @@
    * deletes the request and tells nobody. A row leaves the list on the server's answer; a 404 means
    * the request was already answered or withdrawn, and the list is re-read.
    *
+   * An accepted row stays on the list and offers "Suivre en retour" (owner, 2026-11-09), unless the
+   * reader already follows that person, has asked them, or a block stands between the two.
+   *
    * Reached from the `follow_request` notification row, from its push
    * (`fr.emse.canari://follow-requests`), and from the banner on `/notifications`.
    */
@@ -15,6 +18,8 @@
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import FollowPersonRow from '$lib/components/follows/FollowPersonRow.svelte';
+  import FollowBackButton from '$lib/components/follows/FollowBackButton.svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import {
     acceptFollowRequest,
     appendFollowPage,
@@ -36,6 +41,8 @@
   /** Where the next page starts; `null` once the last page is shown. */
   let next = $state<string | null>(null);
   let loadingMore = $state(false);
+  /** Requests accepted in this visit: their row stays and turns into "Suivre en retour". */
+  const accepted = new SvelteSet<string>();
 
   onMount(load);
 
@@ -80,7 +87,9 @@
     try {
       if (action === 'accept') await acceptFollowRequest(request.userId);
       else await refuseFollowRequest(request.userId);
-      requests = requests.filter((r) => r.userId !== request.userId);
+      // An acceptance keeps its row (the follow-back offer); a refusal takes it off.
+      if (action === 'accept') accepted.add(request.userId);
+      else requests = requests.filter((r) => r.userId !== request.userId);
       showToast(
         action === 'accept' ? m.follow_requests_accepted() : m.follow_requests_refused(),
         'info'
@@ -133,22 +142,26 @@
       {#each requests as request (request.userId)}
         <FollowPersonRow userId={request.userId} createdAt={request.createdAt}>
           {#snippet actions()}
-            <button
-              type="button"
-              class="text-text-muted rounded-xl px-3 py-2 text-sm font-semibold transition-colors hover:bg-black/5 disabled:opacity-40"
-              disabled={busy !== null}
-              onclick={() => answer(request, 'refuse')}
-            >
-              {m.follow_requests_refuse()}
-            </button>
-            <button
-              type="button"
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
-              disabled={busy !== null}
-              onclick={() => answer(request, 'accept')}
-            >
-              {m.follow_requests_accept()}
-            </button>
+            {#if accepted.has(request.userId)}
+              <FollowBackButton userId={request.userId} />
+            {:else}
+              <button
+                type="button"
+                class="text-text-muted rounded-xl px-3 py-2 text-sm font-semibold transition-colors hover:bg-black/5 disabled:opacity-40"
+                disabled={busy !== null}
+                onclick={() => answer(request, 'refuse')}
+              >
+                {m.follow_requests_refuse()}
+              </button>
+              <button
+                type="button"
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
+                disabled={busy !== null}
+                onclick={() => answer(request, 'accept')}
+              >
+                {m.follow_requests_accept()}
+              </button>
+            {/if}
           {/snippet}
         </FollowPersonRow>
       {/each}
