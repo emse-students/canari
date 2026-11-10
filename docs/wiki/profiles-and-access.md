@@ -2577,7 +2577,15 @@ would be refused word for word - the banner offers Delete alone.
    the publishing association's members in.
 4. **A legacy institution post keeps NULL** (its whole audience, everyone) until an edit gives it a
    reach; the edit form does not force one.
-5. **Events are not touched**: the event a post announces keeps its own visibility. The events half
+5. **An entity's type is not editable today** (`UpdateAssociationDto` has no `type`; only a direct
+   database edit changes it), so a post that carries a reach always belongs to an institution. If the
+   type ever became editable, an ex-institution's post would keep a reach it can no longer change:
+   the options route answers `400 institution_reach_not_offered` (the picker shows its load error)
+   and a PATCH naming a reach is refused the same way - the type change would then have to clear
+   `"reachPublic"`/`"reachSpaces"` on that entity's posts in the same transaction (or the write
+   accept a reach on a post that already has one), and the edit form draw the picker from the
+   served `type` alone (review of #3314, unreachable today, nothing built).
+6. **Events are not touched**: the event a post announces keeps its own visibility. The events half
    of C1 (`association_calendar_event_audiences`, reform section 3) is not built.
 
 #### Proof
