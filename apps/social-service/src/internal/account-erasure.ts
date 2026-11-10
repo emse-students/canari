@@ -79,6 +79,7 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'follow_suggestion_dismissals.userId': { action: 'delete' },
   'follow_suggestion_dismissals.targetId': { action: 'delete' },
   'engagement_push_days.userId': { action: 'delete' },
+  'campus_trend_weeks.userId': { action: 'delete' },
   'user_activity_settings.userId': { action: 'delete' },
   'post_engagement_notices.recipientId': { action: 'delete' },
   // The member's birthday and visibility (migration 148), and when they last set a date.
@@ -105,9 +106,14 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'post_notifications.recipientId': { action: 'delete' },
   'post_notifications.actorId': { action: 'delete' },
   'post_notifications.actorName': { action: 'delete', via: 'actorId' },
-  // A booking notice's place and slot (migration 117): holds no account id itself, and goes with
-  // the row the recipient's (or the actor's) statement above deletes - never kept past its person.
-  'post_notifications.meta': { action: 'delete', via: 'recipientId' },
+  // A notice's structured facts (migration 117): a booking's place and slot, a trend's media - and
+  // ONE account id, a campus trend's named account (`meta.likedBy.userId`, owner 2026-11-10), which
+  // sits on ANOTHER reader's row: that key is removed from every row naming the account (the row
+  // stays, naming nobody). `meta->'likedBy'->>'userId'` has no index, so that statement scans
+  // `post_notifications` - acceptable at today's size, and an erasure is rare; an expression index is
+  // the answer if the table grows. The rest goes with the row the recipient's (or the actor's)
+  // statement deletes - never kept past its person.
+  'post_notifications.meta': { action: 'anonymise', via: 'likedBy' },
   'minesweeper_scores.userId': { action: 'delete' },
   'minesweeper_challenges.userId': { action: 'delete' },
   'minesweeper_bans.userId': { action: 'delete' },
@@ -597,6 +603,11 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     label: 'engagement_push_days',
     sql: `DELETE FROM engagement_push_days WHERE "userId" = $1`,
   },
+  // The weekly campus-trend counters (migration 163): the reader's own rows.
+  {
+    label: 'campus_trend_weeks',
+    sql: `DELETE FROM campus_trend_weeks WHERE "userId" = $1`,
+  },
   // Friends' activity (engagement WP-9): the person's "share my activity" choice, and every ledger
   // row telling them of a post. A row of another reader about the erased person's post goes with
   // the post (ON DELETE CASCADE); the ledger never names the actor.
@@ -634,6 +645,12 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   { label: 'opening_reminders', sql: `DELETE FROM opening_reminders WHERE "userId" = $1` },
   // Before the submissions are anonymised: a file row is found by its uploader.
   { label: 'form_files', sql: `DELETE FROM form_files WHERE "uploaderId" = $1` },
+  // A campus trend on another reader's bell that names the account (`meta.likedBy`): the key goes,
+  // the row stays and names nobody.
+  {
+    label: 'post_notifications_liked_by',
+    sql: `UPDATE post_notifications SET meta = meta - 'likedBy' WHERE meta->'likedBy'->>'userId' = $1`,
+  },
   {
     label: 'post_notifications',
     sql: `DELETE FROM post_notifications WHERE "recipientId" = $1 OR "actorId" = $1`,

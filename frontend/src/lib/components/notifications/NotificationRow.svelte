@@ -232,6 +232,20 @@
           : m.notif_campus_trend_untitled())
   );
   /**
+   * WHO THE READER FOLLOWS THAT LIKED IT (owner, 2026-11-10: friends' activity is no longer a
+   * notification - the trend names them instead): `meta.likedBy`, written per reader by the server,
+   * is one followed account's name and how many others reacted; drawn after the opening as
+   * " - aimée par Léa et 9 autres", one sentence per count form. Null when the row names nobody.
+   */
+  const trendLikedBy = $derived.by<string | null>(() => {
+    const likedBy = notif.meta?.likedBy as { name?: unknown; others?: unknown } | undefined;
+    if (!likedBy || typeof likedBy.name !== 'string' || !likedBy.name) return null;
+    const others = typeof likedBy.others === 'number' ? Math.max(0, Math.floor(likedBy.others)) : 0;
+    if (others === 0) return m.notif_campus_trend_liked_by({ name: likedBy.name });
+    if (others === 1) return m.notif_campus_trend_liked_by_one({ name: likedBy.name });
+    return m.notif_campus_trend_liked_by_many({ name: likedBy.name, count: others });
+  });
+  /**
    * THE THREE REQUESTS TO AN AUTHOR (D38b), named for the same reason. A request is asked BY an
    * association, so it draws the association's avatar; its answer is given by the AUTHOR, a person,
    * whose avatar the two answers draw. The body is the post's opening either way.
@@ -600,6 +614,9 @@
       {:else if isCampusTrend}
         <!-- Engagement WP-10: nobody acted; "Suggestion :" is drawn above, here the post's opening. -->
         <span class="italic"><EmojiText text={trendOpening} /></span>
+        {#if trendLikedBy}
+          <span data-notif-trend-liked-by> - <EmojiText text={trendLikedBy} /></span>
+        {/if}
       {:else if isRepostNotif}
         {notif.type === 'repost_proposed'
           ? m.notif_repost_proposed_text()

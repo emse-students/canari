@@ -104,7 +104,10 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
 export type NotificationType = keyof typeof NOTIFICATION_TYPE_MIN_CLIENT;
 
 /** The notices that are a push and never a bell row: a live does not outlive its moment (L3). */
-export type PushOnlyNotificationType = 'live_started' | 'live_mention';
+export const PUSH_ONLY_NOTIFICATION_TYPES = ['live_started', 'live_mention'] as const;
+
+/** One of {@link PUSH_ONLY_NOTIFICATION_TYPES}. */
+export type PushOnlyNotificationType = (typeof PUSH_ONLY_NOTIFICATION_TYPES)[number];
 
 /**
  * THE FIRST BUILD WHOSE NATIVE TABLES (`CanariFirebaseMessagingService.kt`, `canari_push.mm`, the

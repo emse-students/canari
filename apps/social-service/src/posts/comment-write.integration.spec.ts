@@ -99,6 +99,8 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
       resolveActorName: jest.fn(() => Promise.resolve('Name')),
       resolveMentionedUserIds: jest.fn(() => [] as string[]),
       mentionRecipientsOf: jest.fn(() => Promise.resolve([] as string[])),
+      // The daily cap, proven in `engagement-push-cap.integration.spec.ts`: open here.
+      withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
     };
     interactions = new PostInteractionsService(
       ds.getRepository(Post),
@@ -107,6 +109,11 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
       { release: jest.fn(() => Promise.resolve()) } as never,
       { serve: jest.fn((rows: unknown[]) => Promise.resolve(rows)) } as never
     );
+    // The trend's evaluation after a comment reads tables this schema does not build; it is proven
+    // in `campus-trend.integration.spec.ts`.
+    jest
+      .spyOn(interactions as unknown as { evaluateTrend(id: string): void }, 'evaluateTrend')
+      .mockImplementation(() => undefined);
     moderation = new ModerationService(ds.getRepository(ContentReport), {} as never, {} as never);
   });
 

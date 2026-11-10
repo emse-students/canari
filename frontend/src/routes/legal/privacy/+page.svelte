@@ -271,21 +271,27 @@
           publications populaires de personnes de votre espace, que vous voyez déjà, peuvent
           apparaître dans « Pour toi » marquées « Suggestion » ; cet onglet range les publications
           selon leur fraîcheur et le nombre de personnes qui y ont réagi ou les ont commentées, sans
-          autre donnée sur vous. Quand une personne que vous suivez réagit à une publication ou la
-          commente, vous en êtes prévenu une seule fois par publication, et seulement si vous voyez
-          déjà cette publication, sans blocage entre vous, ni avec son auteur lorsque la publication
-          le nomme ; jamais pour un commentaire anonyme, écrit au nom d'une association ou retiré
-          par la modération, ni pour un commentaire sur une publication anonyme. Vos réactions et
-          commentaires sont annoncés de la même façon à vos abonnés acceptés, sauf si vous
-          désactivez « Partager mon activité » dans les réglages (activé par défaut) : cela arrête
-          les annonces à venir, sans retirer celles déjà envoyées. Quand une publication de votre
-          espace (votre campus ou votre formation, jamais par un abonnement ou un accès nominatif)
-          fait réagir au moins quatre personnes dans les 24 heures qui suivent sa publication, vous
-          en êtes prévenu une fois, sans nom de personne ; son auteur ne l'est pas. Ces annonces ne
-          vous envoient pas plus de cinq notifications par jour ; les autres restent dans vos
-          notifications. Sont conservés : votre réglage, le fait qu'un lecteur a déjà été prévenu
-          d'une publication (jusqu'à l'effacement de la publication ou de son compte) et le nombre
-          de ces notifications reçues chaque jour (sept jours).
+          autre donnée sur vous. Quand une publication de votre espace (votre campus ou votre
+          formation, jamais par un abonnement ou un accès nominatif) fait réagir au moins dix
+          personnes dans les 24 heures qui suivent sa publication, elle peut vous être suggérée par
+          une notification, une fois par jour et deux fois par semaine au plus ; son auteur ne l'est
+          pas. Cette suggestion peut nommer une personne que vous suivez (abonnement accepté) qui a
+          aimé la publication, et dire combien d'autres personnes l'ont aimée ; elle ne nomme jamais
+          l'auteur, ni une personne avec qui un blocage existe. Vous pouvez être nommé ainsi auprès
+          de vos abonnés acceptés quand vous aimez une publication qu'ils voient déjà, sauf si vous
+          désactivez « Partager mon activité » dans les réglages (activé par défaut). La
+          notification conservée chez votre abonné garde l'identifiant de votre compte, jamais votre
+          nom : votre nom n'y est affiché que tant que vous aimez toujours la publication, que le
+          partage est activé, qu'il vous suit et qu'aucun blocage n'existe entre vous ; l'effacement
+          de votre compte retire cet identifiant. Une notification déjà reçue sur un téléphone ne
+          peut pas être retirée. Les notifications non essentielles (suggestions, réactions et
+          commentaires sur vos publications, publications des personnes suivies, republications,
+          ouvertures de réservations et d'événements) n'arrivent pas plus de trois fois par jour sur
+          votre téléphone ; les autres restent dans vos notifications. Sont conservés : votre
+          réglage, le fait qu'un lecteur a déjà été prévenu d'une publication (jusqu'à l'effacement
+          de la publication ou de son compte), le nombre de ces notifications reçues chaque jour
+          (sept jours) et le nombre de suggestions reçues chaque semaine (quatorze jours après la
+          fin de la semaine).
         </dd>
       </div>
       <div>

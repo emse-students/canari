@@ -28,6 +28,8 @@ describe('PostInteractionsService.addComment notifications', () => {
       mentionRecipientsOf: jest.fn((_post: unknown, _writer: string, ids: string[]) =>
         Promise.resolve(ids)
       ),
+      // The daily cap, proven in `engagement-push-cap.integration.spec.ts`: open here.
+      withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
     };
     const push = { notifyContent: jest.fn(() => Promise.resolve()) };
     const postRepo = {
@@ -114,10 +116,9 @@ describe('PostInteractionsService.addComment notifications', () => {
     ]);
   });
 
-  it("asks friends' activity only once the reply and mention rows are written (told once, rule 7)", async () => {
-    // A follower of the writer who is answered or mentioned has a row for the post when the
-    // disclosure statement reads `post_notifications`, so they are never told twice: the order is
-    // the code's, not a race between two fire-and-forget blocks.
+  it('evaluates the campus trend only once the comment, reply and mention rows are written', async () => {
+    // The order is the code's, not a race between two fire-and-forget blocks. Friends' activity
+    // no longer writes a ledger row of its own (owner, 2026-11-10).
     const order: string[] = [];
     const post = {
       id: 'p1',
@@ -135,14 +136,38 @@ describe('PostInteractionsService.addComment notifications', () => {
       .manager;
     const routed = manager.query.getMockImplementation()!;
     manager.query.mockImplementation((sql: string, params?: unknown[]) => {
-      // Friends' activity's ledger statement (a campus trend's names reason 'trend' instead).
-      if (sql.includes('INSERT INTO post_engagement_notices') && sql.includes("'friend'"))
-        order.push('friends');
+      if (sql.includes('INSERT INTO post_engagement_notices') && sql.includes("'trend'"))
+        order.push('trend');
       return routed(sql, params);
     });
     await service.addComment('p1', { userId: 'reader', text: 'hello', parentId: 'parent' });
     for (let i = 0; i < 5; i++) await flush();
-    expect(order).toEqual(['comment', 'reply', 'mention', 'friends']);
+    expect(order).toEqual(['comment', 'reply', 'mention', 'trend']);
+  });
+
+  it('asks the daily cap for every push, and a comment beyond it keeps its row only (owner, 2026-11-10)', async () => {
+    const { service, push, notifications } = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'parent-author', parentId: null }],
+    });
+    notifications.resolveMentionedUserIds.mockReturnValue(['mentioned']);
+    // The budget the real table answers: a comment is counted (and spent here), a reply and a
+    // mention are not.
+    notifications.withinPushBudget.mockImplementation((type: string, ids: string[]) =>
+      Promise.resolve(type === 'comment' ? [] : ids)
+    );
+    await service.addComment('p1', { userId: 'reader', text: 'hello', parentId: 'parent' });
+    await flush();
+    expect(notifications.withinPushBudget.mock.calls.map(([type]) => type).sort()).toEqual([
+      'comment',
+      'mention',
+      'reply',
+    ]);
+    expect(notifications.createNotification).toHaveBeenCalledTimes(3);
+    const sent = push.notifyContent.mock.calls as unknown as Array<[string]>;
+    expect(sent.map(([to]) => to).sort()).toEqual(['mentioned', 'parent-author']);
   });
 
   it("asks the read's gate who of the mentioned may be told, as the writer, and tells only them", async () => {
@@ -249,6 +274,7 @@ describe('PostInteractionsService.addReaction across the review cohort', () => {
       const notifications = {
         createNotification: jest.fn(() => Promise.resolve()),
         resolveActorName: jest.fn(() => Promise.resolve('Actor')),
+        withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
       };
       const push = { notifyContent: jest.fn(() => Promise.resolve()) };
       const post = { id: 'p1', authorId: 'author', reactions: {} };
@@ -256,6 +282,9 @@ describe('PostInteractionsService.addReaction across the review cohort', () => {
         {
           findOne: jest.fn(() => Promise.resolve(post)),
           save: jest.fn((p: unknown) => Promise.resolve(p)),
+          // The trend's evaluation after a reaction: no row, so nothing announced (its own
+          // behaviour is proven in `campus-trend.integration.spec.ts`).
+          manager: { query: jest.fn(() => Promise.resolve([])) },
         } as unknown as Repository<Post>,
         notifications as unknown as PostNotificationsService,
         push as unknown as PushService,
@@ -266,6 +295,10 @@ describe('PostInteractionsService.addReaction across the review cohort', () => {
       await flush();
       expect(notifications.createNotification).toHaveBeenCalledTimes(cohort === '' ? 1 : 0);
       expect(push.notifyContent).toHaveBeenCalledTimes(cohort === '' ? 1 : 0);
+      // The daily cap is asked before the push, and only when there is one to send.
+      expect(notifications.withinPushBudget.mock.calls).toEqual(
+        cohort === '' ? [['reaction', ['author']]] : []
+      );
     } finally {
       if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
       else process.env.SERVICE_ACCOUNT_USER_ID = saved;

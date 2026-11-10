@@ -806,24 +806,36 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *body = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.body", fixedStem]);
     return;
   }
-  // A campus trend, told as a SUGGESTION (engagement WP-10, owner 2026-11-10): nobody acted; the
-  // title is "Suggestion : " and the post's opening - "une publication" when the server sends none -
-  // and the body a fixed sentence. A post with no text but a picture or a video has its own key.
-  if ([key isEqualToString:@"social_campus_trend"]) {
-    *title = arg.length > 0
-                 ? [NSString stringWithFormat:CanariLocalized(@"notif.social.campus_trend.title"), arg]
-                 : CanariLocalized(@"notif.social.campus_trend.untitled");
-    *body = CanariLocalized(@"notif.social.campus_trend.body");
-    return;
-  }
-  if ([key isEqualToString:@"social_campus_trend_photo"]) {
-    *title = CanariLocalized(@"notif.social.campus_trend_photo.title");
-    *body = CanariLocalized(@"notif.social.campus_trend_photo.body");
-    return;
-  }
-  if ([key isEqualToString:@"social_campus_trend_video"]) {
-    *title = CanariLocalized(@"notif.social.campus_trend_video.title");
-    *body = CanariLocalized(@"notif.social.campus_trend_video.body");
+  // A campus trend, told as a SUGGESTION (engagement WP-10, owner 2026-11-10): the title is
+  // "Suggestion : " and the post's opening - "une publication" when the server sends none - and the
+  // body names a followed account who liked it ("Aimée par Léa et 9 autres", one sentence per count
+  // form from `contentCount`), or a fixed sentence when there is none. A post with no text but a
+  // picture or a video has its own key.
+  if ([key isEqualToString:@"social_campus_trend"] ||
+      [key isEqualToString:@"social_campus_trend_photo"] ||
+      [key isEqualToString:@"social_campus_trend_video"]) {
+    NSString *stem = [key substringFromIndex:@"social_".length];
+    if ([key isEqualToString:@"social_campus_trend"]) {
+      *title = arg.length > 0
+                   ? [NSString stringWithFormat:CanariLocalized(@"notif.social.campus_trend.title"), arg]
+                   : CanariLocalized(@"notif.social.campus_trend.untitled");
+    } else {
+      *title = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.title", stem]);
+    }
+    if (actor.length == 0) {
+      *body = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.body", stem]);
+      return;
+    }
+    id rawCount = data[@"contentCount"];
+    NSInteger others = [rawCount isKindOfClass:[NSString class]] ? MAX(0, [rawCount integerValue]) : 0;
+    if (others == 0) {
+      *body = [NSString stringWithFormat:CanariLocalized(@"notif.social.campus_trend.liked_by"), actor];
+    } else if (others == 1) {
+      *body = [NSString stringWithFormat:CanariLocalized(@"notif.social.campus_trend.liked_by_one"), actor];
+    } else {
+      *body = [NSString stringWithFormat:CanariLocalized(@"notif.social.campus_trend.liked_by_many"), actor,
+                                         [NSString stringWithFormat:@"%ld", (long)others]];
+    }
     return;
   }
   // The bookings' reminder (WP-N): nobody acted, a fixed title; the body is the place and the time.

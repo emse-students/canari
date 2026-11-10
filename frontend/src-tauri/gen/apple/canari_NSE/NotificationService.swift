@@ -223,6 +223,23 @@ class NotificationService: UNNotificationServiceExtension {
     let actor = Self.string(userInfo["actorName"]) ?? ""
     let arg = Self.string(userInfo["contentArg"]) ?? ""
 
+    /// A campus trend's body (owner, 2026-11-10): the followed account who liked the post, named in
+    /// `actorName`, and how many others reacted in `contentCount` - one sentence per count form, so
+    /// the plural is exact; the fixed sentence `fallback` when the server names nobody.
+    func trendBody(_ fallback: String) -> String {
+      if actor.isEmpty { return Self.localized(fallback, locale: locale) }
+      let others = max(0, Int(Self.string(userInfo["contentCount"]) ?? "") ?? 0)
+      switch others {
+      case 0: return Self.localizedFormat("notif.social.campus_trend.liked_by", actor, locale: locale)
+      case 1:
+        return Self.localizedFormat("notif.social.campus_trend.liked_by_one", actor, locale: locale)
+      default:
+        return String(
+          format: Self.localized("notif.social.campus_trend.liked_by_many", locale: locale),
+          actor, String(others))
+      }
+    }
+
     /// Title from the actor, body from the fragment or a fixed sentence when it is empty.
     func actorTitled(_ stem: String) -> (String, String) {
       let body = arg.isEmpty ? Self.localized("notif.social.\(stem).body", locale: locale) : arg
@@ -285,26 +302,27 @@ class NotificationService: UNNotificationServiceExtension {
     // the title, the space's name or the event's title is the body.
     case "social_booking_open": composed = actorTitled("booking_open")
     case "social_event_open": composed = actorTitled("event_open")
-    // A campus trend, told as a SUGGESTION (engagement WP-10, owner 2026-11-10): nobody acted;
-    // the title is "Suggestion : " and the post's opening - "une publication" when the server
-    // sends none - and the body a fixed sentence. A post with no text but a picture or a video has
-    // its own key, so a colon is never followed by nothing.
+    // A campus trend, told as a SUGGESTION (engagement WP-10, owner 2026-11-10): the title is
+    // "Suggestion : " and the post's opening - "une publication" when the server sends none - and
+    // the body names a followed account who liked it ("Aimée par Léa et 9 autres"), or a fixed
+    // sentence when there is none. A post with no text but a picture or a video has its own key,
+    // so a colon is never followed by nothing.
     case "social_campus_trend":
       composed = (
         arg.isEmpty
           ? Self.localized("notif.social.campus_trend.untitled", locale: locale)
           : Self.localizedFormat("notif.social.campus_trend.title", arg, locale: locale),
-        Self.localized("notif.social.campus_trend.body", locale: locale)
+        trendBody("notif.social.campus_trend.body")
       )
     case "social_campus_trend_photo":
       composed = (
         Self.localized("notif.social.campus_trend_photo.title", locale: locale),
-        Self.localized("notif.social.campus_trend_photo.body", locale: locale)
+        trendBody("notif.social.campus_trend_photo.body")
       )
     case "social_campus_trend_video":
       composed = (
         Self.localized("notif.social.campus_trend_video.title", locale: locale),
-        Self.localized("notif.social.campus_trend_video.body", locale: locale)
+        trendBody("notif.social.campus_trend_video.body")
       )
     // The reminder: nobody acted, a fixed title; the body is the place and the time.
     case "social_booking_reminder":
