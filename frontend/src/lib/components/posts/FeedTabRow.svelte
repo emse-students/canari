@@ -10,6 +10,11 @@
    * or leaves the row. The scroller's vertical padding keeps the pills' 44 px touch target inside
    * it, since a horizontal scroller clips both axes. What a tab tap does is the feed page's.
    *
+   * THE THREE LABELS FIT WITHOUT SCROLLING AT 390 PX AND 360 PX (dev tour, `1.6.9-alpha.4`: "Mon
+   * espace" was clipped at the track's right edge at 390): `px-2.5` (10 px) instead of 14, and under
+   * 24rem the text drops one scale step (`text-xs`) with `px-2`. The sideways scroll stays the
+   * fallback for a 2x text size, never the normal state.
+   *
    * What each tab shows is explained by the first-use hint `hint-feed-tabs` (it replaced the (i)
    * button of #2857, owner 2026-11-03): every tab marks itself `posts.tab.<feed>` for it.
    */
@@ -191,7 +196,7 @@
           use:guideAnchor={`posts.tab.${tab.feed}`}
           onclick={() => onFeed(tab.feed)}
           aria-pressed={feed === tab.feed}
-          class="tap-target focus-visible:ring-accent-icon relative z-1 flex-1 shrink-0 rounded-full px-3.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:outline-none {feed ===
+          class="tap-target focus-visible:ring-accent-icon relative z-1 flex-1 shrink-0 rounded-full px-2.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:outline-none max-[24rem]:px-2 max-[24rem]:text-xs {feed ===
           tab.feed
             ? settled === tab.feed
               ? 'text-on-accent font-semibold'

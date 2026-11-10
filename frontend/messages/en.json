@@ -3389,6 +3389,7 @@
   "nav_dashboard_label": "Dashboard",
   "nav_settings_desc": "Preferences, security, devices",
   "nav_dashboard_desc": "Application overview",
+  "error_not_found_message": "This page could not be found.",
   "error_unexpected_message": "An unexpected error occurred.",
   "error_back_home": "Back to home",
   "auth_callback_authenticating": "Authenticating…",
