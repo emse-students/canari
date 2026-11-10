@@ -252,6 +252,9 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
     ]) {
       await q(migration(file));
     }
+    // The feed's select reads `posts."liveId"` (migration 156, live replays); that migration needs
+    // the whole `lives` table, so only the column the select reads is added here.
+    await q(`ALTER TABLE posts ADD COLUMN IF NOT EXISTS "liveId" uuid NULL`);
     for (const [id, name, rule] of [
       [A1, 'A1', ['ICM', SE]],
       [C, 'C', [null, GA]],

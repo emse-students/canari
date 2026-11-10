@@ -57,6 +57,7 @@ import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedAuthorSql, blockedUserIdsFor } from '../common/blocked-user-ids';
 import { SUGGESTED_POSTS_MAX, suggestedPostIds } from './suggested-posts';
 import { readPostOpenVerdict } from './post-openable';
+import { readReplayRowFacts, type ReplayRowFacts } from '../lives/replay-row-facts';
 import { pageComments, type CommentOrder } from './comment-page';
 import { CommentIdentityService } from './comment-identity';
 import { isAnonymousPoll, servePolls } from './anonymous-poll';
@@ -1583,7 +1584,7 @@ export class PostsService {
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
          posts."linkedCalendarEventId",
          posts.images, posts.polls, posts.forms, posts.reactions, posts."scheduledAt",
-         posts.kind, posts."durationMs", posts."expiresAt", posts."studentsOnly",
+         posts.kind, posts."durationMs", posts."expiresAt", posts."liveId", posts."studentsOnly",
          ${commentCount} AS "commentCount",
          (
            SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
@@ -1655,17 +1656,21 @@ export class PostsService {
     // stored under the generation it started in and never served (`readPostListPage`). No stamp
     // (Redis unreachable) means no page is stored either.
     let stamp: string | null = null;
+    let cachedPage: unknown = undefined;
     try {
       const cached = (await Promise.race([
         readPostListPage(this.redis, cacheKey, viewerUserId),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 100)),
       ])) as { page: unknown; stamp: string };
       stamp = cached.stamp;
-      // The stored page is what this method returned before, parsed: as untyped as JSON.parse was.
-      if (cached.page !== undefined) return cached.page as any;
+      cachedPage = cached.page;
     } catch {
       // Redis miss or error - fall through to DB
     }
+    // OUTSIDE the cache's try: only a Redis failure falls through to the database, never a failure
+    // of what is served on top of the page. The stored page is what this method returned before,
+    // parsed: as untyped as JSON.parse was.
+    if (cachedPage !== undefined) return await this.withReplayRowFacts(cachedPage as any);
 
     const rawPosts = await this.listPostRows(params);
     const safe = await this.decorateListRows(rawPosts, viewerUserId, isAdmin === true);
@@ -1678,7 +1683,8 @@ export class PostsService {
       }
     }
 
-    return safe;
+    // AFTER the page is stored: a replay's cover key and the server's clock are read per serve.
+    return await this.withReplayRowFacts(safe);
   }
 
   /**
@@ -1790,6 +1796,40 @@ export class PostsService {
     });
 
     return this.stripBigIntForJson(result);
+  }
+
+  /**
+   * A LIVE REPLAY'S ROW, AS SERVED (docs/wiki/live-replays.md, WP-R4): its live's last preview as the
+   * cover (`poster`, `posterKey`) and the database's clock (`serverNow`) beside its `expiresAt`, so
+   * the feed card draws the time left without the phone's clock (`readReplayRowFacts`). Added at
+   * serve time on the cached and the computed page alike, never stored with the page. A page with no
+   * replay - every page while `live_replays_mode` is off - reads nothing and is returned as it is.
+   * A read that fails is logged at ERROR and the rows go out without the facts - never a 500.
+   */
+  private async withReplayRowFacts<T>(page: T): Promise<T> {
+    if (!Array.isArray(page)) return page;
+    const liveIds = page
+      .filter((p: any) => p?.kind === 'replay' && typeof p.liveId === 'string')
+      .map((p: any) => p.liveId as string);
+    if (liveIds.length === 0) return page;
+    let facts: Map<string, ReplayRowFacts>;
+    try {
+      facts = await readReplayRowFacts(this.postRepo.manager, liveIds);
+    } catch (e) {
+      // A MISSING COVER NEVER FAILS THE FEED: the rows go out with no cover and no server clock
+      // (the card then draws neither), and the cause is named here.
+      this.logger.error(
+        `[LIVE_REPLAY] ${liveIds.length} replay row(s) served without cover or clock: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return page;
+    }
+    return page.map((p: any) => {
+      const f = p?.kind === 'replay' ? facts.get(p.liveId) : undefined;
+      if (p?.kind === 'replay' && !f) {
+        this.logger.warn(`[LIVE_REPLAY] row ${p.id} served without its facts (live ${p.liveId})`);
+      }
+      return f ? { ...p, ...f } : p;
+    }) as T;
   }
 
   /**
@@ -2253,6 +2293,8 @@ export class PostsService {
         shaped.authorLastName = rows[0].lastName;
       }
     }
+    // A live replay's cover and the server's clock, as on a list row.
+    if (shaped.kind === 'replay') return (await this.withReplayRowFacts([shaped]))[0];
     return shaped;
   }
 

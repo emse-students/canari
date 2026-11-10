@@ -1114,7 +1114,7 @@ function describe(error: unknown): string {
  * Runs one buffer operation and resolves on its `updateend`, rejects on its `error` or its throw.
  * Waits first for an operation already running (a buffer takes one at a time).
  */
-function settleBuffer(buffer: LiveSourceBufferLike, op: () => void): Promise<void> {
+export function settleBuffer(buffer: LiveSourceBufferLike, op: () => void): Promise<void> {
   const run = () =>
     new Promise<void>((resolve, reject) => {
       const done = () => {
@@ -1142,7 +1142,7 @@ function settleBuffer(buffer: LiveSourceBufferLike, op: () => void): Promise<voi
 }
 
 /** Whether two byte arrays hold the same bytes. */
-function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+export function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   if (a.byteLength !== b.byteLength) return false;
   for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
   return true;
