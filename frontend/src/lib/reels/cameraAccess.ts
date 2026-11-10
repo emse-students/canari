@@ -18,6 +18,7 @@
 import { facingConstraint, lensIsExact, type CameraFacing } from '$lib/utils/cameraFacing';
 import { REEL_AUDIO_CONSTRAINTS, cameraVideoConstraints } from './framedCapture';
 import { captureUserMedia } from '$lib/utils/audioSession';
+import { logCaptureAudioLayout } from '$lib/utils/audioLayout';
 import { REEL_FRAME_RATIO, containFrame } from './reelFrame';
 
 /** Why the camera could not be opened. One code per cause the screen draws differently. */
@@ -131,6 +132,7 @@ export async function openReelCamera(
       },
       'reel-camera'
     );
+    if (withAudio) logCaptureAudioLayout('camera', stream);
     const video = stream.getVideoTracks()[0];
     const reported = video?.getSettings?.().facingMode;
     if (exact && reported && reported !== facing) {
@@ -192,6 +194,7 @@ export function postCameraOpener(): (
         { audio: REEL_AUDIO_CONSTRAINTS },
         'post-camera'
       );
+      logCaptureAudioLayout('camera', mic);
       console.debug('[camera] post camera: microphone granted - photos and videos');
       return new MediaStream([...lens.getVideoTracks(), ...mic.getAudioTracks()]);
     } catch (err) {

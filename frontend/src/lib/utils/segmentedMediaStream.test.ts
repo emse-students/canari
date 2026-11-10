@@ -13,8 +13,13 @@ import { flushMacrotask } from '../../test/flush';
 
 vi.mock('$lib/stores/auth', () => ({ getToken: () => Promise.resolve('token') }));
 
-const { chooseSegmentedPlayback, openSegmentedStream, FEED_STREAM_PACING, VIEWER_STREAM_PACING } =
-  await import('./segmentedMediaStream');
+const {
+  chooseSegmentedPlayback,
+  openSegmentedStream,
+  FEED_STREAM_PACING,
+  VIEWER_STREAM_PACING,
+  streamProgressOf,
+} = await import('./segmentedMediaStream');
 
 const WEBM = 'video/webm;codecs=vp9,opus';
 
@@ -129,6 +134,9 @@ describe('openSegmentedStream', () => {
       managed: false,
     });
     expect(handle.url).toBe('blob:stream');
+    // The progress a reel view's outcome line reads: nothing known before the header is read.
+    const progress = streamProgressOf('blob:stream')!;
+    expect(progress).toEqual({ segmentCount: null, appended: 0, bytes: 0 });
 
     const blob = await handle.done;
     // Byte-compared rather than deep-equalled: two megabytes element by element take seconds.
@@ -142,7 +150,11 @@ describe('openSegmentedStream', () => {
     expect(FakeMediaSource.last!.ended).toBeUndefined();
     expect(ranges).toHaveLength(3);
     expect(ranges[0].startsWith('bytes=0-')).toBe(true);
+    expect(progress).toEqual({ segmentCount: 3, appended: 3, bytes: n });
     handle.close();
+    // A closed stream owns no URL; the object a caller kept still says where it got to.
+    expect(streamProgressOf('blob:stream')).toBeUndefined();
+    expect(progress.appended).toBe(3);
   });
 
   it('ends the stream as a decode error when a segment does not authenticate', async () => {

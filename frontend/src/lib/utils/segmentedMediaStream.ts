@@ -159,6 +159,32 @@ export interface SegmentedStreamHandle {
   close(): void;
 }
 
+/**
+ * How far one stream has got: what the in-app log's one line per reel view reads when the view ends
+ * (`reels/reelViewOutcome.ts`), so a reel that never showed a frame names where its bytes stopped.
+ * Mutated in place by the stream, never by a reader.
+ */
+export interface StreamProgress {
+  /** The segment count the file's header announced - `null` until that header has been read. */
+  segmentCount: number | null;
+  /** Segments verified and appended to the element's buffer. */
+  appended: number;
+  /** Plaintext bytes appended. */
+  bytes: number;
+}
+
+/** Every open stream's progress, by its MSE URL - the one name the element and its owner share. */
+const progressByUrl = new Map<string, StreamProgress>();
+
+/**
+ * The live progress of the open stream whose URL is `url`, or `undefined` when no stream owns that
+ * URL (a whole blob, or a stream already closed). The object is the stream's own: a caller that
+ * keeps it reads the last state reached even after the stream closes.
+ */
+export function streamProgressOf(url: string): StreamProgress | undefined {
+  return progressByUrl.get(url);
+}
+
 /** Resolves on the buffer's next `updateend`, rejects on its `error`. */
 function appendSegment(buffer: SourceBuffer, bytes: ArrayBuffer): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -329,6 +355,8 @@ function openConsumer(
   }
   const source = new playback.MediaSourceCtor();
   const url = URL.createObjectURL(source);
+  const progress: StreamProgress = { segmentCount: null, appended: 0, bytes: 0 };
+  progressByUrl.set(url, progress);
   let closed = false;
   let paced = !!pacing;
   let element: PacingElement | null = null;
@@ -379,12 +407,15 @@ function openConsumer(
     );
     const buffer = source.addSourceBuffer(ref.mimeType);
     const segmentCount = await feed.count();
+    progress.segmentCount = segmentCount;
     const parts: Blob[] = [];
     for (let i = 0; i < segmentCount; i++) {
       await demand(i);
       const part = await feed.segment(i);
       if (closed) throw new DOMException('stream closed', 'AbortError');
       await appendSegmentEvicting(buffer, await part.arrayBuffer(), () => element, ref.mediaId);
+      progress.appended += 1;
+      progress.bytes += part.size;
       parts.push(part);
     }
     if (source.readyState === 'open') source.endOfStream();
@@ -428,6 +459,7 @@ function openConsumer(
       if (closed) return;
       closed = true;
       abort.abort();
+      progressByUrl.delete(url);
       URL.revokeObjectURL(url);
     },
   };

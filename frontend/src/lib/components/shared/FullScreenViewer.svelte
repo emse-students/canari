@@ -65,6 +65,12 @@
     /** Immersive only: the bars are faded out and let every touch through to the content. */
     chromeHidden?: boolean;
     /**
+     * Immersive only: the reader reaches for the faded bars - a mouse moves over the header, a key
+     * focuses one of its buttons. The owner of `chromeHidden` brings them back; without it a focused
+     * Back button sat at opacity 0.
+     */
+    onChromeReach?: () => void;
+    /**
      * Immersive only: how opaque the black ground is, in `[0, 1]`. The swipe-down dismiss fades it
      * as the picture follows the finger, so what is behind shows the gesture is a way out.
      */
@@ -83,6 +89,7 @@
     footer,
     immersive = false,
     chromeHidden = false,
+    onChromeReach,
     backdropOpacity = 1,
   }: Props = $props();
 
@@ -148,6 +155,10 @@
         chromeHidden
           ? 'pointer-events-none opacity-0'
           : ''}"
+        data-viewer-header
+        onpointermove={(e) => e.pointerType === 'mouse' && onChromeReach?.()}
+        onfocusin={() => onChromeReach?.()}
+        role="presentation"
         style="padding-top: max({immersive
           ? '0.5rem'
           : '0.75rem'}, var(--safe-area-inset-top, 0.75rem));"
