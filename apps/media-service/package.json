@@ -15,8 +15,8 @@
   },
   "dependencies": {
     "@nestjs/common": "^12.3.2",
-    "@nestjs/core": "^12.3.2",
-    "@nestjs/platform-express": "^12.3.2",
+    "@nestjs/core": "^12.4.0",
+    "@nestjs/platform-express": "^12.4.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "fs-extra": "^11.4.1",
@@ -68,6 +68,9 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "setupFilesAfterEnv": [
+      "<rootDir>/../jest.temp-cwd.cjs"
+    ]
   }
 }

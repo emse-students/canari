@@ -1,5 +1,6 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
+import { noticeContent } from './visibleNotices';
 import type { AddMessageToChatOptions, ConversationLifecycle } from '$lib/types';
 import {
   entersAsUnvouchedDevice,
@@ -909,12 +910,17 @@ async function writeUninvitedLine(
 ): Promise<void> {
   const userId = userIdOfLeaf(event.identity);
   const getName = await ctx.resolveDisplayNames([userId]);
-  const user = getName(userId);
+  // The row carries the id and the reader draws the name, so a newcomer unknown NOW is not frozen
+  // into it as "Utilisateur inconnu" (`noticeText.ts`).
   await ctx.addMessageToChat(
     'system',
-    kind === 'unvouched-device'
-      ? m.chat_system_unvouched_device_entry({ user })
-      : m.chat_system_uninvited_entry({ user }),
+    noticeContent(
+      {
+        event: kind === 'unvouched-device' ? 'unvouchedDeviceEntry' : 'uninvitedEntry',
+        actor: userId,
+      },
+      getName
+    ),
     event.groupId,
     { isSystem: true, messageId, ...at }
   );

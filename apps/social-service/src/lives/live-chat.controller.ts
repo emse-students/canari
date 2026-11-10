@@ -33,7 +33,8 @@ export class LiveChatController {
   ) {}
 
   /**
-   * Posts a message: `{ clientId: <uuid>, sealed: <base64 of iv + ciphertext + tag> }`. Refused
+   * Posts a message: `{ clientId: <uuid>, sealed: <base64 of iv + ciphertext + tag>, mentions?: <64-hex
+   * user ids> }` - the mentions are CANDIDATES the server narrows to the live's audience. Refused
    * like the key, then 403 `LIVE_CHAT_WITHHELD` to a named reader the chat is withheld from
    * (`LivesService.mayChat`, owner 2026-11-04).
    */
@@ -41,11 +42,28 @@ export class LiveChatController {
   async post(
     @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-user-id') userId: string,
-    @Body() body: { clientId?: unknown; sealed?: unknown }
+    @Body() body: { clientId?: unknown; sealed?: unknown; mentions?: unknown }
   ) {
     const caller = callerOf(userId);
     await this.lives.mayChat(caller, id);
     return this.chat.post(caller, id, body ?? {});
+  }
+
+  /**
+   * Which of the declared `ids` the `@` picker of this live's chat may suggest (owner, 2026-11-09):
+   * the subset who can see the live. Answers ids only - the client already resolves names. Open to
+   * whoever may chat, and read-only.
+   */
+  @Post(':id/mention-audience')
+  @HttpCode(200)
+  async mentionAudience(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string,
+    @Body() body: { ids?: unknown }
+  ) {
+    const caller = callerOf(userId);
+    await this.lives.mayChat(caller, id);
+    return { ids: await this.chat.mentionAudience(caller, id.toLowerCase(), body?.ids) };
   }
 
   /**

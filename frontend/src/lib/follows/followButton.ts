@@ -52,3 +52,27 @@ export function describeFollowRefusal(code: string | null): string {
   if (code === FOLLOW_DAILY_LIMIT) return m.refusal_follow_daily_limit();
   return m.profile_follow_error();
 }
+
+/** What the "Suivre en retour" button draws: the offer, the request it became, or the follow. */
+export type FollowBackView = 'follow_back' | 'requested' | 'following';
+
+/**
+ * THE FOLLOW-BACK BUTTON, AS DATA (owner, 2026-11-09). `status` is where the reader stands with the
+ * person who just got accepted (`'hidden'` for a blocked account in either direction, `undefined`
+ * while unknown); `offered` is whether the offer was already drawn in this session.
+ *
+ * - no row: the offer - "Suivre en retour".
+ * - `pending` / `accepted`: drawn ONLY once the offer was drawn (it is the answer to the tap, "Demande
+ *   envoyee" or "Abonne"); a pair that was already pending or following on arrival gets nothing.
+ * - unknown, `'hidden'`: nothing.
+ */
+export function followBackView(
+  status: FollowStatus | null | undefined | 'hidden',
+  offered: boolean
+): FollowBackView | null {
+  if (status === null) return 'follow_back';
+  if (!offered) return null;
+  if (status === 'pending') return 'requested';
+  if (status === 'accepted') return 'following';
+  return null;
+}

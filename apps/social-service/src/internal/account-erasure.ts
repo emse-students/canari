@@ -74,6 +74,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // the erased account as a `user` target, and would otherwise outlive it.
   'account_bells.userId': { action: 'delete' },
   'account_bells.targetId': { action: 'delete' },
+  // The follow suggestions the reader dismissed (migration 155, engagement WP-5), and every
+  // reader's dismissal OF this person - the second names the erased account as a `user` target.
+  'follow_suggestion_dismissals.userId': { action: 'delete' },
+  'follow_suggestion_dismissals.targetId': { action: 'delete' },
   // The member's birthday and visibility (migration 148), and when they last set a date.
   'profile_birthdays.userId': { action: 'delete' },
   'birthday_changes.userId': { action: 'delete' },
@@ -301,6 +305,13 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'live_rules_acceptances.userId': { action: 'delete' },
   // The live chat (WP-L6): the account's messages and reaction taps go; a count map holds no id.
   'live_chat_messages.authorId': { action: 'delete' },
+  // Who a line told of a mention (migration 154): ids of OTHER accounts on a row that dies with its
+  // live (C2, an hour at most plus the purge); the author's erasure deletes the row above.
+  'live_chat_messages.mentionedUserIds': {
+    action: 'kept',
+    reason:
+      'ephemeral: the row goes with its live (C2), and the ids are only the addressees of a one-minute notice window',
+  },
   'live_reaction_bursts.userId': { action: 'delete' },
   // The strike ladder (WP-L8b): a withdrawal is a record ABOUT the account, and goes with it; the
   // moderator who decided is anonymised, as a cut's.
@@ -553,6 +564,12 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'account_bells',
     sql: `DELETE FROM account_bells WHERE "userId" = $1 OR "targetId" = $1`,
+  },
+  // Every dismissal naming the account, as reader or as target - no kind term, as for the bells:
+  // an association target is a uuid, never an account id.
+  {
+    label: 'follow_suggestion_dismissals',
+    sql: `DELETE FROM follow_suggestion_dismissals WHERE "userId" = $1 OR "targetId" = $1`,
   },
   // The birthday (migration 148): the date, its visibility, the day it was last announced, and
   // when a date was last set. The followers' notices name the member as their actor and go with
