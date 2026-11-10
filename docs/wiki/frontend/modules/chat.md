@@ -4450,7 +4450,9 @@ followed growth only - so `anchorShift` kept the row at the top of the viewport 
 `threadGrowthResponse` (`threadAnchor.ts`) replaces the predicate with three answers: a reader at the
 bottom FOLLOWS any change of reach, growth or shrink (`follow-bottom`), holds when nothing moved
 (`hold-bottom`), and is never anchor-compensated; the row anchor (`keep-row`) is for a reader in
-history, while entering and while older messages are prepended, exactly as before.
+history and while older messages are prepended. **Entering is no longer one of them** (2026-11-09,
+[below](#rows-received-as-notifications-appeared-only-at-the-second-open-2026-11-09)): an entry
+follows the bottom.
 `threadGrowthObserver.test.ts` drives the observer through late growth, the keyboard box and the
 `svh` shrink: the old rule leaves the pinned reader exactly 214 px up, the new one at 0, and a reader
 in history keeps their row. **Owed: one reading of the built change on an Android phone, a DM with a
@@ -5094,6 +5096,74 @@ bracket the unknown stretch between the conversation map and the pane DOM:
 (the pane never received the grown conversation). `[CHAT_VIEW]` N+1 with the row still missing:
 rendering or scroll (`windowStart`, the pin), not data flow. `selected=false` while the pane is open
 means `selectedContact` and the pane disagree.
+
+**The count line is `Log.d`, so it is NOT in the exported log** (`appLog.ts` records no debug) - it is
+for a console attached to the device. What the exported log carries (2026-11-09):
+
+- `[ADD_MSG] ✓ Message upgraded: id=<id> selected=<bool>` - a shown row (a push preview) upgraded in
+  place by the live path: the count does not move, so no count line follows it.
+- `[CHAT_VIEW] <id8> entry settled: pinned=<bool> isNearBottom=<bool> newestVisible=<bool> rows=N
+  fromBottom=<px>` - INFO, ONE per conversation entry (`chatViewEntryLine`), written on the frame
+  after the entry is revealed AND its catch-up (`isLoadingHistory` / `isCatchingUpMessages`) has
+  ended, so the history replay's upgrades and withdrawal have landed. `pinned` is measured
+  (`isPinnedToBottom`), `isNearBottom` is the flag the observers read, `newestVisible` says whether
+  the conversation's newest row is the last row in view. `newestVisible=false` with `pinned=true` is
+  a render-window defect (the row is not mounted); `pinned=false` with `isNearBottom=true` is a
+  change the follow did not answer.
+
+### Rows received as notifications appeared only at the second open (2026-11-09)
+
+Reported by the owner (Android 1.6.8): messages received as push notifications showed in the DM only
+when it was opened a SECOND time. The log proved the data path: at the notification-tap open the
+three previews were in the map (`FCM_CACHE Injection done 3/3`), then within 1.4 s the stored page
+was drawn before the probe, the three previews were upgraded in place (`Preview upgrade ... taking
+the live path`, two into taller reply bubbles, count unchanged), and `[HISTORY] 3 early-drawn row(s)
+below the fresh page withdrawn` took the oldest rows off the top. The second open changed no data.
+The pane's own evidence was debug-only, so the mechanism is inferred, and three holes were closed:
+
+1. **An entry dropped every change of the thread's extent.** `threadGrowthResponse` answered
+   `keep-row` while `entering`, and `anchorShift` compensates nothing while entering - so an upgrade
+   growing a row, or a withdrawal, during the entry was not followed at all. An entry is at the
+   bottom by definition (`fillViewportThenPin`), so it now follows (`follow-bottom`) whatever
+   `wasNearBottom` says - a scroll measured while the list is hidden is not the reader's. Only a
+   prepend (`isLoadingOlder`) keeps the row. Reproduced first in `threadGrowthObserver.test.ts`
+   ("a conversation being entered": 180 px from the bottom after two 90 px upgrades), then fixed.
+2. **The follow of a new message was a SMOOTH scroll.** Every `scroll` event of the glide is
+   measured, so the stick-to-bottom flag read `false` mid-way, and growth then was answered as growth
+   under a reader in history: the glide ended at the OLD bottom. `scrollToBottom` is instant
+   everywhere, like the jump to a message ([above](#the-jump-is-instant-because-a-smooth-one-was-cancelled-by-the-tap-that-asked-for-it-2026-10-12)).
+3. **The entry's re-pins on a clock are gone.** `scrollToBottomSettled` re-pinned for four frames
+   and at 250 and 600 ms - a guess at when late content lands, blind to what lands after it and
+   pulling a reader who scrolled up inside it back down. The observer now covers the entry, so the
+   pin is the synchronous one plus the reveal frame.
+
+**Ruled out: the entrance animation.** `animate-rise-in` fills nothing and ends at `opacity: 1`, so
+a row whose animation stops is its own style (`riseInEntrance.test.ts` reads the rule). **And a
+stale write fixed on the way:** the live upgrade wrote `{...convo, messages}` from the snapshot read
+BEFORE `settleWithPending`'s store read, and a notification-tap open draws the stored page in that
+gap - the write put the thread back to the previews alone. It re-reads the conversation after the
+await (`useMessaging.upgradeSnapshot.svelte.test.ts`). **Owed: one notification-tap open on the
+Mi 9T with three pushed replies, and the `entry settled` line read from the exported log.**
+
+**What the timed re-pins were still covering, found in review (2026-11-09).** Three cases, each now
+closed at its cause rather than by a clock:
+
+- **A growth seen by the scroll measurement before the observer could follow it.** `measureScroll`
+  runs in an animation frame, and a frame runs those BEFORE it delivers `ResizeObserver` entries: a
+  medium decoding to its size (no DOM mutation) in the frame of a pending measurement - the reveal's
+  scroll, every widen step's - read "not at the bottom", dropped the flag, and the observer then
+  answered `keep-row`. `stickToBottomAfterScroll` (`threadAnchor.ts`): a reader leaves the bottom
+  only by moving UP out of the slack; a pane that did not move up keeps the flag, and the observer
+  follows. This also makes the smooth glide of fix 2 harmless in principle.
+- **An older-history load in flight across a switch.** `loadOlderGroups`' restore was computed from
+  the PREVIOUS conversation's offsets and landed on the new one, and its `isLoadingOlder` held the
+  new entry's growth to `keep-row`. A switch now retires it (`olderLoadToken`): no restore, and the
+  flag is the new entry's.
+- **The stored copy of the preview.** Re-reading the conversation after the await still wrote the
+  upgrade built from the SHOWN preview over whatever row the stored page had put there - a tombstone
+  came back as the body, a reaction the copy carried was dropped. The body now lands onto the
+  current row (`mergeMessageUpgrade`, the same pending mutations re-folded), and a row that is no
+  longer a preview is left as it is, like the store's compare-and-set does.
 
 ## Each conversation keeps its own draft (2026-10-27)
 

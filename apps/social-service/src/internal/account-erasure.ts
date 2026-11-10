@@ -308,6 +308,13 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'live_rules_acceptances.userId': { action: 'delete' },
   // The live chat (WP-L6): the account's messages and reaction taps go; a count map holds no id.
   'live_chat_messages.authorId': { action: 'delete' },
+  // Who a line told of a mention (migration 154): ids of OTHER accounts on a row that dies with its
+  // live (C2, an hour at most plus the purge); the author's erasure deletes the row above.
+  'live_chat_messages.mentionedUserIds': {
+    action: 'kept',
+    reason:
+      'ephemeral: the row goes with its live (C2), and the ids are only the addressees of a one-minute notice window',
+  },
   'live_reaction_bursts.userId': { action: 'delete' },
   // The strike ladder (WP-L8b): a withdrawal is a record ABOUT the account, and goes with it; the
   // moderator who decided is anonymised, as a cut's.

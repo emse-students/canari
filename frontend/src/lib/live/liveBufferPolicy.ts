@@ -26,11 +26,17 @@
  *   handover can come K x D later, and the poll learns of it up to one {@link LIVE_MANIFEST_POLL_MS}
  *   after that. {@link LiveBufferPolicy.longestWaitMs} is the largest of that bound, the longest gap
  *   measured, and the floor.
- * - A BUFFER SHORTER THAN THE LONGEST WAIT IS RE-ANCHORED AT ONCE ({@link LiveBufferPolicy.reanchor}),
- *   not left to stall: after a delivery, the media ahead must outlast the wait for the next one.
  * - THE ANCHOR SITS ONE POLL ABOVE THAT WAIT ({@link LiveBufferPolicy.targetMs}): a delivery's phase
  *   against the poll moves by up to one poll, so an anchor exactly at the wait would re-anchor on that
- *   ordinary jitter - a backward seek every few deliveries.
+ *   ordinary jitter - and never under {@link LIVE_PLAYER_MARGIN_SEGMENTS} segments.
+ *
+ * AND WHY NOTHING HERE EVER SEEKS BACKWARD (owner, 2026-11-09, production: a broadcaster on a bad link
+ * and the viewer "replays the current segment in a loop until the next one arrives"). A short buffer
+ * used to be re-anchored at `end - target` - BEHIND the playhead whenever the media ahead was under
+ * the target, which is exactly when it was re-anchored - and so was the first delivery after a stall.
+ * Every late segment therefore showed the reader the seconds they had just watched again. Margin is
+ * media not yet shown, and only two things make it: the join's anchor, and playing slower than the
+ * producer ({@link LiveBufferPolicy.pace}). {@link liveSeekPoint} answers forward or not at all.
  *
  * A gap that is an outage, not a cadence (a catch-up jump, a retried poll, a quiet broadcaster) is
  * never recorded: {@link LiveBufferPolicy.interrupt}.
@@ -40,7 +46,10 @@ import {
   LIVE_MANIFEST_POLL_MS,
   LIVE_PLAYER_CADENCE_WINDOW,
   LIVE_PLAYER_DRIFT_SLACK_MS,
+  LIVE_PLAYER_FAST_RATE,
+  LIVE_PLAYER_MARGIN_SEGMENTS,
   LIVE_PLAYER_MIN_TARGET_BUFFER_MS,
+  LIVE_PLAYER_SLOW_RATE,
   LIVE_SEGMENT_MS,
 } from './constants';
 
@@ -99,6 +108,30 @@ export function formatLiveRanges(ranges: LiveTimeRanges | null): string {
   return `[${spans.join(' ')}]`;
 }
 
+/**
+ * Where a seek puts the playhead now at `position`, or null for no seek - and NEVER BEFORE
+ * `position`: media already shown is never shown again (owner, 2026-11-09). The anchor is
+ * `targetMs` behind the newest buffered media, clamped to the start of its range; it is taken only
+ * when it lies ahead (a join, a backlog jumped, a viewer drifted past its slack, a hole to cross).
+ * Otherwise, a playhead with nothing playable under it (the end of a range, a hole) goes to the
+ * first media buffered past it, and one with media ahead stays where it is: it plays on by itself.
+ */
+export function liveSeekPoint(
+  position: number,
+  ranges: LiveTimeRanges | null,
+  targetMs: number
+): number | null {
+  if (!ranges || ranges.length === 0) return null;
+  const last = ranges.length - 1;
+  const anchor = Math.max(ranges.start(last), ranges.end(last) - targetMs / 1000);
+  if (anchor > position) return anchor;
+  if (mediaAheadS(position, ranges) > 0) return null;
+  for (let i = 0; i < ranges.length; i++) {
+    if (ranges.start(i) > position) return ranges.start(i);
+  }
+  return null;
+}
+
 /** Classifies a `waiting` - see {@link LiveWait}. */
 export function classifyLiveWait(
   seeking: boolean,
@@ -148,12 +181,23 @@ export interface LiveDelivery {
 }
 
 /**
- * Why a delivery re-anchors the playhead at the target, when nothing else asked for a seek:
- * - `short`: the media ahead would not outlast {@link LiveBufferPolicy.longestWaitMs} - the next
- *   delivery may come after it runs dry;
- * - `drift`: the video sits past the target plus {@link LIVE_PLAYER_DRIFT_SLACK_MS} behind the edge.
+ * Why a delivery re-anchors the playhead at the target, when nothing else asked for a seek: `drift`,
+ * the video sits past the target plus {@link LIVE_PLAYER_DRIFT_SLACK_MS} behind the edge - a FORWARD
+ * seek. A margin too short is never re-anchored (that seek went backward, and replayed): it is
+ * rebuilt by {@link LiveBufferPolicy.pace}.
  */
-export type LiveReanchor = 'short' | 'drift';
+export type LiveReanchor = 'drift';
+
+/**
+ * The pace the video plays at: `steady` 1x; `slow` ({@link LIVE_PLAYER_SLOW_RATE}) while the margin
+ * is short, so it grows back; `fast` ({@link LIVE_PLAYER_FAST_RATE}) while the viewer sits past it.
+ */
+export type LivePace = 'slow' | 'steady' | 'fast';
+
+/** The playback rate of a {@link LivePace}. */
+export function livePaceRate(pace: LivePace): number {
+  return pace === 'slow' ? LIVE_PLAYER_SLOW_RATE : pace === 'fast' ? LIVE_PLAYER_FAST_RATE : 1;
+}
 
 /** One per run of a viewer: reset at every (re)start. */
 export class LiveBufferPolicy {
@@ -186,12 +230,20 @@ export class LiveBufferPolicy {
     return Math.max(gap, most * longest + this.pollMs);
   }
 
+  /** The longest segment measured, in ms; {@link LIVE_SEGMENT_MS} before any delivery measured one. */
+  get segmentMs(): number {
+    const longest = this.groups.reduce((a, g) => Math.max(a, g.segmentMs), 0);
+    return longest > 0 ? longest : LIVE_SEGMENT_MS;
+  }
+
   /**
    * How far behind the newest buffered media the player anchors, in ms: the longest wait plus one
-   * poll, the jitter of a delivery's phase against the poll, so ordinary jitter never re-anchors.
+   * poll (the jitter of a delivery's phase against the poll, so ordinary jitter never re-anchors),
+   * and never under {@link LIVE_PLAYER_MARGIN_SEGMENTS} segments of the length measured - the margin
+   * a late segment is absorbed by (owner, 2026-11-09).
    */
   get targetMs(): number {
-    return this.longestWaitMs + this.pollMs;
+    return Math.max(this.longestWaitMs + this.pollMs, LIVE_PLAYER_MARGIN_SEGMENTS * this.segmentMs);
   }
 
   /** Past this many ms behind the newest buffered media, the player seeks back to the target. */
@@ -209,18 +261,40 @@ export class LiveBufferPolicy {
    * dropped).
    */
   isBacklog(segments: number): boolean {
-    const longest = this.groups.reduce((a, g) => Math.max(a, g.segmentMs), 0);
-    return segments * (longest > 0 ? longest : LIVE_SEGMENT_MS) > this.maxBehindMs;
+    return segments * this.segmentMs > this.maxBehindMs;
   }
 
   /**
    * Whether a delivery that left `aheadMs` of media before the playhead re-anchors it at the
-   * target, and why ({@link LiveReanchor}); null when it plays on.
+   * target ({@link LiveReanchor}); null when it plays on.
    */
   reanchor(aheadMs: number): LiveReanchor | null {
-    if (aheadMs < this.longestWaitMs) return 'short';
-    if (aheadMs > this.maxBehindMs) return 'drift';
-    return null;
+    return aheadMs > this.maxBehindMs ? 'drift' : null;
+  }
+
+  /**
+   * The pace to play at, from `aheadMs` of media before the playhead and the pace now. Deterministic
+   * thresholds on the buffered range, read at the manifest poll the player makes anyway - no timer.
+   *
+   * AT A DELIVERY (`atDelivery`) the media ahead is at its peak, which a steady producer holds within
+   * one poll under the target (the delivery's phase against the poll). So: under `target - poll`
+   * slows, over `target + poll` speeds up, and each comes back to 1x only once the peak has crossed
+   * the target itself - a band of a poll on each side, so ordinary jitter never flips the rate.
+   * BETWEEN DELIVERIES the media ahead only falls, by design down to `target - longestWait` (the
+   * longest wait the deliveries' shape explains); under that the producer is later than its own
+   * shape, and the video slows at once rather than at the delivery that may not come. Nothing else
+   * changes between deliveries, so the rate changes at most once per delivery and once per lateness.
+   */
+  pace(aheadMs: number, current: LivePace, atDelivery: boolean): LivePace {
+    const target = this.targetMs;
+    if (!atDelivery) {
+      return current !== 'slow' && aheadMs < target - this.longestWaitMs ? 'slow' : current;
+    }
+    if (current === 'slow') return aheadMs >= target ? 'steady' : 'slow';
+    if (current === 'fast') return aheadMs <= target ? 'steady' : 'fast';
+    if (aheadMs < target - this.pollMs) return 'slow';
+    if (aheadMs > target + this.pollMs) return 'fast';
+    return 'steady';
   }
 
   /**
