@@ -260,7 +260,7 @@
       {#each answered as { item, text } (item.id)}
         {@const file = liveFile(sub, item)}
         <div class={text.length > 80 ? 'sm:col-span-2' : ''}>
-          <dt class="text-text-muted text-2xs font-semibold">
+          <dt class="text-text-muted text-2xs font-semibold whitespace-pre-line">
             {item.label}
           </dt>
           {#if file}

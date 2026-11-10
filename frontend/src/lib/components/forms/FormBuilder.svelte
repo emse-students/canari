@@ -478,7 +478,7 @@
           <img
             src={associationLogoSrc(item.imageUrl) ?? ''}
             alt={m.form_builder_image_preview_alt()}
-            class="border-cn-border h-20 w-28 shrink-0 rounded-lg border object-cover"
+            class="border-cn-border bg-cn-bg h-20 w-28 shrink-0 rounded-lg border object-contain"
             loading="lazy"
           />
           <div class="flex min-w-0 flex-1 flex-col gap-2">
