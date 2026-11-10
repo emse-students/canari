@@ -918,6 +918,20 @@ export async function readInFeedAudience(
 export const READER_SPACES_SQL = `SELECT s.formation, s.campus FROM spaces s JOIN users u ON u.id = $1
   WHERE ${isReaderSpaceSql('s', 'u')} ORDER BY s.campus, s.formation`;
 
+/**
+ * THE SPACES A READER'S AGENDA REACHES (owner, 2026-11-10: a reader whose agenda shows several
+ * spaces narrows the VIEW by space): every space an association the reader SEES (a member, or its
+ * rules reach their spaces, or a read grant - the agenda's own predicate) addresses through its
+ * rules. It is the vocabulary the feed's `campus` / `formation` narrowing
+ * (`eventReachesSpaceMatchingSql`) speaks, so an option offered always matches the events it keeps.
+ * A reading aid for a view setting, never an access decision.
+ */
+export const AGENDA_REACHED_SPACES_SQL = `SELECT s.formation, s.campus FROM spaces s
+  WHERE EXISTS (SELECT 1 FROM associations ag_asso JOIN users ag_user ON ag_user.id = $1
+    WHERE ${associationVisibleToUserSql('ag_asso.id', 'ag_user', { readGrants: true })}
+      AND ${associationRulesReachSpaceMatchingSql('ag_asso.id', { formation: 's.formation', campus: 's.campus' })})
+  ORDER BY s.campus, s.formation`;
+
 /** The profile facts of user `$1`, for `campusWideReaderCampus` (asked for a reader with no space). */
 export const READER_PROFILE_SQL = `SELECT id, campus, cursus FROM users WHERE id = $1`;
 

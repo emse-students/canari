@@ -1719,6 +1719,28 @@ predicate carries that exclusion once, and moderation reads it (proved in
   the platform admin's edit of another person's post refused), the moderation and lives controller
   specs.
 
+### The agenda's space filter (owner, 2026-11-10)
+
+A reader whose signed-in agenda reaches several spaces (staff, admins, a BDE, a student with several
+formations) narrows the VIEW to one campus or one formation. It replaced the "Association" select of
+`/calendar`, which named nothing a reader thinks in; an association is still reached from its own
+page, and a `?association=` deep link keeps working (with a "show everything" button, as the select
+that cleared it is gone).
+
+- **Options** come from `GET /api/associations/calendar/spaces` (signed in): the spaces
+  (`AGENDA_REACHED_SPACES_SQL`, `reader-spaces.ts`) addressed by the rules of every association the
+  reader SEES - the agenda's own predicate (member, rules reach their spaces, read grant). That is the
+  vocabulary of the narrowing below, so an option is never offered that keeps nothing by construction.
+  `agendaSpaceOptions` (`calendar/agendaSpaceFilter.ts`) lists "Tous les espaces", the campuses, then
+  the formations; **the control is drawn only when more than one space is reached**.
+- **Narrowing** is the feed's existing `campus=` / `formation=` query (`restrictToSelection`,
+  `eventReachesSpaceMatchingSql`), applied on top of `restrictToViewerSpaces`: it can only shrink the
+  answer. It is a view setting and decides nothing about access.
+- **Remembered per reader** in `localStorage` (`ACCOUNT_KEY.agendaSpaceFilter`, swept with the
+  account). The first month is asked with the remembered value; a value the reader's spaces no longer
+  offer is dropped and the month re-read. The subscribe link and the PDF export keep their own
+  selectors (D40) and do not follow this filter.
+
 ### D40 closed - no event is published to an anonymous reader (2026-11-02)
 
 **Decided by the owner (2026-11-02):** only what the student portal shows is public, and it shows no
