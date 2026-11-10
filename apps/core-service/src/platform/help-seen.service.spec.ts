@@ -2,6 +2,7 @@
 
 import { Logger } from '@nestjs/common';
 import { HelpSeenService } from './help-seen.service';
+import { HelpSeenController } from './help-seen.controller';
 import type { Repository } from 'typeorm';
 import type { HelpSeen } from './entities/help-seen.entity';
 import type { User } from '../users/entities/user.entity';
@@ -111,6 +112,30 @@ describe('HelpSeenService.profilePhotoPromptEligible', () => {
         serviceFor('ICM:saint-etienne', profile).service.profilePhotoPromptEligible('u1')
       ).resolves.toBe(false);
     }
+  });
+
+  it('answers false and warns when the profile read rejects, instead of failing', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { service, users } = serviceFor('ICM:saint-etienne', icmStEtienne);
+    users.findOne.mockRejectedValueOnce(new Error('connection lost'));
+    await expect(service.profilePhotoPromptEligible('u1')).resolves.toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('connection lost'));
+  });
+
+  it('keeps the seen read answering when the profile read rejects (through the controller)', async () => {
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+    const { service, users } = serviceFor('ICM:saint-etienne', icmStEtienne);
+    users.findOne.mockRejectedValueOnce(new Error('boom'));
+    const repo = {
+      find: jest.fn(async () => [{ helpId: 'welcome-tour', seenAt: new Date() }]),
+    };
+    (service as unknown as { repo: unknown }).repo = repo;
+    const controller = new HelpSeenController(service);
+    await expect(controller.list('u1')).resolves.toMatchObject({
+      seen: ['welcome-tour'],
+      profilePhotoPromptEligible: false,
+    });
   });
 
   it('prompts nobody when the variable is unset or empty, without reading a profile', async () => {

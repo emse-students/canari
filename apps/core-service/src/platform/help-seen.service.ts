@@ -55,11 +55,19 @@ export class HelpSeenService implements OnModuleInit {
    */
   async profilePhotoPromptEligible(userId: string): Promise<boolean> {
     if (this.promptSpaces.spaces.length === 0) return false;
-    const user = await this.users.findOne({
-      where: { id: userId },
-      select: { id: true, campus: true, cursus: true },
-    });
-    return isPromptEligible(user, this.promptSpaces.spaces);
+    try {
+      const user = await this.users.findOne({
+        where: { id: userId },
+        select: { id: true, campus: true, cursus: true },
+      });
+      return isPromptEligible(user, this.promptSpaces.spaces);
+    } catch (e) {
+      // ISOLATED: a temporary prompt must never fail the seen-help read every guided help depends on.
+      this.logger.warn(
+        `[PROFILE_PHOTO_PROMPT] the profile read failed - not offered this time: ${e instanceof Error ? e.message : 'unknown error'}`
+      );
+      return false;
+    }
   }
 
   /**
