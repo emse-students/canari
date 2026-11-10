@@ -105,6 +105,27 @@ export function isDoubleReport(m: ViewportMeasurement, baselineHeight: number): 
 }
 
 /**
+ * How much of the LAYOUT viewport's bottom the keyboard covers, in CSS px: the band below the
+ * visible area that a `position: fixed` panel must stay out of.
+ *
+ * THE VISUAL VIEWPORT KNOWS FIRST. On Android 15+ (edge-to-edge, `adjustResize` inert) the layout
+ * viewport gives up the keyboard's room only when `MainActivity` pads its content by the IME inset;
+ * the visual viewport has already shrunk by then. Mi 9T, `1.6.9`, 2026-11-10: `visualViewport`
+ * resize to 588 at +357 ms after the focus, `innerHeight` still 945 until +1000 ms - and a phone
+ * browser never shrinks the layout viewport at all. Zero when pinch-zoomed (a zoom is not a
+ * keyboard) and once the layout viewport has caught up; the double report is absorbed as in
+ * `computeSnapshot`, so its one bogus frame is never a 357 px band.
+ *
+ * @param m the raw viewport measurement.
+ * @param baselineHeight the tallest the layout viewport has been with no keyboard.
+ */
+export function keyboardInsetBottom(m: ViewportMeasurement, baselineHeight: number): number {
+  if (m.scale > ZOOM_SCALE_EPSILON) return 0;
+  const vvHeight = isDoubleReport(m, baselineHeight) ? m.winH : m.vvHeight;
+  return Math.max(0, m.winH - vvHeight - m.offsetTop);
+}
+
+/**
  * Pure geometry: turns raw viewport numbers into a keyboard snapshot.
  * Fix (root cause): when `scale > 1` the visual viewport shrank because of a pinch-zoom, not a
  * keyboard - bail out with `zoomed: true` and a full-height, closed snapshot so the shell is
@@ -140,7 +161,7 @@ export function computeSnapshot(
   }
   const vvHeight = doubleReported ? m.winH : m.vvHeight;
 
-  const insetBottom = Math.max(0, m.winH - vvHeight - m.offsetTop);
+  const insetBottom = keyboardInsetBottom(m, baselineHeight);
   const delta = Math.max(baselineHeight - vvHeight, m.winH - vvHeight);
   const isOpen = delta > thresholdPx;
   const layoutShrunk =
@@ -182,26 +203,44 @@ export function hasVirtualKeyboard(os: string): boolean {
   return os !== 'windows' && os !== 'macos' && os !== 'linux';
 }
 
-function readSnapshot(baselineHeight: number): KeyboardViewportSnapshot {
+/**
+ * Reads the viewport now. A desktop OS has no on-screen keyboard, so its visual viewport is read as
+ * the layout viewport: a shorter window there is a resize (`hasVirtualKeyboard`).
+ */
+function measureViewport(): ViewportMeasurement {
   const vv = window.visualViewport;
   const winH = window.innerHeight;
   if (!hasVirtualKeyboard(detectRuntimeDeviceOs())) {
-    return computeSnapshot(
-      { winH, vvHeight: winH, offsetTop: 0, scale: 1 },
-      winH,
-      keyboardOpenThresholdPx()
-    );
+    return { winH, vvHeight: winH, offsetTop: 0, scale: 1 };
   }
+  return {
+    winH,
+    vvHeight: vv?.height ?? winH,
+    offsetTop: vv?.offsetTop ?? 0,
+    scale: vv?.scale ?? 1,
+  };
+}
+
+/** Tallest the layout viewport has been with no keyboard - owned by `initKeyboardViewport`. */
+let baselineHeight = 0;
+
+function readSnapshot(): KeyboardViewportSnapshot {
+  const m = measureViewport();
   return computeSnapshot(
-    {
-      winH,
-      vvHeight: vv?.height ?? winH,
-      offsetTop: vv?.offsetTop ?? 0,
-      scale: vv?.scale ?? 1,
-    },
-    baselineHeight,
+    m,
+    hasVirtualKeyboard(detectRuntimeDeviceOs()) ? baselineHeight : m.winH,
     keyboardOpenThresholdPx()
   );
+}
+
+/**
+ * The keyboard's band at the bottom of the layout viewport, MEASURED NOW rather than read from the
+ * last snapshot - so a caller handling the same `resize` event as this store never mixes a fresh
+ * `innerHeight` with a stale inset, whichever listener ran first. See `keyboardInsetBottom`.
+ */
+export function currentKeyboardInsetBottom(): number {
+  if (typeof window === 'undefined') return 0;
+  return keyboardInsetBottom(measureViewport(), baselineHeight);
 }
 
 const SAFE_BOTTOM_PROPERTY = '--safe-area-inset-bottom';
@@ -326,12 +365,12 @@ export function overlaySettledAroundFocus(
 export function initKeyboardViewport(): () => void {
   if (typeof window === 'undefined') return () => {};
 
-  let baselineHeight = window.innerHeight;
+  baselineHeight = window.innerHeight;
 
   let keyboardWasOpen = false;
 
   const update = () => {
-    const next = readSnapshot(baselineHeight);
+    const next = readSnapshot();
     const openedNow = next.isOpen && !keyboardWasOpen;
     snapshot = next;
     applyCssVars(next, baselineHeight);
