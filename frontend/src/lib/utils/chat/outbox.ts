@@ -2798,6 +2798,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         log(`[OUTBOX] ${entry.id.slice(0, 8)}… withdrawn just before the send - not delivered`);
         return 'gone';
       }
+      // THE QUEUE IS NEVER HANDED TO ANOTHER TAB: a document that lost the leader copy since the
+      // flush gate (a steal, many awaits back) would have `sendMessage` hand this entry to the new
+      // leader - which drains the SAME shared queue and would send it a second time. Read with no
+      // await before the call, whose own gate runs in the same turn.
+      if (refusesCommitsHere()) {
+        log(
+          `[OUTBOX] ${entry.id.slice(0, 8)}… not sent here: this tab lost the leader copy before the send - it stays queued for the leader`
+        );
+        return 'skip';
+      }
       // HELD UNTIL THE SENT ROW IS DELETED, NOT ONLY WHILE THE POST RUNS. A sent row stays queued
       // through `persistSent` and its own delete, and a withdrawal reading it there was answered
       // "never sent" for a frame the peers already had - so no `delete_message` went out.

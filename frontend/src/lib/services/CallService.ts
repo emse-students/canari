@@ -36,11 +36,14 @@ import {
   CallSetupAbandonedError,
   CallE2eUnsupportedError,
   CallInitiateError,
+  CallNoLeaderTabError,
   CallRelayWithheldError,
   CallSignallingRefusedError,
   describeCallFailure,
   TURN_DISABLED_CODE,
 } from '$lib/utils/callFailure';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
+import { leaderTabCarriesSends } from '$lib/utils/chat/tabSendDelegation';
 import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -1082,6 +1085,13 @@ export class CallService {
     if (!canUseRtpScriptTransform()) {
       appendLog(refusedCallReport('-', currentEngine()));
       throw new CallE2eUnsupportedError();
+    }
+    // A tab without the leader copy places a call through the leader, which seals its invite and
+    // its hangup (`tabSendDelegation.ts`). With no leader to carry them, the invite could never
+    // leave AFTER the ring - so the call is refused here, before anything rings.
+    if (refusesCommitsHere() && !leaderTabCarriesSends()) {
+      appendLog('[Call] startCall refused - no leader tab can carry its frames (reload owed)');
+      throw new CallNoLeaderTabError();
     }
 
     this.currentGroupId = groupId;

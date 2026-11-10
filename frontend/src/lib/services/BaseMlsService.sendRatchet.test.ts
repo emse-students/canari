@@ -8,6 +8,18 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
   scheduleOutboundMlsPersist: vi.fn(),
   noteInboundMlsFrame: vi.fn(),
 }));
+// The election, overridable per case (a follower whose leader lives in another tab), and the
+// hand-over to that leader, observed.
+const election = vi.hoisted(() => ({ role: null as null | 'leader' | 'follower' }));
+vi.mock('$lib/mls-client/tabLeader', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/mls-client/tabLeader')>();
+  return { ...actual, getTabLeadership: () => election.role ?? actual.getTabLeadership() };
+});
+const delegateCommitToLeader = vi.hoisted(() => vi.fn());
+vi.mock('$lib/utils/chat/tabCommitDelegation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/chat/tabCommitDelegation')>()),
+  delegateCommitToLeader,
+}));
 
 import type { Mock } from 'vitest';
 import { BaseMlsService } from './BaseMlsService';
@@ -239,11 +251,12 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
   });
 
   /**
-   * Review of #3326: a leader promoted in place keeps the copy it loaded as a follower until its
-   * reload, and a send from it re-issued a generation the peer had consumed - dropped at the peer,
-   * and counted in the account's ledger from the wrong copy.
+   * Review of #3326: a document leading on the copy it loaded as a follower (promotion reload owed)
+   * re-issued a generation the peer had consumed - dropped at the peer, and counted in the account's
+   * ledger from the wrong copy. No leader elsewhere can carry it (a follower hands it over:
+   * `tabCommitDelegation.test.ts`), so it is refused typed.
    */
-  it('a tab without the leader copy seals nothing, posts nothing and counts nothing', async () => {
+  it('a document without the leader copy and no leader to hand to seals, posts and counts nothing', async () => {
     const peer = new Peer();
     const disk = { state: { epoch: 4, next: {} } as ModelState };
     noteMlsStateLoaded(false);
@@ -255,7 +268,41 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
       expect(promoted.svc.encryptForSend).not.toHaveBeenCalled();
       expect(promoted.svc.delivery.postApplicationMessage).not.toHaveBeenCalled();
       expect(sendRatchetEntries(U)).toEqual([]);
+      expect(delegateCommitToLeader).not.toHaveBeenCalled();
     } finally {
+      resetStateAuthorityForTests();
+    }
+  });
+
+  it('a follower hands its send to the leader tab and returns the frame the leader sent', async () => {
+    const peer = new Peer();
+    const disk = { state: { epoch: 4, next: {} } as ModelState };
+    noteMlsStateLoaded(false);
+    election.role = 'follower';
+    delegateCommitToLeader.mockResolvedValueOnce({
+      status: 'done',
+      value: { status: 'sent', sealed: 'AQI=', authorProof: 'Aw==', receivedAt: 42 },
+    });
+    try {
+      const follower = session(new RatchetModel(disk.state), peer, disk);
+
+      const sent = await follower.send();
+
+      expect(sent).toEqual({
+        sealed: new Uint8Array([1, 2]),
+        authorProof: new Uint8Array([3]),
+        receivedAt: 42,
+      });
+      expect(delegateCommitToLeader).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'send', groupId: G, delivery: { named: 'visible' } })
+      );
+      // Nothing sealed, posted or counted on the follower's own copy.
+      expect(follower.svc.encryptForSend).not.toHaveBeenCalled();
+      expect(follower.svc.delivery.postApplicationMessage).not.toHaveBeenCalled();
+      expect(sendRatchetEntries(U)).toEqual([]);
+    } finally {
+      election.role = null;
+      delegateCommitToLeader.mockReset();
       resetStateAuthorityForTests();
     }
   });

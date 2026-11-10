@@ -3,6 +3,7 @@ import {
   createDelegationClient,
   createDelegationServer,
   type DelegatedCommitExecutors,
+  type DelegatedCommitOp,
   type DelegationEnv,
   type DelegationLocks,
   type DelegationReadiness,
@@ -10,6 +11,17 @@ import {
   sessionDelegationReadiness,
 } from './tabCommitDelegation';
 import type { TabCommitStore } from './tabCommitStore';
+import {
+  delegatedSendExecutor,
+  sendThroughLeaderTab,
+  type LeaderSender,
+} from './tabSendDelegation';
+import {
+  addressedHistoryAnswer,
+  DELIVERY,
+  type FrameDelivery,
+} from '$lib/mls-client/frameDelivery';
+import { DelegatedSendFailedError, FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 
 /**
  * A FOLLOWER TAB'S COMMIT, DONE BY THE LEADER - two tabs simulated in one realm.
@@ -240,6 +252,10 @@ function recordingExecutors() {
       runs.push(`salon:${channelId}`);
       return 'entered';
     },
+    send: async ({ groupId }) => {
+      runs.push(`send:${groupId}`);
+      return { status: 'sent', sealed: '', authorProof: '', receivedAt: 1 };
+    },
   };
   return { runs, executors };
 }
@@ -423,6 +439,165 @@ describe('a follower is answered by a leader that lives', () => {
       status: 'refused',
       reason: 'not-delegable',
     });
+  });
+});
+
+/**
+ * A FOLLOWER'S SEND, SEALED BY THE LEADER (review of #3326): the real two halves of
+ * `tabSendDelegation.ts` over this simulated origin, whose records cross as JSON - so the bytes
+ * and the delivery must survive a copy, and the delivery must reach the leader as the SAME constant.
+ */
+describe('a follower tab hands its sends to the leader tab', () => {
+  const bytes = new Uint8Array([7, 8, 9]);
+
+  function sendingLeader(doc: string, w: ReturnType<typeof makeWorld>, sender: LeaderSender) {
+    const leader = tab(doc, w, { leader: true });
+    leader.server.listen();
+    leader.server.register(delegatedSendExecutor(async () => sender));
+    return leader;
+  }
+
+  const fromFollower = (follower: ReturnType<typeof tab>) => ({
+    leadership: () => 'follower' as const,
+    delegate: (op: Extract<DelegatedCommitOp, { kind: 'send' }>) => follower.delegate(op),
+  });
+
+  it('the leader seals and posts it on its own copy, and the follower gets the frame back', async () => {
+    const w = makeWorld();
+    const sendMessage = vi.fn(async () => ({
+      sealed: new Uint8Array([1, 2]),
+      authorProof: new Uint8Array([3]),
+      receivedAt: 1234,
+    }));
+    sendingLeader('L', w, { sendMessage });
+    const follower = tab('F', w, { leader: false });
+
+    const sent = await sendThroughLeaderTab('g1', bytes, DELIVERY.mutation, fromFollower(follower));
+
+    expect(sent).toEqual({
+      sealed: new Uint8Array([1, 2]),
+      authorProof: new Uint8Array([3]),
+      receivedAt: 1234,
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const [groupId, plaintext, , delivery] = sendMessage.mock.calls[0] as unknown as [
+      string,
+      Uint8Array,
+      undefined,
+      FrameDelivery,
+    ];
+    expect(groupId).toBe('g1');
+    expect([...plaintext]).toEqual([7, 8, 9]);
+    // Identity, not shape: the leaf refresh decision reads `=== DELIVERY.visible | mutation`.
+    expect(delivery).toBe(DELIVERY.mutation);
+    await settle();
+    expect(w.databases.ids()).toEqual([]);
+  });
+
+  it('an addressed delivery keeps its recipients across the tab boundary', async () => {
+    const w = makeWorld();
+    const sendMessage = vi.fn(async () => ({
+      sealed: new Uint8Array(),
+      authorProof: new Uint8Array(),
+      receivedAt: null,
+    }));
+    sendingLeader('L', w, { sendMessage });
+    const follower = tab('F', w, { leader: false });
+
+    await sendThroughLeaderTab(
+      'g1',
+      bytes,
+      addressedHistoryAnswer('bob:d1'),
+      fromFollower(follower)
+    );
+
+    expect((sendMessage.mock.calls[0] as unknown[])[3]).toEqual(addressedHistoryAnswer('bob:d1'));
+  });
+
+  it("the leader's own failure reaches the caller typed, as its send failing", async () => {
+    const w = makeWorld();
+    sendingLeader('L', w, {
+      sendMessage: async () => {
+        throw new TypeError('Failed to fetch');
+      },
+    });
+    const follower = tab('F', w, { leader: false });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const failure = await sendThroughLeaderTab(
+      'g1',
+      bytes,
+      DELIVERY.visible,
+      fromFollower(follower)
+    ).catch((e: unknown) => e);
+    warn.mockRestore();
+
+    expect(failure).toBeInstanceOf(DelegatedSendFailedError);
+    expect((failure as DelegatedSendFailedError).leaderErrorName).toBe('TypeError');
+  });
+
+  it('a leader at its PIN gate refuses it, typed, and seals nothing', async () => {
+    const w = makeWorld();
+    const sendMessage = vi.fn();
+    const leader = tab('L', w, { leader: true, readiness: 'unavailable' });
+    leader.server.listen();
+    leader.server.register(delegatedSendExecutor(async () => ({ sendMessage })));
+    const follower = tab('F', w, { leader: false });
+
+    const failure = await sendThroughLeaderTab(
+      'g1',
+      bytes,
+      DELIVERY.visible,
+      fromFollower(follower)
+    ).catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(FollowerTabSendError);
+    expect((failure as FollowerTabSendError).reason).toBe('leader-unavailable');
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('NO LEADER REACHABLE (leading on a follower copy): refused before any hand-over', async () => {
+    const delegate = vi.fn();
+
+    const failure = await sendThroughLeaderTab('g1', bytes, DELIVERY.visible, {
+      leadership: () => 'leader',
+      delegate,
+    }).catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(FollowerTabSendError);
+    expect((failure as FollowerTabSendError).reason).toBe('no-leader');
+    expect(delegate).not.toHaveBeenCalled();
+  });
+
+  it('a leader that dies mid-send ends the wait by the browser, not a clock: leader-gone, never re-sent', async () => {
+    const w = makeWorld();
+    let started = 0;
+    sendingLeader('L1', w, {
+      sendMessage: () => {
+        started += 1;
+        return new Promise<never>(() => {});
+      },
+    });
+    const follower = tab('F', w, { leader: false });
+
+    const answer = sendThroughLeaderTab(
+      'g1',
+      bytes,
+      DELIVERY.visible,
+      fromFollower(follower)
+    ).catch((e: unknown) => e);
+    await settle();
+    expect(started).toBe(1);
+    // The handover's proof: the dead document's run lock is released by the browser.
+    w.locks.kill('L1');
+    w.bus.deafen('L1');
+    const next = vi.fn();
+    sendingLeader('L2', w, { sendMessage: next });
+
+    const failure = await answer;
+    expect(failure).toBeInstanceOf(FollowerTabSendError);
+    expect((failure as FollowerTabSendError).reason).toBe('leader-gone');
+    expect(next).not.toHaveBeenCalled();
   });
 });
 

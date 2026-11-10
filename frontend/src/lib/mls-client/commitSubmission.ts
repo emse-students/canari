@@ -338,19 +338,44 @@ export class FollowerTabCommitError extends Error {
 }
 
 /**
- * A send was asked of a tab whose copy of the MLS state is not the leader's (a follower, or a leader
- * promoted in place before its reload), and refused before anything was sealed: that copy's send
- * ratchet is behind every generation the leader already put on the wire, so the frame would re-use
- * one the peer consumed and be dropped. Same fact as {@link FollowerTabCommitError}
- * (`refusesCommitsHere`). The outbox keeps the entry queued for the leader.
+ * A send was asked of a tab whose copy of the MLS state is not the leader's, and NO LEADER COULD
+ * CARRY IT: nothing was sealed. A follower hands its sends to the leader tab
+ * (`tabSendDelegation.ts`); this is what is left - a leader promoted in place before its reload
+ * (`no-leader`: it is the leader, on a copy behind every generation the old one sent), an engine
+ * without Web Locks, a leader at its PIN gate or signed in to another account, or a leader that died
+ * while running it (the delegation's refusals) - or `lead-lost`: the lead left this document in the
+ * middle of its own send, which is refused rather than handed over, since an outbox entry handed to
+ * the new leader would be sent twice (it drains the same queue). The outbox keeps such an entry
+ * queued for the leader.
  */
 export class FollowerTabSendError extends Error {
-  constructor(readonly groupId: string) {
+  constructor(
+    readonly groupId: string,
+    readonly reason: string = 'no-leader'
+  ) {
     super(
-      `a send to ${groupId.slice(0, 8)}... was asked of a tab without the leader copy - only the ` +
-        'leader tab encrypts, so nothing was sealed'
+      `a send to ${groupId.slice(0, 8)}... was asked of a tab without the leader copy and no leader ` +
+        `tab could carry it (${reason}) - nothing was sealed`
     );
     this.name = 'FollowerTabSendError';
+  }
+}
+
+/**
+ * A send a follower handed to the leader tab, which RAN it and failed (a refused POST, an unresolved
+ * commit, the network). The leader's own error does not cross the tab boundary as a class, so its
+ * name and message are carried for the log; the caller treats it as its own send failing.
+ */
+export class DelegatedSendFailedError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly leaderErrorName: string,
+    leaderMessage: string
+  ) {
+    super(
+      `the leader tab's send to ${groupId.slice(0, 8)}... failed: ${leaderErrorName}: ${leaderMessage}`
+    );
+    this.name = 'DelegatedSendFailedError';
   }
 }
 

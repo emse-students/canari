@@ -3243,11 +3243,29 @@ promoted in place whose reload is owed.
   against its copy and neither forgets nor resets the ledger, which is one per account.
 - `mayPull` and the mailbox barrier read the same fact instead of the role alone, so a leader promoted
   in place pulls nothing until its reload.
-- **Sends** (review of #3326): `sendMessage` and `emitFrame` refuse typed (`FollowerTabSendError`,
-  `commitSubmission.ts`) before they seal or post, so a leader promoted in place no longer re-issues a
-  generation from its follower copy. The outbox skips its flush in such a tab and treats the typed
-  refusal as `skip`: the entry stays queued for the page the promotion reload starts. A direct send
-  from a follower (media forward, call signalling) now fails typed where a peer used to drop it.
+- **Sends are sealed by the leader** (review of #3326). In such a tab `sendMessage` hands the
+  plaintext to the leader tab over the commit delegation (`tabCommitDelegation.ts`, kind `send`;
+  `tabSendDelegation.ts`): the leader runs its own `sendMessage` and answers the frame
+  (`sealed`, `authorProof`, `receivedAt`, base64 across the boundary) or its failure as data
+  (`DelegatedSendFailedError`). The delivery crosses BY NAME, so the leader passes the same
+  `DELIVERY` constant its identity checks read. Every direct caller (a call's invite and hangup, a
+  media forward, a scroll-back request, a notice, a salon invitation card) works unchanged from a
+  follower. **Termination is the delegation's, never a clock**: a serving leader answers, a leader
+  at its PIN gate or on another account refuses typed, a leader that dies while running it is proven
+  dead by its free run lock (`leader-gone`, never re-sent); an unclaimed request waits for the next
+  leader that loaded its state as leader, and the only other candidate is this document, whose
+  promotion reload ends the wait with it.
+- **`FollowerTabSendError` is left for the cases no leader can carry**: a document leading on a
+  copy it loaded as a follower (`no-leader`, refused before any hand-over), the delegation's
+  refusals, and `lead-lost` - the lead left the document in the middle of its own send (`emitFrame`,
+  after the awaits). That one is refused, never handed over: a send that started in the leader may be
+  an outbox entry, and the new leader drains the same shared queue, so handing it over would send it
+  twice. For the same reason the outbox never hands an entry to another tab: it skips its flush in a
+  leader promoted in place, re-reads `refusesCommitsHere()` with no await before its `sendMessage`
+  call, and treats the typed refusal as `skip` (no attempt counted, the entry kept for the leader).
+- **A call needs a leader to carry its frames**: with none (`refusesCommitsHere()` and not
+  `leaderTabCarriesSends()`), `startCall` refuses with `CallNoLeaderTabError` BEFORE the initiate,
+  so nothing rings, and the toast says the tab is restarting (`call_no_leader_tab`).
 - **Graine key groups**: `ensureDistributionGroupFor`, `verifyDistributionEpoch` and
   `rejoinBehindDistributionGroup` answer from what the copy holds, with one `debug` line, and never
   reach the commit replay (`catchUpDistributionGroup` -> `processIncomingMessage`) in such a tab.
@@ -3279,8 +3297,9 @@ page teardown rarely completes anyway.
 the device-key gate, and is refused by the version guard when the leader wrote since. Guarded by
 `BaseMlsService.checkpointLedgers.test.ts`, `hex.mlsVersion.test.ts`, `restoreFollower.test.ts`,
 `history.followerRefused.test.ts`, `useConversations.loadHistory.svelte.test.ts`,
-`BaseMlsService.sendRatchet.test.ts`, `BaseMlsService.mailboxBarrier.test.ts` and
-`distributionGroup.test.ts`. **This does not fix an own image left on its ThumbHash placeholder in a
+`BaseMlsService.sendRatchet.test.ts`, `BaseMlsService.mailboxBarrier.test.ts`,
+`distributionGroup.test.ts`, `tabCommitDelegation.test.ts` (the send round trip over a JSON-copying
+origin, its refusals and a leader dying mid-send), `outbox.test.ts` and `CallService.p2p.test.ts`. **This does not fix an own image left on its ThumbHash placeholder in a
 follower** - that is #3321. Owed: a two-tab
 reading on dev showing no `checkpoint persisted` in the follower and no `REFUSED as stale` in the
 leader ([backlog](../backlog.d/p1-a-follower-tab-wrote-its-mls-copy-over-the-leaders.md)).

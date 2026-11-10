@@ -16,7 +16,11 @@ import { canari } from '$lib/proto/canari.js';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { cappedReconnectDelayMs } from '$lib/utils/reconnectBackoff';
-import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
+import {
+  CallE2eUnsupportedError,
+  CallNoLeaderTabError,
+  describeCallFailure,
+} from '$lib/utils/callFailure';
 import { m } from '$lib/paraglide/messages';
 import { flushMacrotask } from '../../test/flush';
 import { callHoldsAppSound, resetCallSoundGateForTest } from '$lib/utils/callSoundGate';
@@ -49,6 +53,16 @@ vi.mock('$lib/stores/appVersionCheck.svelte', async (importOriginal) => ({
 vi.mock('$lib/users/blocks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/users/blocks')>()),
   isBlockedWith: vi.fn(async () => false),
+}));
+/** Whether this tab holds the leader copy, and whether a leader tab carries its sends; per test. */
+const tabRole = vi.hoisted(() => ({ refuses: false, leaderCarries: false }));
+vi.mock('$lib/mls-client/stateAuthority', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/stateAuthority')>()),
+  refusesCommitsHere: () => tabRole.refuses,
+}));
+vi.mock('$lib/utils/chat/tabSendDelegation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/chat/tabSendDelegation')>()),
+  leaderTabCarriesSends: () => tabRole.leaderCarries,
 }));
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
@@ -722,6 +736,46 @@ describe('a peer-to-peer call, client side', () => {
     );
     expect(apiFetch).not.toHaveBeenCalled();
     expect(get(service.callState)).toBe('idle');
+  });
+
+  describe('placed from a tab without the leader copy (review of #3326)', () => {
+    afterEach(() => {
+      tabRole.refuses = false;
+      tabRole.leaderCarries = false;
+    });
+
+    it('with no leader tab to carry its frames, refuses before any request: nothing rings', async () => {
+      tabRole.refuses = true;
+      tabRole.leaderCarries = false;
+      const service = new CallService(fakeMls);
+      const { apiFetch } = await import('$lib/utils/apiFetch');
+      vi.mocked(apiFetch).mockClear();
+      vi.mocked(fakeMls.sendMessage).mockClear();
+
+      const failure = await service.startCall('group-1', false).catch((e: unknown) => e);
+
+      expect(failure).toBeInstanceOf(CallNoLeaderTabError);
+      expect(describeCallFailure(failure)).toBe(m.call_no_leader_tab());
+      expect(apiFetch).not.toHaveBeenCalled();
+      expect(fakeMls.sendMessage).not.toHaveBeenCalled();
+      expect(get(service.callState)).toBe('idle');
+    });
+
+    it('a follower with a leader places the call: its invite goes out through `sendMessage`, which hands it to the leader', async () => {
+      tabRole.refuses = true;
+      tabRole.leaderCarries = true;
+      vi.mocked(fakeMls.sendMessage).mockClear();
+      const service = new CallService(fakeMls);
+
+      await callerJoined(service);
+
+      expect(get(service.callState)).toBe('calling');
+      const invites = vi
+        .mocked(fakeMls.sendMessage)
+        .mock.calls.map((c) => decodeAppMessage((c as unknown as [string, Uint8Array])[1])?.call)
+        .filter((c) => c?.callId === 'room-1');
+      expect(invites).toHaveLength(1);
+    });
   });
 
   it('joins a p2p room with its room token, and builds its peer connection during the ring, offering nothing before PeerReady', async () => {

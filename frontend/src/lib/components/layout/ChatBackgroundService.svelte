@@ -168,6 +168,7 @@
   import { mergeFcmMessagesAndAnnounce } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
   import { serveDelegatedCommits } from '$lib/utils/chat/tabCommitDelegation';
+  import { delegatedSendExecutor } from '$lib/utils/chat/tabSendDelegation';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
   import { mergeAnnouncedMessage } from '$lib/utils/chat/salonEcho';
@@ -2078,6 +2079,10 @@
     const stopServingKeyGroupCommits = serveDelegatedCommits(
       globalChannels.delegatedKeyGroupExecutors(channelsCtx)
     );
+    // A follower's sends, sealed on this tab's copy when it leads (`tabSendDelegation.ts`).
+    const stopServingSends = serveDelegatedCommits(
+      delegatedSendExecutor(async () => globalSession.ensureMls())
+    );
 
     // ── FCM cache polling (Tauri/Android only) ────────────────────────────
     // Messages received via FCM while the app is in the foreground are written
@@ -2119,6 +2124,7 @@
       unsubscribeTabMessages();
       stopServingConversationCommits();
       stopServingKeyGroupCommits();
+      stopServingSends();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);
       stopForegroundHeartbeat?.();

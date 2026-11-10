@@ -87,6 +87,19 @@ export class CallE2eUnsupportedError extends Error {
 }
 
 /**
+ * A call asked of a tab that does not hold the leader copy, while NO LEADER TAB CAN CARRY ITS SENDS
+ * (a leader promoted in place, its reload owed; an engine without Web Locks): REFUSED before any
+ * request, so nothing rings. A follower with a leader places the call normally - its invite and its
+ * hangup are sealed by the leader (`tabSendDelegation.ts`).
+ */
+export class CallNoLeaderTabError extends Error {
+  constructor() {
+    super("no leader tab can carry this call's frames - refused before the ring");
+    this.name = 'CallNoLeaderTabError';
+  }
+}
+
+/**
  * The call a setup step was working for ENDED while the step awaited (a hangup during the
  * microphone prompt, a declined or cancelled ring): nothing failed, and the step's result belongs to
  * nobody. Thrown by `CallService.assertSetupLive` after every await of `startCall`/`acceptCall`,
@@ -167,6 +180,7 @@ export class CallRelayWithheldError extends Error {
  */
 export function describeCallFailure(error: unknown): string {
   if (error instanceof CallE2eUnsupportedError) return m.call_e2e_unsupported();
+  if (error instanceof CallNoLeaderTabError) return m.call_no_leader_tab();
   if (error instanceof CallE2eBypassedError) return m.call_e2e_bypassed();
   if (error instanceof CallE2eSetupError) return m.call_e2e_setup_failed();
   if (error instanceof CallRelayWithheldError) {

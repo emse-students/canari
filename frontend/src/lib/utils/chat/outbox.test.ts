@@ -124,6 +124,8 @@ import type { StoredMessage } from '$lib/db/types';
 import { drainPendingGroupExits } from './pendingGroupExits';
 import { toBase64 } from '$lib/utils/hex';
 import type { Conversation } from '$lib/types';
+import { noteMlsStateLoaded, resetStateAuthorityForTests } from '$lib/mls-client/stateAuthority';
+import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 
 /**
  * EVERY CONTROLLER A CASE CREATES IS DISPOSED WHEN THE CASE ENDS. A controller subscribes to the
@@ -505,6 +507,70 @@ describe('outbox flusher - offline guards', () => {
     await outbox.flush();
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
     expect(storage._map.size).toBe(0);
+  });
+});
+
+/**
+ * ONLY THE LEADER COPY SENDS THE QUEUE, AND THE QUEUE IS NEVER HANDED TO ANOTHER TAB (review of
+ * #3326): a follower's DIRECT sends go to the leader (`tabSendDelegation.ts`), but an outbox entry
+ * handed over would be sent twice - the new leader drains the same shared queue.
+ */
+describe('outbox flusher in a document without the leader copy', () => {
+  beforeEach(() => {
+    connectivity.reset();
+  });
+  afterEach(() => {
+    isTabLeaderMock.mockImplementation(() => true);
+    resetStateAuthorityForTests();
+  });
+
+  it('a leader promoted in place (its reload owed) sends nothing and keeps the queue', async () => {
+    noteMlsStateLoaded(false);
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const log = vi.fn();
+    const outbox = createOutbox(makeDeps({ mlsService, storage, log }));
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.get('m1')).toMatchObject({ status: 'pending', attempts: 0 });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('loaded as a follower'));
+  });
+
+  it('a lead lost between the flush gate and the send: not sent, not handed over, kept intact', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      // A steal lands while the flush awaits the membership read, many awaits before the send.
+      active: async () => {
+        isTabLeaderMock.mockImplementation(() => false);
+        return true;
+      },
+    });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.get('m1')).toMatchObject({ status: 'pending', attempts: 0 });
+  });
+
+  it('a send refused typed (`FollowerTabSendError`) is a skip: no attempt counted, the entry kept', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      send: async () => {
+        throw new FollowerTabSendError('g1', 'lead-lost');
+      },
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(storage._map.get('m1')).toMatchObject({ status: 'pending', attempts: 0 });
+    // Not marked failed: nothing about the entry failed.
+    expect(conversations.get('g1')!.messages[0].status).not.toBe('failed');
   });
 });
 

@@ -210,6 +210,7 @@ import {
   ADMIT_REFUSED_REASON,
 } from '$lib/mls-client/CommitRefusedError';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { sendThroughLeaderTab } from '$lib/utils/chat/tabSendDelegation';
 import { commitRateLimitRemainingMs, noteCommitRateLimited } from '$lib/mls-client/commitRateLimit';
 import {
   CommitOutcomeUnknownError,
@@ -8630,8 +8631,9 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<SentFrame> {
     // ONLY THE LEADER COPY SEALS (`refusesCommitsHere`): a follower's copy, or a leader promoted in
     // place before its reload, is behind every generation the leader sent, so its frame is a drop at
-    // the peer and its ledger count is written from the wrong copy. Refused before anything moves.
-    if (refusesCommitsHere()) throw new FollowerTabSendError(groupId);
+    // the peer and its ledger count is written from the wrong copy. Such a document hands the send to
+    // the leader tab, which seals it on its own copy (`tabSendDelegation.ts`); nothing moves here.
+    if (refusesCommitsHere()) return sendThroughLeaderTab(groupId, messageBytes, frameDelivery);
     await this.waitForCatchUpIdle();
     // NOTHING IS SEALED ON TOP OF A COMMIT WHOSE OUTCOME IS UNKNOWN: whether this device is at N or
     // N+1 is exactly what that outcome decides, so it is asked first, by the same resubmission.
@@ -8712,8 +8714,11 @@ export abstract class BaseMlsService implements IMlsService {
     frameDelivery: FrameDelivery
   ): Promise<SentFrame> {
     // AGAIN AFTER THE AWAITS ABOVE (the catch-up, the settle, the barrier): the lead can leave this
-    // document while they run, and nothing after this line awaits before the seal.
-    if (refusesCommitsHere()) throw new FollowerTabSendError(groupId);
+    // document while they run (a steal), and nothing after this line awaits before the seal. REFUSED
+    // here, never handed over: a send that started in the leader may be an outbox entry, which the
+    // new leader drains from the same shared queue - handing it over too would send it twice. The
+    // outbox keeps it queued (`FollowerTabSendError` is its `skip`); a direct caller sees it typed.
+    if (refusesCommitsHere()) throw new FollowerTabSendError(groupId, 'lead-lost');
     const {
       sealed: encryptedBytes,
       authorProof,

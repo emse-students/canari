@@ -7,6 +7,7 @@
  * the member met - creating a conversation, inviting, removing, entering a community's or a salon's
  * key group all said "do it from the other tab". Now the follower HANDS THE GESTURE to the leader,
  * which runs it on its authoritative state exactly as its own gesture, and answers the outcome.
+ * A follower's application SENDS travel the same way (kind `send`, `tabSendDelegation.ts`).
  *
  * WHO SERVES: a document that leads AND loaded its MLS state as the leader
  * (`servesFollowerCommits`, `stateAuthority.ts`) runs a request; a leader whose login has not loaded
@@ -73,7 +74,26 @@ export type DelegatedCommitOp =
   /** The community's Graine key group (`ensureCommunityDistributionGroup`). */
   | { kind: 'enter-community-key-group'; workspaceId: string }
   /** A salon's own key group, entered by a member who has access (`enterPrivateSalonGroup`). */
-  | { kind: 'enter-salon-group'; workspaceId: string; channelId: string; isPrivate: boolean };
+  | { kind: 'enter-salon-group'; workspaceId: string; channelId: string; isPrivate: boolean }
+  /** One application frame, sealed and posted by the leader (`tabSendDelegation.ts`). */
+  | {
+      kind: 'send';
+      groupId: string;
+      /** The plaintext, base64: a record is plain data JSON carries too. */
+      message: string;
+      /** A `DELIVERY` constant by NAME (identity is what the leader reads), or an addressed one. */
+      delivery: DelegatedDelivery;
+    };
+
+/** A frame's delivery across the tab boundary - see {@link DelegatedCommitOp}'s `send`. */
+export type DelegatedDelivery =
+  | { named: 'visible' | 'mutation' | 'transport' | 'keyMaterial' }
+  | { silent: boolean; durable: boolean; recipients?: string[] };
+
+/** What the leader's send came to: the frame, or its own failure carried as data. */
+export type DelegatedSendResult =
+  | { status: 'sent'; sealed: string; authorProof: string; receivedAt: number | null }
+  | { status: 'failed'; name: string; message: string };
 
 export type DelegatedCommitKind = DelegatedCommitOp['kind'];
 
@@ -95,6 +115,7 @@ export interface DelegatedCommitResults {
   remove: DelegatedRemovalResult;
   'enter-community-key-group': 'entered';
   'enter-salon-group': 'entered';
+  send: DelegatedSendResult;
 }
 
 /** Why the leader did not answer the gesture itself (see the module comment). */
@@ -180,6 +201,8 @@ function describe(op: DelegatedCommitOp): string {
       return `key group of ${op.workspaceId.slice(0, 8)}...`;
     case 'enter-salon-group':
       return `salon group ${op.channelId.slice(0, 8)}...`;
+    case 'send':
+      return `send to ${op.groupId.slice(0, 8)}...`;
   }
 }
 
