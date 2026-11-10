@@ -34,10 +34,70 @@ export interface MediaEnvelope {
   replyTo?: MessageReference;
 }
 
+/**
+ * The events a membership or group notice row names people for. The row carries WHO (ids) and the
+ * reader draws the names, so a name that arrives after the row was written still reaches it.
+ */
+export type NoticeEvent =
+  | 'memberAdded'
+  | 'memberRemoved'
+  | 'memberLeft'
+  | 'uninvitedEntry'
+  | 'unvouchedDeviceEntry'
+  | 'groupRenamed'
+  | 'groupPhotoChanged'
+  | 'groupPhotoRemoved';
+
+/** The structured fact behind a notice row: an event, the people it names and its one argument. */
+export interface NoticeSpec {
+  event: NoticeEvent;
+  /** The acting user (the adder, the remover, the renamer, the leaver). */
+  actor: string;
+  /** The users acted upon: the added members, or the removed one. */
+  targets?: string[];
+  /** The new group name, for `groupRenamed`. */
+  name?: string;
+}
+
+const NOTICE_EVENTS: readonly string[] = [
+  'memberAdded',
+  'memberRemoved',
+  'memberLeft',
+  'uninvitedEntry',
+  'unvouchedDeviceEntry',
+  'groupRenamed',
+  'groupPhotoChanged',
+  'groupPhotoRemoved',
+];
+
+/** Reads a stored notice back, or `undefined` for anything that is not one. */
+function readNotice(raw: unknown): NoticeSpec | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const n = raw as Record<string, unknown>;
+  if (typeof n.event !== 'string' || !NOTICE_EVENTS.includes(n.event)) return undefined;
+  if (typeof n.actor !== 'string' || !n.actor) return undefined;
+  const targets = Array.isArray(n.targets)
+    ? n.targets.filter((t): t is string => typeof t === 'string' && t !== '')
+    : undefined;
+  // An addition or a removal names who it acted upon; without them the stored `text` is all there is.
+  if ((n.event === 'memberAdded' || n.event === 'memberRemoved') && !targets?.length) {
+    return undefined;
+  }
+  return {
+    event: n.event as NoticeEvent,
+    actor: n.actor,
+    ...(targets ? { targets } : {}),
+    ...(typeof n.name === 'string' ? { name: n.name } : {}),
+  };
+}
+
 /** System / group-event notification (never user-authored). */
 export interface SystemEnvelope {
   kind: 'system';
+  /** The sentence as drawn when the row was written: the fallback when `notice` is absent. */
   text: string;
+  /** Present on a membership or group notice: the reader draws `text` from it, names resolved live. */
+  notice?: NoticeSpec;
   /** Present when the system event is a channel invitation; renders the invite card in the UI. */
   channelInvite?: {
     channelId: string;
@@ -216,9 +276,11 @@ export function parseEnvelope(content: string): MessageEnvelope {
                 ...(isCallEndReason(ce.outcome) ? { outcome: ce.outcome } : {}),
               }
             : undefined;
+        const notice = readNotice(obj.notice);
         return {
           kind: 'system',
           text: obj.text,
+          ...(notice ? { notice } : {}),
           ...(channelInvite ? { channelInvite } : {}),
           ...(callEvent ? { callEvent } : {}),
         };
@@ -384,6 +446,11 @@ export function applyEditToBody(content: string, newText: string): string {
 /** Build a system / group-event envelope (e.g. "Alice renamed the group"). These are never user-authored. */
 export function mkSystemEnvelope(text: string): MessageEnvelope {
   return { kind: 'system', text };
+}
+
+/** A notice row: the sentence as a fallback, and the ids the reader resolves live. */
+export function mkNoticeEnvelope(text: string, notice: NoticeSpec): SystemEnvelope {
+  return { kind: 'system', text, notice };
 }
 
 /** Build a poll envelope from a decoded PollMsg (the live tally is stored separately). */

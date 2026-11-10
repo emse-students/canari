@@ -96,4 +96,19 @@ export const videoSound = {
   toggle(): void {
     videoSound.setMuted(!muted);
   },
+  /**
+   * THE ENGINE REFUSED AN AUDIBLE START and the caller plays muted instead (the live viewer, which
+   * must not sit paused behind an autoplay rule): silent for THIS session, and NOT remembered - the
+   * reader chose sound, the engine's refusal did not change that choice, and the next run (or the next
+   * tap, through {@link videoSound.setMuted}) gets it back. Called BEFORE the element is muted, so the
+   * `volumechange` a viewer forwards (`followVideoSound`) finds the answer already muted and writes
+   * nothing.
+   */
+  muteForRefusedStart(): void {
+    if (muted) return;
+    console.info(
+      '[VIDEO] an audible start was refused - silent for this session, the stored choice kept'
+    );
+    muted = true;
+  },
 };
