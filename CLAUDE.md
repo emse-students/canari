@@ -198,8 +198,7 @@ the USER can do is ONE table** - [backlog](docs/wiki/backlog.md#owed-to-the-user
 **CLOSED, DO NOT REOPEN** (user: record closed chantiers so nobody returns to them fifty times):
 section navigation ([section-navigation](docs/wiki/frontend/section-navigation.md)), read-receipt
 privacy ([read-receipt-privacy](docs/wiki/read-receipt-privacy.md)), the first pass of community-open
-slowness ([report](docs/wiki/frontend/community-open-slowness-mi9t-2026-10-13.md)) and the weak-network
-audit, all 2026-10-14; the interface chantier, 2026-09-29 ([ecosystem-convergence](docs/wiki/ecosystem-convergence.md#where-the-chantier-stands-and-the-restart-order)).
+slowness ([report](docs/wiki/frontend/community-open-slowness-mi9t-2026-10-13.md)), all 2026-10-14; the interface chantier, 2026-09-29 ([ecosystem-convergence](docs/wiki/ecosystem-convergence.md#where-the-chantier-stands-and-the-restart-order)).
 
 ### CANARI - THE QUEUE, IN ORDER
 
@@ -246,5 +245,6 @@ audit, all 2026-10-14; the interface chantier, 2026-09-29 ([ecosystem-convergenc
 46. **The owner's decisions of 2026-11-09 (portail `v1.0.9` after `1.6.9`, dev floor `1.6.6`, the order of the big chantiers)** ([note](docs/wiki/backlog.d/owner-decisions-of-2026-11-09.md)).
 47. **P2 - a CanaReel that never loads (owner, Android `1.6.8`, 2026-11-09): one `[reel-view]` line per view built; five candidate causes, one Mi 9T shaped reading owed** ([backlog](docs/wiki/backlog.d/p2-a-canareel-that-never-loads.md)).
 48. **P2 - rotation on the video and camera screens only (owner, 2026-11-09): the native mechanism, the one store, the camera and the broadcaster built, the two viewers owed after the video-player stack; phone readings owed** ([backlog](docs/wiki/backlog.d/rotation-on-video-and-camera-screens.md), [design](docs/wiki/frontend/screen-orientation.md)).
+49. **P2 - the weak-network audit, closed 2026-10-14, REOPENED by the owner on 2026-11-10 ("lenteur dans toute l'app"): every screen measured in serial round trips on dev, five chains cut, the rest designed** ([audit](docs/wiki/frontend/weak-network-audit-2026-11-10.md), [backlog](docs/wiki/backlog.d/weak-network-audit-2-what-is-left.md)).
 
 **Closed without a fix, readings owed** - each a row of [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else), not queue work: a returner's community past (`v0.18.26`), the member who could not publish, a first contact's notification, a salon seed after its message and the iOS silent frames (#2000), the first iOS feedback (scroll, emoji). #752's two P2s are closed ([backlog](docs/wiki/backlog.md)).

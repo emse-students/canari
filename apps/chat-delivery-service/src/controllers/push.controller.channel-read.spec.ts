@@ -1,9 +1,18 @@
 /// <reference types="jest" />
 
 import { Test, TestingModule } from '@nestjs/testing';
+import type { Repository } from 'typeorm';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { BadRequestException, ForbiddenException, HttpException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ExecutionContext,
+  ForbiddenException,
+  HttpException,
+  Logger,
+} from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
+import { ClientIpThrottlerGuard } from '../guards/client-ip-throttler.guard';
 import { PushSecretGuard } from '../guards/push-secret.guard';
 import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import * as crypto from 'crypto';
@@ -58,6 +67,10 @@ describe('PushController - POST mls/push/channel-read', () => {
     })
       .overrideGuard(ThrottlerGuard)
       .useValue({ canActivate: () => true })
+      .overrideGuard(UserThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(ClientIpThrottlerGuard)
+      .useValue({ canActivate: () => true })
       .overrideGuard(PushSecretGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(PushSecretThrottlerGuard)
@@ -66,13 +79,26 @@ describe('PushController - POST mls/push/channel-read', () => {
     controller = module.get(PushController);
   });
 
+  /**
+   * The route as mounted: the REAL `PushSecretGuard` first (it is what refuses a wrong secret, the
+   * handler no longer re-checks it), then the handler.
+   */
+  async function post(auth: string, body: Parameters<PushController['markChannelReadForPush']>[0]) {
+    const guard = new PushSecretGuard(pushTokenRepo as unknown as Repository<PushToken>);
+    const req = { method: 'POST', headers: { authorization: auth }, body };
+    await guard.canActivate({
+      switchToHttp: () => ({ getRequest: () => req }),
+    } as unknown as ExecutionContext);
+    return controller.markChannelReadForPush(body);
+  }
+
   afterEach(() => {
     process.env = { ...env };
     jest.restoreAllMocks();
   });
 
   it('carries the proven user and the notification instant to social-service under the internal secret', async () => {
-    await expect(controller.markChannelReadForPush(auth, body)).resolves.toEqual({
+    await expect(post(auth, body)).resolves.toEqual({
       at: 1_700_000_000_000,
     });
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
@@ -83,24 +109,20 @@ describe('PushController - POST mls/push/channel-read', () => {
   });
 
   it('refuses a caller without the device push secret, and calls nobody', async () => {
-    await expect(
-      controller.markChannelReadForPush('PushSecret wrong', body)
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(post('PushSecret wrong', body)).rejects.toBeInstanceOf(ForbiddenException);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('refuses an instant that is not a positive integer', async () => {
     for (const at of [0, -1, 1.5, '5', undefined]) {
-      await expect(controller.markChannelReadForPush(auth, { ...body, at })).rejects.toBeInstanceOf(
-        BadRequestException
-      );
+      await expect(post(auth, { ...body, at })).rejects.toBeInstanceOf(BadRequestException);
     }
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('refuses to forward anything when the internal secret is unset', async () => {
     delete process.env.INTERNAL_SECRET;
-    await expect(controller.markChannelReadForPush(auth, body)).rejects.toMatchObject({
+    await expect(post(auth, body)).rejects.toMatchObject({
       status: 503,
     });
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -108,18 +130,18 @@ describe('PushController - POST mls/push/channel-read', () => {
 
   it('answers 403 when social-service says the user cannot read that salon', async () => {
     fetchSpy.mockResolvedValue(social(403));
-    await expect(controller.markChannelReadForPush(auth, body)).rejects.toMatchObject({
+    await expect(post(auth, body)).rejects.toMatchObject({
       status: 403,
     });
   });
 
   it('answers 502 for any other upstream failure, and 503 when it is unreachable', async () => {
     fetchSpy.mockResolvedValue(social(500));
-    await expect(controller.markChannelReadForPush(auth, body)).rejects.toMatchObject({
+    await expect(post(auth, body)).rejects.toMatchObject({
       status: 502,
     });
     fetchSpy.mockRejectedValue(new Error('ECONNREFUSED'));
-    const err = await controller.markChannelReadForPush(auth, body).catch((e: unknown) => e);
+    const err = await post(auth, body).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(HttpException);
     expect((err as HttpException).getStatus()).toBe(503);
   });

@@ -25,7 +25,8 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
+import { UserThrottlerGuard } from '../guards/user-throttler.guard';
 import { PushSecretGuard, verifyPushSecret } from '../guards/push-secret.guard';
 import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import type { Response } from 'express';
@@ -209,7 +210,7 @@ export class PushController {
    * not DEBUG because a device that reached here has given up: every notification for that device is
    * silently lost until it registers, which is a defect somewhere and should read like one.
    */
-  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @UseGuards(HeaderAuthGuard, UserThrottlerGuard)
   @Post('mls/push/unavailable')
   reportPushUnavailable(
     @Body() body: { deviceId: string; platform?: string; reason?: string },
@@ -253,10 +254,9 @@ export class PushController {
    * ran - prints `none`. A report naming a refusal and no missing term prints `missing=none`,
    * because nothing was missing: the open ran.
    */
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
   @Post('mls/push/blind-banner')
-  async reportBlindBanner(
-    @Headers('authorization') authHeader: string,
+  reportBlindBanner(
     @Body()
     body: {
       userId?: string;
@@ -267,10 +267,10 @@ export class PushController {
       held?: unknown;
       refused?: unknown;
     }
-  ): Promise<{ recorded: true }> {
+  ): { recorded: true } {
+    // The PushSecret of `userId:deviceId` is proven by `PushSecretGuard`, first on this route.
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
-    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
     const terms = Array.isArray(body.missing) ? body.missing : [];
     const refused =
       body.refused === undefined || body.refused === null
@@ -307,15 +307,13 @@ export class PushController {
    * Every refusal is an ANSWER the phone logs, and none is retried: the banner has already been
    * cleared locally, and the next time the app opens the salon the receipt rises anyway.
    */
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(PushSecretGuard, PushSecretThrottlerGuard)
   @Post('mls/push/channel-read')
   async markChannelReadForPush(
-    @Headers('authorization') authHeader: string,
     @Body() body: { userId?: string; deviceId?: string; channelId?: unknown; at?: unknown }
   ): Promise<{ at: number | null }> {
+    // The PushSecret of `userId:deviceId` is proven by `PushSecretGuard`, first on this route.
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
-    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
-    await this.verifyPushSecretAuth(authHeader, userId, deviceId);
     const channelId = sanitizeQueryValue(String(body.channelId ?? ''), 'channelId');
     const at = body.at;
     if (typeof at !== 'number' || !Number.isSafeInteger(at) || at <= 0) {
@@ -363,7 +361,7 @@ export class PushController {
    * undone by the old session's end. Written on EVERY registration, null included: a row rewritten
    * by a token without the claim must not keep naming a session that did not write it.
    */
-  @UseGuards(ThrottlerGuard, HeaderAuthGuard)
+  @UseGuards(HeaderAuthGuard, UserThrottlerGuard)
   @Post('mls/push/register')
   async registerPushToken(
     @Body()

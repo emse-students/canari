@@ -23,7 +23,31 @@ import { registerPerReaderCache } from '$lib/utils/sharedCache';
  * it is not an answer about anybody's photo, and the caller then requests the avatar as before.
  */
 const known = new Map<string, boolean>();
-registerPerReaderCache(() => known.clear());
+
+/**
+ * The answer still on the wire for each id, so a face asked for while its batch is in flight JOINS
+ * that request instead of opening a second one.
+ *
+ * WHY (dev, 2026-11-10, 500 ms RTT): a cold start sent `avatar-presence` for the SAME two ids five
+ * times within 30 ms - the conversation tiles and the members list mount in separate turns of the
+ * event loop, so each turn opened its own batch while the first was unanswered, and on the thin
+ * link the four repeats were answered one after another, 0.6 s apart. {@link known} only helps once
+ * an answer is IN; this map covers the round trip before it. The entry lives exactly as long as the
+ * request (no clock), and is dropped with the reader like {@link known}.
+ */
+const asking = new Map<string, Promise<boolean | null>>();
+
+/**
+ * Bumped when the reader changes, so an answer asked for the previous reader is handed to the
+ * callers who waited for it but never written into {@link known} for the next one.
+ */
+let readerGeneration = 0;
+
+registerPerReaderCache(() => {
+  known.clear();
+  asking.clear();
+  readerGeneration++;
+});
 
 /** Mirrors `MAX_PROFILE_BATCH` in `apps/core-service/src/users/users.controller.ts`. */
 const PRESENCE_BATCH_MAX = 100;
@@ -40,6 +64,20 @@ let pendingBatch: Map<string, Waiter[]> | null = null;
 export function avatarPhotoPresence(userId: string): Promise<boolean | null> {
   const remembered = known.get(userId);
   if (remembered !== undefined) return Promise.resolve(remembered);
+  const inFlight = asking.get(userId);
+  if (inFlight) return inFlight;
+  const answer = enqueuePresence(userId);
+  asking.set(userId, answer);
+  // The answer never rejects (every waiter is resolved, `null` included), so the entry is dropped
+  // exactly when it is in - and only if it is still this one (a reader change may have replaced it).
+  void answer.then(() => {
+    if (asking.get(userId) === answer) asking.delete(userId);
+  });
+  return answer;
+}
+
+/** Registers `userId` in the batch that leaves on the next microtask. */
+function enqueuePresence(userId: string): Promise<boolean | null> {
   return new Promise<boolean | null>((resolve) => {
     if (!pendingBatch) {
       const batch = new Map<string, Waiter[]>();
@@ -57,6 +95,7 @@ export function avatarPhotoPresence(userId: string): Promise<boolean | null> {
 
 /** One request per chunk of the batch; every waiter is settled, whatever happened. */
 async function flushPresenceBatch(batch: Map<string, Waiter[]>): Promise<void> {
+  const generation = readerGeneration;
   const ids = [...batch.keys()];
   const chunks: string[][] = [];
   for (let i = 0; i < ids.length; i += PRESENCE_BATCH_MAX) {
@@ -67,7 +106,7 @@ async function flushPresenceBatch(batch: Map<string, Waiter[]>): Promise<void> {
       const answer = await askPresence(chunk);
       for (const id of chunk) {
         const hasPhoto = answer === null ? null : answer.has(id);
-        if (hasPhoto !== null) known.set(id, hasPhoto);
+        if (hasPhoto !== null && generation === readerGeneration) known.set(id, hasPhoto);
         for (const resolve of batch.get(id) ?? []) resolve(hasPhoto);
       }
     })
