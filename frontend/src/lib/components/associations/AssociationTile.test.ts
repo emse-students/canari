@@ -61,3 +61,12 @@ describe("CardTile's header is optional, and only because a caller needs no head
     expect(card).toMatch(/\{:else if FallbackIcon\}/);
   });
 });
+
+describe("CardTile's no-image case is a deliberate placeholder", () => {
+  const card = read('lib/components/shared/CardTile.svelte');
+
+  it('tints the fallback frame with the accent and leads the row when there is no badge', () => {
+    expect(card).toContain('bg-(--tile-accent)/15');
+    expect(card).toMatch(/trimmedBadge \? 'ml-auto' : ''/);
+  });
+});
