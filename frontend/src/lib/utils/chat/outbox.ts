@@ -350,7 +350,7 @@ interface StoredProofs {
  */
 function dependsOnAny(entry: OutboxEntry, ids: Set<string>): boolean {
   if (ids.size === 0) return false;
-  if (entry.kind === 'reply' && entry.replyTo && ids.has(entry.replyTo.id)) return true;
+  if (entry.replyTo && entry.kind !== 'control' && ids.has(entry.replyTo.id)) return true;
   if (entry.kind !== 'control' || !entry.controlProto) return false;
   const proto = entry.controlProto;
   for (const id of ids) {
@@ -748,7 +748,8 @@ export const UPLOAD_STALL_HINT_MS = 10_000;
 export function buildMediaMessage(
   entry: Pick<OutboxEntry, 'id' | 'sentAt'>,
   media: NonNullable<OutboxEntry['media']>,
-  ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>
+  ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>,
+  replyTo?: OutboxEntry['replyTo']
 ): { proto: Uint8Array; content: string } {
   // What the sender declared (a reel message's intent, length and expiry hint): empty for an
   // ordinary attachment, which therefore encodes exactly as before.
@@ -787,11 +788,27 @@ export function buildMediaMessage(
       ...mediaPlaceholderProtoField(media.placeholder),
       ...mediaEncodingProtoField(ref.encoding),
       ...mediaReelProtoFields(declaration),
+      // THE MESSAGE THIS FILE ANSWERS, the same reference a text reply carries (a reply that gets
+      // a photo attached stays a reply on both sides). Absent for an ordinary attachment.
+      ...(replyTo
+        ? { replyTo: { id: replyTo.id, senderId: replyTo.senderId, preview: replyTo.preview } }
+        : {}),
     }),
     messageId: entry.id,
     sentAt: entry.sentAt,
   });
-  return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
+  return {
+    proto,
+    content: serializeEnvelope(
+      mkMediaEnvelope(
+        fullRef,
+        media.caption,
+        replyTo
+          ? { id: replyTo.id, senderId: replyTo.senderId, content: replyTo.preview }
+          : undefined
+      )
+    ),
+  };
 }
 
 /**
@@ -1533,7 +1550,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     entry: OutboxEntry
   ): Promise<{ entry: OutboxEntry; commit: () => Promise<void> }> {
     const kept = { entry, commit: async () => {} };
-    if (entry.kind !== 'reply' || !entry.replyTo?.preview) return kept;
+    // A reply is a text reply OR a file sent as one (a `media` entry carrying its quote).
+    if ((entry.kind !== 'reply' && entry.kind !== 'media') || !entry.replyTo?.preview) return kept;
     const quoted = await quotedCopy(entry.replyTo.id);
     let entitled: boolean;
     try {
@@ -1571,7 +1589,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       const content =
         env.kind === 'text' && env.replyTo
           ? serializeEnvelope(mkTextEnvelope(env.text, { ...env.replyTo, content: '' }))
-          : echo.content;
+          : env.kind === 'media' && env.replyTo
+            ? serializeEnvelope(
+                mkMediaEnvelope(env.media, env.caption, { ...env.replyTo, content: '' })
+              )
+            : echo.content;
       const messages = [...found.convo.messages];
       messages[found.idx] = {
         ...echo,
@@ -2722,7 +2744,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         }
         // NO AWAIT FROM THE GATES ABOVE TO THE SEND BELOW: the inbound-queue barrier this entry owes
         // is taken BEFORE the gates (THE SEAL BARRIER above), so they read the post-drain state.
-        const prepared = buildMediaMessage(entry, media, media.uploadedRef);
+        // A file sent as a reply quotes under the SAME exclusion-window rule as a text reply.
+        const decided = await decideQuote(entry);
+        commitQuote = decided.commit;
+        const prepared = buildMediaMessage(entry, media, media.uploadedRef, decided.entry.replyTo);
         proto = prepared.proto;
         mediaContent = prepared.content;
         // The upload has completed, so the blob is readable before MLS acknowledges the message.

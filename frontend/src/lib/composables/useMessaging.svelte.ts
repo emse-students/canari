@@ -21,6 +21,7 @@ import {
   resumeUnsentSalonSends,
   forgetSalonSendsOfEndedSession,
   deliverSalonAttachment,
+  quoteReference,
   type SendMessageDeps,
   addReaction,
   removeReaction,
@@ -2098,6 +2099,18 @@ export function useMessaging() {
 
     const currentReplyingTo = replyByConversation.get(sentFrom) ?? null;
     replyByConversation.delete(sentFrom);
+    // THE REPLY ARMED AT THE TAP GOES WITH THE FIRST FILE, like the caption: a message that answers
+    // another stays an answer whether it is typed or carries a photo (owner, 2026-11-10: the reply
+    // was consumed here and the file went out as a plain message).
+    const quoted = currentReplyingTo ? quoteReference(currentReplyingTo) : undefined;
+    const mediaReplyTo: OutboxEntry['replyTo'] = quoted
+      ? { id: quoted.id, senderId: quoted.senderId, preview: quoted.content }
+      : undefined;
+    if (quoted && fileEntries.length > 0) {
+      ctx.log(
+        `[REPLY] ${sentFrom.slice(0, 8)}… the reply to ${quoted.id.slice(0, 8)}… goes with the first of ${fileEntries.length} file(s)`
+      );
+    }
     ctx.setSendError('');
 
     const mediaTypeFromMime = (mime: string): 'image' | 'video' | 'audio' | 'file' =>
@@ -2123,6 +2136,8 @@ export function useMessaging() {
         for (let index = 0; index < fileEntries.length; index++) {
           const entry = fileEntries[index];
           const captionForFile = index === 0 ? mediaCaption : undefined;
+          const replyForFile = index === 0 ? mediaReplyTo : undefined;
+          const echoReplyForFile = index === 0 ? quoted : undefined;
           const messageId = crypto.randomUUID();
           const sentAt = tappedAt + index;
 
@@ -2140,6 +2155,15 @@ export function useMessaging() {
             caption: captionForFile,
             ...(entry.voiceNote ? { voiceNote: true } : {}),
           };
+          // The quote the placeholder row is drawn with (the real envelope is built from the same
+          // reference once the upload names the blob).
+          const placeholderReply = echoReplyForFile
+            ? {
+                id: echoReplyForFile.id,
+                senderId: echoReplyForFile.senderId,
+                content: echoReplyForFile.content,
+              }
+            : undefined;
           const placeholder = serializeEnvelope(
             mkMediaEnvelope(
               {
@@ -2155,7 +2179,8 @@ export function useMessaging() {
                 ...(entry.placeholder ? { placeholder: entry.placeholder } : {}),
                 ...(entry.voiceNote ? { voiceNote: true } : {}),
               },
-              captionForFile
+              captionForFile,
+              placeholderReply
             )
           );
 
@@ -2172,6 +2197,7 @@ export function useMessaging() {
               timestamp: new SvelteDate(sentAt),
               skipDbSave: true,
               salonEcho: true,
+              ...(echoReplyForFile ? { replyTo: echoReplyForFile } : {}),
             });
             // The salon left the map since the tap (`addMessageToChat` buffers instead of drawing):
             // no row means no upload, and the catch gives the file back to the staging.
@@ -2186,6 +2212,7 @@ export function useMessaging() {
               sentAt,
               file: entry.file,
               media: described,
+              replyTo: replyForFile,
               deps: salonAttachmentDeps(ctx, sentFrom, convo, messageId, {
                 width: entry.width,
                 height: entry.height,
@@ -2208,6 +2235,7 @@ export function useMessaging() {
                 sentAt,
                 kind: 'media',
                 media: { ...described, fileBytes },
+                ...(replyForFile ? { replyTo: replyForFile } : {}),
                 status: 'pending',
                 attempts: 0,
                 createdAt: sentAt,
@@ -2270,6 +2298,7 @@ export function useMessaging() {
                   onPairWritten: () => {
                     pairWritten = true;
                   },
+                  ...(echoReplyForFile ? { replyTo: echoReplyForFile } : {}),
                 });
               } catch (pairError) {
                 if (!(pairError instanceof MessagePairWriteError)) throw pairError;
@@ -2363,6 +2392,12 @@ export function useMessaging() {
         } else if (ctx.selectedNow() === sentFrom) {
           if (unsent > 0) restageInOrder(sentFrom, fileEntries.slice(sentMediaMessageCount));
           mediaRestaged = unsent > 0;
+          // THE FIRST FILE WAS NOT SENT: the reply it carried goes back with it, so the retry is
+          // still an answer.
+          if (sentMediaMessageCount === 0 && currentReplyingTo) {
+            replyByConversation.set(sentFrom, currentReplyingTo);
+            ctx.log(`[REPLY] re-armed in "${sentFrom.slice(0, 8)}…": its file was given back`);
+          }
           ctx.setSendError(mediaRefusal);
           ctx.log(
             `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) re-staged: ${String(error)}`
