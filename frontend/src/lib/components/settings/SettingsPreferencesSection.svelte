@@ -3,7 +3,6 @@
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import {
-    Settings,
     Volume2,
     VolumeX,
     Vibrate,
@@ -15,6 +14,7 @@
     Share2,
     Compass,
     Lightbulb,
+    Smile,
   } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
@@ -26,6 +26,20 @@
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
   import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import RepostConsentSetting from './RepostConsentSetting.svelte';
+  import ActivitySharingSetting from './ActivitySharingSetting.svelte';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
+  import {
+    EMOJI_STYLES,
+    currentEmojiStyle,
+    setEmojiStyle,
+    type EmojiStyle,
+  } from '$lib/utils/emojiStyle';
+
+  /** The label of each emoji choice, in the order `EMOJI_STYLES` lists them. */
+  const EMOJI_STYLE_LABELS: Record<EmojiStyle, () => string> = {
+    system: m.settings_emoji_style_system,
+    canari: m.settings_emoji_style_canari,
+  };
 
   // The vibration toggle is only meaningful on touch-capable hardware; detect it here so the
   // section needs no props and stays drop-in.
@@ -61,12 +75,7 @@
   class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-200 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="mb-6 flex items-center gap-3">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
-      <Settings size={22} strokeWidth={2.5} />
-    </div>
-    <h2 class="text-text-main text-lg font-bold">{m.profile_preferences_title()}</h2>
-  </div>
+  <h2 class="sr-only">{m.profile_preferences_title()}</h2>
 
   <div class="space-y-5">
     <div class="flex items-center justify-between gap-4">
@@ -91,8 +100,8 @@
         aria-checked={settings.soundsEnabled}
         aria-label={m.profile_pref_sounds_aria()}
         onclick={() => settings.setSoundsEnabled(!settings.soundsEnabled)}
-        class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
- {settings.soundsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+        class="focus-visible:ring-accent-icon relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+ {settings.soundsEnabled ? 'bg-accent' : 'bg-black/20 dark:bg-white/15'}"
       >
         <span
           class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
@@ -124,8 +133,8 @@
           aria-checked={settings.vibrationsEnabled}
           aria-label={m.profile_pref_vibrations_aria()}
           onclick={() => settings.setVibrationsEnabled(!settings.vibrationsEnabled)}
-          class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
- {settings.vibrationsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+          class="focus-visible:ring-accent-icon relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+ {settings.vibrationsEnabled ? 'bg-accent' : 'bg-black/20 dark:bg-white/15'}"
         >
           <span
             class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
@@ -154,8 +163,8 @@
           aria-checked={settings.shareSuggestionsEnabled}
           aria-label={m.settings_share_suggestions_aria()}
           onclick={() => settings.setShareSuggestionsEnabled(!settings.shareSuggestionsEnabled)}
-          class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
- {settings.shareSuggestionsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+          class="focus-visible:ring-accent-icon relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+ {settings.shareSuggestionsEnabled ? 'bg-accent' : 'bg-black/20 dark:bg-white/15'}"
         >
           <span
             class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
@@ -196,9 +205,9 @@
             aria-label={opt.label}
             title={opt.label}
             onclick={() => themeStore.setPreference(opt.value as 'system' | 'light' | 'dark')}
-            class="focus-visible:ring-cn-yellow flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2
+            class="focus-visible:ring-accent-icon flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2
  {themeStore.preference === opt.value
-              ? 'bg-cn-yellow text-cn-ink shadow'
+              ? 'bg-accent text-on-accent shadow'
               : 'text-text-muted hover:text-text-main'}"
           >
             <Icon size={15} strokeWidth={2.5} />
@@ -208,7 +217,32 @@
       </div>
     </div>
 
+    <div class="flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3.5">
+        <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
+          <Smile size={20} strokeWidth={2.5} />
+        </div>
+        <div>
+          <p class="text-text-main text-sm font-bold">{m.settings_emoji_style_label()}</p>
+          <p class="text-text-muted mt-0.5 text-xs font-medium">
+            {m.settings_emoji_style_desc()}
+          </p>
+        </div>
+      </div>
+
+      <SegmentedControl
+        items={EMOJI_STYLES.map((style) => ({ key: style, label: EMOJI_STYLE_LABELS[style]() }))}
+        value={currentEmojiStyle()}
+        onSelect={setEmojiStyle}
+        label={m.settings_emoji_style_label()}
+        tone="yellow"
+        class="w-44 shrink-0"
+      />
+    </div>
+
     <RepostConsentSetting />
+
+    <ActivitySharingSetting />
 
     <div class="flex items-center justify-between gap-4">
       <div class="flex items-center gap-3.5">
@@ -234,9 +268,9 @@
             aria-label={LOCALE_LABELS[locale]}
             title={LOCALE_LABELS[locale]}
             onclick={() => void changeLocale(locale)}
-            class="focus-visible:ring-cn-yellow rounded-lg px-3 py-1.5 text-xs font-semibold uppercase transition-colors outline-none focus-visible:ring-2
+            class="focus-visible:ring-accent-icon rounded-lg px-3 py-1.5 text-xs font-semibold uppercase transition-colors outline-none focus-visible:ring-2
  {getLocale() === locale
-              ? 'bg-cn-yellow text-cn-ink shadow'
+              ? 'bg-accent text-on-accent shadow'
               : 'text-text-muted hover:text-text-main'}"
           >
             {locale}
@@ -260,7 +294,7 @@
         type="button"
         onclick={replayWelcomeTour}
         data-guide-replay="welcome-tour"
-        class="border-cn-border text-text-main hover:bg-text-main/10 focus-visible:ring-cn-yellow shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2"
+        class="border-cn-border text-text-main hover:bg-text-main/10 focus-visible:ring-accent-icon shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2"
       >
         {m.guide_replay_button()}
       </button>
@@ -282,7 +316,7 @@
             type="button"
             onclick={() => replayHint(hint)}
             data-guide-replay={hint.id}
-            class="border-cn-border text-text-main hover:bg-text-main/10 focus-visible:ring-cn-yellow rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2"
+            class="border-cn-border text-text-main hover:bg-text-main/10 focus-visible:ring-accent-icon rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2"
           >
             {hint.replay!.label()}
           </button>

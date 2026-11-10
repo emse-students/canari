@@ -258,8 +258,8 @@
       onclick={() => (open = !open)}
       aria-expanded={open}
       aria-haspopup="menu"
-      class="ui-icon-button text-text-muted rounded-lg transition-colors outline-none hover:bg-amber-500/10 hover:text-amber-600 {open
-        ? 'bg-amber-500/10 text-amber-600'
+      class="ui-icon-button text-text-muted hover:bg-accent/10 hover:text-accent-text rounded-lg transition-colors outline-none {open
+        ? 'bg-accent/10 text-accent-text'
         : ''}"
       aria-label={m.post_more_actions_label()}
       title={m.post_more_actions_label()}
@@ -284,7 +284,7 @@
           type="button"
           role="menuitem"
           onclick={() => pick(openShareSheet)}
-          class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          class="{ROW} text-text-main hover:bg-accent/10 hover:text-accent-text"
         >
           <Share2 size={16} strokeWidth={2.5} />
           {m.post_share_label()}
@@ -301,7 +301,7 @@
                   onRepostChange(reposted)
                 );
               })}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+            class="{ROW} text-text-main hover:bg-accent/10 hover:text-accent-text"
           >
             <Repeat2 size={16} strokeWidth={2.5} />
             {repostedByMe ? m.post_repost_undo_label() : m.post_repost_label()}
@@ -313,7 +313,7 @@
             type="button"
             role="menuitem"
             onclick={() => pick(onRepublish)}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+            class="{ROW} text-text-main hover:bg-accent/10 hover:text-accent-text"
           >
             <Repeat2 size={16} strokeWidth={2.5} />
             {m.post_republish_action()}
@@ -325,7 +325,7 @@
             type="button"
             role="menuitem"
             onclick={() => pick(onProposeRepublication)}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+            class="{ROW} text-text-main hover:bg-accent/10 hover:text-accent-text"
           >
             <Send size={16} strokeWidth={2.5} />
             {m.post_propose_republication_action()}
@@ -337,7 +337,7 @@
             type="button"
             role="menuitem"
             onclick={() => pick(onRequestRepublication)}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+            class="{ROW} text-text-main hover:bg-accent/10 hover:text-accent-text"
           >
             <Megaphone size={16} strokeWidth={2.5} />
             {m.post_request_republication_action()}
@@ -349,7 +349,7 @@
             type="button"
             role="menuitem"
             onclick={() => pick(() => onWithdrawRequest(pending.proposalId))}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+            class="{ROW} text-text-main hover:bg-accent/10 hover:text-accent-text"
           >
             <X size={16} strokeWidth={2.5} />
             <span class="truncate">{m.post_request_withdraw_action({ name: pending.name })}</span>
@@ -361,7 +361,7 @@
             type="button"
             role="menuitem"
             onclick={() => pick(() => onUnrepublish(republisher.id))}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+            class="{ROW} text-text-main hover:bg-accent/10 hover:text-accent-text"
           >
             <Undo2 size={16} strokeWidth={2.5} />
             <span class="truncate">{m.post_unrepublish_action({ name: republisher.name })}</span>
@@ -374,7 +374,7 @@
             role="menuitem"
             data-repost-consent
             onclick={() => pick(() => onSetRepostConsent(!repostsAllowed))}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+            class="{ROW} text-text-main hover:bg-accent/10 hover:text-accent-text"
           >
             {#if repostsAllowed}
               <Ban size={16} strokeWidth={2.5} />
@@ -392,7 +392,7 @@
             role="menuitem"
             data-post-reposters-open
             onclick={() => pick(onShowReposters)}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+            class="{ROW} text-text-main hover:bg-accent/10 hover:text-accent-text"
           >
             <Users size={16} strokeWidth={2.5} />
             {m.post_reposters_menu({ count: reposterCount })}
@@ -408,7 +408,7 @@
               role="menuitem"
               data-post-pin-space={space.spaceId}
               onclick={() => pick(() => onTogglePin(space))}
-              class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-500"
+              class="{ROW} text-text-main hover:bg-accent/10 hover:text-accent-text"
             >
               {#if space.state !== null}
                 <PinOff size={16} strokeWidth={2.5} />
@@ -433,7 +433,7 @@
             type="button"
             role="menuitem"
             onclick={() => pick(onUnmaskAnonymous)}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-500"
+            class="{ROW} text-text-main hover:bg-accent/10 hover:text-accent-text"
           >
             <VenetianMask size={16} strokeWidth={2.5} />
             {m.post_action_unmask_anonymous()}
@@ -445,7 +445,7 @@
             type="button"
             role="menuitem"
             onclick={() => pick(onStartEdit)}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-500"
+            class="{ROW} text-text-main hover:bg-accent/10 hover:text-accent-text"
           >
             <Pencil size={16} strokeWidth={2.5} />
             {m.post_edit_post_label()}

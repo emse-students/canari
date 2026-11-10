@@ -2,6 +2,10 @@
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "settings_language_label": "Langue",
   "settings_language_desc": "Langue de l'interface",
+  "settings_emoji_style_label": "Emojis",
+  "settings_emoji_style_desc": "Système : ceux de votre téléphone. Canari : les mêmes dessins sur tous les appareils.",
+  "settings_emoji_style_system": "Système",
+  "settings_emoji_style_canari": "Canari",
   "auth_brand_subtitle": "Mines Saint-Étienne",
   "auth_redirecting": "Redirection…",
   "auth_restore_in_progress": "Restauration de votre session...",
@@ -458,7 +462,16 @@
   "chat_device_revoke_session_confirm": "Supprimer cette connexion ? Celui qui la détient sera déconnecté et devra tout reprendre depuis le début.",
   "chat_devices_intro": "Chaque ligne est un appareil relié à votre compte. Le supprimer le déconnecte et lui retire l'accès à vos conversations : il repart de zéro.",
   "chat_device_no_session": "Aucune connexion active",
-  "chat_device_session_count": "{count} connexions",
+  "chat_device_session_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} connexion",
+        "countPlural=other": "{count} connexions"
+      }
+    }
+  ],
   "chat_device_session_orphan_note": "Cette connexion n'a jamais identifié d'appareil : elle n'a pas déverrouillé vos messages. Si vous ne la reconnaissez pas, supprimez-la.",
   "chat_device_session_unlisted_note": "Cette connexion nomme un appareil qui ne figure plus dans la liste. Si vous ne la reconnaissez pas, supprimez-la.",
   "chat_device_limit_reached": "Cet appareil n'a pas pu s'enregistrer : votre compte a atteint la limite de {max} appareils. Supprimez un appareil inutilisé dans Paramètres > Gestion des appareils, puis rouvrez l'application.",
@@ -493,7 +506,16 @@
   "chat_channel_access_description": "Définissez si le canal est ouvert à tous les membres ou restreint à certains utilisateurs.",
   "chat_channel_settings_read_only_hint": "Seuls les membres ayant la permission de gérer les canaux peuvent modifier ces réglages.",
   "common_loading_label": "Chargement…",
-  "reactors_more_label": "+{count} autres",
+  "reactors_more_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "+{count} autre",
+        "countPlural=other": "+{count} autres"
+      }
+    }
+  ],
   "common_saving_label": "Sauvegarde…",
   "common_delete_button": "Supprimer",
   "chat_channel_private_label": "Canal privé",
@@ -502,14 +524,14 @@
   "chat_channel_join_as_admin_done": "Vous avez rejoint #{name}",
   "chat_channel_join_as_admin_failed": "Impossible de rejoindre #{name}",
   "chat_channel_private_description": "Seuls les membres autorisés peuvent accéder",
-  "chat_channel_public_label": "Canal public",
   "chat_channel_public_description": "Tous les membres de la communauté peuvent accéder",
   "chat_channel_visibility_label": "Visibilité",
   "chat_channel_visibility_public": "Public",
   "chat_channel_visibility_private": "Privé",
   "chat_channel_visibility_public_note": "Tous les membres peuvent voir et rejoindre ce canal.",
   "chat_channel_visibility_private_note": "Seuls les membres invités peuvent accéder à ce canal.",
-  "chat_toggle_private_channel_label": "Rendre le canal privé",
+  "chat_channel_access_option_public": "Public",
+  "chat_channel_access_option_restricted": "Restreint",
   "chat_allowed_members_label": "Membres autorisés",
   "chat_no_allowed_members_warning": "Aucun membre autorisé - le canal sera inaccessible.",
   "chat_add_member_label": "Ajouter un membre",
@@ -636,6 +658,8 @@
   "msg_restored_unverified": "non vérifié",
   "msg_restored_unverified_hint": "Ce message a été restauré depuis l'historique d'un autre membre, et rien ne prouve qui l'a écrit : son auteur utilisait peut-être une ancienne version de Canari.",
   "msg_en_attente": "En attente…",
+  "msg_waiting_for_network": "En attente du réseau…",
+  "msg_waiting_for_server": "En attente du serveur…",
   "msg_echec": "Échec",
   "msg_non_confirme": "Non confirmé",
   "msg_remettre_dans_le_champ": "Remettre dans le champ",
@@ -705,7 +729,16 @@
   "msg_max_reactions_label": "Maximum de {max} réactions différentes sur ce message.",
   "msg_recent_reactions_label": "Récents",
   "msg_reactions_label": "Réactions au message",
-  "msg_reactions_show_more": "Afficher {count} autres réactions",
+  "msg_reactions_show_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Afficher {count} autre réaction",
+        "countPlural=other": "Afficher {count} autres réactions"
+      }
+    }
+  ],
   "msg_reaction_aria_label": "{emoji} ({count} personnes)",
   "msg_reaction_aria_label_one": "{emoji} (1 personne)",
   "msg_audio_format_unsupported_label": "Format non supporté",
@@ -735,6 +768,7 @@
   "post_anonymous_removed": "Anonymat retiré, l'auteur est de nouveau visible.",
   "post_unable_to_unmask": "Impossible de retirer l'anonymat",
   "post_reacter": "Ajouter une réaction",
+  "post_react_hold_hint": "Appui court : J'aime. Appui long : choisir une réaction",
   "post_already_reported": "Vous avez déjà signalé ce post.",
   "post_unable_to_vote": "Impossible de voter",
   "post_action_not_allowed": "Action non autorisée",
@@ -752,6 +786,7 @@
   "report_user_dialog_title": "Signaler cette personne",
   "profile_report_btn": "Signaler",
   "profile_block_btn": "Bloquer",
+  "profile_more_actions": "Plus d'actions sur ce profil",
   "profile_unblock_btn": "Débloquer",
   "profile_block_confirm": "Bloquer {name} ? Vous ne vous trouverez plus dans la recherche, et aucun de vous deux ne pourra ouvrir une discussion avec l'autre ni l'inviter dans un groupe ou un salon. Vos conversations, groupes et communautés existants ne changent pas. La personne n'en est pas informée.",
   "profile_block_done": "Personne bloquée.",
@@ -873,6 +908,7 @@
   "post_comments_sheet_title": "Commentaires",
   "post_comment_load_older_label": "Voir les commentaires plus anciens",
   "post_comment_as_association_caption": "Commentaire au nom de {name}",
+  "post_comment_add_image_label": "Ajouter une image",
   "post_comment_media_error": "Impossible de joindre ce média au commentaire.",
   "post_media_expired_label": "Média expiré.",
   "post_image_alt": "Image de la publication",
@@ -904,6 +940,9 @@
   "video_fullscreen_label": "Plein écran",
   "video_exit_fullscreen_label": "Quitter le plein écran",
   "video_unplayable": "Cette vidéo ne peut pas être lue sur cet appareil.",
+  "video_expand_label": "Ouvrir en grand",
+  "video_sound_on_announce": "Son activé",
+  "video_sound_off_announce": "Son coupé",
   "post_download_label": "Télécharger",
   "post_poll_multiple_choice_label": "Choix multiples autorisés",
   "post_poll_days_remaining": [
@@ -1019,14 +1058,14 @@
   "post_create_form_none_available": "Vous n'avez aucun formulaire à joindre. Créez-en un, ou retirez le formulaire du post.",
   "post_create_publish_error": "Impossible de publier le post",
   "publish_queue_queued": "Publication en attente",
-  "publish_queue_preparing": "Préparation du média {current} sur {count}",
-  "publish_queue_preparing_percent": "Préparation du média {current} sur {count} - {percent} %",
-  "publish_queue_uploading": "Publication en cours - média {current} sur {count} - {percent} %",
-  "publish_queue_publishing": "Publication en cours...",
-  "publish_queue_waiting": "Publication en pause - elle reprendra dès que la connexion revient",
-  "publish_queue_failed": "La publication a échoué : {reason}",
-  "publish_queue_paused": "Publication en pause",
-  "publish_queue_withdrawing": "Suppression de la publication...",
+  "publish_queue_preparing": "Préparation {current}/{count}",
+  "publish_queue_preparing_percent": "Préparation {current}/{count} · {percent} %",
+  "publish_queue_uploading": "Envoi {current}/{count} · {percent} %",
+  "publish_queue_publishing": "Publication…",
+  "publish_queue_waiting": "En attente du réseau",
+  "publish_queue_failed": "Échec : {reason}",
+  "publish_queue_paused": "En pause",
+  "publish_queue_withdrawing": "Suppression…",
   "publish_queue_pause": "Mettre en pause",
   "publish_queue_resume": "Reprendre",
   "publish_queue_gone": "Cette publication a été supprimée : elle ne peut plus être publiée",
@@ -1093,7 +1132,16 @@
   "post_create_publish_button_label": "Publier",
   "post_form_section_remove_label": "Retirer le formulaire",
   "post_form_choose_label": "- Choisir un formulaire -",
-  "post_form_questions_label": "{count} questions",
+  "post_form_questions_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} question",
+        "countPlural=other": "{count} questions"
+      }
+    }
+  ],
   "post_form_opens_suffix_label": "ouvre {date}",
   "post_form_opens_planned_label": "Ouverture prévue le {date}",
   "post_form_none_yet_label": "Aucun formulaire pour l'instant.",
@@ -1178,29 +1226,131 @@
   "admin_storage_disk_used": "{used} / {total} utilisés ({percent} %)",
   "admin_storage_postgres_label": "Base de données",
   "admin_storage_garage_label": "Objets média (Garage)",
-  "admin_storage_garage_object_count": "{count} objets",
+  "admin_storage_garage_object_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet",
+        "countPlural=other": "{count} objets"
+      }
+    }
+  ],
   "admin_storage_redis_label": "Cache (Redis)",
   "admin_storage_unavailable": "Mesure indisponible.",
   "admin_storage_media_growth_title": "Ce qui a été écrit",
   "admin_storage_media_week_range": "{from}-{to} j",
   "admin_storage_media_week_current": "7 derniers jours",
   "admin_storage_media_older": "Au-delà de {days} j : {size}. La rétention en efface une partie, ce n'est donc pas une mesure de croissance.",
-  "admin_storage_media_undated": "{count} objets sans date d'écriture, absents des barres ci-dessus.",
+  "admin_storage_media_undated": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet sans date d'écriture, absent des barres ci-dessus.",
+        "countPlural=other": "{count} objets sans date d'écriture, absents des barres ci-dessus."
+      }
+    }
+  ],
   "admin_storage_media_retention_title": "Rétention",
   "admin_storage_media_retention_healthy": "Aucun objet au-delà de la fenêtre de {days} jours. Balayage toutes les {hours} h.",
-  "admin_storage_media_retention_pending": "{count} objets ({size}) ont dépassé la fenêtre de {days} jours et attendent le prochain balayage.",
-  "admin_storage_media_retention_stalled": "{count} objets ({size}) auraient dû partir : le plus ancien a {age} jours pour une fenêtre de {days} jours. Un balayage est passé sans les prendre.",
+  "admin_storage_media_retention_pending": [
+    {
+      "declarations": [
+        "input count",
+        "input days",
+        "input size",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) a dépassé la fenêtre de {days} jours et attend le prochain balayage.",
+        "countPlural=other": "{count} objets ({size}) ont dépassé la fenêtre de {days} jours et attendent le prochain balayage."
+      }
+    }
+  ],
+  "admin_storage_media_retention_stalled": [
+    {
+      "declarations": [
+        "input count",
+        "input age",
+        "input days",
+        "input size",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) aurait dû partir : le plus ancien a {age} jours pour une fenêtre de {days} jours. Un balayage est passé sans le prendre.",
+        "countPlural=other": "{count} objets ({size}) auraient dû partir : le plus ancien a {age} jours pour une fenêtre de {days} jours. Un balayage est passé sans les prendre."
+      }
+    }
+  ],
   "admin_storage_media_unreachable_title": "Hors d'atteinte du balayage",
   "admin_storage_media_unreachable_none": "Aucun. Chaque objet du bucket a son entrée de métadonnées.",
-  "admin_storage_media_unreachable_some": "{count} objets ({size}) qu'aucun balayage ne peut atteindre.",
+  "admin_storage_media_unreachable_some": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) qu'aucun balayage ne peut atteindre.",
+        "countPlural=other": "{count} objets ({size}) qu'aucun balayage ne peut atteindre."
+      }
+    }
+  ],
   "admin_storage_media_untracked": "{count} ({size}) sans entrée de métadonnées : le balayage parcourt les métadonnées, il ne les voit pas.",
   "admin_storage_media_tombstoned": "{count} ({size}) marqués supprimés mais toujours dans le bucket : une suppression a échoué.",
-  "admin_storage_media_public": "{count} objets ({size}) sont des ressources publiques, exemptées de rétention.",
-  "admin_storage_media_archive": "{count} objets ({size}) sont des médias du fil (posts, commentaires, avatars), conservés indéfiniment.",
-  "admin_storage_media_association": "{count} objets ({size}) sont des documents d'associations, conservés indéfiniment, même après la suppression du compte qui les a envoyés.",
-  "admin_storage_media_reel": "{count} objets ({size}) sont des vidéos de CanaReels, supprimées avec leur reel un mois après la publication.",
+  "admin_storage_media_public": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) est une ressource publique, exemptée de rétention.",
+        "countPlural=other": "{count} objets ({size}) sont des ressources publiques, exemptées de rétention."
+      }
+    }
+  ],
+  "admin_storage_media_archive": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) est un média du fil (posts, commentaires, avatars), conservé indéfiniment.",
+        "countPlural=other": "{count} objets ({size}) sont des médias du fil (posts, commentaires, avatars), conservés indéfiniment."
+      }
+    }
+  ],
+  "admin_storage_media_association": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) est un document d'association, conservé indéfiniment, même après la suppression du compte qui l'a envoyé.",
+        "countPlural=other": "{count} objets ({size}) sont des documents d'associations, conservés indéfiniment, même après la suppression du compte qui les a envoyés."
+      }
+    }
+  ],
+  "admin_storage_media_reel": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) est une vidéo de CanaReels, supprimée avec son reel un mois après la publication.",
+        "countPlural=other": "{count} objets ({size}) sont des vidéos de CanaReels, supprimées avec leur reel un mois après la publication."
+      }
+    }
+  ],
   "admin_storage_reels": "{live} reels en vie, {overdue} en retard de suppression (un reel en retard est encore là passé son mois : le traitement horaire ne l'a pas retiré).",
-  "admin_storage_media_unclassified": "{count} objets ({size}) n'ont aucune classe de rétention (envoyés avant le 2026-10-01 ou par un ancien client) : le balayage n'y touche jamais.",
+  "admin_storage_replays": "{live} replays de live en ligne ({size}) ; {evictions} supprimés avant leurs 3 jours par le plafond total en 30 jours (un chiffre non nul veut dire que le plafond LIVE_REPLAY_TOTAL_MAX_GB est trop petit).",
+  "admin_storage_media_unclassified": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) n'a aucune classe de rétention (envoyé avant le 2026-10-01 ou par un ancien client) : le balayage n'y touche jamais.",
+        "countPlural=other": "{count} objets ({size}) n'ont aucune classe de rétention (envoyés avant le 2026-10-01 ou par un ancien client) : le balayage n'y touche jamais."
+      }
+    }
+  ],
   "admin_storage_mls_title": "MLS",
   "admin_storage_mls_desc": "Ce que contiennent la base et le cache ci-dessus. Des nombres seulement : rien ici n'alerte, ne classe ni n'agit.",
   "admin_storage_mls_tables_title": "Tables",
@@ -1209,13 +1359,36 @@
   "admin_storage_mls_table_live": "~{size} de données",
   "admin_storage_mls_queue_title": "File non distribuée",
   "admin_storage_mls_queue_summary": "{rows} messages en attente pour {devices} appareils.",
-  "admin_storage_mls_queue_deepest": "File la plus profonde pour un seul appareil : {count} messages.",
+  "admin_storage_mls_queue_deepest": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "File la plus profonde pour un seul appareil : {count} message.",
+        "countPlural=other": "File la plus profonde pour un seul appareil : {count} messages."
+      }
+    }
+  ],
   "admin_storage_mls_queue_oldest": "Message le plus ancien en attente : {days} jours.",
   "admin_storage_mls_queue_empty": "Rien en attente.",
   "admin_storage_mls_queue_growth": "Messages mis en file par semaine",
   "admin_storage_mls_ghosts_title": "Appareils sans key package",
   "admin_storage_mls_ghosts_none": "Aucun. Les {devices} appareils qui portent des adhésions ont tous publié un key package.",
-  "admin_storage_mls_ghosts_some": "{count} appareils sur {devices} portent des adhésions ({memberships}) sans avoir publié de key package : ils ne peuvent être ajoutés à rien ni recevoir de Welcome.",
+  "admin_storage_mls_ghosts_some": [
+    {
+      "declarations": [
+        "input count",
+        "input devices",
+        "input memberships",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} appareil sur {devices} porte des adhésions ({memberships}) sans avoir publié de key package : il ne peut être ajouté à rien ni recevoir de Welcome.",
+        "countPlural=other": "{count} appareils sur {devices} portent des adhésions ({memberships}) sans avoir publié de key package : ils ne peuvent être ajoutés à rien ni recevoir de Welcome."
+      }
+    }
+  ],
   "admin_storage_mls_redis_title": "Clés du cache",
   "admin_storage_mls_redis_summary": "{keys} clés. La répartition ci-dessous est un échantillon de {sampled}.",
   "admin_storage_mls_redis_prefix": "{prefix} : {keys}",
@@ -1330,7 +1503,16 @@
   "admin_legacy_status_already_held": "Déjà cotisant - ligne close sans rien changer",
   "admin_legacy_collision_hint": "Plusieurs lignes partagent le même nom, prénom et promo pour une même association. Rien ne peut décider seul laquelle revient à qui : la première personne connectée prend la cotisation et les autres lignes restent bloquées.",
   "admin_legacy_empty": "Aucune ligne.",
-  "admin_legacy_total_label": "{count} lignes",
+  "admin_legacy_total_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} ligne",
+        "countPlural=other": "{count} lignes"
+      }
+    }
+  ],
   "admin_payments_connect_hint": "La configuration des paiements en ligne se fait sur chaque association : page publique → Modifier → onglet Paiements.",
   "admin_agenda_title": "Événements en attente",
   "admin_agenda_subtitle": "Validez un événement pour le rendre visible sur l'agenda public et dans l'agenda global.",
@@ -1398,6 +1580,10 @@
   "admin_platform_checkpoint_skip_mode_off": "Après chaque réception",
   "admin_platform_checkpoint_skip_mode_on": "Différée (jusqu'à 100 messages)",
   "admin_platform_checkpoint_skip_mode_hint": "Téléphones seulement. S'applique à une app ouverte à sa prochaine vérification de ce serveur, qui a lieu quand elle reprend le focus, revient en ligne ou redevient visible - il n'y a pas de vérification périodique. En différé, un téléphone qui ne fait que recevoir enregistre son état de chiffrement au prochain envoi, au passage en arrière-plan ou tous les 100 messages reçus, au lieu d'après chaque réception. À n'activer qu'une fois les lectures listées dans device-verification passées sur dev.",
+  "admin_platform_live_replays_mode_label": "Rediffusion des directs",
+  "admin_platform_live_replays_mode_off": "Désactivée (supprimé à la fin)",
+  "admin_platform_live_replays_mode_on": "Gardée 3 jours",
+  "admin_platform_live_replays_mode_hint": "S'applique aux directs lancés après l'enregistrement : un direct garde au plus ses 3 dernières heures et devient une rediffusion visible 3 jours par le même public. Repasser en désactivé ne supprime pas les rediffusions déjà publiées. À n'activer qu'une fois les textes (CGU, confidentialité) à jour et les lectures de la page live-replays passées sur dev.",
   "admin_platform_push_mode_hint": "Prend effet dès l'enregistrement, pour les messages des conversations : en réveil seul, Google et Apple ne reçoivent plus qu'un identifiant opaque, et le téléphone va chercher le reste ici. Seules les versions de l'app qui savent le faire le reçoivent ; les autres restent en complet. À n'activer qu'une fois l'extension de notifications iOS vérifiée sur un iPhone.",
   "admin_spaces_label": "Espaces",
   "admin_spaces_title": "Espaces & audiences",
@@ -2964,8 +3150,16 @@
   "form_cash_expiry_placeholder": "Jamais (laisser vide)",
   "form_cash_expiry_hint": "Les paiements sur place non validés après ce délai passent automatiquement à \"expiré\". Laissez vide pour ne jamais expirer.",
   "form_cash_expiry_required_public": "Obligatoire sur un formulaire public : une réponse non payée, à régler sur place, garde sa place jusqu'à ce délai.",
-  "form_questions_count": "{count} questions",
-  "form_questions_count_one": "1 question",
+  "form_questions_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} question",
+        "countPlural=other": "{count} questions"
+      }
+    }
+  ],
   "form_add_question_button": "Ajouter une question",
   "form_error_title_required": "Le titre du formulaire est obligatoire.",
   "form_error_association_required": "Veuillez sélectionner une association bénéficiaire pour un formulaire payant.",
@@ -3227,6 +3421,7 @@
   "nav_dashboard_label": "Tableau de bord",
   "nav_settings_desc": "Préférences, sécurité, appareils",
   "nav_dashboard_desc": "Vue d'ensemble de l'application",
+  "error_not_found_message": "Cette page est introuvable.",
   "error_unexpected_message": "Une erreur inattendue est survenue.",
   "error_back_home": "Retour à l'accueil",
   "auth_callback_authenticating": "Authentification en cours…",
@@ -3363,7 +3558,6 @@
   "profile_bio_save_error_fallback": "Erreur lors de la sauvegarde",
   "settings_page_title": "Paramètres",
   "settings_page_subtitle": "Préférences, sécurité et gestion de votre compte",
-  "settings_device_id_label": "device : {id}",
   "settings_storage_heading": "Stockage",
   "settings_storage_desc": "Espace utilisé par Canari sur cet appareil : messages, cache média et état de chiffrement.",
   "settings_storage_measuring": "Mesure en cours...",
@@ -3574,8 +3768,6 @@
   "calendar_export_preview_label": "Aperçu",
   "calendar_export_preview_title": "Aperçu du calendrier",
   "events_heading": "Événements",
-  "events_empty_title": "Aucun événement pour le moment",
-  "events_empty_desc": "Les événements à venir apparaîtront ici.",
   "common_creating_label": "Création…",
   "assoc_new_back": "Retour aux associations",
   "assoc_new_heading": "Créer une association",
@@ -3843,9 +4035,8 @@
   "profile_public_info_heading": "Informations",
   "status_pill_connected": "Connecté",
   "status_pill_offline": "Hors-ligne",
-  "admin_maintenance_banner_text": "Mode maintenance actif - seuls les administrateurs ont accès.",
+  "admin_maintenance_banner_text": "Maintenance : admins uniquement",
   "env_banner_test_label": "Environnement de test",
-  "env_banner_test_detail": "Les personnes et les associations sont fictives. Rien de ce que vous faites ici n'atteint la vraie application.",
   "md_toolbar_aria_label": "Mise en forme",
   "md_toolbar_bold": "Gras",
   "md_toolbar_italic": "Italique",
@@ -3906,10 +4097,10 @@
   "calendar_event_fallback_title": "Événement",
   "calendar_event_linked_form": "Formulaire lié",
   "calendar_event_linked_post": "Post lié",
-  "mls_error_oom_text": "Mémoire insuffisante - rechargez l'application pour recevoir de nouveaux messages.",
-  "mls_error_private_mode_text": "Mode navigation privée - les messages ne seront pas conservés après fermeture.",
-  "mls_error_keystore_lost_text": "Notifications push dégradées - reconnectez-vous pour les réactiver.",
-  "mls_error_restore_shortfall_text": "Certaines conversations n'ont pas pu être restaurées sur cet appareil et attendent d'être resynchronisées.",
+  "mls_error_oom_text": "Mémoire insuffisante",
+  "mls_error_private_mode_text": "Navigation privée : messages non conservés",
+  "mls_error_keystore_lost_text": "Notifications push dégradées : reconnectez-vous",
+  "mls_error_restore_shortfall_text": "Conversations à resynchroniser",
   "mls_error_reload_action": "Recharger",
   "mls_error_dismiss_action": "Compris",
   "media_lightbox_default_aria": "Aperçu média",
@@ -4074,6 +4265,7 @@
   "posts_empty_title": "Aucun post",
   "posts_empty_followed": "Suivez des associations ou des personnes pour voir leurs publications ici, ou passez sur",
   "posts_badge_new": "Nouveau",
+  "suggestion_post_badge": "Suggestion",
   "posts_all_loaded": "Vous avez tout vu !",
   "posts_card_render_failed": "Cette publication n'a pas pu s'afficher.",
   "posts_stored_refreshing": "Fil enregistré sur l'appareil, mise à jour…",
@@ -4140,9 +4332,17 @@
   "chat_system_call_busy": "Contact occupé",
   "chat_system_call_duration_under_minute": "moins d'une minute",
   "chat_system_call_duration_one_minute": "1 minute",
-  "chat_system_call_duration_minutes": "{count} minutes",
+  "chat_system_call_duration_minutes": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} minute",
+        "countPlural=other": "{count} minutes"
+      }
+    }
+  ],
   "chat_preview_media": "[Média]",
-  "chat_preview_info": "[Info]",
   "chat_preview_poll": "[Sondage]",
   "chat_preview_gif": "[GIF]",
   "chat_preview_link": "[Lien]",
@@ -4242,7 +4442,16 @@
   "pdf_open_document_label": "Ouvrir le document",
   "post_file_ready_to_save": "Prêt - touchez pour enregistrer",
   "pdf_viewer_page_alt": "Page {page} sur {total}",
-  "pdf_viewer_page_count": "{count} pages",
+  "pdf_viewer_page_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} page",
+        "countPlural=other": "{count} pages"
+      }
+    }
+  ],
   "pdf_viewer_zoom_in": "Agrandir",
   "pdf_viewer_zoom_out": "Réduire",
   "pdf_viewer_error": "Ce document ne peut pas être affiché.",
@@ -4255,9 +4464,9 @@
   "open_in_app_banner_install": "Pas encore l'application ? La télécharger",
   "open_in_app_banner_open": "Ouvrir dans l'application",
   "open_in_app_banner_dismiss": "Continuer dans ce navigateur",
-  "offline_banner_title": "Hors connexion.",
+  "offline_banner_title": "Hors connexion",
   "offline_banner_desc": "Vous pouvez lire vos conversations. Vos messages partiront dès le retour du réseau ; dans un salon, les photos, vidéos et sondages attendent la connexion.",
-  "offline_banner_reconnecting": "Connexion retrouvée, synchronisation de vos messages...",
+  "offline_banner_reconnecting": "Synchronisation…",
   "slow_indicator_label": "Connexion lente. Vos messages partent quand même ; les chargements peuvent prendre plus de temps.",
   "link_label_home": "Accueil",
   "link_label_chat": "Discussion",
@@ -4274,6 +4483,13 @@
   "link_label_generic": "Lien",
   "link_preview_open_in_canari": "Ouvrir dans Canari",
   "link_preview_unavailable": "Contenu indisponible ou accès restreint",
+  "shared_post_unavailable_title": "Publication indisponible",
+  "shared_post_unavailable_hint": "Elle a été supprimée, a expiré ou n'est pas visible pour vous.",
+  "shared_post_reel_chip": "CanaReel",
+  "shared_post_open_label": "Ouvrir la publication de {author}",
+  "shared_post_open_reel_label": "Ouvrir le CanaReel de {author}",
+  "shared_post_failed_hint": "Aperçu non chargé. Touchez pour ouvrir la publication.",
+  "shared_post_no_text": "Publication sans texte",
   "link_preview_profile_member": "Membre Canari",
   "link_preview_join_community": "Rejoindre la communauté",
   "link_preview_join_conversation": "Rejoindre la discussion",
@@ -4413,7 +4629,16 @@
   "form_criterion_question_label": "Question",
   "form_criterion_question_placeholder": "Choisir une question...",
   "form_criterion_untitled_question": "Question sans titre",
-  "form_criterion_formation_count": "{count} personnes",
+  "form_criterion_formation_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} personne",
+        "countPlural=other": "{count} personnes"
+      }
+    }
+  ],
   "form_builder_priced_by_grid": "Les tarifs de cette question sont fixés dans la grille tarifaire, pas ici.",
   "form_view_not_open_to_you_title": "Ce formulaire ne vous est pas destiné",
   "form_view_not_open_to_you_desc": "Son accès est réservé à certaines promotions, formations ou cotisants.",
@@ -4494,6 +4719,8 @@
   "reels_camera_retry": "Réessayer",
   "reels_camera_close": "Fermer la caméra",
   "reels_camera_switch": "Changer de caméra",
+  "screen_rotate_landscape": "Passer en paysage",
+  "screen_rotate_portrait": "Revenir en portrait",
   "reels_camera_torch_on": "Allumer le flash",
   "reels_camera_torch_off": "Éteindre le flash",
   "reels_shutter_capture": "Photo (toucher) ou vidéo (maintenir)",
@@ -4504,6 +4731,7 @@
   "reels_capture_photo_error": "La photo a échoué. Réessayez.",
   "reels_capture_not_a_video": "Ce fichier n'est pas une vidéo.",
   "reels_capture_too_long": "Un CanaReel dure {seconds} secondes au plus.",
+  "reels_capture_not_vertical": "Un CanaReel est une vidéo verticale. Publiez-la depuis « Nouvelle publication », comme post.",
   "reels_capture_take_refused": "Cette prise n'a pas pu être gardée. Réessayez.",
   "reels_capture_pick_before_limits": "La durée maximale d'un CanaReel n'a pas encore pu être lue. Réessayez dans un instant.",
   "reels_capture_limits_error": "Canari est injoignable - toucher pour réessayer",
@@ -4534,7 +4762,23 @@
   "reel_sendto_failed_in_unnamed": "Une vidéo n'a pas pu être envoyée dans l'une des conversations choisies : ouvrez-la pour voir pourquoi.",
   "reel_sendto_failed_in_many": "La vidéo n'a pas pu être envoyée dans {count} conversations : ouvrez-les pour voir pourquoi.",
   "reel_sendto_failed_in_chosen": "La vidéo n'a pas pu être envoyée dans les conversations choisies : ouvrez-les pour voir pourquoi.",
-  "reel_sendto_delete_everywhere_skipped": "Supprimée dans {done} conversations ; {skipped} ne sont plus sur cet appareil et la gardent.",
+  "reel_sendto_delete_everywhere_skipped": [
+    {
+      "declarations": [
+        "input done",
+        "input skipped",
+        "local donePlural = done: plural",
+        "local skippedPlural = skipped: plural"
+      ],
+      "selectors": ["donePlural", "skippedPlural"],
+      "match": {
+        "donePlural=one skippedPlural=one": "Supprimée dans {done} conversation ; {skipped} n'est plus sur cet appareil et la garde.",
+        "donePlural=one skippedPlural=other": "Supprimée dans {done} conversation ; {skipped} ne sont plus sur cet appareil et la gardent.",
+        "donePlural=other skippedPlural=one": "Supprimée dans {done} conversations ; {skipped} n'est plus sur cet appareil et la garde.",
+        "donePlural=other skippedPlural=other": "Supprimée dans {done} conversations ; {skipped} ne sont plus sur cet appareil et la gardent."
+      }
+    }
+  ],
   "reel_sendto_everywhere_running": "La suppression de cette vidéo est déjà en cours.",
   "reel_sendto_same_as_post": "Les conversations recevront la vidéo publiée elle-même.",
   "reel_sendto_cancel_all": "Annuler partout",
@@ -4606,9 +4850,28 @@
   "reels_publish_uploading": "Envoi...",
   "reels_publish_done": "CanaReel publié",
   "reels_publish_error": "Le CanaReel n'a pas pu être publié. Réessayez.",
-  "reels_publish_expiry_note": "Visible {days} jours, puis supprimé automatiquement. Vous pourrez l'enregistrer dans votre galerie d'ici là.",
-  "reels_publish_from_composer_notice": "CanaReel : supprimé au bout de {days} jours. Pour garder la vidéo, gardez-la comme post.",
-  "reels_publish_keep_as_post": "Garder comme post",
+  "reels_publish_expiry_note": "Visible {lifetime}, puis supprimé automatiquement. Vous pourrez l'enregistrer dans votre galerie d'ici là.",
+  "reels_lifetime_years": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} an",
+        "countPlural=other": "{count} ans"
+      }
+    }
+  ],
+  "reels_lifetime_days": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} jour",
+        "countPlural=other": "{count} jours"
+      }
+    }
+  ],
+  "reels_publish_from_composer_notice": "Une vidéo verticale de {seconds} secondes au plus est un CanaReel : supprimé au bout de {lifetime}.",
   "reels_viewer_label": "CanaReels",
   "reels_viewer_close": "Fermer les CanaReels",
   "reels_viewer_prev": "CanaReel précédent",
@@ -5214,7 +5477,16 @@
   "bookings_day_state_none": "rien de libre",
   "bookings_strip_label": "Jours de la semaine",
   "bookings_column_label": "Colonne",
-  "bookings_column_free_count": "{count} libres",
+  "bookings_column_free_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} libre",
+        "countPlural=other": "{count} libres"
+      }
+    }
+  ],
   "bookings_grid_caption": "Créneaux de {space}",
   "bookings_grid_drag_hint_pointer": "Glissez sur la grille pour choisir plusieurs créneaux.",
   "bookings_grid_drag_hint_touch": "Appui long, puis glissez sur la grille pour choisir plusieurs créneaux.",
@@ -5250,8 +5522,8 @@
   "bookings_detail_organiser_cancel_note_notified": "Si vous l'annulez, ses personnes sont prévenues.",
   "bookings_stranded_hint_notified": "Annulez celles qui doivent partir, puis enregistrez de nouveau. Les personnes concernées sont prévenues.",
   "bookings_stranded_cancel_confirm_notified": "Annuler la réservation du {when} ? La personne qui l'a faite est prévenue.",
-  "bookings_space_notification_note": "Prévenu d'une annulation, d'un ajout et avant chaque créneau.",
-  "bookings_mine_notification_note": "Prévenu d'une annulation, d'un ajout et avant chaque créneau.",
+  "bookings_space_notification_note": "Notifications : vous êtes prévenu d'une annulation, d'un ajout et avant chaque créneau.",
+  "bookings_mine_notification_note": "Notifications : vous êtes prévenu d'une annulation, d'un ajout et avant chaque créneau.",
   "bookings_tab_new_button": "Créer un espace",
   "bookings_spaces_search_placeholder": "Rechercher un espace",
   "bookings_row_resources": "{count} ressources",
@@ -5386,8 +5658,6 @@
   "live_association_unknown": "Une association",
   "live_viewer_label": "Live de {name}",
   "live_viewer_close": "Fermer le live",
-  "live_viewer_mute": "Couper le son",
-  "live_viewer_unmute": "Activer le son",
   "live_viewer_elapsed": "En direct depuis {time}",
   "live_viewer_connecting": "Connexion au live...",
   "live_viewer_reconnecting": "Reconnexion...",
@@ -5622,6 +5892,8 @@
   "notif_booking_cancelled_text": "a annulé une réservation",
   "notif_booking_withdrawn_text": "a quitté votre réservation",
   "notif_booking_added_text": "vous a inscrit à une réservation",
+  "notif_booking_open_text": "a ouvert les réservations :",
+  "notif_event_open_text": "a publié un événement :",
   "notif_booking_changed_text": "a modifié votre réservation",
   "notif_booking_removed_text": "vous a retiré d'une réservation",
   "notif_booking_reminder_text": "Rappel : votre réservation commence bientôt",
@@ -5633,6 +5905,8 @@
   "follow_requests_accept": "Accepter",
   "follow_requests_refuse": "Refuser",
   "follow_requests_accepted": "Demande acceptée",
+  "follow_back_btn": "Suivre en retour",
+  "follow_back_named": "Suivre {name} en retour",
   "follow_requests_refused": "Demande refusée",
   "follow_requests_gone": "Cette demande a déjà été traitée ou retirée.",
   "follow_requests_answer_error": "Impossible d'enregistrer la réponse. Réessayez.",
@@ -5701,6 +5975,12 @@
   "settings_allow_reposts_hint": "Vos abonnés pourront republier vos posts pour leurs propres abonnés. Vous pouvez changer ce choix post par post depuis le menu d'une publication. Les publications anonymes ne sont jamais republiées.",
   "settings_allow_reposts_error": "Le réglage n'a pas pu être enregistré.",
   "notif_member_repost_text": "a republié :",
+  "notif_friend_reaction_text": "a réagi à une publication :",
+  "notif_friend_comment_text": "a commenté une publication :",
+  "notif_campus_trend_text": "Une publication de votre espace fait réagir :",
+  "settings_share_activity": "Partager mon activité",
+  "settings_share_activity_hint": "Les personnes qui vous suivent sont prévenues quand vous réagissez ou commentez une publication qu'elles voient déjà. Rien n'est envoyé sur une publication qu'elles ne voient pas, ni pour un commentaire anonyme ou au nom d'une association.",
+  "settings_share_activity_error": "Le réglage n'a pas pu être enregistré.",
   "bookings_owner_label": "Créer en tant que",
   "bookings_owner_personal": "Moi",
   "bookings_owner_current": "Cette association",
@@ -5892,10 +6172,40 @@
   "follow_chip_follow_named": "Suivre {name}",
   "follow_chip_withdraw_named": "Demande envoyée - retirer la demande de suivi à {name}",
   "follow_chip_withdraw": "Demande envoyée - retirer la demande de suivi",
+  "suggestions_title": "Suggestions pour vous",
+  "suggestions_common_count": "{count} en commun",
+  "suggestions_dismiss_named": "Masquer la suggestion {name}",
+  "suggestions_dismiss_failed": "La suggestion n'a pas pu être masquée.",
+  "suggestions_also_title": "Suivez aussi...",
+  "suggestions_onboarding_title": "Suivez des comptes pour remplir votre fil",
+  "suggestions_onboarding_hint": "Des personnes et des associations que vous pourriez connaître.",
+  "suggestions_empty_followed_hint": "Suivez des personnes et des associations pour voir leurs publications ici.",
   "chat_role_names_title": "Noms des rôles",
   "chat_role_names_description": "Donnez à chaque rôle le nom que votre communauté utilise. Seul le nom change : les droits de chaque rôle restent les mêmes. Laissez vide pour reprendre le nom par défaut.",
   "chat_role_name_input_label": "Nom du rôle {role}",
   "chat_role_name_reset_button": "Nom par défaut",
   "chat_role_name_invalid_error": "Ce nom ne peut pas être enregistré : 40 caractères au plus, sans caractère de contrôle.",
-  "chat_role_name_forbidden_error": "Seuls les administrateurs peuvent renommer les rôles."
+  "chat_role_name_forbidden_error": "Seuls les administrateurs peuvent renommer les rôles.",
+  "replay_badge": "Rediffusion",
+  "replay_time_left_days": "encore {count} j",
+  "replay_time_left_hours": "encore {count} h",
+  "replay_time_left_minutes": "encore {count} min",
+  "replay_loading": "Chargement de la rediffusion",
+  "replay_reconnecting": "Reconnexion…",
+  "replay_gone": "Cette rediffusion n'est plus disponible.",
+  "replay_unavailable": "Cette rediffusion ne peut pas être lue sur cet appareil.",
+  "replay_retry": "Réessayer",
+  "replay_card_open": "Regarder la rediffusion",
+  "replay_card_default_title": "Rediffusion du direct de {name}",
+  "replay_card_duration_label": "Durée de la rediffusion",
+  "replay_cover_alt": "Image du direct de {name}",
+  "replay_save_confirm": "Enregistrer la rediffusion ? Environ {megabytes} Mo seront écrits sur cet appareil.",
+  "replay_save_confirm_button": "Enregistrer",
+  "replay_save_cancel_button": "Annuler",
+  "replay_save_done_parts": "Rediffusion enregistrée en {parts} fichiers : la caméra a changé pendant le direct.",
+  "replay_save_gone": "La rediffusion a expiré, elle ne peut plus être enregistrée.",
+  "live_rule_audience_member_replay": "Visible comme un post : par les membres qui partagent un espace avec vous, pendant la diffusion, puis en rediffusion pendant 3 jours (un direct de moins de 30 secondes n'en laisse pas). Le chat n'est pas conservé.",
+  "live_rule_audience_association_replay": "Visible comme un post de l'association : par les membres qu'elle touche, pendant la diffusion, puis en rediffusion pendant 3 jours (un direct de moins de 30 secondes n'en laisse pas). Le chat n'est pas conservé.",
+  "live_ended_broadcaster_replay": "Vous avez terminé le live. Sa rediffusion sera visible 3 jours.",
+  "live_end_confirm_replay": "Terminer le live ? Il s'arrête pour tous les spectateurs ; sa rediffusion reste visible 3 jours."
 }

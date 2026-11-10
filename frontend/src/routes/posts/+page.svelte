@@ -58,6 +58,21 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import LiveOverlay from '$lib/components/live/LiveOverlay.svelte';
   import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
+  import FeedSuggestions from '$lib/components/suggestions/FeedSuggestions.svelte';
+  import {
+    FEED_CAROUSEL_AFTER_POSTS,
+    cardOpen,
+    ensureFeedSuggestions,
+    feedSuggestionCards,
+    feedSuggestionPlacement,
+    suggestionsFollowingCount,
+  } from '$lib/follows/suggestions.svelte';
+  import {
+    ensureSuggestedPosts,
+    forgetSuggestedPost,
+    placeSuggestedPosts,
+    suggestedPosts,
+  } from '$lib/posts/suggestedPosts.svelte';
   import { initialScrollDirection, nextScrollDirection } from '$lib/utils/scrollDirection';
   import LiveFeedCard from '$lib/components/live/LiveFeedCard.svelte';
   import LiveViewer from '$lib/components/live/LiveViewer.svelte';
@@ -467,6 +482,38 @@
    * re-derives it.
    */
   const activeFeed = $derived(data.feedParams.feed);
+
+  // FOLLOW SUGGESTIONS (engagement WP-6): read once per reader, and only once a feed that draws
+  // them is open - Mon espace or Suivis (`feedSuggestionPlacement`).
+  $effect(() => {
+    if (activeFeed === 'all' || activeFeed === 'followed') ensureFeedSuggestions();
+  });
+
+  // SUGGESTED POSTS (engagement WP-7, L13): Mon espace only - read once per reader when it opens.
+  $effect(() => {
+    if (activeFeed === 'all') ensureSuggestedPosts();
+  });
+
+  /** Which suggested post follows which feed index, for the posts mounted so far; none off Mon espace. */
+  function suggestedPlacement(shown: PostEntity[]): Record<number, PostEntity> | null {
+    if (activeFeed !== 'all') return null;
+    return placeSuggestedPosts(
+      shown.map((p) => p.id),
+      suggestedPosts()
+    );
+  }
+
+  /** Where this feed draws its suggestions for `postCount` posts: one place, or none. */
+  function suggestionPlacement(postCount: number) {
+    const followingCount = suggestionsFollowingCount();
+    if (followingCount === null) return null;
+    return feedSuggestionPlacement({
+      feed: activeFeed,
+      postCount,
+      followingCount,
+      openCards: feedSuggestionCards().filter(cardOpen).length,
+    });
+  }
 
   /**
    * PAINT THE TAB FROM WHAT IT LAST HELD, THEN REPLACE IT WITH THE ANSWER.
@@ -927,7 +974,7 @@
       value={searchQuery}
       oninput={onSearchInput}
       placeholder={m.posts_search_placeholder()}
-      class="ui-search-own-clear border-cn-border text-text-main placeholder:text-text-muted/70 bg-cn-surface w-full rounded-2xl border py-2.5 pr-10 pl-10 text-sm font-medium transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20"
+      class="ui-search-own-clear border-cn-border text-text-main placeholder:text-text-muted/70 bg-cn-surface focus:border-accent/50 focus:ring-accent/20 w-full rounded-2xl border py-2.5 pr-10 pl-10 text-sm font-medium transition-all outline-none focus:ring-2"
     />
     <!--
       ONE BUTTON FOR TWO WIDTHS, because the two gestures are the same gesture. From `md` up the
@@ -960,7 +1007,7 @@
   <div
     class="pointer-events-none mb-1 transition-transform duration-200 ease-out motion-reduce:transition-none [&_button]:pointer-events-auto {searchQuery
       ? ''
-      : 'sticky top-0 z-10 pt-2 pb-3'} {tabsHidden ? '-translate-y-full' : ''}"
+      : 'sticky top-0 z-10 -mt-6 pt-2 pb-3 md:mt-0'} {tabsHidden ? '-translate-y-full' : ''}"
     inert={tabsHidden}
     onfocusin={() => (tabsFocused = true)}
     onfocusout={(e) => {
@@ -1132,6 +1179,8 @@
       </div>
 
       {#snippet feedList(resolvedPosts: PostEntity[])}
+        {@const placement = suggestionPlacement(resolvedPosts.length)}
+        {@const suggestedAt = suggestedPlacement(resolvedPosts.slice(0, mounted.count))}
         <!-- A REFRESH DOES NOT BLANK A FEED THAT IS ALREADY ON SCREEN. This was `{#if loading}`,
              so a pull-to-refresh at post #30 collapsed the list to four skeletons, shrank the
              document and lost the reader's place - for posts still held in `postsOverride`. Same
@@ -1139,6 +1188,9 @@
         {#if loading && resolvedPosts.length === 0}
           {@render skeletonCards()}
         {:else if resolvedPosts.length === 0}
+          {#if placement === 'banner'}
+            <FeedSuggestions placement="banner" />
+          {/if}
           <div
             class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"
           >
@@ -1163,8 +1215,14 @@
               </p>
             {/if}
           </div>
+          {#if placement === 'page'}
+            <FeedSuggestions placement="page" />
+          {/if}
         {:else}
-          {#each resolvedPosts.slice(0, mounted.count) as post (post.id)}
+          {#if placement === 'banner'}
+            <FeedSuggestions placement="banner" />
+          {/if}
+          {#each resolvedPosts.slice(0, mounted.count) as post, i (post.id)}
             <div class="relative" use:markPostSeen={post}>
               {#if isNew(post)}
                 <PostCornerBadge label={m.posts_badge_new()} />
@@ -1179,6 +1237,16 @@
                 storeFirstPage(data.feedParams, postsOverride.slice(0, FEED_FIRST_PAGE_SIZE));
               })}
             </div>
+            {#if placement === 'inline' && i === FEED_CAROUSEL_AFTER_POSTS - 1}
+              <FeedSuggestions placement="inline" />
+            {/if}
+            {@const suggested = suggestedAt?.[i]}
+            {#if suggested}
+              <div class="relative" data-suggested-post={suggested.id}>
+                <PostCornerBadge label={m.suggestion_post_badge()} />
+                {@render guardedCard(suggested, () => forgetSuggestedPost(suggested.id))}
+              </div>
+            {/if}
           {/each}
 
           <!-- Infinite-scroll sentinel - only once every card is mounted: under the third card it

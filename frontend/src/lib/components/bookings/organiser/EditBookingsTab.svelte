@@ -78,7 +78,7 @@
 
 <div class="space-y-3">
   <div class="flex items-center justify-between gap-3">
-    <h2 class="text-text-main min-w-0 text-lg font-bold tracking-tight">
+    <h2 class="text-text-main min-w-0 text-lg font-bold">
       {personal ? m.bookings_personal_title() : m.bookings_tab_label()}
     </h2>
     <button
@@ -129,7 +129,7 @@
   {#if loading}
     <div class="flex justify-center py-8">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if spaces.length === 0}
@@ -149,7 +149,7 @@
             class="text-text-main hover:bg-cn-border/20 flex min-w-0 flex-1 items-center gap-3 p-4 transition-colors"
           >
             <span
-              class="bg-cn-yellow/15 text-text-muted flex h-12 w-12 shrink-0 items-center justify-center rounded-xl"
+              class="bg-accent/15 text-text-muted flex h-12 w-12 shrink-0 items-center justify-center rounded-xl"
               aria-hidden="true"
             >
               <CalendarClock size={22} />

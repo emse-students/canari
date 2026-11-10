@@ -111,6 +111,11 @@ export function notificationHref(
     case 'association_repost':
     // WP-F6: a person the reader follows reposted the post.
     case 'member_repost':
+    // Engagement WP-9: a person the reader follows reacted to or commented on the post.
+    case 'friend_reaction':
+    case 'friend_comment':
+    // Engagement WP-10: a post of the reader's space took off.
+    case 'campus_trend':
     // D38b: the proposer was told the author's answer - the post shows it (carried, or not).
     case 'repost_personal_accepted':
     case 'repost_personal_refused':
@@ -131,6 +136,12 @@ export function notificationHref(
     case 'booking_changed':
     case 'booking_removed':
       return BOOKINGS_HREF;
+    // The openings told to an association's followers (engagement WP-4): `postId` is the booking
+    // SPACE, which Reservations lists; for an event it is the EVENT, which the agenda shows.
+    case 'booking_open':
+      return BOOKINGS_HREF;
+    case 'event_open':
+      return '/calendar';
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
     default:
@@ -153,6 +164,9 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'followed_post',
   'association_repost',
   'member_repost',
+  'friend_reaction',
+  'friend_comment',
+  'campus_trend',
   'repost_proposed',
   'coorganise_proposed',
   'repost_personal_requested',
@@ -179,6 +193,8 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'booking_reminder',
   'booking_changed',
   'booking_removed',
+  'booking_open',
+  'event_open',
   'lydia_payments_active',
   'lydia_payments_paused',
   'lydia_cashier_added',

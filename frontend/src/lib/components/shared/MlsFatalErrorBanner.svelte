@@ -46,12 +46,12 @@
   <!-- `alert`, not `status`: this one is allowed to interrupt what a screen reader is saying,
        because the MLS stack is down and nothing the user types will be sent. -->
   <Banner variant={config.variant} tone="alert">
-    <span class="flex-1">{config.text}</span>
+    <span class="flex-1 truncate" title={config.text}>{config.text}</span>
 
     {#snippet action()}
       <button
         type="button"
-        class="shrink-0 rounded-md bg-white/20 px-3 py-1 text-xs font-semibold transition-colors hover:bg-white/30"
+        class="banner-action bg-white/20 transition-colors hover:bg-white/30"
         onclick={config.onAction}
       >
         {config.action}

@@ -188,7 +188,7 @@
 {#if loading}
   <div class="border-cn-border bg-cn-surface rounded-2xl border p-8 text-center">
     <div
-      class="border-cn-yellow mx-auto h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+      class="border-accent-icon mx-auto h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
     ></div>
   </div>
 {:else if empty}
@@ -207,9 +207,7 @@
            So each month is its own block and the card is the list under the heading, not around it.
            `top-0` is the top of `.page-scroll-wrap`, which starts below the mobile header. -->
       <section bind:this={sectionEls[index]}>
-        <h3
-          class="bg-cn-bg text-text-muted sticky top-0 z-10 py-2 text-xs font-bold tracking-wide uppercase"
-        >
+        <h3 class="bg-cn-bg text-text-muted sticky top-0 z-10 py-2 text-xs font-bold">
           {section.label}
         </h3>
 
@@ -226,7 +224,7 @@
                 <div class="text-zoom-w-11 shrink-0 text-center">
                   <div
                     class="text-zoom-size-9 mx-auto flex items-center justify-center rounded-full text-lg font-bold {today
-                      ? 'bg-cn-yellow text-cn-ink'
+                      ? 'bg-accent text-on-accent'
                       : 'text-text-main'}"
                   >
                     {group.day}
@@ -321,7 +319,7 @@
       <div bind:this={sentinel} class="flex justify-center py-4" aria-live="polite">
         <span class="sr-only">{m.calendar_schedule_loading_more()}</span>
         <div
-          class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-2 border-t-transparent"
+          class="border-accent-icon h-5 w-5 animate-spin rounded-full border-2 border-t-transparent"
           aria-hidden="true"
         ></div>
       </div>

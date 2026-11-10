@@ -73,6 +73,16 @@ const RAW_TABLES = [
   // Migration 146's unpublished form revisions: a form id and the form's own content, no account -
   // they go with their form (ON DELETE CASCADE), as its other content does.
   'form_drafts',
+  // Migration 155's dismissed follow suggestions (engagement WP-5): the reader, and a person target.
+  'follow_suggestion_dismissals',
+  // Migration 156's replay cap evictions (docs/wiki/live-replays.md): a live id, byte counts and a
+  // date, no account - and pruned at 30 days by the live sweep.
+  'live_replay_cap_evictions',
+  // Migration 157's daily push counters (engagement WP-8): the recipient's own rows.
+  'engagement_push_days',
+  // Migration 159 (engagement WP-9): the activity setting and the told-once ledger.
+  'user_activity_settings',
+  'post_engagement_notices',
 ];
 
 const SRC = join(__dirname, '..');

@@ -17,7 +17,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.6.9</string>
 	<key>CFBundleVersion</key>
-	<string>100600902</string>
+	<string>100600905</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIBackgroundModes</key>
@@ -84,9 +84,14 @@
 	<string>UIStatusBarStyleDefault</string>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
+	<!-- The iPhone may turn, and is portrait everywhere but the video and camera screens: the gate is
+	     the root view controller's mask, which canari_ios.mm drives from the page's request
+	     (docs/wiki/frontend/screen-orientation.md). Portrait first: the launch orientation. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>

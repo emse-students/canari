@@ -676,7 +676,7 @@
 
 <div class="space-y-6">
   <div class="border-cn-border bg-cn-surface space-y-1 rounded-2xl border p-6 shadow-sm">
-    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
       <HandCoins size={20} />
       {m.asso_cotisations_title()}
     </h2>
@@ -792,7 +792,7 @@
         <div class="border-cn-border space-y-3 border-t pt-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h4 class="text-text-main text-xs font-bold tracking-wide uppercase">
+              <h4 class="text-text-main text-xs font-bold">
                 {m.asso_cotisations_price_title()}
               </h4>
               {#if tierProducts.length > 1}
@@ -818,7 +818,7 @@
           {#if tiersLoading}
             <div class="text-text-muted flex items-center gap-2 text-sm">
               <div
-                class="border-cn-yellow h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
+                class="border-accent-icon h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
               ></div>
               {m.common_loading_label()}
             </div>
@@ -869,7 +869,7 @@
                         state for as long as it existed, with no screen able to report it.
                       -->
                       {#if !product.isActive}
-                        <p class="text-amber-warn mt-1 text-xs font-semibold">
+                        <p class="text-amber-warn-text mt-1 text-xs font-semibold">
                           {product.activationWithheld
                             ? m.asso_cotisations_tier_withheld_hint()
                             : m.asso_cotisations_tier_off_sale_hint()}
@@ -886,7 +886,7 @@
                           checked={product.isActive}
                           disabled={togglingTierId === product.id}
                           onchange={() => void handleToggleTierActive(product)}
-                          class="accent-cn-yellow size-4"
+                          class="accent-accent size-4"
                         />
                         <span class={product.isActive ? 'text-text-main' : 'text-text-muted'}>
                           {m.asso_cotisations_tier_active_label()}
@@ -988,7 +988,7 @@
                               type="checkbox"
                               checked={editingMatrix !== null}
                               onchange={(e) => toggleTierGrid(product, e.currentTarget.checked)}
-                              class="accent-cn-yellow mt-0.5 size-4"
+                              class="accent-accent mt-0.5 size-4"
                             />
                             <span>
                               <span class="text-text-main block text-xs font-semibold">
@@ -1044,7 +1044,7 @@
                 void handleCreateTier();
               }}
             >
-              <p class="text-text-main text-xs font-bold tracking-wide uppercase">
+              <p class="text-text-main text-xs font-bold">
                 {m.asso_cotisations_tier_add_title()}
               </p>
               <div class="grid gap-3 sm:grid-cols-2">
@@ -1135,7 +1135,7 @@
           type="text"
           bind:value={search}
           placeholder={m.asso_cotisations_search_placeholder()}
-          class="border-cn-border w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:border-amber-400/60 focus:ring-2 focus:ring-amber-400/45"
+          class="border-cn-border focus:border-accent/60 focus:ring-accent/45 w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-4 pl-9 text-sm outline-none focus:ring-2"
         />
       </div>
 
@@ -1150,7 +1150,7 @@
       {#if rosterLoading}
         <div class="flex justify-center py-8">
           <div
-            class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+            class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
           ></div>
         </div>
       {:else if rosterItems.length === 0}
@@ -1159,7 +1159,7 @@
         <div class="space-y-4">
           {#each rosterGroups as group (group.promo ?? 'none')}
             <div class="space-y-2">
-              <h4 class="text-text-muted text-xs font-bold tracking-wide uppercase">
+              <h4 class="text-text-muted text-xs font-bold">
                 {group.promo != null
                   ? m.asso_cotisations_group_promo_label({ promo: group.promo })
                   : m.asso_cotisations_group_no_promo()}
@@ -1181,7 +1181,7 @@
                             onValueChange={(v) => void handleChangeTier(item, v)}
                             label={m.asso_cotisations_tier_change_label()}
                             disabled={switchingTagId !== null}
-                            triggerClass="border-amber-warn/40 bg-amber-warn/15 text-amber-warn flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
+                            triggerClass="border-amber-warn/40 bg-amber-warn/15 text-amber-warn-text flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold disabled:opacity-50"
                           >
                             {#snippet trigger(selected)}
                               <span class="truncate">{selected?.label ?? item.tier}</span>
@@ -1190,7 +1190,7 @@
                           </Picker>
                         {:else if item.tier}
                           <span
-                            class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-xs font-semibold"
+                            class="bg-amber-warn/15 text-amber-warn-text rounded-full px-2 py-0.5 text-xs font-semibold"
                           >
                             {item.tier}
                           </span>
@@ -1226,7 +1226,7 @@
         {#if rosterLoadingMore}
           <div class="flex justify-center py-3">
             <div
-              class="border-cn-yellow h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
+              class="border-accent-icon h-5 w-5 animate-spin rounded-full border-4 border-t-transparent"
             ></div>
           </div>
         {/if}

@@ -155,6 +155,16 @@
     'event_pending_coorganiser',
   ] as const;
   const isEventNotif = $derived((EVENT_TYPES as readonly string[]).includes(notif.type));
+  /**
+   * THE TWO OPENINGS told to an association's followers (engagement WP-4), named for the same reason:
+   * the ASSOCIATION opened a booking space or published an event. `text` is the space's name or the
+   * event's title, empty for a space reached by its link only.
+   */
+  const OPENING_TEXT: Readonly<Record<string, () => string>> = {
+    booking_open: m.notif_booking_open_text,
+    event_open: m.notif_event_open_text,
+  };
+  const isOpeningNotif = $derived(Object.hasOwn(OPENING_TEXT, notif.type));
 
   /**
    * THE TWO PUBLICATION NOTICES, which spent their life reading "a commente :".
@@ -187,6 +197,14 @@
    */
   const isMemberRepostNotif = $derived(notif.type === 'member_repost');
   /**
+   * FRIENDS' ACTIVITY (engagement WP-9), named for the same reason: a PERSON the reader follows
+   * reacted to or commented on a post the reader sees, so it draws that person's avatar, and the
+   * body is the POST's opening - never the comment, never the reaction.
+   */
+  const isFriendNotif = $derived(
+    notif.type === 'friend_reaction' || notif.type === 'friend_comment'
+  );
+  /**
    * A CO-ORGANISATION PROPOSAL (D39), named for the same reason: the ORGANISING association asks,
    * and the body is the event's title.
    */
@@ -210,6 +228,7 @@
       isRepostNotif ||
       isCoorganiseNotif ||
       notif.type === 'repost_personal_requested' ||
+      isOpeningNotif ||
       // An organiser of an association space cancelled or booked: the association acted (WP-N).
       notif.type === 'booking_cancelled' ||
       notif.type === 'booking_added' ||
@@ -317,7 +336,7 @@
     notif.type === 'reaction'
       ? 'bg-pink-500 text-white'
       : notif.type === 'mention'
-        ? 'bg-amber-500 text-cn-ink'
+        ? 'bg-accent text-on-accent'
         : notif.type === 'reply'
           ? 'bg-blue-500 text-white'
           : notif.type === 'form_reminder'
@@ -326,17 +345,17 @@
                 notif.type === 'lydia_payments_paused' ||
                 notif.type === 'delegation_revoked' ||
                 notif.type === 'delegation_receiver_not_ready'
-              ? 'bg-amber-500 text-cn-ink'
+              ? 'bg-accent text-on-accent'
               : notif.type === 'event_rejected'
                 ? 'bg-red-500 text-white'
                 : notif.type === 'event_pending' || notif.type === 'event_pending_coorganiser'
-                  ? 'bg-amber-500 text-cn-ink'
-                  : isEventNotif || isCoorganiseNotif
+                  ? 'bg-accent text-on-accent'
+                  : isEventNotif || isCoorganiseNotif || isOpeningNotif
                     ? 'bg-sky-600 text-white'
-                    : isPostNotif || isRepostNotif || isPersonalRepostNotif
+                    : isPostNotif || isRepostNotif || isPersonalRepostNotif || isFriendNotif
                       ? 'bg-indigo-500 text-white'
                       : isFollowNotif || notif.type === 'birthday'
-                        ? 'bg-amber-500 text-cn-ink'
+                        ? 'bg-accent text-on-accent'
                         : notif.type === 'profile_correction_refused'
                           ? 'bg-red-500 text-white'
                           : isUnknownNotif
@@ -350,8 +369,9 @@
   // passed by exactly one caller: the 320px bell dropdown, deleted on 2026-09-14 when the bell
   // became a link to this page. A second shape nothing asks for is a second shape nobody checks.
   const avatarBox = 'h-14 w-14';
-  const badgeBox = 'h-7 w-7';
-  const glyph = 15;
+  // 20px on a 56px disc: the 28px one hid half of the initials (design audit M9).
+  const badgeBox = 'h-5 w-5';
+  const glyph = 11;
 </script>
 
 <button
@@ -447,7 +467,7 @@
         <Newspaper size={glyph} strokeWidth={2.75} />
       {:else if isRepostNotif || isPersonalRepostNotif}
         <Repeat2 size={glyph} strokeWidth={2.75} />
-      {:else if isCoorganiseNotif}
+      {:else if isCoorganiseNotif || isOpeningNotif}
         <CalendarPlus size={glyph} strokeWidth={2.75} />
       {:else if isUnknownNotif}
         <Bell size={glyph} strokeWidth={2.75} />
@@ -540,6 +560,15 @@
       {:else if isMemberRepostNotif}
         {m.notif_member_repost_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isFriendNotif}
+        {notif.type === 'friend_reaction'
+          ? m.notif_friend_reaction_text()
+          : m.notif_friend_comment_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if notif.type === 'campus_trend'}
+        <!-- Engagement WP-10: nobody acted; the sentence names the reader's space, the body the post. -->
+        {m.notif_campus_trend_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if isRepostNotif}
         {notif.type === 'repost_proposed'
           ? m.notif_repost_proposed_text()
@@ -574,6 +603,9 @@
       {:else if isCoorganiseNotif}
         {m.notif_coorganise_proposed_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isOpeningNotif}
+        {OPENING_TEXT[notif.type]()}
+        {#if bodyText}<span class="italic"><EmojiText text={bodyText} /></span>{/if}
       {:else if !isUnknownNotif}
         {m.notif_comment_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
@@ -584,16 +616,12 @@
       blue here; Canari's accent is the yellow, and an app with no other blue in its palette calling
       "unread" blue is the incoherence this pass exists to remove.
     -->
-    <p
-      class="mt-0.5 text-xs {unread
-        ? 'font-semibold text-amber-600 dark:text-amber-400'
-        : 'text-text-muted'}"
-    >
+    <p class="mt-0.5 text-xs {unread ? 'text-accent-text font-semibold' : 'text-text-muted'}">
       {formatRelative(notif.createdAt)}
     </p>
   </div>
 
   {#if unread}
-    <span class="mt-2 h-2.5 w-2.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true"></span>
+    <span class="bg-accent mt-2 h-2.5 w-2.5 shrink-0 rounded-full" aria-hidden="true"></span>
   {/if}
 </button>

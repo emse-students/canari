@@ -244,7 +244,7 @@ describe('PinModal - the lock-screen sheet', () => {
     flushSync();
 
     const key = (d: string) => buttons().find((b) => b.text.trim() === d)!.el;
-    const filled = () => document.querySelectorAll('.bg-cn-yellow.scale-110').length;
+    const filled = () => document.querySelectorAll('.bg-accent.scale-110').length;
     key('1').click();
     key('2').click();
     flushSync();

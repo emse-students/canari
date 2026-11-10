@@ -121,11 +121,40 @@ export function uploadViewOf(messageId: string): UploadView | undefined {
 export function patchUpload(messageId: string, patch: Partial<UploadView>): void {
   const prev = views.get(messageId) ?? { phase: 'preparing', loaded: 0, total: 0, attempt: 0 };
   views.set(messageId, { ...prev, ...patch });
+  // A view written for the message supersedes what its pending label said it waited for.
+  textWaits.delete(messageId);
 }
 
 /** The entry left the queue (sent, withdrawn, failed for good): nothing left to show. */
 export function clearUpload(messageId: string): void {
   views.delete(messageId);
+  textWaits.delete(messageId);
+}
+
+/**
+ * WHAT A PENDING TEXT WAITS FOR (R05, 2026-11-09), by message id: the LINK (its last attempt met no
+ * answer) or the SERVER (it answered "not now": 502, 503, 504 - a deploy). A text has no upload, so
+ * this is not a phase of {@link UploadView}: the bubble's pending label reads it, and nothing else.
+ * Written by the outbox for a DM or group text and by `messaging.ts` for a salon text; dropped with
+ * the message's view ({@link clearUpload}), by any view written over it, and by a reconnect.
+ */
+export type TextWait = 'network' | 'server';
+
+const textWaits = new SvelteMap<string, TextWait>();
+
+/** Reactive read of {@link TextWait} for `messageId`; undefined when it waits for nothing named. */
+export function textWaitOf(messageId: string): TextWait | undefined {
+  return textWaits.get(messageId);
+}
+
+/** A held text says what it waits for. */
+export function setTextWait(messageId: string, on: TextWait): void {
+  textWaits.set(messageId, on);
+}
+
+/** A held text no longer waits for what it said (a reconnect, another kind of hold). */
+export function clearTextWait(messageId: string): void {
+  textWaits.delete(messageId);
 }
 
 /**
@@ -154,6 +183,7 @@ export function setUnsentReason(messageId: string, reason: UnsentReason): void {
 export function clearAllUploads(): void {
   views.clear();
   unsentReasons.clear();
+  textWaits.clear();
   // The owners are NOT the outbox's: each forgets its own (`forgetSalonAttachments`), so an outbox
   // torn down never strands a salon upload without its cancel.
 }

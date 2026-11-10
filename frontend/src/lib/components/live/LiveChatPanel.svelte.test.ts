@@ -15,11 +15,23 @@ import { m } from '$lib/paraglide/messages';
 vi.mock('$lib/components/shared/Avatar.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: (id: string) => (id.startsWith('b') ? 'Bob' : ''),
+  peekUserDisplayName: (id: string) => (id.startsWith('b') ? 'Bob' : null),
   resolveUserDisplayName: async () => 'Bob',
+  resolveDisplayNames: async () => {},
+  seedUserDisplayName: () => {},
+}));
+vi.mock('$lib/users/blocks', () => ({ listBlockedUsers: async () => [] }));
+vi.mock('$lib/utils/apiFetch', () => ({
+  apiFetch: vi.fn(async () => ({ ok: true, json: async () => [] })),
+}));
+vi.mock('$lib/stores/userState.svelte', () => ({
+  currentUserId: () => ME_ID,
 }));
 
 const BOB = 'b'.repeat(64);
 const ME = 'a'.repeat(64);
+/** Hoisted for the `userState` mock above (a mock factory runs before the consts). */
+const ME_ID = 'a'.repeat(64);
 
 function line(over: Partial<LiveChatLine>): LiveChatLine {
   return {
@@ -57,6 +69,83 @@ afterEach(() => {
   if (app) unmount(app);
   app = null;
   document.body.innerHTML = '';
+});
+
+/** The shared mention editor inside the composer. */
+function editorOf(target: HTMLElement): HTMLElement {
+  return target.querySelector<HTMLElement>('[data-live-chat-input] [role="textbox"]')!;
+}
+
+/** Types `text` at the end of the editor through a real Range and `input` event, as a keystroke does. */
+function typeInto(editor: HTMLElement, text: string) {
+  editor.textContent = text;
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  const sel = window.getSelection()!;
+  sel.removeAllRanges();
+  sel.addRange(range);
+  editor.dispatchEvent(new InputEvent('input', { bubbles: true }));
+  flushSync();
+}
+
+describe('LiveChatPanel mentions (owner, 2026-11-09)', () => {
+  const CARA = 'c'.repeat(64);
+
+  it('a mention in a line is a tappable chip, and the line is lifted for the account it names', () => {
+    const { target } = render({
+      lines: [
+        line({ id: 'm-1', clientId: 'c-1', text: `salut @[${ME_ID}] et @[${CARA}]` }),
+        line({ id: 'm-2', clientId: 'c-2', text: 'rien pour toi' }),
+      ],
+    });
+    const [first, second] = target.querySelectorAll('[data-live-chat-line]');
+    expect(first.querySelectorAll('[data-live-chat-mention]')).toHaveLength(2);
+    expect(first.querySelector(`[data-live-chat-mention="${ME_ID}"]`)!.getAttribute('role')).toBe(
+      'link'
+    );
+    // The raw token is never shown, and only the line that names the viewer is lifted.
+    expect(first.textContent).not.toContain('@[');
+    expect(first.classList.contains('live-chat-line-mentioned')).toBe(true);
+    expect(second.classList.contains('live-chat-line-mentioned')).toBe(false);
+  });
+
+  it('a mention inside a line that carries actions does not open them, and is no nested button', () => {
+    const { target } = render({
+      lines: [line({ text: `hey @[${CARA}]` })],
+      report: vi.fn(),
+    });
+    const toggle = target.querySelector<HTMLButtonElement>('[data-live-chat-line-toggle]')!;
+    expect(toggle.querySelector('button')).toBeNull();
+    toggle.querySelector<HTMLElement>('[data-live-chat-mention]')!.click();
+    flushSync();
+    expect(target.querySelector('[data-live-chat-actions]')).toBeNull();
+  });
+
+  it('@ in the composer suggests the people the chat has shown, never the viewer', () => {
+    const { target } = render({
+      lines: [
+        line({ id: 'm-1', clientId: 'c-1', authorId: BOB }),
+        line({ id: 'm-2', clientId: 'c-2', authorId: ME_ID, mine: true }),
+      ],
+    });
+    typeInto(editorOf(target), '@');
+    const rows = [...target.querySelectorAll('[data-mention-suggestion]')];
+    expect(rows.map((r) => r.getAttribute('data-mention-suggestion'))).toEqual([BOB]);
+  });
+
+  it('picking a suggestion sends the stored token, which the session turns into mentions', async () => {
+    const { target, send } = render({ lines: [line({ authorId: BOB })] });
+    const editor = editorOf(target);
+    typeInto(editor, '@');
+    target
+      .querySelector<HTMLElement>(`[data-mention-suggestion="${BOB}"]`)!
+      .dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    flushSync();
+    target.querySelector<HTMLFormElement>('[data-live-chat-composer]')!.requestSubmit();
+    await vi.waitFor(() => expect(send).toHaveBeenCalled());
+    expect((send.mock.calls[0] as unknown[])[0]).toContain(`@[${BOB}]`);
+  });
 });
 
 describe('LiveChatPanel arrival lines (owner, 2026-11-07)', () => {
@@ -231,14 +320,11 @@ describe('LiveChatPanel', () => {
 
   it('the composer sends the text and empties; no composer when one cannot write', async () => {
     const { target, send } = render();
-    const input = target.querySelector<HTMLInputElement>('[data-live-chat-input]')!;
-    expect(input.maxLength).toBe(300);
-    input.value = 'salut';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    flushSync();
+    const editor = editorOf(target);
+    typeInto(editor, 'salut');
     target.querySelector<HTMLFormElement>('[data-live-chat-composer]')!.requestSubmit();
     await vi.waitFor(() => expect(send).toHaveBeenCalledWith('salut'));
-    expect(input.value).toBe('');
+    expect(editor.textContent).toBe('');
     unmount(app!);
     const reader = render({ canWrite: false });
     expect(reader.target.querySelector('[data-live-chat-composer]')).toBeNull();
@@ -246,17 +332,15 @@ describe('LiveChatPanel', () => {
 
   it('a too long refusal puts the text back with the reason', async () => {
     const { target } = render({ send: vi.fn(async () => 'too-long' as const), maxChars: 3 });
-    const input = target.querySelector<HTMLInputElement>('[data-live-chat-input]')!;
-    input.value = 'abc';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    flushSync();
+    const editor = editorOf(target);
+    typeInto(editor, 'abc');
     target.querySelector<HTMLFormElement>('[data-live-chat-composer]')!.requestSubmit();
     await vi.waitFor(() =>
       expect(target.querySelector('[role="alert"]')?.textContent).toContain(
         m.live_chat_failed_too_long({ max: 3 })
       )
     );
-    expect(input.value).toBe('abc');
+    expect(editor.textContent).toBe('abc');
   });
 });
 

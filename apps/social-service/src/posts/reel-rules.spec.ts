@@ -7,17 +7,21 @@
  * carry - a poll on something that expires in a month, a schedule that would start the month before
  * anybody could see it.
  */
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, type Logger } from '@nestjs/common';
+import { assertNotReplay } from './republications.service';
 import { assertCreateKindShape, assertReelEditShape } from './reel-rules';
 import {
   CHAT_REEL_MAX_DURATION_MS,
   CHAT_REEL_MAX_TARGETS,
+  REEL_MAX_ASPECT_RATIO,
   REEL_MAX_DURATION_MS,
-  isExpiredReel,
+  REEL_RETENTION_DAYS,
+  isExpiredPost,
+  isReelFrame,
   reelLimits,
 } from './reel.constants';
 
-const video = { type: 'video', mimeType: 'video/mp4' };
+const video = { type: 'video', mimeType: 'video/mp4', width: 720, height: 1280 };
 const reel = (extra: Record<string, unknown> = {}) => ({
   kind: 'reel',
   durationMs: 41_250,
@@ -77,6 +81,56 @@ describe('assertCreateKindShape - a reel', () => {
   });
 });
 
+describe('assertCreateKindShape - a reel is a VERTICAL video (owner, 2026-11-09)', () => {
+  const framed = (width?: number, height?: number) =>
+    reel({ media: [{ type: 'video', mimeType: 'video/mp4', width, height }] });
+
+  it.each([
+    ['9:16, a phone held upright', 720, 1280],
+    ['3:4, the iOS system camera', 360, 480],
+    ['4:5 exactly, the widest a reel may be', 1080, 1350],
+  ])('accepts %s', (_label, width, height) => {
+    expect(() => assertCreateKindShape(framed(width, height))).not.toThrow();
+  });
+
+  it.each([
+    ['one pixel wider than 4:5', 1081, 1350],
+    ['a square', 1080, 1080],
+    ['landscape 16:9', 1280, 720],
+    ['no dimensions', undefined, undefined],
+    ['a width only', 720, undefined],
+    ['a zero height', 720, 0],
+  ])('refuses %s', (_label, width, height) => {
+    expect(() => assertCreateKindShape(framed(width, height))).toThrow(BadRequestException);
+  });
+
+  it('leaves an ordinary post alone whatever its video is: a landscape video stays a post', () => {
+    expect(() =>
+      assertCreateKindShape({
+        markdown: '',
+        media: [{ type: 'video', mimeType: 'video/mp4', width: 1280, height: 720 }],
+      })
+    ).not.toThrow();
+  });
+});
+
+describe('isReelFrame', () => {
+  it('reads width / height against the served 4:5', () => {
+    expect(REEL_MAX_ASPECT_RATIO).toBe(0.8);
+    expect(isReelFrame(800, 1000)).toBe(true);
+    expect(isReelFrame(801, 1000)).toBe(false);
+  });
+
+  it.each([
+    ['strings', '720', '1280'],
+    ['NaN', Number.NaN, 1280],
+    ['Infinity', 720, Number.POSITIVE_INFINITY],
+    ['a negative width', -720, 1280],
+  ])('is false on %s', (_label, width, height) => {
+    expect(isReelFrame(width, height)).toBe(false);
+  });
+});
+
 describe('assertCreateKindShape - a post keeps the rules it had', () => {
   it('leaves the text-or-media rule to the DTO, so a media-only post is not refused here', () => {
     expect(() => assertCreateKindShape({ markdown: '' })).not.toThrow();
@@ -113,19 +167,22 @@ describe('assertReelEditShape - the caption is the only thing an edit may change
   });
 });
 
-describe('isExpiredReel', () => {
+describe('isExpiredPost', () => {
   const now = Date.parse('2026-11-01T00:00:00Z');
 
   it('is true for a reel at or past its expiry, false before it', () => {
-    expect(isExpiredReel({ kind: 'reel', expiresAt: new Date(now - 1) }, now)).toBe(true);
-    expect(isExpiredReel({ kind: 'reel', expiresAt: new Date(now) }, now)).toBe(true);
-    expect(isExpiredReel({ kind: 'reel', expiresAt: new Date(now + 1) }, now)).toBe(false);
+    expect(isExpiredPost({ kind: 'reel', expiresAt: new Date(now - 1) }, now)).toBe(true);
+    expect(isExpiredPost({ kind: 'reel', expiresAt: new Date(now) }, now)).toBe(true);
+    expect(isExpiredPost({ kind: 'reel', expiresAt: new Date(now + 1) }, now)).toBe(false);
+    // A live replay expires by the same column (docs/wiki/live-replays.md).
+    expect(isExpiredPost({ kind: 'replay', expiresAt: new Date(now) }, now)).toBe(true);
+    expect(isExpiredPost({ kind: 'replay', expiresAt: new Date(now + 1) }, now)).toBe(false);
   });
 
   it('is never true for a post, whatever its columns say', () => {
-    expect(isExpiredReel({ kind: 'post', expiresAt: new Date(0) }, now)).toBe(false);
-    expect(isExpiredReel({ expiresAt: new Date(0) }, now)).toBe(false);
-    expect(isExpiredReel({ kind: 'reel', expiresAt: null }, now)).toBe(false);
+    expect(isExpiredPost({ kind: 'post', expiresAt: new Date(0) }, now)).toBe(false);
+    expect(isExpiredPost({ expiresAt: new Date(0) }, now)).toBe(false);
+    expect(isExpiredPost({ kind: 'reel', expiresAt: null }, now)).toBe(false);
   });
 });
 
@@ -139,8 +196,35 @@ describe('reelLimits - the numbers a client reads', () => {
     expect(CHAT_REEL_MAX_DURATION_MS).toBeLessThan(REEL_MAX_DURATION_MS);
   });
 
+  it('serves the vertical rule and the one-year lifetime (owner, 2026-11-09)', () => {
+    expect(reelLimits()).toMatchObject({ maxAspectRatio: 0.8, retentionDays: 365 });
+    expect(REEL_RETENTION_DAYS).toBe(365);
+  });
+
   it('serves the target cap of one "Envoyer à..." press (15.2), so no client carries it', () => {
     expect(reelLimits().chatReelMaxTargets).toBe(CHAT_REEL_MAX_TARGETS);
     expect(CHAT_REEL_MAX_TARGETS).toBe(15);
+  });
+});
+
+describe('assertNotReplay - a live replay is never reposted (owner, 2026-11-09, D6)', () => {
+  const logger = { debug: jest.fn() } as unknown as Logger;
+
+  it('refuses a replay with the typed 403 POST_REPLAY_NOT_REPOSTABLE', () => {
+    let caught: unknown;
+    try {
+      assertNotReplay({ id: 'p1', kind: 'replay' }, logger);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ForbiddenException);
+    expect((caught as ForbiddenException).getResponse()).toMatchObject({
+      code: 'POST_REPLAY_NOT_REPOSTABLE',
+    });
+  });
+
+  it('lets a post and a reel through', () => {
+    expect(() => assertNotReplay({ id: 'p1', kind: 'post' }, logger)).not.toThrow();
+    expect(() => assertNotReplay({ id: 'p1', kind: 'reel' }, logger)).not.toThrow();
   });
 });

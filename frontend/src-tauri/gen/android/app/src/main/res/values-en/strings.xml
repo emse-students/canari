@@ -70,6 +70,12 @@
     <string name="notif_social_association_repost_body">New post</string>
     <string name="notif_social_member_repost_title">%1$s reposted a post</string>
     <string name="notif_social_member_repost_body">New post</string>
+    <string name="notif_social_friend_reaction_title">%1$s reacted to a post</string>
+    <string name="notif_social_friend_reaction_body">See the post</string>
+    <string name="notif_social_friend_comment_title">%1$s commented on a post</string>
+    <string name="notif_social_friend_comment_body">See the post</string>
+    <string name="notif_social_campus_trend_title">A post is taking off in your space</string>
+    <string name="notif_social_campus_trend_body">See the post</string>
     <string name="notif_social_repost_proposed_title">%1$s proposes a post to share</string>
     <string name="notif_social_repost_proposed_body">A post to share</string>
     <string name="notif_social_repost_personal_requested_title">%1$s asks to share your post</string>
@@ -78,6 +84,8 @@
     <string name="notif_social_coorganise_proposed_body">An event to co-organise</string>
     <string name="notif_social_live_started_title">%1$s is live</string>
     <string name="notif_social_live_started_body">Tap to watch</string>
+    <string name="notif_social_live_mention_title">%1$s mentioned you in a live</string>
+    <string name="notif_social_live_mention_body">Tap to join the live</string>
     <string name="notif_social_follow_request_title">%1$s asks to follow you</string>
     <string name="notif_social_follow_request_body">Tap to answer</string>
     <string name="notif_chat_join_ask_title">%1$s wants to join</string>
@@ -99,6 +107,10 @@
     <string name="notif_social_booking_withdrawn_body">Your booking still stands</string>
     <string name="notif_social_booking_added_title">%1$s added you to a booking</string>
     <string name="notif_social_booking_added_body">Find it in Bookings</string>
+    <string name="notif_social_booking_open_title">%1$s opened bookings</string>
+    <string name="notif_social_booking_open_body">Find them in Bookings</string>
+    <string name="notif_social_event_open_title">%1$s published an event</string>
+    <string name="notif_social_event_open_body">Find it in the calendar</string>
     <string name="notif_social_booking_reminder_title">Booking reminder</string>
     <string name="notif_social_booking_reminder_body">Your booking starts soon</string>
     <string name="notif_social_booking_changed_title">%1$s changed your booking</string>

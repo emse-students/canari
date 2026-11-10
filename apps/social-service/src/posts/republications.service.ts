@@ -30,7 +30,7 @@ import { PostRepublication } from './entities/post-republication.entity';
 import { PostNotificationsService } from './post-notifications.service';
 import { invalidatePostListCache } from './post-list-cache';
 import { lockPostRow, REPUBLISHING_ASSOCIATION_TYPES } from './republication-sql';
-import { isExpiredReel, type PostKind } from './reel.constants';
+import { isExpiredPost, type StoredPostKind } from './reel.constants';
 
 /** The columns of a post a republication decides on. */
 export interface PostRow {
@@ -40,9 +40,24 @@ export interface PostRow {
   anonymous: boolean;
   hiddenByModeration: boolean;
   scheduledAt: Date | null;
-  kind: PostKind;
+  kind: StoredPostKind;
   expiresAt: Date | null;
   markdown: string | null;
+}
+
+/**
+ * A LIVE REPLAY IS NEVER REPOSTED OR REPUBLISHED into a feed (owner, 2026-11-09, decision D6,
+ * docs/wiki/live-replays.md): it is the live's own three days, not a post another feed carries.
+ * A typed refusal, asked at every path that would carry it elsewhere, never a 404 the client would
+ * read as "gone".
+ */
+export function assertNotReplay(post: Pick<PostRow, 'id' | 'kind'>, logger: Logger): void {
+  if (post.kind !== 'replay') return;
+  logger.debug(`[REPOST] ${post.id} is a live replay: refused (D6)`);
+  throw new ForbiddenException({
+    code: 'POST_REPLAY_NOT_REPOSTABLE',
+    message: 'A live replay cannot be reposted',
+  });
 }
 
 /**
@@ -51,7 +66,7 @@ export interface PostRow {
  */
 export function isWithheldPost(post: PostRow): boolean {
   const unpublished = !!post.scheduledAt && new Date(post.scheduledAt).getTime() > Date.now();
-  return post.hiddenByModeration || unpublished || isExpiredReel(post);
+  return post.hiddenByModeration || unpublished || isExpiredPost(post);
 }
 
 /** An association as a republication needs it. */
@@ -443,6 +458,7 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
       this.logger.debug(`[REPOST] ${postId.slice(0, 8)} is not republishable (absent or withheld)`);
       throw new NotFoundException('Post not found');
     }
+    assertNotReplay(post, this.logger);
     if (!post.associationId) {
       this.logger.debug(`[REPOST] ${postId.slice(0, 8)} refused: a personal post`);
       throw new BadRequestException('A personal post is republished only with its author consent');

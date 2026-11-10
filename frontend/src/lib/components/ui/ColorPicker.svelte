@@ -198,7 +198,7 @@
   <button
     type="button"
     onclick={() => (open = !open)}
-    class="border-cn-border hover:border-cn-dark focus:ring-cn-yellow/60 h-7 w-12 rounded-lg border-2 shadow-sm transition-all hover:scale-105 focus:ring-2 focus:outline-none active:scale-95"
+    class="border-cn-border hover:border-cn-dark focus:ring-accent/60 h-7 w-12 rounded-lg border-2 shadow-sm transition-all hover:scale-105 focus:ring-2 focus:outline-none active:scale-95"
     style="background:{value};"
     aria-label={label ?? m.color_picker_default_aria()}
     title={label}
@@ -266,7 +266,7 @@
             onHexInput({ target: { value: '#' + raw } } as unknown as Event);
           }}
           maxlength={6}
-          class="border-cn-border bg-cn-bg text-text-main focus:ring-cn-yellow min-w-0 flex-1 rounded-lg border px-2 py-1 font-mono text-xs focus:ring-1 focus:outline-none"
+          class="border-cn-border bg-cn-bg text-text-main focus:ring-accent-icon min-w-0 flex-1 rounded-lg border px-2 py-1 font-mono text-xs focus:ring-1 focus:outline-none"
           placeholder="rrggbb"
           spellcheck="false"
         />

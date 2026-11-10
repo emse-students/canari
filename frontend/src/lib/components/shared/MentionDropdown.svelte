@@ -31,14 +31,14 @@
           data-mention-suggestion={user.id}
           class="w-full px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl {i ===
           selectedIdx
-            ? 'bg-amber-100/60 dark:bg-amber-900/30'
-            : 'hover:bg-amber-50 dark:hover:bg-amber-900/20'}"
+            ? 'bg-accent/20'
+            : 'hover:bg-accent/20'}"
           onmousedown={(e) => {
             e.preventDefault();
             onSelect(user);
           }}
         >
-          <span class="mr-0.5 font-bold text-amber-600 dark:text-amber-400">@</span><span
+          <span class="text-accent-text mr-0.5 font-bold">@</span><span
             class="text-text-main font-medium">{user.displayName || user.id}</span
           >
         </button>

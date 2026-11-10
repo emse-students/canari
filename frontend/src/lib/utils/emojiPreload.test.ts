@@ -65,3 +65,17 @@ describe('the grid cells', () => {
     }
   });
 });
+
+describe('the emoji setting (2026-11-09)', () => {
+  const preload = readFileSync(
+    join(process.cwd(), 'src', 'lib', 'utils', 'emojiPreload.ts'),
+    'utf8'
+  );
+
+  it('decides what the warm-up and the grid fetch: no picture at all under "system"', () => {
+    expect(preload).toContain('emojiPictureSrc(emoji)');
+    expect(preload).not.toContain('emojiSvgSrc');
+    expect(grid).toContain('emojiPictureSrc(');
+    expect(grid).not.toContain('emojiSvgSrc');
+  });
+});

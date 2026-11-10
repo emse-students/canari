@@ -30,10 +30,14 @@ export type PushContentKey =
   | 'social_followed_post'
   | 'social_association_repost'
   | 'social_member_repost'
+  | 'social_friend_reaction'
+  | 'social_friend_comment'
+  | 'social_campus_trend'
   | 'social_repost_proposed'
   | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
   | 'social_live_started'
+  | 'social_live_mention'
   | 'social_follow_request'
   | 'social_follow_accepted'
   | 'social_birthday'
@@ -46,6 +50,8 @@ export type PushContentKey =
   | 'social_booking_reminder'
   | 'social_booking_changed'
   | 'social_booking_removed'
+  | 'social_booking_open'
+  | 'social_event_open'
   | 'form_opening_soon'
   | 'form_open'
   | 'form_paid_over_capacity'
@@ -132,6 +138,7 @@ export type PushContent = {
    * - `social_reaction`: the reaction itself (an emoji)
    * - `social_association_post` / `social_followed_post`: the opening of the post's own text
    * - `social_live_started`: nothing, always empty
+   * - `social_live_mention`: the live's title, empty when it has none
    * - the three live moderation keys (`social_live_cut`, `_suspended`, `_withdrawn`): nothing, always
    *   empty - the reason is a WORD, so it stays on the in-app row, which the client words
    * - the two form reminder keys: nothing, always empty
@@ -143,6 +150,8 @@ export type PushContent = {
    *   for `social_booking_reminder` the place followed by the start time on the space's clock.
    *   EMPTY on a space reached by its link only (Q-R5): a lock screen never names such a space, and
    *   the device then shows the key's fixed sentence
+   * - `social_booking_open` / `social_event_open` (engagement WP-4): the booking space's name, the
+   *   event's title - EMPTY for a space reached by its link only (Q-R5)
    */
   arg: string;
   legacyTitle: string;
@@ -669,6 +678,60 @@ export function memberRepostContent(
 }
 
 /**
+ * An account the recipient follows reacted to a post the recipient can see (engagement WP-9,
+ * friends' activity, docs/wiki/engagement.md). `actorName` is the person who reacted; `arg` is the
+ * opening of the POST's own text - never the reaction, never anything of the reader's.
+ */
+export function friendReactionContent(
+  actorName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
+  return {
+    key: 'social_friend_reaction',
+    icon,
+    actorName,
+    arg: preview,
+    legacyTitle: `${actorName} a réagi à une publication`,
+    legacyBody: preview || 'Voir la publication',
+  };
+}
+
+/**
+ * An account the recipient follows commented on a post the recipient can see (engagement WP-9).
+ * `actorName` is the writer; `arg` is the opening of the POST's text, never the comment's.
+ */
+export function friendCommentContent(
+  actorName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
+  return {
+    key: 'social_friend_comment',
+    icon,
+    actorName,
+    arg: preview,
+    legacyTitle: `${actorName} a commenté une publication`,
+    legacyBody: preview || 'Voir la publication',
+  };
+}
+
+/**
+ * A post of the recipient's space took off (engagement WP-10, campus trends): nobody acted in the
+ * notice's name, so `actorName` is empty - an anonymous post stays anonymous; `arg` is the opening
+ * of the post's own text.
+ */
+export function campusTrendContent(preview: string): PushContent {
+  return {
+    key: 'social_campus_trend',
+    actorName: '',
+    arg: preview,
+    legacyTitle: 'Une publication fait réagir votre espace',
+    legacyBody: preview || 'Voir la publication',
+  };
+}
+
+/**
  * Another association proposes a post to one the recipient may publish for (D38). `actorName` is
  * the PROPOSING association; `arg` the post's opening.
  */
@@ -791,6 +854,23 @@ export function liveStartedContent(
     arg: title,
     legacyTitle: `${broadcasterName} est en live`,
     legacyBody: title || 'Appuyez pour regarder',
+  };
+}
+
+/**
+ * Someone mentioned the recipient in a live's chat (owner, 2026-11-09). `actorName` is the person who
+ * wrote the line; `arg` is the live's TITLE, empty when it has none - the body is then the fixed
+ * sentence, as for `social_live_started`. Its own key rather than `social_mention`, whose fixed body
+ * says "in a comment"; it takes the same `mentions` category (chat-delivery's `push-category.ts`).
+ */
+export function liveMentionContent(actorName: string, title: string, icon?: PushIcon): PushContent {
+  return {
+    key: 'social_live_mention',
+    icon,
+    actorName,
+    arg: title,
+    legacyTitle: `${actorName} vous a mentionné dans un live`,
+    legacyBody: title || 'Appuyez pour rejoindre le live',
   };
 }
 
@@ -921,5 +1001,35 @@ export function bookingReminderContent(line: string): PushContent {
     arg: line,
     legacyTitle: 'Rappel de réservation',
     legacyBody: line || 'Votre réservation commence bientôt',
+  };
+}
+
+/**
+ * AN ASSOCIATION THE READER FOLLOWS OPENED A BOOKING SPACE (engagement WP-4, decision 5d): its
+ * window opened, or it was created bookable at once. `actorName` is the ASSOCIATION; `arg` is the
+ * space's name, empty for a space reached by its link only (Q-R5), and the fixed sentence then.
+ */
+export function bookingOpenContent(associationName: string, place: string): PushContent {
+  return {
+    key: 'social_booking_open',
+    actorName: associationName,
+    arg: place,
+    legacyTitle: `${associationName} ouvre les réservations`,
+    legacyBody: place || 'Retrouvez-les dans Réservations',
+  };
+}
+
+/**
+ * AN ASSOCIATION THE READER FOLLOWS PUBLISHED AN EVENT on the agenda (engagement WP-4, decision 5d):
+ * an event with no registration form "opens" when it is validated - one with a form opens with its
+ * form. `actorName` is the ASSOCIATION; `arg` is the event's title.
+ */
+export function eventOpenContent(associationName: string, title: string): PushContent {
+  return {
+    key: 'social_event_open',
+    actorName: associationName,
+    arg: title,
+    legacyTitle: `${associationName} publie un événement`,
+    legacyBody: title || "Retrouvez-le dans l'agenda",
   };
 }

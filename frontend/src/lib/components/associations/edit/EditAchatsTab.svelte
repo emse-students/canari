@@ -308,7 +308,7 @@
 <div class="border-cn-border space-y-5 rounded-2xl border bg-[var(--cn-surface)]/95 p-6 shadow-sm">
   <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
         <UsersIcon size={20} />
         {m.asso_achats_title()}
       </h2>
@@ -427,7 +427,7 @@
   {#if purchasesLoading}
     <div class="flex justify-center py-8">
       <div
-        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else if filteredPurchases.length === 0}
@@ -435,7 +435,7 @@
   {:else}
     <div class="border-cn-border/70 overflow-x-auto rounded-xl border">
       <table class="w-full text-sm">
-        <thead class="bg-cn-bg text-text-muted text-left text-xs font-bold tracking-wide uppercase">
+        <thead class="bg-cn-bg text-text-muted text-left text-xs font-bold">
           <tr>
             <th class="px-4 py-3">{m.asso_achats_col_date()}</th>
             <th class="px-4 py-3">{m.asso_achats_col_buyer()}</th>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { Bell, ChevronDown } from '@lucide/svelte';
   import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -77,7 +78,7 @@
   {#if loading}
     <div class="flex items-center justify-center py-20">
       <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
       ></div>
     </div>
   {:else}
@@ -87,7 +88,7 @@
         aria-labelledby="bookings-mine-heading"
         use:guideAnchor={'bookings.mine'}
       >
-        <h2 id="bookings-mine-heading" class="text-text-main text-lg font-bold tracking-tight">
+        <h2 id="bookings-mine-heading" class="text-text-main text-lg font-bold">
           {m.bookings_mine_heading()}
         </h2>
         {#if bookingsError}
@@ -109,10 +110,15 @@
           </ul>
         {/if}
         {#if history.length}
-          <details class="group">
+          <details class="group/history">
             <summary
-              class="text-text-main cursor-pointer py-2 text-sm font-semibold select-none hover:underline"
+              class="text-text-main flex cursor-pointer list-none items-center gap-2 py-2 text-sm font-semibold select-none hover:underline [&::-webkit-details-marker]:hidden"
             >
+              <ChevronDown
+                size={16}
+                class="text-text-muted transition-transform group-not-open/history:-rotate-90"
+                aria-hidden="true"
+              />
               {m.bookings_history_heading({ count: history.length })}
             </summary>
             <ul
@@ -127,7 +133,7 @@
       </section>
 
       <section class="space-y-3" aria-labelledby="bookings-spaces-heading">
-        <h2 id="bookings-spaces-heading" class="text-text-main text-lg font-bold tracking-tight">
+        <h2 id="bookings-spaces-heading" class="text-text-main text-lg font-bold">
           {m.bookings_spaces_heading()}
         </h2>
         {#if spacesError}
@@ -148,7 +154,10 @@
 
       <EditBookingsTab associationId={null} />
 
-      <p class="text-text-muted text-center text-xs">
+      <p
+        class="border-cn-border bg-cn-surface text-text-muted flex items-start gap-2 rounded-2xl border p-4 text-xs"
+      >
+        <Bell size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
         {BOOKING_NOTIFICATIONS_LIVE
           ? m.bookings_mine_notification_note()
           : m.bookings_mine_no_notification_note()}

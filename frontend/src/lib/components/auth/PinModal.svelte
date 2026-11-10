@@ -281,7 +281,7 @@
         >
           <img src="/favicon.svg" alt="" class="size-11 object-contain" />
         </div>
-        <h1 class="text-text-main text-xl font-semibold">
+        <h1 class="font-body text-text-main text-xl font-semibold">
           {isFirstSetup ? m.auth_pin_title_setup() : m.auth_pin_title()}
         </h1>
         <p class="text-text-muted text-sm">
@@ -303,7 +303,7 @@
               class="size-3.5 rounded-full transition-all duration-150 {i < pin.length
                 ? displayError
                   ? 'bg-red-err scale-110'
-                  : 'bg-cn-yellow scale-110'
+                  : 'bg-accent scale-110'
                 : displayError
                   ? 'bg-red-err/30'
                   : 'bg-text-muted/30'}"
@@ -330,7 +330,7 @@
                   type="button"
                   onclick={onBiometricRequest}
                   disabled={isLoading}
-                  class="pin-key text-cn-yellow rounded-full transition-all active:scale-95 disabled:opacity-50"
+                  class="pin-key text-accent-text rounded-full transition-all active:scale-95 disabled:opacity-50"
                 >
                   <FingerprintPattern size={26} />
                   <span class="sr-only">{m.auth_pin_use_fingerprint()}</span>
@@ -387,7 +387,7 @@
             }}
             disabled={isLoading}
             placeholder="••••••"
-            class="border-cn-border/60 focus:border-cn-yellow focus:ring-cn-yellow/30 placeholder:text-text-muted/50 w-full rounded-2xl border bg-black/5 px-4 py-3.5 text-center font-mono text-2xl tracking-[0.4em] transition-all placeholder:tracking-normal focus:ring-2 focus:outline-none disabled:opacity-50 dark:bg-white/5 {displayError
+            class="border-cn-border/60 focus:border-accent-icon focus:ring-accent/30 placeholder:text-text-muted/50 w-full rounded-2xl border bg-black/5 px-4 py-3.5 text-center font-mono text-2xl tracking-[0.4em] transition-all placeholder:tracking-normal focus:ring-2 focus:outline-none disabled:opacity-50 dark:bg-white/5 {displayError
               ? 'border-red-err pin-shake'
               : ''}"
           />
@@ -438,7 +438,7 @@
           type="button"
           disabled={isLoading}
           onclick={() => onRecoverPin?.()}
-          class="text-cn-yellow w-full text-center text-xs font-semibold hover:underline disabled:opacity-50"
+          class="text-accent-text w-full text-center text-xs font-semibold hover:underline disabled:opacity-50"
         >
           {m.auth_pin_recover_link()}
         </button>
@@ -520,7 +520,7 @@
                 data-stay-signed-in
                 bind:checked={staySignedIn}
                 disabled={isLoading}
-                class="border-cn-border/60 accent-cn-yellow size-5 shrink-0 rounded"
+                class="border-cn-border/60 accent-accent size-5 shrink-0 rounded"
               />
               <span class="text-text-main text-sm font-medium">{m.auth_pin_stay_signed_in()}</span>
             </label>

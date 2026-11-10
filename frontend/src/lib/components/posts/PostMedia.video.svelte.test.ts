@@ -2,7 +2,7 @@
 /**
  * A POST'S VIDEO IS PLAYED BY CANARI'S PLAYER, NEVER BY THE ENGINE'S `controls` (user, 2026-10-01).
  *
- * The feed's inline video was already the app's (`InlineVideo`); the gallery viewer and the
+ * The feed's inline video was already the app's (now `VideoPlayer` `feed`); the gallery viewer and the
  * single-media viewer still handed the clip to a `<video controls>`, which drew Android's grey bar
  * on the Mi 9T. Pinned: no `<video>` this component draws carries `controls`, the viewers carry
  * `VideoPlayer`'s group, and the box before the bytes arrive is Canari's poster, not a black box.
@@ -72,8 +72,11 @@ async function mountVideo(props: Record<string, unknown>, resolved = true) {
   return target;
 }
 
+/** The full-screen viewer's player (the feed card's own is the `feed` variant of the same one). */
 const player = () =>
-  document.querySelector(`[role="group"][aria-label="${m.video_player_label()}"]`);
+  document.querySelector(
+    `[role="group"][aria-label="${m.video_player_label()}"][data-video-player="lightbox"]`
+  );
 
 describe("PostMedia - a video is Canari's to play", () => {
   it('the gallery viewer plays it in VideoPlayer, with no native controls', async () => {
@@ -87,6 +90,10 @@ describe("PostMedia - a video is Canari's to play", () => {
   it('the single-media viewer opened from the feed does too', async () => {
     const target = await mountVideo({});
     expect(player()).toBeNull();
+    expect(
+      target.querySelector('[data-video-player="feed"]'),
+      'the card plays it inline'
+    ).not.toBeNull();
     target
       .querySelector<HTMLButtonElement>(`button[aria-label="${m.post_fullscreen_label()}"]`)!
       .click();

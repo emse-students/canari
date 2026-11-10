@@ -96,7 +96,7 @@ describe('MessageMobileActions action row', () => {
     const onClose = vi.fn();
     const { buttons } = open({ ...all, onPin, onClose, pinned: true });
     const pin = buttons.find((b) => b.getAttribute('aria-label') === m.msg_unpin_label())!;
-    expect(pin.className).toContain('text-amber-600');
+    expect(pin.className).toContain('text-accent-text');
     pin.click();
     expect(onPin).toHaveBeenCalledOnce();
     expect(onClose).toHaveBeenCalledOnce();

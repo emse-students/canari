@@ -10,6 +10,11 @@
    * or leaves the row. The scroller's vertical padding keeps the pills' 44 px touch target inside
    * it, since a horizontal scroller clips both axes. What a tab tap does is the feed page's.
    *
+   * THE THREE LABELS FIT WITHOUT SCROLLING AT 390 PX AND 360 PX (dev tour, `1.6.9-alpha.4`: "Mon
+   * espace" was clipped at the track's right edge at 390): `px-2.5` (10 px) instead of 14, and under
+   * 24rem the text drops one scale step (`text-xs`) with `px-2`. The sideways scroll stays the
+   * fallback for a 2x text size, never the normal state.
+   *
    * What each tab shows is explained by the first-use hint `hint-feed-tabs` (it replaced the (i)
    * button of #2857, owner 2026-11-03): every tab marks itself `posts.tab.<feed>` for it.
    */
@@ -47,9 +52,24 @@
    * content box, so it also follows a sideways scroll) and moved by `transform` alone. Hidden until
    * the first measure, which is also drawn with no transition, so it never slides in from nowhere.
    * The duration and easing are the motion scale's; reduced motion is the global rule's.
+   *
+   * THE LABELS ARE ABOVE THE PILL BY AN EXPLICIT STACKING ORDER, NEVER BY DOM ORDER ALONE (iPhone 12,
+   * `1.6.9-alpha.4`: the opaque yellow pill hid its own label, while Android drew it). The pill is a
+   * plain 2D `translateX` at rest - a `translate3d` made it a permanent compositing layer, and iOS
+   * WebKit, in this masked (`scrollFades`) overflow scroller, drew that layer over the later,
+   * uncomposited labels; while the pill was a 20 % tint the same overpaint only tinted them. The
+   * scroller isolates its own stacking context, the pill is `z-0`, every label `z-1`.
    */
   let pill = $state<{ x: number; w: number } | null>(null);
   let pillAnimated = $state(false);
+  /**
+   * THE LABEL FOLLOWS THE PILL, NOT THE SELECTION. The ink label (`text-on-accent`) is 1.09:1 on the
+   * dark glass, so it may only be drawn once the yellow pill is UNDER it: `settled` is the tab the
+   * pill has reached (null while it slides, and before the first measure), and a label turns ink
+   * only when the selection and the settled tab agree. The leaving label goes muted at once, the
+   * arriving one turns ink at the end of the slide (`transitionend`), so no label is ever ink on glass.
+   */
+  let settled = $state<PostFeed | null>(null);
 
   /** Reads the active button's box into `pill`; true when it moved. */
   function measurePill(row: HTMLElement, selected: PostFeed): boolean {
@@ -69,8 +89,12 @@
     const row = tabs;
     if (!row) return;
     // A selection slides, except the very first placement (nothing to slide from).
-    pillAnimated = untrack(() => pill) !== null;
-    measurePill(row, selected);
+    const animated = untrack(() => pill) !== null;
+    pillAnimated = animated;
+    // Untracked: the measure reads and writes `pill`, and this effect must run once per selection.
+    const slides = untrack(() => measurePill(row, selected)) && animated;
+    // A pill that did not move (or moved without a transition) is already under its label.
+    settled = slides ? null : untrack(() => pill) ? selected : null;
     const observer =
       typeof ResizeObserver === 'undefined'
         ? null
@@ -78,7 +102,9 @@
             // A re-layout (resize, web font) moves the pill with its tab, never as a slide.
             const before = pillAnimated;
             pillAnimated = false;
-            if (!measurePill(row, feed)) pillAnimated = before;
+            // Placed with no transition (first layout, resize): it is under its label at once.
+            if (measurePill(row, feed)) settled = feed;
+            else pillAnimated = before;
           });
     observer?.observe(row);
     // Each tab too: a font swap resizes a button without resizing the row.
@@ -143,7 +169,7 @@
   >
     <div
       bind:this={tabs}
-      class="no-scrollbar relative flex min-w-0 flex-1 gap-1 overflow-x-auto"
+      class="no-scrollbar relative isolate flex min-w-0 flex-1 gap-1 overflow-x-auto"
       data-feed-tabs
       use:scrollFades
     >
@@ -151,9 +177,13 @@
         <span
           aria-hidden="true"
           data-feed-tab-pill
-          class="pointer-events-none absolute inset-y-0 left-0 rounded-full border border-amber-500/40 bg-amber-500/20"
+          class="bg-accent pointer-events-none absolute inset-y-0 left-0 z-0 rounded-full"
+          ontransitionend={(e) => {
+            if (e.propertyName === 'transform') settled = feed;
+          }}
+          ontransitioncancel={() => (settled = null)}
           style:width="{pill.w}px"
-          style:transform="translate3d({pill.x}px, 0, 0)"
+          style:transform="translateX({pill.x}px)"
           style:transition={pillAnimated
             ? 'transform var(--motion-slow) var(--motion-ease-out), width var(--motion-slow) var(--motion-ease-out)'
             : 'none'}
@@ -166,9 +196,11 @@
           use:guideAnchor={`posts.tab.${tab.feed}`}
           onclick={() => onFeed(tab.feed)}
           aria-pressed={feed === tab.feed}
-          class="tap-target relative flex-1 shrink-0 rounded-full px-3.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none {feed ===
+          class="tap-target focus-visible:ring-accent-icon relative z-1 flex-1 shrink-0 rounded-full px-2.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:outline-none max-[24rem]:px-2 max-[24rem]:text-xs {feed ===
           tab.feed
-            ? 'text-text-main font-semibold'
+            ? settled === tab.feed
+              ? 'text-on-accent font-semibold'
+              : 'text-text-muted font-semibold'
             : 'text-text-muted hover:text-text-main font-medium'}"
         >
           {tab.label()}

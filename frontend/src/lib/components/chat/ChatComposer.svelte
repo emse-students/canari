@@ -911,12 +911,10 @@
         class="bg-cn-surface relative mx-3 mb-3 flex items-center justify-between overflow-hidden rounded-2xl border border-black/5 p-3 shadow-lg sm:mx-4 md:mx-6 md:p-4 dark:border-white/10"
       >
         <div
-          class="absolute top-0 bottom-0 left-0 w-1.5 bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"
+          class="bg-accent absolute top-0 bottom-0 left-0 w-1.5 shadow-[0_0_12px_color-mix(in_srgb,var(--accent)_60%,transparent)]"
         ></div>
         <div class="min-w-0 flex-1 pl-1.5">
-          <div
-            class="mb-0.5 flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-500"
-          >
+          <div class="text-accent-text mb-0.5 flex items-center gap-1.5 text-xs font-bold">
             <span class="truncate">{m.chat_editing_message_label()}</span>
           </div>
           <div class="text-text-muted truncate text-xs leading-snug font-medium">
@@ -926,7 +924,7 @@
         {#if onCancelEdit}
           <button
             onclick={onCancelEdit}
-            class="ui-icon-button text-text-muted hover:text-text-main ml-2 rounded-full bg-black/5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
+            class="ui-icon-button text-text-muted hover:text-text-main focus-visible:ring-accent-icon ml-2 rounded-full bg-black/5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
             aria-label={m.chat_cancel_edit_label()}
           >
             <X size={16} strokeWidth={2.5} />
@@ -943,12 +941,10 @@
         class="bg-cn-surface relative mx-3 mb-3 flex items-center justify-between overflow-hidden rounded-2xl border border-black/5 p-3 shadow-lg sm:mx-4 md:mx-6 md:p-4 dark:border-white/10"
       >
         <div
-          class="absolute top-0 bottom-0 left-0 w-1.5 bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"
+          class="bg-accent absolute top-0 bottom-0 left-0 w-1.5 shadow-[0_0_12px_color-mix(in_srgb,var(--accent)_60%,transparent)]"
         ></div>
         <div class="min-w-0 flex-1 pl-1.5">
-          <div
-            class="mb-0.5 flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-500"
-          >
+          <div class="text-accent-text mb-0.5 flex items-center gap-1.5 text-xs font-bold">
             <span class="truncate"
               >{m.chat_reply_to_message({
                 replySenderDisplayName: replySenderDisplayName || m.user_unknown_label(),
@@ -966,7 +962,7 @@
         {#if onCancelReply}
           <button
             onclick={onCancelReply}
-            class="ui-icon-button text-text-muted hover:text-text-main ml-2 rounded-full bg-black/5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
+            class="ui-icon-button text-text-muted hover:text-text-main focus-visible:ring-accent-icon ml-2 rounded-full bg-black/5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
             aria-label={m.chat_cancel_reply_label()}
           >
             <X size={16} strokeWidth={2.5} />
@@ -1006,7 +1002,7 @@
         <div
           class="bg-cn-surface rounded-2xl border border-black/5 p-3 shadow-lg md:p-4 dark:border-white/10"
         >
-          <div class="text-text-muted text-2xs mb-2 px-1 font-bold tracking-wider uppercase">
+          <div class="text-text-muted text-2xs mb-2 px-1 font-bold">
             {m.chat_pending_files_count({ pendingFiles: pendingFiles.length })}
           </div>
           <div class="flex max-h-52 flex-wrap gap-3 overflow-y-auto overscroll-contain">
@@ -1144,7 +1140,7 @@
           class="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 -translate-y-16"
         >
           <span
-            class="text-cn-ink flex items-center gap-2 rounded-full bg-amber-500 px-4 py-2.5 text-sm font-bold whitespace-nowrap shadow-xl shadow-amber-500/20"
+            class="text-on-accent bg-accent shadow-accent/20 flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-bold whitespace-nowrap shadow-xl"
           >
             <CloudUpload size={18} strokeWidth={2.5} />
             {m.chat_drag_files_badge()}

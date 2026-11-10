@@ -237,7 +237,7 @@ describe("chat-reel: the stats name it, and its overdue figure is the sweep's ow
     };
     const { service } = serviceWith(items);
 
-    const stats = await service.getStorageStats();
+    const stats = await service.getStorageStats([]);
 
     expect(stats.chatReelCount).toBe(2);
     expect(stats.chatReelBytes).toBe(20);

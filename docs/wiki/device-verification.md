@@ -668,7 +668,11 @@ locked and the app killed, and a second device calling it with VIDEO.
 
 ## The emoji picker paints at once - owed on the iPhone (2026-11-08)
 
-Cause and fix: [emoji](frontend/emoji.md#the-picker-paints-at-once---2026-11-08). On a pre-release, killed app, a conversation with at least one message: open a conversation, wait for it to settle, tap a message's reaction "+" (then the composer's emoji button on a second run). Read: no cell of the first screen of "Smileys et emotions" is blank or grows, "Recents" has no empty tile, the tab bar shows nine icons and no stray glyph, on the FIRST open after a cold launch. Record the first-frame state with a screen capture.
+Cause and fix: [emoji](frontend/emoji.md#the-picker-paints-at-once---2026-11-08). On a pre-release, killed app, a conversation with at least one message: open a conversation, wait for it to settle, tap a message's reaction "+" (then the composer's emoji button on a second run). Read: no cell of the first screen of "Smileys et emotions" is blank or grows, "Recents" has no empty tile, the tab bar shows nine icons and no stray glyph, on the FIRST open after a cold launch. Record the first-frame state with a screen capture. **Since the emoji setting (2026-11-09) this reading is of the "Canari" mode**: choose it in Settings > Preferences first.
+
+## The emoji setting - owed on both phones (2026-11-09)
+
+Mechanism: [emoji](frontend/emoji.md#the-setting---one-resolver-2026-11-09). On a pre-release, both phones, an install that had the app before the update. Read: **(1)** with nothing chosen, Settings > Preferences > "Emojis" shows "Systeme" selected, and a bubble, a reaction pill, the picker's cells and tab bar and the composer draw the platform's emoji (Apple's on the iPhone, the phone maker's on the Mi 9T), a skin-toned thumb in one glyph; **(2)** the picker's cells sit centred at the size of the pictures, nothing clipped; **(3)** switching to "Canari" redraws the open conversation in Noto's pictures without a restart, and a cold start opens straight in pictures with no system glyph on the first frame; **(4)** back to "Systeme", a cold start draws no picture first; **(5)** a jumbo emoji-only message is large in both modes; **(6)** under "Systeme", a poster export still shows Noto's pictures.
 
 ## The seed mirror labelled by account - owed (2026-11-07)
 
@@ -1852,6 +1856,29 @@ account, the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[
    the video to that post; no publish step. "Garder comme post" after editing the caption and
    choosing "Anonyme" in the step: the composer shows the edited text and "Anonyme"; publishing it
    lands on the "Tout" feed.
+
+## RV. Every vertical video of 90 s or less is a CanaReel, kept a year - owed on BOTH phones
+
+**Proves** [the rule of 2026-11-09](frontend/modules/reels.md#the-rule-every-vertical-video-of-90-s-or-less-is-a-canareel-owner-2026-11-09)
+on real hardware: the gates replace the decoder, so whether `videoWidth`/`videoHeight` honour a
+phone video's rotation tag (an Android portrait clip is often stored 1920x1080 + 90 degrees) and
+whether the prepared frame comes out vertical is read here only. **Supersedes CR steps 3, 5 and 9's
+"Garder comme post"** (the button is gone). **Precondition:** a pre-release carrying it on an estate
+serving `maxAspectRatio`, a bench account, the console for `[PUBLISH-QUEUE]`, `[reel-capture]`,
+`[reel-publish]` and `[reel-rule]`.
+
+1. **"+" -> new post -> "Photo/vidéo" -> a PORTRAIT gallery video under 90 s** (one filmed upright
+   with the system camera), a caption, "Publier": the log says `one video 720x1280, N ms: a
+   CanaReel`; the feed shows a reel card that opens the reel pager; `my-reels` lists it with an
+   `expiresAt` a year out.
+2. **The same with a LANDSCAPE video, then a 2-minute portrait video**: `a post` in the log, an
+   ordinary post video.
+3. **A portrait video PLUS a photo, or with a poll**: a post.
+4. **The CanaReels tab -> gallery -> a landscape video**: the toast "Un CanaReel est une vidéo
+   verticale...", no review. A portrait one reaches the review and publishes as a reel.
+5. **The composer's camera, HOLD**: the step shows "Une vidéo verticale de 90 secondes au plus est
+   un CanaReel : supprimé au bout de 1 an" and NO "Garder comme post"; the tab's step reads "Visible
+   1 an...".
 
 ## RR. The CanaReels rail, the comments sheet and the photo pages - owed on BOTH phones
 

@@ -47,7 +47,7 @@ services:
     # the morning somebody rebuilt. `redis:alpine` is a FLOATING MAJOR - it was serving 8.8.0 on
     # 2026-09-01 and a `docker compose pull` could have moved it to 9 without a line changing
     # here. The tag before the `@` is documentation: the digest is what is fetched.
-    image: redis:8.10-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
+    image: redis:8.10-alpine@sha256:71885d8cc6e42f2bc0aa2eb853bfc4be200b5108a46ac50e117ae1df0531fb80
     ports:
       - "6379:6379"
     healthcheck:
@@ -265,8 +265,13 @@ services:
       GARAGE_SECRET_ACCESS_KEY: ${GARAGE_SECRET_ACCESS_KEY:?run 'make local-env' - infrastructure/.env carries no GARAGE_SECRET_ACCESS_KEY}
       GARAGE_BUCKET: ${GARAGE_BUCKET:?run 'make local-env' - infrastructure/.env carries no GARAGE_BUCKET}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
+      # The live segments' own store, the `live_segments` volume below: a live's segments become its
+      # replay, and replays are NEVER backed up (docs/wiki/live-replays.md, D2). backup-objects.sh
+      # mounts an allowlist of volumes that does not name it, asserted by backup-sources.test.sh.
+      LIVE_SEGMENTS_DIR: /app/live_segments
     volumes:
       - media_meta:/app/media_meta
+      - live_segments:/app/live_segments
     depends_on:
       garage:
         condition: service_healthy
@@ -399,6 +404,8 @@ services:
       # env-from-prod.sh regenerates a random one. Both estates still require their own, no default.
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-dev-agenda-signing-key-change-me-0123456789abcdef}
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
+      # The live replays' total cap in GB (docs/wiki/live-replays.md, D5); empty means 20.
+      LIVE_REPLAY_TOTAL_MAX_GB: ${LIVE_REPLAY_TOTAL_MAX_GB:-}
       # Encrypts each association's Lydia Business private token at rest (migration 100). Unset, a
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
@@ -528,3 +535,5 @@ volumes:
   garage_meta:
   garage_data:
   media_meta:
+  # The live segments, never backed up (docs/wiki/live-replays.md, D2).
+  live_segments:

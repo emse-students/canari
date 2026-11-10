@@ -373,8 +373,13 @@ services:
       GARAGE_SECRET_ACCESS_KEY: ${GARAGE_SECRET_ACCESS_KEY:?GARAGE_SECRET_ACCESS_KEY is required - set via CD secrets or .env}
       GARAGE_BUCKET: ${GARAGE_BUCKET:-canari-media}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
+      # The live segments' own store, the `live_segments` volume below: a live's segments become its
+      # replay, and replays are NEVER backed up (docs/wiki/live-replays.md, D2). backup-objects.sh
+      # mounts an allowlist of volumes that does not name it, asserted by backup-sources.test.sh.
+      LIVE_SEGMENTS_DIR: /app/live_segments
     volumes:
       - media_meta:/app/media_meta
+      - live_segments:/app/live_segments
       # Staging of resumable upload sessions (parts land here before the object store takes the blob).
       - media_upload_sessions:/app/upload_sessions
     healthcheck:
@@ -523,6 +528,8 @@ services:
       # Signs a reported live chat line kept for staff (WP-L8b, docs/wiki/services/lives.md);
       # unset, every chat-line report is refused 503 and nothing is kept.
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
+      # The live replays' total cap in GB (docs/wiki/live-replays.md, D5); empty means 20.
+      LIVE_REPLAY_TOTAL_MAX_GB: ${LIVE_REPLAY_TOTAL_MAX_GB:-}
       # Encrypts each association's Lydia Business private token at rest (migration 100). Unset, a
       # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
       # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
@@ -684,3 +691,6 @@ volumes:
   media_meta:
   # Transient staging, DELIBERATELY not backed up: a session is a day of resumable work at most.
   media_upload_sessions:
+  # Live segments and replays, DELIBERATELY not backed up (owner decision D2, 2026-11-09): a replay
+  # promised gone after 3 days must not survive in a snapshot (docs/wiki/live-replays.md).
+  live_segments:

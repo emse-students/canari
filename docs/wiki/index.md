@@ -77,6 +77,7 @@
 - [Sharing into and out of Canari](frontend/sharing.md) - the OS share sheet both ways: the Android SEND filter, the native copy and its handoff file, the "Envoyer a..." picker, and the lots left (share out, the iOS extension, suggestions)
 - [App icons](frontend/app-icons.md) — one drawing, the bird at half of what is seen, four generators
 - [Android / iOS parity audit](frontend/android-ios-parity.md) - where the two native projects DISAGREE, read from source 2026-08-28
+- [Screen orientation](frontend/screen-orientation.md) - portrait everywhere, rotation on the video and camera screens: the one store, Android `requestedOrientation`, the iOS root-controller hook, the lock
 - [MLS WASM client](frontend/mls-wasm.md) — openmls compiled to WASM, key management, sync engine
 - [Backup and restore](frontend/backup.md) — the `.canari` file, and why a refusal is a code rather than a sentence
 - [Auth module](frontend/modules/auth.md) — Login flow, PIN, biometrics, device registration
@@ -90,6 +91,7 @@
 - [Calls revival plan](frontend/modules/calls-revival-plan.md) - draft 2026-10-15: decisive tests first, the endpoint x network x call-kind matrix, the App Review video, a server-side switch, WP-C0..C13
 - [Calendar module](frontend/modules/calendar.md) — Events, ICS export, global calendar
 - [Posts module](frontend/modules/posts.md) — Feed, polls, reactions, comments
+- [The video player](frontend/modules/video-player.md) - one player for every surface (owner, 2026-11-09): the glass controls kit, tap = sound / hold = pause / double tap = like, the sound remembered per device, the glass budget and its Android measurement
 - [Sharing out of Canari](frontend/share-out.md) — "Partager" on a message, an attachment, a post: the system share sheet, the decrypted copy and how long it lives
 - [CanaReels (client)](frontend/modules/reels.md) — The camera tab, the capture screen, publishing a reel, the vertical viewer, save to gallery
 - [CanaReels editor](frontend/modules/reel-editor.md) — The post-capture review, editor (text and emoji overlays, one gesture helper), remove-the-sound, and the work-package split
@@ -133,6 +135,7 @@
 - [Association permissions](association-permissions.md) — The eleven flags measured from their call sites, the one predicate answering "may this user act here", and the two tiers above a member
 - [Cotisations](cotisations.md) — Membership dues: cotisant tags, boutique products, form member pricing
 - [Carte de la Vie Asso](carte-vie-asso.md) — Editable poster generator (drag & drop canvas, PDF export)
+- [Live replays](live-replays.md) - a finished live kept three days as a CanaReel: the measured cost, the live's own segments served as a replay post, the owner's eight decisions of 2026-11-09, the 20 GB cap, WP-R1..WP-R6 (WP-R1 built)
 - [Engagement](engagement.md) - the owner's decisions of 2026-11-07: who a live and a post notify, follow suggestions (the query, measured), the per-account bell, the daily push cap, what each surface reveals, WP-1..WP-10
 - [Birthdays](birthdays.md) - day and month on the profile, who sees the date, the ring on the day for everyone, the followers' morning notice: the data, the rules, the proofs
 

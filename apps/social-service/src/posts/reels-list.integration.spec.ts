@@ -165,6 +165,9 @@ maybe('the CanaReels viewer list against PostgreSQL (feed=reels)', () => {
     await q(migration('078_read_grants.sql'));
     await q(migration('121_member_reposts.sql'));
     await q(migration('123_member_repost_notices.sql'));
+    // The feed's select reads `posts."liveId"` (migration 156, live replays); that migration needs
+    // the whole `lives` table, so only the column the select reads is added here.
+    await q(`ALTER TABLE posts ADD COLUMN IF NOT EXISTS "liveId" uuid NULL`);
     await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'A5', 'a5')`, [A5]);
     await q(
       `INSERT INTO association_audiences ("associationId", formation, campus)

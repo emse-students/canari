@@ -33,16 +33,21 @@
 {#if show}
   <Banner busy={reconnecting}>
     {#if reconnecting}
-      <RefreshCw size={15} class="shrink-0 animate-spin opacity-70" aria-hidden="true" />
+      <RefreshCw
+        size={14}
+        class="shrink-0 opacity-70 motion-safe:animate-spin"
+        aria-hidden="true"
+      />
       <span class="truncate">{m.offline_banner_reconnecting()}</span>
     {:else}
-      <CloudOff size={15} class="shrink-0 opacity-70" aria-hidden="true" />
-      <!-- Spacing via gap rather than markup whitespace: the gap survives any reformatting of
-           the two message spans, a literal space between them does not. -->
-      <span class="flex min-w-0 flex-wrap gap-x-1">
-        <span class="font-semibold">{m.offline_banner_title()}</span>
-        <span class="opacity-80">{m.offline_banner_desc()}</span>
+      <CloudOff size={14} class="shrink-0 opacity-70" aria-hidden="true" />
+      <!-- A FEW WORDS ON SCREEN, THE SENTENCE FOR THE EAR. What the offline state means (reading
+           works, messages queue, a salon's media waits) is on the wiki and read out by the live
+           region, not drawn: the owner asked for the minimum (2026-11-09). -->
+      <span class="truncate font-semibold" title={m.offline_banner_desc()}>
+        {m.offline_banner_title()}
       </span>
+      <span class="sr-only">{m.offline_banner_desc()}</span>
     {/if}
   </Banner>
 {/if}

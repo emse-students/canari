@@ -194,6 +194,11 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
     `);
     // The readers' bells, which the association delete and the erasure both write (engagement WP-3).
     await q(migration('142_account_bells.sql'));
+    // A validated event tells its association's followers of it (engagement WP-4): the follows, and
+    // the opening reminders 151 creates.
+    await q(`CREATE TABLE association_follows (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      "followerUserId" varchar(255) NOT NULL, "associationId" uuid NOT NULL)`);
+    await q(migration('151_opening_reminders.sql'));
     for (const [id, name] of [
       [A1, 'Organiser'],
       [A2, 'Legacy'],

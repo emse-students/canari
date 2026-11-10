@@ -288,7 +288,7 @@
 
           <!-- Month navigation -->
           <div>
-            <p class="text-text-muted mb-2 text-xs font-bold tracking-wider uppercase">
+            <p class="text-text-muted mb-2 text-xs font-bold">
               {m.calendar_export_month_label()}
             </p>
             <div class="flex items-center gap-2">
@@ -318,7 +318,7 @@
 
           <!-- Background image: the one thing that really changes from month to month. -->
           <div class="space-y-3">
-            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+            <p class="text-text-muted text-xs font-bold">
               {m.calendar_export_bg_label()}
             </p>
             {#if opts.bgDataUrl}
@@ -426,7 +426,7 @@
                     aria-checked={opts.cellBorderWidth === width}
                     data-testid="cell-border-width-{width}"
                     onclick={() => (opts.cellBorderWidth = width)}
-                    class="border-cn-border text-text-main aria-checked:bg-cn-yellow aria-checked:text-cn-ink hover:bg-cn-bg min-h-11 flex-1 basis-16 rounded-lg border px-2 text-xs font-semibold transition-colors"
+                    class="border-cn-border text-text-main aria-checked:bg-accent aria-checked:text-cn-ink hover:bg-cn-bg min-h-11 flex-1 basis-16 rounded-lg border px-2 text-xs font-semibold transition-colors"
                   >
                     {borderWidthLabel[width]()}
                   </button>
@@ -446,7 +446,7 @@
                       aria-checked={opts.cellBorderColor === color}
                       data-testid="cell-border-color-{color}"
                       onclick={() => (opts.cellBorderColor = color)}
-                      class="border-cn-border text-text-main aria-checked:bg-cn-yellow aria-checked:text-cn-ink hover:bg-cn-bg min-h-11 flex-1 basis-16 rounded-lg border px-2 text-xs font-semibold transition-colors"
+                      class="border-cn-border text-text-main aria-checked:bg-accent aria-checked:text-cn-ink hover:bg-cn-bg min-h-11 flex-1 basis-16 rounded-lg border px-2 text-xs font-semibold transition-colors"
                     >
                       {borderColorLabel[color]()}
                     </button>
@@ -472,7 +472,7 @@
 
           <!-- Three colours, pre-filled from the image by `paletteFromImage` and overridable. -->
           <div class="space-y-2">
-            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+            <p class="text-text-muted text-xs font-bold">
               {m.calendar_export_colors_label()}
             </p>
             {#if opts.bgDataUrl}
@@ -499,7 +499,7 @@
             <!-- PDF and PNG side by side, wrapping onto two rows when the text is large. The visible
                  label is the format alone - "Telecharger le PDF" broke onto two lines in a 360px
                  panel - and the accessible name is the full action, which contains it. -->
-            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+            <p class="text-text-muted text-xs font-bold">
               {m.calendar_export_download_label()}
             </p>
             <div class="flex flex-wrap gap-2">
@@ -537,14 +537,14 @@
 
         <!-- ── Preview panel ── -->
         <div class="border-cn-border bg-cn-surface rounded-2xl border p-4 shadow-sm">
-          <p class="text-text-muted mb-3 text-xs font-bold tracking-wider uppercase">
+          <p class="text-text-muted mb-3 text-xs font-bold">
             {m.calendar_export_preview_label()}
           </p>
           <div bind:clientWidth={previewContainerWidth}>
             {#if loading}
               <div class="flex items-center justify-center py-16">
                 <div
-                  class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+                  class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
                 ></div>
               </div>
             {:else if previewScale > 0}

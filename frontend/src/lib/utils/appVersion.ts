@@ -83,12 +83,28 @@ export type CheckpointSkipMode = 'off' | 'on';
  */
 export const CHECKPOINT_SKIP_MODES: readonly CheckpointSkipMode[] = ['off', 'on'];
 
+/**
+ * The server's switch for live replays (`platform_config.live_replays_mode`, published by
+ * `/api/version` as `liveReplays.mode`): `off` - a live is deleted at its end; `on` - a live started
+ * now is kept three days as a replay. Enforced by social-service at the START of a live, which fixes
+ * it on the live row; this client names it for the admin page (docs/wiki/live-replays.md).
+ */
+export type LiveReplaysMode = 'off' | 'on';
+
+/**
+ * Every value of {@link LiveReplaysMode}. FIVE COPIES of these two strings exist (the SQL CHECK,
+ * core's entity, social-service's reader, this, the admin page through this) and
+ * `liveReplaysModesAgree.test.ts` fails the day one of them drifts.
+ */
+export const LIVE_REPLAYS_MODES: readonly LiveReplaysMode[] = ['off', 'on'];
+
 export type ServerVersionInfo = {
   version: string;
   minClientVersion: string;
   maintenance: PlatformMaintenanceInfo;
   callsMode: CallsMode;
   livesMode: LivesMode;
+  liveReplaysMode: LiveReplaysMode;
   checkpointSkipMode: CheckpointSkipMode;
   /** Whether this core-service redeems a code with a PKCE verifier - see {@link AppVersionCheckResult}. */
   oidcPkce: boolean;
@@ -112,6 +128,8 @@ export type AppVersionCheckResult = {
   callsMode: CallsMode;
   /** Whether the server lets lives answer; `off` until a server has said otherwise. */
   livesMode: LivesMode;
+  /** Whether lives are kept as replays (the client asks for them only then); `off` until a server has said otherwise. */
+  liveReplaysMode: LiveReplaysMode;
   /** Whether a receive-only drain may defer its MLS checkpoint; `off` until a server has said otherwise. */
   checkpointSkipMode: CheckpointSkipMode;
   /**
@@ -178,6 +196,16 @@ function normalizeLivesMode(raw: unknown): LivesMode {
 }
 
 /**
+ * The live-replays mode a `/api/version` body carries (`liveReplays.mode`). ABSENT OR UNKNOWN READS
+ * AS `off`: a server that does not publish the switch has no replay, and the client then never asks
+ * for one (`withReplays` is sent only when this reads `on`).
+ */
+function normalizeLiveReplaysMode(raw: unknown): LiveReplaysMode {
+  const mode = raw && typeof raw === 'object' ? (raw as { mode?: unknown }).mode : undefined;
+  return LIVE_REPLAYS_MODES.find((known) => known === mode) ?? 'off';
+}
+
+/**
  * The checkpoint-skip mode a `/api/version` body carries. ABSENT OR UNKNOWN READS AS `off`: `off` is
  * the behaviour every client has always had, so a server that does not publish the switch - or a
  * value this client does not know - can only ever mean today's durability.
@@ -195,6 +223,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     minClientVersion?: unknown;
     maintenance?: unknown;
     calls?: unknown;
+    liveReplays?: unknown;
     lives?: unknown;
     checkpointSkip?: unknown;
     oidcPkce?: unknown;
@@ -211,6 +240,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     maintenance: normalizeMaintenance(obj.maintenance),
     callsMode: normalizeCallsMode(obj.calls),
     livesMode: normalizeLivesMode(obj.lives),
+    liveReplaysMode: normalizeLiveReplaysMode(obj.liveReplays),
     checkpointSkipMode: normalizeCheckpointSkipMode(obj.checkpointSkip),
     oidcPkce: obj.oidcPkce === true,
     presencePost: obj.presencePost === true,
@@ -231,6 +261,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   maintenance: PlatformMaintenanceInfo;
   calls: { mode: CallsMode };
   lives: { mode: LivesMode };
+  liveReplays: { mode: LiveReplaysMode };
   checkpointSkip: { mode: CheckpointSkipMode };
   oidcPkce: boolean;
   presencePost: boolean;
@@ -243,6 +274,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     maintenance: info.maintenance,
     calls: { mode: info.callsMode },
     lives: { mode: info.livesMode },
+    liveReplays: { mode: info.liveReplaysMode },
     checkpointSkip: { mode: info.checkpointSkipMode },
     oidcPkce: info.oidcPkce,
     presencePost: info.presencePost,
@@ -412,6 +444,7 @@ export function buildAppVersionCheckResult(
     maintenance,
     callsMode: serverInfo?.callsMode ?? 'off',
     livesMode: serverInfo?.livesMode ?? 'off',
+    liveReplaysMode: serverInfo?.liveReplaysMode ?? 'off',
     checkpointSkipMode: serverInfo?.checkpointSkipMode ?? 'off',
     oidcPkce: serverInfo?.oidcPkce ?? false,
     presencePost: serverInfo?.presencePost ?? false,

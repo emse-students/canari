@@ -13,14 +13,14 @@
   const cursus = $derived(profile.cursus ?? []);
   const posts = $derived(profile.posts ?? []);
   const chip =
-    'bg-cn-yellow/10 border-cn-yellow/20 text-cn-dark inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold tracking-wider uppercase shadow-sm';
+    'bg-accent/10 border-accent/20 text-cn-dark inline-flex max-w-full shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold whitespace-nowrap shadow-sm';
 </script>
 
 {#if cursus.length || posts.length || profile.campus}
-  <div class="mt-2 flex flex-wrap justify-center gap-2 sm:justify-start">
+  <div data-profile-chips class="mt-2 flex flex-wrap justify-center gap-2 sm:justify-start">
     {#each cursus as entry, i (i)}
       <div class={chip}>
-        <GraduationCap size={14} strokeWidth={2.5} />
+        <GraduationCap size={14} strokeWidth={2.5} class="shrink-0" />
         {entry.formation}
       </div>
     {/each}

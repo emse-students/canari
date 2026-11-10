@@ -822,7 +822,7 @@
     {#if loading}
       <div class="flex justify-center py-16">
         <div
-          class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+          class="border-accent-icon h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else if error && !project}
@@ -831,7 +831,7 @@
       <!-- ONE action bar on one line (owner, 2026-11-08): it scrolls sideways rather than wrapping. -->
       <header class="flex items-center gap-2 overflow-x-auto pb-1 whitespace-nowrap">
         {#if !canEdit}
-          <h2 class="text-text-main text-lg font-bold">{project.name}</h2>
+          <h2 class="font-display text-text-main text-lg font-bold">{project.name}</h2>
         {:else if editingName}
           <input
             bind:this={nameInputEl}
@@ -842,7 +842,7 @@
               if (e.key === 'Escape') cancelRename();
             }}
             maxlength={120}
-            class="text-text-main border-cn-yellow border-b-2 bg-transparent px-0 py-0 text-lg font-bold outline-none"
+            class="text-text-main border-accent-icon border-b-2 bg-transparent px-0 py-0 text-lg font-bold outline-none"
             style="min-width:120px;max-width:400px;width:{Math.max(120, editedName.length * 10)}px;"
           />
         {:else}
@@ -944,7 +944,7 @@
         <div
           class="border-cn-border bg-cn-surface-alt flex flex-wrap items-center gap-3 rounded-2xl border p-4"
         >
-          <TriangleAlert size={18} class="text-cn-yellow shrink-0" />
+          <TriangleAlert size={18} class="text-accent-icon shrink-0" />
           <div class="min-w-0 flex-1">
             <p class="text-text-main text-sm font-bold">{m.carte_unattached_title()}</p>
             <p class="text-text-muted mt-0.5 text-sm">{m.carte_unattached_body()}</p>
@@ -967,9 +967,7 @@
 
       <!-- New associations of the space: switched off until the author decides (owner, 2026-11-08). -->
       {#if canEdit && freshNames.length > 0}
-        <div
-          class="border-cn-yellow/50 bg-cn-yellow/10 flex items-start gap-3 rounded-2xl border p-4"
-        >
+        <div class="border-accent/50 bg-accent/10 flex items-start gap-3 rounded-2xl border p-4">
           <Sparkles size={18} class="text-cn-dark mt-0.5 shrink-0" />
           <div class="min-w-0 flex-1">
             <p class="text-text-main text-sm font-bold">
@@ -1021,7 +1019,7 @@
               <div
                 class="border-cn-border bg-cn-surface-alt flex items-start gap-3 rounded-2xl border p-4"
               >
-                <TriangleAlert size={18} class="text-cn-yellow mt-0.5 shrink-0" />
+                <TriangleAlert size={18} class="text-accent-icon mt-0.5 shrink-0" />
                 <div class="min-w-0">
                   <p class="text-text-main text-sm font-bold">
                     {m.carte_overlaps_title({ count: overlaps.length })}
@@ -1173,7 +1171,7 @@
                             </div>
                             {#if classified.fresh.has(asso.id)}
                               <span
-                                class="bg-cn-yellow text-cn-ink shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
+                                class="bg-accent text-on-accent shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
                               >
                                 {m.carte_asso_new_badge()}
                               </span>
@@ -1329,14 +1327,14 @@
                       min="0"
                       max="80"
                       bind:value={scrimOpacity}
-                      class="accent-cn-yellow"
+                      class="accent-accent"
                     />
                   </label>
                 {/if}
               </div>
 
               <label class="text-text-muted inline-flex items-center gap-2 text-xs font-semibold">
-                <input type="checkbox" bind:checked={directoryVisible} class="accent-cn-yellow" />
+                <input type="checkbox" bind:checked={directoryVisible} class="accent-accent" />
                 {m.carte_directory_toggle()}
               </label>
 
@@ -1402,7 +1400,7 @@
                           patchDecoration(selectedTextDeco.id, {
                             bold: e.currentTarget.checked,
                           })}
-                        class="accent-cn-yellow"
+                        class="accent-accent"
                       />
                       {m.carte_deco_bold()}
                     </label>
@@ -1421,7 +1419,7 @@
                           })}
                         class="inline-flex items-center justify-center rounded-lg border px-2 py-1 transition-colors
  {selectedTextDeco.align === opt.v
-                          ? 'border-cn-yellow bg-cn-yellow/15 text-cn-dark'
+                          ? 'border-accent-icon bg-accent/15 text-cn-dark'
                           : 'border-cn-border text-text-muted hover:text-text-main'}"
                       >
                         <opt.icon size={14} />
@@ -1501,7 +1499,7 @@
                         aria-label={m.carte_shape_option({ n: i + 1 })}
                         onclick={() => patchBubble(selectedBubble.assoId, { shape: sh.key })}
                         class="h-8 w-8 border p-1 transition-colors {selectedBubble.shape === sh.key
-                          ? 'border-cn-yellow text-cn-yellow'
+                          ? 'border-accent-icon text-accent-text'
                           : 'border-cn-border text-text-muted hover:text-text-main'}"
                       >
                         <span
@@ -1529,7 +1527,7 @@
                           })}
                         class="flex h-8 w-8 items-center justify-center border p-1 transition-colors {selectedBubble.logoShape ===
                         ls.key
-                          ? 'border-cn-yellow text-cn-yellow'
+                          ? 'border-accent-icon text-accent-text'
                           : 'border-cn-border text-text-muted hover:text-text-main'}"
                       >
                         <span
@@ -1585,7 +1583,7 @@
                                 selectedBureau: next,
                               });
                             }}
-                            class="accent-cn-yellow"
+                            class="accent-accent"
                           />
                           {member.name}
                           {member.role ? `- ${member.role}` : ''}
@@ -1625,7 +1623,7 @@
                                 selectedBureau: next,
                               });
                             }}
-                            class="accent-cn-yellow"
+                            class="accent-accent"
                           />
                           {member.name}
                           {member.role ? `- ${member.role}` : ''}

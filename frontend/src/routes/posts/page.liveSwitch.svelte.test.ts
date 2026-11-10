@@ -9,6 +9,15 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import { clearFeedCache } from '$lib/posts/feedCache';
 import { livesModeStub } from '../../test/stubs/livesModeStub.svelte';
 
+// The follow suggestions (engagement WP-6) are a read of their own: none in these feeds.
+vi.mock('$lib/follows/suggestions.svelte', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  ensureFeedSuggestions: () => {},
+}));
+vi.mock('$lib/posts/suggestedPosts.svelte', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  ensureSuggestedPosts: () => {},
+}));
 vi.mock('$app/state', () => ({
   page: { params: {}, url: new URL('https://canari.test/posts?feed=all'), state: {} },
 }));

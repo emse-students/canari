@@ -49,7 +49,7 @@ function makeService(existing?: Partial<Post>) {
       mayActOnAny: () => Promise.resolve(new Set()),
     } as unknown as AssociationsService,
     { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,
-    { release: jest.fn() } as unknown as PostMediaRetentionService
+    { release: jest.fn(), assertOwnMedia: jest.fn() } as unknown as PostMediaRetentionService
   );
   return { service, saved, queries };
 }

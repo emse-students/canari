@@ -41,6 +41,10 @@
    * caption, the rail, the reactions and the comments belong to the POST, never to a media: they
    * do not move with the strip. The rail's save and sound follow the VISIBLE media - a video has
    * them, a picture has neither (no picture save exists; a photo page has none either).
+   *
+   * A LIVE REPLAY IS A PAGE TOO (owner, 2026-11-09): no strip, no media - `ReplayPane` plays the
+   * live's own segments in the shared player, and the rail's save is the replay's (segment by
+   * segment). It has NO repost anywhere (the rail never had one: its "Envoyer a..." sends a link).
    */
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import type { PostEntity } from '$lib/posts/api';
@@ -64,6 +68,8 @@
   import ReelFrame from './ReelFrame.svelte';
   import ReelSaveButton from './ReelSaveButton.svelte';
   import ReelMediaPane from './ReelMediaPane.svelte';
+  import ReplayPane from './ReplayPane.svelte';
+  import { saveReplayFlow } from '$lib/live/replaySaveFlow';
   import DoubleTapHeart from '$lib/components/posts/DoubleTapHeart.svelte';
   import { doubleTapLike } from '$lib/actions/doubleTapLike';
   import type { Point } from '$lib/utils/viewerGestures';
@@ -216,7 +222,7 @@
     frameReachesBottom ? 'pb-[calc(var(--safe-area-inset-bottom,0px)+1rem)]' : 'pb-4'
   );
   /** The rail carries a reel's tools (save, sound) even when it carries no social action. */
-  const showRail = $derived(!!rail || page === 'reel' || visibleIsVideo);
+  const showRail = $derived(!!rail || page === 'reel' || page === 'replay' || visibleIsVideo);
 
   function setExpanded(next: boolean) {
     console.debug(`[reel-viewer] caption ${next ? 'expanded' : 'folded'} on ${post.id}`);
@@ -269,7 +275,11 @@
      saves what the viewer holds - the ref with its key that the player itself decrypts - so nothing
      here asks the server who owns the reel. -->
 {#snippet railTools()}
-  <ReelSaveButton reel={saveable} rail />
+  {#if page === 'replay'}
+    <ReelSaveButton reel={saveable} rail save={() => saveReplayFlow(post)} />
+  {:else}
+    <ReelSaveButton reel={saveable} rail />
+  {/if}
 {/snippet}
 
 <!-- A DOUBLE TAP ON THE REEL LIKES IT (`doubleTapLike`), the letterbox bands included. Nothing is
@@ -292,7 +302,9 @@
          one that never moves. The transition is the viewer's snap; reduced motion makes it instant
          (the global rule in app.css), and nothing waits on its end. -->
     <div class="h-full w-full overflow-hidden" data-reel-page={page}>
-      {#if panes.length > 0}
+      {#if page === 'replay'}
+        <ReplayPane {post} {active} playerSafeBottom={frameReachesBottom} {onReady} />
+      {:else if panes.length > 0}
         <div
           class="flex h-full w-full"
           style:transform={panes.length > 1
@@ -365,7 +377,7 @@
                around a 20 pt picture and a 23 pt name). -->
           <a
             href={authorHref}
-            class="pointer-events-auto flex min-h-11 min-w-0 items-center gap-2 rounded-full pr-2 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            class="focus-visible:ring-accent-icon pointer-events-auto flex min-h-11 min-w-0 items-center gap-2 rounded-full pr-2 outline-none focus-visible:ring-2"
             aria-label={postAuthorLinkLabel(post)}
             data-reel-author
           >
@@ -465,8 +477,8 @@
           onReact={rail?.onReact}
           onComments={post.canSeeComments === false ? undefined : rail?.onComments}
           onSend={rail?.onSend}
-          tools={page === 'reel' || visibleIsVideo ? railTools : undefined}
-          sound={page === 'reel' || visibleIsVideo}
+          tools={page === 'reel' || page === 'replay' || visibleIsVideo ? railTools : undefined}
+          sound={page === 'reel' || page === 'replay' || visibleIsVideo}
           bind:drawerOpen={railDrawerOpen}
         />
       </div>
@@ -496,7 +508,7 @@
       {#if visibleIndex > 0}
         <button
           type="button"
-          class="ui-icon-button absolute top-1/2 left-3 z-30 hidden -translate-y-1/2 rounded-full bg-white/15 text-white outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 md:flex"
+          class="ui-icon-button focus-visible:ring-accent-icon absolute top-1/2 left-3 z-30 hidden -translate-y-1/2 rounded-full bg-white/15 text-white outline-none hover:bg-white/25 focus-visible:ring-2 md:flex"
           aria-label={m.reels_carousel_prev()}
           title={m.reels_carousel_prev()}
           onclick={() => onMediaStep('media-prev')}
@@ -508,7 +520,7 @@
       {#if visibleIndex < panes.length - 1}
         <button
           type="button"
-          class="ui-icon-button absolute top-1/2 right-16 z-30 hidden -translate-y-1/2 rounded-full bg-white/15 text-white outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 md:flex"
+          class="ui-icon-button focus-visible:ring-accent-icon absolute top-1/2 right-16 z-30 hidden -translate-y-1/2 rounded-full bg-white/15 text-white outline-none hover:bg-white/25 focus-visible:ring-2 md:flex"
           aria-label={m.reels_carousel_next()}
           title={m.reels_carousel_next()}
           onclick={() => onMediaStep('media-next')}

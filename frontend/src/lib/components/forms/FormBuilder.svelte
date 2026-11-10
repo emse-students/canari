@@ -269,7 +269,7 @@
 
   /** The two condition pickers: a compact box sharing the row. */
   const conditionTriggerClass =
-    'border-cn-border text-text-main focus:border-cn-yellow flex min-w-0 flex-1 items-center justify-between gap-2 rounded-xl border-2 bg-(--cn-surface) px-3 py-2 text-left text-xs transition-all outline-none';
+    'border-cn-border text-text-main focus:border-accent-icon flex min-w-0 flex-1 items-center justify-between gap-2 rounded-xl border-2 bg-(--cn-surface) px-3 py-2 text-left text-xs transition-all outline-none';
 
   /** "Always show", then every question this one may depend on. */
   const conditionSourceOptions = $derived<PickerOption[]>([
@@ -321,8 +321,8 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="group bg-cn-surface relative w-full min-w-0 rounded-xl border border-black/5 shadow-sm transition-all duration-150 sm:rounded-lg dark:border-white/10 {expanded
-    ? 'border-cn-yellow/50 p-3 sm:p-4'
-    : 'px-1.5 py-0.5 sm:hover:border-amber-500/30'}"
+    ? 'border-accent/50 p-3 sm:p-4'
+    : 'sm:hover:border-accent/30 px-1.5 py-0.5'}"
   onkeydown={onCardKeydown}
 >
   {#if !expanded}
@@ -348,7 +348,7 @@
           n: questionIndex ?? 1,
           title: item.label || m.form_builder_title_placeholder(),
         })}
-        class="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60"
+        class="focus-visible:ring-accent/60 flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-2 text-left outline-none focus-visible:ring-2"
       >
         <span
           class="text-text-muted bg-cn-border/50 text-2xs shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
@@ -402,7 +402,7 @@
         bind:value={item.label}
         aria-label={m.form_builder_question_label()}
         placeholder={m.form_builder_title_placeholder()}
-        class="border-cn-border text-text-main placeholder:text-text-muted/50 focus:border-cn-yellow min-w-0 flex-1 border-b-2 bg-transparent px-1 py-1.5 text-base font-semibold outline-none sm:text-lg"
+        class="border-cn-border text-text-main placeholder:text-text-muted/50 focus:border-accent-icon min-w-0 flex-1 border-b-2 bg-transparent px-1 py-1.5 text-base font-semibold outline-none sm:text-lg"
       />
       <button
         bind:this={typeAnchor}
@@ -419,7 +419,7 @@
           typeAsSheet = opensAsSheet();
           showTypePicker = true;
         }}
-        class="border-cn-border text-text-main focus:border-cn-yellow flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-2 text-left text-xs font-medium outline-none"
+        class="border-cn-border text-text-main focus:border-accent-icon flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-2 text-left text-xs font-medium outline-none"
       >
         {#if currentType}
           {@const CurIcon = currentType.Icon}
@@ -609,7 +609,7 @@
             <div>
               <div class="mb-2 flex items-center gap-1.5">
                 <GitBranch size={13} class="text-text-muted/70 shrink-0" />
-                <span class="text-text-muted text-2xs font-bold uppercase"
+                <span class="text-text-muted text-2xs font-bold"
                   >{m.form_builder_conditional_label()}</span
                 >
               </div>
@@ -666,7 +666,7 @@
           aria-label={m.form_builder_required_label()}
           title={m.form_builder_required_label()}
           class="ui-icon-button rounded-lg transition-colors {item.required
-            ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+            ? 'bg-accent/15 text-accent-text'
             : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
         >
           <Asterisk size={18} />

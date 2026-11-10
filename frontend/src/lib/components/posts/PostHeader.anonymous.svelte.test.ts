@@ -129,8 +129,8 @@ describe('PostHeader republication', () => {
     expect(time.querySelector('[data-post-republished-by]')!.textContent).toContain(
       m.post_republished_by({ names: 'BDE' })
     );
-    // Two glyphs on the line, the clock and the repost: both decoration.
-    const repost = time.querySelectorAll('svg')[1];
+    // One glyph on the line now (no clock): the repost one, decorative.
+    const repost = time.querySelectorAll('svg')[0];
     expect(repost.getAttribute('aria-hidden')).toBe('true');
   });
 

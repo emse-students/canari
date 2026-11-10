@@ -26,6 +26,10 @@ describe('categoryOfDataPush', () => {
     ['social_repost_personal_requested', 'posts'],
     ['social_coorganise_proposed', 'events'],
     ['social_live_started', 'posts'],
+    ['social_friend_reaction', 'posts'],
+    ['social_friend_comment', 'posts'],
+    ['social_campus_trend', 'posts'],
+    ['social_live_mention', 'mentions'],
     ['social_follow_request', 'follows'],
     ['social_follow_accepted', 'follows'],
     ['social_birthday', 'birthdays'],
@@ -49,6 +53,8 @@ describe('categoryOfDataPush', () => {
     ['social_booking_reminder', 'bookings'],
     ['social_booking_changed', 'bookings'],
     ['social_booking_removed', 'bookings'],
+    ['social_booking_open', 'bookings'],
+    ['social_event_open', 'events'],
   ])('files contentKey %s under %s', (contentKey, expected) => {
     expect(categoryOfDataPush({ type: 'social', contentKey })).toBe(expected);
   });
@@ -95,7 +101,10 @@ describe('categoryOfDataPush', () => {
     const union = source.match(/export type PushContentKey =([\s\S]*?);/);
     const declared = [...(union?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
     expect(
-      declared.filter((k) => k.startsWith('social_live_') && k !== 'social_live_started')
+      declared.filter(
+        (k) =>
+          k.startsWith('social_live_') && k !== 'social_live_started' && k !== 'social_live_mention'
+      )
     ).toEqual(LIVE_MODERATION_KEYS);
   });
 

@@ -17,16 +17,13 @@
    */
   import { onMount, tick } from 'svelte';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
-  import {
-    LoaderCircle,
-    MessageCircle,
-    MessageCircleOff,
-    Radio,
-    Share2,
-    Volume2,
-    VolumeX,
-    X,
-  } from '@lucide/svelte';
+  import { LoaderCircle, MessageCircle, MessageCircleOff, Radio, Share2, X } from '@lucide/svelte';
+  import { videoGestures } from '$lib/actions/videoGestures';
+  import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
+  import MediaSpinner from '$lib/components/shared/MediaSpinner.svelte';
+  import VideoFeedbackGlyph, {
+    type VideoFeedbackKind,
+  } from '$lib/components/ui/player/VideoFeedbackGlyph.svelte';
   import LiveBadge from './LiveBadge.svelte';
   import LiveIdentity from './LiveIdentity.svelte';
   import LiveReportControl from './LiveReportControl.svelte';
@@ -41,7 +38,7 @@
   import { videoSound } from '$lib/stores/videoSound.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { LivePlayer, type LivePlayerDeps, type LiveVideoLike } from '$lib/live/livePlayer';
-  import { fetchLiveLimits } from '$lib/live/api';
+  import { fetchLiveLimits, fetchLiveMentionAudience } from '$lib/live/api';
   import { shareLiveLink } from '$lib/live/shareLive';
   import {
     LiveChatSession,
@@ -74,6 +71,8 @@
   let actionButton = $state<HTMLButtonElement | null>(null);
   let closeButton = $state<HTMLButtonElement | null>(null);
   let viewerState = $state<LiveViewerState>({ kind: 'connecting' });
+  /** The buffer ran dry while the live plays: the kit's spinner over the last frame until media comes. */
+  let buffering = $state(false);
   let elapsedMs = $state<number | null>(null);
   /** How many watch, from each manifest poll - a number, never who (null: nothing to show). */
   let viewers = $state<number | null>(null);
@@ -113,8 +112,9 @@
 
   /**
    * The `<video>` as the player drives it. A `play()` the engine refuses WITH sound (no gesture yet)
-   * is tried again muted - which turns the app's one sound answer off, as any muted video does - so a
-   * live never sits paused behind an autoplay rule; the toggle brings the sound back with a tap.
+   * is tried again muted, so a live never sits paused behind an autoplay rule; the app's answer goes
+   * silent for this session only (`muteForRefusedStart`) - the reader's remembered choice is not the
+   * engine's refusal - and a tap brings the sound back.
    */
   function videoFor(el: HTMLVideoElement): LiveVideoLike {
     return {
@@ -133,12 +133,21 @@
       get readyState() {
         return el.readyState;
       },
+      get playbackRate() {
+        return el.playbackRate;
+      },
+      set playbackRate(rate: number) {
+        // The pace changes the speed a few percent, never the voice (`LiveBufferPolicy.pace`).
+        el.preservesPitch = true;
+        el.playbackRate = rate;
+      },
       async play() {
         try {
           await el.play();
         } catch (e) {
           if (el.muted) throw e;
           console.warn(`[LIVE] viewer: play() with sound refused (${String(e)}) - muted`);
+          videoSound.muteForRefusedStart();
           el.muted = true;
           await el.play();
         }
@@ -208,6 +217,9 @@
       onViewers: (count) => {
         viewers = count;
       },
+      onBuffering: (dry) => {
+        buffering = dry;
+      },
       chat: {
         onKey: (key, opened) => {
           session.onKey(key, opened);
@@ -243,8 +255,17 @@
     return chat.send(text);
   }
 
+  /** What the last tap on the picture did, for the glyph (`VideoFeedbackGlyph`). */
+  let feedback = $state<{ kind: VideoFeedbackKind; n: number } | null>(null);
+  let feedbackCount = 0;
+
+  /**
+   * The sound, from the speaker or a tap on the picture (owner, 2026-11-09: the tap is the sound on
+   * every video). A live has no hold: its player resumes a paused element at the next delivery.
+   */
   function toggleSound() {
     videoSound.toggle();
+    feedback = { kind: videoSound.muted ? 'sound-off' : 'sound-on', n: ++feedbackCount };
     if (video) video.muted = videoSound.muted;
     // A tap is the gesture an unmuted play() needed.
     if (video?.paused && viewerState.kind === 'playing')
@@ -288,7 +309,8 @@
     <video
       bind:this={video}
       use:followVideoSound
-      class="absolute inset-0 h-full w-full object-contain"
+      use:videoGestures={{ onTap: toggleSound, enabled: !terminal }}
+      class="absolute inset-0 h-full w-full object-contain [-webkit-touch-callout:none]"
       class:opacity-40={terminal}
       playsinline
       autoplay
@@ -297,6 +319,14 @@
       onerror={() => player?.noteMediaError()}
       data-live-video
     ></video>
+    <!-- A tap's glyph: the feedback of a gesture, never a state. -->
+    <VideoFeedbackGlyph {feedback} />
+    <!-- THE LAST RESORT: the margin ran out (the broadcaster later than all of it). The kit's spinner
+         over the frozen last frame - never a loop, never black - until the next media resumes it.
+         "Reconnecting" and the final screens say their own thing instead. -->
+    {#if buffering && viewerState.kind === 'playing'}
+      <MediaSpinner />
+    {/if}
 
     <div
       class="absolute inset-x-0 top-0 flex items-center gap-2 bg-linear-to-b from-black/60 to-transparent p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
@@ -324,26 +354,13 @@
         </span>
       </span>
       <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
-      <button
-        type="button"
-        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
-        aria-label={videoSound.muted ? m.live_viewer_unmute() : m.live_viewer_mute()}
-        title={videoSound.muted ? m.live_viewer_unmute() : m.live_viewer_mute()}
-        aria-pressed={!videoSound.muted}
-        onclick={toggleSound}
-        data-live-sound
-      >
-        {#if videoSound.muted}
-          <VolumeX size={22} />
-        {:else}
-          <Volume2 size={22} />
-        {/if}
-      </button>
+      <!-- The kit's speaker, the same object as on every other video (owner, 2026-11-09). -->
+      <VideoSoundButton muted={videoSound.muted} onToggle={toggleSound} data-live-sound />
       <!-- Withheld: no toggle either - a button that shows and hides nothing is a dead control. -->
       {#if !chatWithheld}
         <button
           type="button"
-          class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-cn-yellow rounded-full outline-none focus-visible:ring-2"
+          class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-accent-icon rounded-full outline-none focus-visible:ring-2"
           aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
           title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
           aria-pressed={chatOpen}
@@ -360,7 +377,7 @@
       {#if !terminal}
         <button
           type="button"
-          class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+          class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
           aria-label={m.live_share_label()}
           title={m.live_share_label()}
           onclick={() => shareLiveLink(live.id)}
@@ -372,7 +389,7 @@
       <button
         bind:this={closeButton}
         type="button"
-        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
+        class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
         aria-label={m.live_viewer_close()}
         title={m.live_viewer_close()}
         onclick={() => overlay.dismissFromUi()}
@@ -407,6 +424,7 @@
               discard={(id) => chat?.discard(id)}
               hide={(id) => void chat?.hide(id)}
               report={(line) => (reportedLine = line)}
+              audienceOf={(ids) => fetchLiveMentionAudience(live.id, ids)}
             />
           {/if}
         </div>
@@ -431,7 +449,7 @@
           <p class="mt-1 text-sm opacity-90">{m.live_viewer_full_body()}</p>
           <button
             type="button"
-            class="bg-cn-yellow text-cn-ink mt-4 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
+            class="bg-accent text-on-accent mt-4 min-h-11 rounded-full px-5 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white"
             bind:this={actionButton}
             onclick={() => player?.retry()}
             data-live-retry

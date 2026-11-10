@@ -161,7 +161,10 @@ jobs:
           DEV_CLOUDFLARE_ACCOUNT_ID: ${{ secrets.DEV_CLOUDFLARE_ACCOUNT_ID }}
           DEV_CLOUDFLARE_TURN_ANALYTICS_TOKEN: ${{ secrets.DEV_CLOUDFLARE_TURN_ANALYTICS_TOKEN }}
           DEV_CLOUDFLARE_TURN_MONTHLY_BUDGET_GB: ${{ secrets.DEV_CLOUDFLARE_TURN_MONTHLY_BUDGET_GB }}
+          DEV_LIVE_REPLAY_TOTAL_MAX_GB: ${{ secrets.DEV_LIVE_REPLAY_TOTAL_MAX_GB }}
           DEV_MIGALLERY_API_KEY: ${{ secrets.DEV_MIGALLERY_API_KEY }}
+          # Private `id=file.png,...` list for the dev-only avatar override (bench account ids). Optional.
+          DEV_AVATAR_OVERRIDE_EXTRA: ${{ secrets.DEV_AVATAR_OVERRIDE_EXTRA }}
           DEV_GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.DEV_GOOGLE_SAFE_BROWSING_API_KEY }}
           DEV_KLIPY_API_KEY: ${{ secrets.DEV_KLIPY_API_KEY }}
           DEV_ANDROID_APP_LINK_SHA256: ${{ secrets.DEV_ANDROID_APP_LINK_SHA256 }}

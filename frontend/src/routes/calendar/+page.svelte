@@ -561,7 +561,7 @@
           type="button"
           onclick={openDeposit}
           use:guideAnchor={'calendar.deposit'}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
+          class="bg-accent text-on-accent hover:bg-accent-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
         >
           <CalendarPlus size={18} />
           {m.calendar_deposit_button()}
@@ -576,18 +576,16 @@
         href={resolve('/admin/agenda')}
         class="border-amber-warn/30 bg-amber-warn/10 hover:border-amber-warn/40 flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 transition-colors"
       >
-        <span
-          class="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100"
-        >
-          <ShieldAlert size={18} />
+        <span class="text-accent-text flex min-w-0 items-center gap-2 text-sm font-semibold">
+          <ShieldAlert size={18} class="shrink-0" />
           {m.calendar_moderate_label()}
           {#if pendingCount > 0}
-            <span class="text-2xs text-cn-ink rounded-full bg-amber-500 px-2 py-0.5 font-bold">
+            <span class="text-2xs text-on-accent bg-accent rounded-full px-2 py-0.5 font-bold">
               {pendingCount}
             </span>
           {/if}
         </span>
-        <span class="text-xs text-amber-800/80 dark:text-amber-200/80"
+        <span class="text-accent-text shrink-0 text-xs whitespace-nowrap"
           >{m.calendar_moderate_open()} →</span
         >
       </a>
@@ -657,7 +655,7 @@
         type="button"
         onclick={() => (showSubscribeModal = true)}
         data-calendar-subscribe
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
+        class="bg-accent text-on-accent hover:bg-accent-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
       >
         <CalendarCheck size={18} />
         {m.calendar_subscribe()}

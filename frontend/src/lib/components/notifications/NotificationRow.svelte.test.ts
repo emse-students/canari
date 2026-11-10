@@ -327,6 +327,21 @@ describe('NotificationRow sentence', () => {
   });
 
   // WP-F4: a PERSON asks to follow, or said yes; no text, never the comment sentence, no logo.
+  // Engagement WP-4: the ASSOCIATION opened a booking space or published an event - its logo, its
+  // own verb, the place or the title in italics, and never the comment sentence.
+  it('says an association opened bookings or published an event, with its logo', () => {
+    const opened = renderRow({ ...postRow('booking_open'), associationId: 'asso-1' });
+    expect(opened.textContent).toContain(m.notif_booking_open_text());
+    expect(opened.textContent).toContain('Scene ouverte lundi');
+    expect(opened.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
+    const event = renderRow({ ...postRow('event_open'), associationId: 'asso-1' });
+    expect(event.textContent).toContain(m.notif_event_open_text());
+    expect(event.textContent).not.toContain('a commenté');
+    // A link-only space: no place, the sentence alone.
+    const hidden = renderRow({ ...postRow('booking_open'), associationId: 'asso-1', text: '' });
+    expect(hidden.textContent).toContain(m.notif_booking_open_text());
+  });
+
   it('says a person asks to follow you, and that a person accepted your request', () => {
     const follow = (type: string) => ({ ...postRow(type), postId: 'member-1', text: '' });
     const asked = renderRow(follow('follow_request'));
@@ -343,6 +358,25 @@ describe('NotificationRow sentence', () => {
     const row = renderRow({ ...postRow('birthday'), postId: 'member-1', text: '' });
     expect(row.textContent).toContain(m.notif_birthday_text());
     expect(row.textContent).not.toContain('a commenté');
+  });
+
+  it("says a followed person reacted to or commented on a post, with the post's opening (WP-9)", () => {
+    const reacted = renderRow(postRow('friend_reaction'));
+    expect(reacted.textContent).toContain(m.notif_friend_reaction_text());
+    expect(reacted.textContent).toContain('Scene ouverte lundi');
+    expect(reacted.textContent).not.toContain(m.notif_comment_text());
+    const commented = renderRow(postRow('friend_comment'));
+    expect(commented.textContent).toContain(m.notif_friend_comment_text());
+    expect(commented.textContent).toContain('Scene ouverte lundi');
+    // Never the sentence of a comment on the reader's own post.
+    expect(m.notif_friend_comment_text()).not.toBe(m.notif_comment_text());
+  });
+
+  it('says a post of the space is taking off, naming nobody (WP-10)', () => {
+    const row = renderRow({ ...postRow('campus_trend'), actorId: 'system', actorName: '' });
+    expect(row.textContent).toContain(m.notif_campus_trend_text());
+    expect(row.textContent).toContain('Scene ouverte lundi');
+    expect(row.textContent).not.toContain(m.notif_comment_text());
   });
 });
 

@@ -19,6 +19,8 @@ import {
   bookingReminderContent,
   bookingChangedContent,
   bookingRemovedContent,
+  bookingOpenContent,
+  eventOpenContent,
   bookingWithdrawnContent,
   eventProposedContent,
   eventValidatedContent,
@@ -31,10 +33,14 @@ import {
   followedPostContent,
   associationRepostContent,
   memberRepostContent,
+  friendReactionContent,
+  friendCommentContent,
+  campusTrendContent,
   repostProposedContent,
   repostPersonalRequestedContent,
   coorganiseProposedContent,
   liveStartedContent,
+  liveMentionContent,
   followRequestContent,
   followAcceptedContent,
   birthdayContent,
@@ -80,6 +86,7 @@ describe('push content', () => {
     ['repostPersonalRequested', repostPersonalRequestedContent('BDE', 'hello')],
     ['coorganiseProposed', coorganiseProposedContent('BDE', 'Gala')],
     ['liveStarted', liveStartedContent('Claire', '')],
+    ['liveMention', liveMentionContent('Claire', '')],
     ['followRequest', followRequestContent('Claire')],
     ['followAccepted', followAcceptedContent('Claire')],
     ['liveCut', liveCutContent()],
@@ -113,6 +120,20 @@ describe('push content', () => {
       actorName: '',
       contentArg: '',
     });
+  });
+
+  it('a live mention names the writer, and the live title is the body, or the fixed sentence (owner, 2026-11-09)', () => {
+    const titled = liveMentionContent('Claire', 'Gala');
+    expect(pushContentData(titled)).toEqual({
+      contentKey: 'social_live_mention',
+      actorName: 'Claire',
+      contentArg: 'Gala',
+    });
+    expect([titled.legacyTitle, titled.legacyBody]).toEqual([
+      'Claire vous a mentionné dans un live',
+      'Gala',
+    ]);
+    expect(liveMentionContent('Claire', '').legacyBody).toBe('Appuyez pour rejoindre le live');
   });
 
   it("a live's title is the body of its push; without one, the fixed sentence (owner, 2026-11-07)", () => {
@@ -401,10 +422,14 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_followed_post', followedPostContent(ACTOR, '')],
     ['social_association_repost', associationRepostContent(ACTOR, '')],
     ['social_member_repost', memberRepostContent(ACTOR, '')],
+    ['social_friend_reaction', friendReactionContent(ACTOR, '')],
+    ['social_friend_comment', friendCommentContent(ACTOR, '')],
+    ['social_campus_trend', campusTrendContent('')],
     ['social_repost_proposed', repostProposedContent(ACTOR, '')],
     ['social_repost_personal_requested', repostPersonalRequestedContent(ACTOR, '')],
     ['social_coorganise_proposed', coorganiseProposedContent(ACTOR, '')],
     ['social_live_started', liveStartedContent(ACTOR, '')],
+    ['social_live_mention', liveMentionContent(ACTOR, '')],
     ['social_follow_request', followRequestContent(ACTOR)],
     ['social_follow_accepted', followAcceptedContent(ACTOR)],
     ['social_birthday', birthdayContent(ACTOR)],
@@ -417,6 +442,8 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_booking_reminder', bookingReminderContent('')],
     ['social_booking_changed', bookingChangedContent(ACTOR, '')],
     ['social_booking_removed', bookingRemovedContent(ACTOR, '')],
+    ['social_booking_open', bookingOpenContent(ACTOR, '')],
+    ['social_event_open', eventOpenContent(ACTOR, '')],
   ];
 
   /**

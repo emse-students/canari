@@ -216,6 +216,23 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
+
+**Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`
+(`apps/media-service/src/media/live-segments.service.ts`).
+**What it humours:** a media-service before live replays WP-R3 wrote live segments and posters into
+the backed-up object store (Garage) under `live/`; since WP-R3 they live on the `live_segments`
+volume ([live-replays](live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)), and
+`StorageService` refuses a `live/` key. The segments of a live on air at that deploy stayed in Garage,
+where no purge and no reaper looks any more. Each boot deletes every live segment key of the object
+store (`live/<uuid>/<uuid>`, an allowlist: any other `live/` object is logged at WARN and kept) and
+logs `[LIVE_STORE] object store drained of old live segments: drained=N leftAlone=M` (an ERROR line if
+the store failed; the next boot retries). A rollback to an older image writes there again, and the
+next forward deploy drains it.
+**The cost while it stands:** one empty prefix listing of Garage per boot.
+**Removal condition:** the release carrying WP-R3 deployed on both estates and, after it, one boot of
+each logging `drained=0`. Then delete the method, its hook, its two spec cases and this entry.
+
 ### Removal at the portail's deploy + one silent week - the public carte read that names no space (2026-11-08)
 
 **Site:** `PosterService.getSoleLegacyPublished` and the no-`space` branch of
@@ -581,6 +598,26 @@ out is not lost; it goes with the table's held drop, which MUST also `DROP FUNCT
 control, raised once BOTH stores serve it. Then the old endpoints go, and the held drop of
 `association_push_mutes` follows. Measure before: the endpoints' own debug lines counted per week
 name how many older builds still mute that way.
+
+### No date yet - a form reminder written by a server image older than the openings (2026-11-09)
+
+**BUILT 2026-11-09 with WP-4 of [engagement](engagement.md) (L9).**
+**Site:** migration 152 (`canari_form_reminder_to_opening()`, two triggers on `form_reminders`) and
+the `FormReminder` entity still mapped in `forms/forms.module.ts`. WP-4 folded the "Me prévenir" asks
+into `opening_reminders`; the three `/api/forms/:id/remind` routes keep their shape and write the new
+table, so an OLD CLIENT needs nothing.
+**What an older SERVER image does during the deploy.** It still writes and claims `form_reminders`.
+Without a shim, an ask it took after the copy would be lost, and an opening due while both images run
+could be pushed twice (each image claiming its own table).
+**The shim.** 152's triggers turn an old image's insert or upsert into the same ask on
+`opening_reminders`, its delete into the same delete, and make its CLAIM on the new row first: a
+claim the new image already made cancels the old row's update (`RETURN NULL`), so one push. The new
+code never writes the old table. `FormReminder` stays mapped only so a `synchronize`d local database
+still has the table the trigger and the erasure name.
+**Removal condition:** WP-4 has served one stable (no older image can be rolled out any more). Then a
+HELD migration drops `form_reminders` AND `DROP FUNCTION canari_form_reminder_to_opening()`
+(dropping the table removes the triggers, not their function), the entity is unmapped and the
+erasure's `form_reminders` statement goes.
 
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 

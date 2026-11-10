@@ -1,6 +1,8 @@
 <script lang="ts">
   import PostMedia from './PostMedia.svelte';
   import { isReel, type PostEntity, type PostMediaRef } from '$lib/posts/api';
+  import ReplayCard from './ReplayCard.svelte';
+  import { isReplay } from '$lib/live/replayTimeline';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
   import PostMarkdown from './PostMarkdown.svelte';
@@ -73,6 +75,9 @@
     const type = resolveMediaType(media);
     return type === 'image' || type === 'video';
   }
+
+  /** Media follows the text, so the text hands over 8 px instead of the 12 it keeps before the action bar. */
+  const hasMedia = $derived(postMedia.length > 0 && Boolean(authToken));
 
   // Compacted on purpose: a document is skipped. The gallery's cells are drawn FROM this array, so
   // a cell's position IS its lightbox index - a document can never renumber the pictures after it.
@@ -148,21 +153,23 @@
     return asReel ? REEL_FALLBACK_ASPECT : DEFAULT_MEDIA_ASPECT;
   }
   let reelViewerOpen = $state(false);
+  /** A live replay: no media, a card that opens the CanaReels viewer (`ReplayCard`). */
+  const replay = $derived(isReplay(post));
 </script>
 
 {#if post.markdown}
-  <div class="px-5 pb-3">
-    <div class="text-text-main text-sm leading-relaxed wrap-break-word">
+  <div class="px-4 {hasMedia ? 'pb-2' : 'pb-3'}">
+    <div class="text-text-main text-sm wrap-break-word">
       <PostMarkdown
         markdown={post.markdown}
         bind:element={markdownEl}
-        class="opacity-90 {clamped ? 'line-clamp-8' : ''}"
+        class={clamped ? 'line-clamp-8' : ''}
       />
       {#if !fullContent && (overflows || expanded)}
         <button
           type="button"
           onclick={() => (expanded = !expanded)}
-          class="mt-1 text-xs font-bold text-amber-600 outline-none hover:underline focus-visible:underline dark:text-amber-400"
+          class="text-accent-text mt-1 text-xs font-bold outline-none hover:underline focus-visible:underline"
         >
           {expanded ? m.post_voir_moins() : m.post_voir_plus()}
         </button>
@@ -174,8 +181,17 @@
   </div>
 {/if}
 
-{#if postMedia.length > 0 && authToken}
-  <div class="mt-1 mb-1 w-full px-3">
+{#if replay}
+  <ReplayCard {post} onOpen={() => (reelViewerOpen = true)} />
+  {#if reelViewerOpen}
+    <ReelViewer startPost={post} {authToken} {likerId} onClose={() => (reelViewerOpen = false)} />
+  {/if}
+{:else if postMedia.length > 0 && authToken}
+  <div
+    class="w-full overflow-hidden first:rounded-t-2xl last:rounded-b-2xl {post.markdown
+      ? ''
+      : 'mt-2'}"
+  >
     {#if reel}
       {@render singleMedia(postMedia[0], true)}
       {#if reelViewerOpen}
@@ -203,7 +219,7 @@
              `aspect-square`: its height then comes from its width and never from the picture inside
              it, which would otherwise stretch the rows it spans. -->
         <div
-          class="grid gap-0.5 overflow-hidden rounded-lg {gallery.shape === 'feature'
+          class="grid gap-0.5 overflow-hidden {gallery.shape === 'feature'
             ? 'grid-cols-3 grid-rows-2'
             : 'grid-cols-2'}"
           data-post-gallery={gallery.shape}
@@ -233,7 +249,7 @@
                 <button
                   type="button"
                   onclick={() => openLightbox(i)}
-                  class="bg-cn-scrim/60 absolute inset-0 flex items-center justify-center text-white outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 focus-visible:ring-inset"
+                  class="bg-cn-scrim/60 focus-visible:ring-accent/50 absolute inset-0 flex items-center justify-center text-white outline-none focus-visible:ring-4 focus-visible:ring-inset"
                   aria-label={m.post_gallery_more_label({ count: gallery.overflow })}
                   data-gallery-more
                   data-double-tap-defers
@@ -268,17 +284,15 @@
   {@const reserved = reservesAspectRatio(resolveMediaType(media))}
   {@const isVideo = resolveMediaType(media) === 'video'}
   <div use:nearViewport={watchNear(media)}>
-    <!-- A PICTURE IS INSET AND ROUNDED, NO LONGER FULL-BLEED (user, 2026-10-01, Mi 9T): run
-         edge to edge, its square corners cut across the card's 18 px ones. The block's `px-3` +
-         `rounded-lg` is the concentric pair - 18 px outside, 12 px in, 8 px left, which is also
-         the scale's card corner. The inset is PADDING on the block, never a margin on the box:
-         the box is sized by `aspect-ratio` under a `max-height`, so without `w-full` a tall
-         video shrinks its width to fit the ceiling instead of being cropped by it. A document
-         card adds `px-2`, which lands it on the post text's 20 px. -->
+    <!-- A PICTURE IS FULL-BLEED WITHIN THE CARD (owner, 2026-11-09; the inset and rounding of 2026-10-01
+         existed because edge-to-edge corners cut across the card's corner, which the block above now
+         clips to when it is the card's first or last block). The box is sized by `aspect-ratio` under
+         a `max-height`, so it keeps `w-full`: without it a tall video shrinks its width to fit the
+         ceiling instead of being cropped by it. A document card keeps `px-4`, the post text's inset. -->
     <div
       class="relative overflow-hidden {reserved
-        ? `w-full rounded-lg ${isVideo ? 'bg-cn-surface' : 'bg-black/5 dark:bg-white/5'}`
-        : 'w-full px-2 pb-1'}"
+        ? `w-full ${isVideo ? 'bg-cn-card' : 'bg-black/5 dark:bg-white/5'}`
+        : 'w-full px-4 pb-1'}"
       style={reserved ? mediaAspectStyle(media.width, media.height, videoFallback(asReel)) : ''}
       data-reel-card={asReel ? '' : undefined}
       data-video-box={isVideo ? '' : undefined}
@@ -295,7 +309,7 @@
       />
     </div>
     {#if media.caption && !asReel}
-      <p class="text-text-muted px-2 pt-2 pb-1 text-xs italic">{media.caption}</p>
+      <p class="text-text-muted px-4 pt-2 pb-1 text-xs italic">{media.caption}</p>
     {/if}
   </div>
 {/snippet}

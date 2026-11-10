@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Bell } from '@lucide/svelte';
   import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
   import {
     NOTIFICATION_CATEGORIES,
@@ -51,12 +50,9 @@
   style="animation-fill-mode: backwards;"
 >
   <div class="mb-6 flex items-center gap-3">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
-      <Bell size={22} strokeWidth={2.5} />
-    </div>
     <div>
-      <h2 class="text-text-main text-lg font-bold">{m.settings_notifications_heading()}</h2>
-      <p class="text-text-muted mt-0.5 text-xs font-medium">
+      <h2 class="sr-only">{m.settings_notifications_heading()}</h2>
+      <p class="text-text-muted text-xs font-medium">
         {m.settings_notifications_subtitle()}
       </p>
     </div>
@@ -87,8 +83,8 @@
           aria-checked={on}
           aria-label={m.settings_notif_switch_aria({ category: COPY[category].label() })}
           onclick={() => void toggle(category)}
-          class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
- {on ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+          class="focus-visible:ring-accent-icon relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+ {on ? 'bg-accent' : 'bg-black/20 dark:bg-white/15'}"
         >
           <span
             class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
