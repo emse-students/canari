@@ -35,5 +35,5 @@
       onDone();
     }
   }}
-  class="text-text-main placeholder:text-text-muted/70 border-cn-border mt-1 w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus:border-amber-500"
+  class="text-text-main placeholder:text-text-muted/70 border-cn-border focus:border-accent-icon mt-1 w-full rounded-lg border bg-transparent px-3 py-2 text-sm outline-none"
 />

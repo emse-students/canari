@@ -8,7 +8,7 @@
  */
 
 /** Border/focus colours, split out because only these differ between valid and invalid. */
-const EDGE_OK = 'focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]';
+const EDGE_OK = 'focus:border-accent-icon focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]';
 /** A red halo at rest AND on focus: a 1px red edge alone is too weak to read as an error. */
 const EDGE_INVALID =
   'border-red-err shadow-[0_0_0_3px_color-mix(in_srgb,var(--red-err)_25%,transparent)] ' +

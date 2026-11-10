@@ -20,6 +20,7 @@ describe('VersionService', () => {
       callsMode: 'audio',
       livesMode: 'on',
       checkpointSkipMode: 'on',
+      liveReplaysMode: 'on',
     }),
   } as unknown as PlatformService;
 
@@ -45,6 +46,12 @@ describe('VersionService', () => {
     const out = await service.getVersion();
 
     expect(out.checkpointSkip).toEqual({ mode: 'on' });
+  });
+
+  it('publishes the live replays switch, which social-service enforces at the start of a live', async () => {
+    const out = await service.getVersion();
+
+    expect(out.liveReplays).toEqual({ mode: 'on' });
   });
 
   it('says it forwards a PKCE verifier, so a client challenges only a server that will redeem it', async () => {

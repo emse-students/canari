@@ -50,8 +50,8 @@
   }: Props = $props();
 
   const ACTIVE = {
-    amber: 'bg-amber-500/15 text-amber-700 shadow-sm dark:bg-amber-500/20 dark:text-amber-400',
-    yellow: 'bg-cn-yellow text-cn-ink shadow-sm',
+    amber: 'bg-accent/15 text-accent-text shadow-sm',
+    yellow: 'bg-accent text-on-accent shadow-sm',
   } as const;
   const IDLE = 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5';
 
@@ -99,9 +99,9 @@
       tabindex={selected ? 0 : -1}
       onclick={() => onSelect(item.key)}
       onkeydown={(e) => onKeydown(e, i)}
-      class="flex min-w-0 items-center justify-center text-center leading-tight font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {variant ===
+      class="focus-visible:ring-accent-icon flex min-w-0 items-center justify-center text-center leading-tight font-semibold transition-colors outline-none focus-visible:ring-2 {variant ===
       'underline'
-        ? `-mb-px min-h-11 gap-2 border-b-2 px-4 text-sm ${selected ? 'border-cn-yellow text-text-main' : 'text-text-muted hover:text-text-main border-transparent'}`
+        ? `-mb-px min-h-11 gap-2 border-b-2 px-4 text-sm ${selected ? 'border-accent-icon text-text-main' : 'text-text-muted hover:text-text-main border-transparent'}`
         : `flex-col gap-1 rounded-lg px-1 py-2 text-xs sm:flex-row sm:gap-2 sm:text-sm ${selected ? ACTIVE[tone] : IDLE}`}"
     >
       {#if item.icon}

@@ -25,7 +25,7 @@
   onclick={onLike}
   aria-pressed={liked}
   aria-label={count > 0 ? m.post_likes_count_label({ count }) : m.post_like_label()}
-  class="tap-target text-2xs flex items-center gap-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500 {liked
+  class="tap-target text-2xs focus-visible:ring-accent-icon flex items-center gap-1 font-bold transition-colors outline-none focus-visible:ring-2 {liked
     ? 'text-red-500'
     : 'text-text-muted hover:text-text-main'} {className}"
 >

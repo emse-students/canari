@@ -6,6 +6,7 @@ import type {
   CallsMode,
   CheckpointSkipMode,
   LivesMode,
+  LiveReplaysMode,
 } from '../platform/entities/platform-config.entity';
 
 export type AppVersionResponse = {
@@ -48,6 +49,15 @@ export type AppVersionResponse = {
    */
   checkpointSkip: {
     mode: CheckpointSkipMode;
+  };
+  /**
+   * The server's switch for live replays (`platform_config.live_replays_mode`): `on` keeps a live
+   * started now three days as a replay. ENFORCED BY SOCIAL-SERVICE at the start of a live, which
+   * fixes it on the live row; a client reads it only to word the pre-live sheet, and reads an absent
+   * or unknown value as `off`.
+   */
+  liveReplays: {
+    mode: LiveReplaysMode;
   };
   /**
    * A CAPABILITY, NOT A SWITCH: this core-service forwards a PKCE `code_verifier` from
@@ -110,6 +120,7 @@ export class VersionService {
       calls: { mode: platform.callsMode },
       lives: { mode: platform.livesMode },
       checkpointSkip: { mode: platform.checkpointSkipMode },
+      liveReplays: { mode: platform.liveReplaysMode },
       oidcPkce: true,
       presencePost: true,
       publishQueue: true,

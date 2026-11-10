@@ -43,6 +43,18 @@
   --color-cn-tooltip: #242424;
   --color-cn-yellow: var(--cn-yellow);
   --color-cn-yellow-hover: var(--cn-yellow-hover);
+  /* THE ONE ACCENT (owner, 2026-11-09, option B + rule C; docs/wiki/frontend/design-reference.md).
+     `accent` is the FILL (bars, tabs, buttons, selected states) and always carries `on-accent`
+     ink. Yellow cannot be text on a light surface (1.66:1 on white), so the same hue has three
+     more jobs: `accent-text` (a link, a counter, a mention: 4.5:1), `accent-icon` (a glyph, a
+     border, a focus ring that must read as yellow: 3:1) and `accent-hover`. The Tailwind amber
+     scale is NOT an accent and `accentTokens.test.ts` counts it; amber survives as a warning only,
+     through `amber-warn`. */
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-on-accent: var(--on-accent);
+  --color-accent-text: var(--accent-text);
+  --color-accent-icon: var(--accent-icon);
   /* The guided help's accent ink - its step icon and swipe mime, on the popover. The brand's dark
      ink in light, its yellow in dark: one token, so no component spells a dark variant. */
   --color-guide-ink: var(--guide-ink);
@@ -68,10 +80,13 @@
   --color-red-err: var(--red-err);
   --color-red-solid: var(--red-solid);
   /* Third member of the status triad, next to `green-ok` and `red-err`. Warning banners used to
-     hardcode `text-amber-700` / `bg-amber-50` / `border-amber-200`, none of which flip, so the
+     hardcode shades of the raw amber scale, none of which flip, so the
      banner stayed light while the text on it went near-white. Tint it with an opacity modifier
      (`bg-amber-warn/10`, `border-amber-warn/30`) rather than reaching for the amber scale. */
   --color-amber-warn: var(--amber-warn);
+  /* The warning as TEXT ON ITS OWN TINT (`bg-amber-warn/15 text-amber-warn-text`): `amber-warn`
+     reads 4.08:1 there in light, under AA at xs. Dark needs no second value. */
+  --color-amber-warn-text: var(--amber-warn-text);
   /* BANNER SURFACES, OPAQUE BY CONSTRUCTION. A banner covers the interface, so what it covers must
      not read through it - a translucent strip puts body text behind its own words and makes the one
      message meant to be read the hardest thing on screen. Four of the six banners were tinted
@@ -350,8 +365,13 @@
      See docs/wiki/frontend/design-reference.md. */
   --cn-dark: #050505;
   /* THE TWO LINES THAT DO NOT MOVE, IN EITHER THEME. */
-  --cn-yellow: #f6c232;
-  --cn-yellow-hover: #e4af1b;
+  --accent: #f6c232;
+  --accent-hover: #e4af1b;
+  --on-accent: #151b2c;
+  --accent-text: #836300;
+  --accent-icon: #af8601;
+  --cn-yellow: var(--accent);
+  --cn-yellow-hover: var(--accent-hover);
   --guide-ink: var(--cn-dark);
   /* AVATAR PLACEHOLDER PALETTE (user, 2026-10-30, Telegram-style): eight hues, a diagonal pair of
      stops each, picked by `avatarHueIndex(id)`. THEME-INDEPENDENT ON PURPOSE: the initials are
@@ -443,6 +463,7 @@
      AA. One value in both themes, 6:1 with white. */
   --red-solid: #c42b2b;
   --amber-warn: #b45309;
+  --amber-warn-text: #92400e;
   /* FLAT. The reference has no background gradient at all - it is one solid colour behind
      everything. The three stacked gradients that were here (amber and blue radials over a vertical
      ramp) put a moving tint under every screen, which is exactly the "AI-generated" tell. */
@@ -564,8 +585,13 @@
      contrast against white text was harsher than anything the reference ships, and the hue fought
      the yellow. */
   --cn-dark: #e4e6eb;
-  --cn-yellow: #ffd45d;
-  --cn-yellow-hover: #ffe082;
+  --accent: #ffd45d;
+  --accent-hover: #ffe082;
+  --on-accent: #151b2c;
+  --accent-text: #ffd45d;
+  --accent-icon: #ffd45d;
+  --cn-yellow: var(--accent);
+  --cn-yellow-hover: var(--accent-hover);
   --guide-ink: var(--cn-yellow);
   /* DARKER THAN THE REFERENCE, ON PURPOSE (user, 2026-09-08: OLED). Messenger measures #1f1f1f /
      #2e2e2e / #3e4042, and on an OLED panel every one of those keeps the whole screen lit. True
@@ -590,6 +616,7 @@
   --green-ok: #2dd089;
   --red-err: #f07474;
   --amber-warn: #fbbf24;
+  --amber-warn-text: #fbbf24;
   /* NOT FLAT, AND NOT GLASS EITHER (user, 2026-09-08: *"pour faire un peu moins plat, sans repartir
      sur du glassmorphism de fou, on peut imaginer des vignettes"*). ONE soft warm vignette hanging
      from the top, in the brand yellow at 5%, gone by 55% of the way down - not the five 1080px
@@ -1224,7 +1251,7 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
  *
  * WHAT MAY STILL DIFFER IS COLOUR, AND ONLY ON HOVER. A trash can and a pencil are told apart by
  * intent, never by whether they look pressable - so the call site keeps `hover:text-red-600` or
- * `hover:text-amber-600` as utilities.
+ * `hover:text-accent-text` as utilities.
  *
  * IT DECLARES THE BOX, AND DELIBERATELY NOT THE CORNER. #447 made the corner a scale with four
  * meanings, and a class that also set a radius would be a fifth authority on it - the round buttons
@@ -2389,7 +2416,7 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 
 .chat-composer-icon-button:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.5);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 /* Same: the box is `.ui-icon-button`'s, the yellow disc is this class's. */
@@ -2397,7 +2424,7 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   border-radius: 9999px;
   background: var(--cn-yellow);
   color: #151b2c;
-  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.2);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--accent) 20%, transparent);
   transition:
     transform 180ms ease,
     background-color 180ms ease,
@@ -2417,8 +2444,8 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 .chat-composer-send-button:focus-visible {
   outline: none;
   box-shadow:
-    0 4px 16px rgba(245, 158, 11, 0.2),
-    0 0 0 4px rgba(245, 158, 11, 0.3);
+    0 4px 16px color-mix(in srgb, var(--accent) 20%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .chat-composer-send-button.is-disabled {
@@ -2486,7 +2513,7 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 
 .voice-recorder-thumb:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.5);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 .voice-recorder-thumb.is-recording {
@@ -3013,13 +3040,13 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 
 @keyframes messageJumpHighlight {
   0% {
-    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.65);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 65%, transparent);
   }
   35% {
-    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.25);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
   }
 }
 

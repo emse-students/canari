@@ -130,7 +130,7 @@
         bind:value={query}
         placeholder={m.chat_search_discussion_placeholder()}
         aria-label={m.chat_search_discussion_label()}
-        class="border-cn-border text-text-main focus:border-cn-yellow w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
+        class="border-cn-border text-text-main focus:border-accent-icon w-full rounded-xl border bg-(--cn-surface) py-2.5 pr-3 pl-9 text-sm outline-none"
       />
     </div>
 

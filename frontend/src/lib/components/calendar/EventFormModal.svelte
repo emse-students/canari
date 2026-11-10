@@ -242,7 +242,7 @@
                 onclick={() => (values.kind = 'event')}
                 class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {values.kind ===
                 'event'
-                  ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
+                  ? 'border-accent-icon bg-accent/10 text-cn-dark'
                   : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
               >
                 {m.asso_calendar_event_kind_event()}
@@ -252,7 +252,7 @@
                 onclick={() => (values.kind = 'break')}
                 class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {values.kind ===
                 'break'
-                  ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
+                  ? 'border-accent-icon bg-accent/10 text-cn-dark'
                   : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
               >
                 {m.asso_calendar_event_kind_break()}
@@ -340,7 +340,7 @@
                 </div>
               {:else}
                 <label
-                  class="border-cn-border bg-cn-bg text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-sm transition-colors {poster.uploading
+                  class="border-cn-border bg-cn-bg text-text-muted hover:border-accent/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-sm transition-colors {poster.uploading
                     ? 'pointer-events-none opacity-50'
                     : ''}"
                 >
@@ -437,7 +437,7 @@
             type="button"
             onclick={submit}
             disabled={saving}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+            class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
             {saving ? savingLabel : submitLabel}
           </button>
