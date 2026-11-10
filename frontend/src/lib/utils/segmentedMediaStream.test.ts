@@ -10,6 +10,8 @@ import { encryptSegmentedMedia, SEGMENTED_MEDIA_SEGMENT_BYTES } from '$lib/media
 import type { MediaRef } from '$lib/media';
 import type { MediaSourceConstructor } from './segmentedMediaStream';
 import { flushMacrotask } from '../../test/flush';
+import { readMp4Duration } from './mp4Duration';
+import { fragmentedMp4 } from './mp4Fixture.test-helper';
 
 vi.mock('$lib/stores/auth', () => ({ getToken: () => Promise.resolve('token') }));
 
@@ -19,6 +21,7 @@ const {
   FEED_STREAM_PACING,
   VIEWER_STREAM_PACING,
   streamProgressOf,
+  streamSeekFloor,
 } = await import('./segmentedMediaStream');
 
 const WEBM = 'video/webm;codecs=vp9,opus';
@@ -136,7 +139,7 @@ describe('openSegmentedStream', () => {
     expect(handle.url).toBe('blob:stream');
     // The progress a reel view's outcome line reads: nothing known before the header is read.
     const progress = streamProgressOf('blob:stream')!;
-    expect(progress).toEqual({ segmentCount: null, appended: 0, bytes: 0 });
+    expect(progress).toEqual({ segmentCount: null, appended: 0, bytes: 0, trimmedBefore: 0 });
 
     const blob = await handle.done;
     // Byte-compared rather than deep-equalled: two megabytes element by element take seconds.
@@ -150,11 +153,69 @@ describe('openSegmentedStream', () => {
     expect(FakeMediaSource.last!.ended).toBeUndefined();
     expect(ranges).toHaveLength(3);
     expect(ranges[0].startsWith('bytes=0-')).toBe(true);
-    expect(progress).toEqual({ segmentCount: 3, appended: 3, bytes: n });
+    expect(progress).toEqual({ segmentCount: 3, appended: 3, bytes: n, trimmedBefore: 0 });
     handle.close();
     // A closed stream owns no URL; the object a caller kept still says where it got to.
     expect(streamProgressOf('blob:stream')).toBeUndefined();
     expect(progress.appended).toBe(3);
+  });
+
+  /**
+   * A STREAM CAN BE SOUGHT IN BEFORE IT IS WHOLE (owner, 2026-11-10: "on ne peut plus avancer"): the
+   * sender's declared length is set on the source as it opens, before any buffer exists - otherwise
+   * a file whose header declares none reads `Infinity` until its last segment.
+   */
+  it('sets the declared duration on the source before its first buffer, and nothing when undeclared', async () => {
+    const plain = new Uint8Array(10).map((_, i) => i);
+    const { ciphertext, keyHex, ivHex } = await encryptSegmentedMedia(plain.buffer);
+    const sealed = new Uint8Array(ciphertext);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init: RequestInit) => {
+        const [, a, b] = /bytes=(\d+)-(\d+)/.exec((init.headers as Record<string, string>).Range)!;
+        return Promise.resolve(
+          new Response(sealed.slice(Number(a), Math.min(Number(b) + 1, sealed.byteLength)), {
+            status: 206,
+          })
+        );
+      })
+    );
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:declared');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const seen: { duration: number; buffers: number }[] = [];
+    class DurationSource extends FakeMediaSource {
+      buffers = 0;
+      set duration(seconds: number) {
+        seen.push({ duration: seconds, buffers: this.buffers });
+      }
+      addSourceBuffer() {
+        this.buffers += 1;
+        return super.addSourceBuffer();
+      }
+    }
+    const open = (durationMs?: number) =>
+      openSegmentedStream(
+        {
+          type: 'video',
+          mediaId: 'd1',
+          key: keyHex,
+          iv: ivHex,
+          mimeType: WEBM,
+          size: 10,
+          encoding: 'segmented-v1',
+          ...(durationMs ? { durationMs } : {}),
+        },
+        'https://media.test',
+        {
+          kind: 'stream',
+          MediaSourceCtor: DurationSource as unknown as MediaSourceConstructor,
+          managed: false,
+        }
+      );
+    await open(42_000).done;
+    expect(seen).toEqual([{ duration: 42, buffers: 0 }]);
+    await open().done;
+    expect(seen, 'undeclared: the file header answers').toHaveLength(1);
   });
 
   it('ends the stream as a decode error when a segment does not authenticate', async () => {
@@ -452,10 +513,94 @@ describe('openSegmentedStream', () => {
     card.attach(element);
     const blob = await card.done;
     expect(removed).toEqual([[0, 32]]);
+    // The cut is REPORTED: a seek before it would wait for a segment that never comes again.
+    expect(streamProgressOf(card.url)?.trimmedBefore).toBe(32);
     // Three segments, the second appended twice (the first refusal, then the retry).
     expect(appends).toBe(4);
     expect(blob.size).toBe(3 * SEGMENTED_MEDIA_SEGMENT_BYTES);
     card.close();
+  });
+
+  /**
+   * A SEEK BEFORE WHAT A STREAM STILL HOLDS STALLS FOR EVER (review of #3311): segments go in once,
+   * so the floor is the later of the stream's own cut and the start of what the element buffers.
+   */
+  it.each([
+    ['nothing cut, nothing evicted', 0, [], 0],
+    ['the stream cut at 32 s', 32, [[30, 50]], 32],
+    ['the engine evicted up to 12 s', 0, [[12, 40]], 12],
+    ['a whole file (no stream)', undefined, [[0, 40]], 0],
+  ] as const)('the seek floor when %s', (_name, cut, ranges, floor) => {
+    const buffered = {
+      length: ranges.length,
+      start: (i: number) => ranges[i][0],
+    };
+    expect(streamSeekFloor(cut === undefined ? undefined : { trimmedBefore: cut }, buffered)).toBe(
+      floor
+    );
+  });
+
+  /**
+   * THE WHOLE FILE IS BUILT FROM THE SEGMENT BLOBS, AND ONLY ITS HEAD IS COPIED (review of #3311:
+   * reading every segment back into one array held 2-3x a 35 MB reel in the heap). The `mvhd` in
+   * the first segment gets the length the stream played; every other byte is the segments' own.
+   */
+  it('patches only the head of a finished MP4 stream, with the length the source measured', async () => {
+    const movie = await fragmentedMp4(90);
+    // A trailing `free` box makes the file span two segments, so the tail is a separate part.
+    const pad = SEGMENTED_MEDIA_SEGMENT_BYTES;
+    const plain = new Uint8Array(movie.byteLength + pad);
+    plain.set(movie);
+    new DataView(plain.buffer).setUint32(movie.byteLength, pad);
+    plain.set([0x66, 0x72, 0x65, 0x65], movie.byteLength + 4);
+    const { ciphertext, keyHex, ivHex } = await encryptSegmentedMedia(plain.buffer);
+    const sealed = new Uint8Array(ciphertext);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init: RequestInit) => {
+        const [, a, b] = /bytes=(\d+)-(\d+)/.exec((init.headers as Record<string, string>).Range)!;
+        const part = sealed.slice(Number(a), Math.min(Number(b) + 1, sealed.byteLength));
+        return Promise.resolve(new Response(part, { status: 206 }));
+      })
+    );
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mp4');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    /** The engine's measure after `endOfStream`: the end of what was appended. */
+    class MeasuredSource extends FakeMediaSource {
+      duration = Infinity;
+      endOfStream(error?: string) {
+        super.endOfStream(error);
+        this.duration = 3;
+      }
+    }
+    const handle = openSegmentedStream(
+      {
+        type: 'video',
+        mediaId: 'mp4',
+        key: keyHex,
+        iv: ivHex,
+        mimeType: 'video/mp4; codecs="avc1.42c01e"',
+        size: plain.byteLength,
+        encoding: 'segmented-v1',
+      },
+      'https://media.test',
+      {
+        kind: 'stream',
+        MediaSourceCtor: MeasuredSource as unknown as MediaSourceConstructor,
+        managed: false,
+      }
+    );
+    const whole = new Uint8Array(await (await handle.done).arrayBuffer());
+    expect(readMp4Duration(plain).declaredSeconds, 'the source file: undeclared').toBe(0);
+    expect(readMp4Duration(whole).declaredSeconds).toBeCloseTo(3, 3);
+    // Only the duration field differs: four bytes of a v0 mvhd, nothing else moved.
+    expect(whole.byteLength).toBe(plain.byteLength);
+    const differing = whole.reduce((n, byte, i) => n + (byte === plain[i] ? 0 : 1), 0);
+    expect(differing).toBeGreaterThan(0);
+    expect(differing).toBeLessThanOrEqual(4);
+    expect(String(info.mock.calls[0][0])).toContain('written into its head');
+    handle.close();
   });
 
   it('stops for good when closed - the segment in flight is aborted and nothing more is asked', async () => {

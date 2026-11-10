@@ -77,7 +77,7 @@ export function followBirthdaysToday(account: string): () => void {
 
 /**
  * WHETHER THE SIGNED-IN ACCOUNT HAS ENTERED A BIRTHDAY - the fact the one-time birthday prompt reads
- * (`guides/birthdayPrompt.ts`). `null` is "nobody could say" (offline, an older server): the prompt
+ * (`components/posts/BirthdayFeedCard.svelte`). `null` is "nobody could say" (offline, an older server): the prompt
  * is then NOT shown, since inviting a member to enter a date they may have entered is a wrong
  * statement. Only the account last passed to {@link OwnBirthdayFact.load} is held.
  */

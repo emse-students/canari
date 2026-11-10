@@ -823,6 +823,27 @@ async function resumeOrphans(
 }
 
 /**
+ * The reference a reply (or a file sent as one) carries: the quoted message's id and sender plus
+ * its preview, cut the way every quote is. ONE implementation for the text send and the media
+ * send, so a photo answering a message quotes it exactly as a text would.
+ */
+export function quoteReference(replyingTo: ChatMessage): NonNullable<ChatMessage['replyTo']> {
+  const replyEnv = parseEnvelope(replyingTo.content);
+  const replyPreview =
+    replyEnv.kind === 'text' && gifPreviewUrl(replyEnv.text)
+      ? // A GIF quote keeps its WHOLE address: cut at 100 characters it is a broken picture.
+        replyEnv.text.trim()
+      : replyEnv.kind === 'text' || replyEnv.kind === 'system'
+        ? cutReplyPreview(replyEnv.text)
+        : replyEnv.kind === 'media'
+          ? replyEnv.caption === undefined
+            ? m.chat_preview_media()
+            : cutReplyPreview(replyEnv.caption)
+          : cutReplyPreview(`${m.chat_preview_poll()} ${replyEnv.question}`);
+  return { id: replyingTo.id, senderId: replyingTo.senderId, content: replyPreview };
+}
+
+/**
  * Sends a text message in a conversation, optionally as a reply to a previous message.
  *
  * For direct/group MLS conversations the message is captured into the persistent outbox and
@@ -859,22 +880,7 @@ export async function sendChatMessage(
   const sentAt = Date.now();
 
   // Reply preview (from the quoted message envelope), shared by the proto and the local echo.
-  let replyToData: ChatMessage['replyTo'] = undefined;
-  if (replyingTo) {
-    const replyEnv = parseEnvelope(replyingTo.content);
-    const replyPreview =
-      replyEnv.kind === 'text' && gifPreviewUrl(replyEnv.text)
-        ? // A GIF quote keeps its WHOLE address: cut at 100 characters it is a broken picture.
-          replyEnv.text.trim()
-        : replyEnv.kind === 'text' || replyEnv.kind === 'system'
-          ? cutReplyPreview(replyEnv.text)
-          : replyEnv.kind === 'media'
-            ? replyEnv.caption === undefined
-              ? m.chat_preview_media()
-              : cutReplyPreview(replyEnv.caption)
-            : cutReplyPreview(`${m.chat_preview_poll()} ${replyEnv.question}`);
-    replyToData = { id: replyingTo.id, senderId: replyingTo.senderId, content: replyPreview };
-  }
+  const replyToData = replyingTo ? quoteReference(replyingTo) : undefined;
 
   // Channels: the text is SHOWN at once, as a local echo the server's answer settles, and it is
   // queued durably in the unsent ledger, so neither a refusal nor a kill can make it vanish.

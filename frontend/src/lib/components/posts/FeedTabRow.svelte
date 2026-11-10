@@ -13,8 +13,8 @@
    * THE THREE LABELS FIT WITHOUT SCROLLING AT 390 PX AND 360 PX (dev tour, `1.6.9-alpha.4`: "Mon
    * espace" was clipped at the track's right edge at 390): `px-2.5` (10 px) instead of 14, and under
    * 24rem the text drops one scale step (`text-xs`) with `px-2`. The sideways scroll stays the
-   * fallback for a 2x text size, never the normal state. Since 1.6.9 the labels are "Associations",
-   * "Pour toi" and "Campus" (owner, 2026-11-10), all shorter than "Mon espace" was.
+   * fallback for a 2x text size, never the normal state. Since 1.6.9 the labels are "Organisations"
+   * (the tab mixes associations, lists and institutions - owner, 2026-11-10), "Pour toi" and "Campus".
    *
    * What each tab shows is explained by the first-use hint `hint-feed-tabs` (it replaced the (i)
    * button of #2857, owner 2026-11-03): every tab marks itself `posts.tab.<feed>` for it.

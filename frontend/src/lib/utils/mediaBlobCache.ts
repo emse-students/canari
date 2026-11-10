@@ -17,6 +17,7 @@ import {
 } from './mediaErrors';
 import { noteMediaCacheHit } from './mediaTouch';
 import { mediaRequestGate } from './requestGate';
+import { declareMp4Duration, isMp4Type } from './mp4Duration';
 
 /** Exported so `deviceStorage.ts` can measure/clear it without duplicating the literal. */
 export const CIPHER_CACHE_NAME = 'canari-media-ciphertext-v1';
@@ -326,9 +327,30 @@ function loadDecryptedBlobUrl(
         await evictCiphertext(ref.mediaId, baseUrl);
         throw new MediaDecryptError(err);
       }
+      declareVideoDuration(ref, plaintext);
       return pooledBlob(new Blob([plaintext], { type: ref.mimeType }));
     }
   );
+}
+
+/**
+ * A VIDEO UPLOADED BEFORE ITS WRITER DECLARED ITS LENGTH (`mp4Duration.ts`, owner 2026-11-10) is
+ * given it here, in place, before the engine sees a byte: its `mvhd` said 0, so the player read
+ * 0/Infinity and could not seek. Read from the file's own fragments - deterministic, no probe. A file
+ * whose header already says it (every upload since the fix) is left as it is.
+ */
+export function declareVideoDuration(
+  ref: Pick<MediaRef, 'mediaId' | 'mimeType' | 'type'>,
+  plaintext: ArrayBuffer
+): void {
+  if (ref.type !== 'video' || !isMp4Type(ref.mimeType)) return;
+  const outcome = declareMp4Duration(new Uint8Array(plaintext));
+  if (outcome.kind === 'written') {
+    // A file from before the writer's fix: expected while such files exist, counted by this line.
+    console.info(
+      `[media] ${ref.mediaId}: undeclared movie duration (${outcome.was} s) - ${outcome.seconds.toFixed(2)} s read from its fragments`
+    );
+  }
 }
 
 function loadRawBlobUrl(mediaId: string, baseUrl: string, signal?: AbortSignal): Promise<string> {

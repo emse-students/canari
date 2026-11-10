@@ -11,6 +11,7 @@
     gridUnitLimit,
     isOfferedStart,
     unitText,
+    isInvitedUnit,
     isPastUnit,
     type DayColumn,
     type WeekLayout,
@@ -357,7 +358,7 @@
     const label = m.bookings_cell_label({
       resource: resource.name,
       time: formatBookingRange(run.startMs, run.endMs, space.timeZone),
-      state: text,
+      state: isInvitedUnit(unit) ? `${text} (${m.bookings_cell_invited()})` : text,
     });
     const holder = unit.state === 'booked' ? unit.booking.holderName : undefined;
     const holderId = unit.state === 'booked' ? unit.booking.holderId : undefined;
@@ -369,6 +370,7 @@
       holder,
       holderId,
       mine: unit.state === 'booked' && unit.booking.mine,
+      invited: isInvitedUnit(unit),
     };
   }
 
@@ -601,6 +603,7 @@
     timeParts: { start: string; end: string };
     holder: string | undefined;
     holderId: string | undefined;
+    invited: boolean;
   },
   density: 'full' | 'line' | 'icon',
   stacked: StackedLines,
@@ -612,6 +615,11 @@
     {#if density === 'full'}
       <span class="w-full min-w-0 flex-1">
         <span class="block truncate font-semibold">{r.text}</span>
+        {#if r.invited}
+          <span class="text-text-muted text-2xs block truncate" data-invited
+            >{m.bookings_cell_invited()}</span
+          >
+        {/if}
         <!-- One line of hours, or two (start, end) where the block is under 5rem wide. -->
         <span
           class="text-text-muted text-2xs block truncate {stacked >= 3

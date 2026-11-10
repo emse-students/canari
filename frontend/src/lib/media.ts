@@ -173,6 +173,12 @@ export interface PendingMediaFile {
   placeholder?: string;
   /** Set only by the voice recorder's own send path - see {@link MediaRef.voiceNote}. */
   voiceNote?: boolean;
+  /**
+   * A prepared video's length in whole ms, measured by its preparation and DECLARED with the
+   * message (`MediaRef.durationMs`, `MediaMsg.duration_ms`): a reader's player knows it before a
+   * byte arrives, and a stream can be sought in before it is whole (owner, 2026-11-10).
+   */
+  durationMs?: number;
 }
 
 /** Per-context presets - higher quality, less aggressive resize. */

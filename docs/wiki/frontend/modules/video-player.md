@@ -23,7 +23,9 @@ arbiter, the lightbox's zoom) is in [posts](posts.md#a-video-is-canaris-to-play-
    exist (CanaReels, a feed post) and leaves the sound as it was. A small speaker stays visible on
    the video for discoverability (feed: bottom-right, Instagram's ~24 dp). The lightbox and full
    screen keep a scrubber (a time bubble, no frame thumbnail) and a play/pause button. Where a tap used
-   to OPEN the lightbox (feed, chat), an expand chip takes that job.
+   to OPEN the lightbox (feed, chat), an expand chip takes that job. **Amended 2026-11-10**: a feed tap
+   opens full screen again, and a conversation's viewer taps to pause -
+   [the decisions of 2026-11-10](#the-owners-decisions-of-2026-11-10---full-screen-is-canareels).
 4. **The sound is remembered per device** (this replaces the 2026-09-29 rule "muted at every start,
    in memory only"): across videos, sessions and cold starts; never audible on the first ever run;
    unmuting is always a gesture; it should follow the device volume where the platform exposes it
@@ -38,6 +40,119 @@ video has a ~24 dp dark translucent round speaker bottom-right and no scrubber; 
 reel does NOT pause (it opens a speed sheet); the mute state carries from reel to reel and through a
 background; at device volume 0 the glyph is the struck speaker. **Canari departs from it on purpose
 in two places** (owner): the tap is the sound everywhere, and the hold pauses.
+
+## The owner's decisions of 2026-11-10 - full screen is CanaReels
+
+Readers disliked 1.6.9's feed tap (the sound), the conversation viewer was "moche et casse"
+(`0:23 / 0:00`, a line that never moved) and "on ne peut plus avancer dans les videos".
+
+1. **A tap on a feed video opens full screen, and full screen IS the CanaReels viewer**, on that video,
+   at the time it had reached; a swipe continues to the following reels. A CanaReel and a post of one
+   video open as a `reel` page; a video cell of a grid opens the `carousel` page on THAT media
+   (`ReelViewer`'s `startMediaIndex`). A post the viewer cannot draw (`fullScreenPageOf` is `null`: a
+   poll, a file, a linked event beside the video) keeps the media viewer. The expand chip does the
+   same; the speaker chip is the feed's sound. `PostContent.videoOpener` decides, from the post.
+2. **In full screen a tap is the sound, a hold pauses** - the reel and lightbox variants already did
+   (step C); the table is now ONE pure function, `utils/videoTapAction.ts`, tested as a table.
+3. **Entering or leaving full screen never restarts at 0.** The key is the MEDIA (`positionKey`, a
+   post's media id), not the URL: the feed card and the CanaReels viewer hold two downloads of one
+   video. Entering: the inline player notes its time (`rememberVideoPosition`), the viewer's player
+   takes it at mount and seeks at `loadedmetadata`. Leaving: the inline player that opened the viewer
+   WAITS (`awaitVideoHandBack`), and every viewer player hands back where it got to as it is torn down
+   (`handBackVideoPosition`) - an event, never a clock. A viewer nobody opened from inline hands back
+   into nothing. `PostContent` ends the wait once its `ReelViewer` is torn down (`endVideoHandBack`,
+   after a `tick`, so the hand-back the teardown makes still lands).
+   **A STREAMED card takes the handed-back time only if it buffers it** (review of #3311,
+   `isTimeBuffered`): the CanaReels viewer is its OWN `PostMedia` and its own stream, so a card sought
+   outside its buffer would fetch every segment up to there - a third download of the clip - or stall
+   behind a cut; it stays where it was instead. A whole file seeks for free. **Why not a fork of the
+   card's stream** (`SegmentedStreamHandle.fork`, which the post's media viewer uses): a fork dies with
+   its root, and the root here is a feed card in another component tree, which a feed refresh or the
+   viewport band can close while the viewer plays - the viewer would freeze. Sharing a root across
+   trees needs an owner that outlives both (a stream registry by media id), left for when the double
+   download is measured to matter.
+4. **The conversation viewer is minimal** (`variant="conversation"`, `MessageMediaRenderer` and
+   `ConversationMediaPanel`): the `line` scrubber on the bottom edge, dragged to seek; the speaker
+   chip in the bottom-right corner; the glass play glyph while paused; a TAP PAUSES AND PLAYS; no pill,
+   no timecode, no fade (so the viewer's header never hides). Never looped; its sound stays `local`.
+5. **The feed video draws its first frame before its bytes** (owner, same day: a dark box with a play
+   icon, then the frame with white bands, then the blur - three stages): `PostMedia` draws the sharp
+   first frame this session decoded (`reelPosters`), else the publisher's ThumbHash, WITH its blurred
+   bands, from the first paint - and hands the same picture to the player, which keeps it (and builds
+   the bands from it, no second capture) and keeps its `<video>` invisible until its own frame is in.
+   Posts now carry that ThumbHash: the publish queue makes it from the PREPARED file
+   (`firstFramePlaceholder`) and puts it on the media ref (`PostMediaDto.placeholder`, accepted since
+   CanaReels - no server change). The poster is fitted as the video will be (`posterFit`: a cropped
+   grid cell crops its poster too), so nothing changes stage. **A video published before 2026-11-10 has no ThumbHash**: it shows
+   Canari's poster until this device has decoded it once - there is no picture of it anywhere else,
+   and none is invented.
+6. **A video's stream opens a screen ahead** (`PostContent`, `VIDEO_NEAR_MARGIN = '100% 0px'`, given
+   back at `200%`): one height of the scroll box, whatever the phone, instead of the 400 px pictures
+   use. A distance, not a timer.
+
+### Why seeking stopped - the cause, measured
+
+**Every video Canari uploads declared NO LENGTH.** `prepareVideoForUpload` writes a fragmented MP4
+(mediabunny, `fastStart: 'fragmented'`); the muxer writes the `moov` before the first fragment, so the
+`mvhd` duration is 0 and there is no `mehd` - read on the muxer's own output (10 s clip: `mvhd`
+timescale 57600, duration 0; `mdhd` 0; ten `moof`; an `mfra`). Chromium's file demuxer and its MSE
+parser take the movie's length from those boxes, so the `<video>` reported 0 or `Infinity`:
+`formatVideoTime` drew `0:00`, `VideoScrubber` (`known` needs a finite, positive length) refused every
+press, and the engine's own `seekable` range was empty or stopped at what was buffered. A stream made
+it worse: an MSE source with no declared length reads `Infinity` until its LAST segment is appended,
+which a paced viewer stream (1.6.9, #3228) never does.
+
+**Hit**: the conversation viewer and the conversation inline line (whole files), the CanaReels viewer
+line and the post viewer (streams). The feed card has no scrubber. **Ruled out**: HTTP Range - the
+element never sees an HTTP URL (a `blob:` file or an MSE source), and the range reader refuses a `200`
+outright (`MediaRangeUnsupportedError`) rather than play it unseekable. The shared player's seek code
+did not change (the same `Number.isFinite(duration)` guard as before step B).
+
+**The fix, at the container** (`utils/mp4Duration.ts`): the samples' own length (per track, the
+end of its last `trun` minus its FIRST `tfdt`, in its `mdhd` timescale) is written into the `mvhd`
+duration field IN PLACE (same width; `trun` offsets are `moof`-relative and the `mfra`'s absolute, so
+nothing moves). Only a file whose top-level boxes tile its bytes exactly is written - a truncated one
+measures its part, not the movie - and a fuzz test (every prefix of a real upload, 400 seeded byte
+flips, size-0 and 64-bit boxes, a zero timescale) pins that the reader never throws and never writes
+outside the `mvhd`:
+
+- by the writer, once, before upload (`prepareVideoForUpload`) - every video from now on;
+- by the reader, for a file uploaded before (`mediaBlobCache.declareVideoDuration`, on the whole
+  decrypted file) - logged at info with what it found, so the share of old files is countable;
+- by a finished stream, on its HEAD ONLY (`writeMvhdDuration` on a copy of the first segment, which
+  holds the `moov`, with the length the source measured after `endOfStream`, else the declared one):
+  the rest stays the feed's segment `Blob`s, which the engine spills to disk - reading them back into
+  one array held 2-3x a 35 MB reel in the JS heap (review of #3311);
+- a stream is given the SENDER'S DECLARED length on its `MediaSource` as it opens, before any buffer
+  (`segmentedMediaStream.declareStreamDuration`): a conversation's video now carries `durationMs`
+  (`MediaMsg.duration_ms`, the optional field CanaReels-in-chat added, written WITHOUT the reel intent -
+  a client older than the field skips it, a client since reads it on a reel's tile only), and a reel
+  passes its `post.durationMs`.
+
+**A declared length makes the whole clip seekable to the engine, but a stream never appends a
+segment twice**: what its own quota trim removed (`StreamProgress.trimmedBefore`, reported before the
+removal) or the engine evicted (Safari's `ManagedMediaSource` under pressure) is gone. `VideoPlayer.seekTo`
+clamps a streamed source to `streamSeekFloor` - the later of the cut and `buffered.start(0)` - rather
+than leave a seek waiting for ever (logged at debug when it clamps).
+
+**Left, said**: an OLD post video (not a reel, so no declared length) watched as a stream still reads
+`Infinity` until its last segment - its seek reaches only what is buffered. A player that still sees no
+length logs `the engine knows no duration` at info. **Not verified on a device**: that WebKit's
+fragmented-MP4 reader honours the `mvhd` (Chromium's does) - the iPhone reading below.
+
+### Readings owed (both phones, a pre-release carrying this)
+
+- a feed tap on a post video and on a CanaReel opens the CanaReels viewer at the time it had reached;
+  closing resumes the feed video there; a grid video opens on its cell;
+- in the viewer, a tap toggles the sound, a hold pauses;
+- the conversation viewer: line + corner speaker, tap pauses/plays, the line drags and the time moves
+  (a video sent BEFORE this build, and one sent after);
+- the CanaReels line drags to a point not yet downloaded and plays from there;
+- a NEW post video draws its frozen first frame and its bands at once; an old one Canari's poster;
+- **the cost of the `100%` band, on the Mi 9T**: after a fast fling through ~20 video posts, the count
+  of open streams (`[media-seg] stream` lines minus their closes, or `streamProgressOf` entries) and
+  the WebView's JS heap (`chrome://inspect` memory) - against the same fling on a build with the old
+  400 px band. If either grows with the fling instead of settling, the band is too wide.
 
 ## The kit (`src/lib/components/ui/player/`)
 
@@ -272,6 +387,8 @@ mount, how the element takes turns - `feed` `playWhileVisible`, `chat` `arbitrat
 `followVideoSound` - and nothing else differs in kind: the gestures, the glyph, the keyboard map, the
 poster and the unplayable notice are the same code.
 
+- **Superseded 2026-11-10 for the tap and the viewer** ([above](#the-owners-decisions-of-2026-11-10---full-screen-is-canareels)):
+  the feed tap opens the CanaReels viewer; the conversation viewer is `variant="conversation"`.
 - **`feed`** (`PostMedia`, a post card, a reel card, a post page): plays muted while on screen and
   loops, `#t=0.1` on a decrypted file (never on a stream), the blurred first-frame `backdrop` in the
   contained bands. **The kit's speaker chip bottom-right, always drawn** (28 px glass in a 44 px

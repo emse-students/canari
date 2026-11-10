@@ -175,6 +175,14 @@ export function appMsgToEnvelope(
   }
 
   if (msg.media) {
+    // A file sent as a reply carries the reference a text reply does (`MediaMsg.reply_to`).
+    const mediaReplyTo: MessageReference | undefined = msg.media.replyTo
+      ? {
+          id: msg.media.replyTo.id ?? '',
+          senderId: msg.media.replyTo.senderId ?? '',
+          content: msg.media.replyTo.preview ?? '',
+        }
+      : undefined;
     return {
       content: serializeEnvelope(
         mkMediaEnvelope(
@@ -199,10 +207,11 @@ export function appMsgToEnvelope(
             // A reel message's declaration (intent, length, expiry hint); empty for anything else.
             ...mediaReelFromProto(msg.media),
           },
-          msg.media.caption || undefined
+          msg.media.caption || undefined,
+          mediaReplyTo
         )
       ),
-      options: { messageId: msg.messageId || undefined, timestamp },
+      options: { messageId: msg.messageId || undefined, replyTo: mediaReplyTo, timestamp },
     };
   }
 

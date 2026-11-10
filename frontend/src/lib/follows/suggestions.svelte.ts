@@ -25,7 +25,7 @@ import {
   type SuggestedPerson,
   type SuggestionKind,
 } from './api';
-import { associationChipState, personChipState } from './followState.svelte';
+import { associationChipState, isTapSettling, personChipState } from './followState.svelte';
 
 /**
  * L12: "follows almost nobody" is fewer than this many follows in total (accepted person follows
@@ -151,9 +151,11 @@ export function suggestionsFollowingCount(): number | null {
  */
 export function feedSuggestionCards(): SuggestionCard[] {
   if (!read.data) return [];
-  return interleaveCards({ people: read.data.people, entities: [] }).filter(
-    (c) => !dismissed.has(key(c.kind, c.id))
-  );
+  // Filtered BEFORE the cap: a card that leaves (followed, requested, dismissed) lets the next one the
+  // server sent slide in at the end of the row (owner, 2026-11-10) - the read carries up to 20 people.
+  return interleaveCards({ people: read.data.people, entities: [] }, Infinity)
+    .filter(cardDrawn)
+    .slice(0, CAROUSEL_CARDS_MAX);
 }
 
 /** Whether a card was dismissed in this session (the "Suivez aussi..." row reads it too). */
@@ -163,26 +165,28 @@ export function isSuggestionDismissed(kind: SuggestionKind, id: string): boolean
 
 /**
  * Whether a card is still drawn: not dismissed, and its "Suivre" still means something - a person
- * not followed (a request sent stays drawn, showing "Demande envoyee"), an entity not followed. An
+ * not followed or requested (a request removes the card, owner 2026-11-10), an entity not followed. An
  * answer not read yet keeps it drawn; a chip the ledger hides (a block, a membership) hides it.
  */
 export function cardDrawn(card: SuggestionCard): boolean {
   if (dismissed.has(key(card.kind, card.id))) return false;
+  // A follow still out keeps its card: it leaves only once the server said yes, so a refusal never
+  // makes it vanish and come back over the card that slid into its place.
+  if (isTapSettling(card.id)) return true;
   if (card.kind === 'user') {
     const s = personChipState(card.id);
-    return s === undefined || s === null || s === 'pending';
+    return s === undefined || s === null;
   }
   const s = associationChipState(card.id);
   return s === undefined || s === false;
 }
 
 /**
- * Whether a card is still OPEN - something left to do on it: drawn, and not a request already sent.
- * A carousel whose every card is followed or dismissed is hidden (the design's table).
+ * Whether a card is still OPEN - something left to do on it. Since a request removes its card (owner,
+ * 2026-11-10) that is exactly "drawn"; the name stays for the callers that ask the question.
  */
 export function cardOpen(card: SuggestionCard): boolean {
-  if (!cardDrawn(card)) return false;
-  return card.kind !== 'user' || personChipState(card.id) !== 'pending';
+  return cardDrawn(card);
 }
 
 /** The X: the card leaves every carousel at once; a refusal brings it back with a toast. */
