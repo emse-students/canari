@@ -328,6 +328,39 @@ describe("a list never holds another list's rows (alpha.6, 2026-11-10)", () => {
     expect(await storage.getFeedPage(storedFeedKey(FOLLOWED)!, KEY)).toBeNull();
   });
 
+  it('a copy stored on an estate with no ranked list survives a cold start, and goes once the estate is ranked', async () => {
+    estate.rankedFeeds = false;
+    const storage = await openStore();
+    await writeStoredFeedPage(storage, ALICE, FOLLOWED, [post('club-randonnee')]);
+    // Cold start: the capability is unknown again, the copy is drawn and kept.
+    estate.rankedFeeds = null;
+    expect((await readStoredFeedPage(storage, ALICE, FOLLOWED))?.map((p) => p.id)).toEqual([
+      'club-randonnee',
+    ]);
+    expect(await storage.getFeedPage(storedFeedKey(FOLLOWED)!, KEY)).not.toBeNull();
+    // The estate is later known ranked: the copy is another list's, deleted.
+    estate.rankedFeeds = true;
+    expect(await readStoredFeedPage(storage, ALICE, FOLLOWED)).toBeNull();
+    expect(await storage.getFeedPage(storedFeedKey(FOLLOWED)!, KEY)).toBeNull();
+  });
+
+  it('an unmarked copy (alpha.6) is still deleted while the estate is unknown', async () => {
+    estate.rankedFeeds = null;
+    const storage = await openStore();
+    await storage.saveFeedPage(
+      storedFeedKey(FOLLOWED)!,
+      {
+        owner: 'alice',
+        epoch: feedWriteEpoch('alice', 'feed:foryou')!.epoch,
+        key: storedFeedKey(FOLLOWED),
+        posts: [post('club-randonnee')],
+      },
+      KEY
+    );
+    expect(await readStoredFeedPage(storage, ALICE, FOLLOWED)).toBeNull();
+    expect(await storage.getFeedPage(storedFeedKey(FOLLOWED)!, KEY)).toBeNull();
+  });
+
   it('an empty Pour toi answer replaces its stored rows, on the screen and on the device', async () => {
     const storage = await openStore();
     await writeStoredFeedPage(storage, ALICE, FOLLOWED, [ranked('f1', 0)]);
