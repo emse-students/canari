@@ -108,7 +108,8 @@ export function mergeListPage(
  *
  * - a ranked page whose snapshot is gone (`410 RANKING_GONE`: two hours without a page, or pushed
  *   out by newer rankings) is ranked anew - a first page of a new snapshot - and only the rows not
- *   on screen are appended; logged as a warning, since the reader scrolled a ranking that expired;
+ *   on screen are appended; logged as a warning, since the reader scrolled a ranking that expired.
+ *   ONCE per call: a second 410 is thrown, and the caller shows its retry;
  * - a ranked page that appended nothing new (every row was on screen: after a new ranking) reads
  *   the next one, until a row is new or the list ends - each read starts strictly after the last,
  *   so this ends;
@@ -125,12 +126,16 @@ export async function readNextPage(input: {
   let rows = [...input.shown];
   const appended: PostEntity[] = [];
   let page = nextListPage(rows, rows.length);
+  let reranked = false;
   for (;;) {
     let raw: PostEntity[];
     try {
       raw = await read({ ...page, limit });
     } catch (e) {
-      if (!page.asOf || !isRankingGone(e)) throw e;
+      // AT MOST ONE re-rank per call: a second 410 means the new ranking is gone too, which no
+      // further re-rank would mend - it goes to the caller, who offers the retry.
+      if (!page.asOf || !isRankingGone(e) || reranked) throw e;
+      reranked = true;
       Log.w(
         'RANKED',
         `the ranking of ${page.asOf} is gone at offset ${page.offset} - ranked anew, the rows on screen kept`

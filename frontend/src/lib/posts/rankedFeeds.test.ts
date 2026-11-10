@@ -107,6 +107,24 @@ describe('readNextPage', () => {
     warn.mockRestore();
   });
 
+  it('ranks anew at most once per read: a second 410 is thrown to the caller', async () => {
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    const shown = [row('a', { asOf: 'T1', position: 0 })];
+    const read = vi
+      .fn((_p: ListPage & { limit: number }) => Promise.resolve([] as PostEntity[]))
+      .mockRejectedValueOnce(gone())
+      // The re-rank's page is full but holds a post on screen, so the next page of it is read -
+      // and that ranking is already gone too.
+      .mockResolvedValueOnce([
+        row('a', { asOf: 'T2', position: 0 }),
+        row('x', { asOf: 'T2', position: 1 }),
+      ])
+      .mockRejectedValueOnce(gone());
+    await expect(readNextPage({ shown, limit: 2, read })).rejects.toMatchObject({ status: 410 });
+    expect(read).toHaveBeenCalledTimes(3);
+    warn.mockRestore();
+  });
+
   it('every other refusal is thrown to the caller: a 503 is not read as the end', async () => {
     const read = vi.fn(() => Promise.reject(new ApiRefusalError(503, 'RANKING_UNAVAILABLE', 'x')));
     await expect(

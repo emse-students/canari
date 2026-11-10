@@ -1723,17 +1723,26 @@ export class PostsService {
     // The stamp is read BEFORE the page is computed, so a page computed across an invalidation is
     // stored under the generation it started in and never served (`readPostListPage`). No stamp
     // (Redis unreachable) means no page is stored either.
+    // A RANKED FIRST PAGE IS NEVER CACHED: writing its snapshot IS the request. A cached one would
+    // name a snapshot the trim may already have pushed out (`RANKED_SNAPSHOTS_KEPT`), and the
+    // client's re-rank after a 410 would be handed that dead ranking again.
+    const rankedFirstPage =
+      !params.asOf && (feed === 'foryou' || (feed === 'reels' && params.ranked === true));
     let stamp: string | null = null;
     let cachedPage: unknown = undefined;
-    try {
-      const cached = (await Promise.race([
-        readPostListPage(this.redis, cacheKey, viewerUserId),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 100)),
-      ])) as { page: unknown; stamp: string };
-      stamp = cached.stamp;
-      cachedPage = cached.page;
-    } catch {
-      // Redis miss or error - fall through to DB
+    if (rankedFirstPage) {
+      this.logger.debug(`[RANKED] ${feed} first page: ranked now, never read from the list cache`);
+    } else {
+      try {
+        const cached = (await Promise.race([
+          readPostListPage(this.redis, cacheKey, viewerUserId),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 100)),
+        ])) as { page: unknown; stamp: string };
+        stamp = cached.stamp;
+        cachedPage = cached.page;
+      } catch {
+        // Redis miss or error - fall through to DB
+      }
     }
     // OUTSIDE the cache's try: only a Redis failure falls through to the database, never a failure
     // of what is served on top of the page. The stored page is what this method returned before,
@@ -1743,7 +1752,7 @@ export class PostsService {
     const rawPosts = await this.listPostRows(params);
     const safe = await this.decorateListRows(rawPosts, viewerUserId, isAdmin === true);
 
-    if (stamp !== null) {
+    if (stamp !== null && !rankedFirstPage) {
       try {
         await writePostListPage(this.redis, cacheKey, stamp, safe, PostsService.LIST_CACHE_TTL);
       } catch {
@@ -2233,14 +2242,16 @@ export class PostsService {
           `SELECT ${this.postSelectBody(bp)}
          FROM posts
          LEFT JOIN associations assoc ON assoc.id = posts."associationId"
-         WHERE posts.id = ANY(${bind(slice.picks.map((p) => p.id))}::uuid[])`,
+         WHERE posts.id = ANY(${bind(slice.picks.map((p) => p.id))}::uuid[])
+           AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
+           ${arm.filters(bind)}`,
           values
         );
         const byId = new Map(rows.map((r) => [String(r.id), r]));
         const suggested = new Set(kept.suggested);
         for (const { id, position } of slice.picks) {
           const row = byId.get(id);
-          if (!row) continue; // deleted between the two reads: it takes no place
+          if (!row) continue; // withdrawn between the two reads: it takes no place
           out.push({
             ...row,
             feedAsOf: asOf,

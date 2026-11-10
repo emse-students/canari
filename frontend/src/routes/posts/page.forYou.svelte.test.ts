@@ -195,6 +195,27 @@ describe('Pour toi on the feed page', () => {
     expect(ids.at(-1)).toBe('n1');
   });
 
+  it('a ranking gone again after its re-rank shows the retry line, never an endless re-rank', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const later = '2026-11-10T14:00:00.000000Z';
+    listPosts
+      .mockRejectedValueOnce(new ApiRefusalError(410, 'RANKING_GONE', 'gone'))
+      // The re-rank: a full page that holds only posts on screen, so its next page is read...
+      .mockResolvedValueOnce(
+        Array.from({ length: 10 }, (_, i) => ({
+          ...post(`f${i}`),
+          feedAsOf: later,
+          feedPosition: i,
+        })) as PostEntity[]
+      )
+      // ...and that ranking is gone too.
+      .mockRejectedValueOnce(new ApiRefusalError(410, 'RANKING_GONE', 'gone'));
+    await draw('foryou', forYouFull());
+    await reachBottom();
+    expect(listPosts).toHaveBeenCalledTimes(3);
+    expect(document.querySelector('[data-load-more-failed]')).not.toBeNull();
+  });
+
   it('Campus carries no suggestion', async () => {
     await draw('all', feed());
     expect(document.querySelector('[data-suggested-post]')).toBeNull();

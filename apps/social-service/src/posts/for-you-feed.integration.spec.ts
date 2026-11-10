@@ -521,11 +521,28 @@ maybe('Pour toi against PostgreSQL (feed=foryou)', () => {
     expect(names(listed)).toEqual(['F1', 'F3', 'F2']);
     expect(listed.every((r) => FOR_YOU_AS_OF_PATTERN.test(r.feedAsOf))).toBe(true);
     expect(listed.map((r) => r.feedPosition)).toEqual([0, 1, 2]);
-    // The same request is the cached page: the same ranking, not a new one.
-    expect(await ask({ limit: 3, offset: 0 })).toEqual(listed);
     const next: any[] = await ask(after(listed, 3));
     expect(names(next)).toEqual(['S1', 'F4', 'Tb']);
     expect(next[0].feedSuggested).toBe(true);
     expect(next.every((r) => r.feedAsOf === listed[0].feedAsOf)).toBe(true);
+    // A later page IS cached (its key names the ranking): the same answer.
+    expect(await ask(after(listed, 3))).toEqual(next);
+  });
+
+  it('a ranked first page is never served from the list cache: a re-rank after a 410 is a live ranking', async () => {
+    const ask = (page: Page) =>
+      service.listPosts({ feed: 'foryou', viewerUserId: 'v', ...page } as ListPostsParams);
+    const first: any[] = await ask({ limit: 3, offset: 0 });
+    // Three more first pages, each a NEW ranking (never the 30 s cached page), push `first` out.
+    const asOfs = new Set([first[0].feedAsOf]);
+    for (let i = 0; i < 3; i++) asOfs.add((await ask({ limit: 3, offset: 0 }))[0].feedAsOf);
+    expect(asOfs.size).toBe(4);
+    expect(await refusal(ask(after(first, 3)))).toEqual([410, RANKING_GONE]);
+    // The client's re-rank: a first page whose ranking exists, so its next page is served.
+    const again: any[] = await ask({ limit: 3, offset: 0 });
+    expect(names(await ask(after(again, 3)))).toEqual(['S1', 'F4', 'Tb']);
+    expect(
+      [...fake.strings.keys()].some((k) => k.includes(':foryou:') && k.includes(':3:0:'))
+    ).toBe(false);
   });
 });

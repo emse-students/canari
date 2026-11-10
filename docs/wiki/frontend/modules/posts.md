@@ -108,7 +108,7 @@ Client: `lib/posts/rankedFeeds.ts` (`nextListPage`), `buildListPostsSearchParams
   `asOf=<feedAsOf>&offset=<last feedPosition + 1>` and, below the window, `&cursor=<last
   feedCursor>` (`rankedFeeds.ts` `nextListPage`), never from the count on screen. **The window's
   slice** reads in two steps: the ids left that still pass every filter (ids only), then the full
-  rows of the first `limit` of them - a row withdrawn between two pages (deleted, hidden, blocked)
+  rows of the first `limit` of them, under the same filters again - a row withdrawn between two pages (deleted, hidden, blocked)
   takes no place, and a short page still means the end. **The tail** is a KEYSET below the cursor
   (never an OFFSET, which a withdrawn row would shift), excludes every id of the snapshot (`<> ALL`:
   a post ranked through a repost withdrawn since is not served a second time from the tail), and
@@ -120,7 +120,11 @@ Client: `lib/posts/rankedFeeds.ts` (`nextListPage`), `buildListPostsSearchParams
     rankings, or lost by Redis: a TTL key is evictable under `volatile-lru`). The client ranks anew
     (a first page, a new `asOf`), appends only the posts not on screen - a post already drawn stays
     where it is and takes its new place, so the next page starts after it - and logs a warning
-    (`Log.w('RANKED', ...)`, `readNextPage`).
+    (`Log.w('RANKED', ...)`, `readNextPage`). ONCE per read: a second 410 is thrown and shown as the
+    retry line, never an endless re-rank. And the re-rank is always a LIVE ranking: **a ranked first
+    page (no `asOf`) is never read from or written to the 30 s list cache** (`listPosts`), since a
+    cached one could name a snapshot the trim already pushed out - its snapshot write is the point of
+    the request. Later pages are cached under their `asOf` and `cursor`.
   - `503 RANKING_UNAVAILABLE` - Redis did not answer the read, or the write of a FIRST page: a first
     page whose snapshot could not be kept is never served, since its page 2 would have nothing to be
     a slice of. The feed shows "La suite n'a pas pu etre chargee" with a retry (`loadMoreFailed`),
