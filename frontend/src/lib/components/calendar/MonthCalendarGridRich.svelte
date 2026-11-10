@@ -297,10 +297,11 @@
                     ei === 0 && loneSlot !== 1 ? slotH - DAY_NUM_H : slotH,
                     SCREEN_MIN_FONT
                   )}
+                  <!-- A PENDING EVENT IS TOLD BY ITS DASHED OUTLINE AND TITLE, NEVER BY OPACITY: the
+                       50 % it wore dimmed the text with the fill (grey on dark purple, unreadable),
+                       while `fg` is already the contrast pair of this very fill. -->
                   <div
-                    class="relative flex flex-1 flex-col overflow-hidden {ev.status === 'pending'
-                      ? 'opacity-50'
-                      : ''}"
+                    class="relative flex flex-1 flex-col overflow-hidden"
                     style="{eventBgStyle(ev)} color:{fg};{ev.status === 'pending'
                       ? `outline:1.5px dashed ${fg};outline-offset:-2px;`
                       : ''}"

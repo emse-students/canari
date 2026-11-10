@@ -103,6 +103,12 @@
     <string name="notif_social_association_repost_body">Nouvelle publication</string>
     <string name="notif_social_member_repost_title">%1$s a republié une publication</string>
     <string name="notif_social_member_repost_body">Nouvelle publication</string>
+    <string name="notif_social_friend_reaction_title">%1$s a réagi à une publication</string>
+    <string name="notif_social_friend_reaction_body">Voir la publication</string>
+    <string name="notif_social_friend_comment_title">%1$s a commenté une publication</string>
+    <string name="notif_social_friend_comment_body">Voir la publication</string>
+    <string name="notif_social_campus_trend_title">Une publication fait réagir votre espace</string>
+    <string name="notif_social_campus_trend_body">Voir la publication</string>
     <string name="notif_social_repost_proposed_title">%1$s propose de relayer une publication</string>
     <string name="notif_social_repost_proposed_body">Publication à relayer</string>
     <string name="notif_social_repost_personal_requested_title">%1$s demande à relayer votre publication</string>

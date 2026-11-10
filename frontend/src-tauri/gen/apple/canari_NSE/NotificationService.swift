@@ -243,6 +243,8 @@ class NotificationService: UNNotificationServiceExtension {
     case "social_association_repost": composed = actorTitled("association_repost")
     // WP-F6: the person who reposted names the title.
     case "social_member_repost": composed = actorTitled("member_repost")
+    case "social_friend_reaction": composed = actorTitled("friend_reaction")
+    case "social_friend_comment": composed = actorTitled("friend_comment")
     case "social_repost_proposed": composed = actorTitled("repost_proposed")
     // D38b: an association asks the AUTHOR to republish their personal post.
     case "social_repost_personal_requested": composed = actorTitled("repost_personal_requested")
@@ -283,6 +285,12 @@ class NotificationService: UNNotificationServiceExtension {
     // the title, the space's name or the event's title is the body.
     case "social_booking_open": composed = actorTitled("booking_open")
     case "social_event_open": composed = actorTitled("event_open")
+    // A campus trend (engagement WP-10): nobody acted, a fixed title; the body is the post's opening.
+    case "social_campus_trend":
+      composed = (
+        Self.localized("notif.social.campus_trend.title", locale: locale),
+        arg.isEmpty ? Self.localized("notif.social.campus_trend.body", locale: locale) : arg
+      )
     // The reminder: nobody acted, a fixed title; the body is the place and the time.
     case "social_booking_reminder":
       composed = (

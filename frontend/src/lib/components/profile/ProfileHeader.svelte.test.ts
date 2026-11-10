@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import ProfileHeader from './ProfileHeader.svelte';
 import ProfileChips from './ProfileChips.svelte';
+import { readFileSync } from 'node:fs';
 
 vi.mock('$lib/utils/userAvatarCache', () => ({
   resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
@@ -113,5 +114,27 @@ describe('ProfileChips', () => {
       expect(chip.className).toContain('whitespace-nowrap');
       expect(chip.className).not.toContain('uppercase');
     }
+  });
+
+  it('isolates the avatar box so an avatar badge stacks above the story ring', () => {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(ProfileHeader, {
+      target,
+      props: { userId: 'u1', name: 'A', avatarBadge: snippet('<button data-badge>x</button>') },
+    });
+    mounted.push(() => void unmount(app));
+    flushSync();
+    const box = target.querySelector('[data-badge]')!.parentElement!;
+    expect(box.classList.contains('isolate')).toBe(true);
+    expect(box.classList.contains('relative')).toBe(true);
+  });
+
+  it('stacks the own-profile camera badge above the ring (z-10)', () => {
+    const page = readFileSync('src/routes/profile/(me)/+page.svelte', 'utf8');
+    const button = page.slice(page.indexOf('onclick={changeProfilePhoto}'));
+    expect(button.slice(0, button.indexOf('>')).replace(/\s+/g, ' ')).toMatch(
+      /absolute right-0 bottom-0 z-10 /
+    );
   });
 });

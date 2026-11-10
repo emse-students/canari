@@ -114,6 +114,37 @@ describe('PostInteractionsService.addComment notifications', () => {
     ]);
   });
 
+  it("asks friends' activity only once the reply and mention rows are written (told once, rule 7)", async () => {
+    // A follower of the writer who is answered or mentioned has a row for the post when the
+    // disclosure statement reads `post_notifications`, so they are never told twice: the order is
+    // the code's, not a race between two fire-and-forget blocks.
+    const order: string[] = [];
+    const post = {
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'parent-author', parentId: null }],
+    };
+    const { service, notifications } = makeService(post);
+    notifications.createNotification.mockImplementation((n: { type: string }) => {
+      order.push(n.type);
+      return Promise.resolve();
+    });
+    notifications.resolveMentionedUserIds.mockReturnValue(['mentioned']);
+    const manager = (service as unknown as { postRepo: { manager: { query: jest.Mock } } }).postRepo
+      .manager;
+    const routed = manager.query.getMockImplementation()!;
+    manager.query.mockImplementation((sql: string, params?: unknown[]) => {
+      // Friends' activity's ledger statement (a campus trend's names reason 'trend' instead).
+      if (sql.includes('INSERT INTO post_engagement_notices') && sql.includes("'friend'"))
+        order.push('friends');
+      return routed(sql, params);
+    });
+    await service.addComment('p1', { userId: 'reader', text: 'hello', parentId: 'parent' });
+    for (let i = 0; i < 5; i++) await flush();
+    expect(order).toEqual(['comment', 'reply', 'mention', 'friends']);
+  });
+
   it("asks the read's gate who of the mentioned may be told, as the writer, and tells only them", async () => {
     const post = { id: 'p1', authorId: 'author', associationId: null, comments: [] };
     const { service, push, notifications } = makeService(post);

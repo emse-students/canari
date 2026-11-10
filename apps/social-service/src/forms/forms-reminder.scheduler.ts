@@ -10,6 +10,7 @@ import {
   type DueOpening,
   type OpeningKind,
 } from '../openings/opening-reminders';
+import { pruneEngagementPushDays } from '../posts/engagement-push-cap';
 import { PushService } from '../push/push.service';
 import { formOpeningSoonContent, formOpenContent } from '../push/push-content';
 import { BOOKINGS_TARGET } from '../push/push-target';
@@ -293,6 +294,17 @@ export class FormReminderScheduler {
         );
     } catch (e) {
       this.logger.warn('[GC] purgeOldPostNotifications failed', e);
+    }
+  }
+
+  /** Daily at 03:05 - deletes the engagement push counters older than a week (engagement WP-8). */
+  @Cron('5 3 * * *')
+  async purgeEngagementPushDays() {
+    try {
+      const deleted = await pruneEngagementPushDays(this.reminderRepo.manager);
+      if (deleted > 0) this.logger.log(`[GC] engagement_push_days: ${deleted} deleted`);
+    } catch (e) {
+      this.logger.warn('[GC] purgeEngagementPushDays failed', e);
     }
   }
 

@@ -34,6 +34,12 @@
 "notif.social.association_repost.body" = "New post";
 "notif.social.member_repost.title" = "%@ reposted a post";
 "notif.social.member_repost.body" = "New post";
+"notif.social.friend_reaction.title" = "%@ reacted to a post";
+"notif.social.friend_reaction.body" = "See the post";
+"notif.social.friend_comment.title" = "%@ commented on a post";
+"notif.social.friend_comment.body" = "See the post";
+"notif.social.campus_trend.title" = "A post is taking off in your space";
+"notif.social.campus_trend.body" = "See the post";
 "notif.social.repost_proposed.title" = "%@ proposes a post to share";
 "notif.social.repost_proposed.body" = "A post to share";
 "notif.social.repost_personal_requested.title" = "%@ asks to share your post";

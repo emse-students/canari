@@ -576,8 +576,8 @@
         href={resolve('/admin/agenda')}
         class="border-amber-warn/30 bg-amber-warn/10 hover:border-amber-warn/40 flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 transition-colors"
       >
-        <span class="text-accent-text flex items-center gap-2 text-sm font-semibold">
-          <ShieldAlert size={18} />
+        <span class="text-accent-text flex min-w-0 items-center gap-2 text-sm font-semibold">
+          <ShieldAlert size={18} class="shrink-0" />
           {m.calendar_moderate_label()}
           {#if pendingCount > 0}
             <span class="text-2xs text-on-accent bg-accent rounded-full px-2 py-0.5 font-bold">
@@ -585,7 +585,9 @@
             </span>
           {/if}
         </span>
-        <span class="text-accent-text text-xs">{m.calendar_moderate_open()} →</span>
+        <span class="text-accent-text shrink-0 text-xs whitespace-nowrap"
+          >{m.calendar_moderate_open()} →</span
+        >
       </a>
     {/if}
 

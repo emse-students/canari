@@ -717,8 +717,10 @@
         onOpenNewChat={() => openNewChatModal('contact')}
       />
     {:else}
+      <!-- A plain header, no glass box of its own: `.glass-chrome` is unlayered, so its full border and square corners beat the utilities and cut into the panel's rounded corner on pc and ran to the screen's edge on a phone. Same surface as the panel, one bottom rule, the 16px gutter kept. -->
       <div
-        class="glass-chrome sticky top-0 z-10 flex items-center justify-between rounded-none border-x-0 border-t-0 border-white/50 px-4 py-3 shadow-none dark:border-white/10"
+        data-community-header
+        class="bg-cn-surface sticky top-0 z-10 flex items-center justify-between border-b border-white/50 px-4 py-3 dark:border-white/10"
       >
         <h2 class="font-display text-text-main truncate text-lg font-bold">
           <EmojiText text={selectedCommunityWorkspace?.name || m.sidebar_communities_fallback()} />

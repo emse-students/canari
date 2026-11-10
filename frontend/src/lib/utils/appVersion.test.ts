@@ -82,6 +82,7 @@ describe('parseServerVersionInfo', () => {
       maintenance: { enabled: true, message: 'Pause' },
       callsMode: 'off',
       livesMode: 'off',
+      liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
       oidcPkce: false,
       presencePost: false,
@@ -220,6 +221,7 @@ describe('buildAppVersionCheckResult', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'audio',
       livesMode: 'on',
+      liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
       oidcPkce: true,
       presencePost: false,
@@ -241,6 +243,7 @@ describe('buildAppVersionCheckResult', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
       livesMode: 'off',
+      liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
       oidcPkce: false,
       presencePost: false,
@@ -310,6 +313,7 @@ describe('fetchServerAppVersionReliable', () => {
       maintenance: { enabled: false, message: null },
       callsMode: 'off',
       livesMode: 'off',
+      liveReplaysMode: 'off',
       checkpointSkipMode: 'off',
       oidcPkce: false,
       presencePost: false,
@@ -468,5 +472,27 @@ describe('buildUpdateTarget', () => {
     expect(buildUpdateTarget(null, android, 'sideload').url).toBe(
       'https://github.com/emse-students/canari/releases/latest/download/app-universal-release.apk'
     );
+  });
+});
+
+describe('the live replays switch of /api/version', () => {
+  it.each(['off', 'on'] as const)('reads %s', (mode) => {
+    expect(
+      parseServerVersionInfo({ version: '1.2.3', liveReplays: { mode } })?.liveReplaysMode
+    ).toBe(mode);
+  });
+  it.each([undefined, 'on', { mode: 'ON' }, { mode: true }])(
+    'reads %j as CLOSED - a switch that cannot be read fails closed',
+    (raw) => {
+      expect(parseServerVersionInfo({ version: '1.2.3', liveReplays: raw })?.liveReplaysMode).toBe(
+        'off'
+      );
+    }
+  );
+  it('survives the cache round trip', () => {
+    const info = parseServerVersionInfo({ version: '1.2.3', liveReplays: { mode: 'on' } });
+    const cached = JSON.parse(JSON.stringify(serverVersionInfoToWire(info!))) as unknown;
+    expect(parseServerVersionInfo(cached)).toEqual(info);
+    expect(info?.liveReplaysMode).toBe('on');
   });
 });

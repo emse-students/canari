@@ -11,6 +11,7 @@
 import { pinnedForViewerSql } from './space-pins';
 import {
   BadRequestException,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -33,6 +34,7 @@ import {
   SINGLE_PHOTO_POST_SQL,
 } from './full-screen-post-sql';
 import { republishedFeedAtSql } from './republished-feed-sql';
+import { derivePosterKey } from '../lives/live-poster-key';
 
 const NOW = Date.parse('2026-11-01T12:00:00Z');
 const BLOB = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -52,6 +54,8 @@ function makeService(opts: {
   claim?: () => Promise<{ refused: string[] }>;
   purge?: () => Promise<Record<string, string>>;
   saveFails?: boolean;
+  /** A working page cache (MGET/SETEX over a map) - off by default, so every list reads the database. */
+  cache?: Map<string, string>;
 }) {
   const saved: Array<Record<string, unknown>> = [];
   const queries: Array<{ sql: string; params: unknown[] }> = [];
@@ -83,7 +87,17 @@ function makeService(opts: {
   const service = new PostsService(
     postRepo as unknown as Repository<Post>,
     {
-      setex: jest.fn(),
+      setex: jest.fn((key: string, _ttl: number, value: string) => {
+        opts.cache?.set(key, value);
+        return Promise.resolve('OK');
+      }),
+      ...(opts.cache
+        ? {
+            mget: jest.fn((...keys: string[]) =>
+              Promise.resolve(keys.flat().map((k) => opts.cache!.get(k) ?? null))
+            ),
+          }
+        : {}),
       get: jest.fn(),
       deleteByPattern: jest.fn(() => Promise.resolve(0)),
       incr: jest.fn(() => Promise.resolve(1)),
@@ -492,6 +506,161 @@ describe('reads exclude a reel past its month', () => {
       kind: 'reel',
       durationMs: 5000,
     });
+  });
+});
+
+describe('a live replay row, as served: its cover and the server clock (docs/wiki/live-replays.md)', () => {
+  const LIVE = '11111111-1111-4111-8111-111111111111';
+  const KEY = 'ab'.repeat(32);
+  const SERVER_NOW = new Date('2026-11-01T12:00:05Z');
+  /** The facts read: the live's poster and its key (the previous, plaintext format opens as-is). */
+  const answerFacts = (posterName: string | null) =>
+    jest.fn((sql: string) => {
+      if (sql.includes('unnest($1::uuid[])')) {
+        return Promise.resolve([
+          {
+            liveId: LIVE,
+            serverNow: SERVER_NOW,
+            posterName,
+            posterAgeMs: 1234,
+            liveKey: KEY,
+            liveKeyCiphertext: null,
+            liveKeyVersion: null,
+          },
+        ]);
+      }
+      if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
+      return Promise.resolve([]);
+    });
+  const replay = {
+    id: 'r1',
+    authorId: 'alice',
+    kind: 'replay',
+    durationMs: 60_000,
+    expiresAt: new Date(NOW + DAY_MS),
+    liveId: LIVE,
+    associationId: null,
+    hiddenByModeration: false,
+    scheduledAt: null,
+  } as unknown as Post;
+
+  it('serves the live last preview, its POSTER key (never the live key) and serverNow by id', async () => {
+    const { service, postRepo } = makeService({ existing: replay });
+    postRepo.manager.query = answerFacts('poster-1');
+    const served = await service.getById('r1', { viewerId: 'bob', withReplays: true });
+    expect(served).toMatchObject({
+      kind: 'replay',
+      poster: { name: 'poster-1', ageMs: 1234 },
+      posterKey: derivePosterKey(KEY, LIVE),
+      serverNow: SERVER_NOW,
+    });
+    expect(JSON.stringify(served)).not.toContain(KEY);
+  });
+
+  it('serves no cover for a live that stored no preview, and still the clock', async () => {
+    const { service, postRepo } = makeService({ existing: replay });
+    postRepo.manager.query = answerFacts(null);
+    await expect(
+      service.getById('r1', { viewerId: 'bob', withReplays: true })
+    ).resolves.toMatchObject({ poster: null, posterKey: null, serverNow: SERVER_NOW });
+  });
+
+  it('adds the facts to a listed replay AFTER the page is cached, fresh on every serve from the cache', async () => {
+    const cache = new Map<string, string>();
+    const { service, postRepo } = makeService({ cache });
+    let listReads = 0;
+    let factsAnswer: (sql: string) => Promise<any[]> = answerFacts('poster-1');
+    postRepo.manager.query = jest.fn((sql: string) => {
+      if (sql.includes('posts."liveId", posts."studentsOnly"')) {
+        listReads++;
+        return Promise.resolve([
+          { id: 'r1', kind: 'replay', liveId: LIVE, authorId: 'alice', mentions: '' },
+          { id: 'p2', kind: 'post', liveId: null, authorId: 'alice', mentions: '' },
+        ]);
+      }
+      return factsAnswer(sql);
+    });
+    const ask = () =>
+      service.listPosts({
+        limit: 10,
+        offset: 0,
+        feed: 'all',
+        viewerUserId: 'bob',
+        withReplays: true,
+      });
+
+    const first = await ask();
+    expect(first[0]).toMatchObject({
+      liveId: LIVE,
+      poster: { name: 'poster-1', ageMs: 1234 },
+      posterKey: derivePosterKey(KEY, LIVE),
+      serverNow: SERVER_NOW,
+    });
+    expect(first[1]).not.toHaveProperty('serverNow');
+    expect(first[1]).not.toHaveProperty('posterKey');
+    // The STORED page carries none of the facts: no clock, no cover, no key.
+    expect(cache.size).toBe(1);
+    const stored = [...cache.values()][0];
+    expect(stored).toContain(LIVE);
+    for (const word of ['serverNow', 'posterKey', '"poster"', derivePosterKey(KEY, LIVE)]) {
+      expect(stored).not.toContain(word);
+    }
+
+    // Served from the cache: the list is not read again, and the clock is THIS read's.
+    const later = new Date(SERVER_NOW.getTime() + 20_000);
+    factsAnswer = (sql) =>
+      answerFacts('poster-1')(sql).then((rows) =>
+        sql.includes('unnest($1::uuid[])') ? rows.map((r) => ({ ...r, serverNow: later })) : rows
+      );
+    const second = await ask();
+    expect(listReads).toBe(1);
+    expect(second[0]).toMatchObject({ posterKey: derivePosterKey(KEY, LIVE), serverNow: later });
+
+    // The facts read fails on a cache hit: the rows go out without cover or clock, said at ERROR,
+    // and the page is neither recomputed nor failed.
+    const errors = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+    factsAnswer = (sql) =>
+      sql.includes('unnest($1::uuid[])')
+        ? Promise.reject(new Error('connection reset'))
+        : Promise.resolve([]);
+    const third = await ask();
+    expect(listReads).toBe(1);
+    expect(third).toHaveLength(2);
+    expect(third[0]).toMatchObject({ id: 'r1', liveId: LIVE });
+    expect(third[0]).not.toHaveProperty('serverNow');
+    expect(third[0]).not.toHaveProperty('posterKey');
+    expect(
+      errors.mock.calls.some(
+        (c) => String(c[0]).includes('[LIVE_REPLAY]') && String(c[0]).includes('connection reset')
+      )
+    ).toBe(true);
+  });
+
+  it('reads nothing for a page without a replay', async () => {
+    const { service, postRepo, queries } = makeService({});
+    postRepo.manager.query = jest.fn((sql: string, params: unknown[] = []) => {
+      queries.push({ sql, params });
+      if (sql.includes('posts."liveId", posts."studentsOnly"')) {
+        return Promise.resolve([{ id: 'p2', kind: 'post', liveId: null, mentions: '' }]);
+      }
+      return Promise.resolve([]);
+    });
+    await service.listPosts({ limit: 10, offset: 0, feed: 'all', viewerUserId: 'bob' });
+    expect(queries.some((q) => q.sql.includes('unnest($1::uuid[])'))).toBe(false);
+  });
+
+  it('serves no cover for a preview name without its time - never an age of 0', async () => {
+    const { service, postRepo } = makeService({ existing: replay });
+    const facts = answerFacts('poster-1');
+    postRepo.manager.query = jest.fn((sql: string) =>
+      (facts(sql) as Promise<any[]>).then((rows) =>
+        sql.includes('unnest($1::uuid[])') ? rows.map((r) => ({ ...r, posterAgeMs: null })) : rows
+      )
+    );
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    await expect(
+      service.getById('r1', { viewerId: 'bob', withReplays: true })
+    ).resolves.toMatchObject({ poster: null, posterKey: null, serverNow: SERVER_NOW });
   });
 });
 

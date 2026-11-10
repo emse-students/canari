@@ -33,6 +33,8 @@ import {
   rowsReleasedBy,
 } from './comment-removal';
 import { forgetCommentNotices, writeComments } from './comment-write';
+import { announceFriendActivity, type FriendAct } from './friend-activity';
+import { announceCampusTrend } from './campus-trend';
 import { COMMENT_DELETE_FORBIDDEN, COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredPost } from './reel.constants';
@@ -137,7 +139,37 @@ export class PostInteractionsService {
       })();
     }
 
+    // FRIENDS' ACTIVITY (engagement WP-9): a NEW reaction only - changing the emoji is not news.
+    if (isNew) this.tellFriends(post, userId, 'reaction');
+
     return { ok: true, reactions: post.reactions };
+  }
+
+  /**
+   * Fire-and-forget: tells `actorId`'s followers what they just did on `post`, under the disclosure
+   * rule (`friend-activity.ts`). The act is already stored; a failure is logged and nothing else.
+   */
+  private tellFriends(
+    post: Pick<Post, 'id' | 'markdown'>,
+    actorId: string,
+    act: FriendAct,
+    comment?: StoredComment
+  ): void {
+    void announceFriendActivity(
+      { manager: this.postRepo.manager, notifications: this.notifications },
+      { post, actorId, act, comment }
+    ).catch((e: unknown) => {
+      this.logger.warn(
+        `[FRIEND_ACTIVITY] ${act} on post=${post.id.slice(0, 8)} not told: ${String(e)}`
+      );
+    });
+    // CAMPUS TRENDS (engagement WP-10): this write may be the one that makes the post take off.
+    void announceCampusTrend(
+      { manager: this.postRepo.manager, notifications: this.notifications },
+      post.id
+    ).catch((e: unknown) => {
+      this.logger.warn(`[TREND] post=${post.id.slice(0, 8)} not told: ${String(e)}`);
+    });
   }
 
   /** Removes the user's reaction from a post. */
@@ -383,7 +415,13 @@ export class PostInteractionsService {
           }
         }
       }
-    })();
+    })().finally(() => {
+      // FRIENDS' ACTIVITY (engagement WP-9), only once the comment's own notices are written: a
+      // follower of the writer whom this comment answers or mentions has a row for the post by
+      // then, so rule 7 tells them once - the reply or the mention, never also "X a commente". Rule
+      // 8 - only a comment in its writer's own name - is asked of the stored comment inside.
+      this.tellFriends(post, data.userId, 'comment', comment);
+    });
 
     const [served] = await this.identity.serve([comment], post, {
       viewerId: data.userId,

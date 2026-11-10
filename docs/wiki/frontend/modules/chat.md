@@ -5410,3 +5410,7 @@ admin queue shows its text while that version is shown, none once it changed
 ([moderation-and-blocking](../../moderation-and-blocking.md)). A moderator reverses one by clearing it
 on the screen. An MLS group's nicknames reach no server, so they have no report: the target resets
 theirs, or blocks.
+
+### Channel access is a choice, not a switch (2026-11-10)
+
+Channel settings > Accès draws visibility as a two-option `SegmentedControl` - **Public** (every community member) and **Restreint** (only the allowed members) - with both one-line explanations listed under it and the current one emphasised. It replaces a `role=switch` that was ON for *private*: a public channel therefore showed "Canal public" beside a grey, OFF track, which read as "public is disabled" (owner report, a dark pattern). The binding was NOT wrong (`accessIsPrivate` is the server's `isPrivate`, the card only renders after the load); the control's polarity was. Decision by the lead, reversible. A member without `channel.manage` sees the explanations only. Picking the current option writes nothing; picking the other one asks the same confirmation as before.
