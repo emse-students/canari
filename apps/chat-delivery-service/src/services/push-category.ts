@@ -1,3 +1,5 @@
+import { keysKnownBy } from '../utils/app-version';
+
 /**
  * THE CATEGORIES A USER MAY SWITCH OFF, AND WHICH PUSH BELONGS TO WHICH - the one place either is written.
  *
@@ -50,6 +52,35 @@ export const NOTIFICATION_CATEGORIES = [
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+
+/**
+ * THE FIRST BUILD WHOSE SETTINGS SCREEN NAMES EACH CATEGORY (`null` = every admitted build), read
+ * from the release tags (`frontend/src/lib/notifications/categories.ts` at each tag). A build below a
+ * category's floor cannot draw its switch, so its save cannot be a choice about it: the PUT keeps
+ * what is stored for every category the caller cannot name (`categoriesNameableBy`). A NEW CATEGORY
+ * TAKES THE VERSION OF THE RELEASE THAT ADDS ITS SWITCH - the record type makes a missing one a
+ * compile error. Twin rule of social-service's `notification-client-floor.ts` (docs/wiki/
+ * legacy-compatibility.md, "The client floor of every notification type").
+ */
+export const CATEGORY_MIN_CLIENT: Readonly<Record<NotificationCategory, string | null>> = {
+  messages: null,
+  channels: null,
+  posts: null,
+  comments: null,
+  mentions: null,
+  reactions: null,
+  events: null,
+  forms: null,
+  follows: '1.5.1',
+  bookings: '1.5.1',
+  birthdays: '1.6.9',
+  suggestions: '1.6.10',
+};
+
+/** The categories a caller running `clientVersion` can name (undefined = a build up to 1.6.9). */
+export function categoriesNameableBy(clientVersion: string | undefined): NotificationCategory[] {
+  return keysKnownBy(CATEGORY_MIN_CLIENT, clientVersion);
+}
 
 /** True when `value` is one of the closed set - the only thing a write may name. */
 export function isNotificationCategory(value: unknown): value is NotificationCategory {

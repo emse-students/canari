@@ -3,6 +3,7 @@ import { assertAnsweredByApi } from '$lib/utils/apiJson';
 import { deliveryUrl } from '$lib/utils/apiUrl';
 import { channelService } from '$lib/services/ChannelService';
 import { Log } from '$lib/utils/Log';
+import { withClientVersionHeader } from '$lib/utils/appVersion';
 import { isNotificationCategory, type NotificationCategory } from './categories';
 import {
   isConversationNotificationLevel,
@@ -11,11 +12,19 @@ import {
 
 const PATH = '/api/mls/notification-preferences';
 const GROUP_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The shape of a category id: what an id this build does not know must look like to be kept. */
+const CATEGORY_ID_RE = /^[a-z][a-z_]{0,63}$/;
 
 /** What the account's notification preferences read answers. */
 export interface NotificationPreferencesSnapshot {
   /** The categories switched off. */
   disabled: NotificationCategory[];
+  /**
+   * Switched-off ids THIS BUILD DOES NOT KNOW - a category added after it (a newer server). It draws
+   * no switch for them, so it has no choice to make about them: they are kept as read and sent back
+   * on every save, so a save from here never switches back on what another device switched off.
+   */
+  unknownDisabled: string[];
   /** Every private conversation made quieter than `all`, keyed by group id (absent = `all`). */
   groupLevels: Record<string, ConversationNotificationLevel>;
   /**
@@ -35,7 +44,15 @@ export async function fetchNotificationPreferences(): Promise<NotificationPrefer
     groupLevels?: unknown;
     groupCalls?: unknown;
   };
-  const disabled = Array.isArray(body.disabled) ? body.disabled.filter(isNotificationCategory) : [];
+  const disabledIds: unknown[] = Array.isArray(body.disabled) ? body.disabled : [];
+  const disabled = disabledIds.filter(isNotificationCategory);
+  const unknownDisabled = disabledIds.filter(
+    (id): id is string =>
+      typeof id === 'string' && !isNotificationCategory(id) && CATEGORY_ID_RE.test(id)
+  );
+  if (unknownDisabled.length) {
+    Log.d(`notificationPreferences.fetch keeps ids this build does not know: ${unknownDisabled}`);
+  }
   const groupLevels: Record<string, ConversationNotificationLevel> = {};
   if (body.groupLevels && typeof body.groupLevels === 'object') {
     for (const [groupId, level] of Object.entries(body.groupLevels)) {
@@ -52,7 +69,7 @@ export async function fetchNotificationPreferences(): Promise<NotificationPrefer
       if (GROUP_ID_RE.test(groupId) && typeof allowed === 'boolean') groupCalls[groupId] = allowed;
     }
   }
-  return { disabled, groupLevels, groupCalls };
+  return { disabled, unknownDisabled, groupLevels, groupCalls };
 }
 
 /**
@@ -97,17 +114,21 @@ export async function saveGroupNotificationLevel(
 }
 
 /**
- * Replaces the account's disabled set on the server, which applies it before every push. Throws on
- * any non-2xx answer, and `NotFromApiError` on a 2xx that is not the API's JSON.
+ * Replaces the account's disabled set on the server, which applies it before every push. The ids
+ * this build does not know (`unknownDisabled`, as read) go back unchanged, and the request NAMES THIS
+ * BUILD (`X-Canari-Client-Version`): the server keeps the stored choice of any category the build
+ * cannot name, so neither side alone has to be right. Throws on any non-2xx answer, and
+ * `NotFromApiError` on a 2xx that is not the API's JSON.
  */
 export async function saveDisabledCategories(
-  disabled: readonly NotificationCategory[]
+  disabled: readonly NotificationCategory[],
+  unknownDisabled: readonly string[] = []
 ): Promise<void> {
-  Log.d('notificationPreferences.save', disabled);
+  Log.d('notificationPreferences.save', { disabled, unknownDisabled });
   const res = await apiFetch(`${deliveryUrl()}${PATH}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ disabled }),
+    headers: withClientVersionHeader({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ disabled: [...disabled, ...unknownDisabled] }),
   });
   if (!res.ok) throw new Error(`notification-preferences ${res.status}`);
   assertAnsweredByApi(res, `PUT ${PATH}`);

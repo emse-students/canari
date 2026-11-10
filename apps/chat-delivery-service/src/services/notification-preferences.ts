@@ -143,15 +143,37 @@ export async function writeGroupCallsAllowed(
   return (result.affected ?? 0) > 0;
 }
 
-/** Replaces the account's disabled set. Unknown ids are the caller's to refuse. */
+/**
+ * Replaces the account's disabled set WITH WHAT THE CALLER CAN NAME, and KEEPS the stored choice for
+ * every category in `keep` - the ones the caller's build draws no switch for (`categoriesNameableBy`):
+ * a `1.6.9` phone saving its switches must not switch "Suggestions" back on, a choice it never
+ * showed. ONE statement (`INSERT ... ON CONFLICT DO UPDATE`), so two saves at once each merge
+ * against the row the other committed - never a read, then a write over a newer row. Unknown ids
+ * are the caller's to refuse. Answers the set now stored.
+ */
 export async function writeDisabledCategories(
   manager: EntityManager,
   userId: string,
-  disabled: readonly NotificationCategory[]
-): Promise<void> {
-  await manager.upsert(
-    NotificationPreference,
-    { userId, disabledCategories: [...new Set(disabled)] },
-    { conflictPaths: ['userId'] }
-  );
+  disabled: readonly NotificationCategory[],
+  keep: readonly NotificationCategory[] = []
+): Promise<NotificationCategory[]> {
+  const rows = (await manager.query(
+    `INSERT INTO notification_preference ("userId", "disabledCategories", "updatedAt")
+     VALUES ($1, $2::jsonb, now())
+     ON CONFLICT ("userId") DO UPDATE SET
+       "disabledCategories" = (
+         SELECT COALESCE(jsonb_agg(c ORDER BY c), '[]'::jsonb) FROM (
+           SELECT jsonb_array_elements_text(EXCLUDED."disabledCategories") AS c
+           UNION
+           SELECT c FROM jsonb_array_elements_text(notification_preference."disabledCategories") c
+            WHERE c = ANY($3::text[])
+         ) merged
+       ),
+       "updatedAt" = now()
+     RETURNING "disabledCategories" AS disabled`,
+    // Sorted here as the merge sorts, so the stored order never depends on which path wrote it.
+    [userId, JSON.stringify([...new Set(disabled)].sort()), [...new Set(keep)]]
+  )) as Array<{ disabled: unknown }>;
+  const stored = rows[0]?.disabled;
+  return (Array.isArray(stored) ? stored : []).filter(isNotificationCategory);
 }

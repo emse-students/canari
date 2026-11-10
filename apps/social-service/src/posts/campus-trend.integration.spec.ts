@@ -278,14 +278,39 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     expect(await announceCampusTrend({ manager, notifications }, P(2))).toBeGreaterThan(0);
   });
 
-  it('none after 24 hours, none for a hidden post or a reel', async () => {
+  it('none after 24 hours, none for a reel; a hidden post past it is stamped and told to nobody', async () => {
     await post(P(3), 'a', { reactions: reactors(T + 2), hoursAgo: 25 });
     await post(P(4), 'a', { reactions: reactors(T + 2), hidden: true });
     await post(P(5), 'a', { reactions: reactors(T + 2), kind: 'reel' });
     for (const id of [P(3), P(4), P(5)]) {
       expect(await announceCampusTrend({ manager, notifications }, id)).toBe(0);
-      expect(await stampOf(id)).toBeNull();
+      expect(await told(id)).toEqual([]);
     }
+    expect(await stampOf(P(3))).toBeNull();
+    expect(await stampOf(P(5))).toBeNull();
+    // Stamped: a restore can never announce it on a level read (review of #3312, H1).
+    expect(await stampOf(P(4))).not.toBeNull();
+  });
+
+  it('a post that took off while hidden is never announced once restored (H1)', async () => {
+    await post(P(22), 'a', { reactions: reactors(T - 1), hidden: true });
+    expect(await announceCampusTrend({ manager, notifications }, P(22))).toBe(0);
+    await react(P(22), `e${T - 1}`);
+    expect(await announceCampusTrend({ manager, notifications }, P(22))).toBe(0);
+    expect(await stampOf(P(22))).not.toBeNull();
+    await q(`UPDATE posts SET "hiddenByModeration" = false WHERE id = $1`, [P(22)]);
+    await react(P(22), `e${T}`);
+    expect(await announceCampusTrend({ manager, notifications }, P(22))).toBe(0);
+    expect(await told(P(22))).toEqual([]);
+  });
+
+  it('a post restored BELOW the threshold is announced at its real crossing after it', async () => {
+    await post(P(23), 'a', { reactions: reactors(T - 2), hidden: true });
+    expect(await announceCampusTrend({ manager, notifications }, P(23))).toBe(0);
+    await q(`UPDATE posts SET "hiddenByModeration" = false WHERE id = $1`, [P(23)]);
+    await react(P(23), `e${T - 2}`);
+    await react(P(23), `e${T - 1}`);
+    expect(await announceCampusTrend({ manager, notifications }, P(23))).toBe(4);
   });
 
   it("an association's post: its space is told, a reader through a read grant is not", async () => {
@@ -351,9 +376,12 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     await post(P(11), 'a', { reactions: reactors(T + 2) });
     await unrecorded(P(11));
     expect(await announceCampusTrend({ manager, notifications }, P(11))).toBe(0);
+    // Stamped at that first evaluation, told to nobody: a rollback to 1.6.9 finds it stamped (H2).
+    const stamp = await stampOf(P(11));
+    expect(stamp).not.toBeNull();
     await react(P(11), `e${T + 2}`);
     expect(await announceCampusTrend({ manager, notifications }, P(11))).toBe(0);
-    expect(await stampOf(P(11))).toBeNull();
+    expect(await stampOf(P(11))).toEqual(stamp);
     expect(await told(P(11))).toEqual([]);
     // Published before the rule BELOW the threshold: recorded at its first evaluation, then a real
     // crossing is announced.
@@ -370,7 +398,9 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     await q(`UPDATE posts SET "trendEngagedSeen" = $2 WHERE id = $1`, [P(13), T]);
     await react(P(13), `e${T}`);
     expect(await announceCampusTrend({ manager, notifications }, P(13))).toBe(0);
-    expect(await stampOf(P(13))).toBeNull();
+    // Stamped silently: past the threshold, and never announced later.
+    expect(await stampOf(P(13))).not.toBeNull();
+    expect(await told(P(13))).toEqual([]);
   });
 
   it('records the count it read at every evaluation, and writes nothing when it did not change', async () => {

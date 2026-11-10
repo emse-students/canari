@@ -466,6 +466,15 @@ The unknown-type row above is a SIGNAL that this rule failed, never the path.
 - **Not at the WRITE**: the inbox row is written for every recipient, whatever their device - a reader
   has several devices of several builds, and the row is drawn on the next read by whichever device
   reads it, an updated one included.
+- **The same rule for the notification CATEGORIES** (review of #3312, D1): a build draws a switch only
+  for the categories it knows, so its save of the switches is no choice about the others. chat-delivery
+  holds `CATEGORY_MIN_CLIENT` (`services/push-category.ts`, the first release drawing each switch,
+  read from the tags) and `PUT mls/notification-preferences` keeps the STORED choice of every category
+  the caller's build cannot name (`categoriesNameableBy`, the same header, none = a build up to 1.6.9,
+  through the shared `keysKnownBy` of `utils/app-version.ts`), merged in one `INSERT ... ON CONFLICT DO
+  UPDATE`. From `1.6.10` the client also keeps the switched-off ids it does not know and sends them
+  back (`preferencesApi.ts`), so either side alone suffices. A new category takes the version of the
+  release that adds its switch; the record type makes a missing floor a compile error.
 **Built and waiting on this floor (2026-10-22): `form_paid_over_capacity`**, the organiser alert for a
 payment that landed on a full form ([forms](frontend/modules/forms.md#the-organiser-is-told-when-a-payment-lands-over-capacity-d3-built-2026-10-22-switched-off)).
 **Step 1 is MET (2026-10-29):** production's `minClientVersion` was raised from `1.2.7` to `1.2.9` by the

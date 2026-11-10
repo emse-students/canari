@@ -34,43 +34,53 @@ export const TREND_WINDOW_HOURS = 24;
 const PARIS_DAY_SQL = `(now() AT TIME ZONE 'Europe/Paris')::date`;
 
 /**
- * THE CROSSING, STAMPED ONCE (`$1` the post): the one statement that answers "did THIS write make
- * the post take off". A post takes off at the evaluation that finds its engaged count AT OR ABOVE
- * {@link TREND_THRESHOLD} when the count RECORDED ON THE POST by the previous evaluation
- * (`"trendEngagedSeen"`, migration 161) was BELOW it - a crossing observed, never a level read. Every
- * evaluation records the count it read, and a post is born with 0 (the column's default: no account
- * has engaged with a post that is being inserted).
+ * THE EVALUATION (`$1` the post): the one statement that answers "did THIS write make the post take
+ * off". Two answers, kept apart since the review of #3312:
  *
- * WHY A CROSSING AND NOT A LEVEL (2026-11-10). The first version stamped any post AT OR ABOVE the
- * threshold. When `1.6.9` deployed, every post of the previous 24 hours already past 4 took off at
- * its next reaction - five posts in eight minutes, 2483 notifications. With the recorded count:
+ * - THE STAMP (`"trendAnnouncedAt"`) is written at the first evaluation that finds the engaged count
+ *   AT OR ABOVE {@link TREND_THRESHOLD} - a level, whatever came before, a hidden post included. A
+ *   stamped post is never evaluated again, so the stamp means "this post is past the threshold and
+ *   will never be announced from now on".
+ * - THE ANNOUNCEMENT (`crossed`) is made only when that stamp is a CROSSING OBSERVED: the count
+ *   RECORDED by the previous evaluation (`"trendEngagedSeen"`, migration 161, read as `old.` - the row
+ *   version this UPDATE replaced, under its lock) was BELOW the threshold, and the post is not hidden.
+ *   A post is born with 0 (the column's default: nobody has engaged with a post being inserted).
+ *
+ * WHY (2026-11-10). The first version announced on a level: when `1.6.9` deployed, every post of the
+ * previous 24 hours already past 4 took off at its next reaction - five posts in eight minutes, 2483
+ * notifications. Now:
  * - a post that existed before the rule has NO recorded count (`NULL`): its first evaluation records
- *   one and stamps nothing (`NULL < T` is not true), so a deploy announces no backlog, ever;
- * - a CHANGE of the threshold announces nothing either: a post recorded at 9 that reads 10 after the
- *   constant moved from 10 to 9 has crossed nothing under the new rule (`9 < 9` is false);
- * - concurrent writes cannot hide a crossing: the count is re-read under the row lock, so whichever
- *   evaluation runs first after the count passed the threshold finds the last recorded one below it.
+ *   one, and if it is already past the threshold it is STAMPED SILENTLY - so a deploy announces no
+ *   backlog, ever, and a later rollback to `1.6.9` (which announces on a level any unstamped post)
+ *   finds it stamped (the rest: the pre-rollback statement in docs/wiki/engagement.md);
+ * - a HIDDEN post past the threshold is stamped silently too, so a moderator's restore cannot announce
+ *   it on a level read: what took off while nobody could see it is not news;
+ * - a CHANGE of the threshold announces nothing: an unstamped post's recorded count is below the old
+ *   threshold; lowered to `t`, a post recorded at or above `t` is stamped silently at its next write;
+ * - concurrent writes cannot hide a crossing: the row lock orders them, `old.` is the version each one
+ *   replaced, and `WHERE "trendAnnouncedAt" IS NULL` lets exactly one stamp through (the
+ *   `lives."announcedAt"` pattern).
  *
- * The stamp is still the idempotence - `WHERE "trendAnnouncedAt" IS NULL`, so of two concurrent
- * writes the row lock lets exactly one through (the `lives."announcedAt"` pattern); the 24-hour bound
- * decides eligibility only, read from the database's clock. Only a published post, not hidden, not a
- * reel (CanaReels is its own viewer). A write that changes no count updates nothing.
+ * The 24-hour bound decides eligibility only, read from the database's clock. Only a published post,
+ * not a reel (CanaReels is its own viewer). A write that changes no count updates nothing.
  *
- * Answers one row per evaluated post: `crossed` says whether THIS evaluation stamped it.
+ * Answers one row per evaluated post: `crossed` says whether THIS evaluation announces it.
  */
 export const EVALUATE_TREND_SQL = `UPDATE posts SET
        "trendEngagedSeen" = ${engagedAccountsSql('posts')},
-       "trendAnnouncedAt" = CASE WHEN "trendEngagedSeen" < ${TREND_THRESHOLD}
-                                  AND ${engagedAccountsSql('posts')} >= ${TREND_THRESHOLD}
+       "trendAnnouncedAt" = CASE WHEN ${engagedAccountsSql('posts')} >= ${TREND_THRESHOLD}
                              THEN now() END
  WHERE id = $1::uuid
    AND "trendAnnouncedAt" IS NULL
    AND kind = 'post'
-   AND NOT COALESCE("hiddenByModeration", false)
    AND ("scheduledAt" IS NULL OR "scheduledAt" <= now())
    AND "publishedAt" > now() - make_interval(hours => ${TREND_WINDOW_HOURS})
    AND "trendEngagedSeen" IS DISTINCT FROM ${engagedAccountsSql('posts')}
-RETURNING id, markdown, images, "trendAnnouncedAt" IS NOT NULL AS crossed`;
+RETURNING id, markdown, images,
+          COALESCE(new."trendAnnouncedAt" IS NOT NULL
+                   AND old."trendEngagedSeen" < ${TREND_THRESHOLD}
+                   AND NOT COALESCE(new."hiddenByModeration", false), false) AS crossed,
+          new."trendAnnouncedAt" IS NOT NULL AS stamped`;
 
 /**
  * WHO MAY BE TOLD (the post of the `stamped` CTE, {@link campusTrendSql}): everyone who sees the post
@@ -120,18 +130,21 @@ RETURNING "recipientId"`;
  * {@link EVALUATE_TREND_SQL} as a data-modifying CTE that {@link campusTrendLedgerSql} reads, so the
  * stamp that says "this post was announced" and the rows that say "these readers were told" commit
  * together or not at all - a failure between two statements would leave a stamped post that nobody
- * was told of, for ever. Answers the stamped post's text and media (no row when this write did not
- * cross), how many readers were eligible, and the readers told.
+ * was told of, for ever. Answers ONE row: whether this write announced the post (`announced`, then
+ * its text and media), whether it stamped it WITHOUT an announcement (`silent`: past the threshold
+ * with no crossing seen), how many readers were eligible, and the readers told.
  */
 export function campusTrendSql(): string {
   return `WITH evaluated AS (${EVALUATE_TREND_SQL}),
 stamped AS (SELECT id, markdown, images FROM evaluated WHERE crossed),
 candidates AS (${campusTrendCandidatesSql()}),
 told AS (${campusTrendLedgerSql()})
-SELECT ct_s.markdown, ct_s.images,
+SELECT EXISTS (SELECT 1 FROM stamped) AS announced,
+       EXISTS (SELECT 1 FROM evaluated WHERE stamped AND NOT crossed) AS silent,
+       (SELECT markdown FROM stamped) AS markdown,
+       (SELECT images FROM stamped) AS images,
        (SELECT count(*) FROM candidates)::int AS eligible,
-       ARRAY(SELECT "recipientId" FROM told ORDER BY 1) AS told
-  FROM stamped ct_s`;
+       ARRAY(SELECT "recipientId" FROM told ORDER BY 1) AS told`;
 }
 
 /**
@@ -166,13 +179,23 @@ export async function announceCampusTrend(
   },
   postId: string
 ): Promise<number> {
-  const [stamped]: {
+  const [result]: {
+    announced: boolean;
+    silent: boolean;
     markdown: string | null;
     images: unknown;
     eligible: number;
     told: string[];
   }[] = await deps.manager.query(campusTrendSql(), [postId]);
-  if (!stamped) return 0;
+  if (result?.silent) {
+    // Past the threshold without a crossing anybody saw: a post older than the rule, a hidden one,
+    // or a lowered threshold. Stamped, so never announced - said once, at the stamp.
+    logger.log(
+      `[TREND] post=${postId.slice(0, 8)} stamped without an announcement (no crossing seen)`
+    );
+  }
+  if (!result?.announced) return 0;
+  const stamped = result;
   const told = stamped.told ?? [];
   const media = trendMediaOf(stamped.images);
   logger.log(

@@ -823,16 +823,36 @@ decisions of 2026-11-10, as built:
 
 - **A crossing is a crossing, read from durable state, never a clock** (migration **161**, plain:
   `posts."trendEngagedSeen"`, `ADD COLUMN`, then `SET DEFAULT 0`, no backfill). Every evaluation
-  (`EVALUATE_TREND_SQL`) records the engaged count it read, and stamps `trendAnnouncedAt` only when
-  the RECORDED count was below the threshold and the current one is at or above it. A post created
+  (`EVALUATE_TREND_SQL`) records the engaged count it read, and keeps two answers apart (review of
+  #3312, H1 and H2): **the STAMP** (`trendAnnouncedAt`) is written at the first evaluation that finds
+  the count at or above the threshold - a level, a hidden post included - and a stamped post is never
+  evaluated again; **the ANNOUNCEMENT** is made only when that stamp is a crossing observed: the count
+  recorded before this write (`RETURNING old."trendEngagedSeen"`, PostgreSQL 18, the row version the
+  UPDATE replaced under its lock) was below the threshold, and the post is not hidden. A post created
   after 161 is born at 0, a fact (nobody has engaged yet), so its crossing is announced as before. A
-  post from before 161 has NULL - "never evaluated" - and NULL crosses nothing: its first evaluation
-  records a count and announces nothing, and only a later write that takes a recorded count below the
-  threshold to at or above it announces. So no deploy can announce a backlog. **A changed
-  `TREND_THRESHOLD` is handled the same way**: raising it only makes crossings rarer; lowering it to
-  `t` announces no post whose recorded count is already at or above `t` (nothing crosses) - only a
-  post whose next write takes it from below `t` to `t`. The write is skipped when the count did not
-  change (`IS DISTINCT FROM`), so an unchanged reaction set costs no row version.
+  post from before 161 has NULL - "never evaluated": past the threshold at its first evaluation, it is
+  stamped SILENTLY; below it, it records a count and a later real crossing announces. So no deploy
+  can announce a backlog. **A post that takes off while hidden is stamped silently**, so a
+  moderator's restore cannot announce it on a level read; a post restored below the threshold is
+  announced at its real crossing after the restore. **A changed `TREND_THRESHOLD` is handled the same
+  way**: raising it only makes crossings rarer; lowering it to `t` stamps silently a post whose
+  recorded count is already at or above `t` - only a post whose next write takes it from below `t`
+  to `t` is announced. The write is skipped when the count did not change (`IS DISTINCT FROM`), so an
+  unchanged reaction set costs no row version. A silent stamp logs `[TREND] ... stamped without an
+  announcement`.
+- **A rollback to `1.6.9` must run ONE statement first.** `1.6.9` announces on a LEVEL any unstamped
+  post within 24 hours, so a rollback would announce every post that is past the threshold and was
+  never evaluated since `1.6.10` (its stamp is written only by an evaluation). Before the rollback,
+  in its own transaction, on the estate rolled back:
+
+  ```sql
+  UPDATE posts SET "trendAnnouncedAt" = now()
+   WHERE "trendAnnouncedAt" IS NULL AND "publishedAt" > now() - interval '24 hours';
+  ```
+
+  It stamps every post of the window, announced or not, so `1.6.9` announces nothing it did not see
+  cross; the price is that no post of those 24 hours can trend after the rollback. Written in
+  `CHANGELOG.md` with the rollback, as every rollback is.
 - **ONE trend per reader per Paris day** (161: `post_engagement_notices."trendDay"` and the partial
   unique index `UQ_post_engagement_notices_trend_day` on `("recipientId", "trendDay")`). The ledger
   insert writes the Paris date of the database's `now()` and `ON CONFLICT DO NOTHING` with no target,
@@ -862,8 +882,10 @@ decisions of 2026-11-10, as built:
   [legacy-compatibility](legacy-compatibility.md#the-client-floor-of-every-notification-type-owner-2026-11-10);
   `campus_trend` and its three keys have the floor `1.6.10`.
 - **Proof**: `campus-trend.integration.spec.ts` on PostgreSQL adds the deploy case (an unrecorded post
-  at 6 never announced, an unrecorded one at 2 announced at its later crossing), a recorded count at
-  the threshold announcing nothing, the recorded count and the skipped write (`xmin` unchanged), one
+  past the threshold stamped silently and never announced, an unrecorded one below it announced at its
+  later crossing), a recorded count at the threshold stamped silently, a post that took off while
+  hidden never announced once restored, a post restored below the threshold announced at its later
+  crossing, the recorded count and the skipped write (`xmin` unchanged), one
   trend per day, the next Paris day, two posts crossing at once, and a photo post's row and push key;
   `bell-page.integration.spec.ts` the floor filter; `notification-client-floor.spec.ts` the tables;
   `NotificationRow.svelte.test.ts` the row.

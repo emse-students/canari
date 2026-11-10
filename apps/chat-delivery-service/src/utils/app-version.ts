@@ -30,3 +30,33 @@ export function appVersionAtLeast(
   }
   return true;
 }
+
+/**
+ * The HTTP header a client names its build in (`X-Canari-Client-Version`, read lower-case) - the
+ * same header social-service reads for the lives and the bell (`common/client-version.ts`).
+ */
+export const CLIENT_VERSION_HEADER = 'x-canari-client-version';
+
+/**
+ * The build a request is assumed to run when it names NONE: every build up to `1.6.9` sends no
+ * {@link CLIENT_VERSION_HEADER} to this service (the header joins its calls in `1.6.10`). A fact
+ * about the builds, never a setting - the twin of social-service's `HEADERLESS_CLIENT_VERSION`.
+ */
+export const HEADERLESS_CLIENT_VERSION = '1.6.9';
+
+/**
+ * THE KEYS OF `floors` A BUILD KNOWS: every key whose floor (`null` = every admitted build) the
+ * build meets. A request that names no build is {@link HEADERLESS_CLIENT_VERSION}; one that names an
+ * unreadable build knows only the `null`-floor keys - fail closed. The one implementation for every
+ * per-key floor table of this service (today the notification categories).
+ */
+export function keysKnownBy<K extends string>(
+  floors: Readonly<Record<K, string | null>>,
+  clientVersion: string | undefined
+): K[] {
+  const version = clientVersion?.trim() || HEADERLESS_CLIENT_VERSION;
+  return (Object.keys(floors) as K[]).filter((key) => {
+    const floor = floors[key];
+    return floor === null || appVersionAtLeast(version, floor) === true;
+  });
+}

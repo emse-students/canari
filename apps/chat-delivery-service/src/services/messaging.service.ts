@@ -7830,9 +7830,14 @@ export class MessagingService {
       if (able === null) unknown++;
       return able !== false;
     });
-    this.logger.log(
-      `[SOCIAL_PUSH][${traceId}] floor=${minAppVersion} user=${userId}: ${tokens.length - kept.length} device(s) below it skipped, ${unknown} of unknown build kept`
-    );
+    // Said only when the floor DID something: since every push key carries its floor (#3312), a
+    // line per push where every device meets it would be noise.
+    const skipped = tokens.length - kept.length;
+    if (skipped > 0 || unknown > 0) {
+      this.logger.log(
+        `[SOCIAL_PUSH][${traceId}] floor=${minAppVersion} user=${userId}: ${skipped} device(s) below it skipped, ${unknown} of unknown build kept`
+      );
+    }
     return kept;
   }
 

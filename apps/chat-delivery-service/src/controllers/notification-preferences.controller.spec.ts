@@ -10,7 +10,10 @@ describe('NotificationPreferencesController', () => {
   const manager = {
     findOne: jest.fn(async () => row),
     find: jest.fn(async () => memberRows),
-    upsert: jest.fn().mockResolvedValue(undefined),
+    // The PUT's one merge statement: answers what it stored, here the caller's set sorted.
+    query: jest.fn(async (_sql: string, params: [string, string, string[]]) => [
+      { disabled: (JSON.parse(params[1]) as string[]).sort() },
+    ]),
     update: jest.fn().mockResolvedValue({ affected: 1 }),
   };
   let controller: NotificationPreferencesController;
@@ -37,21 +40,38 @@ describe('NotificationPreferencesController', () => {
     });
   });
 
-  it('stores the disabled set once per id, keyed by the caller', async () => {
-    const r = await controller.put('u1', { disabled: ['posts', 'posts', 'forms'] });
-    expect(r).toEqual({ disabled: ['posts', 'forms'] });
-    expect(manager.upsert).toHaveBeenCalledWith(
-      expect.anything(),
-      { userId: 'u1', disabledCategories: ['posts', 'forms'] },
-      { conflictPaths: ['userId'] }
-    );
+  /** The parameters of the one merge statement: the caller, its set, the categories kept. */
+  const merged = () => manager.query.mock.calls[0][1] as [string, string, string[]];
+
+  it('stores the disabled set once per id, keyed by the caller, and answers what is stored', async () => {
+    const r = await controller.put('u1', { disabled: ['posts', 'posts', 'forms'] }, '1.6.10');
+    expect(r).toEqual({ disabled: ['forms', 'posts'] });
+    expect(merged()).toEqual(['u1', '["forms","posts"]', []]);
+  });
+
+  it('keeps the stored choice for every category a headerless build (up to 1.6.9) cannot name', async () => {
+    await controller.put('u1', { disabled: ['posts'] });
+    expect(merged()[2]).toEqual(['suggestions']);
+  });
+
+  it('keeps what a 1.6.8 build draws no switch for: birthdays and suggestions', async () => {
+    await controller.put('u1', { disabled: [] }, '1.6.8');
+    expect(merged()[2]).toEqual(['birthdays', 'suggestions']);
+  });
+
+  it('a pre-release of 1.6.10 names suggestions; an unreadable build names only the oldest set', async () => {
+    await controller.put('u1', { disabled: [] }, '1.6.10-alpha.1');
+    expect(merged()[2]).toEqual([]);
+    manager.query.mockClear();
+    await controller.put('u1', { disabled: [] }, 'latest');
+    expect(merged()[2]).toEqual(['follows', 'bookings', 'birthdays', 'suggestions']);
   });
 
   it('refuses an unknown category rather than reporting it saved', async () => {
     await expect(controller.put('u1', { disabled: ['posts', 'calls'] })).rejects.toBeInstanceOf(
       BadRequestException
     );
-    expect(manager.upsert).not.toHaveBeenCalled();
+    expect(manager.query).not.toHaveBeenCalled();
   });
 
   it('refuses a body that is not an array', async () => {
