@@ -329,9 +329,10 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const olderDmGroup = '33333333-3333-4333-8333-333333333333';
 
     async function deliverDmWelcome(
-      initial: Array<[string, ReturnType<typeof emptyConversation>]>
+      initial: Array<[string, ReturnType<typeof emptyConversation>]>,
+      overrides: Record<string, unknown> = {}
     ) {
-      const deps = baseDeps({ conversations: createTestConversations(initial) });
+      const deps = baseDeps({ conversations: createTestConversations(initial), ...overrides });
       const mls = deps.mlsService as any;
       mls.getGroupMeta = vi.fn().mockResolvedValue({ name: 'user-a::peer-user', isGroup: false });
       mls.processWelcome = vi.fn().mockResolvedValue(dmGroup);
@@ -378,6 +379,102 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       expect(deps.conversations.has(olderDmGroup)).toBe(false);
       expect(deps.conversations.has('peer-user')).toBe(false);
       expectEveryKeyIsItsRowId(deps.conversations);
+    });
+
+    /**
+     * A DM THE PEER DELETED IS NEVER CARRIED INTO THE NEXT ONE (owner, 2026-11-10). The retired row
+     * (`removed`) keeps its entry and its stored rows; the new group starts empty. Moved, those rows
+     * carried proofs naming the old group, and every device receiving them in a history bundle marked
+     * them "non verifie" - and the startup merge already refused a tombstone, so the two disagreed.
+     */
+    describe('the stored rows of the previous DM with that peer', () => {
+      const storedRow = {
+        id: 'old-msg-1',
+        conversationId: olderDmGroup,
+        senderId: 'peer-user',
+        content: 'hello',
+        timestamp: 1,
+      };
+
+      function storageStub() {
+        return {
+          getMessagesByIds: vi.fn().mockResolvedValue({
+            rows: new Map([[storedRow.id, storedRow]]),
+            unreadable: new Set<string>(),
+          }),
+          saveMessages: vi.fn().mockResolvedValue(undefined),
+          saveMessagesIfAbsent: vi.fn().mockResolvedValue(undefined),
+        };
+      }
+
+      function previousDm(lifecycle: 'active' | 'removed') {
+        return emptyConversation(olderDmGroup, {
+          lifecycle,
+          conversationType: 'direct',
+          directPeerId: 'peer-user',
+          contactName: 'peer-user',
+          messages: [
+            {
+              id: storedRow.id,
+              senderId: 'peer-user',
+              content: 'hello',
+              timestamp: new Date(1),
+              status: 'sent',
+            } as never,
+          ],
+        });
+      }
+
+      it('a RETIRED DM is not adopted: the new group starts empty, the retired one keeps its rows', async () => {
+        const storage = storageStub();
+        const deps = await deliverDmWelcome([[olderDmGroup, previousDm('removed')]], { storage });
+
+        const fresh = deps.conversations.get(dmGroup);
+        expect(fresh?.lifecycle).toBe('active');
+        expect(fresh?.directPeerId).toBe('peer-user');
+        expect(fresh?.messages).toEqual([]);
+        // The retired conversation stays exactly as it was, its own entry.
+        const retired = deps.conversations.get(olderDmGroup);
+        expect(retired?.lifecycle).toBe('removed');
+        expect(retired?.messages.map((msg) => msg.id)).toEqual([storedRow.id]);
+        // Nothing read to move, nothing written under the new group.
+        expect(storage.getMessagesByIds).not.toHaveBeenCalled();
+        expect(storage.saveMessages).not.toHaveBeenCalled();
+        expect(storage.saveMessagesIfAbsent).not.toHaveBeenCalled();
+        expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('starts empty'));
+        expectEveryKeyIsItsRowId(deps.conversations);
+      });
+
+      it('a LIVE DM is still adopted, its stored rows moved onto the new group', async () => {
+        const storage = storageStub();
+        const deps = await deliverDmWelcome([[olderDmGroup, previousDm('active')]], { storage });
+
+        expect(deps.conversations.has(olderDmGroup)).toBe(false);
+        expect(deps.conversations.get(dmGroup)?.messages.map((msg) => msg.id)).toEqual([
+          storedRow.id,
+        ]);
+        expect(storage.saveMessages).toHaveBeenCalledWith(
+          [{ ...storedRow, conversationId: dmGroup }],
+          'device-key'
+        );
+      });
+
+      it('a re-Welcome into the SAME retired group revives it, as any re-add does', async () => {
+        const deps = await deliverDmWelcome([
+          [
+            dmGroup,
+            emptyConversation(dmGroup, {
+              lifecycle: 'removed',
+              conversationType: 'direct',
+              directPeerId: 'peer-user',
+              contactName: 'peer-user',
+            }),
+          ],
+        ]);
+
+        expect(deps.conversations.get(dmGroup)?.lifecycle).toBe('active');
+        expectEveryKeyIsItsRowId(deps.conversations);
+      });
     });
   });
 

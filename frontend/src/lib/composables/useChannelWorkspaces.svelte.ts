@@ -36,7 +36,7 @@ import {
   registerCommunityHistoryVisibility,
 } from '$lib/utils/graine/runtime';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
-import { buildConversationRow } from '$lib/utils/chat/conversations';
+import { buildConversationRow, findDirectConversationByPeer } from '$lib/utils/chat/conversations';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { getSavedUserId } from '$lib/stores/user';
 import { applyChannelEdit, revertChannelEdit } from '$lib/utils/chat/channelEdit';
@@ -1952,10 +1952,9 @@ export function useChannelWorkspaces() {
         const previousSelection = ctx.getSelectedConversationId?.() ?? null;
         try {
           await ctx.startDirectConversation(memberId, { silent: true });
-          const directConvo = Array.from(ctx.conversations.entries()).find(([, convo]) => {
-            if ((convo.conversationType ?? 'group') !== 'direct') return false;
-            return (convo.directPeerId ?? convo.contactName).toLowerCase() === memberId;
-          });
+          // The LIVE DM just opened, never a retired one with the same member: an invitation
+          // written into a deleted conversation reaches nobody.
+          const directConvo = findDirectConversationByPeer(ctx.conversations, memberId);
 
           if (directConvo) {
             const mlsService = await ctx.ensureMls();

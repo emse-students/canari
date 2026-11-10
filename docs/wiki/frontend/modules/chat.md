@@ -1677,7 +1677,8 @@ refusal, its sentence (`chat_send_session_establishing`) and `MessagingContext.v
 - **A send never rides the orphan buffer.** A conversation that left the map since the tap has two
   answers before the write. A DM RE-KEYED by a duplicate-group merge (the Welcome path of
   `setupMessageHandler` moves the row to the group just joined) is FOLLOWED: the file goes to the new
-  key, found by `findDirectConversationByPeer`, the one predicate the merge itself uses. A
+  key, found by `findDirectConversationByPeer`, the one predicate the merge itself uses (a live row only:
+  a retired DM is never a destination). A
   conversation truly GONE (deleted, left) drops the file and TELLS THE MEMBER
   (`chat_media_conversation_gone` on the send banner); with nothing sent the send answers `false`, so
   the caption goes back to its draft. And `addMessageToChat`'s orphan buffer strips
@@ -3412,9 +3413,35 @@ The writers, which are the mechanism that holds the invariant:
 | --- | --- |
 | boot restore (`conversations.ts`) | `meta.id`; `saveConversation` persists `toConversationMeta(key, ...)` with `id = key`, so the loop is closed |
 | `createNewGroup`, `startNewConversation`, the existing-server-DM path (`groupCreation.ts`) | the group id |
-| the Welcome's early placeholder and `upsertConversation` (`setupMessageHandler.ts`) | `joinedGroupId`; a DM matched by PEER under another group is deleted and **re-keyed onto `joinedGroupId`** - the one writer whose key is computed, pinned by `setupMessageHandler.test.ts` (*"a Welcome into a DM keys the row by the joined group id"*) |
+| the Welcome's early placeholder and `upsertConversation` (`setupMessageHandler.ts`) | `joinedGroupId`; a LIVE DM matched by PEER under another group is deleted and **re-keyed onto `joinedGroupId`** - the one writer whose key is computed; a RETIRED one (`removed`) is never matched, see [a deleted DM is not carried into the next](#a-deleted-dm-is-not-carried-into-the-next-one) - pinned by `setupMessageHandler.test.ts` (*"a Welcome into a DM keys the row by the joined group id"*) |
 | `onWelcomeProcessed` (`sessionAuth.ts`), the FCM merge, channel builders, tab sync | the group / conversation id they were handed |
 | every other `set` (retire, unread, watermarks, rename, avatar, messages) | read-modify-write of a key already in the map |
+
+### A deleted DM is not carried into the next one
+
+Decided by the owner on 2026-11-10. When a peer deletes a DM, this device keeps it as a RETIRED
+conversation (`lifecycle: 'removed'`, with its "a supprime cette conversation" line). A later DM
+with the same peer is a NEW group, and its Welcome used to ADOPT the retired row:
+`findDirectConversationByPeer` did not skip tombstones, so `upsertConversation` moved the retired
+conversation's stored rows onto the new group. Those rows carry author proofs naming the OLD group,
+so every device that later received them in a history bundle marked them "non verifie"
+([history-reconciliation](../../protocols/history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22)). The startup merge
+(`mergeDirectConversationDuplicates`) and discovery already refused a tombstone - the paths disagreed.
+
+**One predicate now answers "the conversation with that peer" everywhere: `canRepresentThePeer`,
+applied inside `findDirectConversationByPeer`.** The callers, each decided:
+
+| Caller | Skips a tombstone | Why |
+| --- | --- | --- |
+| `upsertConversation` (`setupMessageHandler.ts`, the Welcome) | yes, for ANOTHER group's row | the retired DM keeps its own entry and rows, the new group starts empty (`[WELCOME] ... starts empty` names the retired ids); the joined group's OWN DM row is still revived whatever its lifecycle - a re-Welcome into the same group is a re-add |
+| the media send following a re-keyed DM (`useMessaging.svelte.ts`) | yes | it follows the row the Welcome moved, so it asks the same question; a file is never sent into a retired DM |
+| discovery's local de-dup (`serverGroupConversation.ts`) | yes (already did, inline) | a record pending removal must not refuse its own replacement (user report, 2026-08-23) |
+| `startNewConversation` (`groupCreation.ts`) | yes (inline before, same outcome) | a non-active row fell through to the server check anyway; a retired row listed before a live one no longer hides it |
+| the community invitation DM (`useChannelWorkspaces.svelte.ts`) | yes | an invitation written into a deleted DM reaches nobody |
+| `mergeDirectConversationDuplicates` (startup) | yes (already did) | a tombstone competing on `updatedAt` destroyed the fresh group for both parties |
+
+Pinned by `setupMessageHandler.test.ts` (*"the stored rows of the previous DM with that peer"*) and
+`conversations.directPeer.test.ts` (*"findDirectConversationByPeer"*).
 
 The consumers that look a conversation up by a group id, and the verdict on each:
 

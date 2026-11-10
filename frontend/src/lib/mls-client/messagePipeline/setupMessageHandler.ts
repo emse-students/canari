@@ -1,8 +1,12 @@
 import {
   buildConversationRow,
+  canRepresentThePeer,
   findConversationKeyByGroupId,
+  findDirectConversationByPeer,
+  isDirectConversationWith,
   parseDirectPeerFromName,
   resolveDirectPeerId,
+  restoredConversationRow,
 } from '$lib/utils/chat/conversations';
 import { decodeAppMessage, type IAppMessage } from '$lib/proto/codec';
 import { recordAuthorship } from '$lib/crypto/messageAuthorship';
@@ -64,10 +68,6 @@ import {
   retractEvictionNotice,
 } from '$lib/utils/chat/eviction';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
-import {
-  findDirectConversationByPeer,
-  restoredConversationRow,
-} from '$lib/utils/chat/conversations';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isDistributionGroupMeta } from '$lib/utils/chat/groupLifecycle';
 import type { GroupMeta } from '../IMlsService';
@@ -1577,10 +1577,35 @@ async function upsertConversation(
   let matchedExisting = false;
 
   if (isDirect) {
-    const existingDirect = findDirectConversationByPeer(conversations, directPeerId);
+    // THE JOINED GROUP'S OWN DM ROW FIRST, whatever its lifecycle: a re-Welcome into the SAME group
+    // is a re-add, and a re-add revives that conversation (rule: re-add => same conversation,
+    // active). The FIX 1 placeholder written above is not a DM row, so a first join falls through.
+    // Only ANOTHER group's row is adopted by peer, and only a live one - a DM the peer deleted is
+    // never carried into the new one (owner, 2026-11-10; `findDirectConversationByPeer`).
+    const peer = directPeerId.toLowerCase();
+    const ownKey = findConversationKeyByGroupId(conversations, joinedGroupId);
+    const ownRow = ownKey ? conversations.get(ownKey) : undefined;
+    const ownDm = ownKey && ownRow && isDirectConversationWith(ownRow, peer) ? ownKey : undefined;
+    const existingDirect = ownDm
+      ? ([ownDm, ownRow!] as const)
+      : findDirectConversationByPeer(conversations, directPeerId);
     if (existingDirect) {
       newConvoKey = existingDirect[0];
       matchedExisting = true;
+      if (!ownDm) {
+        deps.log(
+          `[WELCOME] DM ${joinedGroupId.slice(0, 8)}… adopts the live row ${existingDirect[1].id.slice(0, 8)}… of the same peer (duplicate group)`
+        );
+      }
+    } else {
+      const retired = [...conversations.values()].filter(
+        (c) => !canRepresentThePeer(c) && isDirectConversationWith(c, peer)
+      );
+      if (retired.length > 0) {
+        deps.log(
+          `[WELCOME] DM ${joinedGroupId.slice(0, 8)}… starts empty: ${retired.length} retired DM(s) with the same peer (${retired.map((c) => c.id.slice(0, 8)).join(', ')}) keep their own entry and their rows`
+        );
+      }
     }
   } else if (conversations.has(joinedGroupId)) {
     matchedExisting = true;

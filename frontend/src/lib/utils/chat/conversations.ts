@@ -189,12 +189,32 @@ export function findConversationKeyByGroupId(
 }
 
 /**
- * The key and row of the DIRECT conversation with `peerId`, or `undefined`.
+ * Whether `convo` is a DIRECT conversation with `peer` (already lower-cased), whatever its lifecycle.
+ *
+ * The identity half of {@link findDirectConversationByPeer}, exported for the one question that
+ * must see a tombstone: a caller saying in its log that a retired DM with this peer was LEFT APART.
+ */
+export function isDirectConversationWith(convo: Conversation, peer: string): boolean {
+  if ((convo.conversationType ?? 'group') !== 'direct') return false;
+  return (convo.directPeerId ?? convo.contactName).toLowerCase() === peer;
+}
+
+/**
+ * The key and row of the LIVE direct conversation with `peerId`, or `undefined`.
  *
  * THE ONE PREDICATE A DUPLICATE-GROUP MERGE RE-KEYS ON (`setupMessageHandler`, the Welcome of a DM
  * whose peer already has a row): the row is moved to the key of the group just joined. A send made
  * under the old key follows it by asking the same question (`handleSendChat`), so the two cannot
  * disagree about which row a DM is.
+ *
+ * A TOMBSTONE IS NOT A CANDIDATE - {@link canRepresentThePeer}, the rule the startup merge
+ * ({@link mergeDirectConversationDuplicates}) and discovery already applied. This finder did not,
+ * and the two paths disagreed: a DM the peer had DELETED (kept here `removed`, with its "a supprime
+ * cette conversation" line) was adopted by the Welcome of the next DM with that peer, its stored rows
+ * moved onto the new group - carrying proofs that name the old one, so every device that received
+ * them in a history bundle marked them "non verifie". Decided by the owner on 2026-11-10: a deleted
+ * private conversation is never carried into a new one. The retired row keeps its own entry, as
+ * after any deletion.
  */
 export function findDirectConversationByPeer(
   conversations: Map<string, Conversation>,
@@ -202,9 +222,7 @@ export function findDirectConversationByPeer(
 ): [string, Conversation] | undefined {
   const peer = peerId.toLowerCase();
   for (const entry of conversations) {
-    const convo = entry[1];
-    if ((convo.conversationType ?? 'group') !== 'direct') continue;
-    if ((convo.directPeerId ?? convo.contactName).toLowerCase() === peer) return entry;
+    if (canRepresentThePeer(entry[1]) && isDirectConversationWith(entry[1], peer)) return entry;
   }
   return undefined;
 }
