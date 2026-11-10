@@ -26,7 +26,7 @@ here has designated a DPO; the school has one.
 
 Data subjects, unless stated: **members** - students, staff and people of the Maison des Eleves who
 hold a MiConnect account. Age floor: 15 (the policy; **no age gate in code**, the population is
-the school's).
+the school's). **Live broadcasts (C19) are watched and made by students, the youngest 16, not by "adults" as an earlier store answer claimed; the Apple age rating is 13+ (owner, 2026-11-10).**
 
 | # | Processing | Purpose | Data | Basis | Retention | Source |
 | --- | --- | --- | --- | --- | --- | --- |
