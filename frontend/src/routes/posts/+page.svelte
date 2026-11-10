@@ -6,7 +6,7 @@
   import { onPostPublished } from '$lib/posts/publishQueue/publishQueue.svelte';
   import { onMount, untrack } from 'svelte';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
-  import { registerRetapRefresh } from '$lib/navigation/scrollToTop';
+  import { registerRetapRefresh, resetPageScroll } from '$lib/navigation/scrollToTop';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import {
@@ -654,18 +654,24 @@
    */
   function navigateFeed(feed: PostFeed) {
     settings.setPreferredPostFeed(feed);
-    showFeed(feed);
+    void showFeed(feed);
   }
 
   /** Opens a feed WITHOUT remembering it: the tab a reader chose is theirs, a publish is not a choice. */
-  function showFeed(feed: PostFeed) {
+  async function showFeed(feed: PostFeed) {
+    // ANOTHER TAB IS ANOTHER LIST, SO IT OPENS AT ITS TOP (owner, 2026-11-10): `reset: false` below
+    // keeps the page's own state, and with it the old tab's scroll offset. Reset before the swap (no
+    // frame of the new list drawn mid-way down) and after it (the load may have moved the box).
+    const changed = feed !== activeFeed;
+    if (changed) resetPageScroll();
     const u = new URL(page.url.href);
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');
     u.searchParams.delete('formation');
     // An old `?kind=` (the 1.2.9 alphas' CanaReels filter) means nothing now: not carried along.
     u.searchParams.delete('kind');
-    void goto(resolve(internalPath(feedPath(u))), { refreshAll: true, reset: false });
+    await goto(resolve(internalPath(feedPath(u))), { refreshAll: true, reset: false });
+    if (changed) resetPageScroll();
   }
 
   async function refreshPosts() {
@@ -753,7 +759,7 @@
     const target = feedToShowAfterPublish(activeFeed, landing);
     if (target) {
       Log.d('POSTS', `published post lands in "${target}", leaving "${activeFeed}"`);
-      showFeed(target);
+      void showFeed(target);
       void loadScheduled();
       return;
     }
@@ -1221,9 +1227,7 @@
               use:markPostSeen={post}
               data-suggested-post={post.feedSuggested ? post.id : undefined}
             >
-              {#if post.feedSuggested}
-                <PostCornerBadge label={m.suggestion_post_badge()} />
-              {:else if isNew(post)}
+              {#if !post.feedSuggested && isNew(post)}
                 <PostCornerBadge label={m.posts_badge_new()} />
               {/if}
               {@render guardedCard(post, () => {

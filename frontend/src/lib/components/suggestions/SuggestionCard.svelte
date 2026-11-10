@@ -48,8 +48,8 @@
   );
 </script>
 
-<li
-  class="border-cn-border bg-cn-surface relative flex w-40 shrink-0 snap-start flex-col items-center gap-2 rounded-xl border px-3 pt-4 pb-3 text-center"
+<div
+  class="border-cn-border bg-cn-surface relative flex h-full w-40 flex-col items-center gap-2 rounded-xl border px-3 pt-4 pb-3 text-center"
   data-suggestion-card={card.kind}
   data-suggestion-id={card.id}
 >
@@ -120,6 +120,6 @@
     </span>
   {/if}
   <div class="mt-auto">
-    <FollowChip kind={card.kind} targetId={card.id} {name} />
+    <FollowChip kind={card.kind} targetId={card.id} {name} variant="soft" />
   </div>
-</li>
+</div>

@@ -114,6 +114,29 @@
       {#if post.studentsOnly}
         <StudentsOnlyChip />
       {/if}
+      {#if post.feedSuggested}
+        <!-- "Suggestion" is a muted word here, as the pinned mark is - no yellow badge over the card's edge (owner, 2026-11-10). -->
+        <span class="flex shrink-0 items-center gap-1.5" data-post-suggestion>
+          <span aria-hidden="true">&#183;</span>
+          {m.suggestion_post_badge()}
+        </span>
+      {/if}
+      {#if showFollow && post.association}
+        <!--
+          "Suivre" for whoever published this, when the reader does not follow them yet (engagement
+          WP-2), a quiet text link on this line and never a button (owner, 2026-11-10). An association
+          post offers the association; a personal post its author; an anonymous post nothing (a revealed
+          author is never turned into a link); the moderation preview (`showFollow` off) nothing.
+        -->
+        <FollowChip
+          kind="association"
+          targetId={post.association.id}
+          name={post.association.name}
+          dotted
+        />
+      {:else if showFollow && post.authorId && !post.anonymous}
+        <FollowChip kind="user" targetId={post.authorId} name={getPostAuthorName()} dotted />
+      {/if}
       {#if republished}
         <!-- One wrapping unit: beside the time and the "Entre etudiants" chip it was squeezed to "Republie par Cl..." on a phone, so it drops to its own line when the three do not fit. -->
         <span class="flex max-w-full min-w-0 items-center gap-1.5" data-post-republished-unit>
@@ -131,21 +154,4 @@
       </div>
     {/if}
   </div>
-  <!--
-    "Suivre" for whoever published this, when the reader does not follow them yet (engagement WP-2).
-    An association post offers the association; a personal post offers its author; an anonymous post
-    offers nothing - there is nobody to follow, and a revealed author is never turned into a button.
-  -->
-  {#if !showFollow}
-    <!-- the moderation preview: a moderator reads the post, they do not follow its author from there -->
-  {:else if post.association}
-    <FollowChip
-      kind="association"
-      targetId={post.association.id}
-      name={post.association.name}
-      iconOnlyOnPhone
-    />
-  {:else if post.authorId && !post.anonymous}
-    <FollowChip kind="user" targetId={post.authorId} name={getPostAuthorName()} iconOnlyOnPhone />
-  {/if}
 </div>

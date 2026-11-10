@@ -90,6 +90,13 @@ const cardIds = () =>
   );
 
 beforeEach(() => {
+  // Reduced motion: the carousel then plays no transition, so a leaving card is gone at once (the
+  // outro is a visual, and happy-dom cannot play one).
+  vi.stubGlobal('matchMedia', () => ({
+    matches: true,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
   forgetReaderCaches();
   vi.clearAllMocks();
   faces.avatars.length = 0;
@@ -100,6 +107,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   if (component) unmount(component);
   component = null;
   document.body.innerHTML = '';
@@ -158,25 +166,23 @@ describe('SuggestionCarousel', () => {
     expect(toast.showToast).toHaveBeenCalledWith(m.suggestions_dismiss_failed(), 'error');
   });
 
-  it('a request keeps its card ("Demande envoyee"); a followed entity leaves; then the row hides', async () => {
+  it('a follow removes its card, soft button and all; a followed entity leaves too; then the row hides', async () => {
     api.askToFollow.mockResolvedValue('pending');
     asso.followAssociation.mockResolvedValue(undefined);
     renderRow();
     await settle();
-    (
-      document.querySelector('[data-suggestion-id="ann"] [data-follow-chip]') as HTMLElement
-    ).click();
+    const soft = document.querySelector('[data-suggestion-id="ann"] [data-follow-chip]')!;
+    expect(soft.getAttribute('data-follow-chip-variant')).toBe('soft');
+    (soft as HTMLElement).click();
     await settle();
-    expect(
-      document
-        .querySelector('[data-suggestion-id="ann"] [data-follow-chip]')
-        ?.getAttribute('data-follow-chip-state')
-    ).toBe('pending');
+    expect(cardIds()).toEqual([ENTITY, 'bob']);
+    expect(toast.showToast).toHaveBeenCalledWith(m.profile_follow_requested_btn(), 'info');
     (
       document.querySelector(`[data-suggestion-id="${ENTITY}"] [data-follow-chip]`) as HTMLElement
     ).click();
     await settle();
-    expect(cardIds()).toEqual(['ann', 'bob']);
+    expect(cardIds()).toEqual(['bob']);
+    expect(toast.showToast).toHaveBeenCalledWith(m.profile_public_following_btn(), 'info');
     // The last open card dismissed: nothing is left to act on, so the whole row goes.
     (
       document.querySelector('[data-suggestion-id="bob"] [data-suggestion-dismiss]') as HTMLElement

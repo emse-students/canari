@@ -6,6 +6,7 @@ import {
   handlePlaceTap,
   isPlaceRetap,
   registerRetapRefresh,
+  resetPageScroll,
   scrollPageToTop,
 } from './scrollToTop';
 import { STATUS_BAR_TAP_EVENT } from '$lib/mobile/nativeStatusBarTap';
@@ -26,6 +27,20 @@ vi.mock('$lib/utils/historyOverlayStack', () => ({
     overlays.depth = 0;
   },
 }));
+
+describe('resetPageScroll', () => {
+  it('puts the scroller back at the top at once, with no animation, and says so', () => {
+    const { el, scrollTo } = mountScroller(500);
+    expect(resetPageScroll()).toBe(true);
+    expect(el.scrollTop).toBe(0);
+    expect(scrollTo).not.toHaveBeenCalled();
+    el.remove();
+  });
+
+  it('reports a page with no scroller instead of throwing', () => {
+    expect(resetPageScroll()).toBe(false);
+  });
+});
 
 /** Mounts a stand-in for the layout's page scroller at a given offset. */
 function mountScroller(scrollTop: number) {

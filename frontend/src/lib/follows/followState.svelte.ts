@@ -36,7 +36,12 @@ import { refusalCode } from '$lib/utils/apiRefusal';
 import { Log } from '$lib/utils/Log';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
-import { describeFollowRefusal, followActionOf, optimisticStatusAfter } from './followButton';
+import {
+  describeFollowRefusal,
+  followActionOf,
+  followLabel,
+  optimisticStatusAfter,
+} from './followButton';
 import {
   FOLLOW_REQUEST_ANSWERED,
   FOLLOW_REQUEST_NOT_FOUND,
@@ -396,11 +401,11 @@ export async function unfollowAssociationLedgered(associationId: string): Promis
  * the server says now (a follow, or none) - no toast, no stuck state. If the reader changed while
  * it was out, nothing is rolled back and nothing is said: that ledger is not this tap's.
  */
-export async function tapPerson(userId: string): Promise<void> {
-  if (tapping.has(userId)) return;
+export async function tapPerson(userId: string): Promise<boolean> {
+  if (tapping.has(userId)) return false;
   const was = persons.get(userId) ?? null;
   const action = followActionOf(was);
-  if (action === 'unfollow') return; // an accepted follow is never a chip: unfollowing asks first, on the profile
+  if (action === 'unfollow') return false; // an accepted follow is never a chip: unfollowing asks first, on the profile
   const at = epoch;
   tapping.add(userId);
   persons.set(userId, optimisticStatusAfter(action));
@@ -408,32 +413,40 @@ export async function tapPerson(userId: string): Promise<void> {
   try {
     if (action === 'ask') await askPerson(userId);
     else await withdrawPerson(userId);
+    if (at !== epoch || action !== 'ask') return false;
+    showToast(followLabel('pending'), 'info');
+    return true;
   } catch (err) {
     Log.d('followState.tapPerson failed', err);
     if (at === epoch) {
       persons.set(userId, was);
       showToast(describeFollowRefusal(refusalCode(err)));
     }
+    return false;
   } finally {
     tapping.delete(userId);
   }
 }
 
 /** The tap on an association's chip: follows at once, goes back on a failure. */
-export async function tapAssociation(associationId: string): Promise<void> {
-  if (tapping.has(associationId) || followedAssociations.has(associationId)) return;
+export async function tapAssociation(associationId: string): Promise<boolean> {
+  if (tapping.has(associationId) || followedAssociations.has(associationId)) return false;
   const at = epoch;
   tapping.add(associationId);
   recordAssociationFollowed(associationId, true);
   Log.d('followState.tapAssociation', associationId.slice(0, 8));
   try {
     await followAssociationLedgered(associationId);
+    if (at !== epoch) return false;
+    showToast(followLabel('accepted'), 'info');
+    return true;
   } catch (err) {
     Log.d('followState.tapAssociation failed', err);
     if (at === epoch) {
       recordAssociationFollowed(associationId, false);
       showToast(m.common_generic_error_label());
     }
+    return false;
   } finally {
     tapping.delete(associationId);
   }

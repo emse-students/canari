@@ -6,6 +6,8 @@
    * one followed, requested or dismissed (the design's "hidden once every card is followed or
    * dismissed").
    */
+  import { flip } from 'svelte/animate';
+  import { scale } from 'svelte/transition';
   import SuggestionCard from './SuggestionCard.svelte';
   import {
     cardDrawn,
@@ -25,6 +27,11 @@
 
   let { cards, title, hint, surface }: Props = $props();
 
+  /** A duration, or none for a reader who asked for reduced motion. */
+  function motionMs(ms: number): number {
+    return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : ms;
+  }
+
   const drawn = $derived(cards.filter(cardDrawn));
   const open = $derived(drawn.some(cardOpen));
 </script>
@@ -43,7 +50,14 @@
     </div>
     <ul class="mt-2 flex snap-x scroll-px-4 gap-3 overflow-x-auto px-4 pb-1">
       {#each drawn as card (`${card.kind}:${card.id}`)}
-        <SuggestionCard {card} onDismiss={(c) => void dismissSuggestion(c.kind, c.id)} />
+        <!-- THE LEAVING CARD SHRINKS AWAY AND THE NEXT ONES SLIDE INTO ITS PLACE (owner, 2026-11-10); no motion for a reader who asked for none. -->
+        <li
+          class="shrink-0 snap-start"
+          animate:flip={{ duration: motionMs(250) }}
+          out:scale={{ duration: motionMs(200), start: 0.85 }}
+        >
+          <SuggestionCard {card} onDismiss={(c) => void dismissSuggestion(c.kind, c.id)} />
+        </li>
       {/each}
     </ul>
   </section>

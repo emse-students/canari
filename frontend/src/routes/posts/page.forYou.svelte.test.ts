@@ -134,7 +134,10 @@ describe('Pour toi on the feed page', () => {
     await draw('foryou', forYou());
     const slot = document.querySelector('[data-suggested-post="s1"]');
     expect(slot).not.toBeNull();
-    expect(slot!.textContent).toContain(m.suggestion_post_badge());
+    // The "Suggestion" word lives on the post header's meta line now (PostHeader), not as a corner
+    // badge pinned over the card's edge.
+    expect(slot!.textContent).not.toContain(m.suggestion_post_badge());
+    expect(slot!.querySelector('[data-post-corner-badge]')).toBeNull();
     const cards = [...document.querySelectorAll('[data-stub="mount-counter"]')].map(
       (el) => el.textContent
     );
