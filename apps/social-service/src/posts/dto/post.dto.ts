@@ -436,6 +436,16 @@ export class ListPostsQueryDto {
   @IsBoolean()
   withLinks?: boolean;
 
+  /**
+   * A LIVE REPLAY (`kind = 'replay'`, docs/wiki/live-replays.md) comes in this page only when the
+   * client says it can draw one - the `withLinks` precedent: a build that cannot draw a replay never
+   * receives one. With `kind=reel` it joins the CanaReels list; without `kind`, the feed.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  withReplays?: boolean;
+
   /** Custom feed: filter by author promotion (personal posts only). */
   @IsOptional()
   @Type(() => Number)

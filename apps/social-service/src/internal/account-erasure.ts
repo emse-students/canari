@@ -293,8 +293,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'booking_spaces.poster': NO_ACCOUNT("the encrypted media reference of a space's poster"),
 
   // -- Lives ({@link LIVES_ERASURE_STATEMENTS}, docs/wiki/services/lives.md) ---------------------
-  // A live is its broadcaster's content and has no replay (L3): the erasure ENDS it and anonymises
-  // it in one statement, and the live sweep then deletes its segments and its row.
+  // A live is its broadcaster's content: the erasure ENDS it and anonymises it in one statement, and
+  // the live sweep then deletes its segments and its row. Its REPLAY post (docs/wiki/live-replays.md)
+  // is deleted with the account's posts, or - published as an association - ended and emptied.
   'lives.broadcasterId': { action: 'anonymise' },
   'live_removed_viewers.viewerId': { action: 'delete' },
   'live_starts.broadcasterId': { action: 'delete' },
@@ -432,6 +433,10 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  *   tombstone, and the partial unique index (one OPEN live per broadcaster) never sees two. The live
  *   sweep deletes the segments and then the row within one run; nothing of it is served meanwhile,
  *   because every read of an ended live is a 410.
+ * - A REPLAY of one of its lives still standing (an association's: a personal one went with the
+ *   account's posts) is ended now and loses the title it copied (`live_replays`), BEFORE the live
+ *   forgets its broadcaster. The lives were locked first ({@link ERASURE_LIVES_LOCK_SQL}), so a
+ *   replay published concurrently is either seen here or never published.
  * - The account's place on another live's removed-viewer list is deleted.
  * - Its `live_starts` rows (the rolling hour `LIVE_STARTS_PER_HOUR` counts) are deleted.
  * - The cuts of its lives (`live_cuts`, WP-L8) and its first-live rules acceptance are deleted; a
@@ -449,6 +454,16 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  * Exported apart so `lives.integration.spec.ts` runs exactly these against the schema 091 builds.
  */
 export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
+  // BEFORE lives_broadcaster, which forgets whose lives they were: a replay of the account's lives
+  // still standing (one published as an association, whose post the erasure keeps) is ended NOW -
+  // every read refuses it, the hourly worker deletes it - and the live's title it copied as its
+  // text, what the member wrote, goes with the live's own (docs/wiki/live-replays.md).
+  {
+    label: 'live_replays',
+    sql: `UPDATE posts SET "expiresAt" = LEAST("expiresAt", now()), markdown = ''
+           WHERE kind = 'replay'
+             AND "liveId" IN (SELECT id FROM lives WHERE "broadcasterId" = $1)`,
+  },
   {
     label: 'lives_broadcaster',
     sql: `UPDATE lives
@@ -910,6 +925,17 @@ export const ERASURE_ASSOCIATION_LOCK_SQL = `SELECT a.id FROM associations a
   ORDER BY a.id
   FOR NO KEY UPDATE OF a`;
 
+/**
+ * The account's LIVES, locked right after its associations and before any post is touched - the
+ * order a live replay's publication and a cut take them (the live's row, then its replay post,
+ * docs/wiki/live-replays.md). A replay being published for one of these lives commits BEFORE this
+ * read returns, so every later statement sees its post; one asked after waits for the erasure and
+ * then finds an erased broadcaster, which publishes nothing.
+ */
+export const ERASURE_LIVES_LOCK_SQL = `SELECT l.id FROM lives l WHERE l."broadcasterId" = $1
+  ORDER BY l.id
+  FOR UPDATE OF l`;
+
 /** Every statement, in the order {@link eraseSocialRows} runs them around the scrub. */
 export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   ...ERASURE_ROW_STATEMENTS,
@@ -1180,6 +1206,7 @@ export async function runErasureStatements(
 export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<SocialErasureResult> {
   // Before anything else: the associations, in the order an association delete takes them.
   const locked = await db.read<{ id: string }>(ERASURE_ASSOCIATION_LOCK_SQL, [userId]);
+  const livesLocked = await db.read<{ id: string }>(ERASURE_LIVES_LOCK_SQL, [userId]);
   const pinsRemoved = await db.read<{ id: string; channelId: string }>(ERASED_PINS_SQL, [userId]);
   const liveCashiersErased = await db.read<{ associationId: string; vendorToken: string }>(
     LIVE_CASHIERS_SQL,
@@ -1189,6 +1216,7 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
   const counts = await runErasureStatements(db, ERASURE_ROW_STATEMENTS, userId);
   // In the log line's `rows=`: how many associations the erasure held while it ran.
   if (locked.length > 0) counts.associations_locked = locked.length;
+  if (livesLocked.length > 0) counts.lives_locked = livesLocked.length;
 
   // Comments, likes and poll votes need the structure, so the candidates are read and locked.
   let postsScrubbed = 0;

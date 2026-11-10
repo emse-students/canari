@@ -164,8 +164,8 @@ describe('reads exclude a reel past its month', () => {
       const { service, queries } = makeService({});
       await service.listPosts({ limit: 10, offset: 0, feed, kind: 'reel', viewerUserId: 'alice' });
       const feedQuery = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql));
-      expect(feedQuery?.sql).toContain(`posts.kind <> 'reel' OR posts."expiresAt" > NOW()`);
-      expect(feedQuery?.sql).toContain(`posts.kind = 'reel'`);
+      expect(feedQuery?.sql).toContain(`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`);
+      expect(feedQuery?.sql).toContain(`posts.kind IN ('reel', 'replay')`);
     }
   });
 
@@ -181,10 +181,10 @@ describe('reads exclude a reel past its month', () => {
         viewerUserId: 'alice',
       });
       const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
-      expect(sql).toContain(`posts.kind = 'reel' OR (posts.kind = 'post' AND`);
+      expect(sql).toContain(`posts.kind IN ('reel', 'replay') OR (posts.kind = 'post' AND`);
       expect(sql).toContain(SINGLE_PHOTO_POST_SQL);
       // The visibility of a post is still asked of every row the arm serves.
-      expect(sql).toContain(`posts.kind <> 'reel' OR posts."expiresAt" > NOW()`);
+      expect(sql).toContain(`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`);
     }
   });
 
@@ -238,11 +238,11 @@ describe('reads exclude a reel past its month', () => {
         viewerUserId: 'alice',
       });
       const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
-      expect(sql).toContain(`posts.kind = 'reel' OR (posts.kind = 'post' AND`);
+      expect(sql).toContain(`posts.kind IN ('reel', 'replay') OR (posts.kind = 'post' AND`);
       expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
       expect(sql).not.toContain(SINGLE_PHOTO_POST_SQL);
       // A plain post has no expiry: the live-reel clause still spares it.
-      expect(sql).toContain(`posts.kind <> 'reel' OR posts."expiresAt" > NOW()`);
+      expect(sql).toContain(`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`);
     }
   });
 
@@ -285,7 +285,7 @@ describe('reads exclude a reel past its month', () => {
         viewerUserId: 'alice',
       });
       const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
-      expect(sql).toContain(`posts.kind = 'reel' OR (posts.kind = 'post' AND`);
+      expect(sql).toContain(`posts.kind IN ('reel', 'replay') OR (posts.kind = 'post' AND`);
       expect(sql).toContain(MULTI_MEDIA_POST_SQL);
       expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
     }
@@ -380,6 +380,35 @@ describe('reads exclude a reel past its month', () => {
     expect(sql).not.toContain(`posts.kind = 'post'`);
   });
 
+  it('A LIVE REPLAY comes only to a client that says withReplays, in the CanaReels list with the reels, never to a removed viewer (docs/wiki/live-replays.md)', async () => {
+    const { service, queries } = makeService({});
+    await service.listPosts({
+      limit: 10,
+      offset: 0,
+      feed: 'all',
+      kind: 'reel',
+      viewerUserId: 'alice',
+    });
+    const without = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+    // The page-wide exclusion (`AND posts.kind <> 'replay'` on its own line), never the removed-viewer term.
+    expect(without).toMatch(/AND posts\.kind <> 'replay'\s*\n/);
+    expect(without).not.toContain('live_removed_viewers');
+
+    queries.length = 0;
+    await service.listPosts({
+      limit: 10,
+      offset: 0,
+      feed: 'all',
+      kind: 'reel',
+      viewerUserId: 'alice',
+      withReplays: true,
+    });
+    const withThem = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+    expect(withThem).not.toMatch(/AND posts\.kind <> 'replay'\s*\n/);
+    expect(withThem).toContain(`posts.kind IN ('reel', 'replay')`);
+    expect(withThem).toContain('live_removed_viewers');
+  });
+
   it('selects the kind, the duration and the expiry on every row it serves', async () => {
     const { service, queries } = makeService({});
     await service.listPosts({ limit: 10, offset: 0, feed: 'all' });
@@ -388,12 +417,12 @@ describe('reads exclude a reel past its month', () => {
     );
   });
 
-  it('searches with the live-reel clause too', async () => {
+  it('searches with the live-row clause too, and never finds a live replay', async () => {
     const { service, queries } = makeService({});
     await service.searchPosts('trip', 10, 0, { viewerUserId: 'alice' });
-    expect(queries.find((q) => /ILIKE/.test(q.sql))?.sql).toContain(
-      `posts.kind <> 'reel' OR posts."expiresAt" > NOW()`
-    );
+    const sql = queries.find((q) => /ILIKE/.test(q.sql))?.sql;
+    expect(sql).toContain(`posts."expiresAt" IS NULL OR posts."expiresAt" > NOW()`);
+    expect(sql).toContain(`posts.kind <> 'replay'`);
   });
 
   it('search pages and the event post pick in a TOTAL order: id breaks a publishedAt tie', async () => {
@@ -415,6 +444,35 @@ describe('reads exclude a reel past its month', () => {
     await expect(service.getById('r1', { viewerId: 'alice' })).rejects.toBeInstanceOf(
       NotFoundException
     );
+  });
+
+  it('answers 404 for a live replay by id to a client that did not say withReplays, and serves it to one that did', async () => {
+    const replay = {
+      id: 'r1',
+      authorId: 'alice',
+      kind: 'replay',
+      durationMs: 60_000,
+      expiresAt: new Date(NOW + DAY_MS),
+      liveId: 'l1',
+      associationId: null,
+      hiddenByModeration: false,
+      scheduledAt: null,
+    } as unknown as Post;
+    await expect(
+      makeService({ existing: replay }).service.getById('r1', { viewerId: 'bob' })
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      makeService({ existing: replay }).service.getById('r1', {
+        viewerId: 'bob',
+        withReplays: true,
+      })
+    ).resolves.toMatchObject({ kind: 'replay' });
+    // Past its three days, withReplays or not.
+    await expect(
+      makeService({
+        existing: { ...replay, expiresAt: new Date(NOW - 1) } as Post,
+      }).service.getById('r1', { viewerId: 'alice', withReplays: true })
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('still serves a live reel, with its three fields', async () => {
@@ -499,6 +557,49 @@ describe('updatePost - a reel', () => {
   it('allows an empty caption on a reel at the service (the DTO owns text-or-media for a post)', async () => {
     const { service } = makeService({ existing: { ...live } });
     await expect(service.updatePost('r1', 'alice', { markdown: '' }, false)).resolves.toBeDefined();
+  });
+});
+
+describe('updatePost - a live replay (docs/wiki/live-replays.md, review of #3248)', () => {
+  const replay = {
+    id: 'p1',
+    authorId: 'alice',
+    kind: 'replay',
+    liveId: 'l1',
+    markdown: 'Gala live',
+    media: [],
+    durationMs: 60_000,
+    expiresAt: new Date(NOW + DAY_MS),
+    associationId: null,
+    studentsOnly: false,
+  } as unknown as Post;
+
+  it('is edited by its caption alone, as a reel: no media, poll, form, event or schedule', async () => {
+    const { service, postRepo } = makeService({ existing: { ...replay } });
+    await expect(
+      service.updatePost('p1', 'alice', { markdown: 'x', media: [{ mediaId: 'other' }] }, false)
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.updatePost(
+        'p1',
+        'alice',
+        { markdown: 'x', scheduledAt: '2099-01-01T00:00:00Z' },
+        false
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(postRepo.save).not.toHaveBeenCalled();
+    await expect(
+      service.updatePost('p1', 'alice', { markdown: 'new' }, false)
+    ).resolves.toBeDefined();
+    expect((postRepo.save.mock.calls[0][0] as unknown as Post).markdown).toBe('new');
+  });
+
+  it('refuses the "Entre etudiants" switch: a replay keeps the audience of its live (D8)', async () => {
+    const { service, postRepo } = makeService({ existing: { ...replay } });
+    await expect(
+      service.updatePost('p1', 'alice', { markdown: 'x', studentsOnly: true }, false)
+    ).rejects.toMatchObject({ response: { code: 'students_only_not_offered' } });
+    expect(postRepo.save).not.toHaveBeenCalled();
   });
 });
 

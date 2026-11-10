@@ -52,7 +52,7 @@ import {
   readPostListPage,
   writePostListPage,
 } from './post-list-cache';
-import { assertStudentsOnlyOffered } from './students-only';
+import { STUDENTS_ONLY_NOT_OFFERED, assertStudentsOnlyOffered } from './students-only';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedAuthorSql, blockedUserIdsFor } from '../common/blocked-user-ids';
 import { SUGGESTED_POSTS_MAX, suggestedPostIds } from './suggested-posts';
@@ -312,7 +312,8 @@ export class PostsService {
     limit: number,
     offset: number,
     kind: PostKind | undefined,
-    singleMedia: SingleMediaMode | undefined
+    singleMedia: SingleMediaMode | undefined,
+    withReplays: boolean
   ) {
     return postListCacheKey({
       feed,
@@ -323,19 +324,39 @@ export class PostsService {
       offset,
       kind,
       singleMedia,
+      withReplays,
     });
   }
 
   /**
-   * Excludes a reel whose month is up, in EVERY read that serves posts.
+   * Excludes a row whose time is up - a reel past its month, a replay past its three days - in EVERY
+   * read that serves posts, and a LIVE REPLAY from every read that has not said it can draw one.
    *
-   * The worker deletes an expired reel at its next hourly tick, and one whose blob will not delete
-   * waits longer; neither may ever be on screen. So the rule that a reel is dead past `expiresAt`
+   * The worker deletes an expired row at its next hourly tick, and one whose blob will not delete
+   * waits longer; neither may ever be on screen. So the rule that a row is dead past `expiresAt`
    * is a clause of the query, not a thing the worker's timing makes true. A post has a NULL
-   * `expiresAt` and the first branch keeps it.
+   * `expiresAt` and the first branch keeps it. A replay is served only where the client asked for
+   * one (`withReplays`, the feed and the CanaReels list): search, the linked event, every other list
+   * leave it out, so an installed build never draws one wrong (docs/wiki/live-replays.md).
    */
-  private liveReelFilterSql(): string {
-    return `AND (posts.kind <> 'reel' OR posts."expiresAt" > NOW())`;
+  private liveReelFilterSql(withReplays = false): string {
+    return `AND (posts."expiresAt" IS NULL OR posts."expiresAt" > NOW())${
+      withReplays
+        ? ''
+        : `
+         AND posts.kind <> 'replay'`
+    }`;
+  }
+
+  /**
+   * THE REMOVED VIEWER (docs/wiki/live-replays.md section 4): a replay is never listed to a viewer
+   * its broadcaster removed from the live - the list's statement of `readPostOpenVerdict`'s term.
+   * `viewer` is the arm's placeholder for the reader's id. Empty without replays in the page.
+   */
+  private replayNotRemovedSql(withReplays: boolean, viewer: string): string {
+    if (!withReplays) return '';
+    return `AND (posts.kind <> 'replay' OR NOT EXISTS (SELECT 1 FROM live_removed_viewers rv
+           WHERE rv."liveId" = posts."liveId" AND rv."viewerId" = ${viewer}))`;
   }
 
   /**
@@ -343,10 +364,12 @@ export class PostsService {
    * the two literals rather than interpolated, so nothing a client sends reaches the SQL text.
    */
   private kindFilterSql(kind: PostKind | undefined, singleMedia?: SingleMediaMode): string {
+    // A replay is drawn full screen like a reel: it is in the CanaReels list when the page asked for
+    // replays at all (`liveReelFilterSql` drops it otherwise).
     if (kind === 'reel' && singleMedia) {
-      return `AND (posts.kind = 'reel' OR (posts.kind = 'post' AND ${singleMediaSql(singleMedia)}))`;
+      return `AND (posts.kind IN ('reel', 'replay') OR (posts.kind = 'post' AND ${singleMediaSql(singleMedia)}))`;
     }
-    if (kind === 'reel') return `AND posts.kind = 'reel'`;
+    if (kind === 'reel') return `AND posts.kind IN ('reel', 'replay')`;
     if (kind === 'post') return `AND posts.kind = 'post'`;
     return '';
   }
@@ -620,7 +643,8 @@ export class PostsService {
             AND NOT COALESCE(posts.anonymous, false) AND posts."authorId" <> $2
             AND NOT posts."hiddenByModeration"
             AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= now())
-            AND NOT (posts.kind = 'reel' AND posts."expiresAt" IS NOT NULL AND posts."expiresAt" <= now())
+            AND (posts."expiresAt" IS NULL OR posts."expiresAt" > now())
+            AND posts.kind <> 'replay'
             AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false, memberReposts: false })}
             AND NOT EXISTS (SELECT 1 FROM user_blocks req_block
               WHERE (req_block."blockerId" = $2 AND req_block."blockedId" = posts."authorId")
@@ -1623,7 +1647,8 @@ export class PostsService {
       limit,
       offset,
       kind,
-      singleMedia
+      singleMedia,
+      params.withReplays === true
     );
 
     // The stamp is read BEFORE the page is computed, so a page computed across an invalidation is
@@ -1819,23 +1844,25 @@ export class PostsService {
 
     const hiddenFilter = this.hiddenFilterSql(isAdmin === true);
     // A dead reel is excluded in EVERY arm, and `kind` (absent = both) narrows every arm alike.
-    const reelFilters = `${this.liveReelFilterSql()}\n         ${this.kindFilterSql(kind, singleMedia)}`;
+    const withReplays = params.withReplays === true;
+    const reelFilters = `${this.liveReelFilterSql(withReplays)}\n         ${this.kindFilterSql(kind, singleMedia)}`;
     const serviceAccountFilter = reviewCohortAuthorFilterSql(isAdmin === true, viewerUserId);
     // WHICH POSTS THIS READER MAY SEE (WP6b), in every arm. The viewer goes LAST, after the optional
     // promo cutoff and blocked list (`tail`), so its placeholder is the next free index of each arm.
     const tail = [...(promoCutoff ? [promoCutoff] : []), ...blockedParams];
     const viewerParam = viewerUserId ?? null;
-    const visibleAt = (index: number) => `AND ${postVisibleToViewerSql('posts', `$${index}`)}`;
+    const visibleAt = (index: number) =>
+      `AND ${postVisibleToViewerSql('posts', `$${index}`)} ${this.replayNotRemovedSql(withReplays, `$${index}`)}`;
     // "Tout" and the promo/formation browse are feeds of SPACES (decision 5 of the follow requests,
     // user 2026-10-25): what an accepted follower reads across spaces (WP-F5) appears in Suivis,
     // never in these two - the predicate without its follower disjunct.
     const spaceVisibleAt = (index: number) =>
-      `AND ${postVisibleToViewerSql('posts', `$${index}`, { followers: false })}`;
+      `AND ${postVisibleToViewerSql('posts', `$${index}`, { followers: false })} ${this.replayNotRemovedSql(withReplays, `$${index}`)}`;
     // "Associations" lists what associations publish and republish; a MEMBER repost is a person's
     // reach, and appears in Suivis only (WP-F6) - an entity post a reader sees only because someone
     // they follow reposted it is not in this feed.
     const associationsVisibleAt = (index: number) =>
-      `AND ${postVisibleToViewerSql('posts', `$${index}`, { memberReposts: false })}`;
+      `AND ${postVisibleToViewerSql('posts', `$${index}`, { memberReposts: false })} ${this.replayNotRemovedSql(withReplays, `$${index}`)}`;
 
     if (feed === 'associations') {
       // $1=limit, $2=offset, $3=promoCutoff (optional), $4=blockedIds (optional)
@@ -2081,10 +2108,22 @@ export class PostsService {
 
   async getById(
     id: string,
-    opts?: { allowHidden?: boolean; viewerId?: string; isGlobalAdmin?: boolean }
+    opts?: {
+      allowHidden?: boolean;
+      viewerId?: string;
+      isGlobalAdmin?: boolean;
+      /** The client draws a live replay; without it a replay is the 404 of a missing post. */
+      withReplays?: boolean;
+    }
   ) {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
+    if (post.kind === 'replay' && opts?.withReplays !== true) {
+      this.logger.debug(
+        `[VISIBILITY] ${id} is a replay, withheld from a client that cannot draw one`
+      );
+      throw new NotFoundException('Post not found');
+    }
     const blockedIds = await this.assertOpenable(post, opts ?? {}, 'READ_OR_REACT');
     return this.serveToReader(
       post,
@@ -2268,8 +2307,9 @@ export class PostsService {
     await this.assertMayEdit(post, userId, isGlobalAdmin);
     await this.applyStudentsOnly(post, data.studentsOnly);
 
-    // A reel is edited by its caption alone; a post's text-or-media rule is the DTO's.
-    if (post.kind === 'reel') {
+    // A reel - and a live replay, whose shape the server wrote (docs/wiki/live-replays.md) - is
+    // edited by its caption alone; a post's text-or-media rule is the DTO's.
+    if (post.kind === 'reel' || post.kind === 'replay') {
       if (isExpiredPost(post)) throw new NotFoundException('Post not found');
       assertReelEditShape(data);
       post.markdown = data.markdown;
@@ -2364,6 +2404,15 @@ export class PostsService {
    */
   private async applyStudentsOnly(post: Post, next: boolean | undefined): Promise<void> {
     if (next === undefined || next === post.studentsOnly) return;
+    if (post.kind === 'replay' && next) {
+      // A live replay has exactly its live's audience (owner, 2026-11-09, D8): the switch is not
+      // offered on it, whatever the association's type.
+      this.logger.warn(`[STUDENTS_ONLY] refused on live replay ${post.id.slice(0, 8)} (D8)`);
+      throw new BadRequestException({
+        code: STUDENTS_ONLY_NOT_OFFERED,
+        message: 'A live replay keeps the audience of its live.',
+      });
+    }
     assertStudentsOnlyOffered(next, await this.associationTypeOf(post.associationId ?? null));
     this.logger.log(
       `[STUDENTS_ONLY] post ${post.id.slice(0, 8)}: switch turned ${next ? 'ON - withdrawn from readers outside students and members' : 'OFF - given back to its audience'}`

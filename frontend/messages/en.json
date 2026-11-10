@@ -1308,6 +1308,7 @@
     }
   ],
   "admin_storage_reels": "{live} reels alive, {overdue} overdue for deletion (an overdue reel is still there after its month: the hourly worker has not removed it).",
+  "admin_storage_replays": "{live} live replays showing ({size}); {evictions} deleted before their 3 days by the total cap in 30 days (a non-zero count means the LIVE_REPLAY_TOTAL_MAX_GB cap is too small).",
   "admin_storage_media_unclassified": [
     {
       "declarations": ["input count", "input size", "local countPlural = count: plural"],

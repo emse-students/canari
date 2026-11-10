@@ -11,8 +11,8 @@
  * picture (or a video): its `type`, or - for a row stored before `type` existed - its `mimeType`,
  * the same reading as the client's `resolveMediaType`.
  *
- * A VIDEO POST NEVER EXPIRES: only a `kind = 'reel'` row has an `expiresAt`, and the live-reel
- * clause (`posts.kind <> 'reel' OR ...`) leaves a plain post alone, so the video of a feed post
+ * A VIDEO POST NEVER EXPIRES: only a reel (or a live replay) row has an `expiresAt`, and the
+ * live-row clause (`posts."expiresAt" IS NULL OR ...`) leaves a plain post alone, so the video of a feed post
  * stays in the list as long as the post does.
  *
  * A COLUMN HOLDING JSON `null` (or any non-array) COUNTS AS EMPTY, never as an error:
