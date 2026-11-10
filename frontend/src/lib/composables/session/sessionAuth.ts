@@ -126,6 +126,7 @@ import {
   answerAfterMailboxDrained,
   reconcileGroup,
   resetHistoryReconciliation,
+  groupsAwaitingAPeer,
   retryDeferredReconciliations,
   setHistoryProbeSender,
 } from '$lib/utils/chat/historyReconcile';
@@ -2643,9 +2644,15 @@ export async function loginImpl(
       // background callback: storage is what says a session is live, the same guard `sendDisconnect`
       // uses. Without it a stray edge after teardown would build an MLS client for nobody.
       if (!ctx.getStorage()) return;
-      const mls = ctx.ensureMls();
-      cb.log('[HISTORY_RECONCILE] a peer came back online - retrying what nobody could answer');
-      void retryDeferredReconciliations(mls, mls.getLocalGroups(), cb.log);
+      // Only when a group is owed this edge: a presence flap with nothing deferred re-runs nothing.
+      const awaiting = groupsAwaitingAPeer();
+      if (awaiting > 0) {
+        const mls = ctx.ensureMls();
+        cb.log(
+          `[HISTORY_RECONCILE] a peer came back online - retrying ${awaiting} group(s) nobody could answer`
+        );
+        void retryDeferredReconciliations(mls, mls.getLocalGroups(), cb.log);
+      }
       // THE SAME EDGE, THE OTHER RECORD OF THE SAME ANSWER. A group whose base nobody was online to
       // republish is locked out until somebody is, and this is the moment somebody is - see
       // `forgetProvenDeadEnds` for why waiting on the epochs alone rests on the far side's build.

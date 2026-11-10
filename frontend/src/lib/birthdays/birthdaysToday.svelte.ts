@@ -2,6 +2,16 @@ import { SvelteSet } from 'svelte/reactivity';
 import { Log } from '$lib/utils/Log';
 import { fetchBirthdaysToday, fetchMyBirthday } from './api';
 
+/** The Paris calendar date (`YYYY-MM-DD`), the zone the server decides "today" in. */
+export function parisDate(now: number = Date.now()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Paris',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
 /**
  * WHOSE BIRTHDAY IT IS TODAY, as the reactive set every avatar reads (`Avatar.svelte` draws the ring
  * for a member in it - decision 3, docs/wiki/birthdays.md).
@@ -12,6 +22,13 @@ import { fetchBirthdaysToday, fetchMyBirthday } from './api';
  * have turned - and held in memory only: nothing about another member's birthday is written to the
  * device, and an account switch never reads the previous account's answer.
  *
+ * THE ANSWER IS PER CALENDAR DAY, so it is asked once a day: while the held answer's date is still
+ * the Paris date, a return to the foreground (or a feed visit) asks nothing (owner's console export,
+ * 2026-11-10: nine identical reads in five minutes). Only a new day, another account or
+ * {@link BirthdaysTodayStore.invalidate} (the reader changed their own date) asks again. No clock:
+ * the key is the calendar date the server itself returned. A member who enters a birthday later
+ * today is drawn from tomorrow, a cost taken for the saved reads.
+ *
  * A failed ask keeps the last answer for the same account (it was the server's) and says so; it is
  * never replaced by a guess.
  */
@@ -19,24 +36,37 @@ export class BirthdaysTodayStore {
   #account: string | null = null;
   readonly #ids = new SvelteSet<string>();
   #token = 0;
+  /** The date of the answer held for the account, or null when none is held. */
+  #answeredFor: string | null = null;
 
   /** Whether `userId`'s birthday is celebrated today. Reactive. */
   has(userId: string): boolean {
     return this.#ids.has(userId);
   }
 
-  /** Asks the server for today's celebrants as `account` sees them. */
+  /** Drops the held answer so the next {@link refresh} asks: the reader changed their own birthday. */
+  invalidate(): void {
+    this.#answeredFor = null;
+  }
+
+  /**
+   * Asks the server for today's celebrants as `account` sees them - unless this account already holds
+   * the answer for the current Paris day.
+   */
   async refresh(account: string): Promise<void> {
     if (this.#account !== account) {
       this.#account = account;
+      this.#answeredFor = null;
       this.#ids.clear();
     }
+    if (this.#answeredFor !== null && this.#answeredFor === parisDate()) return;
     const token = ++this.#token;
     try {
       const today = await fetchBirthdaysToday();
       if (token !== this.#token || this.#account !== account) return;
       this.#ids.clear();
       for (const id of today.userIds) this.#ids.add(id);
+      this.#answeredFor = today.date;
       Log.d('birthdays', `today (${today.date}): ${today.userIds.length} celebrant(s)`);
     } catch (e) {
       Log.i(
@@ -49,6 +79,7 @@ export class BirthdaysTodayStore {
   /** Forgets everything: the account signed out. */
   clear(): void {
     this.#account = null;
+    this.#answeredFor = null;
     this.#token++;
     this.#ids.clear();
   }

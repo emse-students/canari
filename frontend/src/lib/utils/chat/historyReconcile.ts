@@ -1058,6 +1058,20 @@ export async function retryDeferredReconciliations(
   }
 }
 
+/**
+ * How many groups wait for a PEER to come back (`no-peer-online`) - the only deferral a presence edge
+ * can lift. A `no-probe-sender` group is lifted by the sender's installation, never by presence.
+ *
+ * The presence edge asks this first: a flap with nothing owed re-runs nothing and says nothing
+ * (owner's console export, 2026-11-10: the retry line fired every 30-60 s on a slow link while
+ * `deferred` was empty, so each pass sent nothing and only logged).
+ */
+export function groupsAwaitingAPeer(): number {
+  let count = 0;
+  for (const reason of deferred.values()) if (reason === 'no-peer-online') count += 1;
+  return count;
+}
+
 /** Groups whose reconciliation could not be attempted, and why. Exposed for tests and diagnostics. */
 export function deferredReconciliations(): Array<[string, DeferredReason]> {
   return [...deferred];

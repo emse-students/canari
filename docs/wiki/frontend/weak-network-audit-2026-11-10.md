@@ -271,3 +271,5 @@ rows marked fixed are the numbers to compare.
 - [community-open-budget](community-open-budget.md) - the community open, measured on the Mi 9T.
 - [local-first-ui](local-first-ui.md) - why the stored screens paint in 0 RTT.
 - Backlog: [weak-network-audit-2-what-is-left](../backlog.d/weak-network-audit-2-what-is-left.md).
+- The chantier it opened (owner, 2026-11-10, after `1.6.10`):
+  [slow-link-local-first-chantier](../backlog.d/slow-link-local-first-chantier.md).

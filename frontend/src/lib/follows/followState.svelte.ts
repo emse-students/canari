@@ -141,6 +141,8 @@ function dropAfterBlockChange(): void {
 
 /** A real event (the connection back, a navigation): ask again for exactly what failed, once. */
 export function retryFailedFollowReads(): void {
+  // Nothing failed in this epoch: nothing to ask again, and nothing to say.
+  if (failedPersons.size === 0 && !associationsFailed && !blocksFailed) return;
   Log.d(
     'followState',
     `retrying ${failedPersons.size} persons, associations ${associationsFailed}, blocks ${blocksFailed}`
