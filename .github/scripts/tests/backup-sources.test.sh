@@ -91,7 +91,7 @@ for compose in docker-compose.prod.yml docker-compose.dev.yml local/docker-compo
   # The media-service block: from its key to the next service key at the same indent.
   block="$(awk '/^  media-service:/ { on = 1; print; next } on && /^  [a-z]/ { on = 0 } on' "$file")"
   dir="$(printf '%s\n' "$block" | sed -n 's/^ *LIVE_SEGMENTS_DIR: *//p' | tr -d '"')"
-  if [ -n "$dir" ] && printf '%s\n' "$block" | grep -q -- "- live_segments:$dir\$"; then
+  if [ -n "$dir" ] && grep -q -- "- live_segments:$dir\$" <<<"$block"; then
     pass "$compose: media-service mounts live_segments at LIVE_SEGMENTS_DIR ($dir)"
   else
     fail "$compose: media-service must set LIVE_SEGMENTS_DIR and mount live_segments there (dir=[$dir])"
