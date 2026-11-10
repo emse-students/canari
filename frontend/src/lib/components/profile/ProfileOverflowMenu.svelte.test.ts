@@ -3,13 +3,16 @@
  * THE "..." OF SOMEONE ELSE'S PROFILE holds report and block, and nothing else: they left the line
  * of their own where they floated alone at the right of the page.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import ProfileOverflowMenu from './ProfileOverflowMenu.svelte';
 import { m } from '$lib/paraglide/messages';
 
-afterAll(adoptTransitionAnimations());
+// Never undone: a Svelte outro creates its main animation from a happy-dom timer that fires after
+// the last test, so an `afterAll` undo would leave that animation unadopted and its cancellation
+// an unhandled rejection.
+adoptTransitionAnimations();
 
 let component: ReturnType<typeof mount> | null = null;
 
@@ -88,9 +91,6 @@ describe('ProfileOverflowMenu', () => {
     await settle();
     expect(onReport).toHaveBeenCalledTimes(1);
     expect(trigger().getAttribute('aria-expanded')).toBe('false');
-    // The outro finishes before the menu opens again: cancelling it mid-flight is what rejects.
-    await new Promise((r) => setTimeout(r, 400));
-    await settle();
     await open();
     items()[1].click();
     await settle();
@@ -103,8 +103,6 @@ describe('ProfileOverflowMenu', () => {
     items()[1].click();
     await settle();
     expect(onBlockToggle).not.toHaveBeenCalled();
-    await new Promise((r) => setTimeout(r, 400));
-    await settle();
     await open();
     items()[0].click();
     await settle();
