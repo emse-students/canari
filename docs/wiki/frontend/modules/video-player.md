@@ -49,7 +49,8 @@ allows them ([controls](../controls.md)).
 | `VideoChipButton` | the kit's one button: a transparent 44 px `.ui-icon-button` holding a 28 px round `glass-video` chip (`glass` off inside a glass bar, so blurs never stack); stops its press from the player's tap |
 | `VideoSoundButton` | the speaker: state by shape (struck / waves) and `aria-pressed`; the sound-on glyph is the only yellow glyph |
 | `VideoExpandButton` | opens the full-screen viewer where a tap used to |
-| `VideoPlayDisc` | the 64 px (72 px `lg`) glass play disc, white glyph; shown only when it answers "is this playing?" |
+| `VideoPlayGlyph` | the play button: a rounded triangle that IS the glass, no disc, in an invisible 64 px (72 px `lg`) hit square; shown only when it answers "is this playing?" |
+| `VideoGlassGlyph` | the shape itself - play triangle or pause bars - clipped out of a `.glass-video-shape` layer, with an SVG rim and a sibling shadow; also the feedback glyph's play/pause and the poster's triangle |
 | `VideoScrubber` | `line` (2 px, 32 px to touch, thickens with a handle while touched) and `bar` (4 px with buffered); the played part is yellow; a glass time bubble above the handle while dragged |
 | `VideoFeedbackGlyph` | the pop of what a gesture just did (sound on/off, pause, play), a CSS animation that ends invisible - no timer; a sound change is announced (`aria-live="polite"`), an autoplay never is |
 
@@ -106,6 +107,34 @@ like the theme: not per account, not wiped by a sign-out.
   glyph at volume 0, as Instagram does) needs a native bridge on each phone - owed in
   [backlog](../../backlog.d/video-sound-follows-the-device-volume.md).
 - Tests: `videoSound.svelte.test.ts`.
+
+## The glass play glyph - a triangle with no disc (owner, 2026-11-09)
+
+> *"J'aurais juste fait le triangle en liquid glass."* The play glyph ITSELF is the glass: no circle
+> behind it, on every surface at once (viewer, reels, feed, chat, live, the poster before a first
+> frame). The pause bars the same way where they are shown (the gesture's feedback glyph).
+
+How it is built (`VideoGlassGlyph`, geometry in `utils/videoGlassGlyph.ts`): a rounded triangle path
+authored on 64 units and scaled to the box in pixels, used three times - the `clip-path: path()` of a
+`.glass-video-shape` layer (the video's blur and dark tint exist only inside the shape), a thin light
+stroke along it (the rim, a gradient bright at the top-left edge, in SVG because a clipped element
+cannot carry a border), and a blurred copy beneath as the soft shadow. The shadow is a SIBLING of the
+glass: a `filter` on an ancestor would make that ancestor the backdrop root and the glass would blur
+nothing but its own box.
+
+- **Hit target**: the button is an invisible 64 px square (72 px `lg`) around the triangle - the 44 px
+  minimum holds whatever the glyph draws.
+- **Legibility**: the fill is white over the dark tint plus the shadow, so a white frame and a black
+  frame both leave it readable (not yet read on a device - the readings below).
+- **Flat / reduced transparency / no `backdrop-filter` / more contrast**: `.glass-video-shape` reads
+  the same `--glass-video-*` variables as `.glass-video`, so every fallback that flattens the chip
+  flattens it: a solid dark tint in the shape of the triangle, rim and shadow kept.
+- **WebKit - NOT VERIFIED**: a `backdrop-filter` on an element cut by `clip-path` renders in Chromium,
+  and WebKit has reports of ignoring the blur on clipped or masked elements. No test can say, and none
+  was run on the iPhone 12. If WebKit draws the triangle without the blur it falls to the same solid
+  tint as the flat form (still a triangle, still legible) - the honest equivalent, not a fake. The
+  iPhone 12 reading (a paused viewer over a white frame, a black frame, a bright photo) is owed and
+  decides whether the blur is kept there or `videoGlass()` returns `flat` for the glyph.
 
 ## The glass
 
@@ -208,7 +237,7 @@ conversation media panel:
   retired: the tap is the sound now, and the bar leaves by itself). A `silent` video's tap only
   raises the bar. **A held press pauses** and draws neither the disc nor the bar for that pause; the
   release resumes only what the hold paused.
-- **The glass play disc** (`VideoPlayDisc`) when paused, `tabindex="-1"` because the bar repeats it.
+- **The glass play triangle** (`VideoPlayGlyph`) when paused, `tabindex="-1"` because the bar repeats it.
 - The reel mode (`variant="reel"`, step C) shares three pieces: the `lg` glass disc on an autoplay
   refusal, `VideoFeedbackGlyph` for its gestures, and the `line` scrubber (its played part yellow).
   Since step C its tap is the sound and its hold the pause, like every player's.
