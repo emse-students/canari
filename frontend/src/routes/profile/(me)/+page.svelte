@@ -49,7 +49,7 @@
         onclick={changeProfilePhoto}
         title={m.profile_photo_change_label()}
         aria-label={m.profile_photo_change_label()}
-        class="tap-target bg-accent hover:bg-accent-hover text-on-accent shadow-accent/30 absolute right-0 bottom-0 flex h-8
+        class="tap-target bg-accent hover:bg-accent-hover text-on-accent shadow-accent/30 absolute right-0 bottom-0 z-10 flex h-8
  w-8 items-center justify-center
  rounded-full shadow-md ring-2 ring-white transition-all
  active:scale-95 dark:ring-(--cn-bg)"
