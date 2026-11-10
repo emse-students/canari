@@ -17,6 +17,13 @@
   import PostIdentityPicker from '$lib/components/posts/PostIdentityPicker.svelte';
   import StudentsOnlySwitch from '$lib/components/posts/StudentsOnlySwitch.svelte';
   import { studentsOnlyOffered } from '$lib/posts/studentsOnly';
+  import InstitutionReachPicker from '$lib/components/posts/InstitutionReachPicker.svelte';
+  import {
+    emptyReachDraft,
+    institutionReachOffered,
+    isReachComplete,
+    type InstitutionReachDraft,
+  } from '$lib/posts/institutionReach';
   import type { ComposerReelState } from '$lib/posts/composerReelState';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
@@ -50,7 +57,7 @@
    * CanaReel, `reels/reelRule.ts`): a filmed take is one, so handing it back would make it one again.
    */
   interface ReelPublishFromComposer {
-    /** The composer's text, identity and "Entre étudiants": where the step starts. */
+    /** The composer's text, identity, "Entre étudiants" and reach: where the step starts. */
     start: ComposerReelState;
     /** The reel was published, as `identity`: the composer closes behind it. */
     onpublished: (identity: string) => void;
@@ -91,6 +98,23 @@
   });
   /** Sent only where offered: a switch left on before the identity changed is not a choice. */
   const sendStudentsOnly = $derived(studentsOnly && studentsOnlyAssociation !== null);
+  /**
+   * The reach of an institution's post (owner, 2026-11-10): no default, mandatory - "Publier" stays
+   * disabled until a space and a public are chosen, and the reach is sent only where it is offered.
+   */
+  let reach = $state<InstitutionReachDraft>(
+    untrack(() => composer?.start.reach ?? emptyReachDraft())
+  );
+  const reachAssociation = $derived.by(() => {
+    const chosen = associations.find((a) => a.id === identity) ?? null;
+    return chosen && institutionReachOffered(chosen.type) ? chosen : null;
+  });
+  const reachMissing = $derived(reachAssociation !== null && !isReachComplete(reach));
+  const sendReach = $derived(
+    reachAssociation !== null && isReachComplete(reach)
+      ? { spaces: [...reach.spaces], public: reach.public }
+      : undefined
+  );
   let publishing = $state(false);
   let stage = $state<PublishStage | null>(null);
   let errorMessage = $state('');
@@ -189,12 +213,18 @@
           `[reel-publish] publishing with "Entre étudiants" ${sendStudentsOnly ? 'ON' : 'off'}`
         );
       }
+      if (reachAssociation) {
+        console.debug(
+          `[reel-publish] publishing with a reach of ${reach.spaces.length} space(s), public ${reach.public}`
+        );
+      }
       if (clip.blob.type.startsWith('image/')) {
         await publishCameraPhoto({
           clip,
           caption,
           identity,
           studentsOnly: sendStudentsOnly,
+          reach: sendReach,
           onStage,
         });
       } else {
@@ -204,6 +234,7 @@
             caption,
             identity,
             studentsOnly: sendStudentsOnly,
+            reach: sendReach,
             maxDurationMs: limits.maxDurationMs,
             rule: reelRuleOf(limits),
             video: { onProgress: options.onProgress, signal: options.signal },
@@ -302,6 +333,16 @@
         />
       </div>
     {/if}
+    {#if reachAssociation}
+      <div class="mt-3">
+        <InstitutionReachPicker
+          bind:reach
+          associationId={reachAssociation.id}
+          associationName={reachAssociation.name}
+          busy={publishing}
+        />
+      </div>
+    {/if}
 
     <div class="mt-4 flex gap-3">
       <!-- The box is 9:16 from the first paint. The take is a local blob, so its first frame is a
@@ -381,7 +422,7 @@
       <Button
         type="button"
         class="shrink-0"
-        disabled={publishing}
+        disabled={publishing || reachMissing}
         loading={publishing}
         onclick={publish}
         data-reel-publish-submit

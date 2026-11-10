@@ -59,6 +59,7 @@
   import { republishedByText } from '$lib/posts/republication';
   import RevealedAuthorLine from '$lib/components/posts/RevealedAuthorLine.svelte';
   import StudentsOnlyChip from '$lib/components/posts/StudentsOnlyChip.svelte';
+  import InstitutionReachChip from '$lib/components/posts/InstitutionReachChip.svelte';
   import { ChevronLeft, ChevronRight, Repeat2 } from '@lucide/svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
@@ -403,6 +404,9 @@
           >
           {#if post.studentsOnly}
             <StudentsOnlyChip onMedia />
+          {/if}
+          {#if post.reach}
+            <InstitutionReachChip reach={post.reach} onMedia />
           {/if}
           {#if republished}
             <span class="shrink-0 opacity-70" aria-hidden="true">&middot;</span>

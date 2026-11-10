@@ -131,7 +131,7 @@ maybe("friends' activity against PostgreSQL (engagement WP-9)", () => {
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "isBDE" boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false,
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb,
         anonymous boolean NOT NULL DEFAULT false, "hiddenByModeration" boolean NOT NULL DEFAULT false,
         "scheduledAt" timestamptz, kind varchar NOT NULL DEFAULT 'post', markdown text,
         "publishedAt" timestamptz NOT NULL DEFAULT now());

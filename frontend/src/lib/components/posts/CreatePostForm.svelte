@@ -69,6 +69,13 @@
   import PostIdentityPicker from './PostIdentityPicker.svelte';
   import StudentsOnlySwitch from './StudentsOnlySwitch.svelte';
   import { studentsOnlyOffered } from '$lib/posts/studentsOnly';
+  import InstitutionReachPicker from './InstitutionReachPicker.svelte';
+  import {
+    emptyReachDraft,
+    institutionReachOffered,
+    isReachComplete,
+    type InstitutionReachDraft,
+  } from '$lib/posts/institutionReach';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import PostComposerBar from './PostComposerBar.svelte';
   import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
@@ -290,6 +297,17 @@
   );
 
   /**
+   * The reach of an institution's post (owner, 2026-11-10): offered while the identity chosen is an
+   * institution, with NOTHING pre-selected - "Publier" stays disabled until a space and a public are
+   * chosen (`reachMissing`), and the reach is sent only where it is offered.
+   */
+  let reach = $state<InstitutionReachDraft>(emptyReachDraft());
+  const reachAssociation = $derived(
+    chosenAssociation && institutionReachOffered(chosenAssociation.type) ? chosenAssociation : null
+  );
+  const reachMissing = $derived(reachAssociation !== null && !isReachComplete(reach));
+
+  /**
    * Hands over to the broadcaster's screen. The composer is about to unmount, and the debounced
    * auto-save below dies with it, so the draft is saved NOW (text, poll, form; the media are held
    * in memory by `holdPostComposerMedia`): the next open of the composer brings it back, and
@@ -346,6 +364,7 @@
       selectedAssociationId,
       selectedLinkedCalendarEventId,
       ...(studentsOnly ? { studentsOnly: true } : {}),
+      ...(reach.spaces.length > 0 || reach.public !== null ? { reach } : {}),
     };
   }
 
@@ -367,6 +386,7 @@
     selectedAssociationId = draft.selectedAssociationId;
     selectedLinkedCalendarEventId = draft.selectedLinkedCalendarEventId;
     studentsOnly = draft.studentsOnly === true;
+    reach = draft.reach ?? emptyReachDraft();
   }
 
   function persistComposerDraft() {
@@ -627,6 +647,18 @@
       if (studentsOnlyAssociation) {
         Log.d('STUDENTS_ONLY', `publishing with the switch ${payload.studentsOnly ? 'ON' : 'off'}`);
       }
+      if (reachAssociation) {
+        // The button is disabled until the choice is complete: this is a net, never a path.
+        if (!isReachComplete(reach)) {
+          stage = 'content';
+          throw new LocalizedError(m.post_reach_required());
+        }
+        payload.reach = { spaces: [...reach.spaces], public: reach.public };
+        Log.d(
+          'INSTITUTION_REACH',
+          `publishing to ${reach.spaces.length} space(s), public ${reach.public}`
+        );
+      }
       if (selectedLinkedCalendarEventId.trim()) {
         payload.linkedCalendarEventId = selectedLinkedCalendarEventId.trim();
       }
@@ -676,6 +708,7 @@
       selectedAssociationId = '';
       selectedLinkedCalendarEventId = '';
       studentsOnly = false;
+      reach = emptyReachDraft();
       // The hold effect would forget the media only on its next flush, and `onPostCreated` unmounts
       // this composer before that: the next open brought the PUBLISHED media back. Said here, now.
       holdPostComposerMedia([]);
@@ -756,6 +789,16 @@
         <StudentsOnlySwitch
           bind:checked={studentsOnly}
           associationName={studentsOnlyAssociation.name}
+        />
+      </div>
+    {/if}
+
+    {#if reachAssociation}
+      <div class="mt-3" transition:fade={{ duration: 200 }}>
+        <InstitutionReachPicker
+          bind:reach
+          associationId={reachAssociation.id}
+          associationName={reachAssociation.name}
         />
       </div>
     {/if}
@@ -937,7 +980,7 @@
         : undefined}
       reel={reelAllowed
         ? {
-            start: { caption: markdown, identity: selectedAssociationId, studentsOnly },
+            start: { caption: markdown, identity: selectedAssociationId, studentsOnly, reach },
             onpublished: onReelPublished,
           }
         : undefined}
@@ -946,7 +989,7 @@
         <Button
           type="button"
           class="shrink-0"
-          disabled={publishing || !hasContent(markdown, selectedFiles.length)}
+          disabled={publishing || !hasContent(markdown, selectedFiles.length) || reachMissing}
           loading={publishing}
           onclick={publishPost}
         >

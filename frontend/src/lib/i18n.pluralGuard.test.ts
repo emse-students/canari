@@ -41,6 +41,7 @@ const ALLOWED: Record<string, string> = {
   reel_sendto_cancel_all_hint: 'shown only when the take reaches two conversations or more',
   reel_sendto_delete_everywhere_hint: 'shown only when the take reaches two conversations or more',
   bookings_row_resources: 'shown only when a space has more than one resource',
+  post_reach_chip_spaces: 'the chip names the one space, and counts only two or more',
 };
 
 const BARE = /\{count\}\s+[^\W\d_]{3,}/i;

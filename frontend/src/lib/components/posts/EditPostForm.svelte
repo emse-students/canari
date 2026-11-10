@@ -36,6 +36,14 @@
   import PostComposerBar from './PostComposerBar.svelte';
   import StudentsOnlySwitch from './StudentsOnlySwitch.svelte';
   import { studentsOnlyOffered } from '$lib/posts/studentsOnly';
+  import InstitutionReachPicker from './InstitutionReachPicker.svelte';
+  import {
+    institutionReachOffered,
+    isReachComplete,
+    reachDraftFrom,
+    sameReach,
+    type InstitutionReachDraft,
+  } from '$lib/posts/institutionReach';
   import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
   import PickedMediaPreview from './PickedMediaPreview.svelte';
   import MediaCaptionChip from './MediaCaptionChip.svelte';
@@ -167,6 +175,18 @@
   const studentsOnlyEditable = $derived(
     post.studentsOnly === true || studentsOnlyOffered(post.association?.type)
   );
+
+  // --- The reach of an institution's post (owner, 2026-11-10: editable after publishing, both ways) ---
+  /** As served: an institution post published before the reach existed starts with nothing ticked. */
+  const servedReach = untrack(() => reachDraftFrom(post.reach));
+  let reach = $state<InstitutionReachDraft>(untrack(() => reachDraftFrom(post.reach)));
+  /** Drawn on an institution's post, and on any post that already carries a reach. */
+  const reachEditable = $derived(
+    !!post.associationId && (!!post.reach || institutionReachOffered(post.association?.type))
+  );
+  const reachChanged = $derived(reachEditable && !sameReach(reach, servedReach));
+  /** A changed choice that is not complete yet holds the save: an incomplete reach is never sent. */
+  const reachPending = $derived(reachChanged && !isReachComplete(reach));
 
   // --- UI state ---
   let saving = $state(false);
@@ -326,6 +346,14 @@
       if (studentsOnlyEditable && studentsOnly !== (post.studentsOnly === true)) {
         Log.d('STUDENTS_ONLY', `edit turns the switch ${studentsOnly ? 'ON' : 'off'}`);
       }
+      // Sent only when the author changed it AND completed it: absent leaves the stored reach alone.
+      if (reachChanged && isReachComplete(reach)) {
+        payload.reach = { spaces: [...reach.spaces], public: reach.public };
+        Log.d(
+          'INSTITUTION_REACH',
+          `edit sets the reach to ${reach.spaces.length} space(s), public ${reach.public}`
+        );
+      }
 
       if (includePoll) {
         const options = filledPollOptions(pollOptions);
@@ -389,6 +417,17 @@
           bind:checked={studentsOnly}
           associationName={post.association?.name ?? ''}
           busy={saving}
+        />
+      </div>
+    {/if}
+    {#if reachEditable && post.associationId}
+      <div class="mb-5">
+        <InstitutionReachPicker
+          bind:reach
+          associationId={post.associationId}
+          associationName={post.association?.name ?? ''}
+          busy={saving}
+          required={!!post.reach}
         />
       </div>
     {/if}
@@ -612,6 +651,7 @@
           type="button"
           class="shrink-0"
           disabled={saving ||
+            reachPending ||
             (!markdown.trim() && existingMedia.length === 0 && newFiles.length === 0)}
           loading={saving}
           onclick={submitEdit}
