@@ -806,10 +806,24 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *body = CanariLocalized([NSString stringWithFormat:@"notif.social.%@.body", fixedStem]);
     return;
   }
-  // A campus trend (engagement WP-10): nobody acted, a fixed title; the body is the post's opening.
+  // A campus trend, told as a SUGGESTION (engagement WP-10, owner 2026-11-10): nobody acted; the
+  // title is "Suggestion : " and the post's opening - "une publication" when the server sends none -
+  // and the body a fixed sentence. A post with no text but a picture or a video has its own key.
   if ([key isEqualToString:@"social_campus_trend"]) {
-    *title = CanariLocalized(@"notif.social.campus_trend.title");
-    *body = arg.length > 0 ? arg : CanariLocalized(@"notif.social.campus_trend.body");
+    *title = arg.length > 0
+                 ? [NSString stringWithFormat:CanariLocalized(@"notif.social.campus_trend.title"), arg]
+                 : CanariLocalized(@"notif.social.campus_trend.untitled");
+    *body = CanariLocalized(@"notif.social.campus_trend.body");
+    return;
+  }
+  if ([key isEqualToString:@"social_campus_trend_photo"]) {
+    *title = CanariLocalized(@"notif.social.campus_trend_photo.title");
+    *body = CanariLocalized(@"notif.social.campus_trend_photo.body");
+    return;
+  }
+  if ([key isEqualToString:@"social_campus_trend_video"]) {
+    *title = CanariLocalized(@"notif.social.campus_trend_video.title");
+    *body = CanariLocalized(@"notif.social.campus_trend_video.body");
     return;
   }
   // The bookings' reminder (WP-N): nobody acted, a fixed title; the body is the place and the time.

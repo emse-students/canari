@@ -28,7 +28,10 @@ describe('categoryOfDataPush', () => {
     ['social_live_started', 'posts'],
     ['social_friend_reaction', 'posts'],
     ['social_friend_comment', 'posts'],
-    ['social_campus_trend', 'posts'],
+    // A campus trend is a suggestion, its own switch independent of posts (owner, 2026-11-10).
+    ['social_campus_trend', 'suggestions'],
+    ['social_campus_trend_photo', 'suggestions'],
+    ['social_campus_trend_video', 'suggestions'],
     ['social_live_mention', 'mentions'],
     ['social_follow_request', 'follows'],
     ['social_follow_accepted', 'follows'],

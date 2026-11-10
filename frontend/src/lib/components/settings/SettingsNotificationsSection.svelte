@@ -26,6 +26,10 @@
     follows: { label: m.settings_notif_follows_label, desc: m.settings_notif_follows_desc },
     bookings: { label: m.settings_notif_bookings_label, desc: m.settings_notif_bookings_desc },
     birthdays: { label: m.settings_notif_birthdays_label, desc: m.settings_notif_birthdays_desc },
+    suggestions: {
+      label: m.settings_notif_suggestions_label,
+      desc: m.settings_notif_suggestions_desc,
+    },
   };
 
   let loadError = $state(false);

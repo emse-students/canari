@@ -23,6 +23,7 @@ import { reelLimits } from './reel.constants';
 import { resolveListFeed } from './list-feed';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService, bellPageLimit } from './post-notifications.service';
+import { CLIENT_VERSION_HEADER, clientVersionOf } from '../common/client-version';
 import { AssociationsService } from '../associations/associations.service';
 import { withOneEventIcsSig } from '../associations/agenda-signature';
 import { ModerationService } from '../moderation/moderation.service';
@@ -65,11 +66,22 @@ export class PostsController {
     return { service: 'post-service', status: 'ok', timestamp: new Date().toISOString() };
   }
 
-  /** Returns the notification list for the calling user. */
+  /**
+   * Returns the notification list for the calling user - only the types the caller's build can draw,
+   * read from the build it names in `X-Canari-Client-Version` (`notification-client-floor.ts`).
+   */
   @UseGuards(NginxAuthGuard)
   @Get('notifications')
-  getNotifications(@Headers('x-user-id') xUserId: string, @Query('limit') limit?: string) {
-    return this.notifications.getNotifications(xUserId, bellPageLimit(limit));
+  getNotifications(
+    @Headers('x-user-id') xUserId: string,
+    @Query('limit') limit?: string,
+    @Headers(CLIENT_VERSION_HEADER) clientVersion?: string
+  ) {
+    return this.notifications.getNotifications(
+      xUserId,
+      bellPageLimit(limit),
+      clientVersionOf(clientVersion)
+    );
   }
 
   /** Marks all notifications as read for the calling user. */

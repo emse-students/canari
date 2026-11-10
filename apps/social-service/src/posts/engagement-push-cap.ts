@@ -37,19 +37,37 @@ export const CAMPUS_TREND_NOTIFICATION = 'campus_trend';
 /**
  * THE CAPPED PUSH TYPES, and the notification category each files under - ONE map, so the category
  * the cap reads before counting and the one chat-delivery applies at the send cannot disagree; a
- * contract test pins every entry against chat-delivery's `push-category.ts` through its content key.
- * An ALLOWLIST: a type absent here is never counted and never capped.
+ * contract test pins every entry against chat-delivery's `push-category.ts` through EACH of its
+ * content keys. An ALLOWLIST: a type absent here is never counted and never capped.
  *
  * Exactly the kinds about an account the reader does NOT follow (decision 11, amended 2026-11-10):
- * - `campus_trend` (WP-10, decision 5c): a post of the reader's space took off - files under `posts`.
+ * - `campus_trend` (WP-10, decision 5c): a post of the reader's space took off - files under
+ *   `suggestions`, its own switch since 2026-11-10 (owner), under one of three keys (the post's
+ *   opening, or its photo or video when it has no text). It is also bounded to ONE per reader per
+ *   day by its own ledger (`campus-trend.ts`), so the cap never binds on it today: it stays the guard
+ *   for any capped kind added later.
  *
  * NOT here: `friend_reaction` and `friend_comment` (WP-9, decision 5b). They name an account the
  * reader follows, and following is the reader's own choice to hear from it (decision 10), so they
  * push uncounted, reduced only by that account's bell (`BELL_PUSH_KINDS`), the `posts` switch and
  * the told-once ledger.
  */
-export const CAPPED_PUSH_TYPES: ReadonlyMap<string, { contentKey: string; category: string }> =
-  new Map([[CAMPUS_TREND_NOTIFICATION, { contentKey: 'social_campus_trend', category: 'posts' }]]);
+export const CAPPED_PUSH_TYPES: ReadonlyMap<
+  string,
+  { contentKeys: readonly string[]; category: string }
+> = new Map([
+  [
+    CAMPUS_TREND_NOTIFICATION,
+    {
+      contentKeys: [
+        'social_campus_trend',
+        'social_campus_trend_photo',
+        'social_campus_trend_video',
+      ],
+      category: 'suggestions',
+    },
+  ],
+]);
 
 /**
  * The one statement of a capped fan-out: for every DISTINCT recipient (a fan-out that names a

@@ -1028,6 +1028,15 @@ The link-preview pipeline, the SSRF guard, the favicon cascade and the undici se
 
 ## Contracts the compiler does not check
 
+### A NOTIFICATION TYPE HAS A CLIENT FLOOR, DECLARED WITH THE TYPE
+
+The server never sends a type to a build too old to draw it: every bell type and push key has the
+first release that draws it in `notification-client-floor.ts`; the bell read filters on the
+`X-Canari-Client-Version` header (none = a build up to 1.6.9) and every push carries its key's
+`minAppVersion`. A new type takes a floor above every build that cannot draw it, and an undeclared
+one fails to compile or fails `notification-client-floor.spec.ts`.
+[legacy-compatibility](legacy-compatibility.md#the-client-floor-of-every-notification-type-owner-2026-11-10)
+
 ### A VALIDATOR'S BOUND IS DERIVED FROM THE GENERATOR OF THE VALUE, AND ITS SPEC USES A VALUE OF REAL LENGTH
 
 A composite value (`userId:deviceId`) run through a generic allowlist sized for ONE id was refused on

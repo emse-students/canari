@@ -285,11 +285,26 @@ class NotificationService: UNNotificationServiceExtension {
     // the title, the space's name or the event's title is the body.
     case "social_booking_open": composed = actorTitled("booking_open")
     case "social_event_open": composed = actorTitled("event_open")
-    // A campus trend (engagement WP-10): nobody acted, a fixed title; the body is the post's opening.
+    // A campus trend, told as a SUGGESTION (engagement WP-10, owner 2026-11-10): nobody acted;
+    // the title is "Suggestion : " and the post's opening - "une publication" when the server
+    // sends none - and the body a fixed sentence. A post with no text but a picture or a video has
+    // its own key, so a colon is never followed by nothing.
     case "social_campus_trend":
       composed = (
-        Self.localized("notif.social.campus_trend.title", locale: locale),
-        arg.isEmpty ? Self.localized("notif.social.campus_trend.body", locale: locale) : arg
+        arg.isEmpty
+          ? Self.localized("notif.social.campus_trend.untitled", locale: locale)
+          : Self.localizedFormat("notif.social.campus_trend.title", arg, locale: locale),
+        Self.localized("notif.social.campus_trend.body", locale: locale)
+      )
+    case "social_campus_trend_photo":
+      composed = (
+        Self.localized("notif.social.campus_trend_photo.title", locale: locale),
+        Self.localized("notif.social.campus_trend_photo.body", locale: locale)
+      )
+    case "social_campus_trend_video":
+      composed = (
+        Self.localized("notif.social.campus_trend_video.title", locale: locale),
+        Self.localized("notif.social.campus_trend_video.body", locale: locale)
       )
     // The reminder: nobody acted, a fixed title; the body is the place and the time.
     case "social_booking_reminder":

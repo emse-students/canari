@@ -23,6 +23,7 @@ import {
 } from './engagement-push-cap';
 import { PostNotificationsService } from './post-notifications.service';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
+import type { NotificationType, PushOnlyNotificationType } from '../push/notification-client-floor';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -150,7 +151,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       );
     }
 
-    const notice = (type: string, recipientIds: string[]) => ({
+    const notice = (type: NotificationType | PushOnlyNotificationType, recipientIds: string[]) => ({
       recipientIds,
       type,
       actorId: 'actor',
@@ -178,7 +179,12 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     it('an association post, a live, an opening and a mention on the same day are never counted', async () => {
       const svc = service();
       for (let i = 0; i < 5; i++) await svc.pushNotice(notice(CAMPUS_TREND_NOTIFICATION, ['r']));
-      for (const type of ['association_post', 'live_started', 'booking_open', 'event_open']) {
+      for (const type of [
+        'association_post',
+        'live_started',
+        'booking_open',
+        'event_open',
+      ] as const) {
         await svc.pushNotice(notice(type, ['r']));
       }
       await svc.pushNotice(notice('mention', ['r']));

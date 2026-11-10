@@ -30,6 +30,7 @@ import { PostNotificationsService } from '../posts/post-notifications.service';
 import { createPostNotificationsTable } from '../posts/post-notifications.it-schema';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import type { PushContent } from '../push/push-content';
+import type { NotificationType } from '../push/notification-client-floor';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -298,7 +299,7 @@ maybe('the bell against PostgreSQL (engagement WP-3)', () => {
     });
 
     describe('the level table, through the real notification service', () => {
-      const asso = (type: string) =>
+      const asso = (type: NotificationType) =>
         notifications.createNotifications({
           recipientIds: ['ann', 'bob', 'cid'],
           type,

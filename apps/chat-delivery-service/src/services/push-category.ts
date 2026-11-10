@@ -39,6 +39,14 @@ export const NOTIFICATION_CATEGORIES = [
    * off on its own. Off, the bell still lists it - only the push is not sent.
    */
   'birthdays',
+  /**
+   * A post of the reader's space that takes off - a campus trend, told as a SUGGESTION (owner,
+   * 2026-11-10, docs/wiki/engagement.md WP-10): its own switch, on by default, independent of
+   * `posts`, because it is news about accounts the reader does not follow. Off, the bell still lists
+   * it - only the push is not sent. A build older than the switch draws none for it; it is also too
+   * old to be sent a trend at all (social-service's client floor).
+   */
+  'suggestions',
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
@@ -73,13 +81,15 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // posts, so the switch that silences those posts silences its lives too.
   social_live_started: 'posts',
   // Engagement (docs/wiki/engagement.md, L30): an account the reader follows reacted to or commented
-  // on a post (WP-9), and a post of the reader's space took off (WP-10) - news about somebody else's
-  // post, so the switch that silences posts silences them. social-service's `CAPPED_PUSH_TYPES`
-  // reads the same category before it counts the daily cap (campus trends only since 2026-11-10);
-  // its contract spec pins the two.
+  // on a post (WP-9) - news about somebody else's post, so the switch that silences posts silences it.
   social_friend_reaction: 'posts',
   social_friend_comment: 'posts',
-  social_campus_trend: 'posts',
+  // A post of the reader's space took off (WP-10): a SUGGESTION, its own switch since 2026-11-10
+  // (owner). social-service's `CAPPED_PUSH_TYPES` reads the same category before it counts the daily
+  // cap; its contract spec pins the three keys.
+  social_campus_trend: 'suggestions',
+  social_campus_trend_photo: 'suggestions',
+  social_campus_trend_video: 'suggestions',
   social_live_mention: 'mentions',
   // A follow request and its acceptance (WP-F4): a category of their own, which the settings screen
   // draws a switch for. Off, the request still waits in the inbox - only the push is not sent.
