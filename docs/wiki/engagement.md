@@ -6,7 +6,7 @@ design that answers each one, what each surface reveals and to whom, and the wor
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
-(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); everything else DESIGNED, not built.**
+(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); WP-5 BUILT (the suggestion query, 2026-11-09, [below](#wp-5---the-suggestion-query-built)); everything else DESIGNED, not built. R1 and R2 READ on production 2026-11-09 ([R1](#r1---the-trend-threshold), [R2](#r2---the-cap-check)).**
 
 Context it must respect, and which nothing here changes:
 
@@ -146,7 +146,10 @@ asked for the post path's predicate, not a copy of it, and that is what the shap
 entity post's announcement already runs on production for every association post: one statement per
 live, at its first stored segment, never per segment.
 
-**A measured bound, not a setting: the JIT threshold.** The review of #3119 read the association
+**The JIT threshold, now switched off (2026-11-09).** Every social-service connection starts with
+`jit=off` (`PG_SESSION_OPTIONS`), after the same cliff made the bell's read take 1-13 s
+([posts](frontend/modules/posts.md#the-bell-re-checks-the-post-review-of-2965-2026-11-03)); the
+bound below no longer exists, and is kept as the record of why. The review of #3119 read the association
 audience plan at an estimated cost of about 83,000 on a 3,000-user fixture, against PostgreSQL's
 default `jit_above_cost` of 100,000. Past it, PostgreSQL JIT-compiles the plan, which adds a fixed
 compilation time (tens to a few hundred milliseconds) and changes no result. The statement runs once
@@ -437,6 +440,42 @@ CREATE INDEX IF NOT EXISTS "IDX_follow_suggestion_dismissals_target"
 - **The account erasure** deletes the rows where the erased account is `userId` OR `targetId`
   (`internal/account-erasure.ts`, a statement in code, not in the migration), with its spec.
 - The index on the target serves that erasure; the viewer's own lookups use the primary key.
+
+### WP-5 - the suggestion query (BUILT)
+
+Built 2026-11-09 to the shape above, in `follows/suggestions.service.ts` and
+`follows/suggestions.controller.ts`, migration 155 (`follow_suggestion_dismissals`, plain).
+
+- **Routes**: `GET /api/posts/me/suggestions[?limit=&exclude=]` answers `{ people: [{ userId, mutual,
+  faces }], entities: [{ id, name, slug, logoUrl, type }] }`; `POST /api/posts/me/suggestions/dismiss`
+  takes `{ kind: 'user' | 'association', targetId }` (400 `SUGGESTION_DISMISS_INVALID` for an unknown
+  kind, an empty or over-long id, the caller themself, or an entity id that is no uuid; 60 a minute per
+  caller). **Under `/api/posts/me/...`, not `/api/suggestions`** as the first draft said: the follow
+  routes' prefix, so nginx needs no new location. `exclude` is the account just followed - "Suivez
+  aussi..." (L15) - and the page is read one longer so dropping it never shortens it.
+- **ONE statement for the people and their faces**, not two: the faces are an `ARRAY(... LIMIT 3)` over
+  the same `followed` pool the count is drawn from, so "N en commun" and the faces cannot disagree.
+  That pool is the viewer's ACCEPTED follows with no block either way and on the same side of the
+  review cohort: a block with a face removes it from the faces AND the count (decision 4).
+- **The review cohort is excluded both ways** with `sameSideOfReviewCohortSql`: a review account is
+  suggested to nobody outside the cohort and is suggested nobody outside it.
+- **The viewer's formations are read once** (`my_formations`), and a `cursus` that is not an array
+  contributes none rather than failing the statement.
+- **Entities exclude those the viewer is a MEMBER of** (lead, reversible): the Suivre chip is never
+  offered on one (WP-2), so a card for it would be a button that does nothing new.
+- **A row naming a deleted association is not deleted with it**: it is inert (a deleted association
+  is never suggested) and goes with its dismisser's erasure. Deleting it with the association would
+  put `follow_suggestion_dismissals` in the erasure's association lock set for nothing.
+- **Proof**: `follows/suggestions.integration.spec.ts` on PostgreSQL - L10's order (friends of
+  friends, a co-member, the three cohort tiers, ties by id); every exclusion of decision 2 (self, an
+  accepted follow, a pending request, a block either way, a dismissal, a review account, an account
+  that no longer exists); the faces (at most three, by id; a pending ask and a blocked follow neither
+  counted nor shown; a block with a face removes it); the entities (follower order, none followed,
+  archived, joined, dismissed or outside the reader's audience); `exclude`; a permanent, idempotent
+  dismissal that a follow then an unfollow does not clear, and its typed 400s; the erasure both ways;
+  155 re-run.
+- **Owed**: the EXPLAIN on dev with the real tables (the cost table above is a fixture's); the phone
+  readings come with WP-6, which draws it.
 
 ## Where suggestions appear (decision 3)
 
@@ -733,6 +772,16 @@ GROUP BY campus, t ORDER BY campus, t;
 the LARGEST of those per-campus values (one constant, so no campus exceeds the rate). Written back
 here with the date, the row counts and the distribution's tail.
 
+**Read on production 2026-11-09** (the lead, with the owner's yes - decision 14), 90 days:
+
+| Campus | t = 3 | t = 4 | t = 5 | t = 10 |
+| --- | --- | --- | --- | --- |
+| saint-etienne | 106 posts (1.18/day) | at most 1.00/day - the smallest `t` meeting the rate | 60 (0.67/day) | 21 (0.23/day) |
+| gardanne | 0 | 0 | 0 | 0 |
+
+Gardanne has no post crossing at any threshold from 3, so it constrains nothing. **`TREND_THRESHOLD =
+4`**, Saint-Etienne's value.
+
 **When no threshold up to 60 gets a campus to 1 per day or below** (more than 90 posts in 90 days
 reached 60 engaged accounts), the reading does NOT pick 60: it is re-run with the upper end of
 `generate_series` raised until a row reaches the rate, and the value found is written back with that
@@ -784,6 +833,11 @@ is not a row). If p90 is already above 5, the cap binds for most active readers 
 re-read; if p99 is below 5, the cap never binds and stays only as the guard. Either way the reading is
 written back here before WP-9 merges.
 
+**Read on production 2026-11-09** (the lead, with the owner's yes - decision 14), 30 days, the upper
+bound: per reader-day p50 = 2, p90 = 5, p99 = 12, max 13; 261 reader-days, 22 readers; 10.0 % of
+reader-days over 5; 50.0 % of readers over 5 at least once. **p90 is not above 5, so
+`ENGAGEMENT_DAILY_PUSH_CAP` stays 5**: it binds on the busiest days, as intended.
+
 ## What each surface reveals, and to whom
 
 | Surface | Reveals | To whom | Why it is acceptable |
@@ -826,7 +880,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-2** (BUILT, [below](#wp-2---suivre-everywhere-built)) | Suivre everywhere a person or entity is named: post headers of an account the viewer does not follow, search results, association cards (today only the profile and the association page carry it) | `frontend/src/lib/follows/api.ts` | component tests per surface; a phone reading of a follow request from a post header |
 | **WP-3** (BUILT, [below](#wp-3---the-bell-built)) | The bell (decisions 3d, 5a, 10): `account_bells` (`lives` and `none` only, L3), the HELD copy of `association_push_mutes`, the old mute endpoints writing `account_bells` (L8), a follow deleting the row in the creating statement, the seam in `fanOutPush`, the profile control, the association mute UI moved onto it | `follows/association-push-mutes.service.ts` | integration spec of the level table above; a new follow resets a reduced bell and a RETRIED follow does not; following a muted association again unmutes it; a mute set through the old endpoint after the copy is honoured; the existing mute specs still green against the new store |
 | **WP-4** (BUILT, [below](#wp-4---openings-for-followers-built)) | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; never capped | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
-| **WP-5** | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
+| **WP-5** (BUILT, [above](#wp-5---the-suggestion-query-built)) | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
 | **WP-6** | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
 | **WP-7** | Suggested posts (decision 8), through the feed's own block filter (`PostsService.blockedAuthorSql`) as every feed row | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door, and never by an author blocked either way |
 | **WP-8** | The daily cap (decisions 6 and 11): `engagement_push_days`, `ENGAGEMENT_PUSH_TYPES` holding ONLY the new kinds, the statement in `fanOutPush` | `posts/post-notifications.service.ts` | [R2](#r2---the-cap-check) read and written back; integration spec: the 6th capped push of a day is a bell row with no push, two concurrent fan-outs never exceed 5, and an association post, a live, an opening and a mention on the same day are never counted |
@@ -905,6 +959,14 @@ asker untouched), `follow-requests.controller.spec.ts` (cap, typed 400s), and th
 reconnect, an account switch mid-flight, the withdraw races, double taps, member and archived
 hidden, the aria-label of a pending request naming the person and containing the visible text, with
 a nameless fallback).
+
+**"Suivre en retour" (owner's request, 2026-11-09).** On `/notifications/follow-requests`, an accepted
+request keeps its row and the Accepter/Refuser pair becomes `FollowBackButton`, which reuses this
+ledger (`personChipState`, `tapPerson`: a REQUEST, every personal account being private). Its states
+are `followBackView` (`followButton.ts`): offered when the reader has no row; "Demande envoyee" (a tap
+withdraws) or "Abonne" only once the offer was drawn; nothing for a pair already pending or following
+on arrival, a blocked account, or the reader. No server change. The notification rows add nothing:
+`follow_request` leads to this inbox, and `follow_accepted` means the reader already follows.
 
 ### Which migrations are held
 

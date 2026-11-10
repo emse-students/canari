@@ -1,7 +1,7 @@
 package fr.emse.canari
 
 import android.content.Intent
-import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Rect
 import android.media.AudioManager
@@ -26,6 +26,8 @@ import com.google.firebase.messaging.FirebaseMessaging
 import fr.emse.canari.gesture.Edge
 import fr.emse.canari.gesture.ExclusionBand
 import fr.emse.canari.gesture.bandsFor
+import fr.emse.canari.orientation.OrientationMode
+import fr.emse.canari.orientation.requestedOrientationFor
 import java.io.File
 
 class MainActivity : TauriActivity() {
@@ -102,15 +104,12 @@ class MainActivity : TauriActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isNavigationBarContrastEnforced = false
         }
-        // A phone stays in portrait; a tablet is a PC here and keeps its rotation. The threshold
+        // A phone starts in portrait; a tablet is a PC here and keeps its rotation. The threshold
         // is a resource qualifier rather than a manifest attribute because
-        // `android:screenOrientation` takes one literal value, which cannot serve both.
-        requestedOrientation =
-            if (resources.getBoolean(R.bool.canari_lock_portrait)) {
-                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            } else {
-                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            }
+        // `android:screenOrientation` takes one literal value, which cannot serve both. A video or
+        // camera screen asks for another mode through `canariOrientation` while it is mounted.
+        requestedOrientation = requestedOrientationFor(OrientationMode.PORTRAIT, lockPortrait())
+        lastOrientation = resources.configuration.orientation
         super.onCreate(savedInstanceState)
         applyKeyboardInsets()
         // While the in-app ring plays the screen stays on: a screen that timed out mid-ring would
@@ -217,6 +216,7 @@ class MainActivity : TauriActivity() {
         webView.addJavascriptInterface(GestureBridge(), "canariGestures")
         webView.addJavascriptInterface(BackBridge(), "canariBack")
         webView.addJavascriptInterface(AudioBridge(), "canariAudio")
+        webView.addJavascriptInterface(OrientationBridge(), "canariOrientation")
         // The ongoing-call service (WP-C-BG-A) is declared in the main manifest since the calls flip;
         // the page reads an absent `canariCall` as a build that lost the declaration.
         CallBridge.attach(webView)
@@ -236,6 +236,59 @@ class MainActivity : TauriActivity() {
         @JavascriptInterface
         fun setOverlayDepth(depth: Int) {
             overlayDepth.set(depth.coerceAtLeast(0))
+        }
+    }
+
+    /** `R.bool.canari_lock_portrait`: true on a phone, false on a tablet (`values-sw600dp`). */
+    private fun lockPortrait(): Boolean = resources.getBoolean(R.bool.canari_lock_portrait)
+
+    /** The mode last applied, so a repeated request changes nothing and logs nothing. */
+    private var orientationMode = OrientationMode.PORTRAIT
+
+    /** The configuration's orientation last seen, so `onConfigurationChanged` logs a turn once. */
+    private var lastOrientation = Configuration.ORIENTATION_UNDEFINED
+
+    /**
+     * `window.canariOrientation`: which way the app may turn (`screenOrientation.svelte.ts`). The page
+     * sends `portrait` at every boot (a reload must not inherit a screen's landscape) and whatever the
+     * mounted video or camera screen asks; anything else is logged and ignored. One line per change.
+     * Design: docs/wiki/frontend/screen-orientation.md.
+     */
+    private inner class OrientationBridge {
+        @JavascriptInterface
+        fun set(mode: String) {
+            val parsed = OrientationMode.parse(mode)
+            if (parsed == null) {
+                Log.w("MainActivity", "orientation: unknown mode '$mode' ignored")
+                return
+            }
+            runOnUiThread { applyOrientation(parsed) }
+        }
+    }
+
+    private fun applyOrientation(mode: OrientationMode) {
+        if (mode == orientationMode) return
+        val value = requestedOrientationFor(mode, lockPortrait())
+        Log.i(
+            "MainActivity",
+            "orientation ${orientationMode.wire} -> ${mode.wire} (requestedOrientation=$value)"
+        )
+        orientationMode = mode
+        requestedOrientation = value
+    }
+
+    /**
+     * A TURN OF THE SCREEN IS A CONFIGURATION CHANGE THIS ACTIVITY HANDLES IN PLACE: `orientation`,
+     * `screenSize`, `smallestScreenSize` and `screenLayout` are all in the manifest's
+     * `configChanges`, so the WebView, the MLS state and an in-flight send survive it. This line is
+     * the proof on a phone: a rotation logs it and never a second `onCreate`.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (newConfig.orientation != lastOrientation) {
+            lastOrientation = newConfig.orientation
+            val name = if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) "landscape" else "portrait"
+            Log.i("MainActivity", "configuration changed in place: $name (activity not recreated)")
         }
     }
 

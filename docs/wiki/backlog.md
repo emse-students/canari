@@ -277,7 +277,7 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   on the relayer's word with no mark; `#2276` makes it visible in the pre-releases). Fix at the
   source: store the event frame's verified authorship on the notice row, add a notice verdict in
   `restoredAuthorship.ts` that verifies the signed system frame and redraws the text locally
-  (`renderVisibleNotice`) instead of taking the relayer's text; same for `channel_invitation`.
+  (`visibleNoticeContent`) instead of taking the relayer's text; same for `channel_invitation`.
   Interim decision owed after the stable: show the unverified mark on system rows
   (`ChatMessageGroups.svelte` system branch) or not. Do not lower the log level; split the count
   into notices and messages.

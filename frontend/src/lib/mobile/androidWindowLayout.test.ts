@@ -105,9 +105,11 @@ describe('Android window layout (anti-regression)', () => {
     expect(mainActivity).not.toContain('WindowInsetsCompat.Type.statusBars()');
   });
 
-  it('locks a phone to portrait and lets a tablet rotate', () => {
+  it('starts a phone in portrait and lets a tablet rotate', () => {
     expect(mainActivity).toContain('R.bool.canari_lock_portrait');
-    expect(mainActivity).toContain('ActivityInfo.SCREEN_ORIENTATION_PORTRAIT');
+    expect(mainActivity).toContain(
+      'requestedOrientation = requestedOrientationFor(OrientationMode.PORTRAIT, lockPortrait())'
+    );
     // No literal orientation in the manifest: one value there could not serve both form factors.
     expect(manifest).not.toContain('android:screenOrientation');
 
@@ -117,11 +119,27 @@ describe('Android window layout (anti-regression)', () => {
     expect(tablet).toMatch(/<bool name="canari_lock_portrait">false<\/bool>/);
   });
 
-  it('keeps the orientation config change declared, so a tablet rotates without a restart', () => {
-    // Losing `orientation|screenSize` would tear the WebView down on every rotation - the MLS
-    // state reloads, and an in-flight send is interrupted, for a movement of the wrist.
+  it('keeps every config change a rotation makes declared, so a turn never restarts the activity', () => {
+    // Losing one of them would tear the WebView down on every rotation - the MLS state reloads, and
+    // an in-flight send is interrupted, for a movement of the wrist. Since 2026-11-09 a PHONE turns
+    // too, on the video and camera screens (screen-orientation.md), so this holds for every device.
     const activity = manifest.match(/<activity[\s\S]*?>/)?.[0] ?? '';
-    expect(activity).toContain('orientation');
-    expect(activity).toContain('screenSize');
+    const changes = activity.match(/android:configChanges="([^"]*)"/)?.[1].split('|') ?? [];
+    for (const change of ['orientation', 'screenSize', 'smallestScreenSize', 'screenLayout']) {
+      expect(changes).toContain(change);
+    }
+    // The proof on a phone is this line in logcat at a turn, and no second onCreate.
+    expect(mainActivity).toContain('configuration changed in place');
+  });
+
+  it('lets the page ask for an orientation through the canariOrientation bridge', () => {
+    // Both ends pinned: a regenerated activity dropping the interface would leave every video and
+    // camera screen portrait, and no compile notices.
+    expect(mainActivity).toContain(
+      'addJavascriptInterface(OrientationBridge(), "canariOrientation")'
+    );
+    expect(mainActivity).toContain('OrientationMode.parse(mode)');
+    const page = readFileSync(resolve(here, './screenOrientation.svelte.ts'), 'utf8');
+    expect(page).toContain('canariOrientation');
   });
 });

@@ -800,7 +800,7 @@ is also a visible test change.
 WebView refused it with `MEDIA_ERR_SRC_NOT_SUPPORTED` ("Format error") before `sourceopen`, and the
 post sat on a dead player with no request sent. `segmentedMediaStream.test.ts`'s fake `MediaSource`
 cannot see a URL, so every gate was green. Fixed in the same pull request: a streamed `src` reaches
-the element exactly as minted (`streamed`, pinned in `InlineVideo.svelte.test.ts`).
+the element exactly as minted (`streamed`, pinned in `VideoPlayer.inline.svelte.test.ts` since `InlineVideo` was folded into `VideoPlayer`).
 
 **How it was driven, with the writer off.** The PR's own `encryptSegmentedMedia` sealed a 20.9 MB
 fragmented MP4 (H.264 Main + AAC, `video/mp4; codecs="avc1.4D4028, mp4a.40.2"`, 20 segments) under
@@ -835,6 +835,19 @@ its tag. The reader fetches one segment at a time, so its throughput is one roun
 bandwidth, and pipelining is a later choice, not a defect. The native push-thumbnail change is still
 compile- and `cargo test`-verified only. Evidence (JSON timelines, logs, screenshots) is kept
 machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
+
+## The test suite runs each file in a temporary directory (2026-11-09)
+
+The service resolves `chunks_temp`, `media_meta` and the default `upload_sessions` from
+`process.cwd()`, and so do the specs that touch the real filesystem (`chunks_temp/<id>.done` in
+`media.service.chunk-lifecycle.spec.ts`). Run from `apps/media-service`, the suite wrote into a
+`chunks_temp` that had been COMMITTED with eight `.done` sidecars, so every local run deleted tracked
+files; and all the files of a run shared that one directory, which is how the chat-holds spec's
+orphan purge once wiped another file's staged upload. `jest.temp-cwd.cjs`, loaded by
+`setupFilesAfterEnv` in both jest configs (`package.json`, `jest-boot.json`), makes a fresh
+`mkdtemp` directory the working directory of each test FILE before it is required, and removes it
+after. The runtime directories are ignored by `.gitignore`, never tracked: the service makes them at
+boot (`ensureDirSync`).
 
 ## Environment variables
 
