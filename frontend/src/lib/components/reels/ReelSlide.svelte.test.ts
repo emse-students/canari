@@ -331,7 +331,7 @@ it('a neighbour draws the publisher first-frame ThumbHash, not a play glyph', ()
   expect(q('[data-video-first-frame-poster]')!.getAttribute('src')).toBe(
     'data:image/png;thumbhash,HASH'
   );
-  expect(q('.bg-cn-yellow')).toBeNull();
+  expect(q('.bg-accent')).toBeNull();
 });
 
 it('the sharp first frame this device decoded wins over the ThumbHash', () => {
@@ -350,7 +350,7 @@ it('the reel on screen hands its first frame to the player while it loads', () =
 it('an old reel with no picture of its frame draws the black frame, not a play glyph', () => {
   const { q } = render(reel(), false);
   expect(q('[data-video-first-frame-poster]')).toBeNull();
-  expect(q('.bg-cn-yellow')).toBeNull();
+  expect(q('.bg-accent')).toBeNull();
 });
 
 it("tells the opener its file is GONE on a 410 only - a conversation's reel records it (RC-6)", () => {
@@ -362,4 +362,51 @@ it("tells the opener its file is GONE on a 410 only - a conversation's reel reco
   expect(onMediaGone).not.toHaveBeenCalled();
   stub.dispatchEvent(new CustomEvent('stubfailed', { detail: 'expired' }));
   expect(onMediaGone).toHaveBeenCalledTimes(1);
+});
+
+/**
+ * EVERY VIEW OF A REEL ENDS IN ONE INFO LINE (owner, 2026-11-09: a week of in-app log held nothing
+ * about reels that "did not load"). The line is written when the reel leaves the screen - here the
+ * viewer closing - and says whether the first frame came, or where the load stopped.
+ */
+function reelViewLines(spy: { mock: { calls: unknown[][] } }): string[] {
+  return spy.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith('[reel-view]'));
+}
+
+it('a reel that showed its first frame says so, once, when it leaves the screen', () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const { q } = render(reel());
+  const video = q<HTMLElement>('[data-post-media-stub]')!.appendChild(
+    document.createElement('video')
+  );
+  for (const type of ['loadstart', 'loadedmetadata', 'loadeddata', 'playing']) {
+    video.dispatchEvent(new Event(type));
+  }
+  expect(reelViewLines(info)).toEqual([]);
+  mounted.pop()!();
+  const lines = reelViewLines(info);
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toMatch(/^\[reel-view\] post r1 media m-r1: first frame in \d+ ms/);
+  expect(lines[0]).toContain('whole (single-block)');
+  info.mockRestore();
+});
+
+it('a reel that never loaded names where it stopped when the reader leaves it', () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  render(reel());
+  mounted.pop()!();
+  const lines = reelViewLines(info);
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain('NO first frame');
+  expect(lines[0]).toContain('stopped at: downloading the whole file');
+  expect(lines[0]).toContain('media gate 0 running 0 queued');
+  info.mockRestore();
+});
+
+it('a neighbour reel, never on screen, writes no view line', () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  render(reel(), false);
+  mounted.pop()!();
+  expect(reelViewLines(info)).toEqual([]);
+  info.mockRestore();
 });

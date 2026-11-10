@@ -26,7 +26,7 @@
    * ground explains both themes, although one recedes toward black and the other toward white. So
    * it needs no token and no hex: `bg-bubble-in/65` and `bg-bubble-out/65`. The 65 rather than the
    * measured 60-62 is the one deliberate departure, and it is forced by this app's own palette:
-   * Canari's outgoing bubble is `--cn-yellow` carrying DARK text, where the reference's is blue
+   * Canari's outgoing bubble is `--accent` carrying DARK text, where the reference's is blue
    * carrying white. Receding a saturated yellow toward black drags it toward the ink on top of it,
    * and at 60% the dark-theme outgoing pair measures 4.45:1 - a hair under AA for body text, which
    * this is. 65% is inside the measurement's own spread (0.61 and 0.62 were the two readings) and

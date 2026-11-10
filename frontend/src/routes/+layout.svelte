@@ -27,6 +27,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { releaseIosProximityOfPreviousPage } from '$lib/mobile/iosCallProximity';
   import { releaseIosIdleTimerOfPreviousPage } from '$lib/mobile/screenAwake';
+  import { initScreenOrientation } from '$lib/mobile/screenOrientation.svelte';
   import {
     clearEdgeExclusionsForNewDocument,
     excludeLeftEdgeOver,
@@ -176,6 +177,8 @@
     // may have left set.
     if (isIosTauriRuntime()) releaseIosProximityOfPreviousPage();
     if (isIosTauriRuntime()) releaseIosIdleTimerOfPreviousPage();
+    // And the orientation a video or camera screen of the previous page may have left turned.
+    const teardownOrientation = initScreenOrientation();
     themeStore.init();
     startTabIndicator();
     publishTextZoom();
@@ -228,6 +231,7 @@
       disposeDynamicType();
       teardownHistory();
       teardownKeyboard();
+      teardownOrientation();
       window.removeEventListener('focus', onVersionCheckTrigger);
       window.removeEventListener('online', onVersionCheckTrigger);
     };

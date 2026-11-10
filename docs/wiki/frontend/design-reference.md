@@ -3409,6 +3409,35 @@ No key fingerprint or technical id on a normal screen: the waiting device's own 
 
 `CanariBrand` (the only place the lockup is drawn: `Navbar`, and `MobileHeader` without the tagline) sat 1.5-2 px low because each line box carries space above the cap height and below the baseline. Each line is now `leading-none` with `em` margins from the font's real metrics (Fredoka 700: cap top 0.166em, baseline 0.131em from the box edges; Nunito 500: 0.110em and 0.171em), and the block is `min-h-10` + `justify-between`, so the cap top of "Canari" and the baseline of the tagline sit on the icon's edges (measured: within 0.5 px, was +2.0 / +1.6 px). `em` and not `text-box: trim-both cap alphabetic`, which Firefox has not shipped. Re-measure these constants if the brand or body font changes.
 
+## One accent, four tokens, and a guard that counts the amber scale (owner, 2026-11-09)
+
+**Measured before the change** ([audit M2](../../../CHANGELOG.md)): 637 `amber-*` utilities beside 571 `cn-yellow` ones in `.svelte` files, doing the SAME jobs. The active bottom-tab glyph was Tailwind 4.3's amber-600 (`#e17100`, orange), the feed pill amber-500/20, the pinned badge amber-500, the follow chip brand yellow. Under protanopia and deuteranopia every one of them collapses into one olive-yellow family, so the two yellows read as inconsistency, never as two colours. Of ten benchmarked apps, seven use ONE accent hue for interaction, Instagram none, and none uses two shades of one family for one job. NN/g, Apple HIG and Material converge on one accent, with extra hues reserved for meaning.
+
+**The decision: option B for the chrome, rule C for links and counters.** One accent for bars, tabs, buttons and selected states; text and glyphs that must read as yellow on a light surface use a darker shade of the SAME hue, because yellow cannot be text (the fill is 1.66:1 on white, and no lightness of the hue both passes and still looks yellow).
+
+| Token (Tailwind name) | Light | Dark | Job | Measured |
+|---|---|---|---|---|
+| `--accent` (`accent`) | `#f6c232` | `#ffd45d` | The FILL: primary button, active-tab indicator, selected chip, own-bubble. Always carries `on-accent`. | n/a |
+| `--on-accent` (`on-accent`) | `#151b2c` | `#151b2c` | Ink on the fill | 10.35 light, 12.10 dark |
+| `--accent-text` (`accent-text`) | `#836300` | `#ffd45d` | A link, a mention, a counter, any coloured TEXT (rule C) | 5.60 on white, 4.99 on the page grey `#f0f2f5`, 4.58 on its own 20 % tint over that grey; 13.2 on `#121212` |
+| `--accent-icon` (`accent-icon`) | `#af8601` | `#ffd45d` | A glyph, a border, a focus ring, the native tab glyph | 3.37 on white, 3.00 on `#f0f2f5`; 13.2 on `#121212` dark |
+| `--accent-hover` (`accent-hover`) | `#e4af1b` | `#ffe082` | Hover of the fill | n/a |
+
+`--cn-yellow` survives ONLY as a CSS alias of `--accent` (so `var(--cn-yellow)` in a stylesheet still resolves and there is ONE value); the `cn-yellow` utility is gone from components. `accent-text` was first proposed at `#8b6a00` (5.05 / 4.50) and darkened to `#836300` because `#8b6a00` fails 4.5:1 on its own 20 % tint over the page grey (4.13).
+
+**Rules for the next component**
+- A fill is `bg-accent` with `text-on-accent` (or `text-cn-ink`, the same ink). Never white on yellow.
+- Text that is yellow is `text-accent-text`; a glyph `text-accent-icon`; a border or ring `border-accent-icon` / `ring-accent-icon` (3:1 on a light surface), or `/N` of `accent` for a decorative tint.
+- On an ALWAYS-DARK surface (`cn-scrim`, `cn-ink`, a video overlay) the fill colour itself is the text colour: `text-accent`. `accent-text` is dark gold in light theme and would sink there.
+- Amber is a WARNING, never an accent: use `amber-warn` (flips with the theme) and ALWAYS an icon beside it, because under deuteranopia a dark warm text colour is indistinguishable from the accent text (dE 1.8 to 2.1) - WCAG 1.4.1, the cue cannot be hue alone. The dark `amber-warn` (`#fbbf24`) and the dark accent text are the same colour to a normal eye (OKLab distance 1.4 in the old pair); this is why the icon is mandatory. Warning TEXT is `text-amber-warn-text` (light `#92400e`, 4.5:1 on every surface and on its own 10/15/20 % tint; `amber-warn` itself reads 4.08:1 there and stays the glyph and border colour), and a solid `bg-accent` always carries `text-on-accent`, both asserted by `accentTokens.test.ts`.
+- The raw scale (`amber-50` ... `amber-950`) and `*-cn-yellow` utilities are counted by `frontend/src/lib/styles/accentTokens.test.ts`, which also recomputes every ratio above from `app.css`. A justified exception goes in its `ALLOWED_RAW_AMBER` by file and count, with a reason; there are none.
+- `banner-notice` (`#f59e0b`) is the one fixed strong warning strip and stays: it is a warning colour with ink text, not an accent.
+- Dead tokens found by the sweep: `cn-accent` (text, border, bg) never existed in the theme, so those classes painted nothing; they now map to the accent tokens.
+
+**The active place is an ink glyph on a yellow pill** (board variant B). The accent alone is 1.66:1 on the bar and `accent-icon` as a bare glyph only 3.37:1 on white, 3.06 on the page grey, so the cue is the pill plus the ink glyph (10.35:1). Web bottom nav: the icon box is a 56 x 32 px `rounded-full` span, `bg-accent text-on-accent` when active (the hit area stays the whole column, the pill is paint; `motion-safe:` transition). Feed tabs: the sliding pill is the solid `bg-accent` and the selected label `text-on-accent`. **Native tab bar (iOS Liquid Glass / Android system bar): the selected pill is drawn by the system and is not ours to colour, so only the selected glyph bitmap is ours, `accent-icon` (`TAB_ICON_CLASSES.selected`); the ink-on-yellow pill exists on the web bars only.**
+
+**Emoji on yellow.** Noto's face is `#fde030` to `#f4a223` with no outline, 1.0 to 1.3:1 against the fill, so a face dissolves on `bg-accent`. Chrome therefore never puts an emoji on the SOLID fill: a selected reaction is the 20 % tint (`bg-accent/20`), and an emoji-only message is already drawn naked, without its bubble. A text message with an emoji inside the own (yellow) bubble is unchanged and still has the problem; it is the bubble colour, a content decision outside this sweep.
+
 ## Notification rows, comment preview thumbnail, profile ring (design audit M4, M8, M9, M10, 2026-11-09)
 
 - `DeviceNoticeRow`: title on its own line (semibold), body muted, then one row of pill buttons in one style (view, "not me", dismiss muted). Grouping of identical device notices is NOT built.

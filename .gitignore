@@ -112,6 +112,14 @@ lcov-report/
 *.temp
 *.cache
 
+# media-service's runtime directories, made at boot under its working directory (inside the
+# container, or on a volume there). Never content of this repository: the jest suite runs each file
+# in a temporary directory (apps/media-service/jest.temp-cwd.cjs), and a local `bun run start`
+# would otherwise leave staged uploads and a metadata index to commit.
+apps/media-service/chunks_temp/
+apps/media-service/media_meta/
+apps/media-service/upload_sessions/
+
 *.lock
 # A lockfile is committed when the package it locks is itself built into a SHIPPED
 # artefact, so that CI, Docker and a developer machine all resolve the exact same

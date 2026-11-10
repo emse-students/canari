@@ -219,14 +219,14 @@
     class="bg-cn-surface flex shrink-0 items-center justify-between border-b border-black/5 px-5 py-4 dark:border-white/10"
   >
     <div class="flex items-center gap-2.5">
-      <div class="rounded-lg bg-amber-500/10 p-1.5 text-amber-600 dark:text-amber-400">
+      <div class="bg-accent/10 text-accent-text rounded-lg p-1.5">
         <MessageCircle size={16} strokeWidth={2.5} />
       </div>
       <span class="text-text-main text-sm font-bold">{m.post_conversations_panel_title()}</span>
     </div>
     <a
       href={resolve('/chat')}
-      class="text-2xs flex items-center gap-0.5 rounded font-bold text-amber-600 transition-colors outline-none hover:text-amber-500 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-500 dark:hover:text-amber-400"
+      class="text-2xs text-accent-text focus-visible:ring-accent-icon flex items-center gap-0.5 rounded font-bold transition-colors outline-none focus-visible:ring-2"
     >
       {m.post_conversations_see_all_label()}
       <ChevronRight size={14} strokeWidth={2.5} />
@@ -237,7 +237,7 @@
   <div class="flex-1 overflow-y-auto py-2">
     {#if isLoading}
       <div class="text-text-muted flex flex-col items-center justify-center gap-3 py-10">
-        <LoaderCircle size={24} class="animate-spin text-amber-500" />
+        <LoaderCircle size={24} class="text-accent-text animate-spin" />
         <span class="text-xs font-semibold">{m.common_loading_label()}</span>
       </div>
     {:else if displayItems.length === 0}
@@ -253,7 +253,7 @@
         </p>
         <a
           href={resolve('/chat')}
-          class="inline-flex items-center justify-center rounded-xl bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-700 transition-all outline-none hover:bg-amber-500/20 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:text-amber-400"
+          class="bg-accent/10 text-accent-text hover:bg-accent/20 focus-visible:ring-accent-icon inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-xs font-bold transition-all outline-none focus-visible:ring-2 active:scale-95"
         >
           {m.chat_new_discussion_label()}
         </a>
@@ -285,7 +285,7 @@
   <div class="bg-cn-surface shrink-0 border-t border-black/5 px-4 py-4 dark:border-white/10">
     <a
       href={resolve('/chat')}
-      class="text-cn-ink flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 py-3 text-xs font-bold shadow-md shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 focus-visible:ring-4 focus-visible:ring-amber-500/50 active:scale-[0.98]"
+      class="text-on-accent bg-accent shadow-accent/20 hover:bg-accent-hover hover:shadow-accent/30 focus-visible:ring-accent/50 flex w-full items-center justify-center gap-2 rounded-xl py-3 text-xs font-bold shadow-md transition-all outline-none hover:shadow-lg focus-visible:ring-4 active:scale-[0.98]"
     >
       <MessageCircle size={18} strokeWidth={2.5} class="mt-0.5 ml-0.5" />
       {m.post_conversations_open_messaging_label()}

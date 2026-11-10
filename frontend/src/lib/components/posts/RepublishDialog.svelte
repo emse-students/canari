@@ -161,7 +161,7 @@
     {#if loading}
       <div class="flex justify-center py-4">
         <div
-          class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+          class="border-accent-icon h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
         ></div>
       </div>
     {:else if loadFailed}
@@ -173,9 +173,9 @@
         {#each visible as a (a.id)}
           <button
             type="button"
-            class="border-cn-border text-text-main flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left text-sm transition-colors hover:border-amber-400 disabled:opacity-40 {selected ===
+            class="border-cn-border text-text-main hover:border-accent-icon flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left text-sm transition-colors disabled:opacity-40 {selected ===
             a.id
-              ? 'border-amber-400 bg-amber-400/10'
+              ? 'border-accent-icon bg-accent/10'
               : ''}"
             aria-pressed={selected === a.id}
             onclick={() => (selected = a.id)}
@@ -209,7 +209,7 @@
       </button>
       <button
         type="button"
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
+        class="bg-accent text-on-accent hover:bg-accent-hover rounded-xl px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40"
         onclick={submit}
         disabled={submitting || !selected}
       >

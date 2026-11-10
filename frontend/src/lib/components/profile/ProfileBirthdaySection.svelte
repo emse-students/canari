@@ -196,7 +196,7 @@
           <label
             class="border-cn-border flex cursor-pointer items-start gap-3 rounded-xl border p-3 {visibility ===
             choice
-              ? 'bg-cn-yellow/10'
+              ? 'bg-accent/10'
               : ''}"
           >
             <input
@@ -205,7 +205,7 @@
               value={choice}
               bind:group={visibility}
               disabled={busy}
-              class="accent-cn-yellow mt-1"
+              class="accent-accent mt-1"
             />
             <span>
               <span class="text-text-main block text-sm font-bold">

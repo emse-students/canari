@@ -77,7 +77,7 @@
   const rowClass = (run: GridRun, takeable: boolean) =>
     run.kind === 'booked'
       ? run.units[0].state === 'booked' && run.units[0].booking.mine
-        ? 'border-cn-yellow/60 bg-cn-yellow/25 text-text-main'
+        ? 'border-accent/60 bg-accent/25 text-text-main'
         : 'border-cn-border bg-control-fill text-text-main'
       : run.kind === 'blocked'
         ? 'border-red-err/30 bg-red-err/10 text-red-err'
@@ -124,7 +124,7 @@
                 })}
                 disabled={run.kind === 'free' && !takeable}
                 onclick={() => (run.kind === 'free' ? onFree(run) : onOpen(unit))}
-                class="focus-visible:ring-cn-yellow flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 disabled:cursor-default {rowClass(
+                class="focus-visible:ring-accent-icon flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 disabled:cursor-default {rowClass(
                   run,
                   takeable
                 )}"
@@ -150,7 +150,7 @@
   type="button"
   onclick={onAdd}
   aria-label={blockMode ? m.bookings_planning_add_block() : m.bookings_planning_add()}
-  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover focus-visible:ring-cn-yellow sticky bottom-[calc(var(--bottom-nav-reserve)+1rem)] z-20 mt-4 ml-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-2"
+  class="bg-accent text-on-accent hover:bg-accent-hover focus-visible:ring-accent-icon sticky bottom-[calc(var(--bottom-nav-reserve)+1rem)] z-20 mt-4 ml-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-2"
 >
   <Plus size={28} aria-hidden="true" />
 </button>
