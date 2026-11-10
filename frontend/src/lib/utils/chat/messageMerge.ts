@@ -198,11 +198,20 @@ function reconcile(existing: ChatMessage, incoming: ChatMessage): ChatMessage {
     : isEnvelopeContent(existing.content) && isFcmPreviewContent(incoming.content)
       ? existing
       : { ...incoming };
+  // THE STATUS IS NEVER THE PAGE'S TO GIVE: it is derived in memory (the outbox's queue, the send's
+  // answer) and no stored row carries one, so taking the page verbatim ERASED it. A queued own
+  // attachment then lost its `pending` - no clock, no upload view - and with no `mediaId` yet the
+  // bubble drew the bare image placeholder for good (owner, web 1.6.9, 2026-11-10: a follower tab's
+  // photo, its stored page drawn after the login re-marked it pending).
+  const withStatus =
+    existing.status !== undefined && kept.status === undefined
+      ? { ...kept, status: existing.status }
+      : kept;
   // Whichever version is kept, the page's position of the row is the store's latest word on it:
   // "load older" pages below the lowest one held (`oldestPageKey`).
-  return incoming.pageKey && kept.pageKey !== incoming.pageKey
-    ? { ...kept, pageKey: incoming.pageKey }
-    : kept;
+  return incoming.pageKey && withStatus.pageKey !== incoming.pageKey
+    ? { ...withStatus, pageKey: incoming.pageKey }
+    : withStatus;
 }
 
 /**

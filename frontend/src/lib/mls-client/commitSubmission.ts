@@ -338,6 +338,26 @@ export class FollowerTabCommitError extends Error {
 }
 
 /**
+ * A frame of `groupId` was to be SEALED in a tab whose copy of the MLS state is not the leader's (a
+ * follower, or a leader promoted in place before its reload), and refused before the ratchet moved.
+ * Such a copy is behind the leader's, so the generation it would use may be one the peers have
+ * already consumed: the frame would be dropped on arrival, silently (WP-MULTITAB-1). Reached by a
+ * send that started while this document led and resumed after it stopped - a leader suspended by
+ * the browser releases the lock (`tabLeader.ts`, `watchPageLifecycle`). Same fact as
+ * {@link FollowerTabCommitError} (`refusesCommitsHere`), read at the last synchronous step before
+ * the encrypt.
+ */
+export class FollowerTabSendError extends Error {
+  constructor(readonly groupId: string) {
+    super(
+      `a frame of ${groupId.slice(0, 8)}... was to be sealed by a tab whose MLS copy is not the ` +
+        "leader's - nothing was encrypted, the leader sends it"
+    );
+    this.name = 'FollowerTabSendError';
+  }
+}
+
+/**
  * A key package was asked of a tab whose copy of the MLS state is not the leader's (a follower, or
  * a leader promoted in place before its reload), and refused before anything was minted: a key
  * package's private half would live only in that copy, so a peer's Welcome to it could never be

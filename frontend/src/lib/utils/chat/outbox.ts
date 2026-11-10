@@ -95,6 +95,7 @@ import {
 import {
   getIsTabLeader,
   getTabLeadership,
+  requestLeaderHandover,
   whenTabLeadershipDecided,
 } from '$lib/mls-client/tabLeader';
 import {
@@ -108,6 +109,7 @@ import {
   acknowledgeReelTakeAdoption,
 } from '$lib/mls-client/tabMessageSync';
 import { MessageWrittenError, OutboxEntryWrittenAloneError } from './messageWrittenError';
+import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 import { insertMessageOrdered, replaceMessageOrdered } from './messageOrder';
 import { mapStoredMessagesToChatMessages } from './messageUtils';
 import { noteServerTime } from './serverClock';
@@ -964,6 +966,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * before this is read at all, so a stale promise cannot be awaited by a later flush.
    */
   let theElection: Promise<void> | null = null;
+
+  /**
+   * Whether this controller already said it hands its flushes to the leader. A follower asks on
+   * every trigger (each enqueue, wake-up, reconnect), and the line said so on each one - twenty
+   * identical lines in three minutes in the owner's log of 2026-11-10, hiding the one that mattered
+   * (no `Flush requested by a follower tab` answered any of them). The fact is the ROLE, which
+   * changes only through a reload, so it is said once per controller; each queued entry has its own
+   * `Queued` line.
+   */
+  let saidFollowerHandsOver = false;
 
   /**
    * Ids withdrawn by `cancelPending` that a flush already running may still be holding.
@@ -2796,6 +2808,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         log(`[OUTBOX] ${entry.id.slice(0, 8)}… withdrawn just before the send - not delivered`);
         return 'gone';
       }
+      // THE LEAD MAY HAVE LEFT DURING THE AWAITS ABOVE (an upload, the gates): a page the browser
+      // froze released the lock (`tabLeader.ts`, `watchPageLifecycle`) and resumed here. The entry
+      // stays queued for the tab that leads now; the service refuses the same thing at the encrypt.
+      if (!getIsTabLeader()) throw new FollowerTabSendError(terminalId);
       // HELD UNTIL THE SENT ROW IS DELETED, NOT ONLY WHILE THE POST RUNS. A sent row stays queued
       // through `persistSent` and its own delete, and a withdrawal reading it there was answered
       // "never sent" for a frame the peers already had - so no `delete_message` went out.
@@ -2908,6 +2924,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // row is already withdrawn (`cancelPending` deleted it before aborting), so this is only the
     // flush learning of it. Retry: not a failure at all - the member asked for another attempt
     // now, so the backoff is skipped and the lane re-runs at once.
+    // THIS DOCUMENT STOPPED LEADING MID-SEND: nothing was sealed, the entry is the leader's to send.
+    // No attempt is counted and nothing is written - a follower never flushes, so nothing here would
+    // ever read it.
+    if (e instanceof FollowerTabSendError) {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… not sent here: this tab stopped leading during the send - it stays queued for the leader`
+      );
+      return 'skip';
+    }
     if (e instanceof UploadAbortedError) {
       if (e.reason === 'retry') {
         log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload restarted on request`);
@@ -3230,8 +3255,23 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // the write path it never covered - the follower was observed flushing the LEADER's entry.
     // The entry itself needs no transfer: the queue is in IndexedDB, which both tabs share.
     if (!getIsTabLeader()) {
-      log('[OUTBOX] Flush skipped - follower tab; asking the leader to drain the shared queue.');
+      if (!saidFollowerHandsOver) {
+        saidFollowerHandsOver = true;
+        log(
+          '[OUTBOX] Follower tab - every flush is asked of the leader tab, which drains the shared queue (said once).'
+        );
+      }
       requestLeaderOutboxFlush();
+      // AND THE LEAD GOES WHERE THE MEMBER IS when something waits on it (owner, Firefox, 2026-11-10:
+      // a photo queued here stayed unsent until the HIDDEN leader tab was brought forward). A hidden
+      // leader hands the lead over, a visible one ignores the ask (`tabLeader.ts`, `watchHandover`).
+      // Asked only while the shared queue holds an entry that is due - never for a text failed on
+      // 5xx, which waits for the member's Retry, not for a leader.
+      void readQueue('handover ask').then((entries) => {
+        if (entries.some((e) => e.kind !== 'reel-take' && !isServerFailureTerminal(e))) {
+          requestLeaderHandover(log);
+        }
+      });
       return;
     }
     // THE TAKE RECORDS ARE THE LEADER'S, kept once per page life at its first flush (L2, L3).

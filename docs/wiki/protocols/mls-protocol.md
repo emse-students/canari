@@ -3085,7 +3085,7 @@ their MLS client from ONE snapshot and a send from the tab whose ratchet is behi
 generation the peer has already consumed, then dropped silently (WP-MULTITAB-1).
 
 **The Web Locks API is the path every real browser takes**: one exclusive `canari-tab-leader` lock,
-held until `beforeunload`, with mutual exclusion guaranteed by the browser rather than by a
+held until `beforeunload` - or until it is HIDDEN and a visible tab asks for it (the asker steals it), or FROZEN by Chromium (released at `freeze`) ([chat](../frontend/modules/chat.md#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)) - with mutual exclusion guaranteed by the browser rather than by a
 read-modify-write on `localStorage`. The `BroadcastChannel` + heartbeat implementation is the
 fallback for engines without `navigator.locks` (Tauri WebKitGTK, very old browsers), and
 `canari-mls-tab` still carries the promotion messages on both paths (the take-over request was removed on 2026-11-08, with the follower banner).
@@ -3112,8 +3112,8 @@ kept commit is settled at the next connection by the existing machinery; running
 double commit. A `pending` record is run by the next leader, the one a handover elects included,
 and deleted unrun once the tab that asked is gone (its requester lock free). A leader that cannot
 serve ANSWERS: `leader-unavailable` at the PIN keypad or signed out, `not-delegable` for a kind it
-has no executor for or a follower of another account. The mechanism, the refusals, the frozen
-background tab it does not cover, and the guard: [chat](../frontend/modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08).
+has no executor for or a follower of another account. The mechanism, the refusals, the wedged
+leader it does not cover, and the guard: [chat](../frontend/modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08).
 
 ### A tab queued behind itself and went read-only for ever - FIXED 2026-09-21
 
