@@ -2428,6 +2428,37 @@ it is still on screen. The early `if (ime == 0) return ... insets` is what gives
 Verified on hardware 2026-08-17 (v0.14.0 debug build, Android 15): `IME inset: 988 -> content padding`
 in logcat with the composer focused, and the user confirmed the band is gone.
 
+#### A floating panel follows the keyboard from the VISUAL viewport (2026-11-10)
+
+The padding above has a cost the composer never shows: **the layout viewport learns about the
+keyboard late.** The inset listener pads the content once the IME's inset is dispatched; the
+WebView's visual viewport has already shrunk by then. Read on the Mi 9T (`1.6.9` dev pre-release,
+Android 16, over the WebView's DevTools socket), focusing the reaction picker's search field:
+
+| after the focus | event | `innerHeight` | `visualViewport.height` | picker bottom |
+| --- | --- | --- | --- | --- |
+| +357 ms | `visualViewport` resize | 945 | 588 | 937 (under the keyboard) |
+| +480 ms | `window` resize | 945 | 588 | 937 |
+| +1000 ms | `window` resize (the double report) | 588 | 230 | 580 |
+| +1285 ms | `visualViewport` resize | 588 | 588 | 580 |
+
+`bindFixedPopover` (`actions/fixedPopover.ts`) laid panels out against `window.innerHeight` and
+re-ran on `window` `resize` only, so for that whole gap - two thirds of a second here, several
+seconds on the owner's phone - the reaction picker sat where it had opened, half behind the
+keyboard, then jumped. A phone browser never shrinks the layout viewport at all, so there the gap
+never closed.
+
+The panel is now laid out in what the keyboard leaves: `innerHeight` minus
+`currentKeyboardInsetBottom()` (`stores/keyboardViewport.svelte.ts`), the band below the visual
+viewport, measured AT THE CALL rather than read from the last snapshot so no listener order can mix
+a fresh `innerHeight` with a stale inset. It is the same geometry as the snapshot's `insetBottom`
+(`keyboardInsetBottom`, one function for both): the double report is absorbed (its band reads 0,
+not 343) and a pinch-zoom is not a keyboard. The action also re-runs on `visualViewport` `resize`.
+Every panel it places gains it: both emoji pickers, the reactor list, the menus, the autocomplete.
+`fixedPopover.test.ts` drives the four events above and asserts the panel's `top` after each.
+**Owed: one reading on a phone** - the picker's search focused, the panel above the keyboard as it
+lands.
+
 #### The bottom nav reserves nothing
 
 `BottomNav` is `fixed inset-x-0 bottom-0 z-30 md:hidden`, so it is out of flow and occupies no space
