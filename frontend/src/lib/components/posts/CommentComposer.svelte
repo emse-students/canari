@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { ChevronDown, CornerDownRight, ImageIcon, Send, X } from '@lucide/svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import { ChevronDown, CornerDownRight, ImageIcon, ImagePlus, Send, X } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { getToken } from '$lib/stores/auth';
   import GifPickerModal from '$lib/components/chat/GifPickerModal.svelte';
@@ -18,6 +19,8 @@
   import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
+  import { currentAttachRuntime, opensNatively } from '$lib/utils/chat/attachSources';
+  import { pickNatively } from '$lib/utils/chat/nativeAttachPicker';
   import { COMMENT_MAX_LENGTH, type PostMediaRef } from '$lib/posts/api';
   import { ANONYMOUS_POST_IDENTITY } from '$lib/posts/postComposerDraft';
   import {
@@ -103,6 +106,11 @@
   let showGifPicker = $state(false);
   /** True while the box is focused, so only the focused one handles a keyboard GIF. */
   let inputFocused = $state(false);
+  /** The picture that did not go up, kept for "Retry"; cleared by a new attempt or a dismissal. */
+  let mediaFailure = $state<File | null>(null);
+  /** The photo library is the native picker (the iOS app), never a file input (as the post composer's). */
+  const nativeLibrary = opensNatively(currentAttachRuntime(false), 'library');
+  let imageInput = $state<HTMLInputElement | null>(null);
 
   function clearPendingMedia() {
     if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl);
@@ -117,6 +125,7 @@
    */
   async function stageMediaFile(file: File) {
     uploadingMedia = true;
+    mediaFailure = null;
     try {
       let uploadFile = file;
       let dims: { width: number; height: number } | undefined;
@@ -140,9 +149,49 @@
     } catch (err) {
       console.error('Failed to upload comment media', err);
       showToast(m.post_comment_media_error());
+      // Kept, so the chip beside the box can offer a retry without picking the file again.
+      mediaFailure = file;
     } finally {
       uploadingMedia = false;
     }
+  }
+
+  /**
+   * The "image" button: ONE picture from the library, through the SAME `stageMediaFile` as a paste
+   * or a GIF - compressed as a post's photo is, encrypted client-side, uploaded, and only then
+   * attachable, so no comment is ever sent ahead of its picture. Anything that is not an image is
+   * refused out loud.
+   */
+  async function takePickedFiles(files: File[]) {
+    const file = files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      Log.d('CommentComposer', `picked file is ${file.type || 'untyped'}, not an image - refused`);
+      showToast(m.post_comment_media_error());
+      return;
+    }
+    Log.d('CommentComposer', `image picked (${file.type}, ${file.size} bytes)`);
+    await stageMediaFile(file);
+  }
+
+  function openImagePicker() {
+    if (!nativeLibrary) {
+      imageInput?.click();
+      return;
+    }
+    pickNatively('library')
+      .then((files) => takePickedFiles(files.filter((f) => f.type.startsWith('image/'))))
+      .catch((error: unknown) => {
+        console.error(`[CommentComposer] the native library picker failed: ${String(error)}`);
+        showToast(m.chat_attach_picker_failed());
+      });
+  }
+
+  function handleImageInput(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    void takePickedFiles(files);
   }
 
   async function handlePaste(e: ClipboardEvent) {
@@ -392,17 +441,38 @@
         </div>
         {#if gifLoad.error}
           <span class="text-2xs text-red-500" role="alert">{gifLoad.error}</span>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="compact"
             onclick={() => gifLoad && void handleGifSelected(gifLoad.gif)}
-            class="text-2xs text-accent-text font-semibold underline"
             data-testid="comment-gif-retry"
           >
             {m.chat_gif_retry()}
-          </button>
+          </Button>
         {:else}
           <span class="text-text-muted text-2xs animate-pulse">{m.common_loading_label()}</span>
         {/if}
+      </div>
+    {:else if mediaFailure && !uploadingMedia}
+      <div class="mb-2 ml-10 flex items-center gap-2" data-testid="comment-media-failed">
+        <span class="text-2xs text-red-500" role="alert">{m.post_comment_media_error()}</span>
+        <Button
+          variant="ghost"
+          size="compact"
+          onclick={() => mediaFailure && void stageMediaFile(mediaFailure)}
+          data-testid="comment-media-retry"
+        >
+          {m.chat_gif_retry()}
+        </Button>
+        <Button
+          variant="ghost"
+          size="compact"
+          icon
+          onclick={() => (mediaFailure = null)}
+          aria-label={m.post_remove_image_label()}
+        >
+          <X size={12} strokeWidth={3} />
+        </Button>
       </div>
     {:else if pendingPreviewUrl || uploadingMedia}
       <div class="mb-2 ml-10 flex items-center gap-2">
@@ -521,6 +591,27 @@
           onpaste={handlePaste}
           onkeydown={handleKeyDown}
         />
+        <input
+          bind:this={imageInput}
+          type="file"
+          accept="image/*"
+          class="sr-only"
+          tabindex="-1"
+          aria-hidden="true"
+          data-testid="comment-image-input"
+          onchange={handleImageInput}
+        />
+        <button
+          type="button"
+          onclick={openImagePicker}
+          disabled={uploadingMedia || (gifLoad !== null && !gifLoad.error)}
+          title={m.post_comment_add_image_label()}
+          aria-label={m.post_comment_add_image_label()}
+          data-testid="comment-image-button"
+          class="ui-icon-button text-text-muted hover:text-accent-text shrink-0 transition-colors disabled:opacity-40"
+        >
+          <ImagePlus size={18} strokeWidth={2.25} />
+        </button>
         <button
           type="button"
           onclick={() => (showGifPicker = true)}
