@@ -215,6 +215,26 @@ conversation media panel:
 - **A surface that likes on double tap** (`doubleTapLike` on, `data-double-tap-likes`) makes the
   player's single tap wait for the double-tap window - so on a reel the like never flips the sound.
 
+### The viewer's bars follow the player's controls (owner, 2026-11-09, production 1.6.8)
+
+The owner: the header ("Aujourd'hui 19:24", the back arrow) "sometimes does not leave" while a video
+plays. Cause: two clocks. The viewer's bars (`MediaLightbox.chromeHidden`) toggled only on the
+viewer's own tap, while the player's glass bar faded after `CONTROLS_FADE_MS` and was unmounted - a
+tap on a playing video is the player's, so the header never saw one. `utils/videoViewerChrome.svelte.ts`
+joins them: the viewer provides it, a `lightbox` `VideoPlayer` reports `controlsVisible` through it, and
+the header, the side arrows and the footer hide exactly when the bar is faded and return with it. The
+other way: a mouse over the header or a focus on one of its buttons asks the player to raise its
+controls (otherwise a focused Back button sat at opacity 0). A player that leaves gives the bars back. The review
+of the PR closed three more ways the header could stay hidden: an engine error while the bar had faded (the
+message replaced the bar and the header stayed gone - the controls now come back and no longer fade over
+an `unplayable` video), a photo tapped to hide the bars and a video swiped to next (a video's tap is its
+sound, so nothing there could bring the header back - `ViewerChrome.present` clears the toggle while a
+player is on screen), and a slide change mounting the next player before the previous one tore down (the
+leaver's `leave(owner)` is ignored once another player has reported).
+One test each in `MediaLightbox.videoChrome.svelte.test.ts`: the fade, a pause (an arbiter's included),
+a mouse reaching the player, a mouse resting on the header, a key focus on Back, a touch on the header
+(raises nothing), the next video of a gallery, a photo after a video, a photo alone.
+
 ## The feed and a conversation, on the kit (step D)
 
 `InlineVideo` is DELETED: the feed's and a conversation's inline video are `VideoPlayer` variants,

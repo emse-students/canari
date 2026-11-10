@@ -7,7 +7,8 @@
 </script>
 
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
+  import { useViewerChrome } from '$lib/utils/videoViewerChrome.svelte';
   import { CircleAlert, Ellipsis, Maximize, Minimize, Pause, Play } from '@lucide/svelte';
   import { videoGestures } from '$lib/actions/videoGestures';
   import { videoGlass } from '$lib/utils/videoGlass';
@@ -323,10 +324,27 @@
     feedback = { kind, n: ++feedbackCount };
   }
 
+  // THE VIEWER'S BARS FOLLOW THESE CONTROLS (`videoViewerChrome`): the header fades with the glass bar
+  // on the same clock, comes back with it, and a player that leaves - another slide, the next video
+  // of a gallery - gives the bars back. Only the viewer's own player reports.
+  const viewerChrome = useViewerChrome();
+  const chromeOwner = {};
+  $effect(() => {
+    if (variant !== 'lightbox') return;
+    viewerChrome?.report(chromeOwner, !controlsVisible);
+  });
+  $effect(() => () => viewerChrome?.leave(chromeOwner));
+  // The reader reached for the header (a mouse over it, a focus on Back): the controls come up.
+  $effect(() => {
+    const raised = viewerChrome?.raised ?? 0;
+    if (raised > 0 && variant === 'lightbox') untrack(showControls);
+  });
+
   // The fade: only while playing, never mid-scrub, restarted by every `poke`.
   $effect(() => {
     void poke;
-    if (paused || scrubbing || !controlsVisible) return;
+    // An unplayable video has no bar to fade: the viewer's header stays up with its message.
+    if (paused || scrubbing || unplayable || !controlsVisible) return;
     const timer = setTimeout(() => (controlsVisible = false), CONTROLS_FADE_MS);
     return () => clearTimeout(timer);
   });
@@ -647,6 +665,9 @@
       msg: video?.error?.message,
     });
     unplayable = true;
+    // The error replaces the bar: if the bar had faded, the viewer's header would stay hidden over
+    // a message nobody can dismiss, so the controls (and with them the header) come back.
+    controlsVisible = true;
     tellBlocked('unplayable');
   }
 </script>
