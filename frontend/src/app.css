@@ -55,6 +55,10 @@
   --color-on-accent: var(--on-accent);
   --color-accent-text: var(--accent-text);
   --color-accent-icon: var(--accent-icon);
+  /* An OPAQUE accent tint for a chip that overlaps other content (a reaction pill straddling a chat
+     bubble's edge): `bg-accent/20` lets the bubble show through it. The same 20 % mixed over the
+     surface, so it flips with the theme like the surface does. */
+  --color-accent-tint: color-mix(in srgb, var(--accent) 20%, var(--cn-surface));
   /* The guided help's accent ink - its step icon and swipe mime, on the popover. The brand's dark
      ink in light, its yellow in dark: one token, so no component spells a dark variant. */
   --color-guide-ink: var(--guide-ink);
