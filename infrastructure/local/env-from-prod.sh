@@ -116,8 +116,9 @@ TURN_USERNAME LIVE_ENABLED PROFILE_PHOTO_PROMPT_SPACES"
 # person straight in (docs/wiki/sessions.md, "The sign-in handoff"): a laptop holding it could forge a
 # token for anybody. Not REGENERATE either: a regenerated hex string is no EC key, and core-service
 # would say so at error on every boot. Empty, the local stack mints nothing and opens sites plainly.
+# MICONNECT_READER_TOKEN because it reads every MiConnect account: read-only, still personal data.
 BLANK="LYDIA_PROVIDER_PRIVATE_TOKEN LYDIA_PROVIDER_TOKEN MICONNECT_EDITOR_TOKEN
-LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256 HANDOFF_SIGNING_KEY"
+LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256 HANDOFF_SIGNING_KEY MICONNECT_READER_TOKEN"
 
 # Regenerated per local stack: these mint or verify credentials.
 # LYDIA_KEY_ENCRYPTION_SECRET is here and NOT in KEEP: kept, a laptop holding a production dump

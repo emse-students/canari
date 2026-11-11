@@ -38,6 +38,7 @@
     CONTROLS_FADE_MS,
     bufferedFraction,
     formatVideoTime,
+    scrubLength,
     videoKeyAction,
   } from '$lib/utils/videoPlayback';
   import {
@@ -365,6 +366,8 @@
   let muted = $state(true);
   let currentTime = $state(0);
   let duration = $state(Number.NaN);
+  /** What the seek line maps onto (`scrubLength`): the duration, else what can be sought so far. */
+  let length = $state(0);
   let buffered = $state(0);
   /** The first frame is in the element: the poster gives way to it. */
   let frameReady = $state(false);
@@ -459,7 +462,15 @@
     muted = video.muted;
     currentTime = video.currentTime;
     duration = video.duration;
+    length = seekLength(video);
+    // Against the REAL length only: mapped onto what is buffered, the buffered bar would always read
+    // full. No length yet, no buffered bar.
     buffered = bufferedFraction(video.buffered, video.currentTime, video.duration);
+  }
+
+  /** {@link scrubLength} of the element - `seekable` absent (a test double) reads as nothing sought. */
+  function seekLength(el: HTMLVideoElement): number {
+    return scrubLength(el.duration, el.seekable ?? { length: 0, start: () => 0, end: () => 0 });
   }
 
   function togglePlay() {
@@ -582,12 +593,14 @@
    * behind the playhead is never appended again, and a seek there would stall for ever.
    */
   function seekTo(seconds: number) {
-    if (!video || !Number.isFinite(video.duration)) return;
+    if (!video) return;
+    const end = seekLength(video);
+    if (end <= 0) return;
     const floor = streamed ? streamSeekFloor(streamProgressOf(src), video.buffered) : 0;
     if (seconds < floor) {
       Log.d('VideoPlayer', `seek to ${seconds.toFixed(1)} s clamped to ${floor.toFixed(1)} s`);
     }
-    video.currentTime = Math.min(video.duration, Math.max(floor, seconds));
+    video.currentTime = Math.min(end, Math.max(floor, seconds));
     currentTime = video.currentTime;
   }
 
@@ -628,7 +641,7 @@
         break;
       case 'seek-to':
         showControls();
-        if (Number.isFinite(duration)) seekTo(action.fraction * duration);
+        if (length > 0) seekTo(action.fraction * length);
         break;
       case 'toggle-mute':
         toggleMute();
@@ -870,11 +883,13 @@
           'VideoPlayer',
           `intrinsic ${naturalWidth}x${naturalHeight} in a ${boxWidth}x${boxHeight} box`
         );
-        // NO LENGTH, NO SEEK (owner, 2026-11-10): a file or stream that declares none is said, with
-        // what it is, so the population of such videos is countable (`mp4Duration.ts`).
-        if (!Number.isFinite(video.duration) || video.duration <= 0) {
+        // NO LENGTH, NO SEEK (owner, 2026-11-10): a FILE that declares none is said, so the
+        // population of such videos is countable (`mp4Duration.ts`). A STREAM is not said here: at
+        // its metadata it has only its head, and its length comes later from its tail - the
+        // stream itself says when it cannot (`[media-seg] ... none read from its tail - <why>`).
+        if (!streamed && (!Number.isFinite(video.duration) || video.duration <= 0)) {
           console.info(
-            `[VideoPlayer] ${variant}: the engine knows no duration (${video.duration}, ${streamed ? 'stream' : 'file'}) - the scrubber cannot seek`
+            `[VideoPlayer] ${variant}: the file declares no duration (${video.duration}) - the line maps onto what can be sought`
           );
         }
       }
@@ -1008,7 +1023,7 @@
           <VideoScrubber
             variant="line"
             {currentTime}
-            {duration}
+            duration={length}
             onSeek={seekTo}
             {onScrubbingChange}
           />
@@ -1034,7 +1049,7 @@
         <VideoScrubber
           variant="line"
           {currentTime}
-          {duration}
+          duration={length}
           onSeek={seekTo}
           {onScrubbingChange}
         />
@@ -1051,7 +1066,7 @@
         <VideoScrubber
           variant="line"
           {currentTime}
-          {duration}
+          duration={length}
           onSeek={seekTo}
           {onScrubbingChange}
         />
@@ -1093,7 +1108,7 @@
             variant="bar"
             class="mx-2 min-w-0 flex-1"
             {currentTime}
-            {duration}
+            duration={length}
             {buffered}
             onSeek={seekTo}
             {onScrubbingChange}
