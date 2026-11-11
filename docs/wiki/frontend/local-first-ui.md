@@ -406,7 +406,10 @@ token and every read held unanswered):
   gets there: it is a dead session, and the sign-out resets the store.
 - **The early hardware-held read is not awaited in line**: the state lookup and the token start at
   once, so a fast link pays nothing; the key is installed before the preview starts, in the same
-  continuation, and the login awaits the read before it opens the store and the MLS init. Like the
+  continuation, and the login awaits the read before it opens the store and the MLS init. **The read
+  is bound to its login attempt** (`earlyKeyRead.ts`): the login's `finally` ends the attempt first,
+  and a read resolving after that installs nothing - no key outlives a failed login in memory,
+  decided by the attempt's state and never by timing (`earlyKeyRead.test.ts`). Like the
   vault path (the decision of 2026-10-12), it draws the stored feed before the revocation answer,
   and withdraws it if that answer says revoked.
 - **The help-seen copy is drawn only once a server answer filled it ON THIS DEVICE**: a new device

@@ -101,6 +101,7 @@ import { resetAnnouncementState } from '$lib/stores/announcement.svelte';
 import { resetSeenHelps } from '$lib/guidance/seenHelps.svelte';
 import { guideEngine } from '$lib/guidance/guidance.svelte';
 import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
+import { beginLoginAttempt, endLoginAttempt, installEarlyKeyIfLive } from './earlyKeyRead';
 import {
   flushPendingGroupExits,
   registerPendingGroupExitDrain,
@@ -1367,6 +1368,8 @@ export async function loginImpl(
   let storageOpen: Promise<IStorage> | null = null;
   /** The unattended hardware-held key read started before the token, never rejects (see below). */
   let earlyHardwareKey: Promise<void> | null = null;
+  /** This login attempt, as its early key read sees it: ended in the `finally` below. */
+  const attempt = beginLoginAttempt(loginId);
   const startLandingPreview = (storage: Promise<IStorage>, previewKey: string): void => {
     const preview = cb.previewLandingTarget;
     if (!preview) return;
@@ -1484,19 +1487,22 @@ export async function loginImpl(
       // NOT AWAITED IN LINE: the state lookup and the token below start at once, so a fast link
       // pays nothing for the draw. The key is installed BEFORE the preview starts, inside the same
       // continuation, and the login awaits this read before the store and the MLS init are opened.
-      earlyHardwareKey = readHardwareHeldKey(tauriHardwareKeyPort, ctx.getUserId(), cb.log)
-        .catch((e: unknown) => {
+      //
+      // BOUND TO THIS ATTEMPT (`earlyKeyRead.ts`): a read resolving after this login ended (its
+      // `finally` ends `attempt`) installs nothing, so no key outlives a failed login in memory.
+      const read = readHardwareHeldKey(tauriHardwareKeyPort, ctx.getUserId(), cb.log).catch(
+        (e: unknown) => {
           cb.log(
             `[AT_REST_KEY] WARN: the hardware-held key could not be read before the token - nothing drawn before the session (${String(e)})`
           );
           return null;
-        })
-        .then((early) => {
-          if (early === null) return;
-          if (signedOutSinceStart()) {
-            cb.log('[AT_REST_KEY] signed out while the early key was read - nothing drawn');
-            return;
-          }
+        }
+      );
+      earlyHardwareKey = installEarlyKeyIfLive(
+        read,
+        attempt,
+        () => !signedOutSinceStart(),
+        (early) => {
           if (!isValidDeviceKeyB64(early)) {
             cb.log(
               '[AT_REST_KEY] WARN: the keystore answered a key that is not 32 bytes - not drawn'
@@ -1508,7 +1514,9 @@ export async function loginImpl(
           storageOpen = getStorage(ctx.getUserId());
           startLandingPreview(storageOpen, early);
           cb.log('[AT_REST_KEY] hardware-held key in hand before the token - local pages may draw');
-        });
+        },
+        cb.log
+      ).then(() => undefined);
     }
     if (isBiometric) {
       cb.log('[BIOMETRIC] Skipping PIN verification - using device keystore...');
@@ -2975,6 +2983,8 @@ export async function loginImpl(
       });
     }
   } finally {
+    // FIRST: an early key read still in flight installs nothing for an attempt that has ended.
+    endLoginAttempt(attempt);
     if (loginFlowOwner === loginId) ctx.setIsMessagingInitializing(false);
     releaseLoginFlag();
     if (loginInFlightSettled === thisLoginSettled) loginInFlightSettled = null;

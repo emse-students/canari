@@ -36,10 +36,14 @@
    may run them alone (*"Oui pour tout"*), under his own safeguards - a procedure written in the
    wiki, tried on dev first, the deleted rows saved, and the cleanup recorded in a `changelog.d`
    fragment.
-7. **The slow-link chantier stays INVISIBLE to the user**: no button, no text, no setting -
-   *"Tout doit être invisible pour l'utilisateur"*. This overrules the "Lire quand même" control and
-   the percentage label once planned for the video hold (#3333 removes both)
-   ([chantier](slow-link-local-first-chantier.md)).
+7. **The slow-link work stays DISCREET AND INFORMATIVE, never verbose or useless** (corrected by the
+   owner the same day: *"Il n'y a pas de règle 'tout doit être invisible', c'est juste que là c'est
+   verbeux et inutile. Quelque chose de discret et informatif est super."*). There is NO rule that
+   everything must be invisible: the "Lire quand même" button and the percentage label once planned
+   for the video hold were rejected as verbose and useless (#3333 removed both), not because any
+   indicator is forbidden. **The connection indicator the owner wants is the header avatar's ring**:
+   green connected, amber slow, grey offline - replacing the "Hors connexion" banner and the desktop
+   "connecté" pill. Built in a separate draft PR ([chantier](slow-link-local-first-chantier.md)).
 8. **Feed media smoothness**: before a media is ready, the page draws the best picture it knows -
    the decoded first frame, else the ThumbHash, photos included - never black. The next 3 pages are
    preloaded in parallel on a fast link and 1 on a slow link, heads only, and the stream joins the

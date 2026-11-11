@@ -36,7 +36,7 @@ describe('loginImpl and the landing preview', () => {
       loginBody,
       "if (isBiometric && opts?.unattendedKeyRead === true && atRestScheme === 'hardware') {"
     );
-    const read = at(loginBody, 'earlyHardwareKey = readHardwareHeldKey(tauriHardwareKeyPort');
+    const read = at(loginBody, 'const read = readHardwareHeldKey(tauriHardwareKeyPort');
     const install = at(loginBody, 'ctx.setDeviceKey(early);');
     const start = at(loginBody, 'startLandingPreview(storageOpen, early);');
     const token = at(loginBody, "accessToken = await untilSignedOut(getToken(), 'access-token');");
