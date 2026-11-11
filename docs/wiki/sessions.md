@@ -870,7 +870,8 @@ its old epoch (TOK-1; what the commit gate makes of each outcome is in
 `mlsDeliveryApi.renewOn401.test.ts`, `productionDeliveryApi.test.ts`, `apiFetch.test.ts`.
 
 **What answers a 401 on the servers (2026-11-11, review of #2420).** An unset secret is the
-service's own fault, read as "retry later": it answers a 500 logged at ERROR, never a 401 - in
+service's own fault, read as "retry later": it answers a 500 logged at ERROR, never a 401, and the
+three header guards ask it FIRST, so a request with no header gets the same 500 - in
 chat-delivery's `HeaderAuthGuard` (`header-auth.guard.spec.ts`), the `NginxAuthGuard` of core- and
 social-service (`nginx-auth.guard.spec.ts`, 2026-11-12) and media-service's bearer check on an unset
 `JWT_SECRET` (`media.controller.verify-token.spec.ts`). An internal token that does not
