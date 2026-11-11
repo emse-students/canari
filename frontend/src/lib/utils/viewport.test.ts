@@ -14,7 +14,6 @@ import {
   SCHEDULE_AGENDA_QUERY,
   isScheduleAgendaViewport,
   PHONE_VIEWPORT_QUERY,
-  ROTATED_PHONE_QUERY,
   isPhoneViewport,
 } from './viewport';
 
@@ -38,7 +37,7 @@ describe('the viewport queries', () => {
     expect(OVERLAY_LAYOUT_QUERY).toBe('(max-width: 1279.98px)');
     expect(SWIPE_NAV_QUERY).toContain('(max-width: 1279.98px)');
     expect(SCHEDULE_AGENDA_QUERY).toBe('(max-width: 767.98px)');
-    expect(PHONE_VIEWPORT_QUERY).toContain('(max-width: 767.98px)');
+    expect(PHONE_VIEWPORT_QUERY).toBe('(max-width: 767.98px)');
   });
 
   it('keep the pointer question exactly where it belongs', () => {
@@ -51,21 +50,7 @@ describe('the viewport queries', () => {
     // the pointer here would take the grid away from a device that has the width for it.
     expect(SCHEDULE_AGENDA_QUERY).not.toContain('pointer');
     // Same reasoning for the store badges: a touch laptop with a narrow window is not a phone.
-    expect(PHONE_VIEWPORT_QUERY.split(',')[0]).not.toContain('pointer');
-  });
-
-  it('a phone turned to landscape is still a phone, a tablet or a desktop window is not', () => {
-    // 800+ px wide crosses `md`, so the width alone said "desktop" (owner, 2026-11-11).
-    expect(PHONE_VIEWPORT_QUERY).toContain(ROTATED_PHONE_QUERY);
-    expect(ROTATED_PHONE_QUERY).toBe('(max-height: 500px) and (pointer: coarse)');
-    const decide = (width: number, height: number, coarse: boolean) => {
-      const rotated = height <= 500 && coarse;
-      return width <= 767.98 || rotated;
-    };
-    expect(decide(393, 851, true)).toBe(true); // portrait phone
-    expect(decide(851, 393, true)).toBe(true); // the same phone turned
-    expect(decide(1024, 744, true)).toBe(false); // a tablet turned
-    expect(decide(1280, 400, false)).toBe(false); // a short desktop window
+    expect(PHONE_VIEWPORT_QUERY).not.toContain('pointer');
   });
 
   it('answer false rather than throwing where matchMedia cannot be asked', () => {

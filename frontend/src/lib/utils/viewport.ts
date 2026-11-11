@@ -62,24 +62,11 @@ export const SWIPE_NAV_QUERY = `${below(TAILWIND_XL)}, ${COARSE_POINTER_QUERY}`;
 export const SCHEDULE_AGENDA_QUERY = below(TAILWIND_MD);
 
 /**
- * A PHONE TURNED TO LANDSCAPE: a touch screen no taller than a phone's short side. Turned, a phone
- * is 800+ px wide and crosses `md`, which made the width alone call it a desktop (owner, Android
- * 1.6.10, 2026-11-11: the desktop header and rail came back around the camera). 500px is under every
- * tablet's short side (an iPad mini is 744) and over every phone's (the largest is ~430), the touch
- * pointer keeps a short desktop window out, and `orientation` is implied by the height bound.
+ * The login page offers the store badges here rather than assuming a desktop browser (matches
+ * Tailwind `md`, width alone - a touch laptop with a narrow window is not a phone and gets no
+ * install prompt, which pointer-based `NARROW_CHAT_QUERY` would have given it).
  */
-export const ROTATED_PHONE_QUERY = `(max-height: 500px) and ${COARSE_POINTER_QUERY}`;
-
-/**
- * A phone, in either orientation: narrower than Tailwind `md`, OR a phone turned sideways
- * (`ROTATED_PHONE_QUERY`). The login page offers the store badges here rather than assuming a
- * desktop browser. A touch laptop with a narrow window is not a phone and gets no install prompt:
- * the WIDTH term asks no pointer, and the rotated term needs a height only a phone has.
- *
- * This answers for SCRIPT decisions; CHROME is decided by the place (`isFullScreenPlace`), never by
- * this query, so the camera cannot be given a shell by any width.
- */
-export const PHONE_VIEWPORT_QUERY = `${below(TAILWIND_MD)}, ${ROTATED_PHONE_QUERY}`;
+export const PHONE_VIEWPORT_QUERY = below(TAILWIND_MD);
 
 /** Whether `matchMedia` can be asked at all - it cannot under SSR, nor in a bare test environment. */
 function canQuery(): boolean {

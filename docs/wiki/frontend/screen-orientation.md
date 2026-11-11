@@ -195,11 +195,18 @@ PLACE, never a width. Pinned by `styles/fullScreenChrome.test.ts`. The overlays 
 and live viewers, the composers' camera, the broadcaster) are `fixed inset-0` at `--z-viewer` (300),
 above every shell layer, so they were never affected.
 
-**The phone question:** `PHONE_VIEWPORT_QUERY` (`utils/viewport.ts`) now also holds
-`ROTATED_PHONE_QUERY` = `(max-height: 500px) and (pointer: coarse)`: 500 px is under every tablet's
-short side and over every phone's. It answers script decisions only (store badges, guidance); no
-chrome reads it. The reel viewer's prev/next rail was `md:flex` ("a pointer has no swipe") and showed
-on a turned phone; it is `pointer-fine:flex`.
+**The phone question (decided, and left alone):** `PHONE_VIEWPORT_QUERY` is NOT changed. A first cut
+added a rotated-phone term (`(max-height: 500px) and (pointer: coarse)`) and was dropped in review:
+rotation exists only on the camera and video screens, where chrome is now gone through `isFullScreen`,
+so nothing needs it; and it was harmful - the guide's `phone` fact (`guideTypes.ts`, the welcome-tour
+and booking-week wording) would no longer match the chrome drawn on a turned phone, and a coarse
+tablet with a short viewport (keyboard open, split-screen) would be classed as a phone. **The layout
+never asks the width whether a place is full screen.** The reel viewer's prev/next rail was `md:flex`
+("a pointer has no swipe") and showed on a turned phone; it is `any-pointer-fine:flex`, so an iPad
+with a trackpad keeps it and a phone, with no fine pointer at all, does not.
+
+**A desktop browser on `/camera` has no shell either** (lead decision, 2026-11-11): the camera is a
+full-screen place on every device, with its own close button.
 
 **The rotate button** was the video kit's 28 px chip (`VideoChipButton`, glass), a bordered circle
 turned, beside 44 px circles. It is now `ui/CameraControlButton.svelte` - the ONE round control of the

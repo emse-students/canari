@@ -11,12 +11,39 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'svelte/compiler';
 import { isFullScreenPlace } from '$lib/navigation/places';
-import { withoutComments } from './markupSources';
 
-const layout = withoutComments(
-  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../routes/+layout.svelte'), 'utf8')
-).replace(/\r\n/g, '\n');
+const source = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), '../../routes/+layout.svelte'),
+  'utf8'
+).replaceAll('\r\n', '\n');
+const ast = parse(source, { modern: true });
+
+type Node = { type: string; name?: string; [key: string]: unknown };
+
+/**
+ * The `{#if}` conditions (as source text) of every block whose CONSEQUENT holds a `<name />`
+ * component, found by walking the parsed template - not by looking at the text near it.
+ */
+function guardsOf(name: string): string[] | null {
+  let found: string[] | null = null;
+  const walk = (node: unknown, guards: string[]): void => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) return node.forEach((child) => walk(child, guards));
+    const n = node as Node;
+    if (n.type === 'Component' && n.name === name) found = guards;
+    for (const [key, value] of Object.entries(n)) {
+      if (key === 'parent') continue;
+      if (n.type === 'IfBlock' && key === 'consequent') {
+        const test = n.test as { start: number; end: number };
+        walk(value, [...guards, source.slice(test.start, test.end)]);
+      } else walk(value, guards);
+    }
+  };
+  walk(ast.fragment, []);
+  return found;
+}
 
 describe('the root layout on a full-screen place', () => {
   it('knows the camera as one, with its sub-routes', () => {
@@ -25,18 +52,16 @@ describe('the root layout on a full-screen place', () => {
     expect(isFullScreenPlace('/chat')).toBe(false);
   });
 
-  it.each(['<AppSidebar />', '<Navbar />', '<MobileHeader />', '<BottomNav />'])(
+  it.each(['AppSidebar', 'Navbar', 'MobileHeader', 'BottomNav'])(
     '%s is not rendered there, whatever the width',
     (piece) => {
-      const at = layout.indexOf(piece);
-      expect(at, `${piece} is in the layout`).toBeGreaterThan(-1);
-      // The `{#if ...}` that opens the block holding the piece, on the line(s) just above it.
-      const guard = layout.slice(Math.max(0, at - 260), at);
-      expect(guard).toMatch(/\{(#if|:else if)[^}]*!isFullScreen/);
+      const guards = guardsOf(piece);
+      expect(guards, `${piece} is in the layout`).not.toBeNull();
+      expect(guards!.some((test) => test.includes('!isFullScreen'))).toBe(true);
     }
   );
 
   it('does not reserve the sidebar gutter there', () => {
-    expect(layout).toMatch(/isLoginPage \|\| isFullScreen\s*\? ''\s*: 'md:pl-24'/);
+    expect(source).toMatch(/isLoginPage \|\| isFullScreen\s*\? ''\s*: 'md:pl-24'/);
   });
 });
