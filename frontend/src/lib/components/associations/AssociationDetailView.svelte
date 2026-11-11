@@ -25,6 +25,7 @@
   } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import AccountBell from '$lib/components/follows/AccountBell.svelte';
+  import { getBellLevel, type BellLevel } from '$lib/follows/bell';
   import FollowAlsoSuggestions from '$lib/components/suggestions/FollowAlsoSuggestions.svelte';
   import {
     followAssociationLedgered,
@@ -144,6 +145,8 @@
   );
 
   let following = $state(false);
+  /** The bell's level, asked with the sub-reads and handed to the bell that mounts after them. */
+  let bellLevel = $state<Promise<BellLevel> | undefined>();
   let followLoading = $state(false);
   /**
    * The open section is a ROUTE segment (`/associations/<slug>/<section>`), never local state: Back
@@ -292,6 +295,11 @@
       // behind a label.
       const uid = currentUserId();
       let followStatus: { following: boolean };
+      // THE BELL'S LEVEL LEAVES WITH THEM TOO: the bell mounts when this batch has ended, and used
+      // to ask only then - one more round trip behind a control.
+      const bellRead = getBellLevel('association', asso.id);
+      bellRead.catch(() => {});
+      bellLevel = bellRead;
       [members, products, partnerships, followStatus] = await Promise.all([
         listMembers(asso.id),
         listAssociationProducts(asso.id).catch(() => []),
@@ -496,7 +504,7 @@
                 it is offered followed or not, since an association's posts reach its whole
                 audience (L7).
               -->
-              <AccountBell kind="association" targetId={asso.id} />
+              <AccountBell kind="association" targetId={asso.id} initial={bellLevel} />
             {/if}
             {#if myMembership}
               <Button

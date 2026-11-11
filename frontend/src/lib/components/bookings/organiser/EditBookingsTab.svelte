@@ -24,9 +24,16 @@
   interface Props {
     /** The owning entity, or `null` for the reader's personal spaces. */
     associationId: string | null;
+    /**
+     * The managed-spaces read, ALREADY STARTED by a page that knows it will mount this tab (the
+     * Reservations page asks it beside its own two reads, so the tab does not wait for them to end
+     * before asking - one round trip less on a slow link). Awaited instead of asking again; the
+     * refresh after a failure still asks for itself.
+     */
+    managed?: Promise<ManagedSpaceRow[]>;
   }
 
-  let { associationId }: Props = $props();
+  let { associationId, managed }: Props = $props();
   const personal = $derived(associationId === null);
 
   let spaces = $state<ManagedSpaceRow[]>([]);
@@ -40,6 +47,7 @@
     creatorOpen = false;
   }
 
+  // `managed` is the page's read for THIS owner and is read once: a later `load()` never reuses it.
   onMount(load);
 
   async function load() {
@@ -47,7 +55,7 @@
     loading = true;
     error = '';
     try {
-      spaces = await listManagedSpaces(associationId);
+      spaces = await (managed ?? listManagedSpaces(associationId));
     } catch (e) {
       error = describeBookingRefusal(e, m.common_load_error());
     } finally {

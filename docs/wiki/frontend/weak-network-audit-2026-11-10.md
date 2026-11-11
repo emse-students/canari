@@ -194,6 +194,55 @@ rate after the release.
 | C7 | `users/batch` and `avatar-presence` fired in pairs for the same ids (271 and 568 in the owner's log) | two questions about one face, two endpoints | `users/batch` answers `hasPhoto` in each profile; `avatar-presence` remains for the faces with no profile read | 1 request per face batch |
 | C8 | Feed form cards: `GET /api/forms/:id` + `/check` per card (~127 each in the owner's log) | one card, two reads, per form (`forms/api.ts:526`) | the post's feed row carries the form summary and the reader's answer state | 2 requests per card |
 
+### 3.8 BUILT (2026-11-11) - C1, C2, C3 and the restore stop; C4, C7, C8 and `revoked-leaves` re-read
+
+Counted on a fake network (vitest, no clock), the unit being the serial level a read leaves at.
+
+| Chain | Before | After | Test |
+| --- | --- | --- | --- |
+| C1 bookings: `managed` read by the tab | level 2 (after `mine` + `spaces`) | level 1, beside them: **-1 RTT** | `routes/bookings/page.reads.svelte.test.ts` |
+| C2 Pour toi: `users/me/blocks` | level 2 (when the first chip mounts, after the posts) | level 1, issued by the route `load` beside `listPosts`: **-1 RTT**; the cached read is shared with every later chip | `routes/posts/page.load.test.ts` |
+| C3 association: `bells/association/:id` | level 3 (the bell mounts when the page leaves its spinner) | level 2, beside members, products, partnerships and the follow status: **-1 RTT** | `AccountBell.svelte.test.ts` |
+| Restore, link drops mid-pass | N dead history reads + N warns after the drop | the first conversation that finds `connectivity.isOffline` stops the pass, owes it and the rest to the reconnect, ONE `[CATCHUP]` line | `restoreUnreachable.test.ts` |
+
+How: the page starts the read and hands the PROMISE to the component that draws it (`managed` on
+`EditBookingsTab`, `initial` on `AccountBell`), which awaits it instead of asking again; a refusal
+surfaces where the component already handled it, and the page attaches a no-op `catch` so it is never
+an unhandled rejection before the component mounts. Nothing is a timer.
+
+**Not built, and why (read again 2026-11-11).**
+
+- **C2's second half** (`follow-statuses` carried by `GET /api/posts?feed=foryou`) and **C3's sub-reads
+  keyed by the slug** need a social-service change: the author ids exist only in the answer, and the
+  slug routes do not exist. Designed, owed.
+- **C4** is smaller than written: `reconcilePublishedKeyPackages` (the `prekeys/list` read) is already
+  `void` in the background, beside the group sweep, so the serial chain is `prekeys/count` ->
+  `register-device` (the count decides whether to mint, the register carries the package). Cutting
+  that pair needs `register-device` to answer the published count, a chat-delivery change to MLS
+  key-package code; `isDeviceRevoked` is a third, independent question already at level 2.
+- **C7, C8** need the server to carry `hasPhoto` in `users/batch` and the form summary in the feed
+  row.
+- **`revoked-leaves` as `GET`:** equivalence checked against `getRevokedLeaves` - the answer is the
+  banned devices of the group's bound users (device rows, seats, `revoked_device_groups`), which the
+  client intersects with its tree by `lower(user):device`. It needs the route, a client falling back
+  to the `POST` for an older server (a shim with a removal date in
+  [legacy-compatibility](../legacy-compatibility.md)) and a spec: a server change of its own.
+
+### 3.9 The request gate, investigated (owner's question, 2026-11-11)
+
+*Can a slow media request hold a slot that a screen's small API read waits behind?* **No, in the app.**
+`mediaRequestGate` (3 slots) is entered by media bytes only (`mediaBlobCache`, `segmentedMediaReader`);
+every API read goes `apiFetch` -> `trackedFetch` -> `fetch` and touches no gate, so an API read has no
+queue to wait in. A slot is held from the request's start to its RESPONSE HEAD (the gated task returns
+the live `Response`; the body is read after the slot is freed), so a slow body holds none; a media
+request whose head never arrives (media has no head deadline) holds one of three slots and delays other
+MEDIA only. What remains is the wire: three media transfers share the link's bandwidth with the API
+reads, which no app queue decides and the cap of three bounds. So no API lane was added and no deadline
+shortened; `requestGate.apiLane.test.ts` pins the property (the API path never imports a gate; a
+saturated gate queues only its own kind; the slot is freed at the head). Not measured on a phone: the
+bandwidth share on a real 3G link is owed (a feed with sixty thumbnails, an API read timed beside it).
+Also fixed in `requestGate.ts`: a needless spread (`unicorn/no-useless-spread`) the lint printed.
+
 ## 4. The lead's field evidence (owner's Android `1.6.9` log, production nginx), read against the code
 
 1. **Fan-out at boot** (`avatar-presence` 568, `users/batch` 271, per-community triplet ~210 each,
@@ -301,8 +350,8 @@ rate after the release.
 | 6 | C5: one bulk read for the per-community key-group triplet | designed | 2 RTT and ~3 requests per community per boot |
 | 7 | R11 (first pass): an encrypted thumbnail variant for post and chat images | designed (WP-W7) | MBs per feed screen on a thin link |
 | 8 | C4: the key-package path reads its own device list once | designed | 2 RTT per boot |
-| 9 | C1, C2, C3 (bookings, Pour toi, association page) | designed; C1/C2 sit in components other work is changing | 1-2 RTT each |
-| 10 | History restore stops on the first transport failure mid-loop (section 4.2) | designed | N warn lines and N dead requests per drop |
+| 9 | C1, C2, C3 (bookings, Pour toi, association page) | **built** (1 RTT each, 3.8); C2's follow statuses and C3's slug routes owed to the server | 1 RTT each |
+| 10 | History restore stops on the first transport failure mid-loop (section 4.2) | **built** (3.8) | N warn lines and N dead requests per drop |
 | 11 | `revoked-leaves` as a short server answer (section 4.3) | designed | a tree-sized body per key group per session |
 | 12 | C7, C8 (profile + photo in one read; form summary in the feed row) | designed | 1-2 requests per face batch / per form card |
 

@@ -131,3 +131,27 @@ describe('AccountBell, icon only (a profile header)', () => {
     expect(api.setBellLevel).toHaveBeenCalledWith('user', 'u-bob', 'none');
   });
 });
+
+describe('AccountBell, a read started by the page (weak-network audit, C3)', () => {
+  it('shows the level the page asked for and asks nothing itself', async () => {
+    component = mount(AccountBell, {
+      target: document.body,
+      props: { kind: 'association', targetId: 'a1', initial: Promise.resolve('none' as const) },
+    });
+    await settle();
+    expect(bell().dataset.level).toBe('none');
+    expect(api.getBellLevel).not.toHaveBeenCalled();
+  });
+
+  it('a refused head-start read leaves the control disabled, and asks no second time', async () => {
+    const refused = Promise.reject(new Error('x'));
+    refused.catch(() => {});
+    component = mount(AccountBell, {
+      target: document.body,
+      props: { kind: 'association', targetId: 'a1', initial: refused },
+    });
+    await settle();
+    expect(trigger().disabled).toBe(true);
+    expect(api.getBellLevel).not.toHaveBeenCalled();
+  });
+});

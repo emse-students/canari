@@ -33,6 +33,14 @@ import { isChannelConversationId } from './channelCrypto';
 import { isUuidLike } from '$lib/utils/uuidShape';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 
+/** Why a restore stopped asking the server part-way: the connectivity store saw the link drop. */
+class LinkDroppedMidPassError extends Error {
+  constructor() {
+    super('the link was seen to drop while the pass was running');
+    this.name = 'LinkDroppedMidPassError';
+  }
+}
+
 const HEX_ID_RE = /^[0-9a-f]{40,}$/i;
 
 /**
@@ -1150,15 +1158,21 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           else console.error('[CATCHUP] batch history threw - each group reads its own page:', e);
         }
       }
-      if (unreachable !== null && replayMetas.length > 0) {
-        // ONE LINE FOR THE WHOLE PASS, naming what is owed next - not one per conversation.
+      /**
+       * ONE LINE FOR THE WHOLE PASS, naming what is owed next - not one per conversation - and the
+       * archives handed to the reconnect. Said once: before the loop when the first questions got no
+       * answer, or at the conversation where the link was seen to drop.
+       */
+      const skipArchiveReplays = (skipped: typeof replayMetas, why: unknown): void => {
         console.warn(
-          `[CATCHUP] the server got no answer - the archive replay of ${replayMetas.length} ` +
+          `[CATCHUP] the server got no answer - the archive replay of ${skipped.length} ` +
             "conversation(s) is skipped this pass: the mailbox is owed to the reconnect's pull, " +
-            `the archives to the next reconnect: ${String(unreachable)}`
+            `the archives to the next reconnect: ${String(why)}`
         );
-        ctx.onArchiveReplaysSkipped?.(replayMetas.map((m) => m.id));
-      }
+        ctx.onArchiveReplaysSkipped?.(skipped.map((m) => m.id));
+      };
+      if (unreachable !== null && replayMetas.length > 0)
+        skipArchiveReplays(replayMetas, unreachable);
 
       // THE UNREAD CENSUS OF THIS LOAD, said in ONE line after the loop (per row at debug only).
       // Each row's LAST derived count, by id; the census line is summed from it after the loop.
@@ -1193,6 +1207,19 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         // draws before the server page, which replaces it (`loadChannelHistory`). It used to be
         // erased here at every boot, which is what made a salon's first open network-only.
         if (isChannelConversationId(meta.id)) continue;
+        // THE LINK DROPPED MID-PASS. The checks above ran before the first replay; a replay that gets
+        // no answer tells the connectivity store (its history read swallows the failure into an empty
+        // page, so the store is the only place the pass can learn of it). Without this the remaining
+        // N conversations each asked a dead link (45 and 36 `[HISTORY] no answer` lines in a minute,
+        // owner's log), one dead request and one warn per group. The same stop as above, taken at the
+        // first conversation that finds the link known down; this one and the rest are owed.
+        if (unreachable === null && connectivity.isOffline) {
+          unreachable = new LinkDroppedMidPassError();
+          skipArchiveReplays(
+            replayMetas.slice(replayMetas.findIndex((r) => r.id === meta.id)),
+            unreachable
+          );
+        }
         try {
           const existingConvo = ctx.conversations.get(meta.id);
           if (existingConvo && !isChannelConversationId(meta.id) && serverGroupIndex) {

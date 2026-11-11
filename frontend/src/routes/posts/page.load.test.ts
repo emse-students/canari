@@ -16,6 +16,10 @@ vi.mock('$lib/posts/feedAudience', () => ({
   isOutsideFeedAudience: () => false,
   redirectIfNotFeedAudience: () => Promise.resolve(false),
 }));
+const ensureBlocksLoaded = vi.fn();
+vi.mock('$lib/follows/followState.svelte', () => ({
+  ensureBlocksLoaded: () => ensureBlocksLoaded(),
+}));
 vi.mock('$lib/stores/settingsStore.svelte', () => ({
   settings: { preferredPostFeed: null },
 }));
@@ -31,6 +35,7 @@ async function run(query: string) {
 
 beforeEach(() => {
   listPosts.mockClear();
+  ensureBlocksLoaded.mockClear();
   localStorage.clear();
 });
 
@@ -47,5 +52,17 @@ describe('posts load', () => {
     expect(listPosts.mock.calls[0][0]).not.toHaveProperty('kind');
     expect(data.feedParams).not.toHaveProperty('kind');
     expect(localStorage.getItem('canari_post_feed_kind')).toBeNull();
+  });
+
+  it('asks for the blocks of the reader with the first page, not after it (C2)', async () => {
+    let answerPosts!: (rows: never[]) => void;
+    listPosts.mockReturnValueOnce(new Promise<never[]>((r) => (answerPosts = r)));
+    const loading = run('?feed=foryou');
+    await Promise.resolve();
+    // The posts are still unanswered: the blocks read has left already.
+    expect(listPosts).toHaveBeenCalledTimes(1);
+    expect(ensureBlocksLoaded).toHaveBeenCalledTimes(1);
+    answerPosts([]);
+    await loading;
   });
 });

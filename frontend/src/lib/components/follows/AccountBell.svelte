@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { Bell, BellOff, BellRing, ChevronDown } from '@lucide/svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -31,9 +32,17 @@
      * level, so the choice is still read out.
      */
     iconOnly?: boolean;
+    /**
+     * The level's read, ALREADY STARTED by a page that knows it will mount this bell once its other
+     * reads have ended (an association's page asks it beside them: one round trip less on a slow
+     * link). Awaited for the FIRST mount instead of asking again; a changed target asks for itself.
+     */
+    initial?: Promise<BellLevel>;
   }
 
-  let { kind, targetId, iconOnly = false }: Props = $props();
+  let { kind, targetId, iconOnly = false, initial }: Props = $props();
+  /** The head start is for the first read only. */
+  let headStartSpent = false;
 
   let level = $state<BellLevel>('all');
   let loaded = $state(false);
@@ -45,7 +54,10 @@
     const id = targetId;
     loaded = false;
     let stale = false;
-    getBellLevel(k, id)
+    const head = headStartSpent ? undefined : untrack(() => initial);
+    headStartSpent = true;
+    const read = head ?? getBellLevel(k, id);
+    read
       .then((read) => {
         if (stale) return;
         level = read;
