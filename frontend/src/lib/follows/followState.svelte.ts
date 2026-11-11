@@ -190,12 +190,32 @@ function scheduleFlush(): void {
   queueMicrotask(flush);
 }
 
-/** Sends everything queued so far: one call per {@link FOLLOW_STATUS_BATCH_MAX} ids. */
+/** Status reads on the wire. While any is out, newly queued ids WAIT and leave together (below). */
+let statusReadsOut = 0;
+
+/**
+ * Sends everything queued so far: one call per {@link FOLLOW_STATUS_BATCH_MAX} ids - and never while
+ * an earlier call is still out.
+ *
+ * ONE ROUND OF CALLS IN FLIGHT AT A TIME, and that is what turns a feed's cards mounting over a few
+ * hundred milliseconds into two calls instead of eight (measured on the owner's `1.6.9` log:
+ * `follow-statuses` x8 in one boot, each a few ids). The ids that queue while a call is out leave in
+ * ONE call the moment its answer lands (`settled`), so the window is the call itself - an exact
+ * event, no clock. A chip waits at most one extra round trip, which it can afford: it is a hint
+ * drawn after the content, never the content.
+ */
 function flush(): void {
   flushQueued = false;
+  if (statusReadsOut > 0) return;
   const mine = epoch;
+  const settled = () => {
+    statusReadsOut--;
+    // The ids that queued while this was out go now - even after a reset, whose queue is the new one.
+    scheduleFlush();
+  };
   while (queue.length > 0) {
     const ids = queue.splice(0, FOLLOW_STATUS_BATCH_MAX);
+    statusReadsOut++;
     getFollowStatuses(ids)
       .then((statuses) => {
         if (mine !== epoch) return;
@@ -210,7 +230,8 @@ function flush(): void {
         // already followed". NOT asked again until a reconnect, a block change or a new reader.
         warnFailedRead(`statuses of ${ids.length} persons`, e);
         for (const id of ids) failedPersons.add(id);
-      });
+      })
+      .finally(settled);
   }
 }
 

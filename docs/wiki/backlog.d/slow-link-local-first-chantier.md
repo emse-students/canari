@@ -35,6 +35,14 @@ state first, then revalidates ([local-first-ui](../frontend/local-first-ui.md)).
    - tests with an element model whose buffer grows and whose playhead advances on a fake clock,
      counting stalls before and after.
 
+**Gaps 4 and 5, built (2026-11-11, draft PR).** Gap 4: nine communities cost 27 requests at a load,
+now 10 - one batched `GET /api/channels/workspaces/boot-reads` (salons + key-group reference) and
+the roster per community, which stays per community on purpose. Gap 5: `follow-statuses` 8 -> 2 for
+eight card ticks (one round in flight); `users/batch` has no identical request left to remove and
+`devices/self` x3 are three different URLs (C4). Numbers, causes and what was left:
+[audit section 4.5](../frontend/weak-network-audit-2026-11-10.md#4-the-leads-field-evidence-owners-android-169-log-production-nginx-read-against-the-code).
+Owed: the same count on a real boot of the owner's account, and the batched route on dev.
+
 **Method.** Measure every screen on a simulated slow link before and after, as in the audit
 ([method](../frontend/weak-network-audit-2026-11-10.md#1-method-and-what-it-cannot-see)); the number
 that closes a screen is its first paint with the network answering nothing.

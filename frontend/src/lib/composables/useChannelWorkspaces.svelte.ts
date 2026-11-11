@@ -448,18 +448,32 @@ export function useChannelWorkspaces() {
       prepared.push({ sidebarWorkspace, workspaceId });
     }
 
-    const outcomes = await Promise.allSettled(
-      prepared.map(({ sidebarWorkspace, workspaceId }) =>
-        loadCommunitySalons(
-          ctx,
-          sidebarWorkspace,
-          workspaceId,
-          validChannelConversationIds,
-          session,
-          epochAtRequest
-        )
-      )
+    // TWO OF THE THREE READS EACH COMMUNITY MAKES - its salon listing and its key-group reference -
+    // leave in ONE request for all of them (27 requests for nine communities become 10: the roster
+    // is the third and stays per community, read after the device's own tree). Held for exactly this
+    // walk: `releaseBootReads` forgets what no chain took, and settling every chain below is what
+    // makes "the walk is over" a fact rather than a guess. Never throws; a failed batch leaves the
+    // per-community routes to answer.
+    const releaseBootReads = await service.holdCommunityBootReads(
+      prepared.map((p) => p.workspaceId)
     );
+    let outcomes: PromiseSettledResult<void>[];
+    try {
+      outcomes = await Promise.allSettled(
+        prepared.map(({ sidebarWorkspace, workspaceId }) =>
+          loadCommunitySalons(
+            ctx,
+            sidebarWorkspace,
+            workspaceId,
+            validChannelConversationIds,
+            session,
+            epochAtRequest
+          )
+        )
+      );
+    } finally {
+      releaseBootReads();
+    }
     const firstFailure = outcomes.find(
       (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
     );

@@ -414,8 +414,34 @@ function actorDeviceQuery(actorDeviceId?: string): string {
   return actorDeviceId ? `?actorDevice=${encodeURIComponent(actorDeviceId)}` : '';
 }
 
+/** One refusal carried on a batched boot read (the shape of the single route's error body). */
+interface BootReadRefusalDto {
+  status: number;
+  code: string | null;
+  message: string;
+}
+
+/** One community's part of `GET /api/channels/workspaces/boot-reads`. */
+interface CommunityBootReadDto {
+  workspaceId: string;
+  channels: ChannelDto[] | null;
+  channelsRefusal: BootReadRefusalDto | null;
+  keyGroup: DistributionGroupDto | null;
+  keyGroupRefusal: BootReadRefusalDto | null;
+}
+
+/** The most communities one batched boot read asks for - the server's `COMMUNITY_BOOT_READS_MAX`. */
+export const COMMUNITY_BOOT_READS_MAX = 50;
+
 export class ChannelService {
   private baseUrl: string;
+  /**
+   * What the batched boot read answered, per community, WHILE THE LOAD THAT ASKED IT RUNS: each half
+   * is handed to the first per-community read that asks for it and then forgotten, and the whole map
+   * is emptied when the load ends (the release {@link holdCommunityBootReads} returns). Its lifetime
+   * is the load, not a clock - a read made after the load always goes to the server.
+   */
+  private readonly heldBootReads = new Map<string, CommunityBootReadDto>();
 
   constructor() {
     // In browser, API routes are proxied by Vite/nginx.
@@ -545,11 +571,22 @@ export class ChannelService {
     scope: DistributionScope,
     deviceId?: string
   ): Promise<DistributionGroupDto> {
-    const query = deviceId ? `?${new URLSearchParams({ deviceId })}` : '';
-    const res = await this.fetchWithAuth(`${this.distributionGroupUrl(scope)}${query}`);
-    await this.handleError(res);
-    // A 2xx that is not the API's JSON is no answer (`NotFromApiError`, a transport failure).
-    const dto = (await readApiJson(res, 'GET distribution group')) as DistributionGroupDto;
+    // THE BATCHED READ OF THIS LOAD answers the reference of a community's group once, and only for
+    // a read that names no device: a seat is judged against a base read AFTER the question.
+    const held =
+      scope.kind === 'workspace' && !deviceId
+        ? this.takeBootRead<DistributionGroupDto>(scope.workspaceId, 'keyGroup')
+        : undefined;
+    let dto: DistributionGroupDto;
+    if (held) {
+      dto = held.value;
+    } else {
+      const query = deviceId ? `?${new URLSearchParams({ deviceId })}` : '';
+      const res = await this.fetchWithAuth(`${this.distributionGroupUrl(scope)}${query}`);
+      await this.handleError(res);
+      // A 2xx that is not the API's JSON is no answer (`NotFromApiError`, a transport failure).
+      dto = (await readApiJson(res, 'GET distribution group')) as DistributionGroupDto;
+    }
     // Defaulted to the base, not to 0: a server build that predates the field must read as "nothing
     // known to be stale", where 0 would declare every published base ahead of its group.
     return {
@@ -692,7 +729,81 @@ export class ChannelService {
     return res.json() as Promise<CreateChannelResultDto>;
   }
 
+  /**
+   * Asks, in ONE request per {@link COMMUNITY_BOOT_READS_MAX} communities, the two reads a load
+   * makes of each community before joining its key group - its salon listing and its key-group
+   * reference - and holds the answers for the per-community reads that follow
+   * ({@link listChannels}, {@link getDistributionGroup} without a device), each handed out once.
+   * Replaces two requests per community (18 of the 27 for nine communities).
+   *
+   * The roster is NOT among them: the key-group roster pass reads it AFTER the device's own tree, and
+   * a roster read earlier names a member who joined in between as absent.
+   *
+   * NEVER THROWS, and holds nothing when the batch fails (an older server answers 404, the link
+   * drops): the per-community routes then answer as they always did, and the line says so, because a
+   * batch that never works is the visible end of a server this client outran.
+   *
+   * @returns the release the caller MUST run when its load ends: it forgets whatever no read took.
+   */
+  async holdCommunityBootReads(workspaceIds: readonly string[]): Promise<() => void> {
+    const release = () => this.heldBootReads.clear();
+    const ids = [...new Set(workspaceIds)];
+    if (ids.length < 2) return release; // one community: the batch would replace nothing.
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += COMMUNITY_BOOT_READS_MAX) {
+      chunks.push(ids.slice(i, i + COMMUNITY_BOOT_READS_MAX));
+    }
+    Log.d('BOOT_READS', `asking ${ids.length} communities in ${chunks.length} request(s)`);
+    await Promise.all(
+      chunks.map(async (chunk) => {
+        try {
+          const res = await this.fetchWithAuth(
+            `${this.baseUrl}/api/channels/workspaces/boot-reads?ids=${chunk.map(encodeURIComponent).join(',')}`
+          );
+          await this.handleError(res);
+          const body = (await readApiJson(res, 'GET boot reads')) as {
+            items?: CommunityBootReadDto[];
+          };
+          for (const item of body.items ?? []) this.heldBootReads.set(item.workspaceId, item);
+        } catch (e) {
+          console.warn(
+            `[BOOT_READS] batched read of ${chunk.length} communities failed - each community is read on its own route: ${String(e)}`
+          );
+        }
+      })
+    );
+    return release;
+  }
+
+  /**
+   * Hands out, once, what the batched boot read held for `workspaceId`'s `half`: its value, a
+   * refusal rethrown as the {@link ChannelApiError} the single route answers, or `undefined` when
+   * nothing is held (the caller reads the route).
+   */
+  private takeBootRead<T>(
+    workspaceId: string,
+    half: 'channels' | 'keyGroup'
+  ): { value: T } | undefined {
+    const item = this.heldBootReads.get(workspaceId);
+    if (!item) return undefined;
+    const value = item[half];
+    const refusal = half === 'channels' ? item.channelsRefusal : item.keyGroupRefusal;
+    // Neither a value nor a refusal: already handed out, so this read goes to the route.
+    if (value === null && refusal === null) return undefined;
+    if (half === 'channels') {
+      item.channels = null;
+      item.channelsRefusal = null;
+    } else {
+      item.keyGroup = null;
+      item.keyGroupRefusal = null;
+    }
+    if (refusal) throw new ChannelApiError(refusal.status, refusal.code, refusal.message);
+    return { value: value as T };
+  }
+
   async listChannels(workspaceId: string) {
+    const held = this.takeBootRead<ChannelDto[]>(workspaceId, 'channels');
+    if (held) return held.value;
     const res = await this.fetchWithAuth(
       `${this.baseUrl}/api/channels/workspace/${workspaceId}/user/me`
     );

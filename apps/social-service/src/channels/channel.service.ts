@@ -2452,6 +2452,58 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
+   * What a device asks of EVERY community it belongs to at each connection, in ONE answer: the
+   * salon listing ({@link listChannelsForUser}) and the key-group reference
+   * ({@link getDistributionGroupForMember}) - two of the three per-community reads of a boot (the
+   * third, the roster, is deliberately NOT here: it must be read AFTER the device's own tree, or a
+   * member who joined in between reads as absent and loses their leaf).
+   *
+   * EACH ITEM IS ITS OWN VERDICT. The two answers come from the very methods the per-community
+   * routes call, so authorization and shape are theirs, and a refusal on one community (a 403 on a
+   * community just left, a missing key group) is carried as `{ status, code, message }` on that
+   * item and never fails the others - the client rethrows it as the refusal the single route would
+   * have given. Ids beyond {@link COMMUNITY_BOOT_READS_MAX} are not answered at all (the caller
+   * chunks), and a repeated id is answered once.
+   */
+  async listCommunityBootReads(
+    userId: string,
+    workspaceIds: readonly string[]
+  ): Promise<{ items: CommunityBootReadItem[] }> {
+    const ids = [...new Set(workspaceIds)].slice(0, COMMUNITY_BOOT_READS_MAX);
+    this.logger.log(
+      `[BOOT_READS] user=${userId.slice(0, 8)} communities=${ids.length} (asked ${workspaceIds.length})`
+    );
+    const settle = async <T>(read: () => Promise<T>) => {
+      try {
+        return { value: await read(), refusal: undefined };
+      } catch (e) {
+        return { value: undefined, refusal: bootReadRefusal(e) };
+      }
+    };
+    const items = await Promise.all(
+      ids.map(async (workspaceId): Promise<CommunityBootReadItem> => {
+        const [channels, keyGroup] = await Promise.all([
+          settle(() => this.listChannelsForUser(workspaceId, userId)),
+          settle(() => this.getDistributionGroupForMember(workspaceId, userId)),
+        ]);
+        if (channels.refusal || keyGroup.refusal) {
+          this.logger.warn(
+            `[BOOT_READS] workspace=${workspaceId} user=${userId.slice(0, 8)} channels=${channels.refusal?.status ?? 'ok'} keyGroup=${keyGroup.refusal?.status ?? 'ok'}`
+          );
+        }
+        return {
+          workspaceId,
+          channels: channels.value ?? null,
+          channelsRefusal: channels.refusal ?? null,
+          keyGroup: keyGroup.value ?? null,
+          keyGroupRefusal: keyGroup.refusal ?? null,
+        };
+      })
+    );
+    return { items };
+  }
+
+  /**
    * Publishes a member's freshly committed GroupInfo for the community's distribution group.
    * Monotonic on the delivery side, so a late refresh can never regress the served base epoch.
    */
@@ -7114,6 +7166,42 @@ class ErasedAccountLeftAlone extends Error {
     super(`erased account is the last member of workspace ${workspaceId}`);
     this.name = 'ErasedAccountLeftAlone';
   }
+}
+
+/** The most communities one {@link ChannelService.listCommunityBootReads} answers; the client chunks. */
+export const COMMUNITY_BOOT_READS_MAX = 50;
+
+/** A refusal carried on one item of a batched read, the shape the single route's error body has. */
+export interface BootReadRefusal {
+  status: number;
+  code: string | null;
+  message: string;
+}
+
+/** One community's part of the batched boot read: each half is its value or its refusal. */
+export interface CommunityBootReadItem {
+  workspaceId: string;
+  channels: Awaited<ReturnType<ChannelService['listChannelsForUser']>> | null;
+  channelsRefusal: BootReadRefusal | null;
+  keyGroup: DistributionGroupRef | null;
+  keyGroupRefusal: BootReadRefusal | null;
+}
+
+/**
+ * A failure of one half of a batched read, as the refusal the single route would have answered:
+ * an HTTP exception keeps its status and `code`; anything else is a 500 (and is logged by the
+ * caller's warn line, the one thing that says which community it was).
+ */
+export function bootReadRefusal(err: unknown): BootReadRefusal {
+  if (err instanceof HttpException) {
+    const body = err.getResponse();
+    const code =
+      body && typeof body === 'object' && typeof (body as { code?: unknown }).code === 'string'
+        ? (body as { code: string }).code
+        : null;
+    return { status: err.getStatus(), code, message: err.message };
+  }
+  return { status: 500, code: null, message: err instanceof Error ? err.message : String(err) };
 }
 
 /**

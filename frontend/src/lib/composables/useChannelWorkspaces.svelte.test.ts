@@ -90,6 +90,7 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
   ChannelService: class MockChannelService {
     listUserWorkspaces = listUserWorkspaces;
     listChannels = listChannels;
+    holdCommunityBootReads = vi.fn().mockResolvedValue(() => {});
     createWorkspace = createWorkspace;
     createChannel = createChannel;
     renameChannel = renameChannel;

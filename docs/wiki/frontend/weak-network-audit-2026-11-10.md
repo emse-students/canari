@@ -230,6 +230,45 @@ rate after the release.
    session. `POST graine/live-sessions` is buffered for the same reason (it lists the sessions the
    device holds).
 4. **FCM registration 429 x3 in 5 s** - fixed server-side, 3.6.
+5. **The per-community triplet and the duplicate reads (slow-link chantier, gaps 4 and 5,
+   2026-11-11).** Counted on a fake network (vitest, no clock: `ChannelService.bootReads.test.ts`,
+   `followState.requests.svelte.test.ts`), the unit being the request.
+
+   | Read | Before | After |
+   | --- | ---: | ---: |
+   | Per-community triplet, 9 communities (salon listing, key-group reference, roster) | **27** | **10** (1 batch + 9 rosters) |
+   | `follow-statuses`, 8 cards mounting in 8 separate turns | **8** | **2** |
+   | `users/batch` | no identical request to remove (below) | unchanged |
+   | `devices/<self>` x3 | three different URLs (below) | unchanged |
+
+   **The triplet** is, per community, `GET workspace/:id/user/me` (the salons),
+   `GET workspaces/:id/distribution-group` (the key-group reference) and `GET workspaces/:id/members`
+   (the roster the key-group pass compares with the tree). New `GET /api/channels/workspaces/boot-reads?ids=`
+   (social-service, at most 50 ids, the client chunks) answers the first two for every community in
+   one request, **through the very methods the single routes call**, each item carrying its own
+   `{ status, code, message }` refusal so a community just left never fails the others; the client
+   rethrows it as the `ChannelApiError` the single route gives (`ChannelService.holdCommunityBootReads`).
+   The answers are held ONLY while the load that asked runs, each half handed out once, then
+   forgotten when every chain has settled - the lifetime is the walk, not a clock - and a
+   distribution-group read that names a device never takes from it (its seat is judged against a
+   fresher base). **The roster is deliberately not batched:** `reconcileOnce` reads the device's own
+   tree first and the roster second, so that a member who joined in between is never read as absent
+   and stripped of a leaf; a roster read at the start of the load would reopen that window for the
+   length of every join. Old routes stay, for old clients; a failed batch (an older server, the link)
+   holds nothing and logs `[BOOT_READS]` at warn, and each community then reads its own routes. The
+   revoked-leaves read stays per key group (chat-delivery, keyed by the tree), section 4.3.
+
+   **`follow-statuses`** was already one request per id per epoch, flushed by a microtask; the eight
+   calls are eight DIFFERENT id sets, one per turn in which cards mounted. A microtask cannot join
+   turns and a timer is refused, so the flush is now **one round in flight**: ids queued while a call
+   is out leave together the moment its answer lands. A chip waits at most one extra round trip.
+   **`users/batch`** already joins an identical id in flight (`profileCache`), so the 271 are
+   different id sets across turns, as above; it is NOT given the same wait, because a name on a
+   conversation tile is content and not a hint - left open (the answer is a store that owns the
+   peers' names locally, [local-first-ui](local-first-ui.md)). **`devices/<self>` x3** are three
+   different questions about one device (`/revoked`, `/prekeys/count`, `/prekeys/list`) at three
+   different moments around `register-device`, not identical requests: there is nothing to
+   coalesce, and merging them is C4 (MLS key-package path), still designed.
 
 ## 5. Ranked fixes
 
