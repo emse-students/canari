@@ -587,7 +587,8 @@ To read:
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 
 What the audit left open is in the private operations notes until each item is fixed; the rule is
-in [durable-rules](durable-rules.md).
+in [durable-rules](durable-rules.md). Re-read 2026-11-11: nothing public to re-read here; the triage
+did not open the private notes.
 
 ## Session liveness beyond the verifier, tracked privately (2026-10-25)
 
@@ -718,7 +719,9 @@ web, and the MLS state or a file the native checkpoint writes beside `mls.bin` -
 reader does at startup. Measure first: a KILL-2 run with per-run console capture on each window,
 and a kill after a send. KILL-3 is that kill on the WEB side since 2026-10-26: W1's browser, after a send
 and after a receive. The NATIVE half (`mls.bin`) has no row, because no rig tool holds the Tauri
-commit POST.
+commit POST. Re-read 2026-11-11: still real - the seen-ciphertext marks (`history.ts`) and the
+send-ratchet ledger (`mls-client/sendRatchetLedger.ts`) still live in `localStorage`; the design is
+owed. Re-read again 2026-12-11.
 
 ## P3 - A browser whose storage is broken is told the connection failed (KILL-2, 2026-10-25)
 
@@ -787,6 +790,7 @@ Two clocks carry normal-path work in the group add lock:
    refused acquire with a lost invitation waiting re-plans at the server-stated `PTTL` (bounded by
    `ADD_LOCK_WAIT_BOUND_MS`, `mlsDeliveryApi.ts`), because the holder's release publishes nothing.
    Even when the holder releases after 2 s, the waiter sleeps until about 30 s.
+   (Re-read 2026-11-11: `ADD_LOCK_TTL_SEC` is still 30 and the wake unchanged.)
 
 Not clocks on the normal path: the commit lock (`mls:commitlock`, 5 s, released explicitly on
 every commit; its TTL is a crash backstop), and the pending pass, which skips a refused lock and
@@ -1139,31 +1143,8 @@ nothing is built for it. Design and limits:
 Restored history carries each message's author signature, and frames carry a signed epoch fingerprint ([history-reconciliation](protocols/history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22), [mls-protocol](protocols/mls-protocol.md#fork-detection-a-signed-epoch-fingerprint-in-every-application-frame-2026-10-22)). Owed:
 
 - **Rig rows:** a history restore between two clients on a live local estate (a signed message verified, an older one marked "non verifie"), and a forced fork that must produce one `[INTEGRITY] fork` line on each side.
-- **The floor:** unsigned messages are only MARKED today. Re-read 2026-11-11: `minClientVersion` is `1.6.6`, a signing build (#2276 is in every stable since `1.5.0`), so no client allowed to connect sends an unsigned message any more. Refusing them outright now waits only on the retention window of the oldest unsigned message still held on a device, which depends on the retention decision below (90 days today, 5 years if native is gated).
+- **The floor:** unsigned messages are only MARKED today. Re-read 2026-11-11: `minClientVersion` is `1.6.6`, a signing build (#2276 is in every stable since `1.5.0`), so no client allowed to connect sends an unsigned message any more. Refusing them outright now waits only on the oldest unsigned message a device may still hold: with native retention at 5 years (owner, 2026-11-11, [history-reconciliation](protocols/history-reconciliation.md#two-boundaries-not-one)), that is any unsigned message less than 5 years old.
 - **P3 - a history bundle has no byte cap per chunk, only a message count** (re-read 2026-11-11: still none), and each message now carries its body and proof beside its content (about 2.5x per message). A cap in bytes is owed before bundles of long messages are common.
-
-## P2 - Local retention is 90 days everywhere while 5 years was intended on native - decision owed (found 2026-10-22)
-
-`layout/ChatBackgroundService.svelte` (`MESSAGE_MAX_AGE`, line 2096) runs
-`deleteOldMessages(90 days)` every 6 hours with no platform check (`db/indexeddb.ts`, `db/sqlite.ts`),
-while `historyWindow.ts` (`NATIVE_DEVICE_WINDOW_MS`, 5 years) and
-[history-reconciliation](protocols/history-reconciliation.md#two-boundaries-not-one) promise 5 years
-on a phone or desktop. No decision that 90 days is intended was found. Re-read 2026-11-11: unchanged
-in code. Until it is taken, a native device claims coverage it deleted. **The owner decides; the two
-options and what each costs:**
-
-- **(a) Native keeps 5 years: gate the GC on `deviceWindowMs()`** (web stays at 90 days). A
-  one-line change plus its test; the code then matches the claim `historyWindow.ts` and the history
-  protocol already make, and a peer's history ask can be answered from 5 years. Cost: the local
-  database grows without the 90-day bound - every message, reaction and media reference kept on the
-  phone for 5 years - so storage on the phone, a heavier backup, slower cold queries on a big store
-  (the community-open budget is measured on the Mi 9T), and a longer window of plaintext-at-rest on
-  a lost device. It also lengthens the window that blocks refusing unsigned messages (entry above).
-- **(b) Lower the claim to 90 days everywhere.** `NATIVE_DEVICE_WINDOW_MS` and the history docs
-  change to what the GC does. Cost: a new device, or a newcomer's history ask, can be served at most
-  90 days by its peers, so "my history on my new phone" stops at 3 months; whatever relies on 5-year
-  coverage (the windows a device advertises, the history-reconciliation boundaries) is re-read and
-  lowered, and that is a protocol change with its own tests. Less data held on every phone.
 
 ## P3 - Edges of the community removal lock, left by the review of #2284 (2026-10-24)
 
@@ -1189,6 +1170,8 @@ options and what each costs:**
 - **An invitation that reads a salon public and loses the race to a private flip** announces it
   `public` and grants nothing (pre-existing): the flip's allowlist does not name the invitee.
 
+Re-read 2026-11-11: the four edges are unchanged in code; re-read again 2026-12-11.
+
 ([social-service](services/social-service.md#removals-are-bounded-by-the-actor-and-so-is-hiding-a-salon-2026-10-24))
 
 ## P3 - A 1:1 DM created between the erasure's discovery and its roster delete is not tombstoned (review of #2258, 2026-10-24)
@@ -1199,7 +1182,7 @@ account's roster row to the roster delete and its device rows to the sweep's cut
 `dm_groups` row and the other party's side stay: a 1:1 conversation with one member left. The final
 pass does not find it either, since nothing of the account names it any more. Small and rare (a DM
 opened inside the erasure window); fix by having the sweep tombstone any DM whose roster the
-account was on.
+account was on. Re-read 2026-11-11: unchanged in code; re-read again 2026-12-11.
 
 ## P3 - A conversation flagged one-to-one is not held to two members (review of #2585, 2026-10-27)
 
@@ -1287,7 +1270,7 @@ the one actually off the branch, matches the base and keeps going. Owed, in orde
 epoch accuses the base, not the members); then either the server checks a republished base against
 the commit log's row for that epoch (its confirmed transcript hash), or a `diverged` is read as
 `unproven` (nothing staged, nothing escalated) unless the base was minted by the gate. Code unchanged
-in #2269 by decision of the review.
+in #2269 by decision of the review. Re-read 2026-11-11: unchanged in code; re-read again 2026-12-11. The `[FORK]` count is a production log read, not taken by the triage.
 
 **WIDENED 2026-10-27:** the departed-member removal of a roster diff now goes through the same check
 (#2580), and for a KEY GROUP too - its base read from social-service, where a holder also publishes
@@ -1372,33 +1355,6 @@ no purge date (flagged to the DPO); account deletion is a durable queue (#1965).
 
 **Still open from that pass:** sending the DPO dossier and the DSI log-retention request - each a line of the [owed table](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
 
-## P3 - The background Welcome route refuses `not_a_member` before it asks whether these bytes already landed (review of #2329, 2026-10-24)
-
-`POST /api/mls/push/send-welcome-and-commit` (`push.controller.ts`, `sendWelcomeAndCommitPush`) runs, in
-order: `verifyPushSecretAuth` -> the body checks -> the **membership guard** (no `dm_group_members` row
-for the target -> `409 {status: 'rejected', reason: 'not_a_member'}`) -> `validateCommit`, whose
-refusals are the only ones that first ask the commit log whether THESE bytes from THIS device already
-landed at the base (`answerIfAlreadyAccepted`, `messaging.service.ts`) and answer `duplicate` if so.
-
-**The sequence it loses:** the phone's first POST is accepted (the Add lands, the Welcome is stored);
-the answer is lost and Android's `HttpURLConnection` silently retries the POST on a reused connection;
-between the two, the target is removed from the conversation. The retry meets the membership guard
-first and reads `not_a_member`, a typed refusal, so the phone CLEARS its stage
-(`BackgroundWelcomeAnswer.settle`) while the server holds its commit. The device then recovers through
-the foreground's replay and ladder (`ACCEPTED AND NOT HELD` is never said: the clear ran on a refusal),
-so the cost is a recovery, not a fork. Rare: it needs a lost answer AND a removal inside one round trip.
-
-**Why the check cannot simply move after `validateCommit`:** the guard is the single chokepoint that
-stops a holder's phone from re-adding a REMOVED user from a push. After the gate, a removed target's
-re-add commit would already be accepted - the epoch moved, the Welcome stored - before it is refused.
-That is a security regression, not a reordering.
-
-**The fix owed:** on the membership refusal only, ask `answerIfAlreadyAccepted` for these bytes (group,
-device, base epoch, commit) and answer the duplicate acceptance when the log holds them; refuse
-`not_a_member` otherwise. It needs the helper exposed from `MessagingService` (it is private today) and
-one spec: an accepted commit, then a removal, then the same request -> `duplicate`, never
-`not_a_member`. Closes when that spec is green.
-
 ## P3 - The background Welcome's warm-process refusal: its rate, its wasted round trip, and the old-PIN path (review of #2329, 2026-10-24)
 
 1. **The warm mark is sticky, so the refusal may be the common case.** `live_manager_in_process` is set
@@ -1419,6 +1375,9 @@ one spec: an accepted commit, then a removal, then the same request -> `duplicat
    after it build a manager without the stage, which then persists over it while the server may hold
    the commit. Closing it means marking the process warm before those bytes are read, or re-reading
    `mls.bin` under the lock at install.
+
+Re-read 2026-11-11: the three are unchanged; the rate is a log read, and 2 and 3 are native changes
+for their own pull request. Re-read again 2026-12-11.
 
 ## P2 - WP-CHECKPOINT-CAS: one owner of the MLS state per process, handed over by the platform (2026-10-27, design reviewed four times, nothing built)
 
@@ -1677,7 +1636,8 @@ builds of that day still carry 1.2.0. Done when the three digest pins (productio
 the local compose for postgres) move to a rebuild carrying 1.2.1-r0, postgres within major 18. The
 floating `nginx:stable-alpine` follows on its own, and the allowlist entry is deleted in the same pull
 request - the image scan's retirement check fails until it is
-([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
+([cicd](cicd.md#container-images-are-scanned-2026-10-23)). Re-read 2026-11-11: the allowlist still
+carries the entries, so no rebuild has been taken; the scheduled image scan names the day one exists.
 
 ## P3 - Bump authentik when a release ships Debian's libbrotli1 1.1.0-2+deb13u1 (2026-10-24)
 
@@ -1685,7 +1645,7 @@ Owner: Master. `CVE-2026-111497` on Debian's `libbrotli1` 1.1.0-2+b7 is allowlis
 `ghcr.io/goauthentik/server:2026.8.5`, the newest authentik release, which this repository does not
 build. Done when an authentik release carries 1.1.0-2+deb13u1 and `AUTHENTIK_TAG` (the compose
 default and the host's `.env`) moves to it; the image scan's purl retirement fails on that pull
-request until the `libbrotli1` entry is deleted ([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
+request until the `libbrotli1` entry is deleted ([cicd](cicd.md#container-images-are-scanned-2026-10-23)). Re-read 2026-11-11: the entries are still allowlisted.
 
 **Also allowlisted on 2026-10-27 for the same image, same condition (a release that ships them):** dnspython 2.8.0 (`CVE-2026-114605`, fixed in 2.9.0), msgpack 1.2.1 (`CVE-2026-114613`, 1.2.3) and oauthlib 3.3.1 (`CVE-2026-49272`, 4.0.0). Each entry is scoped by purl and retires through the same check, so the bump pull request deletes all four together.
 
@@ -1808,6 +1768,7 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | the background Welcome route validates its commit as the push-secret committer (2026-10-22; verified from source) | one background Welcome on the Mi 9T, by [the procedure](device-verification.md#one-background-welcome-on-the-mi-9t-the-procedure-2026-10-22): the three phone checks and the server's `START` / `accepted` / `DONE` |
 | a community's past goes only to a proven admission (#2273, #2264, `v1.5.0`; [channel-encryption section 25](protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)) | the rig rows COMM-26..31; the floor and the cut date (`ADMISSION_PROOF_SINCE` = 2026-10-27, the day `v1.5.0` shipped) are met |
 | six service images run as a non-root user (core, social, chat-delivery as `bun`; frontend-ssr as `node`; chat-gateway, call-service as `nobody`; batch 8, [cicd](cicd.md#container-images-are-scanned-2026-10-23)) | on dev after the next pre-release: each of the six containers up and healthy, no `EACCES` or `permission denied` in their logs; then one message, one media upload and one call on dev |
+| the iPhone native ring (#2305, switched on by #2727 in `1.5.2`: `CALLS_NATIVE_RING_COMPILED`, `kCanariCallsEnabled` and the `voip` mode all on; [calls](frontend/modules/calls.md#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22)) | the K6, K7, K8 and K8b readings of that page on the iPhone 12 |
 
 ---
 

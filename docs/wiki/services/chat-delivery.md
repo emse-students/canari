@@ -809,9 +809,11 @@ answer, so it held an epoch nobody else had and could not read the group's next 
   resubmission. A typed
   `concurrent_commit` is left too: the lock it reports may be this commit's own first copy, as the
   client's resubmission rule reads it (`resubmissionVerdict`), and the group answers `commit-pending`
-  until the foreground settles it. A 400, a 413 and every other typed `rejected` body still clear. One
-  route-side gap is owed: the membership guard answers `not_a_member` before the duplicate check
-  ([backlog](../backlog.md#p3---the-background-welcome-route-refuses-not_a_member-before-it-asks-whether-these-bytes-already-landed-review-of-2329-2026-10-24)).
+  until the foreground settles it. A 400, a 413 and every other typed `rejected` body still clear. The
+  route's membership guard, the one refusal taken BEFORE the gate, asks the commit log for these
+  bytes first (`answerIfAlreadyAccepted`, since 2026-11-11): a retry of an accepted commit whose
+  target was removed in between is answered `accepted`, never `not_a_member`, and every new re-add of
+  a removed user is still refused there (`push.controller.welcome-commit.spec.ts`).
 - **Only a COLD process stages or settles** (`background_write_mls_bin_if_unchanged_and_cold`, the
   key-group join's writer). In a process whose foreground manager is loaded
   (`live_manager_in_process`), that manager persists over `mls.bin` at its next resume or checkpoint

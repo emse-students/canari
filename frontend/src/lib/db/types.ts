@@ -965,15 +965,16 @@ export interface IStorage {
     before?: PageKey
   ): Promise<StoredMessage[]>;
 
-  // Garbage collection - delete messages older than the given threshold.
+  // Garbage collection - delete messages older than this device's retention window.
 
   /**
-   * Delete messages older than `maxAgeMs` milliseconds and return the count of deleted rows. The
-   * pending mutations whose FRAME is older than the same cutoff go with them: a frame's time is an
-   * upper bound on its target's, so the message such an entry waits for is older still, and would
-   * be collected the moment it arrived.
+   * Delete messages older than `maxAgeMs` milliseconds - by default this device's window,
+   * `deviceWindowMs()` (5 years on a phone or desktop app, 90 days in a browser; owner, 2026-11-11)
+   * - and return the count of deleted rows. The pending mutations whose FRAME is older than the
+   * same cutoff go with them: a frame's time is an upper bound on its target's, so the message such
+   * an entry waits for is older still, and would be collected the moment it arrived.
    */
-  deleteOldMessages(maxAgeMs: number): Promise<number>;
+  deleteOldMessages(maxAgeMs?: number): Promise<number>;
 
   // Backup helpers - expose raw encrypted rows so backups don't require
   // re-encryption and can be imported to a new device with the same device key.

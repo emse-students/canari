@@ -1086,6 +1086,30 @@ export class PushController {
       where: { groupId, userId: targetUserId },
     });
     if (!targetMembership) {
+      // A RETRY OF A COMMIT THAT ALREADY LANDED IS NOT A RE-ADD. The phone's first POST can be
+      // accepted with its answer lost, and the connection retried after the target was removed: the
+      // guard would then answer `not_a_member`, a typed refusal on which the phone clears a stage
+      // the group holds. These exact bytes from this device at this base are asked of the commit log
+      // first - the same proof every refusal inside the gate consults - and answered as the
+      // acceptance they were. Anything else is refused as before: the guard still stops every NEW
+      // re-add of a removed user before the gate could accept it.
+      const duplicate = await this.messagingService.answerIfAlreadyAccepted(
+        groupId,
+        body.baseEpoch,
+        body.commitPayload,
+        deviceId,
+        traceId
+      );
+      if (duplicate) {
+        this.logger.log(
+          `[BG_WELCOME][${traceId}] target=${targetUserId} no longer a member, but these bytes were already accepted at base ${body.baseEpoch} - answered as accepted`
+        );
+        const answer: BackgroundWelcomeAnswer = {
+          status: 'accepted',
+          newEpoch: duplicate.newEpoch,
+        };
+        return answer;
+      }
       this.logger.warn(
         `[BG_WELCOME][${traceId}] REJECT target=${targetUserId} not in dm_group_members (removed) - re-add refused`
       );

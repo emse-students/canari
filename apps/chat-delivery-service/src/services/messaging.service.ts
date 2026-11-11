@@ -4246,9 +4246,11 @@ export class MessagingService {
    * Nothing is advanced or fanned out again; the first acceptance did both. Called by each place that
    * would otherwise refuse on the epoch or on a seat - the admits pre-check, the strict gate, and the
    * advance's lost or rolled-back transaction - because a client reads any of those as a refusal and
-   * clears a commit the group holds.
+   * clears a commit the group holds. PUBLIC for the one refusal taken before this gate: the
+   * background Welcome route's membership guard (`PushController.sendWelcomeAndCommitPush`), whose
+   * retry of an accepted commit would otherwise read `not_a_member` once the target was removed.
    */
-  private async answerIfAlreadyAccepted(
+  async answerIfAlreadyAccepted(
     groupId: string,
     baseEpoch: number,
     commitProto: string,
