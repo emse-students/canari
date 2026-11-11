@@ -75,7 +75,7 @@
 import { SEGMENTED_MEDIA_ENCODING, SEGMENTED_MEDIA_SEGMENT_BYTES } from '$lib/mediaSegmented';
 import type { MediaRef } from '$lib/media';
 import { httpRangeSource, openSegmentedMedia } from './segmentedMediaReader';
-import { isMp4Type, writeMvhdDuration } from './mp4Duration';
+import { isMp4Type, readMp4TailDuration, writeMvhdDuration } from './mp4Duration';
 import { LinkRateMeter, sessionLinkRate } from './linkRate';
 import { headedRangeSource, joinMediaHead } from './mediaHeadStore';
 
@@ -125,6 +125,13 @@ export interface StreamPacing {
   headSegments: number;
   /** While the element plays, segments are fetched until this much is buffered past its playhead. */
   aheadSeconds: number;
+  /**
+   * Read an undeclared clip's length from its LAST segment(s) once the head is in, and give it to
+   * the source ({@link readMp4TailDuration}) - for a consumer that draws a seek line (the viewer).
+   * Costs one or two segments fetched out of order, which the in-order fetch then takes from the
+   * feed: a feed card, which draws no line, does not pay it.
+   */
+  readsLength?: boolean;
 }
 
 /**
@@ -392,7 +399,11 @@ export function bufferedAhead(element: Pick<PacingElement, 'currentTime' | 'buff
  * reader chose this video and watches it full screen - yet still bounded, so a 33 MB video left
  * after ten seconds is not fetched whole.
  */
-export const VIEWER_STREAM_PACING: StreamPacing = { headSegments: 2, aheadSeconds: 30 };
+export const VIEWER_STREAM_PACING: StreamPacing = {
+  headSegments: 2,
+  aheadSeconds: 30,
+  readsLength: true,
+};
 
 /**
  * The segments of ONE media, fetched at most once whoever asks. Every consumer of the stream - the
@@ -547,6 +558,36 @@ async function wholeFile(ref: MediaRef, parts: Blob[], seconds: number): Promise
     `[media-seg] ${ref.mediaId}: undeclared movie duration - ${seconds.toFixed(2)} s written into its head`
   );
   return new Blob([patched, ...parts.slice(1)], { type: ref.mimeType });
+}
+
+/** How many segments, at most, the length is read from at the end of a file (`readTailSeconds`). */
+const TAIL_SEGMENTS_MAX = 3;
+
+/**
+ * THE LENGTH OF AN UNDECLARED CLIP, READ FROM ITS HEAD AND ITS LAST SEGMENTS (owner, 2026-11-11: a
+ * CanaReel streamed by segments drew no seek line - its engine read `Infinity` until the last
+ * segment, which a paced viewer may never fetch). The segments come through the feed, so the
+ * in-order fetch later takes them from memory: nothing is downloaded twice. Reaches back one segment
+ * at a time while the last fragment starts earlier, up to {@link TAIL_SEGMENTS_MAX}.
+ *
+ * @returns The seconds, or why they could not be read.
+ */
+async function readTailSeconds(
+  feed: SegmentFeed,
+  count: number
+): Promise<{ seconds: number } | { why: string }> {
+  const head = new Uint8Array(await (await feed.segment(0)).arrayBuffer());
+  // Every segment but the last holds exactly the first one's size (`mediaSegmented.ts`).
+  const segmentBytes = head.byteLength;
+  const parts: Blob[] = [];
+  for (let first = count - 1; first >= Math.max(1, count - TAIL_SEGMENTS_MAX); first--) {
+    parts.unshift(await feed.segment(first));
+    const tail = new Uint8Array(await new Blob(parts).arrayBuffer());
+    const reading = readMp4TailDuration(head, tail, first * segmentBytes);
+    if (reading.kind === 'seconds') return { seconds: reading.seconds };
+    if (reading.kind === 'unreadable') return { why: reading.why };
+  }
+  return { why: `the last fragment starts more than ${TAIL_SEGMENTS_MAX} segments from the end` };
 }
 
 /** How long a finished stream lasts: what the engine measured, else what the sender declared. */
@@ -779,6 +820,73 @@ function openConsumer(
     console.debug(`[media-seg] stream ${ref.mediaId}: resuming at segment ${index}`);
   }
 
+  /**
+   * Whether this consumer reads the clip's length from its tail: it draws a seek line
+   * (`readsLength`), the clip is an MP4 video whose sender declared no length, and the head does
+   * not already reach the end - a file fetched whole by its head ends with an `endOfStream`, which
+   * measures it.
+   */
+  function learnsLength(segmentCount: number): boolean {
+    return (
+      !!pacing?.readsLength &&
+      !(ref.durationMs && ref.durationMs > 0) &&
+      ref.type === 'video' &&
+      isMp4Type(ref.mimeType) &&
+      segmentCount > pacing.headSegments
+    );
+  }
+
+  /**
+   * Reads the length from the tail and hands it to the source, IN THE APPEND CHAIN: the spec
+   * refuses a `duration` while a buffer is updating, and the chain is the one thing that knows none
+   * is. Never rejects - the chain is the stream's, and a length it could not learn must not break it.
+   */
+  async function learnLength(segmentCount: number): Promise<void> {
+    let found: { seconds: number } | { why: string };
+    try {
+      found = await readTailSeconds(feed, segmentCount);
+    } catch (e) {
+      if (closed) return;
+      found = { why: `its last segments did not arrive (${String(e)})` };
+    }
+    if (closed) return;
+    if ('why' in found) {
+      // The player draws what it can seek then (`scrubLength`): this is the line that says why.
+      console.info(
+        `[media-seg] ${label} ${ref.mediaId}: no declared length, and none read from its tail - ${found.why}`
+      );
+      return;
+    }
+    const seconds = found.seconds;
+    appendChain = appendChain.then(() => setLearnedDuration(seconds));
+    appendChain.catch(() => {});
+  }
+
+  /** Sets a length read from the tail on the source, unless the engine already knows one. */
+  function setLearnedDuration(seconds: number): void {
+    if (closed || source.readyState !== 'open') return;
+    if (Number.isFinite(source.duration) && source.duration > 0) {
+      console.debug(
+        `[media-seg] ${label} ${ref.mediaId}: the engine already knows ${source.duration} s - ${seconds.toFixed(2)} s from the tail not set`
+      );
+      return;
+    }
+    // Never below what is buffered: the spec refuses a duration that would cut appended media.
+    const ranges = buffer?.buffered;
+    const buffered = ranges && ranges.length > 0 ? ranges.end(ranges.length - 1) : 0;
+    try {
+      source.duration = Math.max(seconds, buffered);
+      console.info(
+        `[media-seg] ${label} ${ref.mediaId}: undeclared length - ${seconds.toFixed(2)} s read from its last fragments`
+      );
+    } catch (e) {
+      console.warn(
+        `[media-seg] ${label} ${ref.mediaId}: the length read from its tail was refused`,
+        e
+      );
+    }
+  }
+
   const done = (async () => {
     await new Promise<void>((resolve) =>
       source.addEventListener('sourceopen', () => resolve(), { once: true })
@@ -787,6 +895,10 @@ function openConsumer(
     buffer = source.addSourceBuffer(ref.mimeType);
     const segmentCount = await feed.count();
     progress.segmentCount = segmentCount;
+    // An undeclared clip's length is read once its head is in: never in front of the first frame.
+    const lengthAfter = learnsLength(segmentCount)
+      ? Math.min(pacing!.headSegments, segmentCount)
+      : -1;
     for (let i = 0; i < segmentCount; i++) {
       await demand(i);
       const segment = await feed.segment(i);
@@ -797,6 +909,7 @@ function openConsumer(
       // the loop fetches on and the segment waits with the others (`holdShortfall`).
       release();
       await appendChain;
+      if (i + 1 === lengthAfter) void learnLength(segmentCount);
     }
     // Nothing is left to fetch: what is held goes in, whatever the arithmetic says (`fetchedAll`).
     fetchedAll = true;

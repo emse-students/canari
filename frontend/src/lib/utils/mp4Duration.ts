@@ -325,3 +325,118 @@ export function writeMvhdDuration(
 export function isMp4Type(mimeType: string): boolean {
   return /^video\/mp4\b/i.test(mimeType.trim());
 }
+
+/** What {@link readMp4TailDuration} found in a file's last bytes. */
+export type Mp4TailReading =
+  /** The movie's length, in seconds, from its last fragments. */
+  | { kind: 'seconds'; seconds: number }
+  /** The last fragment starts before the tail: bytes from `from` (an absolute offset) are needed. */
+  | { kind: 'earlier'; from: number }
+  /** The tail cannot say: `why` names what was missing, for the caller's log. */
+  | { kind: 'unreadable'; why: string };
+
+/** The `tfra` facts of one track: when its first and last random-access fragments start, and where the last one is. */
+interface TrackRandomAccess {
+  firstTime: number;
+  lastTime: number;
+  lastMoof: number;
+}
+
+/** Reads every `tfra` of an `mfra` (ISO/IEC 14496-12, 8.8.10). */
+function readRandomAccess(view: DataView, mfra: Box): Map<number, TrackRandomAccess> {
+  const out = new Map<number, TrackRandomAccess>();
+  for (const tfra of childBoxes(view, mfra.body, mfra.end).filter((b) => b.type === 'tfra')) {
+    const wide = view.getUint8(tfra.body) === 1;
+    const trackId = view.getUint32(tfra.body + 4);
+    const sizes = view.getUint32(tfra.body + 8);
+    const count = view.getUint32(tfra.body + 12);
+    // traf_number, trun_number and sample_number, each (length_size_of_* + 1) bytes wide.
+    const tail = ((sizes >> 4) & 3) + 1 + (((sizes >> 2) & 3) + 1) + ((sizes & 3) + 1);
+    const stride = (wide ? 16 : 8) + tail;
+    if (count === 0 || tfra.body + 16 + count * stride > tfra.end) continue;
+    const read = (at: number) => (wide ? Number(view.getBigUint64(at)) : view.getUint32(at));
+    const first = tfra.body + 16;
+    const last = first + (count - 1) * stride;
+    out.set(trackId, {
+      firstTime: read(first),
+      lastTime: read(last),
+      lastMoof: read(last + (wide ? 8 : 4)),
+    });
+  }
+  return out;
+}
+
+/**
+ * HOW LONG A STREAMED FRAGMENTED MP4 LASTS, FROM ITS HEAD AND ITS TAIL ONLY (owner, 2026-11-11: a
+ * CanaReel streamed by segments showed no seek line - its engine read `Infinity`). A file written
+ * before its writer declared its length (`prepareVideoForUpload`) says nothing in its `moov`, and a
+ * stream does not hold the whole file until its last segment - which a paced stream may never
+ * fetch. But the muxer ends every file with an `mfra`: its `tfra` entries say where each track's
+ * LAST fragment starts (time and byte offset), the `mfro` closing the file says how long the `mfra`
+ * is, and that last fragment's `trun` says how long it lasts. So the length is read from the
+ * `moov` (in the head) and the file's last bytes, never from the middle.
+ *
+ * @param head      The file's first bytes, holding the complete `moov` (the stream's first segment).
+ * @param tail      The file's last bytes, ending exactly where the file ends.
+ * @param tailStart The absolute offset of `tail`'s first byte in the file.
+ * @returns The seconds; or `earlier` with the offset the tail must reach back to; or `unreadable`
+ *   naming what was missing. Never throws.
+ */
+export function readMp4TailDuration(
+  head: Uint8Array,
+  tail: Uint8Array,
+  tailStart: number
+): Mp4TailReading {
+  try {
+    const headView = new DataView(head.buffer, head.byteOffset, head.byteLength);
+    // The head is cut mid-file: the walk stops at the first box it overruns, after the `moov`.
+    const moov = childBoxes(headView, 0, head.byteLength).find((b) => b.type === 'moov');
+    if (!moov) return { kind: 'unreadable', why: 'no moov in the head' };
+    const tracks = readTracks(headView, moov);
+
+    const view = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+    const n = tail.byteLength;
+    if (n < 16 || String.fromCharCode(...tail.subarray(n - 12, n - 8)) !== 'mfro') {
+      return { kind: 'unreadable', why: 'no mfro at the end of the file' };
+    }
+    const mfraSize = view.getUint32(n - 4);
+    const mfraAt = n - mfraSize;
+    if (mfraSize < 16 || mfraAt < 0)
+      return { kind: 'unreadable', why: 'the mfra overruns the tail' };
+    const mfra = childBoxes(view, mfraAt, n)[0];
+    if (!mfra || mfra.type !== 'mfra' || mfra.end !== n) {
+      return { kind: 'unreadable', why: 'the mfro does not point at an mfra' };
+    }
+    const access = readRandomAccess(view, mfra);
+    if (access.size === 0) return { kind: 'unreadable', why: 'the mfra lists no fragment' };
+
+    // Every top-level box from the earliest LAST fragment to the mfra: fragments without a sync
+    // sample are not in the `tfra`, so the walk goes on to the end rather than stop at the listed one.
+    const from = Math.min(...[...access.values()].map((a) => a.lastMoof));
+    if (from < tailStart) return { kind: 'earlier', from };
+    const boxes = childBoxes(view, from - tailStart, mfraAt);
+    if (boxes.length === 0 || boxes[boxes.length - 1].end !== mfraAt || boxes[0].type !== 'moof') {
+      return { kind: 'unreadable', why: 'the last fragments do not tile up to the mfra' };
+    }
+    const ends = new Map<number, number>();
+    const starts = new Map<number, number>();
+    // A traf with no tfdt continues from where the tfra says its fragment starts.
+    for (const [id, a] of access) ends.set(id, a.lastTime);
+    for (const moof of boxes.filter((b) => b.type === 'moof')) {
+      for (const traf of childBoxes(view, moof.body, moof.end).filter((b) => b.type === 'traf')) {
+        trafEnd(view, traf, tracks, ends, starts);
+      }
+    }
+    let longest = 0;
+    for (const [id, end] of ends) {
+      const timescale = tracks.get(id)?.timescale ?? 0;
+      const first = access.get(id)?.firstTime ?? 0;
+      if (timescale > 0 && end > first) longest = Math.max(longest, (end - first) / timescale);
+    }
+    return Number.isFinite(longest) && longest > 0
+      ? { kind: 'seconds', seconds: longest }
+      : { kind: 'unreadable', why: 'the last fragments carry no sample' };
+  } catch (e) {
+    return { kind: 'unreadable', why: `the tail could not be walked: ${String(e)}` };
+  }
+}

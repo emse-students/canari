@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as mb from 'mediabunny';
-import { declareMp4Duration, isMp4Type, readMp4Duration, writeMvhdDuration } from './mp4Duration';
+import {
+  declareMp4Duration,
+  isMp4Type,
+  readMp4Duration,
+  readMp4TailDuration,
+  writeMvhdDuration,
+} from './mp4Duration';
 import { fragmentedMp4 } from './mp4Fixture.test-helper';
 import { fragment, initSegment, join } from '$lib/live/fmp4.test-helper';
 
@@ -216,5 +222,57 @@ describe('mp4Duration', () => {
   it('names the MP4 types only', () => {
     expect(isMp4Type('video/mp4; codecs="avc1.42c01e"')).toBe(true);
     expect(isMp4Type('video/webm')).toBe(false);
+  });
+
+  describe('readMp4TailDuration - a stream learns its length from its head and its tail', () => {
+    it("reads the muxer output's length from the moov and the file's last bytes only", async () => {
+      const bytes = await fragmentedMp4(300);
+      // The head is cut inside the first fragment, as a stream's first segment is.
+      const head = bytes.subarray(0, boxAt(bytes, 'moof') + 20);
+      for (const tailBytes of [bytes.byteLength, 1000]) {
+        const start = bytes.byteLength - tailBytes;
+        const reading = readMp4TailDuration(head, bytes.subarray(start), start);
+        expect(reading.kind).toBe('seconds');
+        if (reading.kind === 'seconds') expect(reading.seconds).toBeCloseTo(10, 3);
+      }
+    });
+
+    it('a tail that starts after the last fragment asks for the bytes from where it starts', async () => {
+      const bytes = await fragmentedMp4(300);
+      const mfra = boxAt(bytes, 'mfra');
+      const start = mfra - 8;
+      const reading = readMp4TailDuration(
+        bytes.subarray(0, boxAt(bytes, 'moof') + 20),
+        bytes.subarray(start),
+        start
+      );
+      expect(reading.kind).toBe('earlier');
+      if (reading.kind !== 'earlier') return;
+      expect(reading.from).toBeLessThan(start);
+      const wider = readMp4TailDuration(
+        bytes.subarray(0, boxAt(bytes, 'moof') + 20),
+        bytes.subarray(reading.from),
+        reading.from
+      );
+      expect(wider.kind).toBe('seconds');
+    });
+
+    it('names what is missing, and never throws on a cut or damaged tail', async () => {
+      const bytes = await fragmentedMp4(60);
+      const head = bytes.subarray(0, boxAt(bytes, 'moof') + 20);
+      const cut = bytes.subarray(0, bytes.byteLength - 3);
+      expect(readMp4TailDuration(head, cut, 0)).toMatchObject({ kind: 'unreadable' });
+      expect(readMp4TailDuration(new Uint8Array(16), bytes, 0)).toEqual({
+        kind: 'unreadable',
+        why: 'no moov in the head',
+      });
+      const rand = seeded(7);
+      for (let k = 0; k < 200; k++) {
+        const copy = new Uint8Array(bytes);
+        const at = bytes.byteLength - 1 - Math.floor(rand() * 2048);
+        copy[at] ^= 1 + Math.floor(rand() * 255);
+        expect(() => readMp4TailDuration(head, copy, 0)).not.toThrow();
+      }
+    });
   });
 });

@@ -814,6 +814,53 @@ it('the line seeks where it is pressed once the duration is known, and not befor
 });
 
 /**
+ * A STREAM WITH NO LENGTH YET STILL HAS A LINE (owner, 2026-11-11: CanaReels showed no seek line).
+ * Until its tail gives the source a length (`segmentedMediaStream`), the line maps onto what the
+ * engine can seek - what is buffered - and moves; the length, once set, takes over. The player says
+ * nothing of a stream's missing length at its metadata: the stream names why when it cannot learn it.
+ */
+it('a stream with no length maps its line onto what it can seek, then onto the length once known', () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const { target, video } = mountConversation('blob:undeclared-stream', true);
+  const slider = target.querySelector<HTMLElement>('[role="slider"]')!;
+  slider.getBoundingClientRect = () => ({ left: 0, width: 200, top: 0, height: 32 }) as DOMRect;
+  const press = (x: number) => {
+    slider.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: x, pointerId: 1 })
+    );
+    slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+  };
+  const ranges = (end: number) => ({ length: 1, start: () => 0, end: () => end });
+  Object.defineProperty(video, 'buffered', { configurable: true, get: () => ranges(8) });
+  Object.defineProperty(video, 'seekable', { configurable: true, get: () => ranges(8) });
+  withDuration(video, Number.POSITIVE_INFINITY);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  flushSync();
+  expect(info.mock.calls.map((c) => String(c[0])).join(' ')).not.toContain('no duration');
+  expect(slider.getAttribute('aria-valuemax'), 'the line maps onto the 8 s it can seek').toBe('8');
+  press(100);
+  expect(video.currentTime).toBe(4);
+
+  // The stream read 61 s from its tail and set it on the source.
+  withDuration(video, 61);
+  video.dispatchEvent(new Event('durationchange'));
+  flushSync();
+  expect(slider.getAttribute('aria-valuemax')).toBe('61');
+  press(200);
+  expect(video.currentTime).toBe(61);
+});
+
+it('a FILE that declares no length is said, naming that it is the file', () => {
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const { video } = mountConversation('blob:undeclared-file');
+  withDuration(video, Number.POSITIVE_INFINITY);
+  video.dispatchEvent(new Event('loadedmetadata'));
+  expect(info.mock.calls.map((c) => String(c[0])).join(' ')).toContain(
+    'the file declares no duration'
+  );
+});
+
+/**
  * A STREAM NEVER APPENDS A SEGMENT TWICE (review of #3311): a declared duration makes the whole clip
  * seekable to the engine, but what was evicted behind the playhead is gone, and a seek there would
  * wait for ever. The line lands on the earliest time still held instead.

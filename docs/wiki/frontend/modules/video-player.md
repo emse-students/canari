@@ -155,10 +155,52 @@ removal) or the engine evicted (Safari's `ManagedMediaSource` under pressure) is
 clamps a streamed source to `streamSeekFloor` - the later of the cut and `buffered.start(0)` - rather
 than leave a seek waiting for ever (logged at debug when it clamps).
 
-**Left, said**: an OLD post video (not a reel, so no declared length) watched as a stream still reads
-`Infinity` until its last segment - its seek reaches only what is buffered. A player that still sees no
-length logs `the engine knows no duration` at info. **Not verified on a device**: that WebKit's
-fragmented-MP4 reader honours the `mvhd` (Chromium's does) - the iPhone reading below.
+**Not verified on a device**: that WebKit's fragmented-MP4 reader honours the `mvhd` (Chromium's
+does) - the iPhone reading below.
+
+### A stream learns its length from its tail (2026-11-11)
+
+**Production `1.6.10`, web (owner): no seek line at all on CanaReels and on wide feed videos opened
+full screen.** The log: `[VideoPlayer] reel: the engine knows no duration (Infinity, stream)`, the
+same for `feed:`, and `[media] ...: undeclared movie duration (0 s) - 61.37 s read from its fragments`.
+**The cause**: every video uploaded before the writer fix declares no length, and the declared
+`durationMs` reaches only a reel PAGE's stream (`ReelSlide`: `page === 'reel' ? post.durationMs : null`;
+a carousel page, a post video, an old reel without it get nothing). Such an MSE source reads
+`Infinity` until `endOfStream` - which a paced viewer stream reaches only at the last segment - so
+`VideoScrubber` (`known` needs a finite length) drew an empty track and refused every press.
+`mediaBlobCache` reads the length from the fragments only for a WHOLE file; a stream never held one.
+
+**The fix, in the stream** (`segmentedMediaStream.ts`, `readTailSeconds`; the reader is
+`mp4Duration.readMp4TailDuration`): the muxer ends every file with an `mfra` and an `mfro`. Once the
+head is appended, a consumer whose pacing `readsLength` (the viewer's, `VIEWER_STREAM_PACING`; a feed
+card draws no line and does not pay it) fetches the LAST segment through the shared feed, reads the
+`mfro` (the `mfra`'s size), the `tfra` entries (where each track's last fragment starts, in time and in
+bytes) and that fragment's `trun`s, and hands the length to `MediaSource.duration` **inside the append
+chain** - the spec refuses a `duration` while a `SourceBuffer` updates, and the chain is the one place
+that knows none is. Never below what is buffered; never over a length the engine already knows. When
+the last fragment starts before the tail, it reaches back a segment at a time, at most three. The tail
+segment stays in the feed, so the in-order fetch takes it from memory: nothing is downloaded twice
+(test: four segments, four requests).
+
+- **A seek ahead of what is fetched** fills the gap IN ORDER: the segments are byte ranges, not
+  fragments, so one cannot be appended alone; a `seeking` element with nothing buffered at its new
+  time is a demand (`wanted`), and the loop runs up to the target. The cost is the bytes in between.
+- **A stream that cannot learn its length** says why, once, at info: `[media-seg] <label> <id>: no
+  declared length, and none read from its tail - <why>` (`no mfro at the end of the file`, `no moov in
+  the head`, its last segments did not arrive, ...). Its line still draws: `videoPlayback.scrubLength`
+  maps it onto the end of the element's `seekable` range - what is buffered - so it moves and seeks
+  within what is there instead of vanishing.
+- **The player's line** `the engine knows no duration` is gone for streams (at their metadata they
+  hold only their head; the stream speaks for them). A FILE that declares none still says so:
+  `[VideoPlayer] <variant>: the file declares no duration`.
+- **"Voir plus" did nothing on `1.6.10`** (owner, same evening): on that build the caption sat 1rem
+  above the frame's edge, inside the line's 2rem touch zone (`z-40` over the caption's `z-20`), so the
+  LINE took the click - and with no length it refused it (`known` false), so nothing happened at all.
+  `elementFromPoint` at the button's centre on a model of both geometries: the seek line at 1rem, the
+  button at `clearanceAboveSeekLineRem` (#3355, on `main`, not yet released). Nothing more to fix here.
+- **Phones**: Android's WebView is Chromium (`MediaSource`); iOS's WKWebView has only
+  `ManagedMediaSource` (17.1+), chosen by `chooseSegmentedPlayback` (`managed`). Both take the same
+  path - `duration` is the same attribute - but neither is read on a device yet (below).
 
 ### Readings owed (both phones, a pre-release carrying this)
 
@@ -168,6 +210,10 @@ fragmented-MP4 reader honours the `mvhd` (Chromium's does) - the iPhone reading 
 - the conversation viewer: line + corner speaker, tap pauses/plays, the line drags and the time moves
   (a video sent BEFORE this build, and one sent after);
 - the CanaReels line drags to a point not yet downloaded and plays from there;
+- **an OLD video (uploaded before 2026-11-10) streamed full screen** - a carousel page and a reel:
+  the line is there within a second of the first frame, the log carries `read from its last
+  fragments`, and no `none read from its tail` line (Mi 9T WebView; iPhone 12 WKWebView, whose
+  `ManagedMediaSource` takes the same `duration`);
 - a NEW post video draws its frozen first frame and its bands at once; an old one Canari's poster;
 - **the cost of the `100%` band, on the Mi 9T**: after a fast fling through ~20 video posts, the count
   of open streams (`[media-seg] stream` lines minus their closes, or `streamProgressOf` entries) and
