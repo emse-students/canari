@@ -43,6 +43,16 @@
  * cell) fetches the whole file as fast as it comes, and {@link SegmentedStreamHandle.fetchAll}
  * turns a paced one into it.
  *
+ * # A link slower than the media stops ONCE, not once per segment
+ *
+ * Appending each segment as it lands lets the engine resume on it, play its few seconds and starve
+ * again - 29 stalls on the owner's link (slow-link chantier, gap 6). So when the measured link is
+ * slower than the media ({@link linkIsSlow}, with hysteresis) and the element has fired `waiting`,
+ * the stream keeps fetching but holds the segments back until the rest can play through
+ * ({@link holdTargetSeconds}), then appends them in one go. Nothing of it is shown (owner,
+ * 2026-11-11): the element just waits, as it would for any slow byte. The link is measured in `httpRangeSource`, after the request
+ * gate granted the slot. Mechanism and numbers: `docs/wiki/frontend/modules/video-player.md`.
+ *
  * # What is NOT here yet
  *
  * - SEEKING AHEAD of the download waits for it: segments are appended in order. The reader can fetch
@@ -61,7 +71,7 @@
  *   bound it.
  */
 
-import { SEGMENTED_MEDIA_ENCODING } from '$lib/mediaSegmented';
+import { SEGMENTED_MEDIA_ENCODING, SEGMENTED_MEDIA_SEGMENT_BYTES } from '$lib/mediaSegmented';
 import type { MediaRef } from '$lib/media';
 import { httpRangeSource, openSegmentedMedia } from './segmentedMediaReader';
 import { isMp4Type, writeMvhdDuration } from './mp4Duration';
@@ -120,6 +130,75 @@ export interface StreamPacing {
  */
 export const FEED_STREAM_PACING: StreamPacing = { headSegments: 2, aheadSeconds: 10 };
 
+/**
+ * THE LINK IS CALLED SLOW below this share of the media's rate: `link / media < 1` - it delivers
+ * less than a second of media per second played, so playing as bytes land can only stall.
+ */
+export const SLOW_LINK_BELOW = 1;
+
+/**
+ * ...and FAST AGAIN only once `link / media` reaches this: the HYSTERESIS that keeps a rate
+ * hovering around 1 from flipping the stream between holding and not holding on every sample.
+ */
+export const FAST_LINK_FROM = 1.15;
+
+/** Margin on the hold's target: a measured rate is an average, and the link wobbles around it. */
+export const HOLD_SAFETY = 1.1;
+
+/** The most a slow link's stream holds ahead of its playhead, in seconds - the viewer's own bound. */
+export const SLOW_AHEAD_MAX_SECONDS = 30;
+
+/**
+ * The same bound in bytes of media. A hold appends all of it in one go, so it is kept small; the
+ * engine's own quota is NOT measured here - an append it refuses goes through
+ * `appendSegmentEvicting`, which trims what was played and tries once more.
+ */
+export const SLOW_AHEAD_MAX_BYTES = 6 * 1024 * 1024;
+
+/**
+ * Whether the link is slow now, from `link / media` and what it was called before
+ * ({@link SLOW_LINK_BELOW}, {@link FAST_LINK_FROM}). An unknown ratio keeps the last answer.
+ */
+export function linkIsSlow(ratio: number | null, wasSlow: boolean): boolean {
+  if (ratio === null) return wasSlow;
+  return wasSlow ? ratio < FAST_LINK_FROM : ratio < SLOW_LINK_BELOW;
+}
+
+/**
+ * How far ahead a slow link's stream fetches and holds: the smaller of
+ * {@link SLOW_AHEAD_MAX_SECONDS} and {@link SLOW_AHEAD_MAX_BYTES} of media, never below the
+ * pacing's own `baseSeconds`.
+ */
+export function slowAheadCapSeconds(baseSeconds: number, mediaBytesPerSecond: number): number {
+  return Math.max(
+    baseSeconds,
+    Math.min(SLOW_AHEAD_MAX_SECONDS, SLOW_AHEAD_MAX_BYTES / mediaBytesPerSecond)
+  );
+}
+
+/**
+ * HOW MUCH MUST BE BUFFERED BEFORE A STARVED ELEMENT IS GIVEN ITS BYTES BACK, so it then plays to
+ * the end without stopping again (slow-link chantier, gap 6: a reel at ~318 KB/s on a ~262 KB/s link
+ * stopped 29 times).
+ *
+ * With `B` seconds buffered, `U` bytes still to fetch, a link at `l` and a media at `m` bytes per
+ * second, the buffer never runs dry iff `B >= (U / m) x (m / l - 1)`. Written with the remaining
+ * playing time `R = B + U / m` it is the chantier's rule, `B >= R x (1 - l / m)`: the same bound,
+ * read without the element's `duration`. A link at or above the media's rate needs nothing. Taken
+ * with {@link HOLD_SAFETY}, and never above `capSeconds` - a long video on a very slow link holds
+ * again later rather than buffering past the engine's quota.
+ */
+export function holdTargetSeconds(input: {
+  unfetchedBytes: number;
+  linkBytesPerSecond: number;
+  mediaBytesPerSecond: number;
+  capSeconds: number;
+}): number {
+  const { unfetchedBytes: u, linkBytesPerSecond: l, mediaBytesPerSecond: m, capSeconds } = input;
+  if (l >= m || u <= 0) return 0;
+  return Math.min(capSeconds, (u / m) * (m / l - 1) * HOLD_SAFETY);
+}
+
 /** What a paced stream reads of its element - an `HTMLMediaElement`, or a test's stand-in. */
 export type PacingElement = Pick<
   HTMLMediaElement,
@@ -127,7 +206,15 @@ export type PacingElement = Pick<
 >;
 
 /** The element events after which its demand may have changed. */
-const DEMAND_EVENTS = ['play', 'playing', 'waiting', 'timeupdate', 'seeking', 'progress'] as const;
+const DEMAND_EVENTS = [
+  'play',
+  'playing',
+  'pause',
+  'waiting',
+  'timeupdate',
+  'seeking',
+  'progress',
+] as const;
 
 /** A stream attached to one element. */
 export interface SegmentedStreamHandle {
@@ -315,17 +402,41 @@ interface SegmentFeed {
   count(): Promise<number>;
   /** Segment `index`, fetched and verified the first time it is asked for. */
   segment(index: number): Promise<Blob>;
+  /**
+   * What this media's ranged reads achieved, bytes per second, smoothed over the last ones - `null`
+   * before one has been measured. Measured inside the read, after the request gate granted its slot
+   * (`httpRangeSource`), so neither the queue nor a segment a second consumer finds already in the
+   * feed counts as the link.
+   */
+  linkBytesPerSecond(): number | null;
 }
 
+/** Weight of the newest read in {@link SegmentFeed.linkBytesPerSecond}. */
+const RATE_SMOOTHING = 0.5;
+
+/** A read shorter than this says nothing about the link (a short closing segment, a tiny file). */
+const MIN_MEASURED_BYTES = 64 * 1024;
+
 /** A feed over `ref`; every read is aborted with `signal` (the root stream's close). */
-function createSegmentFeed(ref: MediaRef, baseUrl: string, signal: AbortSignal): SegmentFeed {
+function createSegmentFeed(
+  ref: MediaRef,
+  baseUrl: string,
+  signal: AbortSignal,
+  clock: () => number
+): SegmentFeed {
+  let rate: number | null = null;
+  const observe = (bytes: number, seconds: number) => {
+    if (bytes < MIN_MEASURED_BYTES || seconds <= 0) return;
+    const sample = bytes / seconds;
+    rate = rate === null ? sample : RATE_SMOOTHING * sample + (1 - RATE_SMOOTHING) * rate;
+  };
   let reader: ReturnType<typeof openSegmentedMedia> | null = null;
   // A FAILURE IS NOT MEMOISED: a transient range error on the card's read must not be handed to the
   // viewer forever - the next consumer asks again (a closed root rejects them all anyway).
   const open = () => {
     if (!reader) {
       const opening = openSegmentedMedia(
-        httpRangeSource(baseUrl, ref.mediaId),
+        httpRangeSource(baseUrl, ref.mediaId, observe, clock),
         ref.key,
         ref.iv,
         signal
@@ -355,6 +466,7 @@ function createSegmentFeed(ref: MediaRef, baseUrl: string, signal: AbortSignal):
       }
       return pending;
     },
+    linkBytesPerSecond: () => rate,
   };
 }
 
@@ -367,15 +479,17 @@ function createSegmentFeed(ref: MediaRef, baseUrl: string, signal: AbortSignal):
  * @param playback That choice, carrying the constructor to use.
  * @param pacing   Fetch only what the attached element is about to play ({@link StreamPacing});
  *   absent, the whole file is fetched as fast as it comes.
+ * @param clock    Milliseconds, for measuring the link; a test's stand-in drives it.
  */
 export function openSegmentedStream(
   ref: MediaRef,
   baseUrl: string,
   playback: Extract<SegmentedPlayback, { kind: 'stream' }>,
-  pacing?: StreamPacing
+  pacing?: StreamPacing,
+  clock: () => number = () => performance.now()
 ): SegmentedStreamHandle {
   const rootAbort = new AbortController();
-  const feed = createSegmentFeed(ref, baseUrl, rootAbort.signal);
+  const feed = createSegmentFeed(ref, baseUrl, rootAbort.signal, clock);
   return openConsumer(ref, feed, playback, pacing, rootAbort, 'stream');
 }
 
@@ -458,11 +572,36 @@ function openConsumer(
   }
   const source = new playback.MediaSourceCtor();
   const url = URL.createObjectURL(source);
-  const progress: StreamProgress = { segmentCount: null, appended: 0, bytes: 0, trimmedBefore: 0 };
+  const progress: StreamProgress = {
+    segmentCount: null,
+    appended: 0,
+    bytes: 0,
+    trimmedBefore: 0,
+  };
   progressByUrl.set(url, progress);
   let closed = false;
   let paced = !!pacing;
   let element: PacingElement | null = null;
+  /** The element fired `waiting` and has not played since: it stalls, and a slow link holds it. */
+  let starved = false;
+  /** The link's last verdict ({@link linkIsSlow}), kept for the hysteresis. */
+  let slow = false;
+  /** Every segment is fetched: nothing a hold could still wait for (set after the fetch loop). */
+  let fetchedAll = false;
+  /** A hold is on: said once in the log when it starts, once when it ends. */
+  let holding = false;
+  /**
+   * Segments fetched and not appended yet, in order: what a hold keeps from a starved element so it
+   * plays once, to the end, instead of a second at a time.
+   */
+  const held: Blob[] = [];
+  let heldBytes = 0;
+  /** Every append, in order, whoever releases it - the fetch loop or an element's event. */
+  let appendChain: Promise<void> = Promise.resolve();
+  let buffer: SourceBuffer | null = null;
+  // The segments are kept as the feed's BLOBS: the `ArrayBuffer` read for the append is dropped
+  // once appended, so the whole file never sits in the JS heap (see `wholeFile`).
+  const parts: Blob[] = [];
   /** Wakes a fetch loop waiting for demand; replaced on every wait. */
   let wake: (() => void) | null = null;
   const poke = () => wake?.();
@@ -488,7 +627,138 @@ function openConsumer(
     // A seek past what is buffered on a PAUSED element is a demand too: without it the picture
     // stays black until the reader presses play (`seeking` is true until the data is in).
     if (element.paused && !(element as { seeking?: boolean }).seeking) return false;
+    // A SLOW LINK FETCHES WITHOUT A PAUSE up to its cap: holding at the pacing's lookahead would
+    // leave the link idle while the buffer drains faster than it fills.
+    const rates = linkRates();
+    if (rates && slow) {
+      return (
+        aheadWithHeld(element, rates.media) < slowAheadCapSeconds(pacing.aheadSeconds, rates.media)
+      );
+    }
     return bufferedAhead(element) < pacing.aheadSeconds;
+  }
+
+  /**
+   * Bytes of media per second played: the file's size over its declared length, else what the
+   * stream has appended over what the element buffers (only while nothing was cut from its start).
+   */
+  function mediaBytesPerSecond(): number | null {
+    if (ref.durationMs && ref.durationMs > 0 && ref.size > 0) {
+      return ref.size / (ref.durationMs / 1000);
+    }
+    const ranges = element?.buffered;
+    if (!ranges || ranges.length === 0 || progress.trimmedBefore > 0 || progress.bytes <= 0) {
+      return null;
+    }
+    const seconds = ranges.end(ranges.length - 1) - ranges.start(0);
+    return seconds > 0 ? progress.bytes / seconds : null;
+  }
+
+  /**
+   * The measured link and media rates, `null` while either is unknown - and the link's verdict
+   * ({@link linkIsSlow}) brought up to date, said once when it changes.
+   */
+  function linkRates(): { link: number; media: number } | null {
+    const link = feed.linkBytesPerSecond();
+    const media = mediaBytesPerSecond();
+    if (!link || !media) return null;
+    const next = linkIsSlow(link / media, slow);
+    if (next !== slow) {
+      slow = next;
+      console.debug(
+        `[media-seg] ${label} ${ref.mediaId}: link ${Math.round(link / 1024)} KiB/s, media ${Math.round(media / 1024)} KiB/s - ${slow ? 'slower than the media: a stall is held until the rest can play through' : 'keeps up again'}`
+      );
+    }
+    return { link, media };
+  }
+
+  /** Seconds ahead of the element's playhead, counting what a hold keeps from it. */
+  function aheadWithHeld(el: PacingElement, media: number): number {
+    return bufferedAhead(el) + heldBytes / media;
+  }
+
+  /**
+   * What a starved element still lacks before it may play on: the seconds it has (buffered plus
+   * held) and the {@link holdTargetSeconds} it needs - `null` when no hold applies: the element is
+   * not stalling, the link keeps up, or enough is in for it to play to the end. A hold starts only
+   * on a `waiting` and ends at its target - or earlier, on purpose, when the link is called fast
+   * again (from 1.15x), when the element is paused, played or detached, or when every segment is
+   * fetched. NOTHING OF IT IS SHOWN (owner, 2026-11-11): the element is simply waiting, and the
+   * player draws what it draws for any wait.
+   */
+  function holdShortfall(): { ahead: number; target: number } | null {
+    // A FACT, NOT ARITHMETIC: once every segment is in, nothing is left to wait for, whatever a
+    // wrong or absent `ref.size` makes `unfetchedBytes` say.
+    if (fetchedAll) return null;
+    if (!pacing || !element || element.paused || !starved) return null;
+    const rates = linkRates();
+    if (!rates || !slow) return null;
+    const total =
+      ref.size > 0 ? ref.size : (progress.segmentCount ?? 0) * SEGMENTED_MEDIA_SEGMENT_BYTES;
+    const target = holdTargetSeconds({
+      unfetchedBytes: Math.max(0, total - progress.bytes - heldBytes),
+      linkBytesPerSecond: rates.link,
+      mediaBytesPerSecond: rates.media,
+      capSeconds: slowAheadCapSeconds(pacing.aheadSeconds, rates.media),
+    });
+    const ahead = aheadWithHeld(element, rates.media);
+    return ahead >= target ? null : { ahead, target };
+  }
+
+  /** Logs a hold's start (with its target) and its end - the only trace a hold leaves. */
+  function noteHold(shortfall: { ahead: number; target: number } | null): void {
+    if ((shortfall !== null) === holding) return;
+    holding = shortfall !== null;
+    if (shortfall) {
+      console.debug(
+        `[media-seg] ${label} ${ref.mediaId}: holding a stall, ${shortfall.ahead.toFixed(1)} s of ${shortfall.target.toFixed(1)} s in`
+      );
+    } else {
+      console.debug(
+        `[media-seg] ${label} ${ref.mediaId}: hold released, ${held.length} held segment(s) appended`
+      );
+    }
+  }
+
+  /**
+   * Appends what is held unless a hold applies ({@link holdShortfall}). Called after every fetch and
+   * on every element event; the appends themselves go through ONE chain, so they stay in order.
+   */
+  function release(): void {
+    const shortfall = holdShortfall();
+    noteHold(shortfall);
+    if (shortfall !== null || held.length === 0 || !buffer) return;
+    appendChain = appendChain.then(drain);
+    // The fetch loop awaits the chain: a failed append rejects `done` there, said by its consumer.
+    appendChain.catch(() => {});
+  }
+
+  /**
+   * Appends every held segment, in order. ONCE STARTED, A DRAIN APPENDS EVERYTHING HELD: those bytes
+   * are already here, and stopping a burst half-way would only turn one release into two stalls. A
+   * new `waiting` cannot arise mid-burst (the burst is what the element was waiting for).
+   */
+  async function drain(): Promise<void> {
+    while (held.length > 0 && buffer) {
+      if (closed) throw new DOMException('stream closed', 'AbortError');
+      const segment = held[0];
+      const part = await segment.arrayBuffer();
+      if (closed) throw new DOMException('stream closed', 'AbortError');
+      await appendSegmentEvicting(buffer, part, () => element, ref.mediaId, progress);
+      held.shift();
+      heldBytes -= segment.size;
+      progress.appended += 1;
+      progress.bytes += part.byteLength;
+      parts.push(segment);
+    }
+  }
+
+  /** An element event: its stall state first, then what it releases and what it asks for. */
+  function onElementEvent(event: Event): void {
+    if (event.type === 'waiting') starved = true;
+    else if (event.type === 'playing' || event.type === 'pause') starved = false;
+    release();
+    poke();
   }
 
   /** Resolves once segment `index` is wanted; rejects when the stream is closed meanwhile. */
@@ -509,22 +779,24 @@ function openConsumer(
       source.addEventListener('sourceopen', () => resolve(), { once: true })
     );
     declareStreamDuration(source, ref, label, closed);
-    const buffer = source.addSourceBuffer(ref.mimeType);
+    buffer = source.addSourceBuffer(ref.mimeType);
     const segmentCount = await feed.count();
     progress.segmentCount = segmentCount;
-    // The segments are kept as the feed's BLOBS: the `ArrayBuffer` read for the append is dropped
-    // once appended, so the whole file never sits in the JS heap (see `wholeFile`).
-    const parts: Blob[] = [];
     for (let i = 0; i < segmentCount; i++) {
       await demand(i);
       const segment = await feed.segment(i);
-      const part = await segment.arrayBuffer();
       if (closed) throw new DOMException('stream closed', 'AbortError');
-      await appendSegmentEvicting(buffer, part, () => element, ref.mediaId, progress);
-      progress.appended += 1;
-      progress.bytes += part.byteLength;
-      parts.push(segment);
+      held.push(segment);
+      heldBytes += segment.size;
+      // Appended at once - unless a starved element on a slow link is being held, in which case
+      // the loop fetches on and the segment waits with the others (`holdShortfall`).
+      release();
+      await appendChain;
     }
+    // Nothing is left to fetch: what is held goes in, whatever the arithmetic says (`fetchedAll`).
+    fetchedAll = true;
+    release();
+    await appendChain;
     if (source.readyState === 'open') source.endOfStream();
     console.debug(`[media-seg] ${label} ${ref.mediaId}: ${segmentCount} segment(s) appended`);
     return wholeFile(ref, parts, playedSeconds(source, ref));
@@ -545,11 +817,17 @@ function openConsumer(
     attach(next) {
       if (!pacing) return () => {};
       element = next;
-      for (const type of DEMAND_EVENTS) next.addEventListener(type, poke);
+      starved = false;
+      for (const type of DEMAND_EVENTS) next.addEventListener(type, onElementEvent);
       poke();
       return () => {
-        for (const type of DEMAND_EVENTS) next.removeEventListener(type, poke);
-        if (element === next) element = null;
+        for (const type of DEMAND_EVENTS) next.removeEventListener(type, onElementEvent);
+        if (element === next) {
+          element = null;
+          starved = false;
+          // A detached element is held by nobody: what was kept from it goes in.
+          release();
+        }
       };
     },
     fetchAll() {

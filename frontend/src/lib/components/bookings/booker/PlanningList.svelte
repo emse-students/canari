@@ -12,6 +12,7 @@
   import type { GridRun } from '$lib/bookings/gridRuns';
   import type { PlanningDay } from '$lib/bookings/planning';
   import HolderAvatar from '$lib/components/bookings/booker/HolderAvatar.svelte';
+  import { guideAnchorWhen } from '$lib/guidance/guideAnchors.svelte';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -33,6 +34,8 @@
     /** The day the strip selected: the list scrolls to it. */
     focusDate: string;
     today: string;
+    /** The first-time hint's anchor id for the "+" button, or undefined when no hint points at it. */
+    guideAnchorId?: string;
     onOpen: (unit: SlotUnit) => void;
     onFree: (run: GridRun) => void;
     onAdd: () => void;
@@ -47,6 +50,7 @@
     blockMode,
     focusDate,
     today,
+    guideAnchorId,
     onOpen,
     onFree,
     onAdd,
@@ -155,6 +159,7 @@
 <button
   type="button"
   onclick={onAdd}
+  use:guideAnchorWhen={guideAnchorId}
   aria-label={blockMode ? m.bookings_planning_add_block() : m.bookings_planning_add()}
   class="bg-accent text-on-accent hover:bg-accent-hover focus-visible:ring-accent-icon sticky bottom-[calc(var(--bottom-nav-reserve)+1rem)] z-20 mt-4 ml-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg outline-none focus-visible:ring-2"
 >

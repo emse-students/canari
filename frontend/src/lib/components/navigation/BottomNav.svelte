@@ -57,6 +57,7 @@
 <nav
   id="bottom-nav"
   class="bg-cn-surface fixed inset-x-0 bottom-0 z-30 touch-manipulation border-t border-black/5 shadow-[0_-4px_24px_rgba(0,0,0,0.02)] md:hidden dark:border-white/10 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
+  data-guide-chrome
   style="padding-bottom: var(--safe-area-inset-bottom, 0px)"
 >
   <div class="flex h-(--bottom-nav-height) items-stretch justify-around">

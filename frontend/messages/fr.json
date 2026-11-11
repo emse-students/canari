@@ -6110,7 +6110,7 @@
   "guide_hint_booking_column_title": "Une colonne par ressource",
   "guide_hint_booking_column_body": "Cet espace a plusieurs colonnes, une par salle ou ressource. Choisissez celle que vous voulez réserver : le nombre de créneaux libres est indiqué.",
   "guide_hint_booking_week_title": "Réserver un créneau",
-  "guide_hint_booking_week_body_phone": "Choisissez le jour, puis un créneau libre de la liste, ou utilisez le bouton +. Une fiche vous laisse ajuster la durée et ajouter des personnes avant de confirmer.",
+  "guide_hint_booking_week_body_phone": "Utilisez ce bouton + pour réserver, ou choisissez le jour puis un créneau libre de la liste. Une fiche vous laisse ajuster la durée et ajouter des personnes avant de confirmer.",
   "guide_hint_booking_week_body_desktop": "Choisissez un créneau libre dans la grille, ou glissez sur plusieurs pour réserver plus longtemps. Une fiche vous laisse ajuster la durée et ajouter des personnes avant de confirmer.",
   "boot_connecting": "Connexion à Canari...",
   "boot_unreachable_title": "Impossible de joindre Canari depuis ce réseau",
