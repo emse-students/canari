@@ -6,6 +6,8 @@ import {
   countingReadPoint,
   derivedUnreadCount,
   hasRead,
+  localReadSeedFor,
+  parseLocalReadSeed,
   isUnreadForUser,
   mergeReadWatermark,
   mergeReadWatermarks,
@@ -192,47 +194,114 @@ describe('the unread badge', () => {
 });
 
 describe('the read point an unread count is taken at', () => {
-  const convo = (
-    messages: ChatMessage[],
-    marks: Partial<Record<'readWatermarks' | 'serverReadWatermarks', ReadWatermarks>> = {}
-  ) => ({
-    messages,
-    ...marks,
-  });
+  /** A DM/group row the server dated `at`; its author's phone stamped it `stamp`. */
+  const dated = (id: string, at: number, senderId = PEER, stamp = at - 5) =>
+    msg(id, stamp, senderId, { serverTimestamp: at });
 
   it('is the saved mark whenever one is saved, own messages after it changing nothing', () => {
-    const c = convo([msg('a', 1000), msg('r', 3000, ME), msg('b', 4000)], {
+    const c = {
+      messages: [dated('a', 1000), dated('r', 3000, ME), dated('b', 4000)],
       serverReadWatermarks: { [ME]: 2000 },
+    };
+    expect(countingReadPoint(c, ME)).toEqual({ stamped: 0, server: 2000, source: 'saved' });
+    expect(derivedUnreadCount(c, ME)).toBe(1);
+  });
+
+  it('with no saved mark, is the SERVER time of my newest own message', () => {
+    const c = {
+      messages: [dated('a', 1000), dated('r1', 2000, ME), dated('b', 3000), dated('r2', 4000, ME)],
+    };
+    expect(countingReadPoint({ messages: [...c.messages, dated('c', 5000)] }, ME)).toEqual({
+      stamped: 0,
+      server: 4000,
+      source: 'own',
     });
-    expect(countingReadPoint(c, ME)).toEqual({ stamped: 0, server: 2000, implied: false });
+    expect(derivedUnreadCount({ messages: [...c.messages, dated('c', 5000)] }, ME)).toBe(1);
+  });
+
+  it('an own row the server has not dated yet (still queued) implies nothing', () => {
+    const c = { messages: [dated('a', 1000), msg('queued', 2000, ME)] };
+    expect(countingReadPoint(c, ME).server).toBe(0);
     expect(derivedUnreadCount(c, ME)).toBe(1);
   });
 
-  it('with no saved mark, is my newest own message: a reply was written with the thread open', () => {
-    const c = convo([
-      msg('a', 1000),
-      msg('r1', 2000, ME),
-      msg('b', 3000),
-      msg('r2', 4000, ME),
-      msg('c', 5000),
-    ]);
-    expect(countingReadPoint(c, ME)).toEqual({ stamped: 4000, server: 0, implied: true });
-    expect(derivedUnreadCount(c, ME)).toBe(1);
+  it('is decided by ONE clock: neither phone being wrong moves it', () => {
+    // My phone an hour FAST: my reply at server 2000 must not cover the peer's later 3000.
+    const fast = { messages: [dated('r', 2000, ME, 3_602_000), dated('b', 3000)] };
+    expect(derivedUnreadCount(fast, ME)).toBe(1);
+    // My phone an hour SLOW: my reply at server 2000 covers the peer's earlier 1500.
+    const slow = { messages: [dated('a', 1500), dated('r', 2000, ME, 2000 - 3_600_000)] };
+    expect(derivedUnreadCount(slow, ME)).toBe(0);
   });
 
-  it('with no saved mark and no own message (a first contact), is 0: every foreign message counts', () => {
-    const c = convo([msg('a', 1000), msg('b', 2000), msg('n', 3000, 'system')]);
-    expect(countingReadPoint(c, ME)).toEqual({ stamped: 0, server: 0, implied: false });
+  it('with no saved mark, no seed and no own message (a first contact), is 0: every foreign message counts', () => {
+    const c = { messages: [dated('a', 1000), dated('b', 2000), dated('n', 3000, 'system')] };
+    expect(countingReadPoint(c, ME)).toEqual({ stamped: 0, server: 0, source: 'none' });
     expect(derivedUnreadCount(c, ME)).toBe(2);
   });
 
+  it("adds the upgrade's local seed, and never lowers anything with it", () => {
+    const seeded = { messages: [dated('a', 1000), dated('b', 3000)], localReadSeed: 2000 };
+    expect(countingReadPoint(seeded, ME)).toEqual({ stamped: 0, server: 2000, source: 'seed' });
+    expect(derivedUnreadCount(seeded, ME)).toBe(1);
+    // A later mark from another device below the seed does not bring 'a' back.
+    expect(derivedUnreadCount({ ...seeded, serverReadWatermarks: { [ME]: 500 } }, ME)).toBe(1);
+    // One above it decides.
+    expect(derivedUnreadCount({ ...seeded, serverReadWatermarks: { [ME]: 3000 } }, ME)).toBe(0);
+  });
+
+  it('the seed for a conversation is its newest held row when it has no read point, else 0', () => {
+    const held = [dated('a', 1000), dated('r', 4000, ME), dated('b', 3000)];
+    expect(localReadSeedFor({ messages: held }, ME)).toBe(4000);
+    expect(localReadSeedFor({ messages: held, readWatermarks: { [ME]: 1 } }, ME)).toBe(0);
+    expect(localReadSeedFor({ messages: [] }, ME)).toBe(0);
+  });
+
+  it('reads a stored seed: a number, 0, or null for "not considered yet"', () => {
+    expect(parseLocalReadSeed(2000)).toBe(2000);
+    expect(parseLocalReadSeed('2000')).toBe(2000);
+    expect(parseLocalReadSeed(0)).toBe(0);
+    expect(parseLocalReadSeed(null)).toBeNull();
+    expect(parseLocalReadSeed(undefined)).toBeNull();
+    expect(parseLocalReadSeed('nope')).toBeNull();
+  });
+
   it('is what withOwnReadAdvanced recounts at, so a read leaves the derived count', () => {
-    const c = { ...convo([msg('a', 1000), msg('r', 2000, ME), msg('b', 3000)]), unreadCount: 1 };
-    const next = withOwnReadAdvanced(c, ME, 3000, 'stamped');
+    const c = {
+      messages: [dated('a', 1000), dated('r', 2000, ME), dated('b', 3000)],
+      unreadCount: 1,
+    };
+    const next = withOwnReadAdvanced(c, ME, 3000, 'server');
     expect(next.unreadCount).toBe(0);
     expect(derivedUnreadCount(next, ME)).toBe(0);
   });
+
+  it('PINS THE SALON BEHAVIOUR: with no salon mark, my own post bounds what this device counts', () => {
+    // A salon row's stamp IS its server `createdAt`. No mark of mine; I posted at 2000.
+    const salon = (id: string, at: number, senderId = PEER) =>
+      msg(id, at, senderId, { serverTimestamp: at });
+    const c = { messages: [salon('mine', 2000, ME)] };
+    // A row older than my post, delivered late, is not counted here (the server's count, which a
+    // reconnect merges, still counts it - this device's live add path no longer does).
+    expect(isUnreadForUser(salon('late', 1500), ...pointOf(c))).toBe(false);
+    // A row after it is.
+    expect(isUnreadForUser(salon('new', 2500), ...pointOf(c))).toBe(true);
+    // And the salon self-mark (stamped clock) recounts at the same point.
+    const read = withOwnReadAdvanced(
+      { ...c, messages: [...c.messages, salon('new', 2500)], unreadCount: 1 },
+      ME,
+      2500,
+      'stamped'
+    );
+    expect(read.unreadCount).toBe(0);
+  });
 });
+
+/** A read point as `isUnreadForUser`'s two trailing arguments. */
+function pointOf(convo: Parameters<typeof countingReadPoint>[0]): [number, number] {
+  const point = countingReadPoint(convo, ME);
+  return [point.stamped, point.server];
+}
 
 describe('the unread count of the scroll-to-bottom button', () => {
   const thread = [

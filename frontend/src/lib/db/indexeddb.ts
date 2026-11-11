@@ -6,7 +6,7 @@ import {
   invalidateAllHistoryStateKeys,
   invalidateHistoryStateKey,
 } from '$lib/utils/chat/historyStateKey';
-import { parseReadWatermarks } from '$lib/utils/chat/readState';
+import { parseLocalReadSeed, parseReadWatermarks } from '$lib/utils/chat/readState';
 import type {
   ConversationMeta,
   EncryptedGraineRow,
@@ -702,7 +702,29 @@ export class IndexedDbStorage implements IStorage {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('conversations', 'readwrite');
-      tx.objectStore('conversations').put(conv);
+      const store = tx.objectStore('conversations');
+      if (typeof conv.localReadSeed === 'number') {
+        store.put(conv);
+      } else {
+        // THE SEED STATE IS KEPT, NOT ERASED, by a caller that does not state it - the same rule as
+        // SQLite's `CONVERSATION_LOCAL_READ_SEED_VALUE`: what the row holds (absent included: an
+        // older build's row, seeded by the next load), or 0 for a row new on this install.
+        const read = store.get(conv.id);
+        read.onsuccess = () => {
+          const held = read.result as ConversationMeta | undefined;
+          const { localReadSeed: _unstated, ...rest } = conv;
+          store.put(
+            held
+              ? {
+                  ...rest,
+                  ...(typeof held.localReadSeed === 'number'
+                    ? { localReadSeed: held.localReadSeed }
+                    : {}),
+                }
+              : { ...rest, localReadSeed: 0 }
+          );
+        };
+      }
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -725,6 +747,7 @@ export class IndexedDbStorage implements IStorage {
       serverReadWatermarks: parseReadWatermarks(r.serverReadWatermarks),
       historyFloor: parseHistoryFloor(r.historyFloor),
       awaitingAdmission: r.awaitingAdmission === true,
+      localReadSeed: parseLocalReadSeed(r.localReadSeed),
     };
   }
 

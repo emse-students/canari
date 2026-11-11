@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 20;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -185,6 +185,31 @@ export function conversationStartedAtStatement(columns: readonly string[]): stri
     ? null
     : 'ALTER TABLE conversations ADD COLUMN started_at INTEGER';
 }
+
+/**
+ * The v19 -> v20 step: the conversation row gains `local_read_seed` (`ConversationMeta.localReadSeed`),
+ * the upgrade's one-time local read point. NULL on every existing row, which is what MARKS it as
+ * written by an older build: the next load seeds it once. A row inserted afterwards is born 0
+ * ({@link CONVERSATION_LOCAL_READ_SEED_VALUE}). Returns `null` when the column is there.
+ *
+ * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
+ */
+export function conversationLocalReadSeedStatement(columns: readonly string[]): string | null {
+  return columns.includes('local_read_seed')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN local_read_seed INTEGER';
+}
+
+/**
+ * The value `saveConversation` writes into `local_read_seed` (parameters: `$1` the id, `$11` the
+ * caller's value or NULL). The caller's value when it states one; else what the row already holds,
+ * NULL included - a row an older build wrote stays "not considered" until the load seeds it; else,
+ * for a row that does not exist yet, 0 - new on this install, never seeded.
+ */
+export const CONVERSATION_LOCAL_READ_SEED_VALUE =
+  'CASE WHEN $11 IS NOT NULL THEN $11 ' +
+  'WHEN EXISTS (SELECT 1 FROM conversations WHERE id = $1) ' +
+  'THEN (SELECT local_read_seed FROM conversations WHERE id = $1) ELSE 0 END';
 
 /**
  * The v17 -> v18 table: mutations whose message is not here yet (`PendingMutation`). Created by

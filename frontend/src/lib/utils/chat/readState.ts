@@ -67,40 +67,94 @@ export function readPointFor(
 
 /**
  * THE READ POINT AN UNREAD COUNT IS TAKEN AT - the one every writer of `unreadCount` asks, so the
- * count derived at a cold start and the one kept up live can never disagree.
+ * count derived at a load and the one kept up live can never disagree. Salons included: the live
+ * add path and the salon self-mark ask it too, so a salon with no mark of its own does not count a
+ * row older than this reader's own newest post (the server's count, which a reconnect merges, does).
  *
- * It is this user's saved marks ({@link readPointFor}) whenever either map holds one. With NO saved
- * mark at all - a conversation never read since read state became durable (2026-08-12), or one a
- * new device holds before any mark reached it - the point is the stamped time of this user's NEWEST
- * OWN message held: a reply is written with the conversation open, so whatever came before it was
- * on screen. With no own message either (a first contact, never opened), the point is 0 and every
- * foreign message counts - which is what a first message from someone new is: unread.
+ * ONE CLOCK, THE SERVER'S, for everything this function adds to the saved marks:
+ * - the saved marks ({@link readPointFor}), as they are;
+ * - the upgrade's LOCAL seed (`localReadSeed`, server clock): the newest message this device held
+ *   when this build first met the conversation with no read point. Local: it is never a mark, never
+ *   a receipt, never in a bundle - nothing but this count reads it;
+ * - with no saved mark, the SERVER time of this user's newest own message held: a reply is written
+ *   with the conversation open, so what the server holds before it was on screen. Compared on the
+ *   server's clock, never the author's: two phones' clocks would otherwise decide it (a fast phone
+ *   hid a later reply of the peer, a slow one counted an earlier one). An own row the server has not
+ *   dated yet (still queued) implies nothing.
  *
- * Why not 0 for every unmarked conversation: the count would be "every foreign message held",
- * up to a whole page, on every conversation last read before 2026-08-12 that has had nothing new
- * since. Why not "count nothing": that is the defect this replaces - a first contact never opened
- * lost its badge at the second cold start. See chat.md, "A DM's unread count is derived from its
- * read point at every load (2026-11-11)".
+ * With none of them (a conversation new on this install, never opened, never answered: a first
+ * contact) the point is 0 and every foreign message counts - which is what it is: unread. Always the
+ * max of what applies, so nothing here makes a read message unread again. See chat.md, "A DM's
+ * unread count is derived from its read point at every load (2026-11-11)".
  *
- * `implied` says the point came from an own message, not from a saved mark - for the log only.
+ * `source` names what decided the server point - for the log only.
  */
 export function countingReadPoint(
   convo: {
-    messages: ReadonlyArray<Pick<ChatMessage, 'isOwn' | 'timestamp'>>;
+    messages: ReadonlyArray<Pick<ChatMessage, 'isOwn' | 'serverTimestamp'>>;
+    readWatermarks?: ReadWatermarks;
+    serverReadWatermarks?: ReadWatermarks;
+    localReadSeed?: number | null;
+  },
+  userNorm: string
+): { stamped: number; server: number; source: 'saved' | 'seed' | 'own' | 'none' } {
+  const saved = readPointFor(convo, userNorm);
+  const seed = parseLocalReadSeed(convo.localReadSeed) ?? 0;
+  if (saved.stamped > 0 || saved.server > 0) {
+    return {
+      stamped: saved.stamped,
+      server: Math.max(saved.server, seed),
+      source: seed > saved.server ? 'seed' : 'saved',
+    };
+  }
+  let newestOwn = 0;
+  for (const msg of convo.messages) {
+    if (!msg.isOwn) continue;
+    const at = msg.serverTimestamp;
+    if (typeof at === 'number' && Number.isFinite(at) && at > newestOwn) newestOwn = at;
+  }
+  const server = Math.max(seed, newestOwn);
+  return {
+    stamped: 0,
+    server,
+    source: server === 0 ? 'none' : newestOwn > seed ? 'own' : 'seed',
+  };
+}
+
+/**
+ * Reads a stored `localReadSeed`: a usable instant, 0 ("considered, nothing seeded"), or `null` -
+ * absent or unusable, which reads as "not considered yet". On Android the SQLite plugin returns an
+ * INTEGER column as a string.
+ */
+export function parseLocalReadSeed(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const at = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(at) || at < 0) return null;
+  return Math.floor(at);
+}
+
+/**
+ * The upgrade's seed for one conversation, decided ONCE: the newest server-clock key among the
+ * messages held when the conversation has NO saved read point, else 0 ("considered, nothing
+ * seeded"). Every held row counts, own and foreign alike - the seed says "what this device already
+ * held", not who wrote it.
+ */
+export function localReadSeedFor(
+  convo: {
+    messages: ReadonlyArray<Pick<ChatMessage, 'timestamp' | 'serverTimestamp'>>;
     readWatermarks?: ReadWatermarks;
     serverReadWatermarks?: ReadWatermarks;
   },
   userNorm: string
-): { stamped: number; server: number; implied: boolean } {
+): number {
   const saved = readPointFor(convo, userNorm);
-  if (saved.stamped > 0 || saved.server > 0) return { ...saved, implied: false };
-  let newestOwn = 0;
+  if (saved.stamped > 0 || saved.server > 0) return 0;
+  let newest = 0;
   for (const msg of convo.messages) {
-    if (!msg.isOwn) continue;
-    const at = stampedTime(msg);
-    if (Number.isFinite(at) && at > newestOwn) newestOwn = at;
+    const at = readOrderKey(msg);
+    if (Number.isFinite(at) && at > newest) newest = at;
   }
-  return { stamped: newestOwn, server: 0, implied: newestOwn > 0 };
+  return newest;
 }
 
 /**
@@ -114,6 +168,7 @@ export function derivedUnreadCount(
     >;
     readWatermarks?: ReadWatermarks;
     serverReadWatermarks?: ReadWatermarks;
+    localReadSeed?: number | null;
   },
   userNorm: string
 ): number {

@@ -5,13 +5,14 @@
  * Owner, Android 1.6.9, 2026-11-11: a DM whose last message was never opened showed no badge. The
  * count is not persisted, the read marks are; the load counted only what its replay ADDED, so a
  * message a push had stored at a resume (session 1) was already held at the next cold start
- * (session 2), and counted 0 with nothing read. Each case below boots twice against ONE store, the
- * way a phone does across a process death. Map: chat.md, "A DM's unread count is derived from its
- * read point at every load (2026-11-11)".
+ * (session 2), and counted 0 with nothing read. Each case boots against ONE store that keeps its
+ * conversation rows the way both backends do (`localReadSeedStore.test.ts`), the way a phone does
+ * across a process death. Map: chat.md, "A DM's unread count is derived from its read point at every
+ * load (2026-11-11)".
  */
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
-import type { StoredMessage } from '$lib/db';
+import type { ConversationMeta, StoredMessage } from '$lib/db';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 
@@ -24,8 +25,8 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: vi.fn(),
 }));
 
-// The archive replay brings nothing new: every message below is already in the store.
-const replay = vi.hoisted(() => vi.fn(async () => undefined));
+// The archive replay brings nothing new unless a case says so: every message is already stored.
+const replay = vi.hoisted(() => vi.fn(async (_opts: any) => undefined));
 vi.mock('./history', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./history')>()),
   replayConversationHistory: replay,
@@ -36,26 +37,50 @@ import { mergeFcmMessagesIntoConversations } from './fcmMemoryMerge';
 
 const ME = 'u1';
 
-/** A stored row of `g-1`, dated by the server at `at` (its author's stamp a little before). */
-const row = (id: string, senderId: string, at: number): StoredMessage =>
+/**
+ * A stored row of `g-1`: the server dated it `at`, its author's phone stamped it `stamp` (by
+ * default a little before - a clock that keeps time).
+ */
+const row = (id: string, senderId: string, at: number, stamp = at - 5): StoredMessage =>
   ({
     id,
     conversationId: 'g-1',
     senderId,
     content: id,
-    timestamp: at - 5,
+    timestamp: stamp,
     serverTimestamp: at,
   }) as StoredMessage;
 
-/** ONE durable store, shared by every boot: what survives the process. */
-function durableStore(meta: Record<string, unknown> = {}) {
+/**
+ * ONE durable store, shared by every boot. Its conversation row follows the storage contract of
+ * `localReadSeed`: a stated value is written, an unstated one keeps the row's, a new row is born 0.
+ * `meta.localReadSeed` absent from the initial row = a row an older build wrote.
+ */
+function durableStore(initial: Partial<ConversationMeta> = {}, newOnThisInstall = true) {
   const messages: StoredMessage[] = [];
+  const rows = new Map<string, ConversationMeta>([
+    [
+      'g-1',
+      {
+        id: 'g-1',
+        name: 'Equipe',
+        lifecycle: 'active',
+        updatedAt: 1,
+        ...(newOnThisInstall ? { localReadSeed: 0 } : {}),
+        ...initial,
+      },
+    ],
+  ]);
   return {
     messages,
-    getConversations: vi.fn(async () => [
-      { id: 'g-1', name: 'Equipe', lifecycle: 'active', ...meta },
-    ]),
-    saveConversation: vi.fn(async () => {}),
+    rows,
+    getConversations: vi.fn(async () => [...rows.values()].map((r) => ({ ...r }))),
+    saveConversation: vi.fn(async (conv: ConversationMeta) => {
+      const held = rows.get(conv.id);
+      const localReadSeed =
+        typeof conv.localReadSeed === 'number' ? conv.localReadSeed : held ? held.localReadSeed : 0;
+      rows.set(conv.id, { ...conv, localReadSeed });
+    }),
     getMessagesPage: vi.fn(async (id: string) => messages.filter((m) => m.conversationId === id)),
     deleteMessagesForConversation: vi.fn(async () => {}),
     getMessages: vi.fn(async () => []),
@@ -82,12 +107,16 @@ function mls(overrides: Record<string, unknown> = {}) {
 /** One cold start: a fresh in-memory map, the same store. Returns the badge of `g-1`. */
 async function coldStart(
   store: ReturnType<typeof durableStore>,
-  service = mls(),
-  conversations = new SvelteMap<string, Conversation>()
+  opts: {
+    service?: ReturnType<typeof mls>;
+    conversations?: SvelteMap<string, Conversation>;
+    log?: (msg: string) => void;
+  } = {}
 ): Promise<number | undefined> {
+  const conversations = opts.conversations ?? new SvelteMap<string, Conversation>();
   await loadExistingConversations({
     storage: store,
-    mlsService: service,
+    mlsService: opts.service ?? mls(),
     conversations,
     messageReactions: new SvelteMap(),
     userId: ME,
@@ -95,24 +124,29 @@ async function coldStart(
     archivedConversationIds: [],
     historyBaseUrl: '',
     onArchivedIdsChange: vi.fn(),
-    log: vi.fn(),
+    log: opts.log ?? vi.fn(),
   } as never);
   return conversations.get('g-1')?.unreadCount;
 }
 
 describe('the unread count a load derives', () => {
+  let debug: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     replay.mockClear();
     connectivity.reset();
+    debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
   });
-  afterEach(() => connectivity.reset());
+  afterEach(() => {
+    debug.mockRestore();
+    connectivity.reset();
+  });
 
   it('keeps the badge of a message stored in session 1 and never read, at the next cold start', async () => {
     const store = durableStore();
     // Session 1: the app boots on an empty store, then a resume injects the push cache - the
     // message is stored AND merged live, which counts it.
     const session1 = new SvelteMap<string, Conversation>();
-    await coldStart(store, mls(), session1);
+    await coldStart(store, { conversations: session1 });
     const pushed = row('m1', 'bob', 1_000);
     store.messages.push(pushed);
     mergeFcmMessagesIntoConversations([pushed], session1, ME);
@@ -142,20 +176,35 @@ describe('the unread count a load derives', () => {
     });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    expect(await coldStart(store, service)).toBe(1);
+    expect(await coldStart(store, { service })).toBe(1);
     expect(replay).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it('with NO saved read point, counts only what came after my newest own message', async () => {
-    // A conversation read before read state was durable: I replied at 2000, so 1000 was on screen.
+  it('with NO read point, counts only what the server holds after my newest own message', async () => {
     const store = durableStore();
     store.messages.push(row('m1', 'bob', 1_000), row('r1', ME, 2_000), row('m2', 'bob', 3_000));
 
     expect(await coldStart(store)).toBe(1);
   });
 
-  it('with no read point and no own message (a first contact never opened), counts every message', async () => {
+  it('decides that on the SERVER clock: my phone running FAST hides no later reply', async () => {
+    // I replied at server 2000 from a phone an hour ahead; the peer answered at server 3000.
+    const store = durableStore();
+    store.messages.push(row('r1', ME, 2_000, 3_602_000), row('m2', 'bob', 3_000));
+
+    expect(await coldStart(store)).toBe(1);
+  });
+
+  it('decides that on the SERVER clock: my phone running SLOW counts no earlier message', async () => {
+    // The peer wrote at server 1500; I replied after it, at server 2000, from a phone an hour behind.
+    const store = durableStore();
+    store.messages.push(row('m1', 'bob', 1_500), row('r1', ME, 2_000, 2_000 - 3_600_000));
+
+    expect(await coldStart(store)).toBe(0);
+  });
+
+  it('with no read point and no own message (a first contact on this install), counts every message', async () => {
     const store = durableStore();
     store.messages.push(row('m1', 'bob', 1_000), row('m2', 'bob', 2_000));
 
@@ -176,5 +225,114 @@ describe('the unread count a load derives', () => {
     store.messages.push(row('m1', 'bob', 1_000), row('m2', 'bob', 2_000));
 
     expect(await coldStart(store)).toBe(0);
+  });
+
+  it.each(['removed', 'pending'] as const)(
+    'gives a %s row no badge: it takes no read mark, so nothing could ever clear one',
+    async (lifecycle) => {
+      const store = durableStore({ lifecycle });
+      store.messages.push(row('m1', 'bob', 1_000));
+
+      expect(await coldStart(store)).toBe(0);
+    }
+  );
+
+  it('publishes ONE count online - the replay`s - never the stored page`s first (no rise then fall)', async () => {
+    const store = durableStore();
+    store.messages.push(row('m1', 'bob', 1_000));
+    // The replay learns that m1 was read on another device.
+    replay.mockImplementationOnce(async (opts: any) => {
+      const c = opts.getConversation('g-1');
+      opts.setConversation('g-1', { ...c, serverReadWatermarks: { [ME]: 1_000 } });
+      return undefined;
+    });
+    const conversations = new SvelteMap<string, Conversation>();
+    const seen: number[] = [];
+    const set = conversations.set.bind(conversations);
+    conversations.set = (key: string, value: Conversation) => {
+      if (key === 'g-1' && value.unreadCount !== undefined) seen.push(value.unreadCount);
+      return set(key, value);
+    };
+
+    await coldStart(store, { conversations });
+
+    expect(seen.every((count) => count === 0)).toBe(true);
+    expect(conversations.get('g-1')?.unreadCount).toBe(0);
+  });
+});
+
+describe("the upgrade's local read seed", () => {
+  let debug: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    replay.mockClear();
+    connectivity.reset();
+    debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+  });
+  afterEach(() => debug.mockRestore());
+
+  it('lights nothing at the upgrade: what an older build held with no read point is seeded as read', async () => {
+    // A group I lurk in, written by an older build: no read point, a page of foreign messages.
+    const store = durableStore({}, false);
+    store.messages.push(row('m1', 'bob', 1_000), row('m2', 'carol', 2_000));
+    const log = vi.fn();
+
+    expect(await coldStart(store, { log })).toBe(0);
+    expect(store.rows.get('g-1')?.localReadSeed).toBe(2_000);
+    expect(log).toHaveBeenCalledWith(
+      '[RESTORE] unread census: 1 conversation(s) seeded with a local read point, 0 with a badge, 0 unread in all'
+    );
+  });
+
+  it('is LOCAL: no read mark moves, nothing is sent, and the row carries no mark it did not have', async () => {
+    const store = durableStore({}, false);
+    store.messages.push(row('m1', 'bob', 1_000));
+    // Every way a mark leaves this device, spied: a read-watermark frame, any control frame.
+    const sends = {
+      sendReadWatermark: vi.fn(async () => {}),
+      enqueueControlEvent: vi.fn(async () => {}),
+      sendMessage: vi.fn(async () => {}),
+    };
+    const conversations = new SvelteMap<string, Conversation>();
+
+    await coldStart(store, { service: mls(sends), conversations });
+
+    expect(store.rows.get('g-1')?.localReadSeed).toBe(1_000);
+    const saved = store.rows.get('g-1');
+    expect(saved?.readWatermarks).toBeUndefined();
+    expect(saved?.serverReadWatermarks).toBeUndefined();
+    expect(conversations.get('g-1')?.readWatermarks).toBeUndefined();
+    expect(conversations.get('g-1')?.serverReadWatermarks).toBeUndefined();
+    expect(sends.sendReadWatermark).not.toHaveBeenCalled();
+    expect(sends.enqueueControlEvent).not.toHaveBeenCalled();
+    expect(sends.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('is written ONCE: a message arriving after it counts, and the seed is never moved', async () => {
+    const store = durableStore({}, false);
+    store.messages.push(row('m1', 'bob', 1_000));
+    expect(await coldStart(store)).toBe(0);
+    expect(store.rows.get('g-1')?.localReadSeed).toBe(1_000);
+
+    store.messages.push(row('m2', 'bob', 2_000));
+    expect(await coldStart(store)).toBe(1);
+    expect(await coldStart(store)).toBe(1);
+    expect(store.rows.get('g-1')?.localReadSeed).toBe(1_000);
+  });
+
+  it('seeds 0 where a read point exists, and the count follows that point', async () => {
+    const store = durableStore({ serverReadWatermarks: { [ME]: 1_000 } }, false);
+    store.messages.push(row('m1', 'bob', 1_000), row('m2', 'bob', 2_000));
+
+    expect(await coldStart(store)).toBe(1);
+    expect(store.rows.get('g-1')?.localReadSeed).toBe(0);
+  });
+
+  it('never seeds a conversation new on this install: a first contact stays counted', async () => {
+    const store = durableStore();
+    store.messages.push(row('m1', 'bob', 1_000));
+
+    expect(await coldStart(store)).toBe(1);
+    expect(await coldStart(store)).toBe(1);
+    expect(store.rows.get('g-1')?.localReadSeed).toBe(0);
   });
 });

@@ -22,12 +22,17 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import { buildUserGroupSyncIndex } from './groupSyncEligibility';
 import { migrateFromLocalStorage } from '../migration';
 import type { IMlsService } from '$lib/mlsService';
-import type { Conversation, ConversationLifecycle } from '$lib/types';
+import type { ChatMessage, Conversation, ConversationLifecycle } from '$lib/types';
 import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/displayName';
 import { foldForSearch } from '$lib/utils/textFold';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
-import { countingReadPoint, derivedUnreadCount } from './readState';
+import {
+  countingReadPoint,
+  derivedUnreadCount,
+  localReadSeedFor,
+  parseLocalReadSeed,
+} from './readState';
 import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { isUuidLike } from '$lib/utils/uuidShape';
@@ -99,6 +104,9 @@ export function toConversationMeta(
     serverReadWatermarks: convo.serverReadWatermarks,
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
+    // A number when this session knows it; absent otherwise, which the store reads as "keep what
+    // the row holds" - never as "not considered", never as 0.
+    ...(typeof convo.localReadSeed === 'number' ? { localReadSeed: convo.localReadSeed } : {}),
     imageMediaId: convo.imageMediaId ?? null,
     awaitingAdmission: convo.awaitingAdmission === true,
   };
@@ -460,6 +468,8 @@ export interface ConversationRowSpec {
   serverReadWatermarks?: Conversation['serverReadWatermarks'];
   historyFloor?: Conversation['historyFloor'];
   startedAt?: Conversation['startedAt'];
+  /** See {@link Conversation.localReadSeed}; only a number is carried, absent keeps `existing`'s. */
+  localReadSeed?: Conversation['localReadSeed'];
   /** See {@link Conversation.awaitingAdmission}; absent keeps what `existing` holds. */
   awaitingAdmission?: Conversation['awaitingAdmission'];
 }
@@ -502,6 +512,10 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   const historyFloor = spec.historyFloor ?? existing?.historyFloor;
   const startedAt = spec.startedAt ?? existing?.startedAt;
   const awaitingAdmission = spec.awaitingAdmission ?? existing?.awaitingAdmission;
+  // A number, or nothing: `null` ("not considered yet") is the STORE's state, which a save that
+  // states nothing keeps (`saveConversation`).
+  const localReadSeed =
+    typeof spec.localReadSeed === 'number' ? spec.localReadSeed : existing?.localReadSeed;
   const directPeerId = identity.directPeerId ?? existing?.directPeerId;
 
   return {
@@ -520,6 +534,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     ...(serverReadWatermarks !== undefined ? { serverReadWatermarks } : {}),
     ...(historyFloor !== undefined ? { historyFloor } : {}),
     ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(typeof localReadSeed === 'number' ? { localReadSeed } : {}),
     ...(awaitingAdmission === true ? { awaitingAdmission } : {}),
   };
 }
@@ -874,6 +889,7 @@ export function restoredConversationRow(
     serverReadWatermarks: meta.serverReadWatermarks,
     historyFloor: meta.historyFloor,
     startedAt: meta.startedAt,
+    localReadSeed: meta.localReadSeed,
     awaitingAdmission: meta.awaitingAdmission,
   });
 }
@@ -891,29 +907,79 @@ export function restoredConversationRow(
  * so a conversation with more unread messages than one page counts one page's worth: a lower bound,
  * over the rows the open thread first draws. See chat.md, "A DM's unread count is derived from
  * its read point at every load (2026-11-11)".
+ *
+ * A ROW THAT IS NOT `active` DERIVES 0: a removed or pending conversation can take no read mark
+ * (the receipt effect refuses it), so nothing could ever clear a badge given to it.
  */
 function bootUnreadCount(
   id: string,
-  convo: Pick<Conversation, 'messages' | 'readWatermarks' | 'serverReadWatermarks'>,
-  userId: string,
-  log: (msg: string) => void
+  convo: Pick<
+    Conversation,
+    'messages' | 'readWatermarks' | 'serverReadWatermarks' | 'localReadSeed' | 'lifecycle'
+  >,
+  userId: string
 ): number {
+  if (convo.lifecycle !== 'active') {
+    console.debug(`[RESTORE] ${id.slice(0, 8)} is ${convo.lifecycle} - unread 0, it takes no mark`);
+    return 0;
+  }
   const userNorm = userId.toLowerCase();
   const point = countingReadPoint(convo, userNorm);
   const count = derivedUnreadCount(convo, userNorm);
-  // One line per conversation that HAS a badge, saying which read point decided it; a row with
-  // nothing unread says nothing, so a boot over a hundred read conversations prints nothing.
+  // Per row at DEBUG only: the boot says ONE census line (`loadExistingConversations`).
   if (count > 0) {
-    log(
-      `[RESTORE] ${id.slice(0, 8)} unread ${count} of ${convo.messages.length} held, at ` +
-        (point.implied
-          ? 'the newest own message (no saved read point)'
-          : point.stamped > 0 || point.server > 0
-            ? 'the saved read point'
-            : 'no read point and no own message (first contact)')
+    console.debug(
+      `[RESTORE] ${id.slice(0, 8)} unread ${count} of ${convo.messages.length} held, read point: ${point.source}`
     );
   }
   return count;
+}
+
+/**
+ * THE UPGRADE'S ONE-TIME LOCAL SEED for one conversation (`ConversationMeta.localReadSeed`).
+ *
+ * Builds before 2026-11-11 counted only what arrived in a session, so a conversation never opened
+ * since read state became durable (2026-08-12) - a group read but never marked, a first contact
+ * ignored, anything read before the marks existed - has NO read point, and deriving its count from
+ * one would light up to a page of "unread" on every such row at the upgrade (owner: no flood on
+ * upgrade). So the FIRST load of this build, and only it, gives each row an older build wrote and
+ * that has no read point a LOCAL point at the newest message it already holds; a row with a read
+ * point is stamped 0. Written once and durable: a stored value, 0 included, is never seeded again,
+ * and a row first written by this build is born 0 (`saveConversation`), so what is new on this
+ * install is never seeded at all.
+ *
+ * LOCAL ONLY: it touches neither read-mark map and sends nothing - no receipt, no frame, no bundle
+ * ever carries it. Accepted consequence: a first contact never opened and held before the upgrade
+ * shows 0, as it did before.
+ *
+ * @param stored the page read from the store: what the device HELD. Not the row's list, which may
+ *   already carry a message delivered live during this boot - that one is new, and counts.
+ * @returns whether a point was seeded (> 0), for the load's census
+ */
+async function seedLocalReadPoint(
+  ctx: LoadConversationsContext,
+  meta: ConversationMeta,
+  stored: ChatMessage[]
+): Promise<boolean> {
+  if (parseLocalReadSeed(meta.localReadSeed) !== null) return false;
+  const row = ctx.conversations.get(meta.id);
+  if (!row) {
+    console.debug(`[RESTORE] ${meta.id.slice(0, 8)} left the map before its seed - not seeded`);
+    return false;
+  }
+  const localReadSeed = localReadSeedFor({ ...row, messages: stored }, ctx.userId.toLowerCase());
+  const next = { ...row, localReadSeed };
+  ctx.conversations.set(meta.id, next);
+  console.debug(
+    `[RESTORE] ${meta.id.slice(0, 8)} seeded: ${localReadSeed > 0 ? `local read point ${localReadSeed}` : '0 (it has a read point, or holds nothing)'}`
+  );
+  try {
+    await ctx.storage.saveConversation(toConversationMeta(meta.id, next, ctx.userId));
+  } catch (e) {
+    // The point holds for this session; the next load seeds again, over what it holds then.
+    console.error(`[RESTORE] ${meta.id.slice(0, 8)} seed not persisted: ${String(e)}`);
+  }
+  return localReadSeed > 0;
 }
 
 /**
@@ -1146,6 +1212,22 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         ctx.onArchiveReplaysSkipped?.(replayMetas.map((m) => m.id));
       }
 
+      // THE UNREAD CENSUS OF THIS LOAD, said in ONE line after the loop (per row at debug only).
+      const census = { seeded: 0, withBadge: 0, total: 0 };
+      const published = new Set<string>();
+      /** Assigns a row its derived count, ONCE per load, and adds it to the census. */
+      const publishBootCount = (id: string): void => {
+        const row = ctx.conversations.get(id);
+        if (!row || published.has(id)) return;
+        published.add(id);
+        const unreadCount = bootUnreadCount(id, row, ctx.userId);
+        ctx.conversations.set(id, { ...row, unreadCount });
+        if (unreadCount > 0) {
+          census.withBadge += 1;
+          census.total += unreadCount;
+        }
+      };
+
       for (const meta of mergedConvMetas) {
         // A SALON'S STORED PAGE IS KEPT (F4 of community-open-budget): it is the copy its next open
         // draws before the server page, which replaces it (`loadChannelHistory`). It used to be
@@ -1217,13 +1299,9 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           if (existing && msgs.length > 0) {
             // MERGED, NEVER ASSIGNED (`mergeMessagePage`): the rows are seeded before this read, so a
             // message delivered live since then is already on the row and is not in this page.
-            // THE COUNT IS DERIVED HERE TOO, before any network: a boot with no link (`unreachable`
-            // below) never reaches the recount after the replay, and its badges must not be 0.
-            const messages = mergeMessagePage(existing.messages, msgs);
             ctx.conversations.set(meta.id, {
               ...existing,
-              messages,
-              unreadCount: bootUnreadCount(meta.id, { ...existing, messages }, ctx.userId, ctx.log),
+              messages: mergeMessagePage(existing.messages, msgs),
             });
 
             // Restore reactions into the shared messageReactions map
@@ -1233,8 +1311,17 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               }
             }
           }
+          // THE UPGRADE'S LOCAL SEED, once per conversation an older build wrote, BEFORE any count
+          // and before the replay brings anything: what is held now is what the old count said
+          // nothing about, and what arrives from here on counts normally.
+          if (await seedLocalReadPoint(ctx, meta, msgs)) census.seeded += 1;
           // The stored page is drawn; the archive is owed elsewhere (said once, above the loop).
-          if (unreachable !== null) continue;
+          // OFFLINE, ITS COUNT IS THE ONE PUBLISHED - there is no replay to wait for. Online it is
+          // not published here: the replay's count follows, and the badge must not rise then fall.
+          if (unreachable !== null) {
+            publishBootCount(meta.id);
+            continue;
+          }
           // Fetch from network → decrypt → save to DB (no direct UI update)
           const commit = await replayConversationHistory({
             mlsService: ctx.mlsService,
@@ -1278,12 +1365,11 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             // a message delivered live while the replay ran is not in it, so counting the page alone
             // both dropped that message from the display and then wrote a badge that did not include
             // it - the same stale read, once as a loss and once as an undercount.
-            const messages = mergeMessagePage(current.messages, refreshedMsgs);
             ctx.conversations.set(meta.id, {
               ...current,
-              messages,
-              unreadCount: bootUnreadCount(meta.id, { ...current, messages }, ctx.userId, ctx.log),
+              messages: mergeMessagePage(current.messages, refreshedMsgs),
             });
+            publishBootCount(meta.id);
             for (const m of refreshedMsgs) {
               if (m.reactions && m.reactions.length > 0) {
                 ctx.messageReactions.set(m.id, m.reactions);
@@ -1292,8 +1378,15 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           }
         } catch (e) {
           ctx.log(`[WARN] Conversation load failed ${meta.id}: ${String(e)}`);
+          // The rows already held still say what is unread: a failed replay must not leave the
+          // badge at the 0 every row starts at - that is the defect this count replaces.
+          publishBootCount(meta.id);
         }
       }
+      ctx.log(
+        `[RESTORE] unread census: ${census.seeded} conversation(s) seeded with a local read point, ` +
+          `${census.withBadge} with a badge, ${census.total} unread in all`
+      );
       // Nothing to commit is said as `undefined`, so the helper owes no checkpoint for it.
       return pendingCommits.length > 0 ? pendingCommits : undefined;
     },

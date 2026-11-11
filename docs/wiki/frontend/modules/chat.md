@@ -4859,41 +4859,70 @@ next cold start found the message already held and counted 0. A load with no lin
 the server's count ([above](#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08));
 DMs and groups (the same loop - only salons skip it) never were.
 
-**The rule: the count is derived from durable state, never from what arrived this session.** At
-every load, after the stored page AND again after the replay, the row's count is
-`derivedUnreadCount` (`readState.ts`): the held messages `isUnreadForUser` calls unread at the
-`countingReadPoint`. The live writers ask the same point, so the `+1` they add is what the next load
-re-derives: `mergeFcmMessagesIntoConversations` (which used to add 1 for any foreign row, even one the
-shade had already marked read), both add paths of `useMessaging`, the `history_bundle` recount, and
-`withOwnReadAdvanced`.
+**The rule: the count is derived from durable state, never from what arrived this session.** A load
+assigns each row `derivedUnreadCount` (`readState.ts`): the held messages `isUnreadForUser` calls
+unread at the `countingReadPoint`. It is PUBLISHED ONCE per row (`publishBootCount`): online after the
+replay, offline after the stored page (there is no replay to wait for), and after a failed replay
+from what is held - never the stored page's count and then the replay's, which made the badge rise
+and fall. **A row that is not `active` derives 0**: a removed or pending conversation takes no read
+mark (the receipt effect refuses it, and a selection zeroes the count in memory only), so nothing
+could ever clear a badge given to it.
 
-**The read point, and the case with none.**
+The live writers ask the same point, so the `+1` they add is what the next load re-derives:
+`mergeFcmMessagesIntoConversations` (which used to add 1 for any foreign row, even one the shade had
+already marked read), both add paths of `useMessaging`, the `history_bundle` recount, and
+`withOwnReadAdvanced`. **Salons included**: the live add path and the salon self-mark ask
+`countingReadPoint` too, so a salon with no mark of this reader's does not count, on this device, a
+row older than the reader's own newest post; the server's count (`unread-counts`, merged at a
+reconnect) still does. Pinned by `readState.test.ts`, "PINS THE SALON BEHAVIOUR".
 
-| Saved mark | Own message held | Read point | Why |
-| --- | --- | --- | --- |
-| yes (either map) | any | the saved marks | the marks are what says "read" |
-| no | yes | the stamped time of my NEWEST own message | a reply is written with the thread open, so what came before it was on screen; this is what keeps a conversation last read before 2026-08-12 (no mark ever written) from showing a page of "unread" |
-| no | no | 0 - every foreign message counts | a first contact never opened: its messages ARE unread, and counting 0 here is the reported defect again |
+**The read point - ONE clock, the server's, for all it adds to the saved marks.**
 
-The residue, accepted: a conversation read before 2026-08-12, never replied to, and not opened since
-shows its held foreign messages once; opening it writes a mark and the count is 0 for good.
+| What applies | Server point | Why |
+| --- | --- | --- |
+| a saved mark (either map) | the saved marks, max the seed below | the marks are what says "read" |
+| the upgrade's local seed (`localReadSeed`) | the seed | see below |
+| no saved mark, an own message the server dated | its SERVER time, max the seed | a reply is written with the thread open, so what the server holds before it was on screen. The server's clock, never the author's: a phone an hour fast hid the peer's later answer, one an hour slow counted an earlier message (both cases tested). An own row not yet dated (queued) implies nothing |
+| none of them | 0 - every foreign message counts | a conversation new on this install, never opened, never answered: a first contact, which IS unread |
+
+**The upgrade's local seed - no flood on upgrade (owner).** Older builds counted only what a session
+received, so a group read but never marked, a first contact ignored, anything last read before the
+marks existed (2026-08-12) has no read point, and deriving its count would light up to a page of
+"unread" on every such row the day this build lands - archived rows too, since they feed the total.
+So the first load of this build, and only it, gives every conversation an older build wrote and that
+has no read point a LOCAL point at the newest message it already held (`seedLocalReadPoint`, over
+the stored page, not over a message delivered live during that boot); a row with a read point gets 0.
+It is a column of its own (`conversations.local_read_seed`, SQLite v20; the same field in
+IndexedDB), with three states the stores keep apart: NULL / absent = written by an older build, not
+considered yet (the migration leaves every existing row so); `0` = considered, never seeded again -
+and every row this build INSERTS is born 0, so what is new on this install is never seeded; `> 0` =
+the seed. A save that does not state the field keeps the row's (`CONVERSATION_LOCAL_READ_SEED_VALUE`,
+`localReadSeedStore.test.ts` on both backends). **It is local**: neither mark map moves, no frame or
+receipt is sent, no bundle carries it, and a backup import keeps the state it was exported with.
+Messages arriving after the seed count normally. **Accepted consequence:** a first contact never
+opened and held before the upgrade shows 0, as it did before.
 
 **History bundles** count only past the read point: the bundle carries the read marks (step 0 of
 `history_bundle`, persisted before the messages), so what was read on another device is covered. A
-bundle answering an ask (`addOnly`) carries no marks; its rows then count past the point above, as
-the live recount already did. **Own messages and system notices** never count (`isUnreadForUser`).
+bundle answering an ask (`addOnly`) carries no marks; its rows count past the point above.
+**Own messages and system notices** never count (`isUnreadForUser`).
 
 **One page, a lower bound - chosen, not a store count.** The count is taken over the rows HELD: the
 stored page (`INITIAL_MESSAGES_PAGE`, 60) merged with what arrived live. A conversation with more
 than a page unread shows a page's worth until it is opened. A store count would need a query in both
-backends (SQLite and IndexedDB) over encrypted rows for a badge that reads "many" either way; the
-page is also exactly the rows the open thread first draws.
+backends over encrypted rows for a badge that reads "many" either way.
 
-**Logs:** one `[RESTORE] <id> unread N of M held, at <which point>` per conversation with a badge;
-`[FCM_CACHE] message <id> is already covered by the read point - no badge` when a push row is not
-counted. Tests: `restoreUnreadCount.test.ts` (two cold starts against one store - five of seven fail
-on the old code), `readState.test.ts` ("the read point an unread count is taken at"),
-`fcmMemoryMerge.test.ts`. **Owed:** the owner's reading on the Android phone.
+**Logs:** ONE census line per load, `[RESTORE] unread census: N conversation(s) seeded with a local
+read point, N with a badge, N unread in all`; per row, at debug only, the count and the point that
+decided it (`saved`, `seed`, `own`, `none`) and the seed written. `[FCM_CACHE] message <id> is already
+covered by the read point - no badge` when a push row is not counted. Tests:
+`restoreUnreadCount.test.ts` (cold starts against one store: the reported defect, offline, skew both
+ways, non-active rows, no rise-then-fall, the seed written once, local, never on a row new on this
+install), `localReadSeedStore.test.ts`, `readState.test.ts`, `fcmMemoryMerge.test.ts`,
+`useMessaging.unreadReadPoint.svelte.test.ts` (both add paths), `systemMessageHandler.readState.test.ts`
+(the bundle recount); each fails on the code it replaced. **Owed:** the owner's reading on the
+Android phone.
+
 
 ## A community's salons have an order everyone shares, and a name that is only a name (2026-10-05)
 

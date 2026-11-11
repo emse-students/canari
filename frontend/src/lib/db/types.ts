@@ -57,6 +57,19 @@ export interface ConversationMeta {
    * or the ask expired). Absent on rows written before it existed, which reads as `false`.
    */
   awaitingAdmission?: boolean;
+  /**
+   * THE UPGRADE'S LOCAL READ SEED (2026-11-11), on the server clock (`messageTime`): the newest
+   * message this device already held when the first build to derive unread counts from the read
+   * point found this conversation with no read point of its own. Counted as read on THIS device only
+   * - never a read mark, never a receipt, never in a bundle (`countingReadPoint`).
+   *
+   * Three states, and the storage keeps them apart:
+   * - `null` / absent - a row written by an older build, not considered yet: the next load seeds it;
+   * - `0` - considered, nothing seeded (it had a read point, or it is new on this install); never
+   *   seeded again. A row first inserted by this build is born `0` (`saveConversation`);
+   * - `> 0` - the seed.
+   */
+  localReadSeed?: number | null;
 }
 
 /**
