@@ -44,6 +44,7 @@ import {
   type DecodedChunk,
 } from './audioTimeline';
 import { declareMp4Duration } from '$lib/utils/mp4Duration';
+import { LoudnessMeter, type MediaLoudness } from './loudnessMeter';
 
 /**
  * How far past `maxSeconds` a source may run and still be accepted. A recorder told to stop at 90 s
@@ -141,6 +142,13 @@ export interface PreparedVideo {
   /** The source's size and the output's, for the log line and the caller's own. */
   sourceBytes: number;
   outputBytes: number;
+  /**
+   * The sound's integrated loudness and sample peak, measured on the decoded source over the kept
+   * window (`loudnessMeter.ts`) - what a reader's player normalises to (`MediaRef.loudness`).
+   * `null` with no audio track, with the sound removed, for silence, or when the measure could not
+   * run (said in the console; never a refusal of the video).
+   */
+  loudness?: MediaLoudness | null;
 }
 
 /** The output's name: the source's stem, `.mp4`. */
@@ -411,15 +419,24 @@ export async function prepareVideoForUpload(
     if (signal?.aborted) throw new VideoPrepareError('aborted', 'video preparation aborted');
 
     if (onProgress) conversion.onProgress = (fraction) => onProgress(fraction);
+    // THE LOUDNESS IS MEASURED WHILE THE CONVERSION RUNS (owner, 2026-11-11): one decode of the
+    // audio alone, in parallel with the video encode, so it costs the send next to nothing; it never
+    // rejects (a failure is `null`, said), so it can be awaited after the conversion as it ended.
+    const measuring = keptAudio
+      ? measureLoudness(mb, keptAudio, { start: windowStart, end: windowEnd, signal })
+      : Promise.resolve(null);
     try {
       await conversion.execute();
     } catch (e) {
+      await measuring;
       if (e instanceof mb.ConversionCanceledError || signal?.aborted) {
         throw new VideoPrepareError('aborted', 'video preparation aborted', { cause: e });
       }
       console.error('[video-prep] the encoder failed', e);
       throw new VideoPrepareError('encode', 'video: the encoder failed', { cause: e });
     }
+    // Awaited before any later refusal, so the input is never disposed under a decode still reading.
+    const loudness = await measuring;
 
     const buffer = output.target.buffer;
     if (!buffer) {
@@ -457,6 +474,7 @@ export async function prepareVideoForUpload(
       durationSeconds,
       sourceBytes: source.size,
       outputBytes: buffer.byteLength,
+      loudness,
     };
   } catch (e) {
     if (isVideoPrepareError(e)) {
@@ -549,6 +567,65 @@ async function placeAudioHoles(
   const paired = pairedPackets(packetTimes, decoded);
   if (!paired) return { kind: 'unanchored', firstChunk: decoded[0].timestamp };
   return audioHoleMap(paired, decoded);
+}
+
+/**
+ * The integrated loudness of `track` over the conversion's window, from ONE decode of the audio
+ * alone (`AudioSampleSink`), each chunk copied to planar floats and fed to {@link LoudnessMeter}.
+ * Runs beside the conversion; never throws: a decoder failure, a stream whose format changes
+ * mid-way or a cancel is `null`, said at the level its cause deserves.
+ */
+async function measureLoudness(
+  mb: typeof import('mediabunny'),
+  track: import('mediabunny').InputAudioTrack,
+  window: { start: number; end: number; signal: AbortSignal | undefined }
+): Promise<MediaLoudness | null> {
+  const started = performance.now();
+  let meter: LoudnessMeter | null = null;
+  let planes: Float32Array[] = [];
+  let frames = 0;
+  try {
+    const end = Number.isFinite(window.end) ? window.end : undefined;
+    for await (const s of new mb.AudioSampleSink(track).samples(window.start, end)) {
+      try {
+        if (window.signal?.aborted) return null;
+        meter ??= new LoudnessMeter(s.sampleRate, s.numberOfChannels);
+        if (s.sampleRate !== meter.sampleRate || s.numberOfChannels !== meter.channelCount) {
+          console.warn(
+            `[video-prep] loudness NOT measured: the audio changed format mid-stream` +
+              ` (${meter.sampleRate} Hz x${meter.channelCount} -> ${s.sampleRate} Hz x${s.numberOfChannels})`
+          );
+          return null;
+        }
+        if (planes.length === 0 || planes[0].length < s.numberOfFrames) {
+          planes = Array.from(
+            { length: meter.channelCount },
+            () => new Float32Array(s.numberOfFrames)
+          );
+        }
+        for (let c = 0; c < meter.channelCount; c++) {
+          s.copyTo(planes[c], { planeIndex: c, format: 'f32-planar' });
+        }
+        meter.push(planes, s.numberOfFrames);
+        frames += s.numberOfFrames;
+      } finally {
+        s.close();
+      }
+    }
+  } catch (e) {
+    console.warn('[video-prep] loudness NOT measured: the audio decoder failed', e);
+    return null;
+  }
+  const result = meter?.result() ?? null;
+  const seconds = meter ? frames / meter.sampleRate : 0;
+  console.debug(
+    `[video-prep] loudness: ` +
+      (result
+        ? `${result.integratedLufs.toFixed(1)} LUFS, sample peak ${result.samplePeakDbfs.toFixed(1)} dBFS`
+        : 'none (silence, or under one 400 ms block)') +
+      `, ${seconds.toFixed(1)} s measured in ${Math.round(performance.now() - started)} ms`
+  );
+  return result;
 }
 
 /** The codec string of AAC-LC, the one audio format the output carries. */

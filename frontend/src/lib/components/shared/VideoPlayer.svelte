@@ -31,6 +31,8 @@
   } from '$lib/actions/playWhileVisible';
   import { arbitratePlayback } from '$lib/actions/playbackArbiter';
   import { feedAutoplayPermitted } from '$lib/video/autoplayPolicy';
+  import { attachLoudnessGain } from '$lib/video/loudnessPlayback';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
   import { captureVideoFrame } from '$lib/utils/videoFrameBackdrop';
   import BlurredBackdrop from './BlurredBackdrop.svelte';
   import { videoSound } from '$lib/stores/videoSound.svelte';
@@ -213,6 +215,12 @@
      * next reel preloads.
      */
     onPlaybackBlocked?: (cause: AutoplayBlockCause | 'unplayable') => void;
+    /**
+     * The video's sound as its author's device measured it (`MediaRef.loudness`): the player brings
+     * it toward one loudness through Web Audio (`loudnessPlayback.ts`, owner 2026-11-11). Absent (a
+     * video sent before, a live replay) it plays exactly as it always did.
+     */
+    loudness?: MediaLoudness | null;
   }
 
   let {
@@ -236,6 +244,7 @@
     onVideo,
     backdrop = false,
     positionKey,
+    loudness = null,
   }: Props = $props();
 
   /** The key positions travel under (`positionKey`, else the URL). */
@@ -292,6 +301,13 @@
   $effect(() => {
     if (!video || !onVideo) return;
     return onVideo(video) ?? undefined;
+  });
+
+  // ONE LOUDNESS FOR EVERY VIDEO (owner, 2026-11-11): the measured gain, routed the first time the
+  // element is audible - a muted autoplay never asks for the AudioContext - and released on unmount.
+  $effect(() => {
+    if (!video) return;
+    return attachLoudnessGain(video, loudness);
   });
 
   /**

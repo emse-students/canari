@@ -14,6 +14,7 @@
 
 import { canari } from './canari.js';
 import type { MediaRef } from '$lib/media';
+import { isMediaLoudness, type MediaLoudness } from '$lib/video/loudnessMeter';
 import { SEGMENTED_MEDIA_ENCODING } from '$lib/mediaSegmented';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 
@@ -134,6 +135,37 @@ export function mediaReelFromProto(media: IMediaMsg): MediaReelDeclaration {
     ...(duration > 0 ? { durationMs: duration } : {}),
     ...(expires > 0 ? { expiresAtMs: expires } : {}),
   };
+}
+
+/**
+ * The `MediaMsg.loudness` field for a measured video, to spread into `mkMedia` - written ONLY when
+ * there is a measurement, so every other attachment encodes byte for byte as before.
+ */
+export function mediaLoudnessProtoField(loudness?: MediaLoudness): {
+  loudness?: { integratedLufs: number; samplePeakDbfs: number };
+} {
+  return isMediaLoudness(loudness)
+    ? {
+        loudness: {
+          integratedLufs: loudness.integratedLufs,
+          samplePeakDbfs: loudness.samplePeakDbfs,
+        },
+      }
+    : {};
+}
+
+/**
+ * A decoded `MediaMsg.loudness` as the `MediaRef` carries it, or nothing: absent (every message
+ * before it), or values no real signal gives (`isMediaLoudness`) - the video then plays as it is.
+ */
+export function mediaLoudnessFromProto(media: IMediaMsg): { loudness?: MediaLoudness } {
+  const raw = media.loudness;
+  if (!raw) return {};
+  const loudness = {
+    integratedLufs: Number(raw.integratedLufs ?? 0),
+    samplePeakDbfs: Number(raw.samplePeakDbfs ?? 0),
+  };
+  return isMediaLoudness(loudness) ? { loudness } : {};
 }
 
 // ─── Transport layer ──────────────────────────────────────────────────────────

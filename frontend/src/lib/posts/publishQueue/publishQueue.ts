@@ -51,6 +51,7 @@
 import type { CreatePostPayload, PostMediaRef } from '$lib/posts/api';
 import { reelDeclarationFor, type ReelRule } from '$lib/reels/reelRule';
 import type { ImageDimensions, MediaRef } from '$lib/media';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import type { OutboxResumableUpload } from '$lib/db/types';
 import type { ResumableBlobEncoding } from '$lib/utils/resumableUpload';
 import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
@@ -120,7 +121,13 @@ export interface PublishQueueDeps {
     file: File,
     onProgress: (fraction: number) => void,
     signal: AbortSignal
-  ) => Promise<{ file: File; dims?: ImageDimensions; durationMs?: number; placeholder?: string }>;
+  ) => Promise<{
+    file: File;
+    dims?: ImageDimensions;
+    durationMs?: number;
+    placeholder?: string;
+    loudness?: MediaLoudness;
+  }>;
   /**
    * The served CanaReel rule (`reelRuleOf` of `GET /api/posts/reel-limits`), or `null` from an estate
    * older than it - then no post becomes a reel, as there. A failure to ask is a failure of the
@@ -600,6 +607,7 @@ export class PublishQueue {
             dims,
             durationMs,
             placeholder,
+            loudness,
           } = await this.deps.prepare(
             new File([original.bytes], original.name, { type: original.type }),
             (f) => this.setView(post, { phase: 'preparing', index: i, step: f }),
@@ -614,6 +622,7 @@ export class PublishQueue {
             ...(dims?.height ? { height: dims.height } : {}),
             ...(durationMs ? { durationMs } : {}),
             ...(placeholder ? { placeholder } : {}),
+            ...(loudness ? { loudness } : {}),
           };
           if (!(await this.deps.store.update(post, { index: i, file }))) return 'gone';
           this.deps.log(
@@ -655,6 +664,7 @@ export class PublishQueue {
         media.ref = {
           ...ref,
           ...(prepared.placeholder ? { placeholder: prepared.placeholder } : {}),
+          ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
           ...(media.caption ? { caption: media.caption } : {}),
         } as PostMediaRef;
         if (!(await this.deps.store.update(post))) return 'gone';

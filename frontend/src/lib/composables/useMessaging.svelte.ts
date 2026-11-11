@@ -2163,6 +2163,7 @@ export function useMessaging() {
             caption: captionForFile,
             ...(entry.voiceNote ? { voiceNote: true } : {}),
             ...(entry.durationMs ? { durationMs: entry.durationMs } : {}),
+            ...(entry.loudness ? { loudness: entry.loudness } : {}),
           };
           // The quote the placeholder row is drawn with (the real envelope is built from the same
           // reference once the upload names the blob).
@@ -2606,6 +2607,8 @@ export function useMessaging() {
         height: prepared.height,
         // Declared with the message (owner, 2026-11-10): whole ms, never 0 ("not declared").
         durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
+        // Declared with the message: what the reader's player normalises to (owner, 2026-11-11).
+        ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
       };
     } catch (e) {
       if (!isVideoPrepareError(e)) throw e;
