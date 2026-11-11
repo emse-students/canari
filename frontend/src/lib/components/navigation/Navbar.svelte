@@ -45,6 +45,7 @@
 -->
 <header
   data-swipe-nav-ignore
+  data-guide-chrome
   class="app-top-bar border-cn-border sticky top-0 z-20 hidden h-(--app-top-bar-height) shrink-0 border-b bg-(--surface-elevated) md:block"
 >
   <div class="flex h-full items-center justify-between gap-3 px-4 py-2 md:px-6">

@@ -26,11 +26,36 @@ export interface BubblePosition {
   readonly side: 'top' | 'bottom' | 'left' | 'right' | 'center';
 }
 
-/** The room on each side of the target, inside the viewport. */
-function room(target: GuideRect, viewport: Viewport) {
+/**
+ * The vertical band a bubble may occupy: the viewport minus the bars fixed at its edges (the phone
+ * header, the bottom tab bar). `top` and `bottom` are viewport y coordinates.
+ */
+export interface Band {
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/**
+ * The band left once the bars are taken out, from their REAL boxes: a bar whose centre is in the
+ * upper half of the viewport takes the top edge, one in the lower half the bottom edge. A bar that
+ * has no height (hidden at this layout) takes nothing, so the band is the viewport on a desktop.
+ */
+export function usableBand(viewportHeight: number, bars: readonly GuideRect[]): Band {
+  let top = 0;
+  let bottom = viewportHeight;
+  for (const bar of bars) {
+    if (bar.height <= 0) continue;
+    if (bar.top + bar.height / 2 < viewportHeight / 2) top = Math.max(top, bar.top + bar.height);
+    else bottom = Math.min(bottom, bar.top);
+  }
+  return { top, bottom: Math.max(top, bottom) };
+}
+
+/** The room on each side of the target, inside the band (vertical) and the viewport (horizontal). */
+function room(target: GuideRect, viewport: Viewport, band: Band) {
   return {
-    top: target.top,
-    bottom: viewport.height - (target.top + target.height),
+    top: target.top - band.top,
+    bottom: band.bottom - (target.top + target.height),
     left: target.left,
     right: viewport.width - (target.left + target.width),
   };
@@ -46,7 +71,8 @@ export function placeBubble(
   viewport: Viewport,
   placement: GuidePlacement,
   gap: number,
-  gutter: number
+  gutter: number,
+  band: Band = { top: 0, bottom: viewport.height }
 ): BubblePosition {
   if (!target) {
     return {
@@ -56,14 +82,14 @@ export function placeBubble(
         viewport.width - bubble.width - gutter
       ),
       top: clamp(
-        (viewport.height - bubble.height) / 2,
-        gutter,
-        viewport.height - bubble.height - gutter
+        (band.top + band.bottom - bubble.height) / 2,
+        band.top + gutter,
+        band.bottom - bubble.height - gutter
       ),
       side: 'center',
     };
   }
-  const r = room(target, viewport);
+  const r = room(target, viewport, band);
   const fitsV = (space: number) => space >= bubble.height + gap + gutter;
   const fitsH = (space: number) => space >= bubble.width + gap + gutter;
   let side: 'top' | 'bottom' | 'left' | 'right';
@@ -78,36 +104,39 @@ export function placeBubble(
   } else if (fitsH(r.left)) {
     side = 'left';
   } else {
-    // Nowhere fits whole: the larger vertical side, clamped, which keeps the target's row visible.
-    side = r.bottom >= r.top ? 'bottom' : 'top';
+    // Nowhere fits whole. A target running past the band's bottom (a tall form block) takes the
+    // bubble INSIDE it at the band's bottom edge - above it would cover the header and the page
+    // title; otherwise the larger vertical side, clamped, which keeps the target's row visible.
+    side = r.bottom < 0 || r.bottom >= r.top ? 'bottom' : 'top';
   }
   const centreX = target.left + target.width / 2 - bubble.width / 2;
   const centreY = target.top + target.height / 2 - bubble.height / 2;
   const maxLeft = viewport.width - bubble.width - gutter;
-  const maxTop = viewport.height - bubble.height - gutter;
+  const minTop = band.top + gutter;
+  const maxTop = band.bottom - bubble.height - gutter;
   switch (side) {
     case 'bottom':
       return {
         left: clamp(centreX, gutter, maxLeft),
-        top: clamp(target.top + target.height + gap, gutter, maxTop),
+        top: clamp(target.top + target.height + gap, minTop, maxTop),
         side,
       };
     case 'top':
       return {
         left: clamp(centreX, gutter, maxLeft),
-        top: clamp(target.top - gap - bubble.height, gutter, maxTop),
+        top: clamp(target.top - gap - bubble.height, minTop, maxTop),
         side,
       };
     case 'right':
       return {
         left: clamp(target.left + target.width + gap, gutter, maxLeft),
-        top: clamp(centreY, gutter, maxTop),
+        top: clamp(centreY, minTop, maxTop),
         side,
       };
     case 'left':
       return {
         left: clamp(target.left - gap - bubble.width, gutter, maxLeft),
-        top: clamp(centreY, gutter, maxTop),
+        top: clamp(centreY, minTop, maxTop),
         side,
       };
   }

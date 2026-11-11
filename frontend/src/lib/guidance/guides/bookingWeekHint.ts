@@ -14,7 +14,8 @@ export const isBookingSpacePage = (pathname: string): boolean => SPACE_PAGE.test
  * read has landed (`loaded`), so the help never starts on an empty, dimmed grid and a failed read
  * (which draws the error line instead) leaves both steps out. The column step exists only for a
  * space with several columns, the very condition that draws the selector. The week step points at
- * the grid (wide) or the planning list (phone) - one element, `data-week-grid` - and says what the
+ * the grid (wide) or the phone's "+" button - each marked by its own render condition, never on an
+ * empty week - and says what the
  * sheet it opens lets a first-timer do. No `replay`: one route per space.
  */
 export const bookingWeekHint: GuideDefinition = {
@@ -31,7 +32,12 @@ export const bookingWeekHint: GuideDefinition = {
     },
     {
       id: 'week',
-      anchor: 'bookings.week',
+      // The control the text names: the phone's icon-only "+" (sticky, above the bar), the wide
+      // screen's grid. Each is marked only where it is drawn, so an empty week leaves the step out.
+      anchor: {
+        byLayout: (layout) => (layout.phone ? 'bookings.week.add' : 'bookings.week'),
+      },
+      placement: { byLayout: (layout) => (layout.phone ? 'top' : 'auto') },
       icon: CalendarPlus,
       title: m.guide_hint_booking_week_title,
       body: {
