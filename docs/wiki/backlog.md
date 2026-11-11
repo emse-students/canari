@@ -59,203 +59,6 @@ Left by the review of #2544. Start after the tier stack (#2544 and its followers
   stay correct, and a cashier is present. Compute the default inside the locked transaction, both
   branches ([cotisations](cotisations.md#c-manual-grant-from-the-cotisations-tab-cash--retroactive)).
 
-## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
-
-**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 IN PRODUCTION since `v1.6.1` (#2859, migrations 121 and 123; hardened by #2917, and #2920 made the posts of lists and members-only associations non-repostable).** Today following a person is free and
-silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
-author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
-[profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
-
-### The decisions
-
-1. **Member reposts.** A member may republish another member's post to THEIR OWN followers, with
-   the AUTHOR's consent: an "allow reposts" setting, per author or per post. A post of an
-   association or an institution that addresses at least one space is reposted without asking;
-   never the post of a list or of a members-only association (owner, 2026-11-02). Never an anonymous post. A block
-   applies both ways. Hiding the original removes every repost. Same rules for reels. A repost
-   enters the Suivis feed of the reposter's followers at the time of the repost; a notification goes
-   only to readers who NEWLY see the post (the D38 rule).
-2. **Follow requests.** Following a PERSON becomes a request the person accepts or refuses.
-   Associations, lists and institutions stay free to follow, with no acceptance phase. Students are
-   PRIVATE by default (requests to approve), every other profile public (accepted automatically);
-   each user may change their own setting.
-3. **Existing follows are kept**, recorded as accepted. Every user gets a followers list with a
-   "remove follower" action. The processing goes into the register (C5) and the privacy policy.
-4. **Visibility opens to accepted followers.** The user: *"Si on garde le systeme d'acceptation,
-   pas la peine d'avoir des barrieres, meme entre espace, campus, formation etc. On peut ouvrir les
-   vannes de visibilite je pense."* With acceptance in place, a personal post is visible to its
-   author's ACCEPTED followers whatever their space, campus or formation, and the D34-D36 rule
-   "personnel never see a student's personal post"
-   ([profiles-and-access](profiles-and-access.md#d34-d36---who-is-who)) no longer holds for a
-   personnel the student accepted. Read grants (WP7) stay out of the personal branch.
-5. **The opening reaches ONLY accepted followers** (user, 2026-10-25, answering the lead's open
-   question). The Tout feed stays filtered by spaces for non-followers, so what widens is exactly
-   what the author approved, one person at a time.
-
-### Follow requests: the four product rules taken on 2026-10-25, all of it still to build
-
-- **Q1 - ALL PERSONAL ACCOUNTS ARE PRIVATE** (user: *"Tous les comptes sont prives alors. Pas besoin
-  de faire de distinctions entre les comptes."*). Following any PERSON is a request the person
-  accepts; there is no public/auto-accept variant, no per-profile default and no setting to switch
-  it. Entities (associations, lists, institutions) stay free to follow. "Private" governs who may
-  FOLLOW; space visibility of the Tout feed is unchanged. This SUPERSEDES decision 2's "students
-  private by default, every other profile public, each user may change it" and removes the setting
-  from WP-F1.
-- **Q2 - A member's repost of an ENTITY post DOES widen its audience** to the reposter's followers
-  (user: "Oui, jusqu'aux abonnes du membre"). The repost still needs no consent from the entity,
-  never covers an anonymous post, and obeys blocks both ways and the hide cascade. WP-F6 and WP-F5
-  must treat it as a disclosure change: Opus security review, and the repost's reach is the
-  reposter's ACCEPTED followers only.
-- **Q3 - Minors: moot.** With one rule for every person, no age-based or profile-based distinction
-  exists to confirm; none is stored or added.
-- **Q4 - A private account stays findable** by name in search and suggestions and can be asked; its
-  posts reach only accepted followers (plus the space rule, per Q1).
-
-### Confirmed by scenario with the user (2026-10-25) and three ideas that came with it
-
-Checked with four cases: a student asks a student, a staff member asks a student (same rule, no
-exception by profile), two people sharing a space still see each other's posts in the space feed
-without following, and a member's repost (author consent given) reaches the reposter's followers
-even when they do not follow the author. **New, from the same answers:** (a) the "Tout" tab renamed "Mon espace" and (b) the information
-button explaining each tab are BUILT (#2857); (b) now MOVES into guided help as a hint on the tab
-bar, and (c) a broader tutorial on the first open after an update is decided as the "what's new"
-help, both in [guided-help](frontend/guided-help.md#owner-decisions-of-2026-11-03).
-
-### The work packages, in order: one small pull request each, its starting point and its proof
-
-Planned 2026-10-27 against `main` at `a97e1cea5`. **Releases, not merges, are the unit that
-matters here:** WP-F1 to WP-F4 and WP-F7 reach users in ONE stable - F1 alone would turn every new
-follow into a request nobody can answer - and that stable carries a data migration, so it ships on
-the user's go. WP-F5 and WP-F6 each follow in a LATER stable. **The two packages marked DISCLOSURE
-(F5, F6) get an adversarial Opus security review before the lead arms them**; the others get the
-ordinary review.
-
-- **WP-F1 - the data model, the migration, and every reader counting accepted rows only. BUILT,
-  draft pull request #2589.** Migration 114 adds `user_follows.status` (`pending` / `accepted`, a
-  CHECK) with every existing row `accepted` (decision 3), then sets the default to `pending` so a
-  writer that forgets the column fails closed; a partial index on what is pending FOR a person
-  serves F2's inbox. `POST /api/posts/users/:id/follow` now writes a `pending` request and answers
-  `{ ok, status }`; `DELETE` unfollows or withdraws; `GET .../follow-status` answers
-  `{ following, status }` (`following` kept true for a request, for older clients -
-  [legacy-compatibility](legacy-compatibility.md)). NO setting (Q1). Old WP-F2 is folded in, because
-  a pending row read as a follow would be a leak the day F1 merges: the Suivis arm
-  (`getFollowedUserIdsForUser`), the announce sweep (`announceRecipientsSql(true)`), the personal
-  republication's newly-reached rule and the live push (`liveAudienceSql`) all AND ONE fragment,
-  `acceptedFollowSql` (`follows/follow-status.ts`); the erasure and the block severing delete
-  whatever the status. Proof: `user-follow-status.integration.spec.ts` (existing rows accepted,
-  replay a no-op, a status-less insert pending, the CHECK), a pending follower in the reader-spaces,
-  personal-republication and lives PostgreSQL specs - all three fail when the fragment is `TRUE` -
-  and `follows.service.spec.ts` (a follow lands pending, a re-ask never downgrades an accepted one).
-  Details: [social-service](services/social-service.md#a-follow-of-a-person-is-a-request-first-wp-f1-migration-114-decided-2026-10-25).
-- **WP-F2 - the request API: inbox, accept, refuse, and the one notification. BUILT, draft pull
-  request #2601, stacked on #2589.** Start:
-  `follows/follows.service.ts`, `posts/posts.controller.ts` (the follow routes), the D38b request
-  queue in `posts/personal-republications.service.ts` for the shape. `GET` the pending requests FOR
-  the caller (the partial index of 114), `POST .../accept` (pending -> accepted, under a row lock so
-  a concurrent withdraw cannot be accepted), `POST .../refuse` (the row is deleted; a refusal tells
-  nobody and does not stop a later ask). A new request notifies ONE person through the existing
-  `PostNotificationsService` (a `follow_request` type: a bell row and a push, `contentKey` for the
-  native renderers, NOT in `MUTABLE_PUSH_TYPES`); an acceptance notifies the requester
-  (`follow_accepted`) - each at most ONCE per pair, from a `user_follow_notices` row (never a
-  clock), and the ask route is throttled per caller. An ask of an id that is not a person is 404
-  `FOLLOW_TARGET_NOT_FOUND`, an ask across a block 403 `FOLLOW_BLOCKED`, both decided inside the one
-  `INSERT ... SELECT`. The block severing deletes both directions whatever the status, and the
-  request bell rows with them: a spec pins it.
-  Proof: unit specs for each transition, a PostgreSQL spec for accept-vs-withdraw, the
-  `post-notifications` spec for the two types, and the block case.
-- **WP-F3 - the followers list and "remove follower". BUILT, draft pull request #2605, stacked
-  on #2601.** `GET` my ACCEPTED followers (a person sees
-  only their own list), `DELETE` one of them (the row goes, the removed person is told nothing and
-  may ask again), and `GET` my own outgoing requests so a request can be withdrawn from a list.
-  Start: `FollowsService`, the controller. Proof: a spec that a removed follower drops out of the
-  Suivis arm, the announce and the live push at once (the F1 readers), and that one person cannot
-  read another's list.
-- **WP-F4 - the client screens, every string through Paraglide (`messages/fr.json` and `en.json`).
-  BUILT, draft pull request #2616 (stacked on #2605).** As built: the inbox is
-  `/notifications/follow-requests` (banner on `/notifications`, host `follow-requests`); "Mes
-  abonnes" is the profile section `followers`, with the sent requests under it; the push renderers
-  were F2's; a `follows` notification category with its switch; the rig row is FOL-REQ-1 on
-  [cross-client-testing](cross-client-testing.md). The plan as written:
-  The profile button in three states (Suivre / Demande envoyee / Abonne(e)), reading `status`; the
-  request inbox beside the D38b requests in the notifications screen (accept / refuse); "Mes
-  abonnes" with "Retirer" in the profile; the bell rows of `follow_request` / `follow_accepted`
-  and their push renderers (Kotlin, Swift, web). Start:
-  `frontend/src/routes/profile/[id]/+page.svelte:175`, `frontend/src/lib/posts/api.ts:669`.
-  Proof: component tests, `bun run check`, and a rig row (two contexts: ask, see "Demande envoyee",
-  accept, see the posts in Suivis; remove, stop seeing). Retires nothing yet: `following` stays
-  until the floor passes this stable.
-  **Left open by the 2026-10-27 review, each owed before the item it names:**
-  - **Pagination of the three lists, a PRECONDITION OF WP-F5 - BUILT 2026-10-31 on the WP-F5 pull
-    request**: cursor paging, server and client ([as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)).
-  - **P3 - an older build that saves its switches turns `follows` back on.** The client keeps only
-    the categories it knows when it reads the disabled set (`fetchNotificationPreferences` filters
-    through `isNotificationCategory`) and the PUT REPLACES the set, so a build older than WP-F4
-    that saves any switch silently re-enables `follows` - and the same holds for every category
-    added after a build shipped. The server cannot tell what the caller knew: the fix is a client
-    that sends the categories it knows (`known`) so the server keeps the rest, and it protects only
-    builds that send it - the floor (`minClientVersion`) closes the rest. Measured: not yet; the
-    window is a person who turned `follows` off on a new build and then saves a switch on an old one.
-  - **Should `minClientVersion` move with this stable?** A build older than WP-F4 reads
-    `following: true` for a PENDING request (the legacy field, [legacy-compatibility](legacy-compatibility.md)),
-    so it shows "Suivi" for an ask nobody has answered, and it has no inbox to answer one. Nothing
-    leaks - the reader filters are server-side - but the person asked can only answer from a new
-    build. A decision for the user when the stable is cut, with the share of old clients measured
-    from the version header then.
-  - **A row the block severing missed came back when the block was lifted - FIXED 2026-10-31 on
-    the WP-F5 pull request (F2 of its review)**: the unblock severs the pair before lifting the
-    block and is refused while it cannot ([as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31)).
-  - **Owner decision - a re-ask after a refusal rewrites the target's unread bell row** (no push,
-    one row per pair, but no cap on how often it is rewritten). Product decision 3; left as built.
-- **WP-F5 - the visibility opening to ACCEPTED followers (DISCLOSURE: Opus security review before
-  arming). MERGED as #2827, ships in `1.5.4`** (owner reconfirmed 2026-10-31):
-  [as built](profiles-and-access.md#wp-f5---accepted-followers-read-across-spaces-as-built-2026-10-31),
-  the policy paragraph and register C5/C19 in the same pull request. The one-time notice is
-  WAIVED (owner, 2026-10-31: *"Non, ouvrir directement"*); the three follow lists now page by
-  cursor; the security review's F2-F6 are fixed on the same pull request; F1 is DECIDED (owner,
-  2026-11-01: *"Ouvrir à tous les abonnés"*): follows made before follow requests existed open
-  across spaces like answered ones. **Still owed before it arms**: the review's re-read. The plan as written: Add an accepted-follower disjunct to the personal branch of `postVisibleToUserSql`
-  (`spaces/reader-spaces.ts`), reusing `acceptedFollowSql`; NEVER for an anonymous post (following
-  someone must not unmask what they posted anonymously), never through a read grant, and monotone
-  for the newly-reached computation; the Tout feed stays filtered by spaces for everyone else
-  (decision 5). Ships only in a stable AFTER the one carrying F3 and F4, with a one-time notice to
-  every person that their followers will see their posts across spaces, so the grandfathered
-  followers can be pruned first. Proof: an integration matrix (accepted / pending / none x same
-  space / other space x personal / anonymous / association post), the read-grants spec unchanged,
-  and the privacy-policy paragraph in the same pull request.
-- **WP-F6 - member reposts with the author's consent, reels included (DISCLOSURE: Opus security
-  review before arming). IN PRODUCTION since `v1.6.1` (#2859, migration 121), hardened by #2917 (migration 123); since #2920 the posts of lists and members-only associations are not repostable**
-  ([as built](profiles-and-access.md#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01));
-  it changed who sees what, and shipped on the owner's go. The plan as
-  written: The consent setting (per author, per post); the SQL beside the
-  republication kinds (`posts/republication-sql.ts`, entity-only today); the consent check modelled
-  on `posts/personal-republications.service.ts`; an ENTITY post reposted without consent but
-  reaching the reposter's ACCEPTED followers only (Q2); never an anonymous post; blocks both ways;
-  the cascades (hide, delete, block, erasure); feed placement in Suivis at the repost time; the
-  D38 newly-reached notification; the share action in `frontend/src/lib/posts/sharePost.ts`.
-  Proof: the D38b refusal list re-run for a member reposter, a hide removing every repost, a
-  notification only for the newly reached, and the policy paragraph in the same pull request.
-- **WP-F7 - the register and the privacy policy for follow requests. DONE 2026-11-02.** The text
-  rode with the code: register C5 and the `/legal/privacy` paragraphs (follows, member reposts,
-  retention table) arrived in the F5 and F6 pull requests, and this package re-read them against
-  the code (the `FOLLOW_ASKS_PER_DAY` cap of 50, the notice row kept until an erasure, the refusal
-  and withdrawal deletes, the F6 consent default ON, the erasure deletes of `member_reposts` and
-  `user_repost_settings`) and found them exact; #2917 and #2920 had already amended C5 and the
-  privacy page in step ("notified, or announced to, through a repost"; lists and members-only
-  associations not repostable), so this package changes neither. The terms (`/legal/cgu`) name followers only for
-  lives and need nothing; the D37-D41 table of
-  [profiles-and-access](profiles-and-access.md#d37-d41---what-each-surface-shows) was the one stale
-  line, now corrected.
-
-### Risks, and what proves each away
-
-- **Disclosure.** WP-F5 widens who reads a personal post. Grandfathered follows were never
-  consented to, so the predicate change must not land before the followers list and "remove
-  follower" are live, and each user should be told once that followers now see their posts across
-  spaces. Proof: WP-F5's matrix, and the Opus review.
-- **Notification volume.** A follow request is one push to one person; a repost notifies only the
-  newly reached, under the D38 lock, so a repost of a widely seen post notifies almost nobody.
-  Proof: the newly-reached spec counting zero for readers who already saw the post.
-
 ## P3 - what the 1.4.1 dev campaign left unexplained or noisy (2026-10-25, alpha.4)
 
 Each is a log or console line the campaign met and no row asserts on. NOISE IS NEVER ACCEPTABLE
@@ -621,6 +424,7 @@ When creation fails between the remote group's creation and the creator's regist
 client's cleanup `DELETE mls/groups/:id` is now answered 403 `NOT_A_MEMBER` (the creator holds no
 seat yet), so the empty row stays. Owed: a server-side path that ends a group nobody ever joined
 (the creator's own bootstrap, or the orphan sweep), with a spec.
+Re-read 2026-11-11: still real - the delete still answers `NOT_A_MEMBER` to a creator with no seat, and no server path ends a group nobody joined. Re-read again 2026-12-11.
 
 ## P3 - A resubmission refused for a reason that can later flip is read as definitive (ADM-3 review, 2026-10-26)
 
@@ -734,6 +538,7 @@ that their browser's storage is the fault, nor that a browser restart is the cur
 database (the data was intact on disk and came back on a clean restart, so the product wiped
 nothing). The fix is to classify a storage failure at boot as its own type where it is thrown, so
 the gate can name it; whether it earns a distinct message is decided with the fix.
+Re-read 2026-11-11: still real - no storage-failure type exists in `frontend/src/lib`. Re-read again 2026-12-11.
 
 ## P2 - An unclean kill of a browser inside ~30 s of a rotation signs the user out (KILL-2, 2026-10-25; design after the stable)
 
@@ -777,6 +582,7 @@ session was absent from `auth_sessions` and from every server line since the ser
 restarted, hours earlier, while the seat's live session had rotated three minutes before the kill.
 The 401 cleared the cookie before it could be read. A cookie store that had failed to commit since
 an earlier kill that morning would explain it, but nothing proves it.
+Re-read 2026-11-11: still real - `ROTATION_GRACE_SECONDS` is 60 and `isPreviousTokenInGrace` still accepts the ONE previous `jti` (`auth-sessions.service.ts`, the line numbers above have moved); every refresh still rotates. Re-read again 2026-12-11.
 
 ## P2 - A cut holder's add lock ends only by its TTL, and a refused waiter sleeps to it (design after the stable, OFF-3, 2026-10-25)
 
@@ -829,6 +635,7 @@ roster change and the leaver's leaf goes at their next connection (`strayLeaves.
 the owed exit carries the notice and its replay sends it before the server step, or the exit
 replay produces the notice. RM-8 names the line as expected, in that row only, until then. The
 online cousin of this is the GRP-6 entry below (a 403 race), whose fix is ordering.
+Re-read 2026-11-11: still real - `pendingGroupExits.ts` carries no notice. Re-read again 2026-12-11.
 
 ## P3 - A salon's `memberAdded` notice carries no minted id (review of #2412, 2026-10-25)
 
@@ -892,19 +699,7 @@ revoked first device's package. It is followed by
 `[MLS] externalJoin b8ea5710... finds NO KeyPackage published for this device (absent) and no round
 running - starting the round` at `warn`, which is the same item. It is not a separate finding about
 revoked devices.
-
-## P2 - The native Android senders trust a 200/201 without reading the body (review of #2428, 2026-10-25, needs a device reading)
-
-The web send now reads a non-JSON 2xx as no answer
-([chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)); the
-Android background senders do not. `sendQueuedMessagePush` (`CanariFirebaseMessagingService.kt`)
-returns `code == 200 || code == 201` and never reads the body, so the drain records the id in
-`sentIds` and `appendOutboxSent` drops it: a notification reply or an `OutboxRetryWorker` send on a
-captive portal is lost for good, exactly the web defect. `BackgroundWelcomeAnswer.kt` does the same
-with `httpCode in 200..299`. The iOS NSE only reads, so it is unaffected. The real exposure is narrower
-over HTTPS (a portal cannot answer for the server without a certificate error, which is a transport
-failure), but the rig reproduces it over plain HTTP. Fix: the content-type check before counting a
-send. Owed: one device reading on the Mi 9T behind a portal.
+Re-read 2026-11-11: still real - no own-publication read exists; the shared route still answers the typed 404. Re-read again 2026-12-11.
 
 ## P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)
 
@@ -1051,18 +846,6 @@ Three paths are left, none built:
   that has none. The drain needs the handler's verdict ("installed a conversation"), not "did not
   throw". Found by reading (review of #2408).
 
-## P3 - A guard answers 5xx for its own faults, and an authorization refusal is a 403 (review of #2420, 2026-10-25)
-
-Server side, separate from the client's 401 rule ([sessions](sessions.md#a-401-renews-the-token-and-sends-the-same-request-once---one-rule-every-caller)).
-- **The delivery services' `HeaderAuthGuard` answers 401 for faults of its OWN** - the internal shared
-  secret unset, an internal signature refused. Those say nothing about the user's bearer, yet a client
-  can only read a 401 as one, so the delivery API had to stop treating a 401 on a renewed token as a
-  dead session. They should be 5xx: a server fault, which every client already reads as "retry later".
-- **Social-service answers 401 for AUTHORIZATION refusals inside handlers** (its posts service and
-  controller). A 401 says "who are you"; "you may not" is a 403. Until it changes, a client's resend
-  after a renewal there is wasted, and the premise "a 401 is the guard's answer about the bearer" holds
-  on `/api/mls` only.
-
 ## P3 - Two edges of the pending pull, left by the review of #2420 (2026-10-25)
 
 - **Any non-2xx page reads as a drained mailbox.** `pullPendingMessagesJson` stops on `!page.ok` and
@@ -1097,6 +880,7 @@ A fallback is a signal, not a path. What is owed:
 - decide what an idle device's empty pool should mean;
 - keep the empty-pool WARN as the accusing line it is.
 Not before the stable.
+Re-read 2026-11-11: still real - the pool is refilled to 50 only at publication on a connection (`WebMlsService.ts`, `TauriMlsService.ts`), and the `[KP] one-time pool EMPTY` WARN still serves the last-resort row (`devices.controller.ts`). Re-read again 2026-12-11.
 
 ## A new person is admitted only by a member (decided by the user on 2026-10-23): step one built
 
@@ -1769,6 +1553,7 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a community's past goes only to a proven admission (#2273, #2264, `v1.5.0`; [channel-encryption section 25](protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)) | the rig rows COMM-26..31; the floor and the cut date (`ADMISSION_PROOF_SINCE` = 2026-10-27, the day `v1.5.0` shipped) are met |
 | six service images run as a non-root user (core, social, chat-delivery as `bun`; frontend-ssr as `node`; chat-gateway, call-service as `nobody`; batch 8, [cicd](cicd.md#container-images-are-scanned-2026-10-23)) | on dev after the next pre-release: each of the six containers up and healthy, no `EACCES` or `permission denied` in their logs; then one message, one media upload and one call on dev |
 | the iPhone native ring (#2305, switched on by #2727 in `1.5.2`: `CALLS_NATIVE_RING_COMPILED`, `kCanariCallsEnabled` and the `voip` mode all on; [calls](frontend/modules/calls.md#the-native-ring-on-the-iphone---pushkit-and-callkit-wp-c6-owner-2026-10-22)) | the K6, K7, K8 and K8b readings of that page on the iPhone 12 |
+| the Android background send behind a captive portal (batch 11: `sendQueuedMessagePush` now keeps a message whose 2xx body is not JSON instead of counting it sent; `BackgroundWelcomeAnswer` and `KeyGroupPushJoin` already read the body; [chat](frontend/modules/chat.md#a-2xx-a-captive-portal-answered-is-no-answer-2026-10-25)) | on the Mi 9T behind a plain-HTTP portal: a notification reply stays in the outbox with one `HTTP 200 with a body that is not JSON` line and leaves once the portal ends; `postChannelRead` still trusts a 200/201 (a read mark, re-sent by the foreground) |
 
 ---
 

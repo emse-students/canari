@@ -3,6 +3,7 @@ import {
   CanActivate,
   ExecutionContext,
   UnauthorizedException,
+  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
 import { verifyInternalToken } from './internal-token';
@@ -12,7 +13,9 @@ import { verifyInternalToken } from './internal-token';
  * HTTP header. This header is injected by Nginx after it validates the request
  * against the core-service auth endpoint (`/internal/auth/verify`). If the header
  * is `"true"` AND the per-minute HMAC `X-Internal-Token` verifies for `x-user-id` the request is
- * allowed through; otherwise (an unset INTERNAL_SHARED_SECRET included) a 401 is thrown.
+ * allowed through; otherwise a 401 is thrown. An unset INTERNAL_SHARED_SECRET is the SERVICE's own
+ * fault, not an answer about the caller's bearer: it is a 500, which every client reads as "retry
+ * later", never a 401 a client would read as a dead session (sessions.md, the 401 rule).
  *
  * This guard must never be used on routes that are intentionally public - those
  * should be excluded from Nginx's `auth_request` directive instead.
@@ -47,7 +50,7 @@ export class HeaderAuthGuard implements CanActivate {
       this.logger.error(
         '[AUTH_GUARD] INTERNAL_SHARED_SECRET is not configured - refusing every guarded request'
       );
-      throw new UnauthorizedException(
+      throw new InternalServerErrorException(
         'INTERNAL_SHARED_SECRET is not configured - service cannot verify internal requests'
       );
     }

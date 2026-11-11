@@ -1836,13 +1836,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     Log.d(TAG, "sendQueuedMessagePush: HTTP $code group=${groupId.take(8)} msg=${messageId.take(8)}")
                     if (code != 200 && code != 201) return null
                     // THE SERVER'S RECEIVE TIME, the instant every recipient's copy is dated by: the
-                    // app orders this message by it (messageOrder.ts). An answer without it (an older
-                    // server, an unreadable body) still counts as sent, undated: 0.
+                    // app orders this message by it (messageOrder.ts). A JSON answer without it still
+                    // counts as sent, undated: 0. A 2xx whose body is NOT JSON is no answer at all -
+                    // a captive portal's page, not the server (the web send's rule, chat.md "A 2xx a
+                    // captive portal answered is no answer"): counting it as sent would drop the
+                    // message from the outbox for good, so it is kept for the next attempt (null).
                     val receivedAt = try {
                         JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optLong("receivedAt", 0L)
                     } catch (e: Exception) {
-                        Log.w(TAG, "sendQueuedMessagePush: sent, answer unreadable - no receive time msg=${messageId.take(8)}: ${e.message}")
-                        0L
+                        Log.w(TAG, "sendQueuedMessagePush: HTTP $code with a body that is not JSON - no answer from the server, kept msg=${messageId.take(8)}: ${e.message}")
+                        return null
                     }
                     if (receivedAt <= 0L) Log.w(TAG, "sendQueuedMessagePush: sent, the server answered no receive time msg=${messageId.take(8)}")
                     receivedAt.coerceAtLeast(0L)

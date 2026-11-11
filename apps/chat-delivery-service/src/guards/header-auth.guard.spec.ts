@@ -1,6 +1,10 @@
 /// <reference types="jest" />
 
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  ExecutionContext,
+  InternalServerErrorException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { createHmac } from 'crypto';
 import { HeaderAuthGuard } from './header-auth.guard';
 
@@ -25,15 +29,16 @@ describe('HeaderAuthGuard', () => {
     guard = new HeaderAuthGuard();
   });
 
-  it('REFUSES a bare x-user-logged-in "true" when no secret is configured, in EVERY environment (CodeQL 2547)', () => {
+  it('REFUSES a bare x-user-logged-in "true" when no secret is configured, in EVERY environment (CodeQL 2547), as its own 500', () => {
     const previous = process.env.NODE_ENV;
     try {
       for (const env of [undefined, 'development', 'test', 'production']) {
         if (env === undefined) delete process.env.NODE_ENV;
         else process.env.NODE_ENV = env;
+        // The service's own fault, never a 401 a client would read as its session's death.
         expect(() =>
           guard.canActivate(makeContext({ 'x-user-logged-in': 'true', 'x-user-id': 'victim' }))
-        ).toThrow(UnauthorizedException);
+        ).toThrow(InternalServerErrorException);
       }
     } finally {
       if (previous === undefined) delete process.env.NODE_ENV;
@@ -87,7 +92,7 @@ describe('HeaderAuthGuard', () => {
     process.env.NODE_ENV = 'production';
     try {
       expect(() => guard.canActivate(makeContext({ 'x-user-logged-in': 'true' }))).toThrow(
-        UnauthorizedException
+        InternalServerErrorException
       );
     } finally {
       process.env.NODE_ENV = previous;
