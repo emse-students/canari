@@ -3552,7 +3552,7 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 ## The SFU runs six webrtc majors it has never placed a call on (2026-08-27)
 
-Re-rated P1 -> P3 on 2026-10-01: `CALLS_ENABLED = false` since 2026-09-01, so no user can reach this code; it becomes P1 again the day calling is revived. The open line is in [backlog](../../backlog.d/p3-the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-0.md).
+Re-rated P1 -> P3 on 2026-10-01 and kept there when calls were revived (`1.5.0`): production's 1:1 calls are peer to peer through Cloudflare TURN, and the School drops the UDP the SFU needs, so no production call reaches this code; it becomes P1 the day the School opens UDP to it. The open line is in [backlog](../../backlog.d/p3-the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-0.md).
 
 `apps/call-service` was brought back to compiling on 2026-08-27 after two Dependabot majors (`webrtc` 0.11 -> 0.17, `axum` 0.7 -> 0.8) had merged through a CI hole (closed: the crate is in the Rust matrix now). Verified: it builds, clippy is clean under `--all-features`, its ten unit tests pass. Not one of those ten runs the ICE stack. **Since 2026-10-09 `apps/call-service/tests/relay_path.rs` does, in CI**: two relay-only peers through an in-process TURN server carry a data-channel message and an SRTP packet ([cicd](../../cicd.md)). It places no call through the SFU and no browser peer - a green gate is not a working system.
 

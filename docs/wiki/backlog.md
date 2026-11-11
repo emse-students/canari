@@ -1891,6 +1891,20 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | native checkpoints hold the manager lock for the export only (#1826, `v1.2.7`) | the Mi 9T's `[MLS] checkpoint: manager lock held N ms` debug line on the same walk |
 | the push of a request to republish a post (D38b, migration 096): the native composers (Kotlin, Swift NSE, ObjC) were never compiled where this was written | HARDWARE: one reading of the push on the Mi 9T and the iPhone 12 ([profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | "Marquer comme lu" from a salon notification on Android (built; a PushSecret call to the salon's read receipt, [mobile](frontend/mobile.md#a-salon-mark-as-read-only-and-why-reply-is-not-offered-decided-2026-10-10-android)) | HARDWARE: one tap on the Mi 9T against a pushing estate |
+| an iPhone's salon banner for a session started while it was shut (NOTIF-20's NSE half): a silent `keyMaterial` frame never wakes the NSE, so the seed can only come from the frame the salon push itself carries - proved on Android, never on an iPhone ([channel-encryption section 19](protocols/channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)) | the iPhone 12 KILLED, a member opens a NEW session in a salon (a seed the phone never held) and sends one text: the banner shows the text, and chat-delivery's `[PUSH_BLIND] platform=ios` count does not move. A fail hands the owner one decision: an alert push for key material |
+| a shut phone joins a salon's key group from the push; iOS joins at the next foreground (#2266, [channel-encryption section 26](protocols/channel-encryption.md#26-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)) | a bench account that never loaded a community is granted a salon there, phone shut: on the Mi 9T a generic banner, `settled joined`, the NEXT push readable, `[KEY_GROUP_PUSH_JOIN] ... registered` at the next start; on the iPhone 12 the join at the next foreground and the next banner readable |
+| a shut phone one commit behind catches up in any community ([channel-encryption section 16](protocols/channel-encryption.md#16-a-shut-phone-one-commit-behind-could-never-catch-up-in-any-community---fixed-2026-09-27); first owed on the user's Pixel 6a, which is never a test device) | on the Mi 9T, screen off: a salon commit (an add), then a salon message; logcat shows `fetchCommitsFromBackend` answering 200 BEFORE the banner, and the banner carries the text |
+| two community settings panels (`v0.18.28`): a salon add survives a reload, the roles tab is one card per role ([social-service](services/social-service.md#roles-membership-and-channel-access)) | web (W1) and the Mi 9T, a community admin: add a member to a salon, reload, the member is still listed; the roles tab shows one card per role |
+| every route fits on REAL hardware (the graphical pass of 2026-09-13 and the 2026-09-18 reports were read in Chrome with a device-metrics override only; [design-reference](frontend/design-reference.md) sections 16-21 and 39) | `bun tools/cross-client-harness/sweep.mjs` (A1 = the Mi 9T, against dev): no route with `scrollWidth - clientWidth > 0` or an element past the viewport; the iPhone 12 by eye on the same routes (no CDP there) |
+| the "Nouvelle discussion" panel lists people for a typed letter (suspended 2026-09-14 on A1 against a dev without the harness directory, [findings](cross-client-harness-findings.md#the-2026-09-14-hardware-session-one-suspended-measurement)) | on the Mi 9T against dev, a bench account: open the panel, type `a` then `e`: a result list appears each time (the empty field shows the recent peers) |
+| a reply swipe no longer closes the thread (#1223; the tab swipe showing its page and a drift staying put PASSED on the iPhone 12 on 2026-10-06 with #1515, [design-reference section 38](frontend/design-reference.md#38-the-page-a-swipe-was-going-to-never-appeared-and-a-taps-drift-went-to-a-different-one)) | on the Mi 9T and the iPhone 12, in an open conversation: five reply swipes on received and own bubbles, each opens the reply bar and the thread stays open |
+| a DESKTOP browser notification (G1 of the 2026-09-18 reports) | on W1 (desktop Chrome, notifications allowed, tab in the background): one salon message and one DM from another account - read the title and body, then click each: it lands on that salon / DM |
+| the push sentences are worded in Rust from the app language and a voice note is announced as one (#2037, `mobile/push_text.rs`, [chat](frontend/modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell)); the iOS FFI and the Kotlin/Swift callers verified by compiling only | the app set to English on the Mi 9T and the iPhone 12, app killed: a reaction, a photo and a voice note from another account - each banner in English, the voice note named as one |
+| a FIRST message from someone with no conversation yet notifies, end to end (both halves fixed since `v0.18.18`, never run on a genuine first contact; the third rig account exists) | the Mi 9T backgrounded and alive: an account it never talked to starts a DM and sends one message - the shade, the tap landing, the conversation in the list WITHOUT a restart, and `builtBy`; then the same with an INVITATION into a community, and once with the app COLD; then NOTIF-17b on the `admits` route (`bun tools/cross-client-harness/archive/notif17b.mjs`) |
+| NOTIF-6c / NOTIF-6d: the quick reply from a BACKGROUNDED shade, and a reply that fails to send (NOTIF-7c/7d and NOTIF-11 passed) | on the Mi 9T against a pushing estate (the local one; dev has no Firebase): `bun tools/cross-client-harness/archive/k.mjs`, the shade answered by hand, once with the link up and once with it cut |
+| a comment, reply or mention opens the post AT the comment - the push since #2000, the bell row since the backlog triage of 2026-11-11 (`notificationHref`, `?comment=`) ([mobile](frontend/mobile.md#what-every-notification-opens-and-what-was-measured-2026-10-08)) | on the Mi 9T and the iPhone 12: one comment push tapped (app killed and backgrounded) and the same row tapped in the bell - the post opens scrolled to that comment |
+| the CanaReels composer, viewer and editor on real content (`v0.18.32`-`v1.0.2`, [reels](frontend/modules/reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29), [reel-editor](frontend/modules/reel-editor.md)); the bench takes so far were lens-covered | one real-content take on each phone (phone held up); the iOS frame timing of the viewer swipe (the Mi 9T measured 11.5 % janky); the whole editor (text, drawing, stickers, "Suivant") on both phones; and the camera preview no longer echoing the microphone (#1368): film with sound near a speaker, no feedback heard |
+| one A0 export of the Carte de la Vie Asso, timed (D8's cost; D11 wanted it before a stable, the stable went first; [carte-vie-asso](carte-vie-asso.md#the-2026-09-27-audit---how-it-was-measured-and-the-eighteen-decisions-it-produced)) | from the production editor on a desktop browser, a space's carte: export A0, record the time, the tab's peak memory and the PDF size, and re-read the text sizes the way the audit did; then the owner's look at that export (in the table below) |
 
 ---
 
@@ -1916,45 +1930,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (two school-staff accounts), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 | **raise `minClientVersion` (production and dev) each time both stores serve the latest update** - the one floor rule (owner, 2026-10-24); every item that waits on a floor waits on this gesture, the hardened v2 reader's writer flip (#2074) and a re-admitted member's window included | 1 setting per release | [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24) |
 | **the DSI's go after it extends the shared host's root disk** - until then no new container is started there (2026-10-24) | blocked upstream | [host-updates](infrastructure/host-updates.md#the-root-disk-no-new-container-until-the-dsi-extends-it-2026-10-24) |
-
-## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
-
-**BUILT AND SHIPPED** (#1143-#1149, migration 064, `v0.18.28`). The eighteen decisions, the audit and
-every mechanism are on
-[carte-vie-asso](carte-vie-asso.md#the-2026-09-27-audit---how-it-was-measured-and-the-eighteen-decisions-it-produced).
-**Still owed, and nothing else:** one A0 export from the production editor, timed, with its memory and
-PDF size, re-reading the text sizes the way the audit did (D8's cost; D11 wanted it before the stable,
-the stable went first); then the user's look at that export (D11).
-
-## The composer and CanaReels chantier - compared on the Mi 9T 2026-09-29, every decision taken
-
-**BUILT AND SHIPPED in `v0.18.32` (R1) and `v1.0.0`-`v1.0.2` (R2, R3).** The comparison, the ten
-decisions (C1-C10) and the build order are on
-[reels](frontend/modules/reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29);
-the editor is [reel-editor](frontend/modules/reel-editor.md). **Owed, readings only:**
-- the user's own look at the R1 composer on the Mi 9T;
-- one real-content take on each phone, the iOS frame timing of the viewer swipe (the Mi 9T measured
-  11.5 % janky frames), and the user's ruling on the publish note;
-- a reading of the whole editor (text, drawing, stickers, "Suivant") on both phones, then the user's
-  Instagram screenshots for E3/E5 ([reel-editor](frontend/modules/reel-editor.md));
-- the front-lens default and full-bleed preview on the iPhone, and the live-mic echo fix (#1368);
-- R4 (live, C9) no longer waits for the calls revival (user, 2026-10-19: lives first, [live](frontend/modules/live.md#decisions-of-2026-10-19)).
-
-## The Liquid Glass conversation chrome - decided 2026-09-30, WP-G1 then WP-G2
-
-Decisions L1-L4 (the three-piece glass header, the "+" that grows, phone apps only) and both halves,
-shipped in `v0.18.32` (#1251, #1254), are on
-[chat](frontend/modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)
-and [mobile](frontend/mobile.md#the-conversations-native-glass-chrome). The alignment, "+" > Photos and
-the four accessible names PASSED on the iPhone 12 on 2026-10-11; **the keyboard FAILS in a new shape**
-(the web layer lags the native "+" by ~250 ms on every rise, [check W](device-verification.md#w-the-composer-stands-still-while-the-keyboard-rises---owed-on-both-phones)).
-
-## The MiConnect profile reform - decided 2026-09-29, the technical plan is next
-
-Thirty-two decisions and the eleven-package plan (validated 2026-09-29) are on
-[profiles-and-access](profiles-and-access.md), the only copy. State: WP0, WPA and WP1 LIVE on
-production; WP4 (4a, 4b #1471) and WP6a/6b (#1384, #1389) and the audiences work are on main; **WP5 is
-next**. WP6b's release order is forced: see the owed-to-the-user table above.
+| **look at the A0 export of the Carte de la Vie Asso** once the lead has taken it (D11), and say whether the text sizes hold at print | 1 look | [the A0 row](#owed-a-verification-and-nothing-else), [carte-vie-asso](carte-vie-asso.md) |
 
 ## P2 - A GIF sent in a chat is loaded by every recipient from KLIPY's CDN (found 2026-10-16, GDPR review)
 
@@ -2115,10 +2091,6 @@ Four senders' devices sealed seed requests at epochs 135-138 while the key group
 ## P2 - A notification tap takes 2.7 s to a usable conversation when killed, 5 s behind the PIN (measured 2026-10-11)
 
 **User goal: tap a message notification, be in the conversation, send a reply - extremely fluid, killed or backgrounded.** Mi 9T, `1.2.3-alpha.5`, dev, medians: warm **<= 0.35 s** to a usable composer; killed with "Rester connecte" **2.7 s**; killed behind the PIN **5.0 s** plus the human typing it; a reply is accepted 0.75-1.1 s after the send button. Ranked costs and the plan F1-F8: [notification-to-conversation-latency](frontend/notification-to-conversation-latency.md). **Since (2026-10-12)**: F2 (#1751, composer 5.06 -> 3.83 s) and F3 (#1752, gate 2.19 -> 1.74 s) SHIPPED in `v1.2.4`; F5 was REFUTED (#1753: the resume starts ~50 ms after the tap, the warm wait is the `/chat` render). F1 (opening from the local store before the session is up) shipped in `v1.2.6` (#1770; measured on the Mi 9T before merge: history -0.6 s and routing -0.5 s, composer unchanged or slightly slower on a good network, vault 2630 -> 2792 ms; on a slow network the pane no longer waits for the session, n=2; the preview's ~380 ms store open on Tauri is its remaining cost): owed a phone reading. **Leads left**: a killed-app notified message arrives ~1.2 s after the conversation is drawn; the thread render costs ~0.3 s; the per-request cost behind the edge. **T1 (push-to-banner latency) cannot be measured on dev**: dev has no `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` (owed table). F4 is a user decision. **Owed**: the same readings on the iPhone (bench build with the inspector) and on a production-sized state.
-
-## P1 - Offline and weak network: the cold start is 103 s on Slow 3G (user, 2026-10-09; measured, partly built)
-
-Salon writes now wait for the link and a repeat is one row (WP-OFF-3/4, PK4 pull request, [section 16](frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17)); a salon photo, video or poll still needs the link. Cold start on Slow 3G: first paint 23 s, list usable 103 s (JS 57 s, then the 2 MB WASM 45 s, then the list); warm 2.1 s. Fourteen ordered work packages, each with its test, and the measured table: [offline-and-weak-network](frontend/offline-and-weak-network.md). Start with WP-OFF-1 (keep the salon draft on failure), WP-W1/W2 (compression, WASM preload), WP-W3. Owed: peer-side delivery, Android and iOS runs (the page lists them).
 
 ## P2 - Weak network, the attachment path after WP-OFF-8 (audit 2026-10-10)
 
@@ -2350,93 +2322,6 @@ To do, in this order: the user adds `fr.emse.canari.dev://callback` to the Canar
 
 ---
 
-## Reported by the USER on 2026-09-27 - the community settings panels, and two community defects behind them
-
-Shipped in `v0.18.28`; what is left is readings, one decision, three test rows and one native change.
-
-- **Readings owed** - web and the Mi 9T: a salon add survives a reload, the roles tab is one card per
-  role ([social-service](services/social-service.md#roles-membership-and-channel-access)). The Pixel
-  6a: a salon message in Gala with the phone shut, `fetchCommitsFromBackend` answering 200 before the
-  banner ([channel-encryption §16](protocols/channel-encryption.md#16-a-shut-phone-one-commit-behind-could-never-catch-up-in-any-community---fixed-2026-09-27)).
-  The iPhone: `NOTIF-20`'s NSE half ([channel-encryption §19](protocols/channel-encryption.md#19-design-the-seed-travels-with-the-message---decided-by-the-user-2026-09-27)).
-- **P1 - DECIDED BY THE USER 2026-10-22 (*"Oui, rejoindre au push"*) AND BUILT: a shut Android
-  phone joins a salon's key group from the push; iOS joins at the next foreground**
-  ([channel-encryption section 26](protocols/channel-encryption.md#26-a-shut-phone-joins-a-salons-key-group-from-the-push---decided-by-the-user-2026-10-22)).
-  Owed: the Mi 9T reading (generic banner, `settled joined`, the next push readable,
-  `[KEY_GROUP_PUSH_JOIN] ... registered` at the next start) and the iPhone reading (the join at the
-  next foreground). The original question: should a phone join a salon's key group from the PUSH, as
-  it joins a DM from a Welcome? Two Gala members (`76198d2d`, `7bc0efc7`) held no device in the key group: the seat is
-  committed by the member's own device when it LOADS the community, and theirs never had (read on
-  production 2026-09-27 21:00, `0.18.15` and `0.18.22`), so every salon push reached them unreadable.
-  Production check, read-only: whether either now holds a key-group row (`dm_group_members` for
-  `17d0281e`).
-- **Three DM/salon test pairs owed (user, 2026-09-27: one contract for a salon and a conversation)** -
-  the same row on a DM and on a salon, plaintext on both: right after a membership change, a sender's
-  first message, a new device. `NOTIF-2`/`NOTIF-19` is the pair that exists
-  ([board](cross-client-testing.md)).
-- **P2 - the Rust half of a push handled in a KILLED app logs nowhere**: `tauri_plugin_log` installs
-  the logger when Tauri starts; a push in a dead app calls Rust through JNI without it, so every
-  `[PushBG]` line is lost. `JNI_OnLoad` (`lib.rs`) installs no logger; one installed there would take
-  the global slot from the plugin at a normal start, so the two must be reconciled, not stacked.
-
-## Reported by the USER on 2026-09-18 and 2026-09-17 - what is still owed
-
-The mechanisms are on [mobile](frontend/mobile.md#one-builder-two-triggers),
-[chat](frontend/modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell) and
-[posts](frontend/modules/posts.md#who-sees-which-control-three-served-booleans-never-authorid).
-**No identity from the users' captures enters this file.**
-
-**Rendering, where it stands (moved from `CLAUDE.md` 2026-10-22):** three of the ELEVEN 2026-09-18
-reports are open (below); 41 channels hold at 390 and 1280 px, but every rendering reading so far was
-Chrome with a device-metrics override, so REAL HARDWARE is owed. The phone agenda was rendered at last:
-its rolling window is right, the two things around it were not
-([calendar](frontend/modules/calendar.md#what-the-first-render-of-that-list-found-2026-09-22)). #1223
-(2026-09-29: the tab swipe SHOWS the page it goes to, a drifting tap no longer turns it, a reply swipe
-no longer closes the thread) is blind to every gate here and owed ONE look on the reporting phone
-([design-reference](frontend/design-reference.md#38-the-page-a-swipe-was-going-to-never-appeared-and-a-taps-drift-went-to-a-different-one)).
-
-- **G1 - one human reading of a DESKTOP banner**: what a salon and a DM notification say, and where a
-  tap lands.
-- **P3 - SHIPPED in `v1.3.0` (#2037): the push scanner's sentences are worded in Rust from the app
-  language, and a declared voice note is announced as one** (`mobile/push_text.rs`,
-  [chat](frontend/modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell)).
-  Owed: an Android and an iPhone reading with the app set to English (a reaction, a photo, a voice
-  note); the iOS FFI and the Kotlin/Swift callers are verified by compiling only.
-
-## Notifications - one builder on Android since 2026-09-18, and the rows that still owe it a run
-
-### P2 (hardware-owed) - a FIRST message from someone you have no conversation with, measured end to end (user, 2026-09-08)
-
-Both halves are fixed since `v0.18.18`; nothing has run them on a genuine first contact. (Not part of
-this item: a reaction to your OWN message has notified since 2026-05-17, on `canari_reactions` since
-2026-09-17 - NOTIF-15 on the [board](cross-client-testing.md).) Owed:
-
-1. **Enrol a third account** (`canari-test-gamma` exists on Authentik, credentials out of tree): a
-   first sign-in through the app, a Chrome profile with its `PORTS` / `ORIGIN` / `ACCOUNT_OF` entries,
-   and a third identity in `names.mjs`
-   ([harness entry](#p2---the-rig-can-express-exactly-two-identities-and-the-third-and-fourth-accounts-now-exist-measured-2026-09-10)).
-2. **One run**: A1 backgrounded and alive, the new peer starts a conversation and sends one message;
-   read the shade, whether the tap lands, whether the conversation is in A1's list WITHOUT a
-   restart, and `builtBy`. Then the same with an INVITATION into a community, and once with A1 COLD.
-3. **NOTIF-17b re-run on the `admits` route** (a device added while offline is a recipient of the
-   next message).
-
-### P3 - NOTIF-6c / NOTIF-6d: the quick reply from a BACKGROUNDED shade, and a reply that fails to send
-
-Owed on the Mi 9T against a pushing estate (the local one; dev has no Firebase): `bun archive/k.mjs`, answer the shade by hand. NOTIF-7c/7d (tap into a salon) PASSED 2026-10-08 and NOTIF-11 PASSED 2026-09-07; NOTIF-12 only records ([board](cross-client-testing-archive-1-4-0.md#14---notif---notifications)).
-
-### P3 - notification taps: what the 2026-10-08 audit left open
-
-Matrix and reasoning: [mobile](frontend/mobile.md#what-every-notification-opens-and-what-was-measured-2026-10-08).
-Shipped in `v1.3.0` (#2000): a proposal push opened the feed, three notices had no switch, a
-browser salon notification clicked through `/chat`. Open:
-
-1. **P3 - a comment, reply or mention opens the post, not the comment.** SHIPPED in `v1.3.0` (#2000): the push carries `commentId` and the post page scrolls to it ([mobile](frontend/mobile.md)). Owed: one tap on the Mi 9T and the iPhone 12 landing on the comment; the in-app bell row still stores no comment id.
-2. **P3 - the Android manifest and `tauri.conf.json` declare five hosts; the page hosts a push writes (`posts`,
-   `calendar`, `admin-agenda`, `proposals`) rely on the explicit intent of the notification.** Read it once on the Mi 9T.
-
-The two questions of the audit are answered (2026-10-08): a follow keeps its meaning, a per-association mute exists, read-grant holders stay unannounced - [social-service](services/social-service.md#follow-bell-and-read-grants-three-different-facts-decided-by-the-user-2026-10-08-the-mute-became-the-bell-engagement-wp-3-2026-11-08).
-
 ## CI and the chain that runs unattended
 
 ### P3 - audit advisories are suppressed because they cannot be reached, and retire themselves
@@ -2465,7 +2350,7 @@ SvelteKit 3 deprecates `alias: { $lib: 'src/lib' }`; the deprecation warning pri
 **OWED - an iPhone re-read of the bars.** The code half shipped (#1242, #1261, #1289;
 [android-ios-parity](frontend/android-ios-parity.md) 1.1, 1.3 and 1.4 are FIXED); what is owed is the
 user's look at the status bar and the home indicator on the iPhone, with the liquid-glass chrome
-([backlog](#the-liquid-glass-conversation-chrome---decided-2026-09-30-wp-g1-then-wp-g2)). This closes
+([chat](frontend/modules/chat.md#the-conversations-chrome-in-the-phone-apps---glass-floating-over-the-thread-2026-09-30)). This closes
 by hardware, never by a fix against a suspected bug nobody has seen.
 
 ### P2 - a call that never paired, and a ring for a call already hung up (2026-10-20)
@@ -2507,17 +2392,6 @@ only on the local rig (ten runs), and production's half cannot be read from the 
 peer online, not the coin flip. What would settle it: a harness `HEAL-repair` batch with the asker's
 election log beside it, then the exclusion-on-agreement change with its state written first. The
 measurement, the root cause and the two refuted causes (not to be re-opened) are in [history-reconciliation](protocols/history-reconciliation.md#heal-repair-lands-on-a-coin-flip-the-measurement-and-the-root-cause-2026-09-08).
-
-## Background notifications on Android - what the 2026-09-05 investigation left open
-
-### P1 (hardware-owed) - an iPhone's salon banner for a session started while it was shut
-
-Owed: ONE iPhone row. A silent `keyMaterial` frame never wakes the NSE, so on iOS the seed of a new
-session can only come from the frame the salon push itself carries (channel-encryption §19, proved
-on Android by NOTIF-20 stage B through the same ladder) - never measured on an iPhone. The count is
-in place on both platforms since 2026-10-05: `[PUSH_BLIND] platform=ios` in the chat-delivery log
-([channel-encryption §14](protocols/channel-encryption.md#what-is-left)). If the row fails, the wake
-(an alert push for key material) is the decision it hands the user.
 
 ## MLS state, device healing and delivery - the defects the campaign measured
 
@@ -2682,17 +2556,6 @@ verifier, does "ancien PIN" restore or reset MLS state, has production ever had 
 ### P3 - TWO out-of-tree directories are both called `canari-harness`, and a decoy `names.mjs` sits in the one the harness does not read (2026-09-04)
 
 Owed to the USER, one-off on the workstation: merge the directories or delete the decoy `names.mjs` (both hold credentials and Chrome profiles). The preflight prints `rig state: <STATE_DIR>` first ([table](cross-client-harness-findings.md#two-out-of-tree-directories-are-both-called-canari-harness-2026-09-04)). **Re-read 2026-10-24 on the workstation:** the identity-provider database dumps are GONE (three 74-byte `.meta` stubs remain); the directory the rig does NOT read still holds the decoy `names.mjs`, two stale test-account files, those stubs, and the Play Console service-account key the play-vitals tooling DOES use (move it, do not delete it).
-
-## The graphical pass - every page at 100 % (user, 2026-09-13)
-
-**EVERYTHING BUT REAL HARDWARE IS DONE** (the route sweep at 390, 1280 and 1920, the truncation defects and
-census, the many-channels and long-name halves: [design-reference](frontend/design-reference.md) sections
-16, 17, 19-21 and 39, stories in `CHANGELOG.md`). Left: the same measurements on real hardware, where all of
-it was Chrome with a device-metrics override and three of three iOS defects were invisible to every gate
-([device-verification](device-verification.md)). The instrument is `tools/cross-client-harness/sweep.mjs`;
-the CLAUDE.md queue carries it.
-
-- **Suspended, not filed**: the "Nouvelle discussion" dialog showed no result list on A1 against `dev`, where the harness directory does not exist. One re-run against the LOCAL estate settles it ([detail](cross-client-harness-findings.md#the-2026-09-14-hardware-session-one-suspended-measurement)). **Why no agent re-ran it (2026-10-09):** the local estate is up, but every signed-in client of the rig reaches its session through Authentik's login, which an agent may not drive, and the app keeps no other session path (tokens live in memory only); the re-run is one `bun sweep.mjs --device W2 --route /chat` plus the dialog by a session holder.
 
 ## Composer and reactions
 

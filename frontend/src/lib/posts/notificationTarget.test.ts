@@ -29,6 +29,16 @@ describe('notificationHref', () => {
     expect(notificationHref({ type: 'mention', postId: 'p1' })).toBe('/posts/p1');
   });
 
+  it('opens a row a comment wrote AT that comment, as its push does', () => {
+    for (const type of ['comment', 'reply', 'mention', 'friend_comment']) {
+      expect(notificationHref({ type, postId: 'p1', commentId: 'c 1' }), type).toBe(
+        '/posts/p1?comment=c%201'
+      );
+    }
+    // A row written before migration 132 names no comment: the post alone.
+    expect(notificationHref({ type: 'comment', postId: 'p1', commentId: null })).toBe('/posts/p1');
+  });
+
   it('sends a form reminder to its form', () => {
     expect(notificationHref({ type: 'form_reminder', postId: 'f1' })).toBe('/forms/f1');
   });

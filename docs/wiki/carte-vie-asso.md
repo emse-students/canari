@@ -191,8 +191,8 @@ read at ~9-10 pt on the printed sheet must be ~4.5 poster px AFTER every scale a
 
 The phasing below still says "A2" in places, and so do the comments in `layout.ts` and
 `PosterCanvas.svelte`: that was the target before the searchable-raster move and is not what the
-export does. What the A0 audit still owes is in
-[backlog](backlog.md#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build).
+export does. What the A0 audit still owes (one timed export, then the owner's look) is a row of
+[the verification table](backlog.md#owed-a-verification-and-nothing-else).
 
 ### The 2026-09-27 audit - how it was measured, and the eighteen decisions it produced
 
@@ -511,11 +511,11 @@ a status, but one click took the map off the portail - after which the portail s
 It is now a status chip that says since when, plus a separate "Retirer du portail" action that
 confirms.
 
-**What is still open**: the editor does not yet say that the LIVE map is older than what has been
-saved. `updatedAt` cannot answer it - `publish()` writes the row, so TypeORM's `@UpdateDateColumn`
-moves with `publishedAt` in the same statement, and separating them would mean trusting a clock by
-a millisecond. It needs a durable record of WHICH layout was published
-([backlog](backlog.md#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build)).
+**The editor says when the LIVE map is older than what has been saved** (#1149, 2026-09-28).
+`updatedAt` cannot answer it - `publish()` writes the row, so TypeORM's `@UpdateDateColumn` moves
+with `publishedAt` in the same statement, and separating them would mean trusting a clock by a
+millisecond. The durable record of WHICH document went live is `publicationFingerprint` on
+`poster_projects`, computed by the client over the document it sends.
 
 ### Rules
 
