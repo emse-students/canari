@@ -56,6 +56,7 @@
      (10.35:1 on it). The hit area stays the whole 44px+ column; the pill is only paint. -->
 <nav
   id="bottom-nav"
+  data-guide-chrome
   class="bg-cn-surface fixed inset-x-0 bottom-0 z-30 touch-manipulation border-t border-black/5 shadow-[0_-4px_24px_rgba(0,0,0,0.02)] md:hidden dark:border-white/10 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
   style="padding-bottom: var(--safe-area-inset-bottom, 0px)"
 >
