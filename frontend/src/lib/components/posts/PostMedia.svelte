@@ -121,6 +121,12 @@
      */
     landscapeViewer?: boolean;
     /**
+     * Told when this media's own full-screen viewer opens (true) and closes (false, including when
+     * the component goes away while it is open). The reel pager listens so its window keyboard and
+     * wheel handlers leave the viewer alone (Escape closes the viewer only, the arrows do not page).
+     */
+    onViewerChange?: (open: boolean) => void;
+    /**
      * `galleryMode` only: a picture of the video's first frame, drawn while the file loads and
      * until the player holds that frame (the reel viewer's poster, `reelPosters.svelte.ts`).
      */
@@ -168,6 +174,7 @@
     minimalPlayer = false,
     playerSafeBottom = true,
     landscapeViewer = false,
+    onViewerChange,
     poster = null,
     onLoaded,
     onPlaybackBlocked,
@@ -482,6 +489,12 @@
   });
 
   let lightboxOpen = $state(false);
+  $effect(() => {
+    if (!lightboxOpen || !onViewerChange) return;
+    const report = onViewerChange;
+    report(true);
+    return () => report(false);
+  });
   let pdfViewerOpen = $state(false);
 
   /**

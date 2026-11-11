@@ -578,6 +578,11 @@
   }
 
   let viewerEl = $state<HTMLDivElement | null>(null);
+  /**
+   * A slide's own full-screen viewer is open over the pager (the landscape chip's `MediaLightbox`,
+   * reported by `PostMedia` through the slide): the keyboard and the wheel are ITS, not the pager's.
+   */
+  let mediaViewerOpen = $state(false);
 
   /**
    * THE MOUSE WHEEL TURNS THE PAGE (user, 2026-10-19, desktop): one gesture, one page, through
@@ -593,7 +598,13 @@
       const lock = new WheelPageLock();
       function onWheel(e: WheelEvent) {
         const step = wheelStep(e);
-        if (!step || list.commentsFor || list.shareFor || wheelOverScrollable(e.target, el!))
+        if (
+          !step ||
+          list.commentsFor ||
+          list.shareFor ||
+          mediaViewerOpen ||
+          wheelOverScrollable(e.target, el!)
+        )
           return;
         e.preventDefault();
         // Free when the wheel was quiet AND the last page has landed (`settling` clears on landing).
@@ -832,7 +843,9 @@
   /** The keyboard: up/down page, left/right a carousel's media, Escape closes. A key the player already used is left to it. */
   function onKeydown(e: KeyboardEvent) {
     // The comments sheet has the keyboard while it is open: its field types, and Escape closes IT.
-    if (e.defaultPrevented || list.settling || list.commentsFor || list.shareFor) return;
+    // A slide's own full-screen viewer (the landscape chip's) has the keyboard too: Escape closes IT.
+    if (e.defaultPrevented || list.settling || list.commentsFor || list.shareFor || mediaViewerOpen)
+      return;
     if (scrollOpenCaption(e)) return;
     if (e.key === 'ArrowDown' || e.key === 'PageDown') {
       e.preventDefault();
@@ -925,6 +938,7 @@
                 preload={slot.i === list.index + 1 && currentSettled}
                 onReady={() => markSettled(slot.post)}
                 onMediaGone={onMediaGone ? () => onMediaGone(slot.post.id) : undefined}
+                onViewerChange={(open) => (mediaViewerOpen = open)}
                 onLike={likerId ? () => likeReel(slot.post) : undefined}
                 rail={railFor(slot.post)}
                 mediaIndex={mediaPositionOf(slot.post).index}

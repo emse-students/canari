@@ -24,7 +24,7 @@
   import type { PostMediaRef } from '$lib/posts/api';
   import type { MediaFailureCause } from '$lib/utils/mediaErrors';
   import type { FullScreenMediaKind } from '$lib/reels/fullScreenPost';
-  import { isLandscapeMedia } from '$lib/reels/landscapeMedia';
+  import { isLandscapeMedia, reportUnusableDimensions } from '$lib/reels/landscapeMedia';
   import { ReelPreload, worthPreloading } from '$lib/reels/reelPreload';
   import { captureReelPoster, reelPosterUrl } from '$lib/reels/reelPosters.svelte';
   import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
@@ -53,6 +53,8 @@
     onReady?: () => void;
     /** The media service answered `410`: the file is gone for good. */
     onMediaGone?: () => void;
+    /** This media's full-screen viewer opened or closed (`PostMedia`); the pager yields its keys. */
+    onViewerChange?: (open: boolean) => void;
   }
 
   let {
@@ -67,6 +69,7 @@
     durationMs = null,
     onReady,
     onMediaGone,
+    onViewerChange,
   }: Props = $props();
 
   const video = $derived(kind === 'video' ? media : undefined);
@@ -77,6 +80,10 @@
    * player, so the chip is the visible video's alone.
    */
   const landscapeFile = $derived(!!video && isLandscapeMedia(video));
+  // A video that records no size gets no chip, and says so once (the derivation above stays pure).
+  $effect(() => {
+    if (active && video) reportUnusableDimensions(video);
+  });
 
   /**
    * WHAT A VIDEO SHOWS BEFORE ITS FIRST FRAME IS DECODED (owner, 2026-10-31: never a play glyph on a
@@ -247,6 +254,7 @@
       minimalPlayer
       {playerSafeBottom}
       landscapeViewer={landscapeFile}
+      onViewerChange={(open) => onViewerChange?.(open)}
       {durationMs}
       poster={posterUrl}
       onLoaded={onMediaLoaded}

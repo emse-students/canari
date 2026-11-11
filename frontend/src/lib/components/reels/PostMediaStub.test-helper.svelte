@@ -15,6 +15,7 @@
     onLoaded,
     onPlaybackBlocked,
     onFailure,
+    onViewerChange,
   }: {
     media: { mediaId: string };
     minimalPlayer?: boolean;
@@ -23,6 +24,7 @@
     onLoaded?: (url: string) => void;
     onPlaybackBlocked?: (cause: 'refused' | 'unplayable' | 'failed') => void;
     onFailure?: (cause: MediaFailureCause) => void;
+    onViewerChange?: (open: boolean) => void;
   } = $props();
 
   let el = $state<HTMLDivElement | undefined>();
@@ -34,10 +36,13 @@
     el.addEventListener('stubloaded', report);
     el.addEventListener('stubblocked', block);
     el.addEventListener('stubfailed', fail);
+    const viewer = (e: Event) => onViewerChange?.((e as CustomEvent<boolean>).detail);
+    el.addEventListener('stubviewer', viewer);
     return () => {
       el?.removeEventListener('stubloaded', report);
       el?.removeEventListener('stubblocked', block);
       el?.removeEventListener('stubfailed', fail);
+      el?.removeEventListener('stubviewer', viewer);
     };
   });
 </script>

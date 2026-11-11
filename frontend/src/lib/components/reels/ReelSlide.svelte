@@ -113,6 +113,8 @@
      * no such record and passes nothing.
      */
     onMediaGone?: () => void;
+    /** A media's full-screen viewer (the landscape chip's) opened or closed over the pager. */
+    onViewerChange?: (open: boolean) => void;
     /** On a carousel page: the visible media (the viewer's, kept per post). 0 elsewhere. */
     mediaIndex?: number;
     /** Where a held horizontal drag has taken the carousel's strip, in px; 0 at rest. */
@@ -132,6 +134,7 @@
     rail,
     onReady,
     onMediaGone,
+    onViewerChange,
     mediaIndex = 0,
     mediaDragX = 0,
     mediaDragging = false,
@@ -344,6 +347,7 @@
                 durationMs={page === 'reel' ? post.durationMs : null}
                 onReady={() => onPaneReady(i)}
                 {onMediaGone}
+                {onViewerChange}
               />
             </div>
           {/each}
