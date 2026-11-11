@@ -5,10 +5,11 @@
    * 2026-11-10, principle 1: privacy wins) - the server reads no row as off. Turning it off takes the
    * name out of bell rows already written and stops every naming not yet sent. The switch shows the
    * SERVER's answer: it is drawn once that answer is read, and redrawn from what each write returns.
-   * The shared `ui/Toggle` (docs/wiki/frontend/controls.md), never a hand-built switch.
+   * Drawn as `SettingSwitchRow`, the row every Preferences setting shares (icon tile left, switch right).
    */
   import { onMount } from 'svelte';
-  import Toggle from '$lib/components/ui/Toggle.svelte';
+  import { Users } from '@lucide/svelte';
+  import SettingSwitchRow from './SettingSwitchRow.svelte';
   import { getActivitySettings, setActivitySettings } from '$lib/posts/api';
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
@@ -27,6 +28,7 @@
   async function save(wanted: boolean) {
     if (saving) return;
     saving = true;
+    shareActivity = wanted;
     try {
       const saved = await setActivitySettings(wanted);
       shareActivity = saved.shareActivity;
@@ -43,8 +45,9 @@
 
 {#if shareActivity !== null}
   <div data-activity-sharing-setting>
-    <Toggle
-      bind:checked={shareActivity}
+    <SettingSwitchRow
+      icon={Users}
+      checked={shareActivity}
       label={m.settings_share_activity()}
       hint={m.settings_share_activity_hint()}
       busy={saving}

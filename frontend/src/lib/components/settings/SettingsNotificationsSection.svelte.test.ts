@@ -60,8 +60,9 @@ async function render() {
 describe('SettingsNotificationsSection', () => {
   it('draws one switch per category, all on by default', async () => {
     await render();
+    // One per category, plus the push switch of Suggestions.
     expect(document.querySelectorAll('button[role="switch"]')).toHaveLength(
-      NOTIFICATION_CATEGORIES.length
+      NOTIFICATION_CATEGORIES.length + 1
     );
     for (const c of NOTIFICATION_CATEGORIES) {
       expect(switchOf(c).getAttribute('aria-checked')).toBe('true');
@@ -101,10 +102,12 @@ describe('SettingsNotificationsSection', () => {
 
   it('draws the push of Suggestions apart, off by default; turning it on writes the push and keeps the app switch on', async () => {
     await render();
-    const push = document.querySelector<HTMLInputElement>(
-      '[data-category-push="suggestions"] input[type="checkbox"]'
+    const push = document.querySelector<HTMLButtonElement>(
+      '[data-category-push="suggestions"] button[role="switch"]'
     )!;
-    expect(push.checked).toBe(false);
+    expect(push.getAttribute('aria-checked')).toBe('false');
+    // Switch on the right, like its neighbours (no icon tile in Notifications).
+    expect(push.parentElement?.lastElementChild).toBe(push);
     expect(switchOf('suggestions').getAttribute('aria-checked')).toBe('true');
     push.click();
     await settle();
@@ -115,10 +118,12 @@ describe('SettingsNotificationsSection', () => {
     await settle();
     expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['suggestions'], [], []);
     expect(
-      document.querySelector<HTMLInputElement>(
-        '[data-category-push="suggestions"] input[type="checkbox"]'
-      )!.checked
-    ).toBe(false);
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-category-push="suggestions"] button[role="switch"]'
+        )!
+        .getAttribute('aria-checked')
+    ).toBe('false');
   });
 
   it('puts the switch back and says so when the write fails', async () => {

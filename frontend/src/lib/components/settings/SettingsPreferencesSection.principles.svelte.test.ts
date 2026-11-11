@@ -46,10 +46,14 @@ afterEach(() => {
 describe('Défilement infini des CanaReels', () => {
   it('is on by default, and turning it off is kept on this device', async () => {
     await render();
-    const box = document.body.querySelector<HTMLInputElement>(
-      '[data-infinite-reels-setting] input[type="checkbox"]'
+    const box = document.body.querySelector<HTMLButtonElement>(
+      '[data-infinite-reels-setting] button[role="switch"]'
     );
-    expect(box?.checked).toBe(true);
+    expect(box?.getAttribute('aria-checked')).toBe('true');
+    // Same row as its neighbours: an icon tile on the left, the switch on the right.
+    const row = document.body.querySelector('[data-infinite-reels-setting] > div')!;
+    expect(row.firstElementChild?.querySelector('svg')).not.toBeNull();
+    expect(row.lastElementChild).toBe(box);
     box!.click();
     flushSync();
     expect(settings.infiniteReelsEnabled).toBe(false);

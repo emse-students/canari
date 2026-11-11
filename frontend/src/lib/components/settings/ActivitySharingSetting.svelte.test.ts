@@ -33,11 +33,11 @@ async function render() {
 }
 
 const switchEl = () =>
-  document.querySelector<HTMLInputElement>(
-    '[data-activity-sharing-setting] input[type="checkbox"]'
+  document.querySelector<HTMLButtonElement>(
+    '[data-activity-sharing-setting] button[role="switch"]'
   );
-/** What the switch draws: the checkbox's own state. */
-const drawn = () => String(switchEl()?.checked);
+/** What the switch draws: its aria-checked state. */
+const drawn = () => switchEl()?.getAttribute('aria-checked');
 
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => {
@@ -52,6 +52,10 @@ describe('ActivitySharingSetting', () => {
     await render();
     expect(drawn()).toBe('true');
     expect(document.body.textContent).toContain(m.settings_share_activity());
+    // Row layout shared with its neighbours: icon tile first, the switch last (on the right).
+    const row = document.querySelector('[data-activity-sharing-setting] > div')!;
+    expect(row.firstElementChild?.querySelector('svg')).not.toBeNull();
+    expect(row.lastElementChild).toBe(switchEl());
   });
 
   it('writes the flip and draws what the server stored', async () => {
