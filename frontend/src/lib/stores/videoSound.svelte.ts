@@ -32,6 +32,38 @@ import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 /** The device preference's key: `'on'` or `'off'`; absent on a device that never chose. */
 export const VIDEO_SOUND_KEY = 'canari-video-sound';
 
+/** The device preference's key of the LEVEL (a number in (0, 1]); absent on a device that never set one. */
+export const VIDEO_VOLUME_KEY = 'canari-video-volume';
+
+/** The level of a device that never chose one: full, the element's own default. */
+export const DEFAULT_VIDEO_LEVEL = 1;
+
+/** Clamps to [0, 1]; a non-number is the default. Zero is MUTE, which never replaces the level. */
+export function normalizeLevel(raw: number): number {
+  if (!Number.isFinite(raw)) return DEFAULT_VIDEO_LEVEL;
+  return Math.min(1, Math.max(0, raw));
+}
+
+function readStoredLevel(): number {
+  try {
+    const raw = localStorage.getItem(VIDEO_VOLUME_KEY);
+    if (raw === null) return DEFAULT_VIDEO_LEVEL;
+    const level = normalizeLevel(Number(raw));
+    return level > 0 ? level : DEFAULT_VIDEO_LEVEL;
+  } catch (err) {
+    console.warn('[VIDEO] the volume level could not be read - starting at full', err);
+    return DEFAULT_VIDEO_LEVEL;
+  }
+}
+
+function writeStoredLevel(level: number): void {
+  try {
+    localStorage.setItem(VIDEO_VOLUME_KEY, String(level));
+  } catch (err) {
+    console.warn('[VIDEO] the volume level could not be saved', err);
+  }
+}
+
 /** What the store remembers, or null when nothing (or something unreadable) is stored. */
 function readStored(): 'on' | 'off' | null {
   try {
@@ -76,7 +108,50 @@ let muted = $state(
     : initialVideoMuted(readStored(), engineAllowsAudibleStart())
 );
 
+/** The last NON-ZERO level: what an unmute restores and what the volume slider rests at. */
+let level = $state(typeof localStorage === 'undefined' ? DEFAULT_VIDEO_LEVEL : readStoredLevel());
+/** What the device has stored (or the default): `commitLevel` writes only a difference. */
+let persistedLevel = level;
+
 export const videoSound = {
+  /** The app's one volume, in (0, 1], applied to every video's `volume`; mute is separate. */
+  get level(): number {
+    return level;
+  },
+  /**
+   * Sets the LEVEL only, IN MEMORY (the desktop volume slider, owner 2026-11-11): every video follows
+   * at once, a drag ticks this many times, and nothing is written or logged per tick - the gesture
+   * ends in {@link videoSound.commitLevel}. Zero is not a level - it is mute - so the last non-zero
+   * one is kept and the caller mutes.
+   */
+  setLevel(next: number): void {
+    const clamped = normalizeLevel(next);
+    if (clamped <= 0 || clamped === level) return;
+    level = clamped;
+  },
+  /**
+   * ENDS A GESTURE: remembers the level on this device and logs it ONCE (the slider's `change`, a
+   * wheel notch, a viewer closing). A no-op when what is stored is already the level.
+   */
+  commitLevel(): void {
+    if (level === persistedLevel) return;
+    Log.d(
+      'VIDEO',
+      `volume level ${Math.round(level * 100)}% for every video (remembered on this device)`
+    );
+    persistedLevel = level;
+    writeStoredLevel(level);
+  },
+  /**
+   * The slider's answer for EVERY video: dragging to 0 is mute (the level is kept), dragging up from
+   * mute unmutes, anything else sets the level (in memory, see {@link videoSound.setLevel}).
+   */
+  setVolume(next: number): void {
+    const clamped = normalizeLevel(next);
+    videoSound.setLevel(clamped);
+    videoSound.setMuted(clamped <= 0);
+  },
+
   /** True while every video in the app is silent. */
   get muted(): boolean {
     return muted;
