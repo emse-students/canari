@@ -289,6 +289,8 @@ Each is a log or console line the campaign met and no row asserts on. NOISE IS N
   DEVICE_KEY/DEVICE_MEMBERSHIPS, the refresh lines of a minted device) are not declared as expected by
   the ADM and DEV rows; a rig allowlist PR follows the chain.
 
+**Plan (batch 13, 2026-11-11) - four separate pieces, none a one-line fix.** (a) The past-epoch WARN (`mls-core/src/messaging.rs`): log at INFO, once, when the frame's epoch is below the epoch this member joined at - needs that join epoch kept in the group state, so native and WASM work with its Rust tests. (b) The unverified restored notices belong to the Graine v2 authorship item (P2) and the device-local rows entry; nothing to do here beyond those. (c) The two flaky tests (`ChatArea.entryWindow.svelte.test.ts`, `outbox.reelResume.test.ts`, both still present): reproduce in the full parallel run and find the shared state - small once reproduced. (d) The rig allowlist of its own probe lines: one harness PR. (c) and (d) can be done in the queue; (a) needs an agent.
+
 ## Owed to the operator - legacy tier tags without a consistent issuer (2026-10-28)
 
 A production count of legacy tier tags without a consistent issuer is owed to the operator after
@@ -606,14 +608,6 @@ yes because it is a migration: a partial unique index on `(associationId, varian
 `membership` products (plus one for the base tier's null key), after counting the duplicates it
 would refuse.
 
-## P3 - `/api/auth/verify` reads the platform config on every request (2026-10-25)
-
-Every `auth_request` reads `platformService.getConfig()` for the maintenance check, and since
-2026-10-25 also one session row. The session read is the point; the config read is the same answer
-for every request. A per-process read deduplicated across concurrent requests (one in flight, not a
-TTL cache) would remove the config's queries (`ensureDefaults` plus the row read) from most requests. Not done in the liveness change, to keep it to one
-fact. Owed: measure the verifier's query rate on production first.
-
 ## P3 - A group creation that fails before its creator is registered leaves an orphan group row (2026-10-25)
 
 When creation fails between the remote group's creation and the creator's registration, the
@@ -627,11 +621,15 @@ The settlement of an unresolved commit classifies a refusal from its body once, 
 final even when the reason is a state that can change later (a seat, a block). Owed: name which
 refusal reasons are definitive, and re-plan rather than settle on the others, with a test per reason.
 
+**Plan (batch 13, 2026-11-11).** `resubmissionVerdict` (`mls-client/commitSubmission.ts`) answers `refused` for every reason but `concurrent_commit`. The gate's reasons (`messaging.service.ts`) split into the commit's own bytes (`epoch_mismatch`, `committer_not_on_roster`, `revoked`, `unresolved_identity`) and states that can change (`admit_refused`, `awaiting_admission`, `no_key_package`, `departed`, `welcome_target_not_member`). Build: a typed set of the second kind, and on those the settle clears the stage AND re-plans the invitation (the lost-invitation re-plan) instead of settling it as done; a test per reason. MLS settlement code: an agent of its own, with an adversarial review.
+
 ## P3 - Key groups still accept a commit with a refused admit dropped (ADM-3 review, 2026-10-26)
 
 A conversation's gate refuses the whole commit when it may not admit someone (ADM-3); a key group's
 gate still accepts it and drops that admit. Owed: decide whether key groups follow the same
 whole-commit rule, and the client rebuild it needs, with a spec on each side.
+
+**Plan (batch 13, 2026-11-11) - a decision first.** Recommended: key groups follow the conversation rule (refuse the whole commit), because a dropped admit leaves a commit whose Welcome names someone the server did not seat. Then the client rebuild on `admit_refused` for a key group, and a spec on each side. Server and MLS client both: an agent of its own once you decide.
 
 ## P3 - Three helpers answer "is this caller a member of this group" (2026-10-25)
 
@@ -649,6 +647,8 @@ FIELDS are not: a rename or a `viewerCanWrite` change (`channel.updated`), a rol
 overwritten by the listing's older row (`upsertChannelRow`, `upsertWorkspaceFromDto`) until the next
 listing. Owed: whether it is seen at all (a demoted admin keeping controls for one listing is the
 case that matters), then the same ledger keyed per field if it is.
+
+**Plan (batch 13, 2026-11-11).** The existence ledger of #2509 dates a whole row; FIELDS need the same ledger keyed per (row, field): `channel.updated` (name, `viewerCanWrite`), `workspace.role.changed`, `workspace.updated` each record the field and the instant heard, and `upsertChannelRow` / `upsertWorkspaceFromDto` skip a field heard after the listing was asked. Medium, client only, testable with the existing listing-race tests; the role change (a demoted admin keeping controls) is the case that matters. Can be done in the queue without an agent.
 
 ## P3 - A re-fetch after a late Welcome re-reads frames the live socket already delivered (DUP-2, 2026-10-25)
 
@@ -683,6 +683,8 @@ and taken as a redelivery). `getDeviceMemberships` carries `admittedAtEpoch` (it
 typed on `DeviceMembershipRow` since the review of #2466 and named in the recovery's
 `unhonoured-seat` line, so a reading of the log tells an admitted seat from a stranded one. It is not
 read as owed: a seat whose adder died would then wait for ever, and the join over it is safe.
+
+**Plan (batch 13, 2026-11-11) - not a small fix, an audit plus one rig row.** (1) Read every adder path (`groupCreation.ts`, `actions.ts`, the Android background answer) for a release of the add lock before its settlement; any found is a fix of its own. (2) One rig row: an Add accepted with its answer dropped, the lock expired, the joiner in by its own external commit, then the adder's late Welcome - expected refused as a spent KeyPackage and read as a redelivery, one leaf for the key. MLS work: an agent of its own if you want it run.
 
 ## P1 - The ledgers that must follow the MLS state live in `localStorage`, which an unclean exit loses for seconds after each write (KILL-2, 2026-10-25; design owed)
 
@@ -857,17 +859,6 @@ of exactly 1 unverified row in the group the row had just created. That is the o
 counts there, the line about W3 itself. Each contact relays 3 to 5 such rows per standing conversation,
 in step with the owner devices minted before. This was read from relay counts by relayer, not row by
 row. The same "device-local" property closes both.
-
-## A revoked device whose refresh cannot name its revocation
-
-A design limit of the refusal record of [sessions](sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25),
-not a defect: the record answers only for a session the revocation itself ended and that is still
-inside its credential's life. Three cases fall outside it and leave through the plain sign-out,
-which keeps the local stores until the next sign-in: a device that stays away longer than its
-refresh credential lives, a session bound to no device id, and a session the revocation could not
-end (the delete answered `503`). What covers all three is the device check on the next sign-in, which
-asks with a fresh session and resets the device there. Owed: one rig row reading that next-sign-in
-reset, so the cover is observed rather than read from code.
 
 ## P3 - A fresh device's own KeyPackage read answers 404, and every browser prints it red (DEV-1, `1.4.1-alpha.3`, 2026-10-25)
 
@@ -1843,6 +1834,8 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a DM read receipt survives a kill inside the 2 s window (the owed mark written at decision time and drained at every outbox registration; [history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)) | on the Mi 9T: read a DM, kill the app within 2 s, relaunch - the peer shows it read; and the count of received `[READ] ... has read up to` lines and of MLS checkpoints per 3 minutes of a two-person exchange, against the build before the coalescing |
 | iOS silent frames reach Canari's code: the method ADDED with `class_replaceMethod`, a woken process limited to an allowlist of dismissals (#2000, `v1.3.0`; [mobile](frontend/mobile.md#silent-frames-reach-the-app-through-a-method-canari-adds-2026-10-17)) | on the iPhone 12: `remote notification hook installed` in the syslog, then a salon read on another device clears the banner, app backgrounded and then foregrounded |
 | a HISTORY ask answered "I hold nothing" is final for its roster (WP-HOLD-NOTHING, #2027, `v1.3.0`; [channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)) | one Mi 9T offline cold start in a community whose online answerer holds nothing: one ask, one answer, no re-ask at the next launch |
+| the pre-038 link seats the group panel would list as members (found 2026-10-25; the group panel reads `user-members` and drops only `awaitingAdmission` seats) | ONE read-only production count: roster rows with no active or admitted device of that user in that group. 0 closes it; otherwise a backfill migration (additive, reviewed, backed up just before, owner's rule of 2026-11-01) |
+| a revoked device whose refresh cannot name its revocation leaves by the plain sign-out, and the next sign-in's device check resets it ([sessions](sessions.md#a-refresh-refused-because-the-device-was-revoked-says-so-2026-10-25)) | one rig row: a device revoked while away past its refresh credential's life signs in again and is reset at that sign-in |
 
 ---
 
@@ -2607,11 +2600,9 @@ two P3s it found shipped in `v1.4.0` (#2210, #2215, #2218, #2205, #2208, #2209);
 
 ## P3 - legacy link seats written before migration 038 would now be listed by the group panel (found 2026-10-25)
 
-The group panel reads the user-level roster (`user-members`) and drops only seats flagged
-`awaitingAdmission`. A link seat written BEFORE migration 038 got `awaitingAdmission` defaulting to
-`false` and never entered the MLS tree, so it would now appear as a member. Owed ONE production count,
-read-only: roster rows with no active or admitted device of that user in that group. Nothing was run
-on production. If it is 0, delete this section; otherwise a backfill migration (additive, reviewed, backed up just before, per the owner's rule of 2026-11-01).
+The one production count this owed is a row of [the verification table](#owed-a-verification-and-nothing-else)
+since 2026-11-11 (a link seat written before migration 038 would be listed by the group panel as a
+member). The items below are unrelated shop and form follow-ups filed under this heading.
 
 - **P3 - three cheap shop-pricing follow-ups left by the #2546 reconciliation review (found 2026-10-29), none fixed yet**: two separate Intl money formatters answer the same question (`formatAmount` in `$lib/forms/fillAnswers.ts` and `formatAmountCents` in `$lib/shop/amountInput.ts`, the second needed only because `AmountPicker`'s chips/keypad trim a whole amount's `,00` and the first does not take that option) and should fold into one; the admin product tabs still spell a price with `toFixed(2)` instead of either; and `ProductPrice.svelte`'s `reasonText` is a `$derived(() => {...})` returning a function it then calls as `reasonText()` in the template, where a plain `$derived(...)` of the value itself would do. None change behaviour a user would notice - a cleanup pass whenever someone is next in these files.
 

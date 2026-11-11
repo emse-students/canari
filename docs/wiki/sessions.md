@@ -15,7 +15,10 @@ Canari is the one variant, deliberately: its 1 h access token is a signed JWT th
 look up. The row backs the REFRESH token, and carries `sid` + `jti`
 (`apps/core-service/src/auth/auth-sessions.service.ts`) - and since 2026-10-25 the verifier every
 `auth_request` location runs, `/api/auth/verify`, also reads that row by `sid`, so through those
-locations an access token lives no longer than its session ([below](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). On Android a session may also
+locations an access token lives no longer than its session ([below](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). The
+verifier's other read, the platform config for the maintenance check, is ONE query and shared by
+every request in flight at once (`PlatformService.getConfig`, 2026-11-11: never a TTL cache, and a
+config write drops the shared read). On Android a session may also
 own ONE restore key, which dies with the row and moves the session to a new phone rather than adding
 one ([account-restore](account-restore.md)).
 
@@ -487,7 +490,7 @@ it stays queued, and no drain-waiter line. A Decline that wins the race against 
 only when the Add carried a seat generation; without one the refusal is a client read failure and warns.
 
 **The cases this record does not reach** are a design limit, listed with what covers them in
-[backlog](backlog.md#a-revoked-device-whose-refresh-cannot-name-its-revocation). Tests:
+[the verification table](backlog.md#owed-a-verification-and-nothing-else). Tests:
 `auth-sessions.service.spec.ts`, `auth.controller.spec.ts`, `session-push-end.integration.spec.ts`,
 `auth.deviceRevoked.test.ts` (the named body, an HTML and an edge 401), `BaseMlsService.revokedFrame.test.ts`,
 `session/revokedDeviceReset.test.ts` (both orderings, the offline return, a late discoverer, a

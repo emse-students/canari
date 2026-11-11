@@ -95,11 +95,36 @@ export class PlatformService implements OnModuleInit {
     await this.repo.save({ ...DEFAULT_ROW });
   }
 
-  /** Returns current platform settings for public version endpoint and auth guards. */
-  async getConfig(): Promise<PlatformConfigPublic> {
+  /**
+   * The read every concurrent {@link getConfig} caller joins - ONE in flight, never a TTL cache: it is
+   * dropped the moment it settles, and a config write drops it too, so no caller that arrives after
+   * a write returned joins a read that started before it.
+   */
+  private configInFlight: Promise<PlatformConfigPublic> | null = null;
+
+  /**
+   * Returns current platform settings for public version endpoint and auth guards.
+   *
+   * Every `/api/auth/verify` asks it (the maintenance check), so it is ONE query when the row exists
+   * (it always does after the first boot) - `ensureDefaults` runs only when that read finds none -
+   * and concurrent callers share one read (`configInFlight`), the answer being the same for all.
+   */
+  getConfig(): Promise<PlatformConfigPublic> {
+    if (this.configInFlight) return this.configInFlight;
+    const read = this.readConfig().finally(() => {
+      if (this.configInFlight === read) this.configInFlight = null;
+    });
+    this.configInFlight = read;
+    return read;
+  }
+
+  /** One read of the row; the default row is written only when none exists yet. */
+  private async readConfig(): Promise<PlatformConfigPublic> {
+    const row = await this.repo.findOne({ where: { id: 1 } });
+    if (row) return toPublic(row);
+    this.logger.debug('getConfig: no platform_config row yet - writing the defaults');
     await this.ensureDefaults();
-    const row = await this.repo.findOneOrFail({ where: { id: 1 } });
-    return toPublic(row);
+    return toPublic(await this.repo.findOneOrFail({ where: { id: 1 } }));
   }
 
   /**
@@ -224,6 +249,8 @@ export class PlatformService implements OnModuleInit {
         throw new Error('platform_config row missing');
       }
     }
+    // A read started before this write may still be in flight: no later caller may join it.
+    this.configInFlight = null;
     const saved = await this.repo.findOneOrFail({ where: { id: 1 } });
     this.logger.debug(
       `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode} liveReplaysMode=${saved.liveReplaysMode}`
