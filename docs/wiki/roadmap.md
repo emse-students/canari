@@ -24,7 +24,7 @@
 | **1.6.9** | stable | 2026-11-10 17:00 | planned | Birthdays, nicknames, role names, Suivre everywhere (WP-2), the public directory, reading fixes. Production, Play the same day, App Store +24-48 h (2026-11-12). | Every reading passes; store/whats-new.txt written and checked; owner decision of 2026-11-09: publish without asking again. |
 | **portail v1.0.9** | portail | 2026-11-10 19:00 | planned | The portal's association directory (Saint-Etienne + ICM); check online: MINITEL absent, 31 associations. Portal PR #118. | Production serves 1.6.9 (GET /api/version). Pre-approved by the owner. |
 | **1.6.10-alpha.1** | pre | 2026-11-12 10:00 | planned | WP-4 (openings for followers) if not in alpha.2; next community-open steps; upstream monitor repaired; 4 CodeQL alerts; the compatibility removals of 13 and 15 November. | PRs reviewed; WP-4's held migration approved after a pass on dev. |
-| **1.6.10** | stable | 2026-11-17 17:00 | forecast | The content of 1.6.10 alpha.1 and alpha.2 once read on both phones. | Both phones read; main's CI green. |
+| **1.6.10** | stable | 2026-11-11 08:20 | **shipped** (production, 2026-11-11) | The content of 1.6.10 alpha.1 (2026-11-10) and alpha.2 (2026-11-11), with #3316 and #3329. | Both phones read; main's CI green. |
 | **1.7.0** | stable | 2026-11-24 17:00 | forecast | Engagement WP-5 and WP-6 (suggestions: query, carousel, 'Follow also', onboarding banner). 'Send to...' + CanaReels in production if the 13 readings pass (CHAT_REEL_WRITER_ENABLED, a one-line PR). | Suggestion query readings (EXPLAIN on dev); iPhone RC-0 readings and benches. |
 | **1.7.1** | stable | 2026-12-01 17:00 | forecast | WP-7 (suggested posts) and WP-8 (daily cap of 5 on the new kinds only); first step of the MiConnect sign-in handoff. | Reading R2 (the cap) written into engagement.md before WP-8. |
 | **1.7.2** | stable | 2026-12-08 17:00 | forecast | WP-9 (friends' activity, user setting); MiConnect sign-in handoff, next step; community open follow-ups. | One integration test per disclosure rule. |
@@ -111,6 +111,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | --- | --- |
 | 2026-11-09 09:30 | First version: three inventories (backlog.md 341 rows, backlog.d and linked pages 256 rows, repository state). |
 | 2026-11-09 11:00 | R26: cause found (the edge challenges the runners; the monitor never read three names), fixed in the repository; the owner decided against any Cloudflare change: the three names are declared unprobed, the coverage gap is the lead's to decide. |
+| 2026-11-11 10:30 | 1.6.10 shipped to production on 2026-11-11 (forecast 2026-11-17, six days early). Owner decision of the same day: fewer features, the slow-link chantier first, then the backlog oldest first ([note](backlog.d/owner-decisions-of-2026-11-11.md)). |
 
 ## Annex A - every row of the backlog
 

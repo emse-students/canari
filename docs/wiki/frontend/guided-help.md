@@ -215,9 +215,13 @@ Every end records the help as seen: Next on the last step, "Passer", Esc, Back, 
 it (`replayGuide('welcome-tour')`, then the feed - the tour applies to `/posts`, where every control
 it points at is drawn). A replay ignores the seen set and still waits for the quiet state.
 
-**An unseen help starts only once the server has answered** (`seenHelps.ready`): starting on the
-local copy alone would replay on a new device a tour the account finished on another one. A device
-that cannot reach the server shows no new help; the next opening asks again.
+**An unseen help starts only on a copy the server has answered** (`seenHelps.ready`): starting on a
+copy the server never filled would replay on a new device a tour the account finished on another
+one. A device that never reached the server shows no new help; the next opening asks again. **Since
+2026-11-11 a copy the server once filled is ready at once** (the persisted `confirmed` flag), because
+the read waits for the session refresh at a cold start - 4 s on the owner's link - and is revalidated
+behind the drawing; the case taken knowingly is a help finished on ANOTHER device since that answer
+([local-first-ui](local-first-ui.md#4bis-the-session-refresh-no-longer-gates-the-boot-paths-first-paint-2026-11-11)).
 
 ## The first-time hints, batch 1 - create
 
@@ -439,8 +443,10 @@ visit after the update, ahead of the contextual hints (one help per visit, so th
   to the server has no age, hence no reminder until it is recorded. Additive: an old client ignores
   the field, and a new client against an old server has no age and never reminds.
 
-- **TEMPORARILY OFFERED ONLY TO ICM AT SAINT-ETIENNE (owner, 2026-11-10).** Who is offered the
-  prompt is decided on the SERVER, so widening it needs no release: core-service reads
+- **OFFERED ONLY TO ICM AT SAINT-ETIENNE (owner, 2026-11-10; made permanent 2026-11-11: *"MiGallery
+  est faite avant tout pour les ICM/Saint-Etienne"*,
+  [decisions](../backlog.d/owner-decisions-of-2026-11-11.md)).** Who is offered the
+  prompt is decided on the SERVER, so changing it needs no release: core-service reads
   `PROFILE_PHOTO_PROMPT_SPACES`, a comma-separated list of `FORMATION:campus` pairs in the spaces'
   own spelling (`ICM:saint-etienne` on both estates, a literal row of `env-manifest.tsv`), and
   `GET /api/users/me/help-seen` answers `profilePhotoPromptEligible` beside `seen` and `ageSeconds`
@@ -450,8 +456,8 @@ visit after the update, ahead of the contextual hints (one help per visit, so th
   neither the card nor the reminder unless the field is `true` (`seenHelps.profilePhotoPromptEligible`,
   `false` until the server answers, or from an older server). **Unset or empty: nobody. A value that
   does not parse: nobody, and an error line at boot** - a typo never widens it. Core-service logs
-  what the variable resolved to once at boot (`[PROFILE_PHOTO_PROMPT]`). **Remove the gate** (module,
-  variable, manifest row, compose and template lines, the field) the day the prompt opens to all.
+  what the variable resolved to once at boot (`[PROFILE_PHOTO_PROMPT]`). **The gate stays**: the
+  limit is the owner's standing choice, not a rollout step.
 - **The rule is one pure function**, `profilePhotoPromptStage` (`guides/profilePhotoPromptStage.ts`):
   no photo + never shown -> first; shown, under 30 days -> nothing; 30 days or more and still none
   -> reminder; reminder shown -> never; a photo, or no answer -> never. Each help's `eligible` asks

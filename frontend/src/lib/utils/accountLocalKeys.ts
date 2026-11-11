@@ -172,6 +172,18 @@ export const ACCOUNT_KEY = {
    * truth; this is the optimistic copy that keeps a help from replaying offline.
    */
   seenHelps: (userId: string) => `canari_seen_helps:v1:${userId}`,
+  /**
+   * `birthdays/birthdaysToday.svelte.ts`: whether the account has entered a birthday - one boolean
+   * about the account itself, never the date - so the feed's prompt card is decided before the
+   * session refresh answers (slow-link chantier, gap 1).
+   */
+  ownBirthdayKnown: (userId: string) => `canari_own_birthday:v1:${userId}`,
+  /**
+   * `stores/announcement.svelte.ts`: the platform announcement the server last said was waiting for
+   * this account, with the client version it was asked for - drawn at the next opening before the
+   * session refresh answers, and only by that same client version.
+   */
+  pendingAnnouncement: (userId: string) => `canari_announcement:v1:${userId}`,
   /** No longer written; removed by the device reset and the deletion where an old build left it. */
   syncGuideSeen: (userId: string) => `canari_sync_guide_seen_${userId}`,
   /**
@@ -257,6 +269,8 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),
     ACCOUNT_KEY.seenHelps(userId),
+    ACCOUNT_KEY.ownBirthdayKnown(userId),
+    ACCOUNT_KEY.pendingAnnouncement(userId),
     ACCOUNT_KEY.lastActive(userId),
     ACCOUNT_KEY.restoreKeyRegistered(userId),
     ACCOUNT_KEY.backupRecoveryCode(userId),
