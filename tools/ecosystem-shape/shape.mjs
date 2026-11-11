@@ -69,7 +69,13 @@ const CANARI_EXTRA_LIBRARIES = ['android.yml', 'ios.yml'];
  * Triggers that mean "somebody pushed code", as opposed to "somebody published a release". No job
  * reachable from one of these may deploy: that is the whole point of the 2026-09-04 model.
  */
-const PUSH_LIKE = new Set(['push', 'workflow_run', 'pull_request', 'pull_request_target', 'schedule']);
+const PUSH_LIKE = new Set([
+  'push',
+  'workflow_run',
+  'pull_request',
+  'pull_request_target',
+  'schedule',
+]);
 
 const failures = [];
 
@@ -146,16 +152,21 @@ for (const [label, dir] of REPOS) {
     for (const [jobName, job] of Object.entries(docs[n]?.jobs ?? {})) {
       if (typeof job !== 'object' || job === null) continue;
       if (job['runs-on'] === 'self-hosted' && n !== 'scheduled.yml') {
-        fail(label, `${n} (${jobName}) reaches a self-hosted runner from ${[...trig].sort().join(', ')}`);
+        fail(
+          label,
+          `${n} (${jobName}) reaches a self-hosted runner from ${[...trig].sort().join(', ')}`
+        );
       }
       // Every deploy library of THIS repository, not one hard-coded name: Canari has three.
-      const lib = typeof job.uses === 'string' ? deployLibs.find((d) => job.uses.includes(d)) : undefined;
+      const lib =
+        typeof job.uses === 'string' ? deployLibs.find((d) => job.uses.includes(d)) : undefined;
       if (lib) {
         fail(label, `${n} (${jobName}) calls ${lib} from ${[...trig].sort().join(', ')}`);
       }
     }
   }
-  if (failures.length === before) ok('no deploy is reachable from a push, a workflow_run or a pull request');
+  if (failures.length === before)
+    ok('no deploy is reachable from a push, a workflow_run or a pull request');
 
   // -- 3 + 4. NO DEAD TRIGGER, NO DEAD FILE -----------------------------------------------------
   // A `workflow_call` nobody calls is a claim the file makes about itself that is not true, and
@@ -191,14 +202,17 @@ for (const [label, dir] of REPOS) {
     const mk = join(root, 'Makefile');
     if (existsSync(mk)) haystack += readFileSync(mk, 'utf8');
     for (const f of scripts) {
-      if (!haystack.includes(basename(f))) fail(label, `nothing runs .github/scripts/${basename(f)}`);
+      if (!haystack.includes(basename(f)))
+        fail(label, `nothing runs .github/scripts/${basename(f)}`);
     }
     if (failures.length === before) {
       ok(`all ${scripts.length} CI scripts are referenced by something that runs them`);
     }
   }
 
-  const visible = names.filter((n) => triggersOf(docs[n]).some((t) => t !== 'workflow_call')).sort();
+  const visible = names
+    .filter((n) => triggersOf(docs[n]).some((t) => t !== 'workflow_call'))
+    .sort();
   const libs = names.filter((n) => !triggersOf(docs[n]).some((t) => t !== 'workflow_call')).sort();
   console.log(`   shape: ${visible.join(' ')}`);
   console.log(`   libs:  ${libs.join(' ')}`);
@@ -262,7 +276,8 @@ function withoutCanariOnly(raw) {
     if (shared !== null) {
       // The line a `# canari-only:shared` names must be code: a comment or a blank line there would
       // let the marker stand for nothing.
-      if (!t || t.startsWith('#')) throw new Error(`# canari-only:shared is not followed by code: ${shared.trim()}`);
+      if (!t || t.startsWith('#'))
+        throw new Error(`# canari-only:shared is not followed by code: ${shared.trim()}`);
       out.push(shared);
       shared = null;
     } else if (t === '# canari-only:begin') {
@@ -286,18 +301,31 @@ function withoutCanariOnly(raw) {
 /** Hash one file the same way in every repository, so CRLF cannot make two copies look different. */
 function digest(path, transform) {
   const raw = readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
-  return createHash('md5').update(transform ? transform(raw) : raw).digest('hex').slice(0, 8);
+  return createHash('md5')
+    .update(transform ? transform(raw) : raw)
+    .digest('hex')
+    .slice(0, 8);
 }
 
 /** Assert that one path is identical across a set of repositories, and say so either way. */
 function compare(shared, repos, note = '', transform = undefined) {
+  compareCopies(
+    shared,
+    repos.map(([label, dir]) => [label, join(dir, shared)]),
+    note,
+    transform
+  );
+}
+
+/** The same, for copies that sit at a different path in each repository: `[label, dir/path]`. */
+function compareCopies(shared, copies, note = '', transform = undefined) {
   const digests = new Map();
-  for (const [label, dir] of repos) {
-    const p = join(ROOT, dir, shared);
+  for (const [label, rel] of copies) {
+    const p = join(ROOT, rel);
     if (existsSync(p)) digests.set(label, digest(p, transform));
   }
   const name = basename(shared).padEnd(46);
-  const absent = repos.filter(([label]) => !digests.has(label)).map(([label]) => label);
+  const absent = copies.filter(([label]) => !digests.has(label)).map(([label]) => label);
   if (absent.length) {
     failures.push(`${shared} is missing from ${absent.join(', ')}`);
     console.log(`   FAIL  ${name} missing from ${absent.join(', ')}`);
@@ -325,10 +353,34 @@ const SIBLINGS = REPOS.filter(([label]) => label !== 'Canari');
 // Canari, whose copy cites the two pull requests the behaviour was measured on THERE (#329, #330).
 // Copying a measurement into three repositories that never made it would be an invention.
 const ARM = '.github/workflows/arm-auto-merge.yml';
-compare(ARM, REPOS, '  [YAML only - the mechanism, Canari-only regions cut]', (raw) => codeOnly(withoutCanariOnly(raw)));
+compare(ARM, REPOS, '  [YAML only - the mechanism, Canari-only regions cut]', (raw) =>
+  codeOnly(withoutCanariOnly(raw))
+);
 compare(ARM, SIBLINGS, '  [prose too; Canari cites measurements made only there]');
 
-for (const [shared, why] of SHARED_BY_SIBLINGS) compare(shared, SIBLINGS, `  [Canari excluded: ${why}]`);
+for (const [shared, why] of SHARED_BY_SIBLINGS)
+  compare(shared, SIBLINGS, `  [Canari excluded: ${why}]`);
+
+// THE SIGN-IN HANDOFF'S VENDORED FILES (Canari's design note on the sign-in handoff, section 4): the
+// verifier, the landing page's logic and the vectors, written in Canari and COPIED byte-identically
+// to every site that redeems a handoff, at that site's own path. Compared RAW: a copy is a copy. A
+// site joins this list in the pull request that vendors it (MiGallery first, WP-H4; Sky with WP-H6).
+// Le Cercle is on the school's GitLab, outside this tool's four checkouts: its copy is held only by
+// its own vector test.
+const HANDOFF_VENDORED = [
+  ['libs/handoff/handoff-verify.ts', { MiGallery: 'src/lib/server/handoff/handoff-verify.ts' }],
+  ['libs/handoff/handoff-landing.ts', { MiGallery: 'src/lib/handoff/handoff-landing.ts' }],
+  [
+    'libs/contracts/handoff-token.cases.json',
+    { MiGallery: 'tests/fixtures/handoff-token.cases.json' },
+  ],
+];
+for (const [source, sites] of HANDOFF_VENDORED) {
+  const dirOf = Object.fromEntries(REPOS);
+  const copies = [['Canari', join(dirOf.Canari, source)]];
+  for (const [label, path] of Object.entries(sites)) copies.push([label, join(dirOf[label], path)]);
+  compareCopies(source, copies, '  [the sign-in handoff, vendored]');
+}
 
 console.log(`\n${'='.repeat(72)}`);
 if (failures.length) {

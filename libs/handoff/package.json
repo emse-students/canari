@@ -1,0 +1,9 @@
+{
+  "name": "canari-handoff-source",
+  "private": true,
+  "description": "The source copies of the vendored sign-in handoff modules and their vector test (make test-ci-scripts). Each MiConnect site carries a byte-identical copy.",
+  "type": "module",
+  "dependencies": {
+    "jose": "6.2.10"
+  }
+}

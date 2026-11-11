@@ -81,9 +81,13 @@ same list heads `libs/contracts/ecosystem-sites.json`):
   ALWAYS (a session or none, section 3.7), and the user's click sends the same token again
   (section 8).
 
-**Not built yet:** H3 (the vendored verifier in `libs/`; the reference is `verifyHandoff` in
-`handoff-redeem.contract.spec.ts`, and section 8 is the contract), the `/ecosystem/[site]` tap route
-(it belongs with N1), and everything on a site (H4, H6, H7).
+**H3 built (2026-11-11):** `libs/handoff/handoff-verify.ts` (the verifier, on `jose`) and
+`libs/handoff/handoff-landing.ts` (the landing page's logic: the fragment read and removed, the
+redemption post, the step it answers), with `libs/handoff/handoff.test.ts` running every vector,
+the replay and the landing steps (`make test-ci-scripts`). `tools/ecosystem-shape/shape.mjs` claim 6
+compares MiGallery's three copies byte for byte, so the site's PR merges FIRST. **H4 (MiGallery)
+is a draft PR** (MiGallery #461). **Not built yet:** the `/ecosystem/[site]` tap route (it belongs
+with N1), H6, H7.
 
 Everything below is design. File:line references are against `main` on 2026-11-07. Sibling
 repositories are named relative to this one (`../MiGallery`, `../Sky`, `../le-cercle`,
