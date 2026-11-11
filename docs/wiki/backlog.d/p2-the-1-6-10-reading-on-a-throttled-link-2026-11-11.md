@@ -20,5 +20,6 @@ fast). Read-only navigation. Principle held: discreet and informative, never ver
 
 **Owed.** A re-reading on the Mi 9T under the same proxy after a pre-release: no grey ring while answers
 arrive, rows named on the first frame of a cold start, the ring a circle in light and dark on both
-headers, the live region announcing offline and back. Also owed: the first frame before the device key is in hand (a cold start with a PIN to type) shows initials, then the names once unlocked. Mechanism:
+headers, the live region announcing offline and back. Also owed: the first frame before the device key is in hand (a cold start with a PIN to type) shows initials, then the names once unlocked. The limit of the ring: on a leader tab and on native apps it is green independently of the socket (no durable
+"gave up" fact exists; a follower tab without a leader socket is grey) - written, not hidden. Mechanism:
 [offline-and-weak-network](../frontend/offline-and-weak-network.md#the-connection-ring-owner-2026-11-11).

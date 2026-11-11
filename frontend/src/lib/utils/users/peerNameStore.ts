@@ -1,7 +1,9 @@
 import { getStorage } from '$lib/db';
-import { currentFeedEpoch, ensureFeedEpoch } from '$lib/posts/feedStoreEpoch';
+import { FeedPageUnreadableError } from '$lib/db/types';
 import type { FeedStoreAccess } from '$lib/posts/feedStore';
 import {
+  currentPeerNamesEpoch,
+  ensurePeerNamesEpoch,
   forgetPeerNames,
   isOpenFor,
   mergeStoredNames,
@@ -15,12 +17,14 @@ import {
  *
  * It is ONE more slot of the store that keeps the feed's first pages (`posts/feedStore.ts`): the
  * `feedPages` object store on IndexedDB, the `feed_pages` table on SQLite, key {@link DIRECTORY_KEY},
- * sealed under the DEVICE KEY by `IStorage.saveFeedPage`. Never localStorage in clear. Reusing the
- * slot store means reusing its exits instead of enumerating new ones:
- * - sign-out and change of account end the feed EPOCH synchronously (`forgetStoredFeeds`); a copy
- *   carrying an ended epoch is deleted unread, and `stores/user.ts` also calls `forgetPeerNames` for
- *   the memory copy;
- * - a PIN change drops every stored page inside the storage hold (`dropStoredFeedPages`);
+ * sealed under the DEVICE KEY by `IStorage.saveFeedPage`. Never localStorage in clear. It shares the
+ * table, not the feed's epoch: its own epoch (`peerNameDirectory.ts`) is ended only by a sign-out or
+ * a change of account, so the feed's reasons for ending its copies (an audience verdict, a 403) do
+ * not cost the names, and this module never writes the feed's epoch. The exits:
+ * - sign-out and change of account: `endPeerNames` (called by `stores/user.ts`) ends the epoch
+ *   synchronously and closes the memory copy; a copy carrying an ended epoch is deleted unread;
+ * - a PIN change drops every stored page inside the storage hold (`dropStoredFeedPages`); the
+ *   in-memory names are SEALED AGAIN under the new key when the layout rebinds with it;
  * - `IStorage.clear()` and a revoked-device wipe empty the table or delete the database.
  * The payload repeats its owner and epoch; a copy naming another account is deleted, never read.
  *
@@ -45,24 +49,25 @@ let access: FeedStoreAccess | null = null;
 let scheduled = false;
 let hydrating: Promise<void> | null = null;
 
-/** Seals the directory under the device key. Failure is logged and the next change retries. */
+/**
+ * Seals the directory under the device key. Failure is logged and the next change retries. The key
+ * is read at the LAST moment and the write is abandoned if it changed meanwhile: a rebind under a
+ * new key (a PIN change) schedules its own write, and a stale captured key would seal a copy no
+ * later read can open.
+ */
 async function flush(): Promise<void> {
   // NEVER BEFORE THE STORED COPY IS READ: a write that raced it would replace the older names with
   // the few this launch has resolved so far.
   await hydrating;
   const target = access;
   if (!target || !isOpenFor(target.userId)) return;
-  const epoch = ensureFeedEpoch(target.userId);
+  const epoch = ensurePeerNamesEpoch(target.userId);
   if (!epoch) return;
   try {
-    const payload: StoredDirectory = {
-      owner: target.userId,
-      epoch: epoch.epoch,
-      names: snapshotNames(),
-    };
-    await (
-      await getStorage(target.userId)
-    ).saveFeedPage(DIRECTORY_KEY, payload, target.deviceKeyB64);
+    const storage = await getStorage(target.userId);
+    if (access !== target || !isOpenFor(target.userId)) return;
+    const payload: StoredDirectory = { owner: target.userId, epoch, names: snapshotNames() };
+    await storage.saveFeedPage(DIRECTORY_KEY, payload, target.deviceKeyB64);
   } catch (error) {
     console.warn(`[PEER-NAMES] the directory could not be stored: ${String(error)}`);
   }
@@ -102,16 +107,23 @@ async function hydrate(target: FeedStoreAccess): Promise<void> {
       | null
       | undefined;
   } catch (error) {
-    // Sealed under a key this device no longer uses, or damaged: deleted, never met again.
-    console.warn(`[PEER-NAMES] the stored directory cannot be opened: ${String(error)}`);
-    await dropCopy(target.userId, 'unreadable');
+    if (error instanceof FeedPageUnreadableError) {
+      // THE ROW ITSELF cannot be opened (sealed under a key this device no longer uses, or
+      // damaged): deleted, never met again.
+      console.warn(`[PEER-NAMES] the stored directory cannot be opened: ${String(error)}`);
+      await dropCopy(target.userId, 'unreadable');
+    } else {
+      // The store failed (it could not be opened, a database was closing): says nothing about the
+      // row, which stays for the next launch.
+      console.warn(`[PEER-NAMES] the stored directory could not be read: ${String(error)}`);
+    }
     return;
   }
   if (!isOpenFor(target.userId) || !opened) return; // the account changed while the read waited
   if (
     opened.owner !== target.userId ||
     typeof opened.epoch !== 'string' ||
-    opened.epoch !== currentFeedEpoch(target.userId) ||
+    opened.epoch !== currentPeerNamesEpoch(target.userId) ||
     typeof opened.names !== 'object' ||
     opened.names === null
   ) {
@@ -126,7 +138,7 @@ async function hydrate(target: FeedStoreAccess): Promise<void> {
 /**
  * Gives the directory the account and key it may be read and written with (the feed's gate,
  * `feedStoreAccess`), or `null` while none is in hand. Another account starts from an empty
- * directory. Idempotent for the same account.
+ * directory; the same account under a NEW key (a PIN change) keeps its names and seals them again.
  */
 export function bindPeerNames(next: FeedStoreAccess | null): void {
   if (!next) {
@@ -135,13 +147,22 @@ export function bindPeerNames(next: FeedStoreAccess | null): void {
     forgetPeerNames();
     return;
   }
-  const same = access?.userId === next.userId && isOpenFor(next.userId);
+  const previous = access;
+  const same = previous?.userId === next.userId && isOpenFor(next.userId);
   access = next;
-  if (same) return;
+  if (same) {
+    if (previous!.deviceKeyB64 !== next.deviceKeyB64) {
+      console.log('[PEER-NAMES] the device key changed - sealing the directory again under it');
+      scheduleWrite();
+    }
+    return;
+  }
   openDirectory(next.userId);
-  hydrating = hydrate(next).finally(() => {
-    hydrating = null;
+  const read = hydrate(next).finally(() => {
+    // Only if no later bind replaced it: a stale read finishing must not clear the newer one.
+    if (hydrating === read) hydrating = null;
   });
+  hydrating = read;
 }
 
 /** Resolves when the read started by the last bind has finished (tests, and callers that must wait). */

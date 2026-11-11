@@ -111,7 +111,7 @@
           title={connection.state === 'slow' ? m.slow_indicator_label() : m.nav_my_profile_title()}
           aria-label={m.nav_my_profile_label()}
           data-connection={connection.state ?? undefined}
-          class="ui-icon-button rounded-full ring-3 transition-all duration-200 {connectionRingClass(
+          class="ui-icon-button focus-visible:outline-accent-icon rounded-full ring-3 transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 {connectionRingClass(
             connection.state
           )}"
         >

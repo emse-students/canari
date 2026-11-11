@@ -137,6 +137,11 @@ export const ACCOUNT_KEY = {
    * sign-out enumerates to end EVERY account's epoch.
    */
   feedStoreEpoch: (userId: string) => `canari_feed_store_epoch:v1:${userId}`,
+  /**
+   * `peerNameDirectory.ts`: the sealed peer-name directory's OWN epoch (not the feed's), ended by a
+   * sign-out or a change of account. Called with `''` it is the prefix `endPeerNames` enumerates.
+   */
+  peerNamesEpoch: (userId: string) => `canari_peer_names_epoch:v1:${userId}`,
   /** `hex.ts`: the MLS state of builds that kept it in `localStorage`, read once and migrated. */
   legacyMlsAutosave: (userId: string) => `mls_autosave_${userId}`,
   /**
@@ -254,6 +259,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.controlRefusals(userId),
     ACCOUNT_KEY.deviceNotices(userId),
     ACCOUNT_KEY.feedStoreEpoch(userId),
+    ACCOUNT_KEY.peerNamesEpoch(userId),
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),
     ACCOUNT_KEY.seenHelps(userId),
@@ -288,6 +294,7 @@ const ID_NAMING_KEYS = [
   ACCOUNT_KEY.deviceKeyEpoch,
   ACCOUNT_KEY.seenCipherIndex,
   ACCOUNT_KEY.feedStoreEpoch,
+  ACCOUNT_KEY.peerNamesEpoch,
 ] as const;
 
 /**

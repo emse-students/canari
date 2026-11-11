@@ -1155,13 +1155,13 @@ state and colour from `connection` / `connectionRingClass` in `stores/slowLink.s
 | --- | --- | --- |
 | green | connected | nothing below applies |
 | amber | slow link | `connectivity.slow` (observed latency floor, never a guess) |
-| grey | offline, or reconnecting | `connectivity.isOffline`; or an offline unlock not yet promoted |
+| grey | offline, or reconnecting | `connectivity.isOffline`; an offline unlock not yet promoted; or a FOLLOWER tab whose leader publishes no open socket |
 
 It is a TRUE CIRCLE (`rounded-full`); the first version rode on a rounded square and read as "a
 strange square". It REPLACED three things: the "Hors connexion" `OfflineBanner` (which also shifted
 the whole page ~126 px, so a tap aimed at a tab landed elsewhere once it vanished - a ring reserves no
 layout space at all), the "Connecte" `StatusPill` of the wide layout, and the amber-only ring. The
-sentences stay for screen readers: `ConnectionAnnouncer.svelte` is an always-mounted live region
+sentences stay for screen readers: `ConnectionAnnouncer.svelte` (rule in `connectionAnnouncement.ts`) is an always-mounted live region
 carrying the offline description, the "syncing" line, the slow line, and "connection restored" once
 when a degraded state ends.
 
@@ -1185,9 +1185,32 @@ the device key, [posts](modules/posts.md)). The profile fetch still runs and ref
   Until then rows show initials and the placeholder, exactly as before; the local read that follows touches
   no network and fills the reactive directory, so the rows already drawn update. A locked device never has
   a name drawn from it.
+- **Its own epoch, not the feed's.** The sealed copy carries an epoch (`ACCOUNT_KEY.peerNamesEpoch`) ended
+  ONLY by a sign-out or a change of account. Riding the feed's epoch ended it for feed reasons (an audience
+  verdict, a 403: an account outside the feed audience lost its names every launch) and made the directory a
+  second writer of that epoch.
+- **Reactive end to end.** Whether the directory is open is a reactive cell like the names: a row drawn before
+  the layout bound it re-reads when the stored copy lands (a plain `let` tracked nothing).
 - **The exits, enumerated.** Sign-out and change of account: `clearUserLocally` / `saveUserLocally` call
-  `forgetStoredFeeds` (the feed epoch ends synchronously; a copy with an ended epoch is deleted unread) and
-  `forgetPeerNames` (memory). PIN change: `dropStoredFeedPages` empties the whole table inside the storage
-  hold, the directory included. `IStorage.clear()` and a revoked-device wipe empty the table or delete the
+  `endPeerNames` (the directory's epoch ends synchronously, the memory copy closes; a copy with an ended epoch
+  is deleted unread). A deleted account (the 404 branch of `resolveUserDisplayName`) is forgotten with
+  `forgetPeerName`. PIN change: `dropStoredFeedPages` empties the whole table inside the storage hold, the
+  directory included; the in-memory names are SEALED AGAIN under the new key when the layout rebinds with it
+  (a write reads the key at the last moment and is abandoned if it changed). A failed STORE read leaves the
+  copy; only a row that cannot be opened (`FeedPageUnreadableError`) is deleted. `IStorage.clear()` and a revoked-device wipe empty the table or delete the
   database. A copy naming another account, or that cannot be opened, is deleted. Pinned by
   `peerNameStore.test.ts` and `user.peerNameExits.test.ts`.
+
+**The ring and the socket (lead decision, 2026-11-11).** The removed "connecte" pill was the only visible
+witness of the WebSocket. The decision: a transient socket drop that the reconnect watchdog is handling keeps
+the ring as it is - the ladder has no last rung (`scheduleReconnectImpl`), so the code holds NO durable
+"gave up" fact for a leader tab, and none was invented (no timer). The one durable socket fact that exists is
+a FOLLOWER tab whose leader publishes no open socket (`leaderSocketConnected`, the old pill's second half):
+that is grey. **The limit, written down:** on a leader tab (and on every native app) the ring is green
+independently of the socket; a socket that stays down while HTTP answers shows green.
+
+**Announcements.** "Connexion retablie" is said once after an offline or reconnecting spell only; a slow link
+that clears is silent, so a flapping slow link does not talk (`announcementStep`).
+
+**Focus.** Both header avatar buttons draw a `focus-visible` accent outline (`outline-accent-icon`): the
+button's `outline: none` and a ring that is now the connection colour left it no focus indicator.

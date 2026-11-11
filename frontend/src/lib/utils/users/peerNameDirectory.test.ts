@@ -2,6 +2,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   MAX_PEER_NAMES,
+  endPeerNames,
+  ensurePeerNamesEpoch,
+  currentPeerNamesEpoch,
+  forgetPeerName,
   forgetPeerNames,
   mergeStoredNames,
   notePeerName,
@@ -43,6 +47,28 @@ describe('peerNameDirectory (memory half)', () => {
     for (let i = 0; i < MAX_PEER_NAMES + 5; i++) notePeerName('me', `p${i}`, `Name ${i}`);
     expect(readPeerName('me', 'p0')).toBeNull();
     expect(readPeerName('me', `p${MAX_PEER_NAMES + 4}`)).not.toBeNull();
+  });
+
+  it('forgets one id (a deleted account) and keeps the others', () => {
+    openDirectory('me');
+    notePeerName('me', 'gone', 'Zed');
+    notePeerName('me', 'kept', 'Amy');
+    forgetPeerName('me', 'gone');
+    expect(readPeerName('me', 'gone')).toBeNull();
+    expect(readPeerName('me', 'kept')).toBe('Amy');
+  });
+
+  it('endPeerNames closes the memory copy and ends every account epoch, and only those', () => {
+    localStorage.setItem('unrelated', 'x');
+    openDirectory('me');
+    notePeerName('me', 'peer-1', 'Alice');
+    ensurePeerNamesEpoch('me');
+    ensurePeerNamesEpoch('other');
+    endPeerNames('sign-out');
+    expect(readPeerName('me', 'peer-1')).toBeNull();
+    expect(currentPeerNamesEpoch('me')).toBeNull();
+    expect(currentPeerNamesEpoch('other')).toBeNull();
+    expect(localStorage.getItem('unrelated')).toBe('x');
   });
 
   it('ignores an empty name or owner', () => {

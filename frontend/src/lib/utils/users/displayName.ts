@@ -15,7 +15,7 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { SYSTEM_SENDER_ID } from '$lib/utils/chat/messageUtils';
 import { noteAbsentUser } from './absentUsers';
 import { noteDeletedAccount, noteResolvedName } from './nameMirror';
-import { notePeerName, readPeerName } from './peerNameDirectory';
+import { forgetPeerName, notePeerName, readPeerName } from './peerNameDirectory';
 import { visibleNickname } from './conversationNicknames.svelte';
 
 const displayNameCache = new Map<string, string>();
@@ -371,6 +371,9 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
   // without asking the network, and a lookup that never left is not a lookup that could fail.
   lookupsAttempted += 1;
 
+  // THE ACCOUNT THE LOOKUP WAS ASKED FOR, taken before the fetch: a name that lands after a
+  // switch of account must not be filed under the account that is on screen by then.
+  const askedFor = currentUserId();
   const promise = fetchUserProfile(normalized)
     .then((profile) => {
       const value = formatProfileDisplayName(profile);
@@ -388,7 +391,7 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
       // for "no name", and a banner would print it as if it were one (WP-MENTION-NAME).
       if (profileHasName(profile)) {
         noteResolvedName(normalized, value);
-        notePeerName(currentUserId(), normalized, value);
+        notePeerName(askedFor, normalized, value);
       }
       const first = profile.firstName?.trim();
       if (first) firstNameCache.set(normalized, first);
@@ -422,6 +425,8 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
         // The server says this account does not exist: no native banner may name it again, seeded
         // name or not (WP-MENTION-NAME) - the phone's copy drops it, and a banner says "someone".
         noteDeletedAccount(normalized);
+        // Nor may the directory keep drawing it from the device.
+        forgetPeerName(askedFor, normalized);
         // A seeded name outranks the label: the 404 here was only a first-name lookup.
         if (cached) return cached;
         const label = isDeletedAccountError(e) ? m.user_deleted_label() : m.user_unknown_label();

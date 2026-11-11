@@ -5,19 +5,20 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+const absent = vi.hoisted(() => ({ answer: false }));
 vi.mock('$lib/stores/user', () => ({
   currentUserId: () => 'me',
   fetchUserProfile: vi.fn(() => new Promise(() => {})),
   getSavedDisplayName: () => null,
-  isAbsentUserError: () => false,
-  isDeletedAccountError: () => false,
+  isAbsentUserError: () => absent.answer,
+  isDeletedAccountError: () => absent.answer,
 }));
 vi.mock('$lib/paraglide/messages', () => ({
   m: { user_unknown_label: () => 'Utilisateur inconnu', user_deleted_label: () => 'Supprime' },
 }));
 
-import { notePeerName, openDirectory, forgetPeerNames } from './peerNameDirectory';
-import { getUserDisplayNameSync, peekUserDisplayName } from './displayName';
+import { notePeerName, openDirectory, forgetPeerNames, readPeerName } from './peerNameDirectory';
+import { getUserDisplayNameSync, peekUserDisplayName, resolveUserDisplayName } from './displayName';
 import * as userStore from '$lib/stores/user';
 
 describe('display name, local source first', () => {
@@ -32,6 +33,16 @@ describe('display name, local source first', () => {
     expect(peekUserDisplayName('peer-9')).toBe('Alice Martin');
     expect(getUserDisplayNameSync('peer-9')).toBe('Alice Martin');
     expect(userStore.fetchUserProfile).not.toHaveBeenCalled();
+  });
+
+  it('forgets a name from the directory when the server answers the account is gone', async () => {
+    notePeerName('me', 'peer-gone', 'Old Name');
+    expect(peekUserDisplayName('peer-gone')).toBe('Old Name');
+    absent.answer = true;
+    vi.mocked(userStore.fetchUserProfile).mockRejectedValueOnce(new Error('404'));
+    await resolveUserDisplayName('peer-gone');
+    absent.answer = false;
+    expect(readPeerName('me', 'peer-gone')).toBeNull();
   });
 
   it('prefers the remembered name to a caller fallback and to the placeholder', () => {

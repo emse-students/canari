@@ -5,8 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const sealed = vi.hoisted(() => ({
   rows: new Map<string, unknown>(),
   keyUsed: [] as string[],
-  failRead: false,
+  failRead: false as false | 'unreadable' | 'store',
 }));
+import { FeedPageUnreadableError } from '$lib/db/types';
+
 vi.mock('$lib/db', () => ({
   getStorage: async () => ({
     saveFeedPage: async (key: string, payload: unknown, deviceKey: string) => {
@@ -15,7 +17,8 @@ vi.mock('$lib/db', () => ({
     },
     getFeedPage: async (key: string, deviceKey: string) => {
       sealed.keyUsed.push(deviceKey);
-      if (sealed.failRead) throw new Error('cannot open');
+      if (sealed.failRead === 'unreadable') throw new FeedPageUnreadableError(key);
+      if (sealed.failRead) throw new Error('database closing');
       return sealed.rows.get(key) ?? null;
     },
     deleteFeedPage: async (key: string) => (sealed.rows.delete(key) ? 1 : 0),
@@ -23,8 +26,8 @@ vi.mock('$lib/db', () => ({
 }));
 
 import { DIRECTORY_KEY, bindPeerNames, peerNamesSettled } from './peerNameStore';
-import { forgetPeerNames, notePeerName, readPeerName } from './peerNameDirectory';
-import { forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
+import { endPeerNames, forgetPeerNames, notePeerName, readPeerName } from './peerNameDirectory';
+import { forgetStoredFeeds, currentFeedEpoch } from '$lib/posts/feedStoreEpoch';
 
 const flush = async () => {
   await peerNamesSettled();
@@ -76,12 +79,12 @@ describe('peerNameStore', () => {
     ).toBe('Bob Durand');
   });
 
-  it('does not read a copy once a sign-out ended the feed epoch, and deletes it', async () => {
+  it('does not read a copy once a sign-out ended its epoch, and deletes it', async () => {
     bindPeerNames({ userId: 'me', deviceKeyB64: 'KEY' });
     await flush();
     notePeerName('me', 'peer-1', 'Alice Martin');
     await flush();
-    forgetStoredFeeds('sign-out');
+    endPeerNames('sign-out');
     bindPeerNames(null);
     bindPeerNames({ userId: 'me', deviceKeyB64: 'KEY' });
     await flush();
@@ -106,9 +109,50 @@ describe('peerNameStore', () => {
     notePeerName('me', 'peer-1', 'Alice Martin');
     await flush();
     bindPeerNames(null);
-    sealed.failRead = true;
+    sealed.failRead = 'unreadable';
     bindPeerNames({ userId: 'me', deviceKeyB64: 'OTHER' });
     await flush();
     expect(sealed.rows.has(DIRECTORY_KEY)).toBe(false);
+  });
+
+  it('keeps the copy when the STORE failed, which says nothing about the row', async () => {
+    bindPeerNames({ userId: 'me', deviceKeyB64: 'KEY' });
+    await flush();
+    notePeerName('me', 'peer-1', 'Alice Martin');
+    await flush();
+    bindPeerNames(null);
+    sealed.failRead = 'store';
+    bindPeerNames({ userId: 'me', deviceKeyB64: 'KEY' });
+    await flush();
+    expect(sealed.rows.has(DIRECTORY_KEY)).toBe(true);
+  });
+
+  it("does not ride the feed's epoch: ending the feed's copies leaves the names, and never starts a feed epoch", async () => {
+    bindPeerNames({ userId: 'me', deviceKeyB64: 'KEY' });
+    await flush();
+    notePeerName('me', 'peer-1', 'Alice Martin');
+    await flush();
+    expect(currentFeedEpoch('me')).toBeNull();
+    forgetStoredFeeds('outside the feed audience');
+    bindPeerNames(null);
+    bindPeerNames({ userId: 'me', deviceKeyB64: 'KEY' });
+    await flush();
+    expect(readPeerName('me', 'peer-1')).toBe('Alice Martin');
+    expect(currentFeedEpoch('me')).toBeNull();
+  });
+
+  it('seals the in-memory names again under the NEW key after a PIN change', async () => {
+    bindPeerNames({ userId: 'me', deviceKeyB64: 'OLD' });
+    await flush();
+    notePeerName('me', 'peer-1', 'Alice Martin');
+    await flush();
+    sealed.rows.delete(DIRECTORY_KEY); // dropStoredFeedPages, inside the PIN-change hold
+    sealed.keyUsed = [];
+    bindPeerNames({ userId: 'me', deviceKeyB64: 'NEW' });
+    await flush();
+    expect(sealed.keyUsed).toEqual(['NEW']);
+    expect(
+      (sealed.rows.get(DIRECTORY_KEY) as { names: Record<string, string> }).names['peer-1']
+    ).toBe('Alice Martin');
   });
 });

@@ -68,7 +68,7 @@
           use:guideAnchor={'nav.profile'}
           title={connection.state === 'slow' ? m.slow_indicator_label() : m.nav_my_profile_title()}
           data-connection={connection.state ?? undefined}
-          class="tap-target rounded-full ring-3 transition-all duration-200 {connectionRingClass(
+          class="tap-target focus-visible:outline-accent-icon rounded-full ring-3 transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 {connectionRingClass(
             connection.state
           )}"
           aria-label={m.nav_my_profile_label()}
