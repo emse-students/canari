@@ -60,7 +60,7 @@ import {
   tabSeed,
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
-import { isUnreadForUser, readPointFor } from '$lib/utils/chat/readState';
+import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -617,7 +617,14 @@ export function useMessaging() {
      */
     convo: Pick<
       Conversation,
-      'id' | 'name' | 'contactName' | 'conversationType' | 'readWatermarks' | 'serverReadWatermarks'
+      | 'id'
+      | 'name'
+      | 'contactName'
+      | 'conversationType'
+      | 'messages'
+      | 'readWatermarks'
+      | 'serverReadWatermarks'
+      | 'localReadSeed'
     >,
     senderId: string,
     content: string,
@@ -645,7 +652,7 @@ export function useMessaging() {
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
-    const mine = readPointFor(convo, ctx.userId.toLowerCase());
+    const mine = countingReadPoint(convo, ctx.userId.toLowerCase());
     // A MESSAGE THIS ACCOUNT HAS ALREADY READ IS NOT NEWS, asked with the predicate the unread badge
     // uses. It is reachable: a reply or "mark as read" from the shade answers a message whose row is
     // still queued for this device, the next connection delivers it, and it used to be announced
@@ -1269,7 +1276,7 @@ export function useMessaging() {
     // the watermark AND counted system messages, so a replayed frame taking the single path could
     // still raise a badge for something already read, and a "X joined" notice raised one for
     // something nobody reads at all.
-    const mineNow = readPointFor(convo, ctx.userId.toLowerCase());
+    const mineNow = countingReadPoint(convo, ctx.userId.toLowerCase());
     const shouldMarkUnread =
       !isConversationOpen &&
       !isSalonMuted(normalized) &&
@@ -1855,7 +1862,7 @@ export function useMessaging() {
     const base = current ?? convo;
     const heldNow = current && current !== convo ? indexMessagesById(current.messages) : null;
     const toAdd = heldNow ? brandNew.filter((m) => !heldNow.has(m.id)) : brandNew;
-    const mine = readPointFor(base, ctx.userId.toLowerCase());
+    const mine = countingReadPoint(base, ctx.userId.toLowerCase());
     // A MUTED SALON RAISES NOTHING, the server's count of it being zero by the same rule.
     const addedUnread = isSalonMuted(normalized)
       ? 0

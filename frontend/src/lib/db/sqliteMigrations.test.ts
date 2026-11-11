@@ -217,7 +217,7 @@ describe('conversationStartedAtStatement (v17)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(conversationStartedAtStatement(['id', 'name', 'started_at'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(19);
+    expect(SCHEMA_VERSION).toBe(20);
   });
 });
 
@@ -256,6 +256,6 @@ describe('outboxUnavailableAnswersStatement (v19)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(outboxUnavailableAnswersStatement(['id', 'unavailable_answers'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(19);
+    expect(SCHEMA_VERSION).toBe(20);
   });
 });
