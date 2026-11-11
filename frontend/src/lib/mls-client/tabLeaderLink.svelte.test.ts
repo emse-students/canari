@@ -22,7 +22,6 @@ import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import {
   handleLeaderLinkEvent,
   leaderReportsNoSocket,
-  leaderSocketConnected,
   leadershipChanged,
   publishLeaderLink,
   resetLeaderLinkForTests,
@@ -37,10 +36,6 @@ describe('the follower reads the leader socket', () => {
     setCurrentUserId('u1');
   });
 
-  it('reads offline until a leader answers', () => {
-    expect(leaderSocketConnected()).toBe(false);
-  });
-
   it('an unanswered leader is UNKNOWN, not "no socket": only an explicit false is', () => {
     expect(leaderReportsNoSocket()).toBe(false);
     handleLeaderLinkEvent({ type: 'leader_link', connected: false, account: 'u1' });
@@ -49,22 +44,15 @@ describe('the follower reads the leader socket', () => {
     expect(leaderReportsNoSocket()).toBe(false);
   });
 
-  it('follows the published state of the leader', () => {
-    handleLeaderLinkEvent({ type: 'leader_link', connected: true, account: 'u1' });
-    expect(leaderSocketConnected()).toBe(true);
-    handleLeaderLinkEvent({ type: 'leader_link', connected: false, account: 'u1' });
-    expect(leaderSocketConnected()).toBe(false);
-  });
-
   it('ignores another account in the same browser', () => {
-    handleLeaderLinkEvent({ type: 'leader_link', connected: true, account: 'u2' });
-    expect(leaderSocketConnected()).toBe(false);
+    handleLeaderLinkEvent({ type: 'leader_link', connected: false, account: 'u2' });
+    expect(leaderReportsNoSocket()).toBe(false);
   });
 
   it('a leader does not record a link as a follower would', () => {
     state.leadership = 'leader';
-    handleLeaderLinkEvent({ type: 'leader_link', connected: true, account: 'u1' });
-    expect(leaderSocketConnected()).toBe(false);
+    handleLeaderLinkEvent({ type: 'leader_link', connected: false, account: 'u1' });
+    expect(leaderReportsNoSocket()).toBe(false);
   });
 });
 
@@ -135,15 +123,15 @@ describe('the link announces itself when the account becomes known, never before
     state.leadership = 'follower';
     stop = startLeaderLink();
     flushSync();
-    handleLeaderLinkEvent({ type: 'leader_link', connected: true, account: 'u1' });
-    expect(leaderSocketConnected()).toBe(true);
+    handleLeaderLinkEvent({ type: 'leader_link', connected: false, account: 'u1' });
+    expect(leaderReportsNoSocket()).toBe(true);
     setCurrentUserId('u2');
     flushSync();
-    expect(leaderSocketConnected()).toBe(false);
-    handleLeaderLinkEvent({ type: 'leader_link', connected: true, account: 'u2' });
-    expect(leaderSocketConnected()).toBe(true);
+    expect(leaderReportsNoSocket()).toBe(false);
+    handleLeaderLinkEvent({ type: 'leader_link', connected: false, account: 'u2' });
+    expect(leaderReportsNoSocket()).toBe(true);
     leadershipChanged();
-    expect(leaderSocketConnected()).toBe(false);
+    expect(leaderReportsNoSocket()).toBe(false);
   });
 
   it('a leader republishes its socket when the account becomes known', async () => {

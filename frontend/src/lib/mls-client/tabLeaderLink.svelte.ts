@@ -40,11 +40,6 @@ function ensureChannel(): BroadcastChannel | null {
   return channel;
 }
 
-/** Whether a follower tab's leader reports an open socket (false until one answers). */
-export function leaderSocketConnected(): boolean {
-  return leaderConnected === true;
-}
-
 /**
  * Whether the leader EXPLICITLY said it has no open socket. Null (no answer yet, or another account's)
  * is UNKNOWN and is not this: a follower tab shows nothing wrong before its leader has spoken.
