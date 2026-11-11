@@ -1,6 +1,6 @@
 <script lang="ts">
   import { internalPath } from '$lib/utils/internalPath';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { CalendarClock, LayoutDashboard, Plus, Settings } from '@lucide/svelte';
@@ -34,6 +34,8 @@
   }
 
   let { associationId, managed }: Props = $props();
+  /** The page's read, taken by the first load only. */
+  let headStart: Promise<ManagedSpaceRow[]> | undefined = untrack(() => managed);
   const personal = $derived(associationId === null);
 
   let spaces = $state<ManagedSpaceRow[]>([]);
@@ -47,7 +49,6 @@
     creatorOpen = false;
   }
 
-  // `managed` is the page's read for THIS owner and is read once: a later `load()` never reuses it.
   onMount(load);
 
   async function load() {
@@ -55,7 +56,9 @@
     loading = true;
     error = '';
     try {
-      spaces = await (managed ?? listManagedSpaces(associationId));
+      const head = headStart;
+      headStart = undefined; // single use: a later load() asks for itself
+      spaces = await (head ?? listManagedSpaces(associationId));
     } catch (e) {
       error = describeBookingRefusal(e, m.common_load_error());
     } finally {

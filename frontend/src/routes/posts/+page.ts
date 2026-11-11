@@ -4,6 +4,7 @@ import type { PageLoad } from './$types';
 import { isOutsideFeedAudience, redirectIfNotFeedAudience } from '$lib/posts/feedAudience';
 import { FEED_FIRST_PAGE_SIZE } from '$lib/posts/feedPageSize';
 import { dropRetiredFeedKind } from '$lib/posts/retiredFeedKind';
+import { currentUserId } from '$lib/stores/userState.svelte';
 import { ensureBlocksLoaded } from '$lib/follows/followState.svelte';
 
 export const load: PageLoad = async ({ url }) => {
@@ -42,7 +43,7 @@ export const load: PageLoad = async ({ url }) => {
   // follow chip draws nothing until that list is known, and the chips used to ask for it only when
   // they mounted - one round trip behind the posts, for a read that needs nothing from them. The
   // list is cached for the session, so a later chip joins this read.
-  ensureBlocksLoaded();
+  if (currentUserId()) ensureBlocksLoaded();
 
   if (await redirectIfNotFeedAudience()) return;
 

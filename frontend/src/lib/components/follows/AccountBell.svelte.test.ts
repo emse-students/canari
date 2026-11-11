@@ -136,7 +136,11 @@ describe('AccountBell, a read started by the page (weak-network audit, C3)', () 
   it('shows the level the page asked for and asks nothing itself', async () => {
     component = mount(AccountBell, {
       target: document.body,
-      props: { kind: 'association', targetId: 'a1', initial: Promise.resolve('none' as const) },
+      props: {
+        kind: 'association',
+        targetId: 'a1',
+        takeInitial: () => Promise.resolve('none' as const),
+      },
     });
     await settle();
     expect(bell().dataset.level).toBe('none');
@@ -148,10 +152,34 @@ describe('AccountBell, a read started by the page (weak-network audit, C3)', () 
     refused.catch(() => {});
     component = mount(AccountBell, {
       target: document.body,
-      props: { kind: 'association', targetId: 'a1', initial: refused },
+      props: { kind: 'association', targetId: 'a1', takeInitial: () => refused },
     });
     await settle();
     expect(trigger().disabled).toBe(true);
     expect(api.getBellLevel).not.toHaveBeenCalled();
+  });
+
+  it('a remount after the head start was taken asks for itself, never reading a stale promise', async () => {
+    let held: Promise<'none'> | undefined = Promise.resolve('none' as const);
+    const take = () => {
+      const read = held;
+      held = undefined;
+      return read;
+    };
+    component = mount(AccountBell, {
+      target: document.body,
+      props: { kind: 'association', targetId: 'a1', takeInitial: take },
+    });
+    await settle();
+    expect(api.getBellLevel).not.toHaveBeenCalled();
+    unmount(component);
+    api.getBellLevel.mockResolvedValue('lives');
+    component = mount(AccountBell, {
+      target: document.body,
+      props: { kind: 'association', targetId: 'a1', takeInitial: take },
+    });
+    await settle();
+    expect(api.getBellLevel).toHaveBeenCalledTimes(1);
+    expect(bell().dataset.level).toBe('lives');
   });
 });

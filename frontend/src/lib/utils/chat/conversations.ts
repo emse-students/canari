@@ -1215,10 +1215,9 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         // first conversation that finds the link known down; this one and the rest are owed.
         if (unreachable === null && connectivity.isOffline) {
           unreachable = new LinkDroppedMidPassError();
-          skipArchiveReplays(
-            replayMetas.slice(replayMetas.findIndex((r) => r.id === meta.id)),
-            unreachable
-          );
+          const from = replayMetas.findIndex((r) => r.id === meta.id);
+          // A meta absent from the list is not owed to anyone's reconnect by a slice(-1).
+          skipArchiveReplays(from >= 0 ? replayMetas.slice(from) : [], unreachable);
         }
         try {
           const existingConvo = ctx.conversations.get(meta.id);

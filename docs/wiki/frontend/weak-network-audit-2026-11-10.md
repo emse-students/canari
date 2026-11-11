@@ -206,7 +206,7 @@ Counted on a fake network (vitest, no clock), the unit being the serial level a 
 | Restore, link drops mid-pass | N dead history reads + N warns after the drop | the first conversation that finds `connectivity.isOffline` stops the pass, owes it and the rest to the reconnect, ONE `[CATCHUP]` line | `restoreUnreachable.test.ts` |
 
 How: the page starts the read and hands the PROMISE to the component that draws it (`managed` on
-`EditBookingsTab`, `initial` on `AccountBell`), which awaits it instead of asking again; a refusal
+`EditBookingsTab`, `takeInitial` on `AccountBell`, a taker the page empties once used), which awaits it instead of asking again; a refusal
 surfaces where the component already handled it, and the page attaches a no-op `catch` so it is never
 an unhandled rejection before the component mounts. Nothing is a timer.
 
@@ -238,7 +238,7 @@ the live `Response`; the body is read after the slot is freed), so a slow body h
 request whose head never arrives (media has no head deadline) holds one of three slots and delays other
 MEDIA only. What remains is the wire: three media transfers share the link's bandwidth with the API
 reads, which no app queue decides and the cap of three bounds. So no API lane was added and no deadline
-shortened; `requestGate.apiLane.test.ts` pins the property (the API path never imports a gate; a
+shortened; `requestGate.apiLane.test.ts` pins the property (a real `trackedFetch` read leaves at once while the real gate is saturated; a
 saturated gate queues only its own kind; the slot is freed at the head). Not measured on a phone: the
 bandwidth share on a real 3G link is owed (a feed with sixty thumbnails, an API read timed beside it).
 Also fixed in `requestGate.ts`: a needless spread (`unicorn/no-useless-spread`) the lint printed.

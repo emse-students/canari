@@ -35,12 +35,14 @@
     /**
      * The level's read, ALREADY STARTED by a page that knows it will mount this bell once its other
      * reads have ended (an association's page asks it beside them: one round trip less on a slow
-     * link). Awaited for the FIRST mount instead of asking again; a changed target asks for itself.
+     * link). A TAKER, not a value: the page hands the read over ONCE (and forgets it), so a remount
+     * - a guest who signs in, a bell remounted after a pick - asks for itself and never reads a
+     * promise that predates a write.
      */
-    initial?: Promise<BellLevel>;
+    takeInitial?: () => Promise<BellLevel> | undefined;
   }
 
-  let { kind, targetId, iconOnly = false, initial }: Props = $props();
+  let { kind, targetId, iconOnly = false, takeInitial }: Props = $props();
   /** The head start is for the first read only. */
   let headStartSpent = false;
 
@@ -54,7 +56,7 @@
     const id = targetId;
     loaded = false;
     let stale = false;
-    const head = headStartSpent ? undefined : untrack(() => initial);
+    const head = headStartSpent ? undefined : untrack(() => takeInitial?.());
     headStartSpent = true;
     const read = head ?? getBellLevel(k, id);
     read

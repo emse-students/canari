@@ -60,7 +60,9 @@
     loading = true;
     const managedRead = listManagedSpaces(null);
     // The tab awaits it later; until then a refusal must not surface as an unhandled rejection.
-    managedRead.catch(() => {});
+    managedRead.catch((e: unknown) =>
+      Log.d('BOOKINGS', `personal spaces read refused, the tab reports it: ${String(e)}`)
+    );
     managed = managedRead;
     await Promise.all([readBookings(), readSpaces()]);
     loading = false;

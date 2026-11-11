@@ -16,6 +16,8 @@ vi.mock('$lib/posts/feedAudience', () => ({
   isOutsideFeedAudience: () => false,
   redirectIfNotFeedAudience: () => Promise.resolve(false),
 }));
+const session = vi.hoisted(() => ({ uid: 'u1' as string | null }));
+vi.mock('$lib/stores/userState.svelte', () => ({ currentUserId: () => session.uid }));
 const ensureBlocksLoaded = vi.fn();
 vi.mock('$lib/follows/followState.svelte', () => ({
   ensureBlocksLoaded: () => ensureBlocksLoaded(),
@@ -36,6 +38,7 @@ async function run(query: string) {
 beforeEach(() => {
   listPosts.mockClear();
   ensureBlocksLoaded.mockClear();
+  session.uid = 'u1';
   localStorage.clear();
 });
 
@@ -64,5 +67,11 @@ describe('posts load', () => {
     expect(ensureBlocksLoaded).toHaveBeenCalledTimes(1);
     answerPosts([]);
     await loading;
+  });
+
+  it('a logged-out load asks for no blocks', async () => {
+    session.uid = null;
+    await run('?feed=foryou');
+    expect(ensureBlocksLoaded).not.toHaveBeenCalled();
   });
 });
