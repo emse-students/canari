@@ -1336,7 +1336,23 @@ server-side admin and moderation screens list communities by name.
 
 ## P3 - the iOS factory wipe leaves the App Group copies other than the names (2026-10-19)
 
-The wipe (`clear_app_data`) walks the app data directory and, since WP-MENTION-NAME, removes the App Group `display_names.json`. It still does NOT reach the other App Group copies the account deletion removes (#2100): the mirrored `push_context.json` and the extension's `fcm_message_cache.ndjson`. Unverified whether a wipe leaves them; read the container on a device after a wipe before deciding. Not widened into the names PR on purpose.
+**Re-read 2026-11-11: still true, and the list is longer.** On iOS, `wipe_native_app_data`
+(`storage.rs`) removes only two things from the App Group: the names copy (`wipe_group_names`) and the
+Share Extension's files (`wipe_group_share`). Its own doc comment says the other copies are not its
+job. It does not remove these, which the container can hold:
+- the account files the deletion sweeps there (`push::extension_account_files`): `push_context.json`
+  with its bearer, `fcm_message_cache.ndjson`, the outbox and watermark files;
+- the seed mirror's copy (`graine_seeds.json`);
+- the device-notice ledger (`device_notices/`).
+
+**Not fixed in the triage, on purpose.** A list of those names would break the durable rule: a total
+wipe's allowlist names what SURVIVES, and its default is delete
+([durable-rules](durable-rules.md)). What else lives in the container (shared preferences, caches,
+the extensions' own files) has never been read.
+
+**Owed:** list the container on the iPhone 12 (`bench_native_store list`). Then name what must
+survive, and make the wipe delete the rest, with a test against a real directory like
+`wipe_app_data`'s.
 
 ## P2 - GDPR compliance: the open items of the register (2026-10-16)
 
@@ -1364,6 +1380,8 @@ The three conditions, in order:
    so bind `miconnect-authorization` to ONE provider first (the harness's `Canari Local`), read it on
    both phones, then lift the hold for the eight.
 
+**The lead lifts the hold** once the three hold, and tells the user (decided 2026-10-18).
+
 ## Decided by the user on 2026-10-16 - the GDPR pass over the whole ecosystem
 
 Source: a read-only DPO-style review of Canari, MiConnect, MiGallery, Sky, Le Cercle, Portail-etu and
@@ -1382,13 +1400,6 @@ a deletion 14 days, stated, dumps to be encrypted; legacy cotisations of ~1400 n
 no purge date (flagged to the DPO); account deletion is a durable queue (#1965).
 
 **Still open from that pass:** sending the DPO dossier and the DSI log-retention request - each a line of the [owed table](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
-
-## Decided by the user on 2026-10-18 (second batch)
-
-- **`graine_seeds.json` and `channel_keys.json` stay on account deletion for now.** They are per-install native files holding community keys, with no owner. Backlog item: verify whether the next session re-mirrors them, then write an erasure rule using the same `push_context.json` ownership proof. *(Superseded 2026-11-07: each mirror entry now names its writers and the account wipes remove the account's own - [auth](frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07); `channel_keys.json` is deleted at every start.)*
-- **WP-RESTORE-1 (account restore through WebAuthn, native + server)** is MERGED (#2065, 2026-10-24); it stays out of a stable until it is read on a phone ([its entry](#p2---wp-restore-1-zero-tap-sign-in-restoration-required-by-google-play-from-april-2027)).
-- **The MiConnect terms hold is lifted by the lead** as soon as the three preconditions listed above are verified; the lead tells the user.
-- **The KLIPY key is not rotated** (re-decided 2026-10-24: dev reuses the production key) - the revisit condition is in [chat](frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18).
 
 ## Decided by the user on 2026-10-22 - the app needs iOS 16
 
@@ -1842,6 +1853,9 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a DM read receipt survives a kill inside the 2 s window (the owed mark written at decision time and drained at every outbox registration; [history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)) | on the Mi 9T: read a DM, kill the app within 2 s, relaunch - the peer shows it read; and the count of received `[READ] ... has read up to` lines and of MLS checkpoints per 3 minutes of a two-person exchange, against the build before the coalescing |
 | iOS silent frames reach Canari's code: the method ADDED with `class_replaceMethod`, a woken process limited to an allowlist of dismissals (#2000, `v1.3.0`; [mobile](frontend/mobile.md#silent-frames-reach-the-app-through-a-method-canari-adds-2026-10-17)) | on the iPhone 12: `remote notification hook installed` in the syslog, then a salon read on another device clears the banner, app backgrounded and then foregrounded |
 | a HISTORY ask answered "I hold nothing" is final for its roster (WP-HOLD-NOTHING, #2027, `v1.3.0`; [channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)) | one Mi 9T offline cold start in a community whose online answerer holds nothing: one ask, one answer, no re-ask at the next launch |
+| a mention names its author from the phone's copy of names, and the push sentences come from Rust in the app language (WP-MENTION-NAME #2047, WP-PUSH-I18N #2037; [mobile](frontend/mobile.md#a-mention-names-its-author-from-the-phones-own-copy-wp-mention-name-2026-10-18)) | one mention push on each phone (app killed) with a known and an unknown author: the name, or "someone"; on the Mi 9T, whether the COLLAPSED shade shows only the author line. Dev cannot send a push without its Firebase service account, so read on a store tester build |
+| the iOS app no longer aborts when its accessibility tree is read (#2101, `v1.3.0`; the WDA query PASSED on `1.3.1-alpha.1`, [device-readings](device-readings-2026-10.md)) | the two syslog lines on the iPhone 12: `[CanariPush] APNs token received` after `registerForRemoteNotifications`, and the becoming-active line naming `the kept-alive one` |
+| a call survives the app leaving the screen: the Android microphone foreground service (WP-C-BG-A, #2162) and the iPhone's `audio` background mode (WP-C-BG-I, #2164), both in `v1.3.1` ([calls](frontend/modules/calls.md#the-blockers-each-with-its-evidence), rows B8 and B9) | the twelve Mi 9T readings of [WP-C-BG-A](frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) and CALL-L1 row 12 on the iPhone 12 |
 
 ---
 
@@ -1913,18 +1927,24 @@ Filed from #2286.
 
 ## P3 - iOS: the system theme does not follow a live switch of the phone's theme (2026-10-19)
 
+**Re-read 2026-11-11: unchanged** (no trait observer in the iOS sources).
 The window override pins `prefers-color-scheme` to the page's own command, so in the `system` preference the iOS app reads the phone at start only (true since 2026-09-30; made explicit by the camera fix). Following it live needs native to post the screen's trait style to the page. [android-ios-parity](frontend/android-ios-parity.md#the-system-theme-on-ios-is-read-at-start-only)
 
 ## P3 - Two association deletes that co-organise each other's events can deadlock (found 2026-10-19, review of #2116, not fixed)
 
+**Re-read 2026-11-11: unchanged.** `remove` still locks only its own row (`SELECT 1 FROM
+associations WHERE id = $1 FOR UPDATE`).
 `AssociationsService.remove(A)` locks A, then deletes A's events. Migration 074's trigger takes their co-owner rows and `coorganise` proposals, and these can name B. The row delete of A then cascades into the co-owner rows and proposals where A co-organises B's events. `remove(B)` does the same in mirror, so each delete can hold a row the other's cascade needs: `40P01`, one delete aborted and retried by hand. This is older than #2116. It needs two staff deleting two linked associations at the same moment. The likely fix is for `remove` to lock, in id order, every association its events' co-organisation reaches before deleting anything. [profiles-and-access](profiles-and-access.md)
 
 ## P3 - A leader taken over in the middle of its own PIN change reloads and tears the change (found 2026-10-18, review of #2058)
 
+**Re-read 2026-11-11: unchanged.** The demotion handler (`setTabLeaderDemotedHandler`,
+`useChatSession.svelte.ts`) still reloads 50 ms later, and nothing checks a key change in progress.
 Another tab's "Take over" makes the changing leader `releaseLeadership`, and the demotion handler (`useChatSession.svelte.ts`) reloads it 50 ms later whatever it is doing; the recovery finishes the move, but it costs a recovery prompt. **Owed**: refuse or defer a takeover while this tab is changing the key (the realm knows it, `RealmHold.changing`), with a two-realm test ([auth](frontend/modules/auth.md#the-other-tabs-of-the-account)).
 
 ## P3 - The case-collision refusal keeps the deletion marker for ever (found 2026-10-18, fourth review of #2023)
 
+**Re-read 2026-11-11: unchanged** (`accountLocalWipe.ts`, "a human must decide").
 `wipeDeletedAccountLocalData` refuses an id that differs from another stored id only by letter case and keeps the wipe OWED, reported once per start, "until a human looks" - but nothing ever asks a human, so the marker lives until the subject signs in again. It was the main precondition of scenario A of that review (a resume wiping the NEW account), now closed by the callback dropping the marker and every login refusing a deleted account; what is left is an owed wipe that never completes and is never surfaced. **Owed**: a decision on what a collision does (wipe the parts not shared by case, and surface the rest to the user), and a test ([auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18)).
 
 ## P2 - Key-group requests sealed 3-6 epochs behind are unreadable by every current member (console export, 2026-10-12)
@@ -2519,29 +2539,44 @@ WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominativ
 
 ## Decided by the user on 2026-10-18 - every design question answered
 
-Each line: the decision, its scope as a work package (WP), and what blocks it. Rows elsewhere in this file point here. Also standing: the lead may cut STABLE releases without asking each time (under the 2026-10-11 authority above).
+**Re-read 2026-11-11.** Rows elsewhere in this file point here. What shipped was removed: WP-DEL-LOCAL
+(#2023), the presence audience half (#2031), WP-SMOKE-LOGIN (#2020, #2073), WP-HOLD-NOTHING (#2027),
+WP-REELS-MENU (#2021), WP-PUSH-I18N (#2037) and WP-MENTION-NAME (#2047). Their readings are rows of
+[the verification table](#owed-a-verification-and-nothing-else). WP-NICK-COMMUNITY-RULES shipped with
+the nicknames (#3177: "Defini par", a nickname kept when its setter leaves). Five have their own
+entries, which carry their state:
+- WP-PRESENCE's push half: [the presence poll](#p3---the-phone-polls-presence-every-ten-seconds-over-a-live-websocket-2026-09-02);
+- WP-CHECKPOINT-SKIP: [open-questions](open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below);
+- WP-RESTORE-1: [its entry](#p2---wp-restore-1-zero-tap-sign-in-restoration-required-by-google-play-from-april-2027);
+- WP-MIGALLERY-OFFSITE: [the offsite](#p2---migallerys-only-offsite-still-lands-on-the-old-canari-vm);
+- WP-SECOND-CAMPAIGN-VENUE: [the second campaign](#a-second-campaign-for-everything-that-is-not-chat---asked-2026-08-16).
 
-- **WP-DEL-LOCAL: an account deletion wipes THAT account's local message database and its vault slot on the device**, never `wipeDeviceToFactory`; a sign-out still keeps it. Shipped in `v1.3.0` (#2023).
-- **DECIDED, NO WORK: a device revoked while offline keeps its sealed residue until a login on it.** No unauthenticated revocation route (enumeration oracle), no local expiry (a clock).
-- **WP-PRESENCE, the push half (M, server, no MLS): the 10 s phone poll is replaced by a push over the live WebSocket.** The audience half (presence visible only to those who share a conversation or a community) SHIPPED in #2031, `v1.3.0`. Blocks: nothing.
-- **WP-SMOKE-LOGIN: a dedicated smoke account on the DEV estate only**, a real sign-in right after the dev deploy; no production credential in GitHub. Shipped in `v1.3.0` (#2020, #2073); it passed on the `v1.4.1-alpha.1` dev deploy.
-- **WP-HOLD-NOTHING (M, MLS-adjacent, OPUS): an additive "I hold nothing" answer to a HISTORY ask**, so the requester records a definitive answer and stops re-asking once per launch. Blocks: verify first that an OLD client ignores an unknown answer frame without error (a test on the old reader), then ship reader-then-writer. **SHIPPED (#2027)** ([channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)): the old reader was checked first (an empty bundle, absorbed silently since `1.0.3`), so reader and writer ship together.
-- **WP-CHECKPOINT-SKIP (M, MLS, OPUS): skip the full checkpoint after a drain that only received application frames**, forced after K deferred receive generations (a COUNT, never a clock). **BUILT 2026-11-07 (decided by the lead under the owner's delegation): K = 100 behind the server switch `platform_config.checkpoint_skip_mode` (core migration 020, `off` on every estate, `/admin/platform`, published as `checkpointSkip.mode` by `/api/version`), read by the client at every drain end; off is today's behaviour, pinned by a test.** Measured 2026-10-22 on the Mi 9T (K 20-100, up to 60 skipped frames: 0 lost, 0 `live-ahead`, 0 duplicates, 0 `unreadable for good` in 6 valid trials, table in [the question](open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)). **Owed before the lead flips it: the two dev readings on the Mi 9T AND the iPhone 12** - a kill during a drain of more than K frames, and a phone killed for hours with traffic ([the readings](open-questions.md#the-readings-owed-before-the-flip), protocol [CKS](device-verification.md#cks-the-checkpoint-skip-switch-on-dev---owed-on-both-phones-before-the-flip)). The v2 seal (writer off) is a separate lever.
-- **WP-RESTORE-1 is planned NOW, independent of the campaign** (Play enforcement April 2027): [mobile](frontend/mobile.md#wp-restore-1---zero-tap-sign-in-restoration-accepted-2026-08-26-built-2026-10-18); merged as #2065, [account-restore](account-restore.md). Owed: the Mi 9T test before the deadline.
-- **WP-MIGALLERY-OFFSITE (M, ops + a MiGallery PR, no native): MiGallery's offsite backup goes to Canari's own offsite server**, Needs the offsite server's access arranged (private notes); a restore test.
-- **WP-MENTION-NAME (M, native Android and iOS, OPUS): a mention notification names its author from the phone's local copy of names**, "someone" if unknown; the name never rides the push. Owed: one look on each phone, and on the Mi 9T whether the COLLAPSED shade shows only the first line of a mention (the author line is line 1 of the message and may hide the text). **SHIPPED in `v1.3.1` (#2047)**: the author on a salon banner (an MLS banner already names its sender), and the mentioned person inside the text from the same copy.
-- **WP-PUSH-I18N (M, Rust + native readings, OPUS): the 16 notification sentences of `mobile/proto_fields.rs` are translated in Rust from the app language, and a voice note stops being announced as an audio file.** One implementation for Android and iOS; a reading on each. **SHIPPED in `v1.3.0` (#2037)** (`mobile/push_text.rs`), owed the two readings.
-- **WP-COORG-ACCEPT-NOTICE (S-M, server + native tables, no MLS): notify the organiser when a co-organisation is accepted** (`CoorganisationService.apply`), a push content in the Android, iOS and NSE tables like `coorganise_proposed`. **Re-read 2026-11-11: half covered, the blocker lifted.** An acceptance on a VALIDATED event already notifies the organiser, the partners and the validators (`event_pending_coorganiser`, WP-Q2 #2973, `announceEventReopened`); an acceptance on a PENDING event still announces nothing - that is what is left. The floor it waited for (#1911, `v1.2.9`) is far below every estate's `minClientVersion` now.
-- **WP-NICK-COMMUNITY-RULES (part of the nicknames build, S): in a community the renamed person sees "set by X"**, and **a nickname STAYS when its setter leaves** (the target may always reset it); same for groups. Closes the two questions left open in the nicknames entry.
-- **DECIDED, NO WORK: the stale "added a member to the group" bubbles on devices from before #1870 are left alone** (no data deletion; they age out of view).
-- **DECIDED, NO WORK: iOS keeps its native stacking of post reactions** under `post_reaction_<postId>`; no NSE merge.
-- **WP-REELS-MENU: a "CanaReels" entry in the + menu.** Shipped in `v1.3.0` (#2021).
-- **WP-SECOND-CAMPAIGN-VENUE (M-L, harness): the second campaign (posts, forms, calendar) runs on a TEST association on the DEV estate only**, so no real member is notified. Design page: [cross-client-campaign](cross-client-campaign.md#the-second-campaign-for-everything-that-is-not-chat---asked-2026-08-16); its three open items (venue, observer, what a verdict rests on) lose "venue".
-- **WP-TEST-TOOLING-REFORM (L, harness, no native; NOT "after the campaign"): the whole test tooling is reformed NOW** (user: "on est a un nombre de test aberrant"). It covers the shared helpers (the `mut.mjs` helpers, the eight hand-opened IndexedDB runners, the local database access), the starting-point contract, and the number of tests itself - cut what does not earn its keep. It re-validates the controls it touches (rule 33), so a revalidation session is part of it, and it supersedes the "wait for a wholesale rig change" lines of [the harness section](#the-harness-itself) and [cicd](cicd.md). Start with an inventory: which tests exist, what each guards, what its last failure caught; delete the rest. **Done so far**: the inventory (#2129) and the deletion of ten byte-identical spec copies in the NestJS services (-81 jest cases; `http-error-log.spec.ts` kept in both, with its reason) - [test-suite-reform](test-suite-reform.md#72-the-declared-copies-deleted-2026-10-21). **Also done (2026-10-21)**: the `customTabsCommands`/`keystoreCommands` merge, the `features.test.ts` reading and the two `no-assertion` files ([7.3](test-suite-reform.md#73-the-frontend-desk-items-2026-10-21)). **Left**: WP-T7 (the rig change, one campaign session with its re-runs).
+Still open here:
+- **WP-COORG-ACCEPT-NOTICE (S-M, server + native tables, no MLS): notify the organiser when a
+  co-organisation is accepted on a PENDING event.** An acceptance on a VALIDATED event already
+  notifies (`event_pending_coorganiser`, WP-Q2 #2973, `announceEventReopened`); on a pending one,
+  `CoorganisationService.apply` still announces nothing. The client floor it waited for (#1911) is
+  below every estate's `minClientVersion`.
+- **WP-TEST-TOOLING-REFORM (L, harness, no native): the whole test tooling is reformed NOW** (user:
+  "on est a un nombre de test aberrant"). Done: the inventory (#2129), the ten byte-identical spec
+  copies deleted ([test-suite-reform 7.2](test-suite-reform.md#72-the-declared-copies-deleted-2026-10-21)),
+  the frontend desk items ([7.3](test-suite-reform.md#73-the-frontend-desk-items-2026-10-21)).
+  **Left**: WP-T7, the rig change, one campaign session with its re-runs.
+
+Decided, no work: a device revoked while offline keeps its sealed residue until a login on it (no
+unauthenticated revocation route, no local expiry); the stale "added a member" bubbles from before
+#1870 are left alone; iOS keeps its native stacking of post reactions under `post_reaction_<postId>`.
 
 ## Decided by the user on 2026-10-19 - lives before calls, and what a live owes before a stable
 
-Wording in [live](frontend/modules/live.md#decisions-of-2026-10-19). Lives come BEFORE the calls revival (calls stay dev-only; supersedes L7). v1 bitrate (720p or 480p) is fixed at launch by the server from the total live load: no transcoding, no mid-live change. Any member may start a live, so **WP-L8 moderation (like posts: `content_reports`, "cut the live" in place of "delete the post", posts code reused) and the per-account limits are a RELEASE BLOCKER before any stable, and the Apple 1.2 / Play UGC answers precede store submission.** Comments and floating reactions are wanted (WP-L6). The "X est en live" notification: server half WP-L7 in progress (draft PR), **owed: the client LIVE card and deep link.** **Open question from the user:** why ask the school IT department - only for raising the shared host nginx connection budget (about 1500 across its sites), not needed until an audience would exceed it.
+**Re-read 2026-11-11.** The wording is in [live](frontend/modules/live.md#decisions-of-2026-10-19). Any
+member may start a live; the v1 bitrate is fixed at launch by the server from the total live load (no
+transcoding, no mid-live change). Built since: the WP-L7 card ("{name} est en live"), and the gate list
+and the return with `1.5.4` ([live-production](frontend/modules/live-production.md)). What is still
+owed is in the two entries: [WP-L8, moderation](backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md)
+and [WP-L6, the chat](backlog.d/p2-live-chat-and-floating-reactions-wp-l6-shipped-behind-lives-mode-21.md).
+The question to the school IT department matters only if an audience would exceed the shared host's
+nginx connection budget (G14, half answered in live-production).
 
 ## Decided by the user on 2026-10-23 - bookings redesign, sharing, reels, calls, payments, MiConnect, release
 

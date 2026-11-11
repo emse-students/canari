@@ -3054,7 +3054,8 @@ minimising destroyed the element playing the voice and built another. `CallOverl
 the whole call and holds the only `<audio>`; every `<video>` is muted.
 
 **What the web can and cannot do** (what each engine does is unmeasured; the native half is a
-backlog item, [P1 - a call does not survive the app leaving the screen](../../backlog.d/p1-blocks-production-calls-mode-a-call-does-not-survive-the-app-leavin.md)):
+work packages WP-C-BG-A and WP-C-BG-I below, built in `v1.3.1`, their readings owed in
+[the verification table](../../backlog.md#owed-a-verification-and-nothing-else)):
 
 | Concern | Web (done) | Native (owed) |
 |---|---|---|
