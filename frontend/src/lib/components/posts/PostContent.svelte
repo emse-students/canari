@@ -185,9 +185,10 @@
   /**
    * THE STREAM AFTER THE OPENED VIDEO, IN THE READER'S ORDER AND WITH ITS SWITCH (owner, 2026-11-11):
    * the CanaReels entry's own implementation (`reels/reelStream.svelte.ts`). A change of order starts
-   * over at the top of the new list, this post still first.
+   * over at the top of the new list, this post still first. Built on the first opening, never with
+   * the card: most cards are never opened full screen.
    */
-  const reelStream = new ReelStream();
+  let reelStream = $state.raw<ReelStream | null>(null);
   /** A live replay: no media, a card that opens the CanaReels viewer (`ReplayCard`). */
   const replay = $derived(isReplay(post));
 
@@ -205,7 +206,7 @@
     Log.d('PostContent.openReelViewer', { postId: post.id, page: fullPage, mediaIndex });
     reelStartIndex = mediaIndex;
     reelContinues = feedReelsContinue();
-    if (reelContinues) reelStream.open();
+    if (reelContinues) (reelStream ??= new ReelStream()).open();
     reelViewerOpen = true;
   }
 
@@ -215,7 +216,7 @@
    */
   async function closeReelViewer() {
     reelViewerOpen = false;
-    reelStream.close();
+    reelStream?.close();
     await tick();
     for (const media of postMedia) endVideoHandBack(media.mediaId);
   }
@@ -383,8 +384,8 @@
     startMediaIndex={reelStartIndex}
     {authToken}
     {likerId}
-    loadPage={reelContinues ? reelStream.loader : NO_FURTHER_REELS}
-    orderChoice={reelContinues ? reelStream.choice : undefined}
+    loadPage={reelContinues && reelStream ? reelStream.loader : NO_FURTHER_REELS}
+    orderChoice={reelContinues && reelStream ? reelStream.choice : undefined}
     onClose={closeReelViewer}
   />
 {/if}

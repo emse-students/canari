@@ -4,8 +4,8 @@ import { mountedReelIndices } from './reelViewerNav';
 
 /**
  * ONE LIST OF THE REEL VIEWER, AND EVERYTHING THAT IS TRUE ONLY OF IT: its reels, the one on screen,
- * how far its loader has been read, which page has settled, each carousel's visible media, and where
- * the track stands. The viewer holds ONE as a `$derived` of its loader (`ReelViewer.svelte`), so a
+ * how far its loader has been read, which page has settled, each carousel's visible media, where
+ * the track and a held carousel drag stand, and which post's comments or share sheet is open. The viewer holds ONE as a `$derived` of its loader (`ReelViewer.svelte`), so a
  * new loader - the stream's order changed - is a new object in the same instant the prop changes:
  * nothing of the old list is ever read against the new one, and nothing has to be reset by an effect
  * that runs after the render (production, 1.6.10: that reset left a slide of the old list reading its
@@ -36,6 +36,16 @@ export class ReelList {
   settling = $state(false);
   /** What runs once the track has landed. */
   afterSettle: (() => void) | null = null;
+  /** Where a held horizontal drag has taken the current carousel's strip (`reelDragOffset`). */
+  mediaDragX = $state(0);
+  /** A drag is held: the strip follows the finger with no transition. */
+  mediaDragging = $state(false);
+  /** The post whose comments sheet is open, by id - the sheet follows the row, not an index. */
+  commentsFor = $state<string | null>(null);
+  /** The comments sheet has begun to slide out: the reel grows back to the screen with it. */
+  commentsLeaving = $state(false);
+  /** The post whose share sheet is open (the rail's send), by id. */
+  shareFor = $state<string | null>(null);
 
   constructor(loader: ReelPageLoader, start: PostEntity, startMediaIndex = 0) {
     this.loader = loader;

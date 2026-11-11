@@ -36,7 +36,7 @@
   let opening = $state(false);
   /**
    * The stream in the reader's order, and its switch - the one implementation every opener of the
-   * stream shares (`reels/reelStream.svelte.ts`). Open while it holds a first page.
+   * stream shares (`reels/reelStream.svelte.ts`).
    */
   const stream = new ReelStream();
   let emptyOpen = $state(false);
@@ -45,7 +45,7 @@
   let expandOrigin = $state<ExpandOrigin | null>(null);
 
   async function open() {
-    if (opening || stream.firstPage) return;
+    if (opening || stream.opened) return;
     opening = true;
     let handedOff = false;
     console.debug('[reels-entry] opening the viewer at the top of the reels list');
@@ -100,7 +100,7 @@
   <Clapperboard size={18} aria-hidden="true" />
 </button>
 
-{#if stream.firstPage}
+{#if stream.opened && stream.firstPage}
   <ReelViewer
     startPost={stream.firstPage[0]}
     {authToken}

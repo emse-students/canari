@@ -154,6 +154,19 @@
    * reset by an effect after a render, and nothing outlives it: its reels, its place, its pages, its
    * settle, its carousels and its track move all go with the object.
    */
+  /**
+   * Runs the body of one of the viewer's OWN effects: a throw there is outside the template's
+   * boundary and would reach the route, so it closes the viewer the same way (`closeOnCrash`).
+   */
+  function guarded<T>(where: string, body: () => T): T | undefined {
+    try {
+      return body();
+    } catch (error) {
+      closeOnCrash(error, where);
+      return undefined;
+    }
+  }
+
   /** How many lists this viewer has shown: the first is the opening, each later one a change of order. */
   let listCount = 0;
   const list = $derived.by(() => {
@@ -168,12 +181,29 @@
     return next;
   });
 
-  let frame = $state<HTMLDivElement | null>(null);
+  /**
+   * THE SWAP LANDS THE PREVIOUS LIST'S MOVE, EXPLICITLY. A track move in flight when the list changes
+   * (a step, a close swipe) would wait for a `transitionend` the swap itself cancels - the close
+   * swipe would leave the viewer open. Its landing runs now, on the list it was set on; a step's
+   * writes go to that list, which nothing draws any more.
+   */
+  let previousList: ReelList | null = null;
+  $effect.pre(() =>
+    guarded('the list swap', () => {
+      const current = list;
+      const previous = previousList;
+      previousList = current;
+      if (previous === null || previous === current) return;
+      const landing = previous.afterSettle;
+      previous.afterSettle = null;
+      previous.settling = false;
+      if (!landing) return;
+      console.debug('[reel-viewer] the list changed during a track move - its landing runs now');
+      untrack(landing);
+    })
+  );
 
-  /** Where a held horizontal drag has taken the current carousel's strip (`reelDragOffset`). */
-  let mediaDragX = $state(0);
-  /** A drag is held: the strip follows the finger with no transition. */
-  let mediaDragging = $state(false);
+  let frame = $state<HTMLDivElement | null>(null);
 
   /** The media position of a page: its visible media out of how many (1 off a carousel). */
   function mediaPositionOf(post: PostEntity | undefined): MediaPosition {
@@ -234,17 +264,19 @@
   }
 
   // The next page, asked for as the reader nears the end of what is loaded.
-  $effect(() => {
-    const current = list;
-    if (
-      !shouldLoadMoreReels(current.index, current.reels.length, current.hasMore) ||
-      current.loadingMore ||
-      current.reels.length === 0
-    ) {
-      return;
-    }
-    void loadMore(current);
-  });
+  $effect(() =>
+    guarded('the next-page effect', () => {
+      const current = list;
+      if (
+        !shouldLoadMoreReels(current.index, current.reels.length, current.hasMore) ||
+        current.loadingMore ||
+        current.reels.length === 0
+      ) {
+        return;
+      }
+      void loadMore(current);
+    })
+  );
 
   /**
    * Reads the next page of `target`, into `target`: a page asked of a list that has since been
@@ -385,14 +417,13 @@
     sendReaction(post, me, pick.type, pick.wasReacted);
   }
 
-  /** The post whose comments sheet is open, by id - the sheet follows the row, not an index. */
-  let commentsFor = $state<string | null>(null);
-  /** The sheet has begun to slide out: the reel grows back to the screen with it. */
-  let commentsLeaving = $state(false);
+  // The comments sheet (`list.commentsFor`) and the share sheet (`list.shareFor`) belong to the LIST:
+  // a change of order closes them with it, so the reel never stays shrunk above a sheet of a list
+  // that is gone.
   /** The reel is a rounded card above the sheet (Instagram's): `scale` of the full screen. */
-  const commentsCard = $derived(commentsFor !== null && !commentsLeaving);
+  const commentsCard = $derived(list.commentsFor !== null && !list.commentsLeaving);
   const commentsPost = $derived(
-    commentsFor ? (list.reels.find((r) => r.id === commentsFor) ?? null) : null
+    list.commentsFor ? (list.reels.find((r) => r.id === list.commentsFor) ?? null) : null
   );
 
   /**
@@ -401,16 +432,17 @@
    * viewer opened only to watch has no reason to load. Drawn inside the viewer, so its dialogs
    * take the viewer's rung (`markViewerLayer`).
    */
-  let shareFor = $state<string | null>(null);
   let ShareSheet = $state<
     typeof import('$lib/components/posts/PostShareSheet.svelte').default | null
   >(null);
 
   function openShareSheet(postId: string) {
+    // The sheet opens on the list it was asked from: a change of order meanwhile leaves it closed.
+    const target = list;
     import('$lib/components/posts/PostShareSheet.svelte')
       .then((mod) => {
         ShareSheet = mod.default;
-        shareFor = postId;
+        target.shareFor = postId;
       })
       .catch((e: unknown) => console.error('[reel-viewer] the share sheet did not load', e));
   }
@@ -430,8 +462,8 @@
       onReact: (type) => pickReaction(post, type),
       onComments: () => {
         console.debug(`[reel-viewer] comments opened on ${post.id}`);
-        commentsLeaving = false;
-        commentsFor = post.id;
+        list.commentsLeaving = false;
+        list.commentsFor = post.id;
       },
       onSend: () => openShareSheet(post.id),
     };
@@ -479,6 +511,13 @@
    */
   function onTransitionEnd(e: TransitionEvent) {
     if (e.target !== e.currentTarget || e.propertyName !== 'transform') return;
+    if (!list.settling) {
+      // The swap landed the previous list's move already (the effect above): nothing is pending.
+      console.debug(
+        `[reel-viewer] a ${e.type} for a move the current list did not start - nothing to land`
+      );
+      return;
+    }
     if (e.type === 'transitioncancel') {
       console.warn('[reel-viewer] the track move was cancelled - landing where it was going');
     }
@@ -497,8 +536,8 @@
     const post = list.reels[list.index];
     const at = mediaPositionOf(post);
     const target = stepMediaIndex(at.index, verdict, at.count);
-    mediaDragging = false;
-    mediaDragX = 0;
+    list.mediaDragging = false;
+    list.mediaDragX = 0;
     if (!post || target === at.index) return;
     console.debug(`[reel-viewer] ${verdict} on ${post.id}: ${at.index} -> ${target}`);
     // The page's settle is kept: the next post's preload goes on behind the strip.
@@ -511,8 +550,8 @@
       stepMedia(verdict);
       return;
     }
-    mediaDragging = false;
-    mediaDragX = 0;
+    list.mediaDragging = false;
+    list.mediaDragX = 0;
     const height = frame?.clientHeight ?? window.innerHeight;
     const width = frame?.clientWidth ?? window.innerWidth;
     const target = stepReelIndex(list.index, verdict, list.reels.length);
@@ -547,216 +586,225 @@
    * scroll. Non-passive, on the viewer only, so `preventDefault` runs exactly when the event is
    * consumed; removed with the viewer.
    */
-  $effect(() => {
-    const el = viewerEl;
-    if (!el) return;
-    const lock = new WheelPageLock();
-    function onWheel(e: WheelEvent) {
-      const step = wheelStep(e);
-      if (!step || commentsFor || shareFor || wheelOverScrollable(e.target, el!)) return;
-      e.preventDefault();
-      // Free when the wheel was quiet AND the last page has landed (`settling` clears on landing).
-      const free = lock.free && !list.settling;
-      lock.heard();
-      if (!free) return;
-      console.debug(`[reel-viewer] wheel: ${step}`);
-      go(step);
-    }
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => {
-      el.removeEventListener('wheel', onWheel);
-      lock.dispose();
-    };
-  });
+  $effect(() =>
+    guarded('the wheel effect', () => {
+      const el = viewerEl;
+      if (!el) return;
+      const lock = new WheelPageLock();
+      function onWheel(e: WheelEvent) {
+        const step = wheelStep(e);
+        if (!step || list.commentsFor || list.shareFor || wheelOverScrollable(e.target, el!))
+          return;
+        e.preventDefault();
+        // Free when the wheel was quiet AND the last page has landed (`settling` clears on landing).
+        const free = lock.free && !list.settling;
+        lock.heard();
+        if (!free) return;
+        console.debug(`[reel-viewer] wheel: ${step}`);
+        go(step);
+      }
+      el.addEventListener('wheel', onWheel, { passive: false });
+      return () => {
+        el.removeEventListener('wheel', onWheel);
+        lock.dispose();
+      };
+    })
+  );
 
   // Touch listeners by hand with `passive: false`: Svelte registers touch handlers as passive, where
   // `preventDefault()` is ignored and the page would scroll under the drag. THE MOUSE DRIVES THE SAME
   // GESTURE (owner, 2026-11-06: a carousel is dragged on a desktop too) through pointer events of
   // type `mouse` - a touch or a pen keeps the touch path, so nothing is read twice.
-  $effect(() => {
-    const el = frame;
-    if (!el) return;
-    let gesture: GestureKind | null = null;
-    let start: Sample = { x: 0, y: 0, t: 0 };
-    let samples: Sample[] = [];
-    /** A mouse drag that moved the page: the click it ends with is not a tap. */
-    let swallowClick = false;
-    const sampleOf = (t: Touch, time: number): Sample => ({ x: t.clientX, y: t.clientY, t: time });
+  $effect(() =>
+    guarded('the gesture effect', () => {
+      const el = frame;
+      if (!el) return;
+      let gesture: GestureKind | null = null;
+      let start: Sample = { x: 0, y: 0, t: 0 };
+      let samples: Sample[] = [];
+      /** A mouse drag that moved the page: the click it ends with is not a tap. */
+      let swallowClick = false;
+      const sampleOf = (t: Touch, time: number): Sample => ({
+        x: t.clientX,
+        y: t.clientY,
+        t: time,
+      });
 
-    /** A press: whether it starts a gesture of ours. */
-    function begin(target: EventTarget | null, at: Sample, pointers: number) {
-      if ((target as HTMLElement | null)?.closest?.(NOT_A_GESTURE) || list.settling) {
-        gesture = null;
-        return;
+      /** A press: whether it starts a gesture of ours. */
+      function begin(target: EventTarget | null, at: Sample, pointers: number) {
+        if ((target as HTMLElement | null)?.closest?.(NOT_A_GESTURE) || list.settling) {
+          gesture = null;
+          return;
+        }
+        gesture = pointers >= 2 ? 'pinch' : 'pending';
+        start = at;
+        samples = [start];
       }
-      gesture = pointers >= 2 ? 'pinch' : 'pending';
-      start = at;
-      samples = [start];
-    }
 
-    /**
-     * A move. `claim` takes it from the engine and says whether it could (a touch the engine is
-     * already scrolling cannot be claimed). False when the move is not ours.
-     */
-    function move(now: Sample, claim: () => boolean): boolean {
-      if (!gesture || gesture === 'pinch') return false;
-      samples.push(now);
-      if (samples.length > 12) samples.shift();
-      const dx = now.x - start.x;
-      const dy = now.y - start.y;
-      if (gesture === 'pending') {
-        // Classified ONCE, then kept until the finger lifts: a swipe that curves stays a swipe.
-        gesture = classifyMove({ dx, dy, zoomed: false, touches: 1 });
-        if (gesture === 'pending') return false;
-        console.debug(`[reel-viewer] drag locked to ${gesture}`);
+      /**
+       * A move. `claim` takes it from the engine and says whether it could (a touch the engine is
+       * already scrolling cannot be claimed). False when the move is not ours.
+       */
+      function move(now: Sample, claim: () => boolean): boolean {
+        if (!gesture || gesture === 'pinch') return false;
+        samples.push(now);
+        if (samples.length > 12) samples.shift();
+        const dx = now.x - start.x;
+        const dy = now.y - start.y;
+        if (gesture === 'pending') {
+          // Classified ONCE, then kept until the finger lifts: a swipe that curves stays a swipe.
+          gesture = classifyMove({ dx, dy, zoomed: false, touches: 1 });
+          if (gesture === 'pending') return false;
+          console.debug(`[reel-viewer] drag locked to ${gesture}`);
+        }
+        // A move the engine is already scrolling is not ours: the drag stands down and springs back.
+        if (!claim()) {
+          gesture = null;
+          list.mediaDragging = false;
+          list.mediaDragX = 0;
+          settle(0, 0);
+          return false;
+        }
+        const o = reelDragOffset(
+          gesture,
+          dx,
+          dy,
+          list.index > 0,
+          list.index < list.reels.length - 1,
+          mediaPositionOf(list.reels[list.index])
+        );
+        list.offsetX = o.x;
+        list.offsetY = o.y;
+        list.mediaDragging = true;
+        list.mediaDragX = o.mediaX;
+        return true;
       }
-      // A move the engine is already scrolling is not ours: the drag stands down and springs back.
-      if (!claim()) {
+
+      /** A release: what the drag meant. */
+      function end(at: Sample) {
+        const kind = gesture;
         gesture = null;
-        mediaDragging = false;
-        mediaDragX = 0;
+        if (!kind || kind === 'pending' || kind === 'pinch') return;
+        samples.push(at);
+        go(
+          reelReleaseVerdict({
+            kind,
+            dx: at.x - start.x,
+            dy: at.y - start.y,
+            velocity: releaseVelocity(samples),
+            width: el!.clientWidth,
+            height: el!.clientHeight,
+            hasPrevious: list.index > 0,
+            hasNext: list.index < list.reels.length - 1,
+            media: mediaPositionOf(list.reels[list.index]),
+          })
+        );
+      }
+
+      // A cancel ends a drag of OURS; one arriving while a page lands (no drag was taken) moves nothing.
+      function cancel() {
+        if (!gesture) return;
+        gesture = null;
+        list.mediaDragging = false;
+        list.mediaDragX = 0;
         settle(0, 0);
-        return false;
       }
-      const o = reelDragOffset(
-        gesture,
-        dx,
-        dy,
-        list.index > 0,
-        list.index < list.reels.length - 1,
-        mediaPositionOf(list.reels[list.index])
-      );
-      list.offsetX = o.x;
-      list.offsetY = o.y;
-      mediaDragging = true;
-      mediaDragX = o.mediaX;
-      return true;
-    }
 
-    /** A release: what the drag meant. */
-    function end(at: Sample) {
-      const kind = gesture;
-      gesture = null;
-      if (!kind || kind === 'pending' || kind === 'pinch') return;
-      samples.push(at);
-      go(
-        reelReleaseVerdict({
-          kind,
-          dx: at.x - start.x,
-          dy: at.y - start.y,
-          velocity: releaseVelocity(samples),
-          width: el!.clientWidth,
-          height: el!.clientHeight,
-          hasPrevious: list.index > 0,
-          hasNext: list.index < list.reels.length - 1,
-          media: mediaPositionOf(list.reels[list.index]),
-        })
-      );
-    }
+      function onStart(e: TouchEvent) {
+        begin(e.target, sampleOf(e.touches[0], e.timeStamp), e.touches.length);
+      }
 
-    // A cancel ends a drag of OURS; one arriving while a page lands (no drag was taken) moves nothing.
-    function cancel() {
-      if (!gesture) return;
-      gesture = null;
-      mediaDragging = false;
-      mediaDragX = 0;
-      settle(0, 0);
-    }
+      function onMove(e: TouchEvent) {
+        if (e.touches.length !== 1) return;
+        move(sampleOf(e.touches[0], e.timeStamp), () => claimTouchMove(e));
+      }
 
-    function onStart(e: TouchEvent) {
-      begin(e.target, sampleOf(e.touches[0], e.timeStamp), e.touches.length);
-    }
+      function onEnd(e: TouchEvent) {
+        if (!gesture || e.touches.length > 0) return;
+        end(sampleOf(e.changedTouches[0], e.timeStamp));
+      }
 
-    function onMove(e: TouchEvent) {
-      if (e.touches.length !== 1) return;
-      move(sampleOf(e.touches[0], e.timeStamp), () => claimTouchMove(e));
-    }
+      const pointSample = (e: PointerEvent): Sample => ({
+        x: e.clientX,
+        y: e.clientY,
+        t: e.timeStamp,
+      });
 
-    function onEnd(e: TouchEvent) {
-      if (!gesture || e.touches.length > 0) return;
-      end(sampleOf(e.changedTouches[0], e.timeStamp));
-    }
-
-    const pointSample = (e: PointerEvent): Sample => ({
-      x: e.clientX,
-      y: e.clientY,
-      t: e.timeStamp,
-    });
-
-    function onPointerDown(e: PointerEvent) {
-      if (e.pointerType !== 'mouse' || e.button !== 0) return;
-      swallowClick = false;
-      begin(e.target, pointSample(e), 1);
-    }
-
-    function onPointerMove(e: PointerEvent) {
-      if (e.pointerType !== 'mouse' || !gesture) return;
-      if (e.buttons === 0) {
-        // The button is up and no pointerup came (a context menu opened mid-drag): the drag is over.
-        console.debug('[reel-viewer] a mouse drag lost its pointerup - cancelled');
+      function onPointerDown(e: PointerEvent) {
+        if (e.pointerType !== 'mouse' || e.button !== 0) return;
         swallowClick = false;
-        cancel();
-        return;
+        begin(e.target, pointSample(e), 1);
       }
-      if (
-        move(pointSample(e), () => {
-          // A mouse drag is ours once it moved past the slop: no text selection, no image drag.
-          e.preventDefault();
-          return true;
-        })
-      ) {
-        swallowClick = true;
+
+      function onPointerMove(e: PointerEvent) {
+        if (e.pointerType !== 'mouse' || !gesture) return;
+        if (e.buttons === 0) {
+          // The button is up and no pointerup came (a context menu opened mid-drag): the drag is over.
+          console.debug('[reel-viewer] a mouse drag lost its pointerup - cancelled');
+          swallowClick = false;
+          cancel();
+          return;
+        }
+        if (
+          move(pointSample(e), () => {
+            // A mouse drag is ours once it moved past the slop: no text selection, no image drag.
+            e.preventDefault();
+            return true;
+          })
+        ) {
+          swallowClick = true;
+        }
       }
-    }
 
-    function onPointerUp(e: PointerEvent) {
-      if (e.pointerType !== 'mouse' || !gesture) return;
-      end(pointSample(e));
-      // The click this pointerup makes is dispatched in the same task; a drag that ends outside
-      // the frame makes none, so the flag must not outlive this frame and eat a later real tap.
-      if (swallowClick) requestAnimationFrame(() => (swallowClick = false));
-    }
+      function onPointerUp(e: PointerEvent) {
+        if (e.pointerType !== 'mouse' || !gesture) return;
+        end(pointSample(e));
+        // The click this pointerup makes is dispatched in the same task; a drag that ends outside
+        // the frame makes none, so the flag must not outlive this frame and eat a later real tap.
+        if (swallowClick) requestAnimationFrame(() => (swallowClick = false));
+      }
 
-    /**
-     * THE CLICK THAT ENDS A MOUSE DRAG IS NOT A TAP: it would pause the video under it and count
-     * towards a double tap's like - and, ending on a caption's LINK (owner, 2026-11-06: a post with
-     * a link is in CanaReels), it would open it. Taken in the capture phase of the WINDOW, before
-     * the document's link handler (`installAppLinkClickHandler`, which leaves a prevented click
-     * alone), the slide's double tap and the player see it; only a click inside the viewer.
-     */
-    function onClickCapture(e: MouseEvent) {
-      if (!swallowClick || !(e.target instanceof Node) || !el!.contains(e.target)) return;
-      swallowClick = false;
-      console.debug('[reel-viewer] the click ending a mouse drag is not a tap - swallowed');
-      e.preventDefault();
-      e.stopPropagation();
-    }
+      /**
+       * THE CLICK THAT ENDS A MOUSE DRAG IS NOT A TAP: it would pause the video under it and count
+       * towards a double tap's like - and, ending on a caption's LINK (owner, 2026-11-06: a post with
+       * a link is in CanaReels), it would open it. Taken in the capture phase of the WINDOW, before
+       * the document's link handler (`installAppLinkClickHandler`, which leaves a prevented click
+       * alone), the slide's double tap and the player see it; only a click inside the viewer.
+       */
+      function onClickCapture(e: MouseEvent) {
+        if (!swallowClick || !(e.target instanceof Node) || !el!.contains(e.target)) return;
+        swallowClick = false;
+        console.debug('[reel-viewer] the click ending a mouse drag is not a tap - swallowed');
+        e.preventDefault();
+        e.stopPropagation();
+      }
 
-    el.addEventListener('touchstart', onStart, { passive: false });
-    el.addEventListener('touchmove', onMove, { passive: false });
-    el.addEventListener('touchend', onEnd, { passive: false });
-    el.addEventListener('touchcancel', cancel);
-    el.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointercancel', cancel);
-    window.addEventListener('click', onClickCapture, { capture: true });
-    // A picture's native drag would steal the mouse's pointer events (`pointercancel`).
-    const noNativeDrag = (e: DragEvent) => e.preventDefault();
-    el.addEventListener('dragstart', noNativeDrag);
-    return () => {
-      el.removeEventListener('dragstart', noNativeDrag);
-      el.removeEventListener('touchstart', onStart);
-      el.removeEventListener('touchmove', onMove);
-      el.removeEventListener('touchend', onEnd);
-      el.removeEventListener('touchcancel', cancel);
-      el.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener('pointercancel', cancel);
-      window.removeEventListener('click', onClickCapture, { capture: true });
-    };
-  });
+      el.addEventListener('touchstart', onStart, { passive: false });
+      el.addEventListener('touchmove', onMove, { passive: false });
+      el.addEventListener('touchend', onEnd, { passive: false });
+      el.addEventListener('touchcancel', cancel);
+      el.addEventListener('pointerdown', onPointerDown);
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', cancel);
+      window.addEventListener('click', onClickCapture, { capture: true });
+      // A picture's native drag would steal the mouse's pointer events (`pointercancel`).
+      const noNativeDrag = (e: DragEvent) => e.preventDefault();
+      el.addEventListener('dragstart', noNativeDrag);
+      return () => {
+        el.removeEventListener('dragstart', noNativeDrag);
+        el.removeEventListener('touchstart', onStart);
+        el.removeEventListener('touchmove', onMove);
+        el.removeEventListener('touchend', onEnd);
+        el.removeEventListener('touchcancel', cancel);
+        el.removeEventListener('pointerdown', onPointerDown);
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+        window.removeEventListener('pointercancel', cancel);
+        window.removeEventListener('click', onClickCapture, { capture: true });
+      };
+    })
+  );
 
   /** How far one arrow key scrolls an unfolded caption: about two lines of its text. */
   const CAPTION_LINE_STEP = 40;
@@ -784,7 +832,7 @@
   /** The keyboard: up/down page, left/right a carousel's media, Escape closes. A key the player already used is left to it. */
   function onKeydown(e: KeyboardEvent) {
     // The comments sheet has the keyboard while it is open: its field types, and Escape closes IT.
-    if (e.defaultPrevented || list.settling || commentsFor || shareFor) return;
+    if (e.defaultPrevented || list.settling || list.commentsFor || list.shareFor) return;
     if (scrollOpenCaption(e)) return;
     if (e.key === 'ArrowDown' || e.key === 'PageDown') {
       e.preventDefault();
@@ -803,14 +851,19 @@
   }
 
   /**
-   * THE VIEWER'S BOUNDARY CAUGHT A THROW (a slide, a sheet, the rail): a defect of this viewer, said
-   * as one with the post on screen, then the viewer closes - the feed behind it stays as it was.
+   * A THROW INSIDE THE VIEWER (its boundary: a slide, a sheet, the rail; or `guarded`: one of its
+   * own effects, which a boundary in its template cannot see): a defect of this viewer, said as one
+   * with where it came from, then the viewer closes ONCE - the feed behind it stays as it was. It
+   * reads nothing of the list, which may be what threw.
    */
-  function closeOnCrash(error: unknown) {
+  let crashed = false;
+  function closeOnCrash(error: unknown, where = 'its content') {
     console.error(
-      `[reel-viewer] the viewer failed on ${list.reels[list.index]?.id ?? '?'} - closed, the page behind it kept:`,
+      `[reel-viewer] the viewer failed in ${where} - closed, the page behind it kept:`,
       error
     );
+    if (crashed) return;
+    crashed = true;
     showToast(m.reels_viewer_crashed(), 'error');
     overlay.dismissFromUi();
   }
@@ -823,7 +876,7 @@
      takes its own boundary (architecture.md, "boundaries are placed by blast radius"): the line
      accuses, the reader is told, and the viewer closes through its history entry - nothing is drawn
      in its place, the feed under it never left. -->
-<svelte:boundary onerror={closeOnCrash}>
+<svelte:boundary onerror={(error) => closeOnCrash(error)}>
   <div use:portal>
     <div
       bind:this={viewerEl}
@@ -875,8 +928,8 @@
                 onLike={likerId ? () => likeReel(slot.post) : undefined}
                 rail={railFor(slot.post)}
                 mediaIndex={mediaPositionOf(slot.post).index}
-                mediaDragX={slot.i === list.index ? mediaDragX : 0}
-                mediaDragging={slot.i === list.index && mediaDragging}
+                mediaDragX={slot.i === list.index ? list.mediaDragX : 0}
+                mediaDragging={slot.i === list.index && list.mediaDragging}
                 onMediaStep={(step) => !list.settling && slot.i === list.index && go(step)}
               />
             </div>
@@ -952,20 +1005,20 @@
           currentUserId={likerId}
           {authToken}
           onChange={setPost}
-          onClosing={() => (commentsLeaving = true)}
+          onClosing={() => (list.commentsLeaving = true)}
           onClose={() => {
-            commentsFor = null;
-            commentsLeaving = false;
+            list.commentsFor = null;
+            list.commentsLeaving = false;
           }}
         />
       {/if}
 
-      {#if ShareSheet && shareFor}
-        {@const sharedReel = list.reels.find((r) => r.id === shareFor)}
+      {#if ShareSheet && list.shareFor}
+        {@const sharedReel = list.reels.find((r) => r.id === list.shareFor)}
         <ShareSheet
           open
-          postId={shareFor}
-          onClose={() => (shareFor = null)}
+          postId={list.shareFor}
+          onClose={() => (list.shareFor = null)}
           canRepost={sharedReel?.canRepost === true}
           repostedByMe={sharedReel?.repostedByMe === true}
           onRepostChange={(id, reposted) => {

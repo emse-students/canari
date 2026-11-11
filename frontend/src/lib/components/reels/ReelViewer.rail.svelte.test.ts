@@ -538,3 +538,44 @@ it('Back closes the drawer as a history entry of its own, and leaves the viewer 
   expect(q('[data-reel-rail-drawer]')).toBeNull();
   expect(onClose).not.toHaveBeenCalled();
 });
+
+it('a change of order with the comments open closes them: the reel is full size and the keys work', async () => {
+  const props = $state({
+    startPost: post('a', { comments: [comment('c1')] }),
+    loadPage: (async () => []) as (offset: number, limit: number) => Promise<PostEntity[]>,
+  });
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  mounted.push(
+    mount(ReelViewer, {
+      target,
+      props: {
+        get startPost() {
+          return props.startPost;
+        },
+        get loadPage() {
+          return props.loadPage;
+        },
+        authToken: 'tok',
+        onClose: vi.fn(),
+        likerId: 'alice',
+      },
+    })
+  );
+  await settle();
+  await click('[data-reel-rail-comments]');
+  expect(q('[data-reel-card]')!.getAttribute('data-reel-card'), 'shrunk above the sheet').toBe(
+    'true'
+  );
+
+  // The order changes: a new loader and a new first reel.
+  props.startPost = post('b');
+  props.loadPage = async (offset) => (offset === 0 ? [post('b'), post('c')] : []);
+  await settle();
+
+  expect(q('[data-comments-drawer-sheet]')).toBeNull();
+  expect(q('[data-reel-card]')!.getAttribute('data-reel-card')).toBe('false');
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+  await settle();
+  expect(q('[data-post-media-stub]')!.getAttribute('data-post-media-stub')).toBe('m-c');
+});

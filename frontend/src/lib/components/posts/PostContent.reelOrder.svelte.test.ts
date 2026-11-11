@@ -28,7 +28,10 @@ vi.mock('$lib/posts/api', async (orig) => ({
 const video = { type: 'video', mediaId: 'm-1', key: 'k', iv: 'i', mimeType: 'video/mp4', size: 1 };
 const mounted: (() => void)[] = [];
 
-beforeEach(() => listPosts.mockReset().mockResolvedValue([{ id: 'other' }] as PostEntity[]));
+beforeEach(() => {
+  listPosts.mockReset().mockResolvedValue([{ id: 'other' }] as PostEntity[]);
+  settings.setReelsOrder('ranked');
+});
 afterEach(() => {
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
@@ -100,4 +103,27 @@ it('with infinite CanaReels off: no list after the post, so no switch and no rea
   viewer.querySelector<HTMLButtonElement>('[data-reel-viewer-load-first]')!.click();
   await settle();
   expect(listPosts).not.toHaveBeenCalled();
+});
+
+it('a change still being read when the card closes and reopens is dropped: the new opening keeps its order', async () => {
+  const viewer = await openFeedVideo();
+  let answer!: (rows: PostEntity[]) => void;
+  listPosts.mockImplementationOnce(() => new Promise<PostEntity[]>((r) => (answer = r)));
+  viewer.querySelector<HTMLButtonElement>('[data-reel-viewer-recent]')!.click();
+  await settle();
+  viewer.querySelector<HTMLButtonElement>('[data-reel-viewer-close]')!.click();
+  await settle();
+  expect(document.querySelector('[data-reel-viewer-stub]')).toBeNull();
+  // Reopened at once, on the same card.
+  document.querySelector<HTMLButtonElement>('[data-post-media-open]')!.click();
+  await settle();
+
+  answer([{ id: 'late' }] as PostEntity[]);
+  await settle();
+  const again = document.querySelector<HTMLElement>('[data-reel-viewer-stub]')!;
+  expect(again.getAttribute('data-order'), 'the late answer reorders nothing').toBe('ranked');
+  expect(settings.reelsOrder, 'nor is its order remembered').toBe('ranked');
+  again.querySelector<HTMLButtonElement>('[data-reel-viewer-load-first]')!.click();
+  await settle();
+  expect(rankedAsked(), 'the reopened viewer reads in Pour toi').toEqual([false, true]);
 });

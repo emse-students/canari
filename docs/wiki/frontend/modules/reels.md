@@ -1170,13 +1170,24 @@ the viewer):
   des CanaReels" off (`feedReelsContinue`) the viewer is handed `NO_FURTHER_REELS` and NO switch:
   there is no list to order ([engagement](../../engagement.md)).
 
+**AN ANSWER BELONGS TO ITS OPENING.** `open` and `close` each start a new opening, and a change's
+read carries the one it was asked in: an answer landing after the viewer closed (or closed and
+reopened on the same card) is dropped and said, never applied - it would reopen the entry's viewer
+by itself, reorder a later opening and remember an order nobody saw. `close` clears nothing the
+loader is built from (only `opened`; `open` replaces the first page), so a closing viewer is never
+handed a new list built only to be torn down.
+
 **THE LIST IS A `$derived` OF THE LOADER** (`reels/reelList.svelte.ts`, `ReelList`): its reels, the
 reel on screen, its pages read, its settle, each carousel's visible media and the track's move all
 live on ONE object, so a new loader is a new list in the same instant the prop changes. Nothing is
 reset afterwards, and anything that outlives its list - a page that lands, a track move that lands -
 writes into the object it was started on, which nothing draws: identity says which list a result
 belongs to, not a generation counter. **And every slide is handed ITS OWN POST** (`mountedReelSlots`:
-the each block iterates `{ post, i }` keyed by the post), never `reels[i]` read again later.
+the each block iterates `{ post, i }` keyed by the post), never `reels[i]` read again later. The
+comments and share sheets and a held carousel drag are the list's too, so a change of order with the
+comments open gives the reel its full size and the keys back. **A track move in flight at the swap
+is landed explicitly, on its own list** (a close swipe still closes); the transition end the swap
+cancels belongs to no current move and is said at debug, never warned.
 
 **The defect both close (production, 1.6.10, Firefox, 2026-11-11):** opened in Récents, switched to
 Pour toi at the third reel (survived), stepped to the fourth, switched back - and the feed page
@@ -1193,8 +1204,11 @@ red on 1.6.10.
 tab row, outside every card's boundary, so the throw reached the route's boundary (Kit's) and the
 whole feed became the error page. The viewer is a visible feature inside a page, so it takes its own
 `svelte:boundary` ([architecture](../architecture.md#an-uncaught-error-in-the-reactive-graph-is-permanent-until-a-reload-so-boundaries-are-placed-by-blast-radius)):
-`[reel-viewer] the viewer failed on <post>` at error, the toast "Les CanaReels ont rencontré une
-erreur", and the viewer closes through its history entry - the feed under it never left.
+`[reel-viewer] the viewer failed in <where>` at error, the toast "Les CanaReels ont rencontré une
+erreur", and the viewer closes once through its history entry - the feed under it never left. A
+boundary in the template cannot see the viewer's OWN effects (the next-page read, the swap, the
+wheel and gesture listeners), so each runs through `guarded`, which closes it the same way. The line
+reads nothing of the list, which may be what threw.
 
 ### "Reels 2 and 3 never play" was two reels with no video (iPhone 12, `v1.2.9-alpha.4`, 2026-10-16)
 

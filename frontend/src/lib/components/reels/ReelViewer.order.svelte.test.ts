@@ -51,7 +51,8 @@ vi.mock('$lib/reels/fullScreenPost', async (orig) => {
   return {
     ...real,
     fullScreenPageOf: (post: Parameters<typeof real.fullScreenPageOf>[0]) => {
-      if ((post as { id?: string }).id === 'boom') throw new Error('a slide that cannot draw');
+      if ((post as { id?: string } | undefined)?.id === 'boom')
+        throw new Error('a slide that cannot draw');
       return real.fullScreenPageOf(post);
     },
   };
@@ -63,6 +64,18 @@ vi.mock('$lib/posts/api', async (orig) => ({
   listPosts: async (o: { ranked?: boolean; offset?: number }) =>
     (o.offset ?? 0) > 0 ? [] : o.ranked ? served.ranked : served.recent,
 }));
+/** A fault planted in one of the viewer's OWN effects (the next-page read), outside its template. */
+const faults = { nextPageEffect: false };
+vi.mock('$lib/reels/reelViewerNav', async (orig) => {
+  const real = await orig<typeof import('$lib/reels/reelViewerNav')>();
+  return {
+    ...real,
+    shouldLoadMoreReels: (...a: Parameters<typeof real.shouldLoadMoreReels>) => {
+      if (faults.nextPageEffect) throw new Error('the next-page decision threw');
+      return real.shouldLoadMoreReels(...a);
+    },
+  };
+});
 vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
   ...(await orig<typeof import('$lib/utils/historyOverlayStack')>()),
   pushHistoryOverlay: vi.fn(),
@@ -218,7 +231,7 @@ describe('ReelViewer - a throw inside it', () => {
     expect(toasts).toEqual([m.reels_viewer_crashed()]);
     expect(
       errors.mock.calls.some((c) =>
-        String(c[0]).startsWith('[reel-viewer] the viewer failed on boom')
+        String(c[0]).startsWith('[reel-viewer] the viewer failed in its content')
       )
     ).toBe(true);
     errors.mockRestore();
@@ -270,5 +283,100 @@ describe('ReelViewer - a change of order from a feed video', () => {
     expect(onScreen(), 'the opened post is first again').toBe('m-opened');
     await key('ArrowDown');
     expect(onScreen(), 'then the stream in the new order').toBe('m-r0');
+
+    // Closing hands the closing viewer no new loader: no list is built only to be torn down.
+    const debugs = vi.spyOn(console, 'debug');
+    stream.close();
+    await settle();
+    expect(debugs.mock.calls.some((c) => String(c[0]).startsWith('[reel-viewer] a new list'))).toBe(
+      false
+    );
+    expect(onScreen()).toBe('m-r0');
+    debugs.mockRestore();
+  });
+});
+
+describe('ReelViewer - a throw in one of its own effects', () => {
+  afterEach(() => (faults.nextPageEffect = false));
+
+  it('closes the viewer the same way, never reaching the page', async () => {
+    faults.nextPageEffect = true;
+    const onClose = vi.fn();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    host = mount(ReelViewer, {
+      target,
+      props: { startPost: reel('a'), loadPage: loaderOf([]), authToken: 'tok', onClose },
+    });
+    await settle();
+    expect(onClose, 'the viewer closes itself, once').toHaveBeenCalledTimes(1);
+    expect(toasts).toEqual([m.reels_viewer_crashed()]);
+    expect(
+      errors.mock.calls.some((c) =>
+        String(c[0]).startsWith('[reel-viewer] the viewer failed in the next-page effect')
+      )
+    ).toBe(true);
+    errors.mockRestore();
+  });
+});
+
+describe('ReelViewer - a change of order during a track move', () => {
+  it('lands that move on its own list at the swap, and warns about nothing', async () => {
+    // Motion on: a step is a transition whose landing waits for `transitionend`.
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const props = $state({
+      startPost: reel('a0'),
+      loadPage: loaderOf(['a0', 'a1', 'a2'].map((id) => reel(id))),
+    });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    host = mount(ReelViewer, {
+      target,
+      props: {
+        get startPost() {
+          return props.startPost;
+        },
+        get loadPage() {
+          return props.loadPage;
+        },
+        authToken: 'tok',
+        onClose: () => {},
+      },
+    });
+    await settle();
+    // A screen of height: a step moves the track one screen, a real transition.
+    Object.defineProperty(document.querySelector('[data-reel-card]')!, 'clientHeight', {
+      value: 800,
+    });
+    const warns = vi.spyOn(console, 'warn');
+    const debugs = vi.spyOn(console, 'debug');
+    await key('ArrowDown');
+    expect(onScreen(), 'the step is still in flight').toBe('m-a0');
+
+    props.startPost = reel('b0');
+    props.loadPage = loaderOf(['b0', 'b1'].map((id) => reel(id)));
+    await settle();
+    expect(debugs.mock.calls.map((c) => String(c[0]))).toContain(
+      '[reel-viewer] the list changed during a track move - its landing runs now'
+    );
+    // The swap cancels the old transition: its end is not this list's, and nothing accuses it.
+    const track = document.querySelector('[data-reel-track]')!;
+    const cancel = new Event('transitioncancel') as Event & { propertyName: string };
+    Object.defineProperty(cancel, 'propertyName', { value: 'transform' });
+    track.dispatchEvent(cancel);
+    await settle();
+    expect(warns).not.toHaveBeenCalled();
+    expect(onScreen()).toBe('m-b0');
+
+    // The new list is at rest: the next step is free.
+    await key('ArrowDown');
+    const end = new Event('transitionend') as Event & { propertyName: string };
+    Object.defineProperty(end, 'propertyName', { value: 'transform' });
+    track.dispatchEvent(end);
+    await settle();
+    expect(onScreen()).toBe('m-b1');
+    warns.mockRestore();
+    debugs.mockRestore();
   });
 });
