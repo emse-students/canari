@@ -9,7 +9,7 @@
   import SettingsAccountBells from './SettingsAccountBells.svelte';
   import { resetSuggestions } from '$lib/follows/suggestions.svelte';
   import { Log } from '$lib/utils/Log';
-  import SettingSwitchRow from './SettingSwitchRow.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
 
   /**
    * One switch per notification category, per ACCOUNT: the choice is stored server-side, which
@@ -132,7 +132,8 @@
       {#if push}
         {@const pushOn = notificationPreferences.isPushEnabled(category)}
         <div data-category-push={category}>
-          <SettingSwitchRow
+          <Toggle
+            layout="row"
             checked={pushOn}
             label={push.label()}
             hint={push.desc()}

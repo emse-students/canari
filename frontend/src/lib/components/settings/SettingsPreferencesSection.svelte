@@ -18,7 +18,7 @@
     Play,
     Infinity as InfinityIcon,
   } from '@lucide/svelte';
-  import SettingSwitchRow from './SettingSwitchRow.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
   import { Log } from '$lib/utils/Log';
   import {
     offeredVideoAutoplayModes,
@@ -281,7 +281,8 @@
     <ActivitySharingSetting />
 
     <div data-infinite-reels-setting>
-      <SettingSwitchRow
+      <Toggle
+        layout="row"
         icon={InfinityIcon}
         checked={settings.infiniteReelsEnabled}
         label={m.settings_infinite_reels_label()}
