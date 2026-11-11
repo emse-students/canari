@@ -3659,7 +3659,12 @@ export function tearDownLiveSession(
     // Dispose after the final flush: flushEncrypted relies on the encrypt worker. NEVER REJECTS:
     // the caller chains the MLS client's retirement, and the next login's wait, on it.
     finalWrite = flushActiveMlsStateEncrypted()
-      .catch((e) => console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`))
+      .catch((e) => {
+        // A REFUSAL HAS BEEN SAID WHERE IT WAS DECIDED (the version guard, or a follower tab, which
+        // owns no MLS state to write); only an unexplained failure is said here.
+        if (e instanceof MlsStateWriteRefusedError) return;
+        console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`);
+      })
       .then(releasePersister);
   } else {
     // NO FINAL FLUSH FOR A REVOKED DEVICE. Persisting the state the next step deletes is precisely

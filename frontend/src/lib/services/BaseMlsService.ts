@@ -196,6 +196,7 @@ import {
   snapshotPendingHistoryMarks,
 } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
+import { Log } from '$lib/utils/Log';
 import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/abandonedDevices';
 import { forgetRefusedDevicesOf } from '$lib/mls-client/refusedDevices';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
@@ -3810,6 +3811,9 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private stateWritesEnded = false;
 
+  /** The follower refusal of {@link persistCheckpoint} has been logged: once per document. */
+  private followerStateWriteRefusalSaid = false;
+
   /**
    * Resolves (or generates and persists) this device's stable per-user id WITHOUT
    * touching the encrypted MLS state. Safe to call before {@link init}, so the PIN
@@ -4291,7 +4295,7 @@ export abstract class BaseMlsService implements IMlsService {
       // Already set by the web write; set here too for a writer that refuses outside a transaction.
       this.stateWritesEnded = true;
       console.error(
-        `[MLS] Device identity rotation ABORTED: another document wrote this account's state (${e.outcome}), so ${this.deviceId} is on no disk - ${oldDeviceId} stays the stored id and keeps its server row, every later MLS state write of this document is refused, and this document must end`
+        `[MLS] Device identity rotation ABORTED: ${e.outcome === 'follower-tab' ? 'this tab does not own the MLS state (a follower tab)' : `another document wrote this account's state (${e.outcome})`}, so ${this.deviceId} is on no disk - ${oldDeviceId} stays the stored id and keeps its server row, every later MLS state write of this document is refused, and this document must end`
       );
       throw e;
     }
@@ -5042,6 +5046,24 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async persistCheckpoint(options?: { endsDocumentOnRefusal?: boolean }): Promise<void> {
     if (this.stateWritesEnded === true) throw new MlsStateWriteRefusedError('ended');
+    // A FOLLOWER TAB NEVER WRITES THE ACCOUNT'S MLS STATE, for the reason it never commits
+    // (`refusesCommitsHere`, the same fact): its copy was loaded once and the leader keeps moving
+    // the real one. Its checkpoints used to land - every history window a follower closed wrote its
+    // copy tagged one above the version it loaded, so the leader's next write of that number was
+    // refused as a collision (owner, web `1.6.10`, 2026-11-11), and while the follower's counter ran
+    // ahead every leader write was refused as stale and the disk held the follower's copy, behind
+    // every frame and commit the leader had applied. Refused here, before anything is captured, so
+    // nothing marks the send ledger or the replay marks durable either: the leader's checkpoints do.
+    if (refusesCommitsHere()) {
+      if (!this.followerStateWriteRefusalSaid) {
+        this.followerStateWriteRefusalSaid = true;
+        Log.i(
+          'MLS',
+          `checkpoint not written: this tab does not own the MLS state (${getTabLeadership()}) - its copy is read-only and the leader tab writes it. Said once per page.`
+        );
+      }
+      throw new MlsStateWriteRefusedError('follower-tab');
+    }
     const emitted = snapshotEmitted(this.userId);
     // A RATCHET WHOSE REPAIR THIS STATE DOES NOT HOLD IS NOT DECLARED DURABLE. A burn still owed
     // (or still running) when the count is read is not in the state this checkpoint exports, so
