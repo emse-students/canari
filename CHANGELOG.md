@@ -5307,7 +5307,7 @@ The delegation state and its approval still tested the Stripe account columns, s
 
 ### Changed - the user's 2026-10-11 decisions recorded
 
-Standing release authority for the lead agent, the Docker prune above 75 % (images and build cache only), no native camera, CanaReels in chats starting with RC-0, the Pixel 6a as observation only, and Apple's submission order ([backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-11)).
+Standing release authority for the lead agent, the Docker prune above 75 % (images and build cache only), no native camera, CanaReels in chats starting with RC-0, the Pixel 6a as observation only, and Apple's submission order ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd)).
 
 ### Changed - release notes of 1.2.4
 

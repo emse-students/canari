@@ -1255,7 +1255,7 @@ the process session, the one end that clears an orphan). **Native, verified by
 compiling and host tests only**: the A -> B -> A -> B reading on the iPhone 12 bench phone,
 [device-verification AS](../../device-verification.md#as-two-accounts-on-one-iphone-install-a---b---a---b---owed-on-the-iphone-12-before-the-stable),
 is owed after a pre-release and before a stable
-([backlog](../../backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)).
+([backlog](../../backlog.md#owed-a-verification-and-nothing-else)).
 
 Tests: `utils/deviceKeyVault.test.ts` (slots, binding, the unlabelled offer),
 `services/TauriMlsService.vaultOwner.test.ts` and `services/WebMlsService.vaultOwner.test.ts` (a

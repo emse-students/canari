@@ -20,7 +20,7 @@ Decisions, not open questions; this entry is deleted when the last one is carrie
   switch; WP-F7 (register and policy) - WP-F6 was already merged (#2859, 2026-11-01), so it gets a security review after the fact instead, since its own was owed before arming and none is recorded; the content-free wake-up push,
   behind a server switch that is OFF by default
   ([entry](push-payloads-carry-nothing-for-google-and-apple.md)); one local MLS store per account
-  instead of one per install ([entry](../backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)).
+  instead of one per install ([entry](../backlog.md#owed-a-verification-and-nothing-else)).
 - **Backlog order once the night's work is done**: opening a community comes first
   ([community-open-budget](../frontend/community-open-budget.md)).
 - **For the day of 2026-11-02**, answered in the morning:
