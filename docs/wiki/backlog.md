@@ -445,6 +445,8 @@ whole-commit rule, and the client rebuild it needs, with a spec on each side.
 `assertCallerMayMutateMembership`) each read a caller's standing on a group in their own way. Fold them onto the one kind-aware read (`standingOnGroupOfKind`) with a spec per
 route, so a group-keyed route has one answer to the question rather than three.
 
+Re-read 2026-11-11 (batch 12): still real - `assertCallerIsGroupMember` (invitations and members controllers) and `assertCallerMayMutateMembership` are still private copies. Re-read again 2026-12-11.
+
 ## P3 - A field change heard during a listing is overwritten by its older answer (2026-10-26)
 
 The existence half is fixed: a salon or community heard of, or removed, while a listing is in flight
@@ -469,6 +471,8 @@ frame itself is damaged` at WARN) is fixed - classified as a spent generation in
 The re-read itself is not: the re-fetch should not ask for, or should not hand to MLS, a row the live
 socket already delivered in this session. Not yet read: whether the re-fetch and the live drain share
 any per-row identity (`queuedMessageId`) the re-fetch could skip on.
+
+Re-read 2026-11-11 (batch 12): still real - the re-fetch still hands MLS rows the live socket delivered; the shared per-row identity is still unread. Re-read again 2026-12-11.
 
 ## P3 - Verify: an Add accepted but unannounced lets the joiner rejoin over its own leaf (DUP-2 review, 2026-10-25)
 
@@ -645,6 +649,8 @@ notice-identity fix ([chat](frontend/modules/chat.md#a-visible-system-notice-nee
 A salon row is server-authoritative, so the history exchange this PR is about does not reach it; what
 an id-less notice costs there (a duplicate on a replay or a re-fetch) is unmeasured. Not built.
 
+Re-read 2026-11-11 (batch 12): still real - the salon invite still sends `mkSystem('memberAdded', ...)` with no id. Re-read again 2026-12-11.
+
 ## P3 - Device-local rows written as `system` are relayed into other members' timelines (review of #2412, 2026-10-25)
 
 The acting device now writes its own visible notice under the frame's id
@@ -668,6 +674,8 @@ of exactly 1 unverified row in the group the row had just created. That is the o
 counts there, the line about W3 itself. Each contact relays 3 to 5 such rows per standing conversation,
 in step with the owner devices minted before. This was read from relay counts by relayer, not row by
 row. The same "device-local" property closes both.
+
+Re-read 2026-11-11 (batch 12): still real - no "device-local" property exists on a row; the outbox, eviction and contact lines still use the `system` sender. Re-read again 2026-12-11.
 
 ## A revoked device whose refresh cannot name its revocation
 
@@ -712,6 +720,8 @@ fire on: a kept send goes on its backoff ladder, up to 60 s later. It is not a l
 portal would flip it back and fire a resume into the portal. The fix needs `trackedFetch` to know
 which routes speak JSON, the version probe included.
 
+Re-read 2026-11-11 (batch 12): still real - nothing marks the server down on a portal answer; the fix still needs `trackedFetch` to know which routes speak JSON. Re-read again 2026-12-11.
+
 ## P3 - The outbox sends into a group whose commit outcome it already knows is unknown (DUP-5, 2026-10-25)
 
 When an Add's commit is answered `503`, the client knows the outcome is unknown: it logs `the Add got
@@ -723,6 +733,8 @@ failed attempts in about eight seconds. Nothing is lost, and the order holds. Bu
 failing what a fact on the same client could have told it. The fix is to carry the group's
 unknown-outcome state to where the outbox decides to attempt a send, so that it waits for the
 settlement instead of trying and failing.
+
+Re-read 2026-11-11 (batch 12): still real - the outbox does not consult `CommitOutcomeUnknownError` before a send. Re-read again 2026-12-11.
 
 ## P3 - Two devices of one account joining a community at once: one exhausts its external-join attempts and loses a frame (LIST-RACE-1-W, 2026-10-27)
 
@@ -780,10 +792,6 @@ identity resolves after mount) keeps watching the first peer. Owed: an `$effect`
 with a test that changes the prop and asserts the watch moves. It is cheap to fix together with the
 ref-count entry above.
 
-## P3 - A pass's unconfirmed tree aborts the group's later pending rows (review of #2416, 2026-10-25)
-
-`pendingAddFactsOf` caches the confirmed tree for a pass, an `unconfirmed` reading included, so every later row of that group aborts `tree-unconfirmed` in the same sweep. Conservative (nothing is added on an unknown tree) and the next sweep retries; a fresh read per row after an unconfirmed one is the candidate. Not built.
-
 ## P3 - The add lock is not renewed through a long rebuild chain (review of #2416, 2026-10-25)
 
 An Add takes the server's add lock (`ADD_LOCK_TTL_SEC`, `apps/chat-delivery-service/src/utils/add-lock.ts`)
@@ -791,6 +799,8 @@ once, and nothing renews it while `rebuildOnRace` rebuilds. Each rebuild now add
 confirmed tree, the premise re-reads), so a long chain can outlive the TTL, and a second Add could
 take the lock while the first is still staging. Candidate fixes: renew the lock in each attempt, or
 bound the chain by the TTL and surface `add-lock-busy`. Not built.
+
+Re-read 2026-11-11 (batch 12): still real - no renewal exists and `ADD_LOCK_TTL_SEC` is 30. Re-read again 2026-12-11.
 
 ## P3 - The edges of the lost-invitation re-plan and its add lock (reviews of #2426, 2026-10-25)
 
@@ -805,6 +815,8 @@ What the re-plan of a kept invitation leaves open ([mls-protocol](protocols/mls-
 - **The authorization audit of the group routes** found a pre-existing remainder on the add-lock door; it is tracked privately.
 - **A re-plan that dies between its merge and its Welcomes sends no Welcome.** Its entry stays, and the next re-plan finds every device `already-in-tree`, so it concludes and sends none. The invitee then depends on their own `welcome_request`. The owed-Welcome record (`owed_welcome.rs`) covers only a settled merge, not this path.
 
+Re-read 2026-11-11 (batch 12): still real - `markAddLock` still keeps one marker per group (`addLockMarkers.ts`); none of the six edges is built. Re-read again 2026-12-11.
+
 ## P3 - A removed device replays the commits it missed and is answered 403, read as a replay error (CC-2, 1.4.1 dev campaign, 2026-10-25)
 
 The Remove commit the server queues to a removed device (`group:parting`) is built on the group's
@@ -818,6 +830,8 @@ failure.** Owed: type it at the throw (`fetchCommitsSince`) and carry it to the 
 then hands it to `retireIfEvicted` rather than to rung 2. Gated on proof because retiring is
 destructive: the roster 403 is not the device's own membership (`ExclusionsRefusedError` records that
 trap), so the decision must read the server's own eviction evidence, not the status alone. Not built.
+
+Re-read 2026-11-11 (batch 12): still real - `fetchCommitsSince` still throws an untyped refusal on a 403 (`mlsDeliveryApi.ts`, while `fetchGroupInfo` beside it types `NotAGroupMemberError`), and `setupMessageHandler.ts` still logs `[GAP] replay error`. Re-read again 2026-12-11.
 
 ## P3 - Three Welcome paths still end in a conversation row or skip a key-group step (2026-10-25)
 
@@ -846,6 +860,8 @@ Three paths are left, none built:
   that has none. The drain needs the handler's verdict ("installed a conversation"), not "did not
   throw". Found by reading (review of #2408).
 
+Re-read 2026-11-11 (batch 12): still real - none of the three paths is built. Re-read again 2026-12-11.
+
 ## P3 - Two edges of the pending pull, left by the review of #2420 (2026-10-25)
 
 - **Any non-2xx page reads as a drained mailbox.** `pullPendingMessagesJson` stops on `!page.ok` and
@@ -855,6 +871,8 @@ Three paths are left, none built:
   page-halving ladder (so a slow renewal never halves a page); the resend it then makes has its own
   stall timer, but a stall there is thrown rather than asked again smaller. Rare (a 401 followed by an
   oversized page); the next pull asks again ([sessions](sessions.md#a-401-renews-the-token-and-sends-the-same-request-once---one-rule-every-caller)).
+
+Re-read 2026-11-11 (batch 12): still real - a non-2xx page now logs `[PENDING] page answered ... the pull stops here` at warn, so the stop is no longer silent, but the caller still cannot tell a stopped pull from a drained one; the 401 resend is still not halved. Re-read again 2026-12-11.
 
 ## P2 - A device's one-time KeyPackage pool is topped up only when it connects (measured 2026-10-25, after the stable)
 

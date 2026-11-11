@@ -183,7 +183,7 @@ async function admissionOfSeat(deps: {
 }
 
 /** What every automatic Add of one group rests on, as one read of the server gives it. */
-interface PendingAddFacts {
+export interface PendingAddFacts {
   /** The tree, confirmed at the server's epoch - or not. */
   tree: TreeReading;
   /** The pending rows the server still holds, or why they could not be read. */
@@ -199,28 +199,37 @@ interface PendingAddFacts {
  * next row reads afresh; a REBUILD always reads afresh (`fresh`), since an overtaken seat claim
  * rebuilds without moving it.
  *
+ * AN UNCONFIRMED TREE IS NEVER KEPT FOR THE PASS (2026-11-11): it is the absence of an answer, not
+ * an answer, so caching it aborted every later row of the group `tree-unconfirmed` in the same
+ * sweep. The next row reads afresh; a CONFIRMED reading is still shared by the pass.
+ *
  * THE PENDING LIST IS READ ON EVERY ATTEMPT, never cached (round 4): a removal deletes the pending row
  * BEFORE its commit lands, so that deletion moves no epoch - a list kept for the pass would tell row
  * B, staged after row A, that a device being removed is "still pending", and re-admit it.
  */
-function pendingAddFactsOf(deps: {
+export function pendingAddFactsOf(deps: {
   mlsService: IMlsService;
   groupId: string;
   userId: string;
   myDeviceId: string;
 }): (fresh: boolean) => Promise<PendingAddFacts> {
   const { mlsService, groupId, userId, myDeviceId } = deps;
-  let pass: { epoch: number; tree: Promise<TreeReading> } | null = null;
+  let pass: { epoch: number; tree: Promise<TreeReading>; unconfirmed?: true } | null = null;
   return async (fresh) => {
     const epoch = mlsService.getEpoch(groupId);
-    if (fresh || pass === null || pass.epoch !== epoch) {
+    if (fresh || pass === null || pass.epoch !== epoch || pass.unconfirmed) {
+      if (pass?.unconfirmed && !fresh && pass.epoch === epoch) {
+        Log.d('[PENDING] the pass tree was unconfirmed - this row reads it afresh', { groupId });
+      }
       // Always confirmed: the one read serves every row, whichever user each names.
       pass = {
         epoch,
         tree: readConfirmedTree(mlsService, groupId, userId, '[PENDING]', () => false),
       };
     }
-    const tree = await pass.tree;
+    const current = pass;
+    const tree = await current.tree;
+    if (tree.status === 'unconfirmed') current.unconfirmed = true;
     const rows = await mlsService
       .getPendingInvitations(userId, myDeviceId)
       .catch((e: unknown) => ({ unreadable: String(e).slice(0, 100) }));
