@@ -112,6 +112,43 @@ describe('MessageBubble edit action in a salon', () => {
     expect(editButtons()).toBe(0);
   });
 
+  it("shows it on the author's own CanaReel, whose caption is text like a photo's", () => {
+    render({
+      content: serializeEnvelope(
+        mkMediaEnvelope(
+          {
+            type: 'video',
+            mediaId: 'r1',
+            key: 'k',
+            iv: 'i',
+            mimeType: 'video/mp4',
+            size: 10,
+            intent: 'reel-message',
+          },
+          'take caption'
+        )
+      ),
+    });
+    expect(editButtons()).toBeGreaterThan(0);
+  });
+
+  it('hides it on a voice note, which has no caption to edit', () => {
+    render({
+      content: serializeEnvelope(
+        mkMediaEnvelope({
+          type: 'audio',
+          mediaId: 'v1',
+          key: 'k',
+          iv: 'i',
+          mimeType: 'audio/webm',
+          size: 10,
+          voiceNote: true,
+        })
+      ),
+    });
+    expect(editButtons()).toBe(0);
+  });
+
   it('hides it on a poll', () => {
     render({
       content: serializeEnvelope(

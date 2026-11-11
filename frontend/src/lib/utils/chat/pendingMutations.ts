@@ -151,7 +151,13 @@ export function settleAgainstPending(
     };
     let winner: PendingMutation | null = null;
     for (const edit of edits) {
-      if (edit.text === undefined || !editFitsBody(target.content, edit.text)) continue;
+      if (edit.text === undefined) continue;
+      if (!editFitsBody(target.content, edit.text)) {
+        console.warn(
+          `[PENDING] Dropped a parked edit of ${target.id.slice(0, 8)} - an empty text edits only a caption`
+        );
+        continue;
+      }
       if (!editSupersedes({ editedAt: edit.rank, content: edit.text }, current)) continue;
       winner = edit;
       current = { editedAt: edit.rank, content: applyEditToBody(target.content, edit.text) };

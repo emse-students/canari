@@ -29,13 +29,13 @@ vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
   subscribeTabOutboxEvents: vi.fn(() => () => {}),
 }));
 
-import { createOutbox, type OutboxController, type OutboxDeps } from './outbox';
+import { createOutbox, sentRowContent, type OutboxController, type OutboxDeps } from './outbox';
 import { IndexedDbStorage } from '$lib/db/indexeddb';
 import type { OutboxEntry } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
 import { MediaKind, decodeAppMessage } from '$lib/proto/codec';
-import { mkMediaEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
+import { mkMediaEnvelope, mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import { clearAllUploads } from './uploadProgress.svelte';
 
 const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
@@ -176,5 +176,76 @@ describe('a queued file whose caption was edited before it left', () => {
     expect(env.kind === 'media' && env.media.mediaId).toBe('blob-1');
     expect(env.kind === 'media' && env.caption).toBe('typed at the tap');
     storage.close();
+  });
+});
+
+describe('what a sent row is stored with - the STORED row decides (review of #3368)', () => {
+  const env = (caption: string, mediaId = 'blob-1') =>
+    serializeEnvelope(
+      mkMediaEnvelope(
+        { type: 'image', mediaId, key: 'aa', iv: 'bb', mimeType: 'image/jpeg', size: 3 },
+        caption
+      )
+    );
+
+  it('writes the stored edit over a stale screen: another tab edited, this one flushed', async () => {
+    const storage = new IndexedDbStorage(freshName());
+    await storage.init();
+    // This tab's screen holds the tap caption, unedited; the edit made in another tab is at rest.
+    const { outbox, mlsService } = setup(storage, false);
+    await storage.saveMessage(
+      {
+        id: 'A',
+        conversationId: 'g1',
+        senderId: 'u',
+        content: env('edited in another tab', ''),
+        timestamp: 100,
+        isEdited: true,
+        editedAt: 150,
+      },
+      KEY
+    );
+    await storage.saveOutboxEntry(photo('A', 100), KEY);
+
+    await outbox.flush();
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+    await vi.waitFor(async () => {
+      const row = await storage.getMessage('A', KEY);
+      const atRest = parseEnvelope(row!.content);
+      expect(atRest.kind === 'media' && atRest.media.mediaId).toBe('blob-1');
+      expect(atRest.kind === 'media' && atRest.caption).toBe('edited in another tab');
+      expect(row!.isEdited).toBe(true);
+    });
+    storage.close();
+  });
+
+  it('keeps the screen when it holds the LATER edit, and when nothing at rest is edited', () => {
+    const shown = { content: env('newer'), isEdited: true, editedAt: 300 };
+    expect(
+      sentRowContent(shown, { content: env('older', ''), isEdited: true, editedAt: 200 })
+    ).toBe(shown.content);
+    const plain = { content: env('tap'), isEdited: false };
+    expect(sentRowContent(plain, { content: env('tap', ''), isEdited: false })).toBe(plain.content);
+  });
+
+  it('takes the stored text onto the sent body when the stored edit is later', () => {
+    const shown = { content: env('older'), isEdited: true, editedAt: 200 };
+    const out = parseEnvelope(
+      sentRowContent(shown, { content: env('newer', ''), isEdited: true, editedAt: 300 })
+    );
+    expect(out.kind === 'media' && out.caption).toBe('newer');
+    expect(out.kind === 'media' && out.media.mediaId).toBe('blob-1');
+  });
+
+  it('applies to a TEXT edited in another tab the same way', () => {
+    const shown = { content: serializeEnvelope(mkTextEnvelope('typed')), isEdited: false };
+    const out = parseEnvelope(
+      sentRowContent(shown, {
+        content: serializeEnvelope(mkTextEnvelope('fixed')),
+        isEdited: true,
+        editedAt: 10,
+      })
+    );
+    expect(out.kind === 'text' && out.text).toBe('fixed');
   });
 });

@@ -5,6 +5,7 @@ import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
 import type { StoredMessagePatch } from '$lib/db/types';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
+import { editSupersedes } from './editPrecedence';
 import type {
   OutboxAdoptedUpload,
   OutboxReelTakeSend,
@@ -347,6 +348,35 @@ interface StoredProofs {
   editProof?: RecordedAuthorship;
   deleteProof?: RecordedAuthorship;
   restoredUnverified?: boolean;
+}
+
+/**
+ * The body a sent message is stored with: the copy on screen, unless the STORED row holds a later
+ * edit, whose text then goes onto the sent body (`applyEditToBody`, so the attachment reference and
+ * the quote are the send's).
+ *
+ * WHY THE STORED ROW DECIDES (owner, 2026-11-11; review of #3368). The copy on screen is the
+ * flushing tab's: a leader flushing a follower's queued photo holds the caption typed at the tap,
+ * while the follower's edit is at rest, and writing the screen's body put the old caption back
+ * under a "modifie" mark that a reload then showed. The same holds for a text edited in a follower
+ * tab. Decided by `editSupersedes`, so a later edit held only in memory still wins.
+ */
+export function sentRowContent(
+  shown: { content: string; isEdited?: boolean; editedAt?: Date | number | null },
+  stored: Pick<StoredMessage, 'content' | 'isEdited' | 'editedAt'>
+): string {
+  if (!stored.isEdited) return shown.content;
+  const storedEdit = { editedAt: stored.editedAt ?? null, content: stored.content };
+  // An undated edit on screen has no clock to defend, so the stored one keeps it (editSupersedes).
+  const shownAt = shown.editedAt instanceof Date ? shown.editedAt.getTime() : shown.editedAt;
+  if (
+    shown.isEdited &&
+    typeof shownAt === 'number' &&
+    editSupersedes({ editedAt: shownAt, content: shown.content }, storedEdit)
+  ) {
+    return shown.content;
+  }
+  return applyEditToBody(shown.content, envelopeBodyText(stored.content));
 }
 
 /**
@@ -1469,7 +1499,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         [messageId],
         (current) =>
           mergeStoredMessage(current, {
-            ...(current.isDeleted ? {} : { content: m.content }),
+            ...(current.isDeleted ? {} : { content: sentRowContent(m, current) }),
             ...(m.serverTimestamp !== undefined ? { serverTimestamp: m.serverTimestamp } : {}),
             ...own_,
             ...(reactionSigned ? { reactions: reactionSigned(current.reactions) } : {}),
@@ -1518,14 +1548,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    *
    * A CAPTION EDITED WHILE THE FILE WAS QUEUED IS KEPT (owner, 2026-11-11): the real envelope is
    * built from the queue entry, which holds the caption typed at the tap, and writing it whole put
-   * the old caption back on the author's screen - and, through `persistSent`, at rest. The peers are
-   * not concerned: the edit's control frame names this message, so it waits behind it in the queue
+   * the old caption back on the author's screen. This is the SCREEN's half; what is written at rest
+   * is decided from the stored row in `persistSent` (`sentRowContent`), which also covers an edit
+   * made in another tab. The peers are not concerned: the edit's control frame names this message, so it waits behind it in the queue
    * (`dependsOnAny`) and reaches them after it.
    */
   function updateMessageContent(messageId: string, content: string): void {
     const found = findMessage(messageId);
     if (!found) return;
     const held = found.convo.messages[found.idx];
+    // A tombstone is final: the attachment it replaced must not come back under it.
+    if (held.isDeleted) {
+      log(`[OUTBOX] ${messageId.slice(0, 8)}… is deleted - its uploaded envelope is not shown`);
+      return;
+    }
     const kept = held.isEdited ? applyEditToBody(content, envelopeBodyText(held.content)) : content;
     if (kept !== content) {
       log(`[OUTBOX] ${messageId.slice(0, 8)}… keeps the caption edited while it was queued`);

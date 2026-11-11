@@ -429,7 +429,12 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // THIS page counts as much as one already on the row.
       if (known?.isDeleted || deletedMessages.has(data.messageId)) return;
       // An empty text edits only a media message's caption (`editFitsBody`).
-      if (!editFitsBody(known.content, data.newContent)) return;
+      if (!editFitsBody(known.content, data.newContent)) {
+        console.warn(
+          `[HISTORY_REPLAY] Dropped an edit of ${data.messageId.slice(0, 8)} - an empty text edits only a caption`
+        );
+        return;
+      }
       // Both the in-memory row and anything an earlier entry of THIS page already accumulated have
       // to be outranked: the page is walked in log order, which is not edit order.
       const heldInPage = editedMessages.get(data.messageId);

@@ -525,9 +525,12 @@
   /**
    * The author's own text message can be edited, and a media message's CAPTION (owner, 2026-11-11:
    * the media stays, the bubble shows "modifié" like an edited text) - only where the parent can take
-   * it. A poll cannot.
+   * it. A CanaReel sent here is a media message like a photo and its caption is text like a photo's;
+   * a voice note has no caption to edit, and a poll cannot be edited.
    */
-  const canEdit = $derived(!isDeleted && isOwn && !pollEnvelope && !!onBeginEdit);
+  const canEdit = $derived(
+    !isDeleted && isOwn && !pollEnvelope && !mediaRef?.voiceNote && !!onBeginEdit
+  );
 
   /**
    * ONE TAP OPENS THE INFO PANEL, TWO TAPS LIKE - NEVER BOTH (user, 2026-10-12). The first tap used

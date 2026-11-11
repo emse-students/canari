@@ -46,10 +46,12 @@ before the raise). An older figure on this page is the floor at the date its ent
 
 - **What.** A media message's edit replaces its caption only, in the unchanged `edit_message` frame
   ([chat](frontend/modules/chat.md#a-media-messages-edit-is-a-caption-edit-2026-11-11)). An older
-  build keeps the OLD caption, unmarked, in two cases: an emptied caption in a DM or group (its
-  `data.newContent` truthiness check drops `''`), and any caption edit in a salon (its
-  `applyChannelEdit` refuses every non-text target). A non-empty caption edit in a DM or group it
-  applies like this build, through `applyEditToBody`'s media branch (`v0.18.18`).
+  build applies a non-empty caption edit in a DM or group like this build, through
+  `applyEditToBody`'s media branch (`v0.18.18`). It keeps the OLD caption, unmarked, on any caption
+  edit in a salon (its `applyChannelEdit` refuses every non-text target). An emptied caption in a DM
+  or group gives **either result on one old build**: the live and replay paths drop `''` (truthiness
+  check, old caption kept), while a history bundle carrying the author's signed edit goes through
+  `vetRestoredEdit`, which takes any string and stores `caption: ''` (photo bare, marked).
 - **Who.** Native apps at or above the floor `1.6.6` but older than the release carrying the caption
   edit; the web app is always current.
 - **Why tolerated.** It is a stale caption, never a lost or corrupted attachment: no build at the

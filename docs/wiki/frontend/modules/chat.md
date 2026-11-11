@@ -799,7 +799,9 @@ edit through `handleEditMessage` end to end on a phone.
 
 Owner, 2026-11-11: a message carrying a photo, a video or a file is editable, **caption only** - the
 media stays the same and the bubble shows the same "modifié" mark as an edited text. A poll is not.
-Until then `canEdit` hid the action on a media message on purpose (`!mediaRef`, and `!hasMedia` in
+**Scope (lead's decision, 2026-11-11):** a CanaReel sent in a conversation stays editable, since a take's
+caption is text like a photo's; a **voice note is not** (`mediaRef.voiceNote`): it has no caption to
+edit. Until then `canEdit` hid the action on a media message on purpose (`!mediaRef`, and `!hasMedia` in
 `MessageBubbleToolbar` and `MessageMobileActions`); both props are gone and the bubble's `canEdit` is
 the one rule.
 
@@ -817,11 +819,11 @@ bought nothing and made older readers fall back on `newContent` anyway.
 | Reader | Caption edited | Caption emptied |
 | --- | --- | --- |
 | this build, DM or group | new caption, media kept, "modifié" | photo bare, "modifié" |
-| older build (>= `1.6.6`), DM or group | same | **old caption kept, no mark**: its `data.newContent` truthiness check drops `''` |
+| older build (>= `1.6.6`), DM or group | same | **either result, depending on the path the edit took**. Live and replay: **old caption kept, no mark** (the `data.newContent` truthiness check drops `''`). A history bundle carrying the author's signed edit: **photo bare, marked** (`vetRestoredEdit` takes any string and stores `caption: ''`, which the bubble draws bare). So one old build can show either, and two old builds can disagree |
 | this build, salon | new caption, media kept, "modifié" | photo bare, "modifié" |
 | older build, salon | **old caption kept, no mark**: `applyChannelEdit` refused every non-text target (`not plain text`, logged) | same |
 
-Every row keeps the media. The two degraded rows are a stale caption, never a loss, and they end
+Every row keeps the media. The degraded cells are a stale caption, never a loss, and they end
 with the floor passing this release.
 
 **An empty caption.** `editFitsBody(content, text)` (`envelope.ts`) is the one rule, asked by every
@@ -838,9 +840,20 @@ In the composer, `editSession.begin(id, text, captionOnly)` records that the edi
 message, so `dependsOnAny` holds it behind the file: the peers receive the file, then the edit. The
 author's own row was the trap: the real envelope swapped in once the upload ends is built from the
 QUEUE ENTRY, which holds the caption typed at the tap, so `updateMessageContent` (`outbox.ts`) wrote
-the old caption back over the edit - and `persistSent` stored it. It now keeps an edited row's
-caption over the real attachment reference (`[OUTBOX] … keeps the caption edited while it was
-queued`). A salon echo still uploading is not editable at all (`awaitingServerId` withholds every
+the old caption back over the edit - and `persistSent` stored it. Two places fix it, one per half:
+- **At rest, the stored row decides** (`sentRowContent`, inside `persistSent`'s compare-and-set). If
+  the stored row holds a later edit than the copy on screen (`editSupersedes`), its text goes onto
+  the sent body through `applyEditToBody`, so the attachment reference is the send's and the caption
+  is the edit's. This matters because the flushing tab may not be the editing one. A leader tab that
+  flushes a follower's queued photo holds the tap caption on screen while the follower's edit is at
+  rest, and writing the screen's body showed "modifié" over the old caption after a reload. A text
+  edited in a follower tab had the same flaw, and the same rule fixes it.
+- **On screen**, `updateMessageContent` keeps an edited row's caption over the real attachment
+  reference (`[OUTBOX] … keeps the caption edited while it was queued`), and leaves a deleted row
+  alone - a tombstone does not get its attachment back.
+
+The edit of a message that then never leaves (withdrawn, or failed for good) is not handled yet:
+[backlog](../../backlog.d/p3-an-edit-of-a-queued-message-whose-send-never-happens.md). A salon echo still uploading is not editable at all (`awaitingServerId` withholds every
 action addressed by a server id), so the salon has no such window.
 
 **The sender's other devices** receive the edit like any member and apply it by the same rule; the
@@ -853,7 +866,9 @@ row dropped), `messagingEditCaption.test.ts` (the frame's three keys, the empty 
 client drops), `channelEdit.test.ts` (salon caption edited and emptied),
 `outbox.captionEditedWhileQueued.test.ts`, `editSession.svelte.test.ts`,
 `ChatComposer.edit.svelte.test.ts`, `MessageBubble.editAction.svelte.test.ts` and
-`MessageMobileActions.row.svelte.test.ts` (Modifier offered on an own media message). **Not
+`MessageMobileActions.row.svelte.test.ts` (Modifier offered on an own media message and a CanaReel,
+not on a voice note). `outbox.captionEditedWhileQueued.test.ts` also covers the stored row edited
+with the screen stale. **Not
 exercised:** a real caption edit between two phones, and a `1.6.x` store build receiving one.
 
 ### Editing your own message in a salon (2026-10-05)
