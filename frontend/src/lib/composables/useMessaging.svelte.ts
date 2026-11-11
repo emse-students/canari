@@ -71,6 +71,7 @@ import {
 } from '$lib/utils/chat/messageReactions';
 import {
   notificationGroupName,
+  notificationIsGroup,
   type NativeMessageNotification,
 } from '$lib/utils/nativeNotification';
 import {
@@ -819,6 +820,7 @@ export function useMessaging() {
           senderId,
           senderName,
           groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
+          isGroup: notificationIsGroup(convo.conversationType),
           body: notificationBody,
           mentionsMe,
           sentAt,

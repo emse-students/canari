@@ -47,6 +47,11 @@
 /// `author_proven` is whether the WebView's open PROVED the author (a salon row under a Graine v2
 /// session): a salon banner names its speaker only then, the same rule the push trigger applies to
 /// its own native open (`ChannelBannerAuthor`), so the two triggers of one message agree.
+/// `is_group` is whether the conversation is a group or a salon, from the WebView's conversation
+/// type: the push carries the same fact as `isGroup`, and the name cannot answer it (a third of
+/// groups have none), so both triggers draw an unnamed group as a group (`ConversationShape`).
+/// `None` when the row carries no type: handed to Kotlin as a null `java.lang.Boolean`, the same
+/// "not said" the push's absent `isGroup` is, so the builder falls back to the name rule.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn notifier_message_natif(
@@ -60,10 +65,11 @@ pub(crate) fn notifier_message_natif(
     server_at: i64,
     covers: i32,
     author_proven: bool,
+    is_group: Option<bool>,
 ) -> bool {
     #[cfg(target_os = "android")]
     {
-        use jni::objects::JValue;
+        use jni::objects::{JObject, JValue};
 
         let Some(vm) = crate::android_java_vm() else {
             log::error!("[NOTIF] no JavaVM cached - the message notification was NOT raised");
@@ -105,12 +111,30 @@ pub(crate) fn notifier_message_natif(
                 }
             }
         }
+        // A boxed Boolean, so "not said" stays null rather than becoming `false` (a DM). The class
+        // is a boot class, which the system loader of this attached thread does find.
+        let is_group_arg = match is_group {
+            None => JObject::null(),
+            Some(value) => {
+                match env.new_object(
+                    "java/lang/Boolean",
+                    "(Z)V",
+                    &[JValue::Bool(u8::from(value))],
+                ) {
+                    Ok(boxed) => boxed,
+                    Err(e) => {
+                        log::error!("[NOTIF] new_object(isGroup) failed: {e} - NOT raised");
+                        return false;
+                    }
+                }
+            }
+        };
 
         match env
             .call_static_method(
                 &class,
                 "notifyMessageFromWebSocket",
-                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJJIZ)Z",
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJJIZLjava/lang/Boolean;)Z",
                 &[
                     (&args[0]).into(),
                     (&args[1]).into(),
@@ -122,6 +146,7 @@ pub(crate) fn notifier_message_natif(
                     JValue::Long(server_at),
                     JValue::Int(covers),
                     JValue::Bool(u8::from(author_proven)),
+                    (&is_group_arg).into(),
                 ],
             )
             .and_then(|v| v.z())
@@ -153,6 +178,7 @@ pub(crate) fn notifier_message_natif(
             server_at,
             covers,
             author_proven,
+            is_group,
         );
         false
     }
