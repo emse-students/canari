@@ -56,6 +56,7 @@
   import {
     isTimeBuffered,
     STREAM_HOLD_EVENT,
+    STREAM_PLAY_ANYWAY_EVENT,
     streamProgressOf,
     streamSeekFloor,
   } from '$lib/utils/segmentedMediaStream';
@@ -417,6 +418,16 @@
     el.addEventListener(STREAM_HOLD_EVENT, read);
     return () => el.removeEventListener(STREAM_HOLD_EVENT, read);
   });
+  /**
+   * "Lire quand meme" (lead's decision, 2026-11-11, reversible): the reader would rather watch with
+   * stalls than wait. Told to the stream through its element - the one object both hold - and the
+   * stream never holds this source again.
+   */
+  function playAnyway() {
+    if (!video) return;
+    Log.d('VideoPlayer', `${variant}: the reader plays through the hold at ${holdPercent} %`);
+    video.dispatchEvent(new Event(STREAM_PLAY_ANYWAY_EVENT));
+  }
   let controlsVisible = $state(true);
   /** Bumped by every interaction: the fade timer restarts from it. */
   let poke = $state(0);
@@ -979,7 +990,7 @@
 
     {#if holdPercent !== null}
       <!-- A LINK SLOWER THAN THE VIDEO: one load, said with its progress, then no stop. -->
-      <MediaSpinner percent={holdPercent} />
+      <MediaSpinner percent={holdPercent} onPlayAnyway={playAnyway} />
     {:else if minimal && buffering}
       <!-- A SLOW NETWORK, NOT A REFUSAL: the reel was asked to play and waits for its data. -->
       <MediaSpinner />

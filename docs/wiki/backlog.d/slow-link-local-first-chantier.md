@@ -36,7 +36,7 @@ state first, then revalidates ([local-first-ui](../frontend/local-first-ui.md)).
      counting stalls before and after.
 
    **Built 2026-11-11** (the hold, the measure after the gate, the hysteresis, the progress label;
-   #3322 closed): 29 stalls become 0 in the model
+   #3322 closed): 29 stalls become 1 in the model
    ([video-player](../frontend/modules/video-player.md#a-link-slower-than-the-video-one-honest-load-2026-11-11)).
    Left: the throttled-link reading on both phones, and the lower-bitrate rendition (not built).
 

@@ -22,8 +22,9 @@ vi.mock('$lib/stores/auth', () => ({ getToken: () => Promise.resolve('token') })
 
 const SEG = SEGMENTED_MEDIA_SEGMENT_BYTES;
 
-/** How many segments the served video has - set by each run. */
+/** How many segments the served video has, and its bytes (a last segment may be partial). */
 let servedSegments = 0;
+let servedBytes = 0;
 
 vi.mock('./segmentedMediaReader', async (importActual) => {
   const actual = await importActual<typeof import('./segmentedMediaReader')>();
@@ -40,7 +41,9 @@ vi.mock('./segmentedMediaReader', async (importActual) => {
       return {
         segmentCount: servedSegments,
         readSegment: async (index: number, s?: AbortSignal) =>
-          index === 0 ? head.buffer : (await source.read(index * SEG, (index + 1) * SEG, s)).buffer,
+          index === 0
+            ? head.buffer
+            : (await source.read(index * SEG, Math.min((index + 1) * SEG, servedBytes), s)).buffer,
       };
     },
   };
@@ -50,6 +53,9 @@ const {
   openSegmentedStream,
   FEED_STREAM_PACING,
   STREAM_HOLD_EVENT,
+  STREAM_PLAY_ANYWAY_EVENT,
+  SLOW_AHEAD_MAX_BYTES,
+  SLOW_AHEAD_MAX_SECONDS,
   streamProgressOf,
   holdTargetSeconds,
   linkIsSlow,
@@ -79,9 +85,21 @@ class ModelElement extends EventTarget {
     const end = this.bufferedEnd;
     return { length: end > 0 ? 1 : 0, start: () => 0, end: () => end } as unknown as TimeRanges;
   }
+  /** The reader seeks to `seconds`: the engine says `seeking`, then plays from there if it can. */
+  seek(seconds: number) {
+    this.currentTime = seconds;
+    if (this.state === 'playing') this.state = 'stalled';
+    this.dispatchEvent(new Event('seeking'));
+  }
+  /** The reader presses play on a paused element. */
+  play() {
+    this.paused = false;
+    this.dispatchEvent(new Event('play'));
+  }
   /** Advances the playhead by `dt` at `now`, as an engine would. */
   step(now: number, dt: number) {
     const EPS = 1e-6;
+    if (this.paused) return;
     if (
       (this.state === 'starting' || this.state === 'stalled') &&
       this.bufferedEnd - this.currentTime > EPS
@@ -106,12 +124,24 @@ class ModelElement extends EventTarget {
 /** The element the fake source buffer feeds - one run at a time. */
 let target: ModelElement | null = null;
 let appends = 0;
+/** The next append is refused as an engine with a full buffer refuses it. */
+let quotaArmed = false;
+/** What the stream removed to make room (`appendSegmentEvicting`). */
+const removed: Array<[number, number]> = [];
 
 class ModelSourceBuffer extends EventTarget {
   updating = false;
   appendBuffer(bytes: ArrayBuffer) {
+    if (quotaArmed) {
+      quotaArmed = false;
+      throw new DOMException('the buffer is full', 'QuotaExceededError');
+    }
     target!.bufferedEnd += bytes.byteLength / MEDIA;
     appends += 1;
+    queueMicrotask(() => this.dispatchEvent(new Event('updateend')));
+  }
+  remove(start: number, end: number) {
+    removed.push([start, end]);
     queueMicrotask(() => this.dispatchEvent(new Event('updateend')));
   }
 }
@@ -140,73 +170,116 @@ interface RunResult {
   startedAt: number | null;
   endedAt: number | null;
   holdsSeen: number[];
+  /** Every hold event as the player reads it: a percent, or `null` once a hold is over. */
+  holdEvents: Array<number | null>;
 }
 
 /** A link delivering one range at a time at `rate` bytes per second, on the fake clock. */
-function modelLink(rate: number, clock: { now: number }) {
-  const pending: Array<{ due: number; resolve: () => void }> = [];
+function modelLink(initialRate: number, clock: { now: number }) {
+  const pending: Array<{ due: number; resolve: () => void; reject: (e: unknown) => void }> = [];
+  let rate = initialRate;
   let busyUntil = 0;
   let calls = 0;
+  let delivered = 0;
   const fetch = vi.fn((_url: string, init: RequestInit) => {
     calls += 1;
-    const [, a, b] = /bytes=(\d+)-(\d+)/.exec((init.headers as Record<string, string>).Range)!;
-    const bytes = Math.min(Number(b) + 1, servedSegments * SEG) - Number(a);
+    const range = (init.headers as Record<string, string>).Range;
+    const [a, b] = range.slice('bytes='.length).split('-').map(Number);
+    const bytes = Math.min(b + 1, servedBytes) - a;
     busyUntil = Math.max(clock.now, busyUntil) + bytes / rate;
     const due = busyUntil;
-    return new Promise<Response>((resolve) =>
-      pending.push({
+    return new Promise<Response>((resolve, reject) => {
+      const entry = {
         due,
+        reject,
         resolve: () =>
           resolve({
             status: 206,
             ok: true,
             arrayBuffer: () => Promise.resolve(new ArrayBuffer(bytes)),
           } as unknown as Response),
-      })
-    );
+      };
+      pending.push(entry);
+      // A closed stream aborts its range, as a real fetch does - or it would keep its gate slot.
+      init.signal?.addEventListener('abort', () => {
+        const i = pending.indexOf(entry);
+        if (i >= 0) pending.splice(i, 1);
+        reject(new DOMException('aborted', 'AbortError'));
+      });
+    });
   });
   return {
     fetch,
     calls: () => calls,
+    delivered: () => delivered,
+    /** The link changes speed from the next range on. */
+    setRate(next: number) {
+      rate = next;
+    },
+    /** Every range on the wire fails as a dropped connection does. */
+    failPending() {
+      for (const p of pending.splice(0)) p.reject(new TypeError('Failed to fetch'));
+    },
     /** Answers every range due by now. */
     deliver(): number {
-      let delivered = 0;
+      let now = 0;
       for (let i = pending.length - 1; i >= 0; i--) {
         if (pending[i].due <= clock.now + 1e-9) {
           pending.splice(i, 1)[0].resolve();
-          delivered += 1;
+          now += 1;
         }
       }
-      return delivered;
+      delivered += now;
+      return now;
     },
   };
 }
 
+/** How a model run is set up beyond its segments and its link. */
+interface StartOptions {
+  /** Bytes of the last segment, when it is partial. */
+  lastSegmentBytes?: number;
+  /** What the ref declares as its size (`0`: unknown); the real size by default. */
+  refSize?: number;
+  /** Whether the sender declared the length (default true). */
+  declared?: boolean;
+  /** False: the element waits paused, as a reel does until its metadata (default true). */
+  askedToPlay?: boolean;
+}
+
 /** Opens the REAL stream over `segments` of media on a link at `rate`, its element asked to play. */
-async function startStream(segments: number, rate: number) {
+async function startStream(segments: number, rate: number, options: StartOptions = {}) {
+  const { lastSegmentBytes = SEG, declared = true, askedToPlay = true } = options;
   servedSegments = segments;
+  servedBytes = (segments - 1) * SEG + lastSegmentBytes;
   appends = 0;
+  quotaArmed = false;
+  removed.length = 0;
   const clock = { now: 0 };
   const link = modelLink(rate, clock);
   vi.stubGlobal('fetch', link.fetch);
   vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:model');
   vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-  const duration = (segments * SEG) / MEDIA;
+  const duration = servedBytes / MEDIA;
   const ref: MediaRef = {
     type: 'video',
     mediaId: 'reel',
     key: '00',
     iv: '00',
     mimeType: 'video/mp4;codecs=avc1.42E01E',
-    size: segments * SEG,
-    durationMs: duration * 1000,
+    size: options.refSize ?? servedBytes,
+    ...(declared ? { durationMs: duration * 1000 } : {}),
     encoding: 'segmented-v1',
   };
   const element = new ModelElement(duration);
+  element.paused = !askedToPlay;
   target = element;
   const holdsSeen: number[] = [];
+  /** What the player would read on every hold event: the percent, or `null` for none. */
+  const holdEvents: Array<number | null> = [];
   element.addEventListener(STREAM_HOLD_EVENT, () => {
-    const hold = streamProgressOf('blob:model')?.hold;
+    const hold = streamProgressOf('blob:model')?.hold ?? null;
+    holdEvents.push(hold?.percent ?? null);
     if (hold) holdsSeen.push(hold.percent);
   });
   const handle = openSegmentedStream(
@@ -221,9 +294,17 @@ async function startStream(segments: number, rate: number) {
     () => clock.now * 1000
   );
   handle.attach(element);
-  // A card on screen is asked to play before it has a byte: the engine says `waiting`.
-  element.dispatchEvent(new Event('play'));
-  element.dispatchEvent(new Event('waiting'));
+  let failure: unknown = null;
+  let finished = false;
+  handle.done.then(
+    () => (finished = true),
+    (e) => (failure = e)
+  );
+  if (askedToPlay) {
+    // A card on screen is asked to play before it has a byte: the engine says `waiting`.
+    element.dispatchEvent(new Event('play'));
+    element.dispatchEvent(new Event('waiting'));
+  }
   const signature = () =>
     `${link.calls()}|${appends}|${streamProgressOf('blob:model')?.hold?.percent}`;
   // The opening read is asked at t = 0, as the reference's is.
@@ -235,12 +316,28 @@ async function startStream(segments: number, rate: number) {
     element.step(clock.now, DT);
     await settleUntilStable(signature);
   };
-  return { element, handle, tick, holdsSeen, duration, clock, signature, link };
+  return {
+    element,
+    handle,
+    tick,
+    holdsSeen,
+    holdEvents,
+    duration,
+    clock,
+    signature,
+    link,
+    failure: () => failure,
+    finished: () => finished,
+    hold: () => streamProgressOf('blob:model')?.hold ?? null,
+  };
 }
 
 /** Plays `segments` of media over a link at `rate` through the REAL stream; returns what happened. */
 async function runStream(segments: number, rate: number): Promise<RunResult> {
-  const { element, handle, tick, holdsSeen, duration, clock } = await startStream(segments, rate);
+  const { element, handle, tick, holdsSeen, holdEvents, duration, clock } = await startStream(
+    segments,
+    rate
+  );
   let endedAt: number | null = null;
   for (let steps = 0; steps < (4 * (duration + (segments * SEG) / rate)) / DT; steps++) {
     await tick();
@@ -251,7 +348,7 @@ async function runStream(segments: number, rate: number): Promise<RunResult> {
   }
   handle.close();
   await flushMacrotask();
-  return { stalls: element.stalls, startedAt: element.startedAt, endedAt, holdsSeen };
+  return { stalls: element.stalls, startedAt: element.startedAt, endedAt, holdsSeen, holdEvents };
 }
 
 /**
@@ -286,7 +383,24 @@ function referencePump(segments: number, rate: number): RunResult {
     element.step(now, DT);
     if (element.state === 'ended') endedAt = now;
   }
-  return { stalls: element.stalls, startedAt: element.startedAt, endedAt, holdsSeen: [] };
+  return {
+    stalls: element.stalls,
+    startedAt: element.startedAt,
+    endedAt,
+    holdsSeen: [],
+    holdEvents: [],
+  };
+}
+
+/** Whether every hold's percents, between two `null`s, only go up. */
+function risesWithinEachHold(events: Array<number | null>): boolean {
+  let last = -1;
+  for (const percent of events) {
+    if (percent === null) last = -1;
+    else if (percent < last) return false;
+    else last = percent;
+  }
+  return true;
 }
 
 afterEach(() => {
@@ -346,9 +460,9 @@ describe('a reel played over the model link', { timeout: 60_000 }, () => {
     // hold's margin (what is still buffered when the last byte lands).
     const duration = (SEGMENTS * SEG) / MEDIA;
     expect(after.endedAt!).toBeLessThanOrEqual(before.endedAt! + 0.1 * duration);
-    // The hold was shown, and its percentage only ever went up.
+    // The hold was shown, and within each hold its percentage only ever went up.
     expect(after.holdsSeen.length).toBeGreaterThan(0);
-    expect([...after.holdsSeen].sort((a, b) => a - b)).toEqual(after.holdsSeen);
+    expect(risesWithinEachHold(after.holdEvents)).toBe(true);
     expect(streamProgressOf('blob:model')).toBeUndefined();
   });
 
@@ -375,5 +489,141 @@ describe('a reel played over the model link', { timeout: 60_000 }, () => {
     // The first segment lands in about half a second here, and plays on the step it lands.
     expect(after.startedAt).toBe(before.startedAt);
     expect(after.startedAt!).toBeLessThanOrEqual(SEG / FAST_LINK + DT);
+  });
+});
+
+/** Ticks `run` until `until()` holds, at most `max` ticks; fails the test if it never does. */
+async function tickUntil(
+  run: Awaited<ReturnType<typeof startStream>>,
+  until: () => boolean,
+  max = 600
+) {
+  for (let i = 0; i < max && !until(); i++) await run.tick();
+  const state = `t=${run.clock.now} calls=${run.link.calls()} delivered=${run.link.delivered()} appends=${appends} hold=${run.hold()?.percent} element=${run.element.state}@${run.element.currentTime}/${run.element.bufferedEnd}`;
+  expect(until(), `the model reached the state the test waits for (${state})`).toBe(true);
+}
+
+describe('what ends or interrupts a hold (review of #3333)', { timeout: 60_000 }, () => {
+  /**
+   * THE HOLD NEVER OUTLIVES THE FETCH: a size the ref gets wrong (unknown, or a partial last
+   * segment counted whole) leaves `unfetchedBytes` above 0 when nothing is left to fetch. Every
+   * segment is in, so the hold ends on that FACT, and the element plays to the end.
+   */
+  it.each([
+    ['an unknown size and length', { refSize: 0, declared: false }],
+    ['a size declared too large', { refSize: 8 * SEG }],
+  ])('ends below its target once every segment is in: %s', async (_name, options) => {
+    // A reel's way: paused on its head, then played; a link far below the media.
+    const run = await startStream(4, 100_000, {
+      ...options,
+      lastSegmentBytes: SEG / 4,
+      askedToPlay: false,
+    });
+    await tickUntil(run, () => appends === 2);
+    run.element.play();
+    await tickUntil(run, () => run.hold() !== null);
+    await tickUntil(run, () => run.finished());
+    expect(appends, 'the held segments went in').toBe(4);
+    expect(run.hold()).toBeNull();
+    await tickUntil(run, () => run.element.state === 'ended');
+    run.handle.close();
+  });
+
+  it('a failed range mid-hold clears the hold the player draws', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const run = await startStream(12, SLOW_LINK);
+    await tickUntil(run, () => run.hold() !== null && run.link.calls() >= 2);
+    run.link.failPending();
+    await settleUntilStable(() => `${run.failure() !== null}|${run.holdEvents.length}`);
+    expect(run.failure()).not.toBeNull();
+    expect(run.hold()).toBeNull();
+    expect(run.holdEvents.at(-1), 'the player was told').toBeNull();
+    run.handle.close();
+  });
+
+  it('closing mid-hold tells the player the hold is over', async () => {
+    const run = await startStream(12, SLOW_LINK);
+    await tickUntil(run, () => run.hold() !== null);
+    run.handle.close();
+    expect(run.holdEvents.at(-1)).toBeNull();
+  });
+
+  it('a refused append in a drain trims what was played and goes on', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Fast at first, so the playhead is well past what a trim keeps; then the link collapses.
+    const run = await startStream(40, FAST_LINK);
+    await tickUntil(run, () => run.element.currentTime > 15);
+    run.link.setRate(SLOW_LINK / 2);
+    await tickUntil(run, () => run.hold() !== null);
+    quotaArmed = true;
+    await tickUntil(run, () => run.hold() === null && !quotaArmed);
+    await settleUntilStable(run.signature);
+    expect(removed.length).toBe(1);
+    expect(removed[0][1]).toBeGreaterThan(0);
+    expect(run.failure()).toBeNull();
+    expect(streamProgressOf('blob:model')!.trimmedBefore).toBe(removed[0][1]);
+    run.handle.close();
+  });
+
+  it('a link that drops mid-hold never makes the percent go back', async () => {
+    const run = await startStream(30, SLOW_LINK);
+    await tickUntil(run, () => (run.hold()?.percent ?? 0) > 0);
+    run.link.setRate(SLOW_LINK / 3);
+    const first = run.holdsSeen.length;
+    await tickUntil(run, () => run.link.delivered() >= 6);
+    expect(run.holdsSeen.length).toBeGreaterThanOrEqual(first);
+    expect(risesWithinEachHold(run.holdEvents)).toBe(true);
+    run.handle.close();
+  });
+
+  it('a seek into what is buffered during a hold ends it: the element plays, nothing stays held', async () => {
+    const run = await startStream(12, SLOW_LINK, { askedToPlay: false });
+    await tickUntil(run, () => appends === 2);
+    run.element.play();
+    await tickUntil(run, () => run.hold() !== null && run.link.delivered() >= 3);
+    const fetched = run.link.delivered();
+    run.element.seek(1);
+    await run.tick();
+    expect(run.element.state).toBe('playing');
+    expect(run.hold()).toBeNull();
+    expect(appends).toBeGreaterThanOrEqual(fetched);
+    run.handle.close();
+  });
+
+  /**
+   * THE CAP IS THE STREAM'S, NOT ONLY THE FORMULA'S: on a link far below the media the target is the
+   * cap, the stream fetches up to it and no further, and the hold ends there before the file does.
+   */
+  it('holds no more than its cap ahead, then releases before the end of the file', async () => {
+    const run = await startStream(40, 100_000);
+    const cap = Math.min(SLOW_AHEAD_MAX_SECONDS, SLOW_AHEAD_MAX_BYTES / MEDIA);
+    let most = 0;
+    let held = false;
+    for (let i = 0; i < 600; i++) {
+      await run.tick();
+      const keptBack = ((run.link.delivered() - appends) * SEG) / MEDIA;
+      most = Math.max(most, run.element.bufferedEnd - run.element.currentTime + keptBack);
+      if (run.hold() !== null) held = true;
+      if (held && run.hold() === null) break;
+    }
+    expect(held).toBe(true);
+    expect(run.hold(), 'released at the cap').toBeNull();
+    expect(run.link.calls()).toBeLessThan(40);
+    expect(most).toBeLessThanOrEqual(cap + SEG / MEDIA);
+    run.handle.close();
+  });
+
+  it('"Lire quand meme": what is held goes in, and that element is never held again', async () => {
+    const run = await startStream(12, SLOW_LINK);
+    await tickUntil(run, () => run.hold() !== null && run.link.delivered() >= 2);
+    run.element.dispatchEvent(new Event(STREAM_PLAY_ANYWAY_EVENT));
+    await settleUntilStable(run.signature);
+    expect(run.hold()).toBeNull();
+    expect(appends).toBe(run.link.delivered());
+    const seen = run.holdsSeen.length;
+    await tickUntil(run, () => run.element.state === 'ended', 800);
+    expect(run.element.stalls, 'the stalls the reader chose').toBeGreaterThan(0);
+    expect(run.holdsSeen.length, 'no hold after the refusal').toBe(seen);
+    run.handle.close();
   });
 });

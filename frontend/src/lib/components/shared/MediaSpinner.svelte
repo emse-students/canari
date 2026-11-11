@@ -11,6 +11,7 @@
    */
   import { LoaderCircle } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import Button from '$lib/components/ui/Button.svelte';
 
   interface Props {
     /**
@@ -20,9 +21,17 @@
     live?: boolean;
     /** How much of a held load is in, 0-100; absent for an ordinary wait. */
     percent?: number;
+    /** "Lire quand meme" under a held load: the reader takes the stalls. Absent, no button. */
+    onPlayAnyway?: () => void;
   }
 
-  let { live = true, percent }: Props = $props();
+  let { live = true, percent, onPlayAnyway }: Props = $props();
+
+  /** The button's tap is its own: neither the player's tap (sound) nor its hold (pause) sees it. */
+  function playAnyway(e: MouseEvent) {
+    e.stopPropagation();
+    onPlayAnyway?.();
+  }
 
   const label = $derived(
     percent === undefined ? m.video_loading_label() : m.video_buffering_progress({ percent })
@@ -45,5 +54,18 @@
     >
       {label}
     </span>
+    {#if onPlayAnyway}
+      <!-- The overlay lets taps through to the picture; only this button takes them. -->
+      <div
+        class="pointer-events-auto"
+        role="presentation"
+        onpointerdown={(e) => e.stopPropagation()}
+        data-video-play-anyway
+      >
+        <Button variant="secondary" size="default" class="min-h-11" onclick={playAnyway}>
+          {m.video_play_anyway()}
+        </Button>
+      </div>
+    {/if}
   {/if}
 </div>

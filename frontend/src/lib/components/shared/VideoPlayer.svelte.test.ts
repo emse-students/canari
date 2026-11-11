@@ -18,7 +18,7 @@ import { CONTROLS_FADE_MS } from '$lib/utils/videoPlayback';
 import { m } from '$lib/paraglide/messages';
 import type { AutoplayBlockCause } from '$lib/utils/videoAutoplay';
 import { HOLD_TO_PAUSE_MS } from '$lib/actions/videoGestures';
-import { STREAM_HOLD_EVENT } from '$lib/utils/segmentedMediaStream';
+import { STREAM_HOLD_EVENT, STREAM_PLAY_ANYWAY_EVENT } from '$lib/utils/segmentedMediaStream';
 
 /** A stream's progress by URL, as a test sets it; any other URL is the real registry's. */
 const { heldProgress } = vi.hoisted(() => ({ heldProgress: new Map<string, unknown>() }));
@@ -846,6 +846,25 @@ it('a stream holding on a slow link shows its progress, and nothing once it play
   video.dispatchEvent(new Event(STREAM_HOLD_EVENT));
   flushSync();
   expect(progress()).toBeNull();
+  heldProgress.clear();
+});
+
+it('"Lire quand meme" on a hold tells the stream through its element, and is not a tap', () => {
+  const { target, video } = mountConversation('blob:held-anyway', true);
+  heldProgress.set('blob:held-anyway', { hold: { percent: 20 } });
+  video.dispatchEvent(new Event(STREAM_HOLD_EVENT));
+  flushSync();
+  const told = vi.fn();
+  video.addEventListener(STREAM_PLAY_ANYWAY_EVENT, told);
+  const muted = video.muted;
+  const button = target.querySelector<HTMLButtonElement>('[data-video-play-anyway] button')!;
+  expect(button.textContent!.trim()).toBe(m.video_play_anyway());
+  // A 44 px target on a phone.
+  expect(button.className).toContain('min-h-11');
+  button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+  flushSync();
+  expect(told).toHaveBeenCalledTimes(1);
+  expect(video.muted, 'the tap was the button, not the sound').toBe(muted);
   heldProgress.clear();
 });
 
