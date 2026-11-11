@@ -934,6 +934,7 @@
   "video_player_label": "Lecteur vidéo",
   "video_play_label": "Lire",
   "video_loading_label": "Chargement de la vidéo",
+  "video_buffering_progress": "Chargement pour une lecture sans coupure… {percent} %",
   "video_pause_label": "Pause",
   "video_seek_label": "Position dans la vidéo",
   "video_time_value": "{elapsed} sur {duration}",

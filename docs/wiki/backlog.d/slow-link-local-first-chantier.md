@@ -35,6 +35,11 @@ state first, then revalidates ([local-first-ui](../frontend/local-first-ui.md)).
    - tests with an element model whose buffer grows and whose playhead advances on a fake clock,
      counting stalls before and after.
 
+   **Built 2026-11-11** (the hold, the measure after the gate, the hysteresis, the progress label;
+   #3322 closed): 29 stalls become 0 in the model
+   ([video-player](../frontend/modules/video-player.md#a-link-slower-than-the-video-one-honest-load-2026-11-11)).
+   Left: the throttled-link reading on both phones, and the lower-bitrate rendition (not built).
+
 **Method.** Measure every screen on a simulated slow link before and after, as in the audit
 ([method](../frontend/weak-network-audit-2026-11-10.md#1-method-and-what-it-cannot-see)); the number
 that closes a screen is its first paint with the network answering nothing.

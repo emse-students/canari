@@ -56,20 +56,38 @@ export class MediaRangeUnsupportedError extends Error {
 }
 
 /**
+ * Told what one ranged read achieved: its bytes, and the seconds from the moment the request gate
+ * GRANTED its slot to the last byte of its body. The time spent queued behind other media is not
+ * the link's, so it is never in the measure (slow-link chantier, gap 6).
+ */
+export type RangeReadObserver = (bytes: number, seconds: number) => void;
+
+/**
  * Ranged reads of `/api/media/:id`, one request per call, each through `mediaRequestGate` like
  * every other media download and each with a token resolved at that moment (`getToken`), since a
  * stream outlives an access token.
  *
  * @param baseUrl The media service's base URL.
  * @param mediaId The object.
+ * @param observe Told what each answered read achieved ({@link RangeReadObserver}): how a stream
+ *   learns the rate of its link.
+ * @param clock   Milliseconds, for that measure; a test's stand-in drives it.
  */
-export function httpRangeSource(baseUrl: string, mediaId: string): CiphertextRangeSource {
+export function httpRangeSource(
+  baseUrl: string,
+  mediaId: string,
+  observe?: RangeReadObserver,
+  clock: () => number = () => performance.now()
+): CiphertextRangeSource {
   const url = `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`;
   return {
     async read(start, endExclusive, signal) {
+      /** When the gate granted the slot: the measure starts there, never at the queue. */
+      let grantedAt = 0;
       // Typed exactly as the whole download types them (`fetchMediaObject`), so a renderer reads
       // one vocabulary (`mediaFailureCause`) whichever path the media took.
       const res = await mediaRequestGate.run(async () => {
+        grantedAt = clock();
         const headers = {
           Authorization: `Bearer ${await getToken()}`,
           Range: `bytes=${start}-${endExclusive - 1}`,
@@ -92,7 +110,9 @@ export function httpRangeSource(baseUrl: string, mediaId: string): CiphertextRan
         if (res.ok) throw new MediaRangeUnsupportedError(res.status);
         throw new MediaDownloadError(res.status);
       }
-      return new Uint8Array(await res.arrayBuffer());
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      observe?.(bytes.byteLength, (clock() - grantedAt) / 1000);
+      return bytes;
     },
   };
 }
