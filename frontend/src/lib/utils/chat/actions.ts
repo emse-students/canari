@@ -219,7 +219,10 @@ export function pendingAddFactsOf(deps: {
     const epoch = mlsService.getEpoch(groupId);
     if (fresh || pass === null || pass.epoch !== epoch || pass.unconfirmed) {
       if (pass?.unconfirmed && !fresh && pass.epoch === epoch) {
-        Log.d('[PENDING] the pass tree was unconfirmed - this row reads it afresh', { groupId });
+        Log.d(
+          'PENDING',
+          `the pass tree was unconfirmed - this row reads it afresh group=${groupId}`
+        );
       }
       // Always confirmed: the one read serves every row, whichever user each names.
       pass = {
