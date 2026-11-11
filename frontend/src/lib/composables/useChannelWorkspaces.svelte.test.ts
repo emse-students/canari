@@ -76,6 +76,12 @@ const sendEncryptedChannelMessage = vi.fn();
 
 const listUserWorkspaces = vi.fn();
 const listChannels = vi.fn();
+/** What a load hands the walk: its listings (the route here) and the release it must run. */
+const releaseBootReads = vi.fn();
+const readCommunityBootReads = vi.fn(async () => ({
+  listChannels: (id: string) => listChannels(id),
+  release: releaseBootReads,
+}));
 const createWorkspace = vi.fn();
 const createChannel = vi.fn();
 const renameChannel = vi.fn();
@@ -90,7 +96,7 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
   ChannelService: class MockChannelService {
     listUserWorkspaces = listUserWorkspaces;
     listChannels = listChannels;
-    holdCommunityBootReads = vi.fn().mockResolvedValue(() => {});
+    readCommunityBootReads = readCommunityBootReads;
     createWorkspace = createWorkspace;
     createChannel = createChannel;
     renameChannel = renameChannel;
@@ -312,6 +318,28 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
     await promise;
     expect(ctx.log).toHaveBeenCalledWith('[WORKSPACE-LOAD] 1/2 community(ies) failed to load');
     expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+    expect(store.workspacesLoadError).not.toBeNull();
+  });
+
+  it('asks the batched listing for exactly the walked communities and releases it when a chain fails', async () => {
+    listUserWorkspaces.mockResolvedValue([
+      makeWorkspaceDto('ws1', 'One', 'one'),
+      makeWorkspaceDto('ws2', 'Two', 'two'),
+    ]);
+    listChannels.mockImplementation((workspaceId: string) =>
+      workspaceId === 'ws1'
+        ? Promise.reject(new SessionExpiredError())
+        : Promise.resolve([makeChannelDto('c2', 'deux')])
+    );
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    await store.loadChannelWorkspacesFromBackend(ctx);
+
+    // The ids of THIS walk, and the load's own log (so a failed batch reaches the in-app log).
+    expect(readCommunityBootReads).toHaveBeenCalledWith(['ws1', 'ws2'], ctx.log);
+    // One failing chain does not skip the release: the walk's hold never outlives it.
+    expect(releaseBootReads).toHaveBeenCalledTimes(1);
     expect(store.workspacesLoadError).not.toBeNull();
   });
 

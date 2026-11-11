@@ -2452,18 +2452,23 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
-   * What a device asks of EVERY community it belongs to at each connection, in ONE answer: the
-   * salon listing ({@link listChannelsForUser}) and the key-group reference
-   * ({@link getDistributionGroupForMember}) - two of the three per-community reads of a boot (the
-   * third, the roster, is deliberately NOT here: it must be read AFTER the device's own tree, or a
-   * member who joined in between reads as absent and loses their leaf).
+   * The salon listing ({@link listChannelsForUser}) of SEVERAL communities in ONE answer, the first
+   * of the three per-community reads of a boot.
    *
-   * EACH ITEM IS ITS OWN VERDICT. The two answers come from the very methods the per-community
-   * routes call, so authorization and shape are theirs, and a refusal on one community (a 403 on a
-   * community just left, a missing key group) is carried as `{ status, code, message }` on that
-   * item and never fails the others - the client rethrows it as the refusal the single route would
-   * have given. Ids beyond {@link COMMUNITY_BOOT_READS_MAX} are not answered at all (the caller
-   * chunks), and a repeated id is answered once.
+   * ONLY THE SALON LISTING, and that is a decision: it is database reads and nothing else. The key
+   * group's reference (`getDistributionGroupForMember`) carries a roster of this user's devices
+   * that decides whether the device forgets its tree and external-joins, and it must be read where
+   * it always was - after MLS is ready and the startup drain has run - or an owed Welcome landing
+   * during boot is forgotten against a stale roster (the GRP-4 duplicate-leaf pattern). The roster
+   * of the community is not batched either: it is read after the device's own tree.
+   *
+   * EACH ITEM IS ITS OWN VERDICT. The answer comes from the very method the per-community route
+   * calls, so authorization and shape are its, and a refusal on one community (a 403 on a community
+   * just left) is carried as `{ status, code, message }` on that item and never fails the others -
+   * the client rethrows it as the refusal the single route would have given. Ids beyond
+   * {@link COMMUNITY_BOOT_READS_MAX} are not answered at all (the caller chunks), a repeated id is
+   * answered once, and at most {@link COMMUNITY_BOOT_READS_CONCURRENCY} communities are read at a
+   * time so one request never holds the whole connection pool.
    */
   async listCommunityBootReads(
     userId: string,
@@ -2473,33 +2478,30 @@ export class ChannelService implements OnApplicationBootstrap {
     this.logger.log(
       `[BOOT_READS] user=${userId.slice(0, 8)} communities=${ids.length} (asked ${workspaceIds.length})`
     );
-    const settle = async <T>(read: () => Promise<T>) => {
-      try {
-        return { value: await read(), refusal: undefined };
-      } catch (e) {
-        return { value: undefined, refusal: bootReadRefusal(e) };
-      }
-    };
-    const items = await Promise.all(
-      ids.map(async (workspaceId): Promise<CommunityBootReadItem> => {
-        const [channels, keyGroup] = await Promise.all([
-          settle(() => this.listChannelsForUser(workspaceId, userId)),
-          settle(() => this.getDistributionGroupForMember(workspaceId, userId)),
-        ]);
-        if (channels.refusal || keyGroup.refusal) {
-          this.logger.warn(
-            `[BOOT_READS] workspace=${workspaceId} user=${userId.slice(0, 8)} channels=${channels.refusal?.status ?? 'ok'} keyGroup=${keyGroup.refusal?.status ?? 'ok'}`
-          );
-        }
-        return {
-          workspaceId,
-          channels: channels.value ?? null,
-          channelsRefusal: channels.refusal ?? null,
-          keyGroup: keyGroup.value ?? null,
-          keyGroupRefusal: keyGroup.refusal ?? null,
-        };
-      })
-    );
+    const items: CommunityBootReadItem[] = [];
+    for (let i = 0; i < ids.length; i += COMMUNITY_BOOT_READS_CONCURRENCY) {
+      const slice = ids.slice(i, i + COMMUNITY_BOOT_READS_CONCURRENCY);
+      items.push(
+        ...(await Promise.all(
+          slice.map(async (workspaceId): Promise<CommunityBootReadItem> => {
+            try {
+              const channels = await this.listChannelsForUser(workspaceId, userId);
+              return { workspaceId, channels, channelsRefusal: null };
+            } catch (e) {
+              const refusal = bootReadRefusal(e);
+              // The detail stays here: an unclassified failure is a generic 500 to the client.
+              this.logger.warn(
+                `[BOOT_READS] workspace=${workspaceId} user=${userId.slice(0, 8)} channels=${refusal.status}` +
+                  (e instanceof HttpException
+                    ? ''
+                    : ` ${e instanceof Error ? e.message : String(e)}`)
+              );
+              return { workspaceId, channels: null, channelsRefusal: refusal };
+            }
+          })
+        ))
+      );
+    }
     return { items };
   }
 
@@ -7178,19 +7180,20 @@ export interface BootReadRefusal {
   message: string;
 }
 
-/** One community's part of the batched boot read: each half is its value or its refusal. */
+/** How many communities one batched read lists at a time (database reads, so a small bound). */
+export const COMMUNITY_BOOT_READS_CONCURRENCY = 10;
+
+/** One community's part of the batched boot read: its salon listing or its refusal. */
 export interface CommunityBootReadItem {
   workspaceId: string;
   channels: Awaited<ReturnType<ChannelService['listChannelsForUser']>> | null;
   channelsRefusal: BootReadRefusal | null;
-  keyGroup: DistributionGroupRef | null;
-  keyGroupRefusal: BootReadRefusal | null;
 }
 
 /**
- * A failure of one half of a batched read, as the refusal the single route would have answered:
- * an HTTP exception keeps its status and `code`; anything else is a 500 (and is logged by the
- * caller's warn line, the one thing that says which community it was).
+ * A failure of a batched read, as the refusal the single route would have answered: an HTTP
+ * exception keeps its status, `code` and message; anything else is a GENERIC 500 - its message can
+ * name a table or a host, so it is logged by the caller and never sent.
  */
 export function bootReadRefusal(err: unknown): BootReadRefusal {
   if (err instanceof HttpException) {
@@ -7201,7 +7204,7 @@ export function bootReadRefusal(err: unknown): BootReadRefusal {
         : null;
     return { status: err.getStatus(), code, message: err.message };
   }
-  return { status: 500, code: null, message: err instanceof Error ? err.message : String(err) };
+  return { status: 500, code: null, message: 'Internal error' };
 }
 
 /**

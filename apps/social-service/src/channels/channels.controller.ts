@@ -100,11 +100,11 @@ export class ChannelsController {
   }
 
   /**
-   * The salon listing AND the key-group reference of several communities in one answer
-   * (`?ids=a,b,c`, at most {@link COMMUNITY_BOOT_READS_MAX}): what a boot asks of each community
-   * before it joins its key group, in one request instead of two per community. Each item carries
-   * its own refusal, so one refused community never fails the rest. The per-community routes stay,
-   * for the clients that predate this one.
+   * The salon listing of several communities in one answer (`?ids=a,b,c`, at most
+   * {@link COMMUNITY_BOOT_READS_MAX}): database reads only, so the salon rows never wait on
+   * chat-delivery. NOT the key-group reference: that one is read after MLS is ready (see the
+   * service method). Each item carries its own refusal, so one refused community never fails the
+   * rest. The per-community routes stay, for the clients that predate this one.
    */
   @UseGuards(NginxAuthGuard)
   @Get('workspaces/boot-reads')

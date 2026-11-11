@@ -60,7 +60,10 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
     createChannel = createChannel;
     listUserWorkspaces = listUserWorkspaces;
     listChannels = listChannels;
-    holdCommunityBootReads = vi.fn().mockResolvedValue(() => {});
+    readCommunityBootReads = vi.fn(async () => ({
+      listChannels: (id: string) => listChannels(id),
+      release: () => {},
+    }));
     getDistributionGroup = (scope: DistributionScope) =>
       scope.kind === 'channel'
         ? salonRead(scope)

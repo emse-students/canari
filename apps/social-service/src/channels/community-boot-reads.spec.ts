@@ -1,12 +1,18 @@
-import { ForbiddenException, HttpException, Logger, NotFoundException } from '@nestjs/common';
-import { ChannelService, COMMUNITY_BOOT_READS_MAX, bootReadRefusal } from './channel.service';
+import { ForbiddenException, HttpException, Logger } from '@nestjs/common';
+import {
+  ChannelService,
+  COMMUNITY_BOOT_READS_CONCURRENCY,
+  COMMUNITY_BOOT_READS_MAX,
+  bootReadRefusal,
+} from './channel.service';
 import { ChannelsController } from './channels.controller';
 
 /**
- * The batched boot read: one answer carrying, per community, the salon listing and the key-group
- * reference. It answers through the two methods the single routes call, so what is pinned here is
- * the per-item verdict (a refusal never fails a sibling), the bound, and the controller's input
- * checks - not the authorization, which the single routes' own specs hold.
+ * The batched boot read: one answer carrying, per community, the salon listing. It answers through
+ * the method the single route calls, so what is pinned here is the per-item verdict (a refusal never
+ * fails a sibling), what is NOT in it (the key-group reference), the bounds, what a failure may
+ * tell the client, and the controller's input checks - not the authorization, which the single
+ * route's own specs hold.
  */
 describe('ChannelService.listCommunityBootReads', () => {
   const USER = 'u1';
@@ -22,69 +28,48 @@ describe('ChannelService.listCommunityBootReads', () => {
       {} as never
     );
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
-    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const listChannels = jest.spyOn(service, 'listChannelsForUser');
+    // The key group is chat-delivery's: the batch must never reach it.
     const keyGroup = jest.spyOn(service, 'getDistributionGroupForMember');
-    return { service, listChannels, keyGroup };
+    return { service, listChannels, keyGroup, warn };
   }
-
-  const ref = (groupId: string) => ({
-    groupId,
-    groupInfo: null,
-    baseEpoch: null,
-    activeEpoch: 0,
-  });
 
   afterEach(() => jest.restoreAllMocks());
 
-  it('answers every community with both halves, one read of each per community', async () => {
+  it('answers every community with its listing and never touches the key group', async () => {
     const { service, listChannels, keyGroup } = makeService();
     listChannels.mockImplementation((ws) => Promise.resolve([{ id: `c-${ws}` }] as never));
-    keyGroup.mockImplementation((ws) => Promise.resolve(ref(`g-${ws}`)));
 
     const { items } = await service.listCommunityBootReads(USER, ['a', 'b', 'c']);
 
     expect(items.map((i) => i.workspaceId)).toEqual(['a', 'b', 'c']);
     expect(items[1].channels).toEqual([{ id: 'c-b' }]);
-    expect(items[1].keyGroup?.groupId).toBe('g-b');
-    expect(items.every((i) => i.channelsRefusal === null && i.keyGroupRefusal === null)).toBe(true);
+    expect(items.every((i) => i.channelsRefusal === null)).toBe(true);
+    expect(Object.keys(items[0]).sort()).toEqual(['channels', 'channelsRefusal', 'workspaceId']);
     expect(listChannels).toHaveBeenCalledTimes(3);
-    expect(keyGroup).toHaveBeenCalledTimes(3);
-    // The roster is NOT part of it: it must be read after the device's own tree.
-    expect(keyGroup).toHaveBeenCalledWith('a', USER);
+    expect(listChannels).toHaveBeenCalledWith('a', USER);
+    expect(keyGroup).not.toHaveBeenCalled();
   });
 
   it('carries a refusal on its own item and answers the others', async () => {
-    const { service, listChannels, keyGroup } = makeService();
+    const { service, listChannels } = makeService();
     listChannels.mockImplementation((ws) =>
       ws === 'left' ? Promise.reject(new ForbiddenException('nope')) : Promise.resolve([] as never)
     );
-    keyGroup.mockImplementation((ws) =>
-      ws === 'nokg'
-        ? Promise.reject(
-            new NotFoundException({ code: 'WORKSPACE_HAS_NO_DISTRIBUTION_GROUP', message: 'x' })
-          )
-        : Promise.resolve(ref(`g-${ws}`))
-    );
 
-    const { items } = await service.listCommunityBootReads(USER, ['ok', 'left', 'nokg']);
+    const { items } = await service.listCommunityBootReads(USER, ['ok', 'left', 'ok2']);
 
     const byId = Object.fromEntries(items.map((i) => [i.workspaceId, i]));
     expect(byId.ok.channelsRefusal).toBeNull();
     expect(byId.left.channels).toBeNull();
     expect(byId.left.channelsRefusal).toMatchObject({ status: 403 });
-    expect(byId.left.keyGroup?.groupId).toBe('g-left');
-    expect(byId.nokg.keyGroupRefusal).toMatchObject({
-      status: 404,
-      code: 'WORKSPACE_HAS_NO_DISTRIBUTION_GROUP',
-    });
-    expect(byId.nokg.channels).toEqual([]);
+    expect(byId.ok2.channels).toEqual([]);
   });
 
   it('reads a repeated id once and answers no more than the bound', async () => {
-    const { service, listChannels, keyGroup } = makeService();
+    const { service, listChannels } = makeService();
     listChannels.mockResolvedValue([] as never);
-    keyGroup.mockResolvedValue(ref('g'));
     const many = Array.from({ length: COMMUNITY_BOOT_READS_MAX + 5 }, (_, i) => `w${i}`);
 
     const { items } = await service.listCommunityBootReads(USER, ['w0', 'w0', ...many]);
@@ -93,14 +78,38 @@ describe('ChannelService.listCommunityBootReads', () => {
     expect(listChannels).toHaveBeenCalledTimes(COMMUNITY_BOOT_READS_MAX);
   });
 
-  it('turns an unclassified failure into a 500 refusal, never a thrown answer', async () => {
-    const { service, listChannels, keyGroup } = makeService();
-    listChannels.mockRejectedValue(new Error('db down'));
-    keyGroup.mockResolvedValue(ref('g'));
+  it('never has more than the concurrency bound in flight', async () => {
+    const { service, listChannels } = makeService();
+    let inFlight = 0;
+    let peak = 0;
+    listChannels.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setImmediate(resolve));
+      inFlight--;
+      return [] as never;
+    });
+    const ids = Array.from({ length: COMMUNITY_BOOT_READS_CONCURRENCY * 3 }, (_, i) => `w${i}`);
+
+    const { items } = await service.listCommunityBootReads(USER, ids);
+
+    expect(items).toHaveLength(ids.length);
+    expect(peak).toBe(COMMUNITY_BOOT_READS_CONCURRENCY);
+  });
+
+  it('sends a generic 500 for an unclassified failure and logs the detail here', async () => {
+    const { service, listChannels, warn } = makeService();
+    listChannels.mockRejectedValue(new Error('relation "channel_members" does not exist'));
 
     const { items } = await service.listCommunityBootReads(USER, ['a']);
 
-    expect(items[0].channelsRefusal).toEqual({ status: 500, code: null, message: 'db down' });
+    expect(items[0].channelsRefusal).toEqual({
+      status: 500,
+      code: null,
+      message: 'Internal error',
+    });
+    expect(JSON.stringify(items)).not.toContain('channel_members');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('channel_members'));
   });
 
   it('classifies an HTTP exception by status and code', () => {

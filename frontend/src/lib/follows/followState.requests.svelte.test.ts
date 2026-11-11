@@ -15,7 +15,7 @@ vi.mock('./api', async (importOriginal) => ({
     new Promise((resolve, reject) => calls.push({ ids: [...ids], answer: resolve, fail: reject })),
 }));
 
-import { ensurePersonStatus, resetFollowState } from './followState.svelte';
+import { ensurePersonStatus, personChipState, resetFollowState } from './followState.svelte';
 
 /** Lets every queued microtask run, so a flush scheduled by `ensurePersonStatus` has happened. */
 const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -56,6 +56,51 @@ describe('follow statuses - one round of calls in flight', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0].ids).toEqual(['a']);
+  });
+
+  it('a reset while a call is out: the new reader does not wait behind the old one', async () => {
+    ensurePersonStatus('old');
+    await turn();
+    expect(calls).toHaveLength(1);
+
+    // Another account signs in while the first reader's call is still on the wire.
+    resetFollowState();
+    ensurePersonStatus('new');
+    await turn();
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].ids).toEqual(['new']);
+
+    // The abandoned call ending late neither answers the new reader nor reopens a gate it no longer holds.
+    ensurePersonStatus('next');
+    calls[0].answer({ old: 'following' });
+    await turn();
+    expect(calls).toHaveLength(2);
+    expect(personChipState('old')).toBeUndefined();
+    calls[1].answer({});
+    await turn();
+    expect(calls).toHaveLength(3);
+    expect(calls[2].ids).toEqual(['next']);
+  });
+
+  it('more than one call of ids in one round: the chunks leave together, the next ids wait for ALL of them', async () => {
+    for (let i = 0; i < 250; i++) ensurePersonStatus(`p${i}`);
+    await turn();
+
+    // 250 ids at the server's cap of 100: three calls of one round, in parallel.
+    expect(calls.map((c) => c.ids.length)).toEqual([100, 100, 50]);
+
+    ensurePersonStatus('late');
+    calls[0].answer({});
+    calls[1].answer({});
+    await turn();
+    // One call is still out: the gate holds.
+    expect(calls).toHaveLength(3);
+
+    calls[2].answer({});
+    await turn();
+    expect(calls).toHaveLength(4);
+    expect(calls[3].ids).toEqual(['late']);
   });
 
   it('keeps going after a failed call: the waiting ids leave, the failed one is not re-asked', async () => {

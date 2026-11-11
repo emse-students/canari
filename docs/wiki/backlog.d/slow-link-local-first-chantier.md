@@ -36,8 +36,10 @@ state first, then revalidates ([local-first-ui](../frontend/local-first-ui.md)).
      counting stalls before and after.
 
 **Gaps 4 and 5, built (2026-11-11, draft PR).** Gap 4: nine communities cost 27 requests at a load,
-now 10 - one batched `GET /api/channels/workspaces/boot-reads` (salons + key-group reference) and
-the roster per community, which stays per community on purpose. Gap 5: `follow-statuses` 8 -> 2 for
+now 19 - one batched `GET /api/channels/workspaces/boot-reads` for the salon listings only (database
+reads, the rows no longer wait on chat-delivery); the key-group reference and the roster stay per
+community on purpose (the reference carries a device roster that is unsafe to read before MLS is
+ready, review of #3332). Gap 5: `follow-statuses` 8 -> 2 for
 eight card ticks (one round in flight); `users/batch` has no identical request left to remove and
 `devices/self` x3 are three different URLs (C4). Numbers, causes and what was left:
 [audit section 4.5](../frontend/weak-network-audit-2026-11-10.md#4-the-leads-field-evidence-owners-android-169-log-production-nginx-read-against-the-code).

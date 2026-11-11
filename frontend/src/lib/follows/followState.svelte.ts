@@ -75,6 +75,14 @@ export function isTapSettling(id: string): boolean {
   return settling.has(id);
 }
 const queue: string[] = [];
+/**
+ * The status calls of the current round, one token each. While any is out, newly queued ids WAIT and
+ * leave together (see `flush`). A SET OF TOKENS, not a counter: the gate can be emptied by an event
+ * ({@link voidReads}, a reconnect) while a call it abandoned is still out, and that call's late end
+ * must remove only its own token - never open the gate on a round that is not its own.
+ */
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- bookkeeping, nothing renders from it
+const roundsOut = new Set<object>();
 let flushQueued = false;
 
 const followedAssociations = new SvelteSet<string>();
@@ -110,6 +118,8 @@ function voidReads(): void {
   settling.clear();
   queue.length = 0;
   flushQueued = false;
+  // A call of the reader who left is still out; the new reader must not wait behind it.
+  roundsOut.clear();
   followedAssociations.clear();
   memberAssociations.clear();
   writtenAssociations.clear();
@@ -180,8 +190,18 @@ function warnFailedRead(what: string, err: unknown): void {
 /** Starts the listeners that end or redo reads - lazily, so merely importing this does nothing. */
 function watch(): void {
   if (!stopWatchingBlocks) stopWatchingBlocks = onBlocksChanged(dropAfterBlockChange);
-  if (!stopWatchingReconnect)
-    stopWatchingReconnect = connectivity.onReconnect(retryFailedFollowReads);
+  if (!stopWatchingReconnect) stopWatchingReconnect = connectivity.onReconnect(onReconnect);
+}
+
+/**
+ * The connection is back: a call that was out across the outage no longer holds the gate (its answer,
+ * if it ever lands, is still applied by the epoch check), so what queued behind it leaves now, and
+ * what failed is asked again.
+ */
+function onReconnect(): void {
+  roundsOut.clear();
+  scheduleFlush();
+  retryFailedFollowReads();
 }
 
 function scheduleFlush(): void {
@@ -190,32 +210,39 @@ function scheduleFlush(): void {
   queueMicrotask(flush);
 }
 
-/** Status reads on the wire. While any is out, newly queued ids WAIT and leave together (below). */
-let statusReadsOut = 0;
-
 /**
- * Sends everything queued so far: one call per {@link FOLLOW_STATUS_BATCH_MAX} ids - and never while
- * an earlier call is still out.
+ * Sends everything queued so far: one call per {@link FOLLOW_STATUS_BATCH_MAX} ids (all the chunks of
+ * one round together) - and never while an earlier round is still out.
  *
  * ONE ROUND OF CALLS IN FLIGHT AT A TIME, and that is what turns a feed's cards mounting over a few
  * hundred milliseconds into two calls instead of eight (measured on the owner's `1.6.9` log:
- * `follow-statuses` x8 in one boot, each a few ids). The ids that queue while a call is out leave in
- * ONE call the moment its answer lands (`settled`), so the window is the call itself - an exact
+ * `follow-statuses` x8 in one boot, each a few ids). The ids that queue while a round is out leave in
+ * ONE call the moment its answers land (`settled`), so the window is the call itself - an exact
  * event, no clock. A chip waits at most one extra round trip, which it can afford: it is a hint
  * drawn after the content, never the content.
+ *
+ * WHAT BOUNDS A ROUND IS A FACT, NOT A TIMER. Every call is an `apiFetch`, which rejects at its own
+ * response-head deadline (a typed `RequestDeadlineError`), and a rejection settles the round like an
+ * answer does. The gate is also emptied by the two events that make an outstanding call moot: the
+ * reader changing or a block changing ({@link voidReads}), and the connection coming back (the
+ * reconnect listener in {@link watch}) - the abandoned call's answer is still applied or dropped by
+ * the epoch check, it just no longer holds the gate. What nothing here bounds is a response BODY
+ * stalling after its head arrived; that leaves the chips behind it hidden (the safe side) until one
+ * of those events, and is the transport's to bound, not a second clock here.
  */
 function flush(): void {
   flushQueued = false;
-  if (statusReadsOut > 0) return;
+  if (roundsOut.size > 0) return;
   const mine = epoch;
-  const settled = () => {
-    statusReadsOut--;
-    // The ids that queued while this was out go now - even after a reset, whose queue is the new one.
-    scheduleFlush();
-  };
   while (queue.length > 0) {
     const ids = queue.splice(0, FOLLOW_STATUS_BATCH_MAX);
-    statusReadsOut++;
+    const token = {};
+    roundsOut.add(token);
+    const settled = () => {
+      roundsOut.delete(token);
+      // The ids that queued while this was out go now - even after a reset, whose queue is the new one.
+      scheduleFlush();
+    };
     getFollowStatuses(ids)
       .then((statuses) => {
         if (mine !== epoch) return;

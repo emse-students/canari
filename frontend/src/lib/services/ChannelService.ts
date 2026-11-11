@@ -426,22 +426,31 @@ interface CommunityBootReadDto {
   workspaceId: string;
   channels: ChannelDto[] | null;
   channelsRefusal: BootReadRefusalDto | null;
-  keyGroup: DistributionGroupDto | null;
-  keyGroupRefusal: BootReadRefusalDto | null;
 }
 
-/** The most communities one batched boot read asks for - the server's `COMMUNITY_BOOT_READS_MAX`. */
+/**
+ * The most communities one batched boot read asks for. MUST equal the server's
+ * `COMMUNITY_BOOT_READS_MAX` (`apps/social-service/src/channels/channel.service.ts`);
+ * `ChannelService.bootReads.test.ts` reads that file and fails when the two disagree.
+ */
 export const COMMUNITY_BOOT_READS_MAX = 50;
+
+/**
+ * The salon listings ONE load asked in a batch, and what that load may take from them
+ * ({@link ChannelService.readCommunityBootReads}). It is a value the load holds and passes down - not
+ * a state of the shared service - so no other caller (a gesture, a leader-tab executor, a creation,
+ * `refreshChannelOrder`) can ever take a boot-time answer, and a newer load's handle is never touched
+ * by an older one's release.
+ */
+export interface CommunityBootReads {
+  /** `workspaceId`'s salons: the answer this load held, handed out once; else the single route. */
+  listChannels(workspaceId: string): Promise<ChannelDto[]>;
+  /** Forgets what THIS load held and no read took. Touches nothing else. */
+  release(): void;
+}
 
 export class ChannelService {
   private baseUrl: string;
-  /**
-   * What the batched boot read answered, per community, WHILE THE LOAD THAT ASKED IT RUNS: each half
-   * is handed to the first per-community read that asks for it and then forgotten, and the whole map
-   * is emptied when the load ends (the release {@link holdCommunityBootReads} returns). Its lifetime
-   * is the load, not a clock - a read made after the load always goes to the server.
-   */
-  private readonly heldBootReads = new Map<string, CommunityBootReadDto>();
 
   constructor() {
     // In browser, API routes are proxied by Vite/nginx.
@@ -571,22 +580,11 @@ export class ChannelService {
     scope: DistributionScope,
     deviceId?: string
   ): Promise<DistributionGroupDto> {
-    // THE BATCHED READ OF THIS LOAD answers the reference of a community's group once, and only for
-    // a read that names no device: a seat is judged against a base read AFTER the question.
-    const held =
-      scope.kind === 'workspace' && !deviceId
-        ? this.takeBootRead<DistributionGroupDto>(scope.workspaceId, 'keyGroup')
-        : undefined;
-    let dto: DistributionGroupDto;
-    if (held) {
-      dto = held.value;
-    } else {
-      const query = deviceId ? `?${new URLSearchParams({ deviceId })}` : '';
-      const res = await this.fetchWithAuth(`${this.distributionGroupUrl(scope)}${query}`);
-      await this.handleError(res);
-      // A 2xx that is not the API's JSON is no answer (`NotFromApiError`, a transport failure).
-      dto = (await readApiJson(res, 'GET distribution group')) as DistributionGroupDto;
-    }
+    const query = deviceId ? `?${new URLSearchParams({ deviceId })}` : '';
+    const res = await this.fetchWithAuth(`${this.distributionGroupUrl(scope)}${query}`);
+    await this.handleError(res);
+    // A 2xx that is not the API's JSON is no answer (`NotFromApiError`, a transport failure).
+    const dto = (await readApiJson(res, 'GET distribution group')) as DistributionGroupDto;
     // Defaulted to the base, not to 0: a server build that predates the field must read as "nothing
     // known to be stale", where 0 would declare every published base ahead of its group.
     return {
@@ -730,25 +728,45 @@ export class ChannelService {
   }
 
   /**
-   * Asks, in ONE request per {@link COMMUNITY_BOOT_READS_MAX} communities, the two reads a load
-   * makes of each community before joining its key group - its salon listing and its key-group
-   * reference - and holds the answers for the per-community reads that follow
-   * ({@link listChannels}, {@link getDistributionGroup} without a device), each handed out once.
-   * Replaces two requests per community (18 of the 27 for nine communities).
+   * Asks the salon listing of every community a load walks in ONE request per
+   * {@link COMMUNITY_BOOT_READS_MAX} communities, and returns the handle that load reads its
+   * listings through ({@link CommunityBootReads}). Replaces one request per community (9 of the 27
+   * for nine communities).
    *
-   * The roster is NOT among them: the key-group roster pass reads it AFTER the device's own tree, and
-   * a roster read earlier names a member who joined in between as absent.
+   * ONLY THE SALON LISTING: database reads on the server, so the salon rows never wait on
+   * chat-delivery. The key-group reference and the roster stay per community, read where they always
+   * were - the reference carries a roster of this user's devices that decides whether the device
+   * forgets its tree, and read before MLS is ready it can be stale against an owed Welcome.
    *
-   * NEVER THROWS, and holds nothing when the batch fails (an older server answers 404, the link
-   * drops): the per-community routes then answer as they always did, and the line says so, because a
+   * NEVER THROWS. A batch that fails (an older server answers 404, the link drops) leaves the handle
+   * empty, every listing then reads its own route as it always did, and `log` says so at warn - a
    * batch that never works is the visible end of a server this client outran.
    *
-   * @returns the release the caller MUST run when its load ends: it forgets whatever no read took.
+   * @param log The load's own log (`ctx.log`), so the line reaches a phone's in-app log.
    */
-  async holdCommunityBootReads(workspaceIds: readonly string[]): Promise<() => void> {
-    const release = () => this.heldBootReads.clear();
+  async readCommunityBootReads(
+    workspaceIds: readonly string[],
+    log: (message: string) => void
+  ): Promise<CommunityBootReads> {
+    const held = new Map<string, CommunityBootReadDto>();
     const ids = [...new Set(workspaceIds)];
-    if (ids.length < 2) return release; // one community: the batch would replace nothing.
+    const handle: CommunityBootReads = {
+      listChannels: async (workspaceId) => {
+        const item = held.get(workspaceId);
+        // Handed out once: a second read of the same community is a new question for the route.
+        held.delete(workspaceId);
+        if (item?.channelsRefusal) {
+          const refusal = item.channelsRefusal;
+          throw new ChannelApiError(refusal.status, refusal.code, refusal.message);
+        }
+        if (item?.channels) return item.channels;
+        return this.listChannels(workspaceId);
+      },
+      release: () => {
+        for (const id of ids) held.delete(id);
+      },
+    };
+    if (ids.length < 2) return handle; // one community: the batch would replace nothing.
     const chunks: string[][] = [];
     for (let i = 0; i < ids.length; i += COMMUNITY_BOOT_READS_MAX) {
       chunks.push(ids.slice(i, i + COMMUNITY_BOOT_READS_MAX));
@@ -764,46 +782,18 @@ export class ChannelService {
           const body = (await readApiJson(res, 'GET boot reads')) as {
             items?: CommunityBootReadDto[];
           };
-          for (const item of body.items ?? []) this.heldBootReads.set(item.workspaceId, item);
+          for (const item of body.items ?? []) held.set(item.workspaceId, item);
         } catch (e) {
-          console.warn(
-            `[BOOT_READS] batched read of ${chunk.length} communities failed - each community is read on its own route: ${String(e)}`
+          log(
+            `[BOOT_READS] warn: batched listing of ${chunk.length} communities failed - each community is read on its own route: ${String(e)}`
           );
         }
       })
     );
-    return release;
-  }
-
-  /**
-   * Hands out, once, what the batched boot read held for `workspaceId`'s `half`: its value, a
-   * refusal rethrown as the {@link ChannelApiError} the single route answers, or `undefined` when
-   * nothing is held (the caller reads the route).
-   */
-  private takeBootRead<T>(
-    workspaceId: string,
-    half: 'channels' | 'keyGroup'
-  ): { value: T } | undefined {
-    const item = this.heldBootReads.get(workspaceId);
-    if (!item) return undefined;
-    const value = item[half];
-    const refusal = half === 'channels' ? item.channelsRefusal : item.keyGroupRefusal;
-    // Neither a value nor a refusal: already handed out, so this read goes to the route.
-    if (value === null && refusal === null) return undefined;
-    if (half === 'channels') {
-      item.channels = null;
-      item.channelsRefusal = null;
-    } else {
-      item.keyGroup = null;
-      item.keyGroupRefusal = null;
-    }
-    if (refusal) throw new ChannelApiError(refusal.status, refusal.code, refusal.message);
-    return { value: value as T };
+    return handle;
   }
 
   async listChannels(workspaceId: string) {
-    const held = this.takeBootRead<ChannelDto[]>(workspaceId, 'channels');
-    if (held) return held.value;
     const res = await this.fetchWithAuth(
       `${this.baseUrl}/api/channels/workspace/${workspaceId}/user/me`
     );
