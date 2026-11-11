@@ -1132,9 +1132,10 @@ export class MediaService {
    * for three at a time rather than starving the request the reader is actually waiting for.
    *
    * @param ref        The `MediaRef` extracted from the MLS message.
-   * @param signal     Abandons the request WHILE IT IS STILL QUEUED - a row scrolled past never
-   *                   asks at all. A download already started runs to completion, because the
-   *                   fetch behind it is shared with every other holder of the same object.
+   * @param signal     This holder leaving. The download is shared with every other holder of the
+   *                   same object, so it is abandoned only when the LAST one has left and nobody
+   *                   rejoined it in the same turn: dropped from the queue (a row scrolled past
+   *                   never asks at all), or stopped on the wire (`mediaBlobCache.ts`, `SharedLoad`).
    * @returns          A cached object URL (`blob:…`). Call
    *                   `releaseDecryptedMediaBlobUrl(ref)` when the element unmounts.
    */

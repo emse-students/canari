@@ -779,10 +779,16 @@ wheel never waits for; (b) photos carried no placeholder.
 - **Both read paths JOIN the head - the precondition the 2026-11-04 refusal named**: a streamed
   reel's segment feed wraps its network source in `headedRangeSource` (a read inside the head is
   answered from it, in flight or in); a reel read whole (`mediaBlobCache`) takes the head and asks
-  for the rest only (`Range: bytes=N-`). Pinned by `mediaHeadStore.test.ts`, which counts the
-  requests.
+  for the rest only (`Range: bytes=N-`), joined only when its `Content-Range` starts where the
+  head ends (anything else is said and the whole file read; `Content-Range` is exposed by the media
+  service so a phone can read it). A head that FAILED is left for good: the stream reads every
+  range itself, the whole read reads the whole file, said once at warn. Pinned by
+  `mediaHeadStore.test.ts`, which counts the requests.
 - **The reel being watched keeps the link**: every byte fetched ahead goes through the gate's
   BACKGROUND lane (`requestGate.ts`): behind every foreground request, never in the last free slot.
+  When the reader reaches a page whose head or picture is still QUEUED there, the foreground reader
+  that joins it raises it to the foreground lane (`GateRank`), so the bytes on screen never wait
+  behind the pages after them; one already on the wire runs on.
 - **A fast scroll leaves nothing behind**: a page passed is dropped at the update that passed it;
   its head's last holder aborts it (queued: the gate drops it; on the wire: `fetch` is aborted). The
   page that becomes the one on screen keeps its head, so its player joins it.

@@ -23,7 +23,9 @@
  * is never memoised: the entry leaves the map and the next reader asks again.
  *
  * The head is fetched in the gate's BACKGROUND lane (`requestGate.ts`): it never takes the last free
- * slot, and every request for what is on screen goes before it.
+ * slot, and every request for what is on screen goes before it - until the reader reaches its page:
+ * a foreground reader joining a head still QUEUED raises it to the foreground lane (`GateRank`),
+ * so the bytes being watched never wait behind the pages after them.
  */
 import {
   SEGMENTED_MEDIA_HEADER_BYTES,
@@ -31,6 +33,7 @@ import {
   SEGMENT_TAG_BYTES,
 } from '$lib/mediaSegmented';
 import { sessionLinkRate } from './linkRate';
+import { GateRank, type GateLane } from './requestGate';
 import { httpRangeSource, type CiphertextRangeSource } from './segmentedMediaReader';
 
 /**
@@ -51,16 +54,17 @@ export const MEDIA_HEAD_BYTES =
 export type HeadFetch = (
   mediaId: string,
   baseUrl: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  rank: GateRank
 ) => Promise<Uint8Array<ArrayBuffer>>;
 
-const networkHead: HeadFetch = (mediaId, baseUrl, signal) =>
+const networkHead: HeadFetch = (mediaId, baseUrl, signal, rank) =>
   httpRangeSource(
     baseUrl,
     mediaId,
     (bytes, seconds) => sessionLinkRate.observe(bytes, seconds),
     undefined,
-    'background'
+    rank
   ).read(0, MEDIA_HEAD_BYTES, signal);
 
 let fetchHead: HeadFetch = networkHead;
@@ -69,6 +73,8 @@ interface HeadEntry {
   bytes: Promise<Uint8Array<ArrayBuffer>>;
   holders: number;
   controller: AbortController;
+  /** Starts in the background lane; the first foreground reader to join raises it. */
+  rank: GateRank;
 }
 
 const heads = new Map<string, HeadEntry>();
@@ -106,10 +112,12 @@ export function holdMediaHead(mediaId: string, baseUrl: string): MediaHeadHold {
   const running = heads.get(mediaId);
   if (running) return holdEntry(mediaId, running);
   const controller = new AbortController();
+  const rank = new GateRank('background');
   const entry: HeadEntry = {
-    bytes: fetchHead(mediaId, baseUrl, controller.signal),
+    bytes: fetchHead(mediaId, baseUrl, controller.signal, rank),
     holders: 0,
     controller,
+    rank,
   };
   heads.set(mediaId, entry);
   entry.bytes.catch(() => {
@@ -119,10 +127,22 @@ export function holdMediaHead(mediaId: string, baseUrl: string): MediaHeadHold {
   return holdEntry(mediaId, entry);
 }
 
-/** Joins the head of `mediaId` when one is held - never starts one. */
-export function joinMediaHead(mediaId: string): MediaHeadHold | null {
+/**
+ * Joins the head of `mediaId` when one is held - never starts one.
+ *
+ * @param lane Who joins. A `foreground` reader (the page on screen: its stream or whole read, or the
+ *   preload of the next page) raises a head still QUEUED in the background lane ahead of the other
+ *   pages' work (`GateRank`), because it is watching those bytes now. A head already on the wire
+ *   runs on.
+ */
+export function joinMediaHead(
+  mediaId: string,
+  lane: GateLane = 'foreground'
+): MediaHeadHold | null {
   const running = heads.get(mediaId);
-  return running ? holdEntry(mediaId, running) : null;
+  if (!running) return null;
+  if (lane === 'foreground') running.rank.promote();
+  return holdEntry(mediaId, running);
 }
 
 /** Waits for `bytes`, rejecting with the abort reason when `signal` fires first. */
@@ -155,16 +175,33 @@ function headIsWholeFile(head: Uint8Array): boolean {
 
 /**
  * A range source that answers from a held head what lies inside it, and asks `inner` only for what
- * lies after it. A head that failed fails the read with its own typed error - the same answer the
- * read itself would have had on that link.
+ * lies after it.
+ *
+ * A HEAD THAT FAILED IS LEFT FOR GOOD. The feed keeps this source for its whole life, so failing
+ * every read with the head's error would fail every segment of a stream whose own reads would have
+ * succeeded. That read and every later one go to `inner` instead, said ONCE at warn: reaching it
+ * means the head fetched ahead failed, which is the signal.
  */
 export function headedRangeSource(
   head: MediaHeadHold,
   inner: CiphertextRangeSource
 ): CiphertextRangeSource {
+  let failed = false;
   return {
     async read(start, endExclusive, signal) {
-      const bytes = await headOrAbort(head.bytes, signal);
+      if (failed) return inner.read(start, endExclusive, signal);
+      let bytes: Uint8Array<ArrayBuffer>;
+      try {
+        bytes = await headOrAbort(head.bytes, signal);
+      } catch (err) {
+        // The reader's own abort is its answer, never the head's failure.
+        if (signal?.aborted) throw err;
+        if (!failed) {
+          failed = true;
+          console.warn('[media-head] the head failed - this stream reads every range itself', err);
+        }
+        return inner.read(start, endExclusive, signal);
+      }
       const len = bytes.byteLength;
       if (endExclusive <= len || headIsWholeFile(bytes)) {
         return new Uint8Array(bytes.slice(start, Math.min(endExclusive, len)));
@@ -185,16 +222,28 @@ export function headedRangeSource(
  * @param head The held head.
  * @param fetchFrom Asks the server for bytes `[from, end)`: answers `206` with them, `416` when the
  *   file ends exactly at `from`, or `200` with the whole file when the server ignored the range.
+ * @param fetchWhole Asks for the whole file, with no range. A failed head, or a `206` that does not
+ *   start where the head ends, is answered with this instead: joining that body to the head would
+ *   build a file that never decrypts.
  * @param signal Abandons the wait for the head.
  */
 export async function readAfterHead(
   head: MediaHeadHold,
   fetchFrom: (from: number) => Promise<Response>,
+  fetchWhole: () => Promise<Response>,
   signal?: AbortSignal
 ): Promise<ArrayBuffer> {
-  const bytes = await headOrAbort(head.bytes, signal);
+  let bytes: Uint8Array<ArrayBuffer>;
+  try {
+    bytes = await headOrAbort(head.bytes, signal);
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    console.warn('[media-head] the head failed - the whole file is read instead', err);
+    return (await fetchWhole()).arrayBuffer();
+  }
   if (headIsWholeFile(bytes)) return bytes.slice().buffer;
-  const res = await fetchFrom(bytes.byteLength);
+  const from = bytes.byteLength;
+  const res = await fetchFrom(from);
   if (res.status === 416) return bytes.slice().buffer;
   if (res.status === 200) {
     // The server ignored the range: its body is the whole file, so it is correct - only the head's
@@ -203,11 +252,25 @@ export async function readAfterHead(
     console.warn('[media-head] the rest was asked as a range and answered whole (200)');
     return res.arrayBuffer();
   }
+  const range = res.headers.get('Content-Range');
+  if (rangeStartOf(range) !== from) {
+    console.warn(
+      `[media-head] the rest was asked from byte ${from} and answered "${range ?? 'no Content-Range'}" - the whole file is read instead`
+    );
+    await res.body?.cancel();
+    return (await fetchWhole()).arrayBuffer();
+  }
   const rest = new Uint8Array(await res.arrayBuffer());
-  const out = new Uint8Array(bytes.byteLength + rest.byteLength);
+  const out = new Uint8Array(from + rest.byteLength);
   out.set(bytes, 0);
-  out.set(rest, bytes.byteLength);
+  out.set(rest, from);
   return out.buffer;
+}
+
+/** The first byte a `Content-Range: bytes A-B/N` names, or `null` when it names none. */
+function rangeStartOf(contentRange: string | null): number | null {
+  const match = /^bytes (\d+)-/.exec(contentRange ?? '');
+  return match ? Number(match[1]) : null;
 }
 
 /** How many heads are held now - the look-ahead's report and the tests. */

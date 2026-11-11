@@ -133,10 +133,8 @@ export function startPublishQueue(userId: string): void {
       // CanaReels photo page was black until its file came): a ThumbHash a reader draws before a
       // byte arrives - the server holds ciphertext and can make none. Made from the PREPARED file,
       // the one readers get. Missing, it is said.
+      // A picture or video that gets none is said by `preparedMediaPlaceholder` itself.
       const placeholder = await preparedMediaPlaceholder(prepared.file);
-      if (!placeholder && /^(video|image)\//.test(prepared.file.type)) {
-        console.warn(`[PUBLISH-QUEUE] a ${prepared.file.type} is published without a placeholder`);
-      }
       return placeholder ? { ...prepared, placeholder } : prepared;
     },
     reelRule: async () => reelRuleOf(await getReelLimits()),

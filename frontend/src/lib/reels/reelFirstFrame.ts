@@ -89,10 +89,17 @@ export async function firstFramePlaceholder(video: Blob): Promise<string | null>
  * a picture's own ThumbHash - or `null` for anything else, or a file this engine cannot decode. ONE
  * place for every publisher (the publish queue, a post's edit), so a picture never goes out without
  * the one a video gets (owner, 2026-11-11: a CanaReels photo page was black until its file came).
+ * A picture or video that gets none is published anyway, and said at warn.
  */
 export async function preparedMediaPlaceholder(file: File): Promise<string | null> {
-  if (file.type.startsWith('video/')) return firstFramePlaceholder(file);
-  if (!file.type.startsWith('image/')) return null;
-  const { placeholderForImageFile } = await import('$lib/utils/mediaPlaceholder');
-  return placeholderForImageFile(file);
+  const isVideo = file.type.startsWith('video/');
+  if (!isVideo && !file.type.startsWith('image/')) return null;
+  const placeholder = isVideo
+    ? await firstFramePlaceholder(file)
+    : await (await import('$lib/utils/mediaPlaceholder')).placeholderForImageFile(file);
+  // Said here, once for every publisher: a picture or video going out without one is drawn black
+  // until its file arrives.
+  if (!placeholder)
+    console.warn(`[media-placeholder] a ${file.type} is published without a placeholder`);
+  return placeholder;
 }

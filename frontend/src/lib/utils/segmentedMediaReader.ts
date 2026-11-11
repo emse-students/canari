@@ -30,7 +30,7 @@ import {
   MediaPurgedError,
   MediaUnreachableError,
 } from './mediaErrors';
-import { mediaRequestGate, type GateLane } from './requestGate';
+import { mediaRequestGate, type GateLane, type GateRank } from './requestGate';
 
 /** Where a reader's ciphertext bytes come from. */
 export interface CiphertextRangeSource {
@@ -73,14 +73,15 @@ export type RangeReadObserver = (bytes: number, seconds: number) => void;
  *   learns the rate of its link.
  * @param clock   Milliseconds, for that measure; a test's stand-in drives it.
  * @param lane    The gate's lane: `background` for bytes fetched ahead of the reader
- *   (`mediaHeadStore.ts`), which never take the last free slot from what is on screen.
+ *   (`mediaHeadStore.ts`), which never take the last free slot from what is on screen; a
+ *   {@link GateRank} when a reader that joins it may raise it to the foreground.
  */
 export function httpRangeSource(
   baseUrl: string,
   mediaId: string,
   observe?: RangeReadObserver,
   clock: () => number = () => performance.now(),
-  lane: GateLane = 'foreground'
+  lane: GateLane | GateRank = 'foreground'
 ): CiphertextRangeSource {
   const url = `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`;
   return {

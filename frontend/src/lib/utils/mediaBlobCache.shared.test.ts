@@ -266,4 +266,62 @@ describe('a download shared by several rows', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(put).toHaveBeenCalledTimes(1);
   });
+
+  /**
+   * A HOLDER THAT JOINS AFTER AN AWAIT ARRIVES TOO LATE (review of #3337, F4): the last holder's
+   * leaving was decided at the end of its turn, so the joiner starts a fresh load. What that costs
+   * is BYTES - the abandoned download's - and nothing else: no partial body reaches the pool (no
+   * URL is minted from it) or the Cache API (the copy is written once, whole).
+   */
+  it('a holder that joins after an await starts afresh: it costs bytes, never a partial file', async () => {
+    const { ref, ciphertext } = await sealed();
+    const put = vi.fn();
+    const store = new Map<string, Response>();
+    vi.stubGlobal('caches', {
+      open: async () => ({
+        match: async (k: string) => store.get(k)?.clone(),
+        put: async (k: string, r: Response) => {
+          put((await r.clone().arrayBuffer()).byteLength);
+          store.set(k, r);
+        },
+        delete: async (k: string) => store.delete(k),
+      }),
+    });
+    let first = true;
+    let firstBodyStopped = false;
+    const fetchMock = vi.fn((_url: string, init: RequestInit) => {
+      if (!first) return Promise.resolve(new Response(ciphertext.slice(0)));
+      first = false;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(ciphertext.slice(0, 4)));
+          init.signal?.addEventListener('abort', () => {
+            firstBodyStopped = true;
+            controller.error(init.signal?.reason);
+          });
+        },
+      });
+      return Promise.resolve(new Response(body));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const minted = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fresh');
+
+    const gone = new AbortController();
+    const abandoned = acquireDecryptedMediaBlobUrl(ref, BASE, gone.signal).catch((err) => err);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    gone.abort();
+    // An await between the leaving and the joining: the turn is over, the load is decided.
+    await Promise.resolve();
+    await Promise.resolve();
+    const late = acquireDecryptedMediaBlobUrl(ref, BASE, new AbortController().signal);
+
+    await expect(late).resolves.toBe('blob:fresh');
+    expect((await abandoned) as Error).toBeInstanceOf(Error);
+    expect(firstBodyStopped, 'the abandoned body was stopped').toBe(true);
+    expect(fetchMock, 'the cost: a second request').toHaveBeenCalledTimes(2);
+    expect(minted, 'one URL, from the whole file').toHaveBeenCalledTimes(1);
+    expect(put, 'the Cache API took the whole file once').toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith(ciphertext.byteLength);
+  });
 });

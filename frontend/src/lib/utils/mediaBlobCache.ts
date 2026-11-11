@@ -16,7 +16,7 @@ import {
   MediaUnreachableError,
 } from './mediaErrors';
 import { noteMediaCacheHit } from './mediaTouch';
-import { mediaRequestGate, type GateLane } from './requestGate';
+import { GateRank, mediaRequestGate, type GateLane } from './requestGate';
 import { declareMp4Duration, isMp4Type } from './mp4Duration';
 import { joinMediaHead, readAfterHead } from './mediaHeadStore';
 
@@ -64,6 +64,8 @@ interface SharedLoad {
   started: boolean;
   /** The load has settled: there is nothing left to abandon. */
   settled: boolean;
+  /** Its lane in the gate: a foreground holder joining a load fetched ahead raises it. */
+  rank: GateRank;
 }
 
 /** Registers one more holder of `entry`; when the last one leaves, the load is abandoned. */
@@ -114,13 +116,16 @@ async function sharedPooledLoad(
   map: Map<string, SharedLoad>,
   key: string,
   signal: AbortSignal | undefined,
-  load: (signal: AbortSignal, onStart: () => void) => Promise<PooledBlob>
+  lane: GateLane,
+  load: (signal: AbortSignal, onStart: () => void, rank: GateRank) => Promise<PooledBlob>
 ): Promise<string> {
   const cached = pool.tryRetain(key);
   if (cached) return cached;
 
   const pending = map.get(key);
   if (pending) {
+    // A page fetched ahead that the reader has reached: its bytes are no longer background work.
+    if (lane === 'foreground') pending.rank.promote();
     holdSharedLoad(map, key, pending, signal);
     const url = await pending.promise;
     return pool.tryRetain(key) ?? url;
@@ -133,10 +138,15 @@ async function sharedPooledLoad(
     holders: 0,
     started: false,
     settled: false,
+    rank: new GateRank(lane),
   };
   entry.promise = (async () => {
     try {
-      const { url, bytes } = await load(controller.signal, () => (entry.started = true));
+      const { url, bytes } = await load(
+        controller.signal,
+        () => (entry.started = true),
+        entry.rank
+      );
       return pool.retain(key, url, bytes);
     } finally {
       entry.settled = true;
@@ -185,14 +195,15 @@ function cipherCacheKey(baseUrl: string, mediaId: string): string {
  * @param options.from Asks only for the bytes from this offset on (`Range: bytes=N-`): the rest of a
  *   media whose head is already held (`mediaHeadStore.ts`). A `416` - the file ends exactly there -
  *   is then an answer, returned as is.
- * @param options.lane The gate's lane: `background` for a picture fetched ahead (`reelAhead.ts`).
+ * @param options.lane The gate's lane: `background` for a picture fetched ahead (`reelAhead.ts`), or
+ *   the load's {@link GateRank}, which a foreground joiner raises.
  */
 async function fetchMediaObject(
   mediaId: string,
   baseUrl: string,
   signal?: AbortSignal,
   onStart?: () => void,
-  options: { from?: number; lane?: GateLane } = {}
+  options: { from?: number; lane?: GateLane | GateRank } = {}
 ): Promise<Response> {
   const { from, lane } = options;
   const url = `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`;
@@ -312,8 +323,8 @@ async function fetchCiphertext(
 interface DownloadOptions {
   /** The ref is `segmented-v1`: a head fetched ahead may be joined. */
   segmented?: boolean;
-  /** The gate's lane ({@link GateLane}). */
-  lane?: GateLane;
+  /** The load's rank in the gate ({@link GateRank}). */
+  lane?: GateRank;
 }
 
 /**
@@ -328,16 +339,16 @@ async function downloadCiphertext(
   onStart: (() => void) | undefined,
   { segmented = false, lane }: DownloadOptions
 ): Promise<ArrayBuffer> {
-  const head = segmented ? joinMediaHead(mediaId) : null;
-  if (!head) {
-    const res = await fetchMediaObject(mediaId, baseUrl, signal, onStart, { lane });
-    return res.arrayBuffer();
-  }
+  const whole = () => fetchMediaObject(mediaId, baseUrl, signal, onStart, { lane });
+  // A read for the foreground raises the head it joins (`GateRank`); one fetched ahead does not.
+  const head = segmented ? joinMediaHead(mediaId, lane?.lane ?? 'foreground') : null;
+  if (!head) return (await whole()).arrayBuffer();
   console.debug(`[mediaBlobCache] ${mediaId}: joins the head fetched ahead, asks for the rest`);
   try {
     return await readAfterHead(
       head,
       (from) => fetchMediaObject(mediaId, baseUrl, signal, onStart, { from, lane }),
+      whole,
       signal
     );
   } finally {
@@ -378,10 +389,11 @@ function loadDecryptedBlobUrl(
     inflightDecrypted,
     decryptedKey(ref),
     signal,
-    async (loadSignal, onStart) => {
+    lane ?? 'foreground',
+    async (loadSignal, onStart, rank) => {
       const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl, loadSignal, onStart, {
         segmented: ref.encoding === SEGMENTED_MEDIA_ENCODING,
-        lane,
+        lane: rank,
       });
       let plaintext: ArrayBuffer;
       try {
@@ -424,10 +436,17 @@ export function declareVideoDuration(
 }
 
 function loadRawBlobUrl(mediaId: string, baseUrl: string, signal?: AbortSignal): Promise<string> {
-  return sharedPooledLoad(rawPool, inflightRaw, mediaId, signal, async (loadSignal, onStart) => {
-    const res = await fetchMediaObject(mediaId, baseUrl, loadSignal, onStart);
-    return pooledBlob(await res.blob());
-  });
+  return sharedPooledLoad(
+    rawPool,
+    inflightRaw,
+    mediaId,
+    signal,
+    'foreground',
+    async (loadSignal, onStart) => {
+      const res = await fetchMediaObject(mediaId, baseUrl, loadSignal, onStart);
+      return pooledBlob(await res.blob());
+    }
+  );
 }
 
 /**

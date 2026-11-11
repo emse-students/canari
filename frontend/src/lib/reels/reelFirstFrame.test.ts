@@ -27,6 +27,12 @@ it('a file that is neither a picture nor a video gets none, and nothing is decod
 
 it('a picture this engine cannot decode is published without one, never refused', async () => {
   fromImage.mockResolvedValueOnce(null as unknown as string);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const file = new File([new Uint8Array(4)], 'photo.heic', { type: 'image/heic' });
   await expect(preparedMediaPlaceholder(file)).resolves.toBeNull();
+  // Said for every publisher - the queue and a post's edit alike.
+  expect(warn).toHaveBeenCalledWith(
+    '[media-placeholder] a image/heic is published without a placeholder'
+  );
+  warn.mockRestore();
 });

@@ -1,4 +1,5 @@
-import { RequestGate } from './requestGate';
+import { vi } from 'vitest';
+import { GateRank, RequestGate } from './requestGate';
 
 /**
  * WHAT THE CAP HAS TO GUARANTEE, and nothing about timing.
@@ -192,6 +193,51 @@ describe('RequestGate background lane', () => {
     expect(gate.queued).toBe(0);
     hold.resolve();
     await Promise.all(fg);
+    expect(started).toBe(false);
+  });
+
+  /**
+   * PRIORITY INVERSION (review of #3337, F2): the page the reader reaches joins the head fetched
+   * for it ahead - queued in the background lane behind the other pages' work. Promoted, it goes
+   * before every other background task, and as a foreground one.
+   */
+  it('a queued background task raised to the foreground is admitted before other background work', async () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const gate = new RequestGate(3);
+    const order: string[] = [];
+    const a = deferred();
+    const b = deferred();
+    const busy = [gate.run(() => a.promise), gate.run(() => b.promise)];
+    const other = gate.run(async () => void order.push('other ahead'), undefined, 'background');
+    const rank = new GateRank('background');
+    const joined = gate.run(async () => void order.push('the page on screen'), undefined, rank);
+    expect(gate.queued).toBe(2);
+
+    rank.promote();
+    // A foreground task takes the free slot the background lane may not.
+    await joined;
+    expect(order).toEqual(['the page on screen']);
+    a.resolve();
+    b.resolve();
+    await Promise.all([...busy, other]);
+    expect(order).toEqual(['the page on screen', 'other ahead']);
+  });
+
+  it('a raised task abandoned afterwards still leaves the queue', async () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const gate = new RequestGate(1);
+    const hold = deferred();
+    const busy = gate.run(() => hold.promise);
+    const rank = new GateRank('background');
+    const abort = new AbortController();
+    let started = false;
+    const raised = gate.run(async () => void (started = true), abort.signal, rank);
+    rank.promote();
+    abort.abort(new DOMException('passed', 'AbortError'));
+    await expect(raised).rejects.toThrow('passed');
+    expect(gate.queued).toBe(0);
+    hold.resolve();
+    await busy;
     expect(started).toBe(false);
   });
 });

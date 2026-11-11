@@ -14,8 +14,15 @@ vi.mock('$lib/stores/auth', () => ({ getToken: () => Promise.resolve('token') })
 const { openSegmentedStream } = await import('./segmentedMediaStream');
 const { acquireDecryptedMediaBlobUrl, releaseDecryptedMediaBlobUrl } =
   await import('./mediaBlobCache');
-const { holdMediaHead, joinMediaHead, heldMediaHeadCount, MEDIA_HEAD_BYTES, setHeadFetchForTest } =
-  await import('./mediaHeadStore');
+const {
+  holdMediaHead,
+  joinMediaHead,
+  heldMediaHeadCount,
+  MEDIA_HEAD_BYTES,
+  readAfterHead,
+  setHeadFetchForTest,
+} = await import('./mediaHeadStore');
+const { GateRank } = await import('./requestGate');
 
 const WEBM = 'video/webm;codecs=vp9,opus';
 
@@ -68,7 +75,12 @@ async function served(mediaId: string, segments: number) {
       const end = b ? Math.min(Number(b) + 1, sealed.byteLength) : sealed.byteLength;
       if (Number(a) >= sealed.byteLength)
         return Promise.resolve(new Response(null, { status: 416 }));
-      return Promise.resolve(new Response(sealed.slice(Number(a), end), { status: 206 }));
+      return Promise.resolve(
+        new Response(sealed.slice(Number(a), end), {
+          status: 206,
+          headers: { 'Content-Range': `bytes ${a}-${end - 1}/${sealed.byteLength}` },
+        })
+      );
     })
   );
   const ref: MediaRef = {
@@ -193,4 +205,108 @@ it('a failed head is not memoised: the next reader starts afresh', async () => {
   expect(calls).toBe(2);
   first.release();
   second.release();
+});
+
+/**
+ * A FAILED HEAD MUST NOT FAIL THE STREAM (review of #3337, F1): the feed keeps its source for its
+ * whole life, so a head that rejected used to reject every later segment too.
+ */
+it('a stream whose head failed reads every range itself, and its fork still plays', async () => {
+  const { ref, plain, asked } = await served('v-headfail', 3);
+  let fail: (err: Error) => void = () => {};
+  setHeadFetchForTest(() => new Promise((_, reject) => (fail = reject)));
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const head = holdMediaHead(ref.mediaId, 'https://media.test');
+  head.bytes.catch(() => {});
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:stream');
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  // The stream joins the head while it is still coming; then the head fails.
+  const stream = openSegmentedStream(ref, 'https://media.test', STREAM);
+  const viewer = stream.fork();
+  fail(new Error('head down'));
+
+  const whole = await stream.done;
+  expect(Buffer.from(await whole.arrayBuffer()).equals(Buffer.from(plain))).toBe(true);
+  // Segment 0 and every later one were read by the stream itself, each once.
+  expect(asked).toHaveLength(4);
+  // The viewer is paced: asked for the rest, it plays the whole file from the same feed.
+  viewer.fetchAll();
+  const seen = await viewer.done;
+  expect(seen.size).toBe(plain.byteLength);
+  expect(asked, 'the fork read nothing again').toHaveLength(4);
+  const said = warn.mock.calls.filter((c) => String(c[0]).includes('[media-head] the head failed'));
+  expect(said, 'the fallback is said once, not per segment').toHaveLength(1);
+  viewer.close();
+  stream.close();
+  head.release();
+});
+
+it('a whole read whose head failed reads the whole file instead', async () => {
+  const { ref, asked } = await served('v-wholefail', 3);
+  setHeadFetchForTest(() => Promise.reject(new Error('head down')));
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const head = holdMediaHead(ref.mediaId, 'https://media.test');
+  head.bytes.catch(() => {});
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:whole');
+  await expect(acquireDecryptedMediaBlobUrl(ref, 'https://media.test')).resolves.toBe('blob:whole');
+  expect(asked).toEqual(['whole']);
+  releaseDecryptedMediaBlobUrl(ref);
+  head.release();
+});
+
+/** F5: a `206` is joined to the head only when it starts where the head ends. */
+it('a rest that does not start where the head ends is never joined: the whole file is read', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const head = {
+    bytes: Promise.resolve(new Uint8Array(MEDIA_HEAD_BYTES).fill(1)),
+    release: () => {},
+  };
+  const whole = new Uint8Array(MEDIA_HEAD_BYTES + 10).fill(2);
+  const fetchWhole = vi.fn(async () => new Response(whole, { status: 200 }));
+  const shifted = async () =>
+    new Response(new Uint8Array(10), {
+      status: 206,
+      headers: { 'Content-Range': `bytes 0-9/${MEDIA_HEAD_BYTES + 10}` },
+    });
+
+  const out = new Uint8Array(await readAfterHead(head, shifted, fetchWhole));
+  expect(fetchWhole).toHaveBeenCalledTimes(1);
+  expect(Buffer.from(out).equals(Buffer.from(whole))).toBe(true);
+  expect(String(warn.mock.calls[0][0])).toContain(`asked from byte ${MEDIA_HEAD_BYTES}`);
+
+  // No Content-Range at all is not a proof either.
+  const unnamed = async () => new Response(new Uint8Array(10), { status: 206 });
+  await readAfterHead(head, unnamed, fetchWhole);
+  expect(fetchWhole).toHaveBeenCalledTimes(2);
+
+  // The right one is joined.
+  const right = async () =>
+    new Response(new Uint8Array(10).fill(3), {
+      status: 206,
+      headers: {
+        'Content-Range': `bytes ${MEDIA_HEAD_BYTES}-${MEDIA_HEAD_BYTES + 9}/${MEDIA_HEAD_BYTES + 10}`,
+      },
+    });
+  const joined = new Uint8Array(await readAfterHead(head, right, fetchWhole));
+  expect(fetchWhole).toHaveBeenCalledTimes(2);
+  expect(joined.byteLength).toBe(MEDIA_HEAD_BYTES + 10);
+  expect(joined[MEDIA_HEAD_BYTES]).toBe(3);
+});
+
+/** F2: the page the reader reaches raises its head, still queued, out of the background lane. */
+it('a foreground reader joining a head raises its rank; the look-ahead does not', async () => {
+  const ranks: InstanceType<typeof GateRank>[] = [];
+  setHeadFetchForTest((_id, _base, _signal, rank) => {
+    ranks.push(rank);
+    return new Promise(() => {});
+  });
+  const ahead = holdMediaHead('v-rank', 'https://media.test');
+  expect(ranks[0].lane).toBe('background');
+  const other = joinMediaHead('v-rank', 'background');
+  expect(ranks[0].lane).toBe('background');
+  const reader = joinMediaHead('v-rank');
+  expect(ranks[0].lane).toBe('foreground');
+  reader?.release();
+  other?.release();
+  ahead.release();
 });
