@@ -793,7 +793,7 @@
     </svelte:boundary>
 
     <!-- Sidebar (navigation principale) -->
-    {#if !isLoginPage}
+    {#if !isLoginPage && !isFullScreen}
       <AppSidebar />
     {/if}
 
@@ -805,10 +805,20 @@
       the two disagreed on screen. Measured on production 2026-09-12 at 1280px: card centre 685,
       dialog centre 640. Two independent statements about one fact, with nothing comparing them.
     -->
-    <div class="relative z-10 flex flex-1 flex-col overflow-hidden {isLoginPage ? '' : 'md:pl-24'}">
-      {#if !isLoginPage && !isKeyboardOpen}
+    <!--
+      A FULL-SCREEN PLACE (`isFullScreen`, the camera) DRAWS NO CHROME AT ALL: sidebar, top bar and
+      gutter go with the header and the tab bar. The sidebar and the top bar are `md:` pieces, so a
+      phone turned to landscape (800+ px wide) brought the desktop shell back around the camera
+      (owner, Android 1.6.10, 2026-11-11): chrome follows the PLACE, never the width.
+    -->
+    <div
+      class="relative z-10 flex flex-1 flex-col overflow-hidden {isLoginPage || isFullScreen
+        ? ''
+        : 'md:pl-24'}"
+    >
+      {#if !isLoginPage && !isKeyboardOpen && !isFullScreen}
         <Navbar />
-        {#if !isMobileConvoOpen && !isFullScreen}
+        {#if !isMobileConvoOpen}
           <MobileHeader />
         {/if}
       {/if}

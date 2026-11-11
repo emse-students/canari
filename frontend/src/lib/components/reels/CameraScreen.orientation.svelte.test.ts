@@ -117,4 +117,28 @@ describe('CameraScreen - the orientation (owner, 2026-11-09)', () => {
     flushSync();
     expect(sent.at(-1)).toBe('auto');
   });
+
+  it('the rotate button is the SAME control as flip and flash, in either orientation', async () => {
+    // Owner, 2026-11-11: it was a 28px bordered chip beside 44px glass circles. One component
+    // (`CameraControlButton`) means one class list, one size and one icon size.
+    for (const landscape of [false, true]) {
+      viewportOrientation.landscape = landscape;
+      const { target } = await mountCamera({ recording: false });
+      const rotate = target.querySelector<HTMLButtonElement>('[data-rotate-button]')!;
+      const flip = target.querySelector<HTMLButtonElement>(
+        'button[aria-label="Switch camera"], button[aria-label="Changer de caméra"]'
+      );
+      const buttons = [...target.querySelectorAll<HTMLButtonElement>('button.ui-icon-button')];
+      expect(buttons.length).toBeGreaterThanOrEqual(3);
+      expect(rotate.className).toContain('ui-icon-button');
+      expect(rotate.className).toContain('bg-black/30');
+      expect(rotate.className).not.toContain('border');
+      // Every sibling carries the exact class list of the rotate button.
+      for (const button of buttons) expect(button.className).toBe(rotate.className);
+      if (flip) expect(flip.className).toBe(rotate.className);
+      // The glyph is the siblings' 22px.
+      expect(rotate.querySelector('svg')!.getAttribute('width')).toBe('22');
+      expect(rotate.querySelector('.glass-video')).toBeNull();
+    }
+  });
 });

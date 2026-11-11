@@ -181,3 +181,27 @@ Found by the adversarial review of 2026-11-09 and accepted as they are (no code)
 
 Native is verified by COMPILING, which proves nothing about running. Each row on a pre-release, on the
 Mi 9T and the iPhone 12, is in [the backlog entry](../backlog.d/rotation-on-video-and-camera-screens.md#readings-owed-on-a-pre-release).
+
+## A turned phone is still a phone, and a full-screen place draws no chrome (2026-11-11)
+
+**Defect (owner, Android `1.6.10`):** turned to landscape, the camera showed the DESKTOP shell - the
+top bar ("Canari", status, apps, avatar) and the left rail - with the camera shrunk into what was
+left. **Cause:** the root layout hid only `MobileHeader`, `BottomNav` and the native tab bar on a
+full-screen place; `Navbar` and `AppSidebar` are `md:` pieces (`hidden md:block` / `md:flex`) and the
+shell reserved `md:pl-24` for the rail. A phone turned is 800+ px wide, so it crossed `md` and the
+two came back. **Fix, at the one place that decides it:** `routes/+layout.svelte` renders `AppSidebar`,
+`Navbar`, `MobileHeader`, the tab bars and the gutter only when `!isFullScreen` - chrome follows the
+PLACE, never a width. Pinned by `styles/fullScreenChrome.test.ts`. The overlays (reel viewer, video
+and live viewers, the composers' camera, the broadcaster) are `fixed inset-0` at `--z-viewer` (300),
+above every shell layer, so they were never affected.
+
+**The phone question:** `PHONE_VIEWPORT_QUERY` (`utils/viewport.ts`) now also holds
+`ROTATED_PHONE_QUERY` = `(max-height: 500px) and (pointer: coarse)`: 500 px is under every tablet's
+short side and over every phone's. It answers script decisions only (store badges, guidance); no
+chrome reads it. The reel viewer's prev/next rail was `md:flex` ("a pointer has no swipe") and showed
+on a turned phone; it is `pointer-fine:flex`.
+
+**The rotate button** was the video kit's 28 px chip (`VideoChipButton`, glass), a bordered circle
+turned, beside 44 px circles. It is now `ui/CameraControlButton.svelte` - the ONE round control of the
+camera and the broadcaster (close, flip, flash, rotate, share, chat) - with the siblings' 22 px glyph.
+The ratchet of hand-built controls went down by the buttons it replaced.

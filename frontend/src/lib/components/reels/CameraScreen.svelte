@@ -39,6 +39,7 @@
   import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
   import { useScreenOrientation, viewportOrientation } from '$lib/mobile/screenOrientation.svelte';
   import { sideSafePadding } from '$lib/utils/sideSafeArea';
+  import CameraControlButton from '$lib/components/ui/CameraControlButton.svelte';
   import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
   import ReelFrame from './ReelFrame.svelte';
 
@@ -480,38 +481,26 @@
     {#if recording}
       <span></span>
     {:else}
-      <button
-        type="button"
-        class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
-        aria-label={m.reels_camera_close()}
-        title={m.reels_camera_close()}
-        onclick={close}
-      >
+      <CameraControlButton label={m.reels_camera_close()} onclick={close}>
         <X size={24} strokeWidth={2.5} />
-      </button>
+      </CameraControlButton>
     {/if}
 
     {#if session.phase === 'live'}
       <div class="flex flex-col gap-3">
         {#if session.canSwitch}
-          <button
-            type="button"
-            class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 disabled:opacity-40"
-            aria-label={m.reels_camera_switch()}
-            title={m.reels_camera_switch()}
+          <CameraControlButton
+            label={m.reels_camera_switch()}
             disabled={session.flipping || !flipAllowed}
             onclick={flip}
           >
             <SwitchCamera size={22} strokeWidth={2.25} />
-          </button>
+          </CameraControlButton>
         {/if}
         {#if session.torchAvailable}
-          <button
-            type="button"
-            class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2"
-            aria-label={session.torchOn ? m.reels_camera_torch_off() : m.reels_camera_torch_on()}
-            aria-pressed={session.torchOn}
-            title={session.torchOn ? m.reels_camera_torch_off() : m.reels_camera_torch_on()}
+          <CameraControlButton
+            label={session.torchOn ? m.reels_camera_torch_off() : m.reels_camera_torch_on()}
+            pressed={session.torchOn}
             onclick={() => void session.toggleTorch()}
           >
             {#if session.torchOn}
@@ -519,7 +508,7 @@
             {:else}
               <ZapOff size={22} strokeWidth={2.25} />
             {/if}
-          </button>
+          </CameraControlButton>
         {/if}
         {#if orientation.canRotate}
           <!-- Stands down during a take: the take holds the orientation it started in. -->
