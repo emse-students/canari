@@ -64,7 +64,7 @@ describe('ChannelService - the batched salon listing of a load', () => {
     expect(without.urls).toHaveLength(27);
 
     const withBatch = serviceOnNetwork(server(nine));
-    const reads = await withBatch.svc.readCommunityBootReads(nine, withBatch.log);
+    const reads = withBatch.svc.startCommunityBootReads(nine, withBatch.log);
     await Promise.all(nine.map((id) => walk(withBatch.svc, reads, id)));
     reads.release();
 
@@ -78,7 +78,7 @@ describe('ChannelService - the batched salon listing of a load', () => {
 
   it('never batches the key group: its reference is read on its own route, after MLS is ready', async () => {
     const { svc, urls, log } = serviceOnNetwork(server(['a', 'b']));
-    await svc.readCommunityBootReads(['a', 'b'], log);
+    svc.startCommunityBootReads(['a', 'b'], log);
 
     const got = await svc.getDistributionGroup({ kind: 'workspace', workspaceId: 'a' });
 
@@ -88,7 +88,7 @@ describe('ChannelService - the batched salon listing of a load', () => {
 
   it('hands each listing out once: the second read of the same community goes to its route', async () => {
     const { svc, urls, log } = serviceOnNetwork(server(['a', 'b']));
-    const reads = await svc.readCommunityBootReads(['a', 'b'], log);
+    const reads = svc.startCommunityBootReads(['a', 'b'], log);
 
     expect(await reads.listChannels('a')).toEqual([{ id: 'c-a' }]);
     expect(await reads.listChannels('a')).toEqual([{ id: 'c-single' }]);
@@ -97,7 +97,7 @@ describe('ChannelService - the batched salon listing of a load', () => {
 
   it('ANOTHER CALLER CANNOT TAKE A HELD HALF: the service itself always reads the route', async () => {
     const { svc, urls, log } = serviceOnNetwork(server(['a', 'b']));
-    const reads = await svc.readCommunityBootReads(['a', 'b'], log);
+    const reads = svc.startCommunityBootReads(['a', 'b'], log);
 
     // A gesture, a leader-tab executor, a creation, `refreshChannelOrder`: all call the service.
     expect(await svc.listChannels('a')).toEqual([{ id: 'c-single' }]);
@@ -108,8 +108,8 @@ describe('ChannelService - the batched salon listing of a load', () => {
 
   it('release drops only the ids of its own load: a second load keeps its hold', async () => {
     const { svc, urls, log } = serviceOnNetwork(server(['a', 'b', 'c', 'd']));
-    const first = await svc.readCommunityBootReads(['a', 'b'], log);
-    const second = await svc.readCommunityBootReads(['c', 'd'], log);
+    const first = svc.startCommunityBootReads(['a', 'b'], log);
+    const second = svc.startCommunityBootReads(['c', 'd'], log);
 
     first.release();
 
@@ -123,8 +123,8 @@ describe('ChannelService - the batched salon listing of a load', () => {
 
   it('two loads on the SAME ids each keep their own answers', async () => {
     const { svc, log } = serviceOnNetwork(server(['a', 'b']));
-    const first = await svc.readCommunityBootReads(['a', 'b'], log);
-    const second = await svc.readCommunityBootReads(['a', 'b'], log);
+    const first = svc.startCommunityBootReads(['a', 'b'], log);
+    const second = svc.startCommunityBootReads(['a', 'b'], log);
 
     first.release();
 
@@ -133,7 +133,7 @@ describe('ChannelService - the batched salon listing of a load', () => {
 
   it('rethrows a refused listing as the refusal the single route answers, once', async () => {
     const { svc, log } = serviceOnNetwork(server(['a', 'left'], { left: 403 }));
-    const reads = await svc.readCommunityBootReads(['a', 'left'], log);
+    const reads = svc.startCommunityBootReads(['a', 'left'], log);
 
     const refused = await reads.listChannels('left').catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(ChannelApiError);
@@ -149,19 +149,66 @@ describe('ChannelService - the batched salon listing of a load', () => {
     );
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const reads = await svc.readCommunityBootReads(['a', 'b'], log);
+    const reads = svc.startCommunityBootReads(['a', 'b'], log);
 
+    expect(await reads.listChannels('a')).toEqual([{ id: 'c-single' }]);
     expect(log).toHaveBeenCalledWith(
       expect.stringMatching(/^\[BOOT_READS\] warn: batched listing/)
     );
     expect(warn).not.toHaveBeenCalled();
+    expect(urls.filter((u) => u.includes('/user/me'))).toHaveLength(1);
+  });
+
+  it('starts the request and returns at once: the other chains run while the batch is still out', async () => {
+    const svc = new ChannelService();
+    let answerBatch: (r: Response) => void = () => {};
+    vi.spyOn(
+      svc as unknown as { fetchWithAuth: (url: string) => Promise<Response> },
+      'fetchWithAuth'
+    ).mockImplementation(
+      (url: string) =>
+        new Promise<Response>((resolve) => {
+          if (url.includes('/boot-reads')) answerBatch = resolve;
+          else resolve(Response.json([{ id: 'c-single' }]));
+        })
+    );
+
+    // Returns synchronously, the request already on the wire and unanswered.
+    const reads = svc.startCommunityBootReads(['a', 'b'], vi.fn());
+    let chainStarted = false;
+    // A sibling chain of the walk (the key-group join) starts without waiting for the batch.
+    const chain = Promise.resolve().then(() => (chainStarted = true));
+    await chain;
+    expect(chainStarted).toBe(true);
+
+    // The listing waits for the pending batch, and takes its answer once it lands.
+    let listed: unknown = null;
+    const listing = reads.listChannels('a').then((rows) => (listed = rows));
+    await Promise.resolve();
+    expect(listed).toBeNull();
+
+    answerBatch(
+      Response.json({
+        items: [{ workspaceId: 'a', channels: [{ id: 'c-a' }], channelsRefusal: null }],
+      })
+    );
+    await listing;
+    expect(listed).toEqual([{ id: 'c-a' }]);
+  });
+
+  it('a load released before the batch answers keeps nothing of it', async () => {
+    const { svc, urls, log } = serviceOnNetwork(server(['a', 'b']));
+    const reads = svc.startCommunityBootReads(['a', 'b'], log);
+
+    reads.release();
+
     expect(await reads.listChannels('a')).toEqual([{ id: 'c-single' }]);
     expect(urls.filter((u) => u.includes('/user/me'))).toHaveLength(1);
   });
 
   it('asks nothing for a single community, and chunks above the server bound', async () => {
     const one = serviceOnNetwork(server(['a']));
-    await one.svc.readCommunityBootReads(['a'], one.log);
+    one.svc.startCommunityBootReads(['a'], one.log);
     expect(one.urls).toHaveLength(0);
 
     const many = Array.from({ length: COMMUNITY_BOOT_READS_MAX + 1 }, (_, i) => `w${i}`);
@@ -169,7 +216,7 @@ describe('ChannelService - the batched salon listing of a load', () => {
       const ids = new URL(url, 'http://x').searchParams.get('ids')!.split(',');
       return server(ids)(url);
     });
-    await big.svc.readCommunityBootReads(many, big.log);
+    big.svc.startCommunityBootReads(many, big.log);
     expect(big.urls).toHaveLength(2);
   });
 

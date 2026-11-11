@@ -15,7 +15,14 @@ vi.mock('./api', async (importOriginal) => ({
     new Promise((resolve, reject) => calls.push({ ids: [...ids], answer: resolve, fail: reject })),
 }));
 
-import { ensurePersonStatus, personChipState, resetFollowState } from './followState.svelte';
+import { Log } from '$lib/utils/Log';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import {
+  ensurePersonStatus,
+  personChipState,
+  resetFollowState,
+  retryFailedFollowReads,
+} from './followState.svelte';
 
 /** Lets every queued microtask run, so a flush scheduled by `ensurePersonStatus` has happened. */
 const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -101,6 +108,59 @@ describe('follow statuses - one round of calls in flight', () => {
     await turn();
     expect(calls).toHaveLength(4);
     expect(calls[3].ids).toEqual(['late']);
+  });
+
+  it('a navigation stops waiting for a round still out, says so once, and what queued leaves', async () => {
+    const info = vi.spyOn(Log, 'i').mockImplementation(() => {});
+    ensurePersonStatus('a');
+    await turn();
+    ensurePersonStatus('b');
+    await turn();
+    expect(calls).toHaveLength(1); // b waits behind a's call, whose body never ends
+
+    // Several chips each register a navigation hook: the first releases, the rest find it empty.
+    retryFailedFollowReads();
+    retryFailedFollowReads();
+    await turn();
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].ids).toEqual(['b']);
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(info).toHaveBeenCalledWith(
+      'followState',
+      'a status round was still out at navigation - not waiting for it'
+    );
+  });
+
+  it('an empty gate at navigation says nothing', async () => {
+    const info = vi.spyOn(Log, 'i').mockImplementation(() => {});
+    retryFailedFollowReads();
+    expect(info).not.toHaveBeenCalled();
+  });
+
+  it('the connection coming back releases the gate the same way', async () => {
+    const info = vi.spyOn(Log, 'i').mockImplementation(() => {});
+    let reconnect: () => void = () => {};
+    vi.spyOn(connectivity, 'onReconnect').mockImplementation((listener) => {
+      reconnect = listener;
+      return () => {};
+    });
+    resetFollowState(); // so the listener is registered anew, through the spy
+    ensurePersonStatus('a');
+    await turn();
+    ensurePersonStatus('b');
+    await turn();
+    expect(calls).toHaveLength(1);
+
+    reconnect();
+    await turn();
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].ids).toEqual(['b']);
+    expect(info).toHaveBeenCalledWith(
+      'followState',
+      'a status round was still out at reconnect - not waiting for it'
+    );
   });
 
   it('keeps going after a failed call: the waiting ids leave, the failed one is not re-asked', async () => {

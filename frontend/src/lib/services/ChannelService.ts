@@ -738,20 +738,55 @@ export class ChannelService {
    * were - the reference carries a roster of this user's devices that decides whether the device
    * forgets its tree, and read before MLS is ready it can be stale against an owed Welcome.
    *
-   * NEVER THROWS. A batch that fails (an older server answers 404, the link drops) leaves the handle
-   * empty, every listing then reads its own route as it always did, and `log` says so at warn - a
-   * batch that never works is the visible end of a server this client outran.
+   * STARTS THE REQUEST AND RETURNS AT ONCE: the handle's `listChannels` waits for the pending batch,
+   * so the caller's other chains (the key-group join among them) start without waiting a round trip
+   * for it.
+   *
+   * NEVER THROWS, and the pending batch never rejects. A batch that fails (an older server answers
+   * 404, the link drops) leaves the handle empty, every listing then reads its own route as it
+   * always did, and `log` says so at warn - a batch that never works is the visible end of a server
+   * this client outran.
    *
    * @param log The load's own log (`ctx.log`), so the line reaches a phone's in-app log.
    */
-  async readCommunityBootReads(
+  startCommunityBootReads(
     workspaceIds: readonly string[],
     log: (message: string) => void
-  ): Promise<CommunityBootReads> {
+  ): CommunityBootReads {
     const held = new Map<string, CommunityBootReadDto>();
     const ids = [...new Set(workspaceIds)];
-    const handle: CommunityBootReads = {
+    let released = false;
+    const chunks: string[][] = [];
+    // One community: the batch would replace nothing.
+    if (ids.length >= 2) {
+      for (let i = 0; i < ids.length; i += COMMUNITY_BOOT_READS_MAX) {
+        chunks.push(ids.slice(i, i + COMMUNITY_BOOT_READS_MAX));
+      }
+      Log.d('BOOT_READS', `asking ${ids.length} communities in ${chunks.length} request(s)`);
+    }
+    const pending = Promise.all(
+      chunks.map(async (chunk) => {
+        try {
+          const res = await this.fetchWithAuth(
+            `${this.baseUrl}/api/channels/workspaces/boot-reads?ids=${chunk.map(encodeURIComponent).join(',')}`
+          );
+          await this.handleError(res);
+          const body = (await readApiJson(res, 'GET boot reads')) as {
+            items?: CommunityBootReadDto[];
+          };
+          // A load that has ended holds nothing more.
+          if (released) return;
+          for (const item of body.items ?? []) held.set(item.workspaceId, item);
+        } catch (e) {
+          log(
+            `[BOOT_READS] warn: batched listing of ${chunk.length} communities failed - each community is read on its own route: ${String(e)}`
+          );
+        }
+      })
+    );
+    return {
       listChannels: async (workspaceId) => {
+        await pending;
         const item = held.get(workspaceId);
         // Handed out once: a second read of the same community is a new question for the route.
         held.delete(workspaceId);
@@ -763,34 +798,10 @@ export class ChannelService {
         return this.listChannels(workspaceId);
       },
       release: () => {
+        released = true;
         for (const id of ids) held.delete(id);
       },
     };
-    if (ids.length < 2) return handle; // one community: the batch would replace nothing.
-    const chunks: string[][] = [];
-    for (let i = 0; i < ids.length; i += COMMUNITY_BOOT_READS_MAX) {
-      chunks.push(ids.slice(i, i + COMMUNITY_BOOT_READS_MAX));
-    }
-    Log.d('BOOT_READS', `asking ${ids.length} communities in ${chunks.length} request(s)`);
-    await Promise.all(
-      chunks.map(async (chunk) => {
-        try {
-          const res = await this.fetchWithAuth(
-            `${this.baseUrl}/api/channels/workspaces/boot-reads?ids=${chunk.map(encodeURIComponent).join(',')}`
-          );
-          await this.handleError(res);
-          const body = (await readApiJson(res, 'GET boot reads')) as {
-            items?: CommunityBootReadDto[];
-          };
-          for (const item of body.items ?? []) held.set(item.workspaceId, item);
-        } catch (e) {
-          log(
-            `[BOOT_READS] warn: batched listing of ${chunk.length} communities failed - each community is read on its own route: ${String(e)}`
-          );
-        }
-      })
-    );
-    return handle;
   }
 
   async listChannels(workspaceId: string) {

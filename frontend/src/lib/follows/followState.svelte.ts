@@ -149,8 +149,25 @@ function dropAfterBlockChange(): void {
   voidReads();
 }
 
-/** A real event (the connection back, a navigation): ask again for exactly what failed, once. */
-export function retryFailedFollowReads(): void {
+/**
+ * A status round still out no longer holds the gate once a real event says waiting for it is moot
+ * (a navigation, the connection back): what queued behind it leaves now. The abandoned call's
+ * answer, if it lands, is still applied or dropped by the epoch check. One line when it did
+ * release something, none when the gate was empty - which is nearly always.
+ */
+function releaseStatusRound(event: string): void {
+  if (roundsOut.size === 0) return;
+  Log.i('followState', `a status round was still out at ${event} - not waiting for it`);
+  roundsOut.clear();
+  scheduleFlush();
+}
+
+/**
+ * A real event (the connection back, a navigation): stop waiting for a status round still out, and
+ * ask again for exactly what failed, once.
+ */
+export function retryFailedFollowReads(event: 'navigation' | 'reconnect' = 'navigation'): void {
+  releaseStatusRound(event);
   // Nothing failed in this epoch: nothing to ask again, and nothing to say.
   if (failedPersons.size === 0 && !associationsFailed && !blocksFailed) return;
   Log.d(
@@ -199,9 +216,7 @@ function watch(): void {
  * what failed is asked again.
  */
 function onReconnect(): void {
-  roundsOut.clear();
-  scheduleFlush();
-  retryFailedFollowReads();
+  retryFailedFollowReads('reconnect');
 }
 
 function scheduleFlush(): void {

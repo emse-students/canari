@@ -456,7 +456,7 @@ export function useChannelWorkspaces() {
     // caller of the shared service can take one, and the release drops only this walk's. Settling
     // every chain below is what makes "the walk is over" a fact. Never throws; a failed batch leaves
     // the per-community routes to answer, said in `ctx.log`.
-    const bootReads = await service.readCommunityBootReads(
+    const bootReads = service.startCommunityBootReads(
       prepared.map((p) => p.workspaceId),
       ctx.log
     );

@@ -259,7 +259,9 @@ rate after the release.
    tree first and the roster second, so a member who joined in between is never read as absent and
    stripped of a leaf. So the honest saving is 27 -> 19 requests, and the salon rows no longer wait
    for anything but the database (rule F3). **The hold belongs to the load:** the batch returns a
-   `CommunityBootReads` handle that the walk passes down (`loadCommunitySalons` reads its listings
+   `CommunityBootReads` handle (`startCommunityBootReads`: the request starts and the handle returns
+   at once, its `listChannels` awaits the pending batch, so the key-group joins and the other chains
+   start no later than before) that the walk passes down (`loadCommunitySalons` reads its listings
    through it), each listing handed out once, `release()` dropping only that handle's ids when every
    chain has settled. It is a value, not a state of the shared `ChannelService`, so no other caller
    (in-session gestures, leader-tab executors, creation, `refreshChannelOrder`) can take a boot-time
@@ -275,9 +277,10 @@ rate after the release.
    is out leave together the moment its answer lands (the 100-id chunks of a round go together, the
    next round waits for all of them). A chip waits at most one extra round trip. What bounds a round
    is a fact, not a timer: every call rejects at `apiFetch`'s response-head deadline, and the gate is
-   emptied by a reader or block change and by a reconnect (an abandoned call keeps only its own
-   token); a response BODY stalling after its head arrived is the transport's to bound, and would
-   leave those chips hidden - the safe side - until one of those events.
+   emptied by a reader or block change, by a reconnect and by a navigation (one `Log.i` line when it
+   releases a round still out; an abandoned call keeps only its own token); a response BODY stalling
+   after its head arrived is the transport's to bound, and costs the chips hidden - the safe side -
+   only until the next of those events.
    **`users/batch`** already joins an identical id in flight (`profileCache`), so the 271 are
    different id sets across turns, as above; it is NOT given the same wait, because a name on a
    conversation tile is content and not a hint - left open (the answer is a store that owns the
