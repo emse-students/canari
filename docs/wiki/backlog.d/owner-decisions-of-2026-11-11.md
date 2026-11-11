@@ -36,3 +36,14 @@
    may run them alone (*"Oui pour tout"*), under his own safeguards - a procedure written in the
    wiki, tried on dev first, the deleted rows saved, and the cleanup recorded in a `changelog.d`
    fragment.
+7. **The slow-link chantier stays INVISIBLE to the user**: no button, no text, no setting -
+   *"Tout doit être invisible pour l'utilisateur"*. This overrules the "Lire quand même" control and
+   the percentage label once planned for the video hold (#3333 removes both)
+   ([chantier](slow-link-local-first-chantier.md)).
+8. **Feed media smoothness**: before a media is ready, the page draws the best picture it knows -
+   the decoded first frame, else the ThumbHash, photos included - never black. The next 3 pages are
+   preloaded in parallel on a fast link and 1 on a slow link, heads only, and the stream joins the
+   preloaded bytes. This REPLACES the decision of 2026-11-04 that the preload stays behind the
+   settled reel. Built by a separate PR.
+9. **A video tapped in the feed opens the viewer in the reader's REMEMBERED order**, with the
+   Pour toi / Recents switch shown. Built by another PR.
