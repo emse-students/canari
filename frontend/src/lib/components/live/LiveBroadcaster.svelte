@@ -59,6 +59,7 @@
   import LiveIdentity from './LiveIdentity.svelte';
   import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
   import LiveViewerCount from './LiveViewerCount.svelte';
+  import CameraControlButton from '$lib/components/ui/CameraControlButton.svelte';
   import RotateButton from '$lib/components/ui/player/RotateButton.svelte';
   import { useScreenOrientation } from '$lib/mobile/screenOrientation.svelte';
   import { previewDoubleTap } from '$lib/reels/previewDoubleTap';
@@ -350,8 +351,6 @@
 
   const pill =
     'inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50';
-  const iconButton =
-    'ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-accent-icon';
 </script>
 
 <!-- A DOUBLE TAP ON THE PREVIEW FLIPS THE LENS (previewDoubleTap.ts), only while the lens button
@@ -481,16 +480,9 @@
         {/if}
       </div>
     {:else}
-      <button
-        type="button"
-        class={iconButton}
-        aria-label={m.common_close_label()}
-        title={m.common_close_label()}
-        onclick={close}
-        data-live-close
-      >
+      <CameraControlButton label={m.common_close_label()} onclick={close} data-live-close>
         <X size={24} strokeWidth={2.5} />
-      </button>
+      </CameraControlButton>
     {/if}
 
     <div class="flex shrink-0 items-center gap-2">
@@ -498,16 +490,9 @@
         <RotateButton onrotate={orientation.rotate} />
       {/if}
       {#if flipAllowed}
-        <button
-          type="button"
-          class={iconButton}
-          aria-label={m.reels_camera_switch()}
-          title={m.reels_camera_switch()}
-          onclick={flip}
-          data-live-switch
-        >
+        <CameraControlButton label={m.reels_camera_switch()} onclick={flip} data-live-switch>
           <SwitchCamera size={22} strokeWidth={2.25} />
-        </button>
+        </CameraControlButton>
       {/if}
       {#if onAir}
         <!-- The on-air controls, together at the top right: share the link, show or hide the chat
@@ -515,23 +500,17 @@
              End - destructive, so it asks (`confirmEnd`). -->
         {#if broadcast.liveId}
           {@const sharedId = broadcast.liveId}
-          <button
-            type="button"
-            class={iconButton}
-            aria-label={m.live_share_label()}
-            title={m.live_share_label()}
+          <CameraControlButton
+            label={m.live_share_label()}
             onclick={() => shareLiveLink(sharedId)}
             data-live-share
           >
             <Share2 size={20} strokeWidth={2.25} />
-          </button>
+          </CameraControlButton>
         {/if}
-        <button
-          type="button"
-          class={iconButton}
-          aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
-          title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
-          aria-pressed={chatOpen}
+        <CameraControlButton
+          label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+          pressed={chatOpen}
           onclick={() => (chatOpen = !chatOpen)}
           data-live-chat-toggle
         >
@@ -540,7 +519,7 @@
           {:else}
             <MessageCircleOff size={20} strokeWidth={2.25} />
           {/if}
-        </button>
+        </CameraControlButton>
         <!-- A compact X like the other controls, tinted red because it is destructive; its name is
              "Terminer" and the confirmation stays. -->
         <button

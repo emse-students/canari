@@ -975,7 +975,7 @@
 
       <!-- A pointer has no swipe: the two steps are buttons on a wide screen. -->
       <div
-        class="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 flex-col gap-2 md:flex"
+        class="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 flex-col gap-2 any-pointer-fine:flex"
       >
         <button
           type="button"
