@@ -53,7 +53,7 @@
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
-  import { countUnreadBelow, readPointFor, seenByAnchors } from '$lib/utils/chat/readState';
+  import { countUnreadBelow, countingReadPoint, seenByAnchors } from '$lib/utils/chat/readState';
   import {
     lastRowAbove,
     resolveAnchor,
@@ -921,7 +921,7 @@
     if (isNearBottom) return 0;
     const convo = chatView?.conversation;
     if (!convo) return 0;
-    const mine = readPointFor(convo, currentUserId.trim().toLowerCase());
+    const mine = countingReadPoint(convo, currentUserId.trim().toLowerCase());
     return countUnreadBelow(messageRows, lastVisibleAnchor, mine.stamped, mine.server);
   });
   /**

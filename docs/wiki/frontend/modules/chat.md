@@ -4861,27 +4861,32 @@ DMs and groups (the same loop - only salons skip it) never were.
 
 **The rule: the count is derived from durable state, never from what arrived this session.** A load
 assigns each row `derivedUnreadCount` (`readState.ts`): the held messages `isUnreadForUser` calls
-unread at the `countingReadPoint`. It is PUBLISHED ONCE per row (`publishBootCount`): online after the
-replay, offline after the stored page (there is no replay to wait for), and after a failed replay
-from what is held - never the stored page's count and then the replay's, which made the badge rise
-and fall. **A row that is not `active` derives 0**: a removed or pending conversation takes no read
+unread at the `countingReadPoint`. It is PUBLISHED AS SOON AS THE STORED PAGE IS READ
+(`publishBootCount`), online or not, BEFORE the replay - on a slow link the replay takes seconds and
+the badge of what the device holds must not wait for it (weak-network chantier) - then again after the
+replay, and after a failed one, from what is held. Rows are only ever added, so after the first
+publish the count rises for what the replay brought and **only a mark lowers it** (tested: a mark the
+replay brings takes 1 to 0). A row that left the map before its count is said at debug. **A row that
+is not `active` derives 0**: a removed or pending conversation takes no read
 mark (the receipt effect refuses it, and a selection zeroes the count in memory only), so nothing
 could ever clear a badge given to it.
 
 The live writers ask the same point, so the `+1` they add is what the next load re-derives:
 `mergeFcmMessagesIntoConversations` (which used to add 1 for any foreign row, even one the shade had
 already marked read), both add paths of `useMessaging`, the `history_bundle` recount, and
-`withOwnReadAdvanced`. **Salons included**: the live add path and the salon self-mark ask
+`withOwnReadAdvanced`, and so do the readers: the shade's hand-off (`applyNativeReadWatermarks`,
+`readWatermarkCache.ts`), the "already read here" question before a banner, and the scroll-down
+pill. **Salons included**: the live add path and the salon self-mark ask
 `countingReadPoint` too, so a salon with no mark of this reader's does not count, on this device, a
 row older than the reader's own newest post; the server's count (`unread-counts`, merged at a
 reconnect) still does. Pinned by `readState.test.ts`, "PINS THE SALON BEHAVIOUR".
 
-**The read point.** A saved mark decides alone; without one, ONE clock, the server's.
+**The read point - ONE clock, the server's, for all it adds to the saved marks.**
 
 | What applies | Server point | Why |
 | --- | --- | --- |
-| a saved mark (either map) | the saved marks, nothing else | the marks are what says "read"; the seed below never covers a message past what this user read |
-| no saved mark, the upgrade's local seed (`localReadSeed`) | the seed, max the row below | see below |
+| a saved mark (either map) | the saved marks, max the seed | the marks are what says "read"; the seed keeps covering what the row held at the upgrade, so a mark BELOW it (another device's, an old "Marquer comme lu" from the shade) never un-hides it - `applyNativeReadWatermarks` ASSIGNS the count, and a lower point there RAISED a badge on a read (tested) |
+| the upgrade's local seed (`localReadSeed`) | the seed | see below |
 | no saved mark, an own message the server dated | its SERVER time, max the seed | a reply is written with the thread open, so what the server holds before it was on screen. The server's clock, never the author's: a phone an hour fast hid the peer's later answer, one an hour slow counted an earlier message (both cases tested). An own row not yet dated (queued) implies nothing |
 | none of them | 0 - every foreign message counts | a conversation new on this install, never opened, never answered: a first contact, which IS unread |
 
@@ -4920,8 +4925,18 @@ the store migration that adds the field** - SQLite v20 (`CONVERSATION_LOCAL_READ
   device held in the same conversation, but not yet delivered to it, is covered - the device's queue
   delivers in the server's order, so this needs an out-of-order delivery. An IndexedDB store below
   version 12 holds only provisional keys and is seeded 0 everywhere (nothing dated to read). A
-  downgrade to an older build that re-creates a row without the field leaves it NULL, which covers
-  nothing.
+  message stored before the upgrade, past a row's saved mark but before its seed, is covered: the
+  seed applies with a mark too (above), and the upgrade does not flood marked rows either.
+- **A backup exported before the column** restores rows with no seed (NULL covers nothing), so a row
+  with no saved mark lights up to one page (60) of what it holds.
+- **A downgrade, then a re-upgrade**, is the same case: an older build's `INSERT OR REPLACE` writes
+  the row without the column, which NULLs it, and the fill never runs again once `user_version` is
+  20.
+- **A web rollback after this ships** fails `indexedDB.open(name, 13)` with a `VersionError`, said as
+  `StorageOpenError`. No data is lost; this is true of every IndexedDB version bump.
+- **Stale marks now count** (accepted): a conversation whose saved mark is old, with messages past it
+  that an older build never counted after a restart, shows them as unread at the next load - above
+  its seed only. That is what its marks say.
 
 It is a column of its own (`conversations.local_read_seed`; the same field in IndexedDB). A row this
 build INSERTS is born `0`; a save that does not state the field keeps the row's

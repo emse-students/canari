@@ -247,16 +247,19 @@ describe('the read point an unread count is taken at', () => {
     expect(countingReadPoint(replied, ME)).toEqual({ stamped: 0, server: 3500, source: 'own' });
   });
 
-  it('a saved mark decides alone: the seed covers nothing past what this user read', () => {
-    // The migration seeds EVERY row; a row with a mark at 1500 holding 'b' at 3000 has 'b' unread,
-    // and a seed of 3000 must not hide it.
-    const marked = {
-      messages: [dated('a', 1000), dated('b', 3000)],
-      localReadSeed: 3000,
-      serverReadWatermarks: { [ME]: 1500 },
-    };
-    expect(countingReadPoint(marked, ME)).toEqual({ stamped: 0, server: 1500, source: 'saved' });
-    expect(derivedUnreadCount(marked, ME)).toBe(1);
+  it('a mark BELOW the seed never raises a count: the seed keeps covering what it covered', () => {
+    const seeded = { messages: [dated('a', 1000), dated('b', 3000)], localReadSeed: 3000 };
+    expect(derivedUnreadCount(seeded, ME)).toBe(0);
+    // A "Marquer comme lu" from the shade, or another device, lands a mark at 1500.
+    const marked = { ...seeded, serverReadWatermarks: { [ME]: 1500 } };
+    expect(countingReadPoint(marked, ME)).toEqual({ stamped: 0, server: 3000, source: 'seed' });
+    expect(derivedUnreadCount(marked, ME)).toBe(0);
+    // A mark above it decides.
+    const later = { ...seeded, messages: [...seeded.messages, dated('c', 5000)] };
+    expect(derivedUnreadCount({ ...later, serverReadWatermarks: { [ME]: 4000 } }, ME)).toBe(1);
+    expect(countingReadPoint({ ...later, serverReadWatermarks: { [ME]: 4000 } }, ME).source).toBe(
+      'saved'
+    );
   });
 
   it('reads a stored seed: a number, 0, or null (absent, covers nothing)', () => {

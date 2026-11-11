@@ -1161,19 +1161,30 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       }
 
       // THE UNREAD CENSUS OF THIS LOAD, said in ONE line after the loop (per row at debug only).
-      const census = { seeded: 0, withBadge: 0, total: 0 };
-      const published = new Set<string>();
-      /** Assigns a row its derived count, ONCE per load, and adds it to the census. */
-      const publishBootCount = (id: string): void => {
+      // Each row's LAST derived count, by id; the census line is summed from it after the loop.
+      const published = new Map<string, ReturnType<typeof bootUnreadCount>>();
+      /**
+       * Assigns a row its derived count. FIRST as soon as its stored page is read - before its replay,
+       * so a badge never waits for the network (a slow link held it for the whole replay) - and again
+       * after the replay over what it added. The count is derived from the marks and the rows held,
+       * and rows are only ever added, so the second call raises it for what the replay brought and
+       * lowers it only for a mark the replay brought.
+       */
+      const publishBootCount = (
+        id: string,
+        when: 'stored page' | 'replay' | 'failed load'
+      ): void => {
         const row = ctx.conversations.get(id);
-        if (!row || published.has(id)) return;
-        published.add(id);
-        const { count: unreadCount, source } = bootUnreadCount(id, row, ctx.userId);
-        ctx.conversations.set(id, { ...row, unreadCount });
-        if (source === 'seed') census.seeded += 1;
-        if (unreadCount > 0) {
-          census.withBadge += 1;
-          census.total += unreadCount;
+        if (!row) {
+          console.debug(
+            `[RESTORE] ${id.slice(0, 8)} left the conversation map before its count (${when}) - nothing to publish`
+          );
+          return;
+        }
+        const derived = bootUnreadCount(id, row, ctx.userId);
+        published.set(id, derived);
+        if ((row.unreadCount ?? 0) !== derived.count) {
+          ctx.conversations.set(id, { ...row, unreadCount: derived.count });
         }
       };
 
@@ -1260,13 +1271,11 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               }
             }
           }
-          // The stored page is drawn; the archive is owed elsewhere (said once, above the loop).
-          // OFFLINE, ITS COUNT IS THE ONE PUBLISHED - there is no replay to wait for. Online it is
-          // not published here: the replay's count follows, and the badge must not rise then fall.
-          if (unreachable !== null) {
-            publishBootCount(meta.id);
-            continue;
-          }
+          // THE STORED PAGE'S COUNT IS PUBLISHED NOW, online or not: on a slow link the replay below
+          // can take seconds, and the badge of what this device already holds must not wait for it.
+          publishBootCount(meta.id, 'stored page');
+          // The archive is owed elsewhere (said once, above the loop).
+          if (unreachable !== null) continue;
           // Fetch from network → decrypt → save to DB (no direct UI update)
           const commit = await replayConversationHistory({
             mlsService: ctx.mlsService,
@@ -1314,7 +1323,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               ...current,
               messages: mergeMessagePage(current.messages, refreshedMsgs),
             });
-            publishBootCount(meta.id);
+            publishBootCount(meta.id, 'replay');
             for (const m of refreshedMsgs) {
               if (m.reactions && m.reactions.length > 0) {
                 ctx.messageReactions.set(m.id, m.reactions);
@@ -1325,7 +1334,15 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           ctx.log(`[WARN] Conversation load failed ${meta.id}: ${String(e)}`);
           // The rows already held still say what is unread: a failed replay must not leave the
           // badge at the 0 every row starts at - that is the defect this count replaces.
-          publishBootCount(meta.id);
+          publishBootCount(meta.id, 'failed load');
+        }
+      }
+      const census = { seeded: 0, withBadge: 0, total: 0 };
+      for (const { count, source } of published.values()) {
+        if (source === 'seed') census.seeded += 1;
+        if (count > 0) {
+          census.withBadge += 1;
+          census.total += count;
         }
       }
       ctx.log(

@@ -688,7 +688,7 @@ export class SqliteStorage implements IStorage {
       awaitingAdmission: Number(r.awaiting_admission) === 1,
       // INTEGER, so a string on Android too; absent or unusable reads as unknown.
       ...(Number(r.started_at) > 0 ? { startedAt: Number(r.started_at) } : {}),
-      // NULL is a state of its own here ("not considered yet"), never read as 0.
+      // NULL is a state of its own here (no seed: a backup import or an older build), never read as 0.
       localReadSeed: parseLocalReadSeed(r.local_read_seed),
     };
   }
@@ -1450,7 +1450,7 @@ export class SqliteStorage implements IStorage {
     // INSERT OR IGNORE: only insert if no row with this id already exists.
     await this.db.execute(
       // An imported row keeps the seed state it was exported with; one from before the column is
-      // NULL, so the next load seeds it like any row an older build wrote.
+      // NULL and covers nothing: only the v20 migration writes a seed, and no load seeds a row.
       'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor, image_media_id, awaiting_admission, server_read_watermarks, started_at, local_read_seed) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
       [
         conv.id,

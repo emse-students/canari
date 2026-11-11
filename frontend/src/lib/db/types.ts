@@ -60,8 +60,8 @@ export interface ConversationMeta {
   /**
    * THE UPGRADE'S LOCAL READ SEED (2026-11-11), on the server clock: the newest server-dated message
    * THIS conversation held when the store migration that added the field ran (SQLite v20, IndexedDB
-   * 14) - inside the migration, so before this build could store anything. Applies ONLY while this
-   * user has no saved read mark, and on THIS device only - never a read mark, never a receipt, never
+   * 14) - inside the migration, so before this build could store anything. Max'ed with any saved
+   * read mark, on THIS device only - never a read mark, never a receipt, never
    * in a bundle (`countingReadPoint`).
    *
    * Written by the migration and nowhere else: `0` when the conversation held nothing dated (and for

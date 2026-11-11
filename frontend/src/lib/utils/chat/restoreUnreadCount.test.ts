@@ -237,7 +237,54 @@ describe('the unread count a load derives', () => {
     }
   );
 
-  it('publishes ONE count online - the replay`s - never the stored page`s first (no rise then fall)', async () => {
+  it('on a SLOW link, shows the badge of what is held before the replay answers', async () => {
+    const store = durableStore();
+    store.messages.push(row('m1', 'bob', 1_000));
+    const conversations = new SvelteMap<string, Conversation>();
+    let release!: () => void;
+    let badgeWhileReplaying: number | undefined;
+    replay.mockImplementationOnce(async () => {
+      // The replay is in flight, and the link is slow: the badge is already there.
+      badgeWhileReplaying = conversations.get('g-1')?.unreadCount;
+      await new Promise<void>((resolve) => (release = resolve));
+      return undefined;
+    });
+
+    const loading = coldStart(store, { conversations });
+    await vi.waitFor(() => expect(badgeWhileReplaying).toBe(1));
+    release();
+    expect(await loading).toBe(1);
+  });
+
+  it('after the stored page, only a MARK the replay brings lowers the badge; what it adds raises it', async () => {
+    const store = durableStore();
+    store.messages.push(row('m1', 'bob', 1_000));
+    replay.mockImplementationOnce(async () => {
+      store.messages.push(row('m2', 'bob', 2_000));
+      return undefined;
+    });
+    expect(await coldStart(store)).toBe(2);
+  });
+
+  it('logs, at debug, a row that left the map before its count, and publishes nothing for it', async () => {
+    const store = durableStore();
+    store.messages.push(row('m1', 'bob', 1_000));
+    const conversations = new SvelteMap<string, Conversation>();
+    // The stored page read is where the row is lost (a leave or an account switch meanwhile).
+    store.getMessagesPage.mockImplementationOnce(async () => {
+      conversations.delete('g-1');
+      return [];
+    });
+
+    await coldStart(store, { conversations });
+
+    expect(conversations.has('g-1')).toBe(false);
+    expect(debug).toHaveBeenCalledWith(
+      expect.stringContaining('left the conversation map before its count (stored page)')
+    );
+  });
+
+  it('a mark the replay brings lowers the stored page`s badge, and the census says the last count', async () => {
     const store = durableStore();
     store.messages.push(row('m1', 'bob', 1_000));
     // The replay learns that m1 was read on another device.
@@ -254,10 +301,16 @@ describe('the unread count a load derives', () => {
       return set(key, value);
     };
 
-    await coldStart(store, { conversations });
+    const log = vi.fn();
+    await coldStart(store, { conversations, log });
 
-    expect(seen.every((count) => count === 0)).toBe(true);
+    // 1 at the stored page, 0 once the replay brought the mark - never a rise after a fall.
+    // Each value set, consecutive repeats dropped (the replay writes the row as it found it).
+    expect(seen.filter((count, i) => i === 0 || count !== seen[i - 1])).toEqual([0, 1, 0]);
     expect(conversations.get('g-1')?.unreadCount).toBe(0);
+    expect(log).toHaveBeenCalledWith(
+      "[RESTORE] unread census: 0 conversation(s) counted from the upgrade's local read seed, 0 with a badge, 0 unread in all"
+    );
   });
 });
 
@@ -351,10 +404,12 @@ describe("the upgrade's local read seed, read by the restore", () => {
     }
   );
 
-  it('yields to a saved mark: the seed covers nothing past what this user read', async () => {
+  it('a saved mark below the seed un-hides nothing; past both, a message counts', async () => {
     const store = durableStore({ localReadSeed: 2_000, serverReadWatermarks: { [ME]: 1_000 } });
     store.messages.push(row('m1', 'bob', 1_000), row('m2', 'bob', 2_000));
+    expect(await coldStart(store)).toBe(0);
 
+    store.messages.push(row('m3', 'bob', 3_000));
     expect(await coldStart(store)).toBe(1);
   });
 

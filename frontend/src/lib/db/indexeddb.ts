@@ -793,8 +793,9 @@ export class IndexedDbStorage implements IStorage {
         store.put(conv);
       } else {
         // THE SEED STATE IS KEPT, NOT ERASED, by a caller that does not state it - the same rule as
-        // SQLite's `CONVERSATION_LOCAL_READ_SEED_VALUE`: what the row holds (absent included: an
-        // older build's row, seeded by the next load), or 0 for a row new on this install.
+        // SQLite's `CONVERSATION_LOCAL_READ_SEED_VALUE`: what the row holds (what the v14 migration
+        // wrote; absent only on a row a backup import or an older build wrote, which covers nothing -
+        // no load seeds a row), or 0 for a row new on this install.
         const read = store.get(conv.id);
         read.onsuccess = () => {
           const held = read.result as ConversationMeta | undefined;

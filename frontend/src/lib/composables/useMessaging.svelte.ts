@@ -60,7 +60,7 @@ import {
   tabSeed,
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
-import { countingReadPoint, isUnreadForUser, readPointFor } from '$lib/utils/chat/readState';
+import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -617,7 +617,14 @@ export function useMessaging() {
      */
     convo: Pick<
       Conversation,
-      'id' | 'name' | 'contactName' | 'conversationType' | 'readWatermarks' | 'serverReadWatermarks'
+      | 'id'
+      | 'name'
+      | 'contactName'
+      | 'conversationType'
+      | 'messages'
+      | 'readWatermarks'
+      | 'serverReadWatermarks'
+      | 'localReadSeed'
     >,
     senderId: string,
     content: string,
@@ -645,7 +652,7 @@ export function useMessaging() {
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
-    const mine = readPointFor(convo, ctx.userId.toLowerCase());
+    const mine = countingReadPoint(convo, ctx.userId.toLowerCase());
     // A MESSAGE THIS ACCOUNT HAS ALREADY READ IS NOT NEWS, asked with the predicate the unread badge
     // uses. It is reachable: a reply or "mark as read" from the shade answers a message whose row is
     // still queued for this device, the next connection delivers it, and it used to be announced
