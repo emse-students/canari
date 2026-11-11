@@ -36,7 +36,7 @@
    * A POST OF SEVERAL PICTURES AND VIDEOS IS A CAROUSEL PAGE (owner, 2026-11-06, as on Instagram):
    * its media sit side by side in a STRIP inside the one frame, the viewer says which is visible
    * (`mediaIndex`) and where a held horizontal drag has taken the strip (`mediaDragX`), and dots
-   * under the top bar say the position. Each media is a `ReelMediaPane`, which owns its download,
+   * on the media's bottom edge, above the author line, say the position. Each media is a `ReelMediaPane`, which owns its download,
    * player and settle; `carouselMediaRole` says which pane is active, drawn and fetched ahead. The
    * caption, the rail, the reactions and the comments belong to the POST, never to a media: they
    * do not move with the strip. The rail's save and sound follow the VISIBLE media - a video has
@@ -374,6 +374,32 @@
       data-reel-caption
       data-reel-caption-inset={frameReachesBottom ? 'safe-area' : 'none'}
     >
+      {#if page === 'carousel' && panes.length > 1}
+        <!-- WHERE THE READER IS IN THE CAROUSEL (owner, 2026-11-11, as Instagram's under the photo):
+             one dot per media, the visible one lit, named "2 of 5". THE FIRST ROW OF THE CAPTION
+             BLOCK, so it sits on the media's bottom edge directly above the author line, rises with
+             the block when "Voir plus" unfolds it (the text is the part that shrinks, never this
+             row) and clears the player's line by the block's own bottom padding. The negative
+             margins undo the block's side padding so the row is centred on the MEDIA, not on the
+             room the rail leaves; the dots are far narrower than that room. Pointer-transparent. -->
+        <div
+          class="pointer-events-none mb-2 -ml-4 flex shrink-0 justify-center gap-1 self-stretch {showRail
+            ? '-mr-16'
+            : '-mr-4'}"
+          role="img"
+          aria-label={m.reels_carousel_position({ index: visibleIndex + 1, total: panes.length })}
+          data-reel-carousel-dots
+        >
+          {#each panes as _pane, i (i)}
+            <span
+              class="size-1.5 rounded-full drop-shadow-sm {i === visibleIndex
+                ? 'bg-white'
+                : 'bg-white/40'}"
+              data-reel-carousel-dot={i === visibleIndex ? 'current' : ''}
+            ></span>
+          {/each}
+        </div>
+      {/if}
       <div class="flex min-w-0 shrink-0 items-center gap-2">
         {#if authorHref}
           <!-- ONE NAME AND ONE BOX FOR ASSISTIVE TECH: the link is named by its `aria-label` and its
@@ -495,21 +521,6 @@
   </ReelFrame>
 
   {#if page === 'carousel' && panes.length > 1}
-    <!-- WHERE THE READER IS IN THE CAROUSEL: one dot per media under the top bar, the visible one
-         lit (Instagram's), named for assistive tech as "2 of 5". Pointer-transparent. -->
-    <div
-      class="pointer-events-none absolute inset-x-0 top-[calc(var(--safe-area-inset-top,0px)+1.25rem)] z-30 flex justify-center gap-1"
-      role="img"
-      aria-label={m.reels_carousel_position({ index: visibleIndex + 1, total: panes.length })}
-      data-reel-carousel-dots
-    >
-      {#each panes as _pane, i (i)}
-        <span
-          class="size-1.5 rounded-full shadow-sm {i === visibleIndex ? 'bg-white' : 'bg-white/40'}"
-          data-reel-carousel-dot={i === visibleIndex ? 'current' : ''}
-        ></span>
-      {/each}
-    </div>
     {#if active && onMediaStep}
       <!-- A pointer has no swipe: the previous and next media are buttons on a wide screen, as the
            posts' are in the viewer's column. Buttons, so neither the swipe nor the double tap takes

@@ -352,6 +352,76 @@ line below is a verified file:line reading, not a guess. The "shape" column is s
 | 13 | Polls with no in-flight guard (`admin/status:74`, `SettingsSecuritySection:100`) | - | open |
 | 14 | `pullToRefresh` keeps a non-passive `touchmove` bound for the whole refresh | - | **fixed 2026-09-23** |
 | 15 | Forced layout per scroll tick, and a linear separator scan; `tick()` + `getElementById` per log line | - | **fixed 2026-09-23** |
+| 16 | The session refresh in front of the boot path's first paint: the feed (hardware-held phones), the announcement, the help-seen set, the "birthday entered" fact | 1 | **fixed 2026-11-11** (section 4bis); today's celebrants stay network-only by decision |
+
+## 4bis. The session refresh no longer gates the boot path's first paint (2026-11-11)
+
+Gap 1 of the [slow-link chantier](../backlog.d/slow-link-local-first-chantier.md). The owner's log
+of 2026-11-10: at a cold start the access-token refresh took **4 s** on his link while the server
+answered in **17 ms**, and the first reads waited on it - the feed, the announcement, help-seen and
+the birthday. They must: `apiFetch` awaits `getToken()` before it sends anything and never issues an
+anonymous request, so every authenticated read is ALREADY queued behind the one refresh in flight,
+and nothing is fired to be retried on a 401. That part is untouched. What was wrong is that the
+SCREENS waited for those reads, and each of them had either no local copy or a copy it would not
+draw.
+
+| Boot-path screen | What it waited for | Now drawn from | Revalidated by |
+| --- | --- | --- | --- |
+| Feed, stored first page, on a vault or web unlock | nothing - already drawn before the token since F1/F4 | the account's sealed store | the first page, once the token is there |
+| Feed, stored first page, on a **hardware-held** phone ("stay signed in", or the biometric cadence with no prompt due) | the device key, which the native init returned only AFTER the token | the same store, opened with the key read from the keystore before the token (`loginImpl`, the unattended hardware-held branch) | the same |
+| The platform announcement | its `GET` | the last answer, per account and per CLIENT VERSION (`ACCOUNT_KEY.pendingAnnouncement`) | the answer replaces it, closing it when the server lists none |
+| The help-seen set (`seenHelps.ready`: the guides, the birthday card, the profile-photo prompt) | its `GET`, even with a local copy | the local copy, once a server answer was merged into it on this device (`confirmed`) | the answer merges into it |
+| "Has this account entered a birthday" (the feed's birthday card) | its `GET` | one boolean per account (`ACCOUNT_KEY.ownBirthdayKnown`), never the date | the answer replaces it |
+
+**The number that closes a screen: its first paint while the network answers nothing** (vitest, the
+token and every read held unanswered):
+
+| Screen | Before | After | Test |
+| --- | --- | --- | --- |
+| Feed, vault/web unlock | 0 RTT (stored page) | 0 RTT | `routes/posts/page.slowLinkFirstPaint.svelte.test.ts` |
+| Feed, hardware-held unattended unlock | never (the key came after the token, then the MLS init) | 0 RTT by construction: one keystore read and one store read, no request - **NO BEHAVIOURAL PROOF YET** | `landingPreviewOrder.test.ts` only (the order, in the source - the read and the token race only on a device); **the Mi 9T first-paint reading is owed** |
+| Announcement | never (shown after refresh + 1 RTT: ~4.5 s on the owner's link) | 0 RTT for an announcement already listed | `announcement.test.ts` |
+| Help-seen ready (birthday card, guides, photo prompt) | never (~4.5 s on the owner's link) | 0 RTT on a device the server has answered once | `seenHelps.test.ts` |
+| Own-birthday fact | never (~4.5 s) | 0 RTT after one answer | `ownBirthday.test.ts` |
+
+**Why each copy may be drawn, and what each one costs.**
+
+- **The hardware-held key is read before the token for the same reason the vault's is**: it is a
+  keystore read that asks nobody (`setUserAuthenticationRequired(false)`), so the device is not
+  locked and its own store may be drawn - `unlockUnattendedFor` already said so; only the key was
+  missing. `deviceKeyB64` stays empty, so the native init still reads the keystore itself and the
+  vault write stays skipped; the session's key read compares itself with the early one and accuses
+  a difference, and starts no second preview. A prompted keystore read keeps its key behind its
+  prompt. A failed early read draws nothing and leaves the refusal to the init, which meets it on
+  the login's own path, typed.
+- **The announcement copy is drawn only by the client version that asked**: the server owns the
+  range comparison, and a copy asked by another version says nothing about this one. A dismissal
+  drops the copy, and an answer computed before the "seen" landed does not reopen it. **It waits for
+  the version verdict to settle** (`isVersionVerdictSettled`, a fact, not a clock): a below-minimum
+  or maintenance gate decided a moment later must never have the modal flash in front of it;
+  `/api/version` needs no token, so on a slow link it settles before the refresh does. **A refusal
+  (a 5xx, a 403) keeps the copy**, a cost taken knowingly: a non-200 says the ask failed, not that
+  nothing waits, so an announcement withdrawn on the server stays drawn from the copy until an
+  answer of 200 says "none" - one opening per refusal, each refusal accused at `error`. A 401 never
+  gets there: it is a dead session, and the sign-out resets the store.
+- **The early hardware-held read is not awaited in line**: the state lookup and the token start at
+  once, so a fast link pays nothing; the key is installed before the preview starts, in the same
+  continuation, and the login awaits the read before it opens the store and the MLS init. **The read
+  is bound to its login attempt** (`earlyKeyRead.ts`): the login's `finally` ends the attempt first,
+  and a read resolving after that installs nothing - no key outlives a failed login in memory,
+  decided by the attempt's state and never by timing (`earlyKeyRead.test.ts`). Like the
+  vault path (the decision of 2026-10-12), it draws the stored feed before the revocation answer,
+  and withdraws it if that answer says revoked.
+- **The help-seen copy is drawn only once a server answer filled it ON THIS DEVICE**: a new device
+  still waits, so it never replays a tour finished elsewhere. Taken knowingly: a help finished on
+  ANOTHER device since that answer may start here before the revalidation lands.
+- **Today's celebrants are not given a copy.** [birthdays](../birthdays.md) decided the list is held in
+  memory only - nothing about another member's birthday is written to the device - so the ring
+  appears when the token does. That is the one boot-path read left network-gated, by decision.
+
+**What is left of gap 1:** the dev reading with Chrome DevTools throttling (the audit's method) of
+the cold boot after this lands, and the first paint read on the bench Mi 9T, which is the
+hardware-held path.
 
 ## 5. The tools, and where they live
 
