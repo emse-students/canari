@@ -26,17 +26,42 @@ cleanup() {
 trap cleanup EXIT
 
 cp "$here/compose.yml" "$work/compose.yml"
-# Throwaway values. The secret key only has to be long; the CAS secret only has to be SET, since
-# this instance never talks to the CAS.
+
+blueprint_dirs=("$here/blueprints")
+if [ -n "${PREVIOUS_REF:-}" ]; then
+  # Extracted BEFORE the instance boots: its blueprints may read a variable this tree's do not (a
+  # branch cut before main added one), and the worker's environment is fixed when it starts.
+  mkdir -p "$work/previous/blueprints"
+  # From the repository ROOT: run inside a subdirectory, `git archive` prefixes even a `ref:path`
+  # tree with that subdirectory and extracts nothing.
+  root="$(git -C "$here" rev-parse --show-toplevel)"
+  git -C "$root" archive "$PREVIOUS_REF:infrastructure/authentik/blueprints" | tar -x -C "$work/previous/blueprints"
+  if ! compgen -G "$work/previous/blueprints/*.yaml" >/dev/null; then
+    echo "::error::$PREVIOUS_REF has no infrastructure/authentik/blueprints/*.yaml to upgrade from"
+    exit 1
+  fi
+  blueprint_dirs+=("$work/previous/blueprints")
+fi
+
+# Throwaway values. The secret key only has to be long.
 cat >"$work/.env" <<EOF
 PG_PASS=blueprint-test
 AUTHENTIK_SECRET_KEY=blueprint-test-$(date +%s)-0123456789abcdef0123456789abcdef
 MIGALLERY_AVATAR_SIGNING_KEY=blueprint-test
-MICONNECT_CAS_CONSUMER_SECRET=blueprint-test
-MICONNECT_EDITOR_TOKEN=blueprint-test-editor-token-0123456789abcdef
-MICONNECT_READER_TOKEN=blueprint-test-reader-token-0123456789abcdef
 AUTHENTIK_PUBLISH=127.0.0.1:0
 EOF
+# EVERY VARIABLE A BLUEPRINT READS (`!Env NAME`) gets a throwaway value, read from the blueprints
+# applied here - this tree's and, on the upgrade run, PREVIOUS_REF's - never from a list kept beside
+# them. A list is what fell behind on 2026-11-11: main's 55-handoff-reader.yaml began reading
+# MICONNECT_READER_TOKEN, and every PR whose tree predated it applied that file over a worker that
+# had no such variable. `env_file: .env` hands each line to the worker; compose.yml's `:?` still
+# refuses a variable it declares and no blueprint names. A token key only has to be long, and the
+# CAS secret only has to be SET, since this instance never talks to the CAS.
+for dir in "${blueprint_dirs[@]}"; do cat "$dir"/*.yaml; done |
+  grep -oE '!Env +\[? *[A-Za-z_][A-Za-z0-9_]*' | grep -oE '[A-Za-z_][A-Za-z0-9_]*$' | sort -u |
+  while read -r name; do
+    echo "$name=blueprint-test-$(printf '%s' "$name" | tr 'A-Z_' 'a-z-')-0123456789abcdef"
+  done >>"$work/.env"
 
 echo "starting a fresh MiConnect ($(grep -o 'AUTHENTIK_TAG:-[^}]*' "$work/compose.yml" | sed -n 1p))"
 docker compose -p "$project" --project-directory "$work" -f "$work/compose.yml" up -d --quiet-pull
@@ -53,16 +78,7 @@ wait_for_default_blueprints "$worker"
 if [ -n "${PREVIOUS_REF:-}" ]; then
   # The UPGRADE path, which is the one production takes: build the instance from the blueprints at
   # PREVIOUS_REF (CI passes main), then apply these over it. A fresh instance alone never runs a
-  # rename entry, since no old name exists on it.
-  mkdir -p "$work/previous/blueprints"
-  # From the repository ROOT: run inside a subdirectory, `git archive` prefixes even a `ref:path`
-  # tree with that subdirectory and extracts nothing.
-  root="$(git -C "$here" rev-parse --show-toplevel)"
-  git -C "$root" archive "$PREVIOUS_REF:infrastructure/authentik/blueprints" | tar -x -C "$work/previous/blueprints"
-  if ! compgen -G "$work/previous/blueprints/*.yaml" >/dev/null; then
-    echo "::error::$PREVIOUS_REF has no infrastructure/authentik/blueprints/*.yaml to upgrade from"
-    exit 1
-  fi
+  # rename entry, since no old name exists on it. Its blueprints were extracted before the boot.
   echo "previous apply: builds the instance from $PREVIOUS_REF's blueprints"
   BLUEPRINTS_DIR="$work/previous/blueprints" bash "$here/apply-blueprints.sh" apply "$worker"
   echo "first apply: upgrades it to these blueprints"

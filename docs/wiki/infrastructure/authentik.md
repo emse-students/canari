@@ -190,7 +190,14 @@ Traps found while writing this, each measured on authentik 2026.8.0:
 - **`!Find`, `!Env` and `!File` resolve to null and carry on** when they match nothing. A mistyped
   name would silently clear a nullable reference, which is why the brand CSS is written inline rather
   than read through `!File`. The applier refuses any `!Find` or `!Env` that resolves to nothing,
-  before it commits.
+  before it commits - and every `!Env` BEFORE anything applies, as `UNRESOLVED <file> attrs.<field>:
+  !Env <NAME> is unset in the worker's environment`: applied first, an unset one reached a
+  non-nullable field as null and failed with a serializer error naming the field, never the variable
+  (`'key': ['This field may not be null.']`, 2026-11-11). `test-blueprints.sh` gives the worker a
+  throwaway value for every `!Env` the blueprints it applies name (this tree's and `PREVIOUS_REF`'s),
+  read from the files rather than listed beside them: the list is what fell behind when `main`'s
+  `55-handoff-reader.yaml` began reading `MICONNECT_READER_TOKEN` and every PR cut before it failed
+  the upgrade run.
 - **A policy bound to a stage binding targets its `pbm_uuid`**, while `!Find` returns `.pk`, the
   child's own key. The target is therefore found on `authentik_policies.policybindingmodel`, through
   `flowstagebinding__...` lookups.
