@@ -62,8 +62,8 @@
 with the call kept alive in the background on Android and on the iPhone; video follows later.
 The flip PR (2026-10-22) compiled in-app audio calls in (an invite, the per-conversation permission control and the sibling-status request also honour `calls_mode` client-side through `callsAvailable(serverCallsMode())`) (`CALLS_COMPILED = true`); what keeps production shut is the server's `calls_mode` (`off` at deploy), and the flip is merged and shipped only when every blocker below is lifted. This section is
 the only copy of the blocker list and of the order; [revival plan](calls-revival-plan.md) keeps the
-2026-10-15 design and the test matrix (section 7), the [backlog](../../backlog.d/p1-blocks-production-calls-mode-what-is-owed-before-production-calls-r.md)
-row points here. Investigated 2026-10-21 against `main` at `1.3.1-alpha.5`.
+2026-10-15 design and the test matrix (section 7). The readings still owed are the last column of
+the table below. Investigated 2026-10-21 against `main` at `1.3.1-alpha.5`.
 
 **The owner's answers, 2026-10-21** - not to be re-opened:
 
@@ -1672,7 +1672,7 @@ ring the in-app UI either: `handleCallSignal` asks `isBlockedWith` before it rin
 ask does not ring (logged at error). Pinned by `calls.service.spec.ts`, `callFailure.test.ts`,
 `CallService.callsEnabled.test.ts` and `CallService.p2p.test.ts`. **Any block with any other member
 refuses the WHOLE call** - right for 1:1, which only the client enforces today; WP-C11 must decide it
-for a group ([backlog](../../backlog.d/p1-blocks-production-calls-mode-what-is-owed-before-production-calls-r.md)).
+for a group ([group calls](../../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)).
 
 ## Audio quality, measured 2026-10-19
 
@@ -3552,7 +3552,7 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 ## The SFU runs six webrtc majors it has never placed a call on (2026-08-27)
 
-Re-rated P1 -> P3 on 2026-10-01: `CALLS_ENABLED = false` since 2026-09-01, so no user can reach this code; it becomes P1 again the day calling is revived. The open line is in [backlog](../../backlog.d/p3-the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-0.md).
+Re-rated P1 -> P3 on 2026-10-01 and kept there when calls were revived (`1.5.0`): production's 1:1 calls are peer to peer through Cloudflare TURN, and the School drops the UDP the SFU needs, so no production call reaches this code; it becomes P1 the day the School opens UDP to it. The open line is in [backlog](../../backlog.d/p3-the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-0.md).
 
 `apps/call-service` was brought back to compiling on 2026-08-27 after two Dependabot majors (`webrtc` 0.11 -> 0.17, `axum` 0.7 -> 0.8) had merged through a CI hole (closed: the crate is in the Rust matrix now). Verified: it builds, clippy is clean under `--all-features`, its ten unit tests pass. Not one of those ten runs the ICE stack. **Since 2026-10-09 `apps/call-service/tests/relay_path.rs` does, in CI**: two relay-only peers through an in-process TURN server carry a data-channel message and an SRTP packet ([cicd](../../cicd.md)). It places no call through the SFU and no browser peer - a green gate is not a working system.
 

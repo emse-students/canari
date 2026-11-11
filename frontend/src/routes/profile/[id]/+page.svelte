@@ -4,7 +4,15 @@
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { fetchUserProfile, type UserProfile, getSavedUserId } from '$lib/stores/user';
+  import { untrack } from 'svelte';
+  import {
+    fetchUserProfile,
+    isAbsentUserError,
+    type UserProfile,
+    getSavedUserId,
+  } from '$lib/stores/user';
+  import { forgetProfileCopy, readProfileCopy, rememberProfile } from '$lib/profile/profileCopies';
+  import { localCopiesOpenFor } from '$lib/localCopies/localCopyStore.svelte';
   import { PROFILE_SELF_SEGMENT } from '$lib/profile/profileSections';
   import { getFollowStatus, type FollowStatus } from '$lib/follows/api';
   import {
@@ -29,6 +37,7 @@
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Log } from '$lib/utils/Log';
+  import { requestDirectConversationWith } from '$lib/utils/chat/pendingChatOpening';
   import ProfileHeader from '$lib/components/profile/ProfileHeader.svelte';
   import ProfileOverflowMenu from '$lib/components/profile/ProfileOverflowMenu.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -58,6 +67,14 @@
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
+  /**
+   * What is on screen is the device's COPY of this profile (slow-link chantier, gap 2), drawn before
+   * the read answers. It holds no verdict about the reader, so the follow and block gestures wait
+   * for the answer.
+   */
+  let fromCopy = $state(false);
+  /** The server ANSWERED that this account is gone: the only failure that withholds a copy. */
+  let absent = $state(false);
   let error = $state('');
   /** Where the reader stands with this person: a request, a follow, or neither (WP-F4). */
   let followStatus = $state<FollowStatus | null>(null);
@@ -111,32 +128,60 @@
     try {
       const [prof, status, blocks] = await profileRead;
       if (token !== loadToken) return;
+      // The copy's lists are on screen: a section whose read FAILED keeps them (typed, not `[]`).
+      const heldCopy = fromCopy;
       profile = prof;
+      fromCopy = false;
       followStatus = status;
       blocked = blocks.some((b) => b.userId === userId);
       extrasLoading = true;
       const [rows, history, entourage] = await Promise.all([
-        extras.memberships.then((v) => {
-          if (token === loadToken) memberships = v;
-          return v;
+        extras.memberships.then((r) => {
+          if (token === loadToken && (r.answered || !heldCopy)) memberships = r.value;
+          return r;
         }),
-        extras.roleHistory.then((v) => {
-          if (token === loadToken) roleHistory = v;
-          return v;
+        extras.roleHistory.then((r) => {
+          if (token === loadToken && (r.answered || !heldCopy)) roleHistory = r.value;
+          return r;
         }),
-        extras.parrainage.then((v) => {
-          if (token === loadToken) parrainage = v;
-          return v;
+        extras.parrainage.then((r) => {
+          if (token === loadToken) parrainage = r.value;
+          return r;
         }),
       ]);
       Log.d(
         'profile.extras',
-        `${rows.length} membership(s), ${history.length} role(s), entourage ${entourage ? 'read' : 'none'}`
+        `${rows.value.length} membership(s), ${history.value.length} role(s), entourage ${entourage.value ? 'read' : 'none'}`
       );
       if (token === loadToken) extrasLoading = false;
+      // Kept for the next visit, whatever the link: sealed on the device, never in clear. The lists
+      // are those ON SCREEN; with no copy behind them and a failed section there is nothing true to
+      // seal, so nothing is.
+      if (token === loadToken && ((rows.answered && history.answered) || heldCopy)) {
+        void rememberProfile({
+          profile: prof,
+          memberships: $state.snapshot(memberships),
+          roleHistory: $state.snapshot(roleHistory),
+        });
+      }
     } catch (err) {
       Log.d('profile.load failed', err);
       if (token !== loadToken) return;
+      if (fromCopy && !isAbsentUserError(err)) {
+        // THE COPY STAYS: a failed revalidation says nothing about the profile. Logged, not shown.
+        console.warn(
+          `[PROFILE-COPIES] ${userId.slice(0, 8)} not refreshed, the device copy stays: ${String(err)}`
+        );
+        extrasLoading = false;
+        return;
+      }
+      if (isAbsentUserError(err)) {
+        // An ANSWER: the account is gone, its copy goes with it.
+        forgetProfileCopy(userId);
+        absent = true;
+        fromCopy = false;
+        profile = null;
+      }
       error = m.profile_public_load_error();
     } finally {
       if (token === loadToken) loading = false;
@@ -153,7 +198,9 @@
     // profile's content is never shown while the new one loads.
     const token = ++loadToken;
     profile = null;
+    fromCopy = false;
     error = '';
+    absent = false;
     memberships = [];
     roleHistory = [];
     parrainage = null;
@@ -178,6 +225,36 @@
     void loadProfile(userId, token);
   });
 
+  /**
+   * DRAWS THE PROFILE FROM THE DEVICE while its read is on the wire (slow-link chantier, gap 2).
+   * Re-runs when the device's copies open (the key may arrive after the first frame). Never over
+   * anything already drawn - an answer that won the race is newer. ONLY AN ANSWER (the account is
+   * gone) withholds it: a transport failure that lands before the slower copy read must not beat it
+   * (the feed's `storedCopyMayDraw` rule), offline being the case the copy exists for.
+   */
+  $effect(() => {
+    const userId = page.params.id;
+    const open = localCopiesOpenFor();
+    if (!userId || !open) return;
+    const token = untrack(() => loadToken);
+    if (untrack(() => profile !== null || absent)) return;
+    let cancelled = false;
+    void readProfileCopy(userId).then((copy) => {
+      if (cancelled || !copy || token !== loadToken || profile !== null || absent) return;
+      profile = copy.profile;
+      memberships = copy.memberships;
+      roleHistory = copy.roleHistory;
+      fromCopy = true;
+      loading = false;
+      extrasLoading = false;
+      error = '';
+      Log.d('profile.copy', `${userId.slice(0, 8)} drawn from the device, no network`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
   function formatYear(year: number | null): string {
     if (!year) return m.profile_promo_unknown();
     return m.profile_promo_value({ year });
@@ -190,10 +267,18 @@
   });
 
   function handleSendMessage() {
-    if (profile?.id) {
-      sessionStorage.setItem('canari_pending_contact', profile.id);
-      goto(resolve('/chat'));
+    // A PERSON, not a conversation: the chat page finds the DM with them or creates it
+    // (`pendingChatOpening.ts`). Handed over as a conversation key, this user id opened nothing.
+    if (!profile?.id) return;
+    // The ask names who made it, so an account signed in after this tap never acts on it.
+    const owner = getSavedUserId();
+    if (!owner) {
+      console.warn('[PROFILE] "Message" pressed with no signed-in account - nothing is asked');
+      return;
     }
+    Log.d('[PROFILE] "Message": asking the chat page for the DM with this person');
+    requestDirectConversationWith(owner, profile.id, sessionStorage);
+    goto(resolve('/chat'));
   }
 
   /**
@@ -342,7 +427,7 @@
             variant={followStatus ? 'secondary' : 'primary'}
             class="min-h-11 flex-1 sm:flex-none"
             onclick={handleFollowToggle}
-            disabled={followLoading}
+            disabled={followLoading || fromCopy}
             data-follow-status={followStatus ?? 'none'}
           >
             {#if followStatus === 'accepted'}
@@ -372,7 +457,7 @@
           {/if}
           <ProfileOverflowMenu
             {blocked}
-            busy={blockLoading}
+            busy={blockLoading || fromCopy}
             onReport={() => (reportOpen = true)}
             onBlockToggle={handleBlockToggle}
           />

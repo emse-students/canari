@@ -1,7 +1,7 @@
 # CanaReels - the server half (R3: decisions C2, C3, C4, C6; the rule and the year of 2026-11-09)
 
 Decided by the user on 2026-09-29 and built from 2026-10-01
-([backlog](../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken)).
+([reels](../frontend/modules/reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29)).
 This page is the CONTRACT the camera tab, the full-screen viewer and the on-device compression are
 built against, and the design behind the server side. A reel is a **post of `kind = 'reel'`**: same
 table, same feed, same reactions, comments, reports and moderation - plus a duration, an expiry,

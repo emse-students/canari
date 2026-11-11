@@ -1583,7 +1583,8 @@ export interface IMlsService {
    * the group itself: that frame is the group's current work, so the group cannot be drained until
    * it returns. A caller chains on it instead (the admission gate's parked asks, section 25).
    *
-   * @throws {GroupDrainAbandonedError} (as a rejection) when the service is destroyed first.
+   * @throws {GroupDrainAbandonedError} (as a rejection) when the service is destroyed first, or
+   *   already was when asked.
    */
   whenGroupDrained(groupId: string): Promise<void>;
   /**

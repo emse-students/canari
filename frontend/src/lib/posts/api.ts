@@ -1041,6 +1041,11 @@ export interface PostNotification {
   text: string;
   /** Structured facts a client draws itself (a booking notice's place, slot and zone); null on older rows. */
   meta?: Record<string, unknown> | null;
+  /**
+   * The comment the row is about, for a row a comment wrote (a comment, a reply, a mention in a
+   * comment, a friend's comment); null otherwise and on rows written before migration 132.
+   */
+  commentId?: string | null;
   read: boolean;
   createdAt: string;
 }

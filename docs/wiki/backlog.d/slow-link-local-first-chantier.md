@@ -17,7 +17,17 @@ state first, then revalidates ([local-first-ui](../frontend/local-first-ui.md)).
    ([local-first-ui](../frontend/local-first-ui.md#4bis-the-session-refresh-no-longer-gates-the-boot-paths-first-paint-2026-11-11)).
    Left: today's celebrants stay network-only (memory-only by the birthdays decision); the dev cold
    boot re-read under DevTools throttling and the Mi 9T first-paint reading are owed.
-2. Some screens have no local copy: Pour toi, the bell, profiles already seen.
+2. Some screens have no local copy: Pour toi, the bell, profiles already seen. **Built 2026-11-11
+   (draft PR)**: Pour toi already had its stored first page (`feed:foryou`, the same store as the
+   other tabs; one more first-paint test pins it). The bell (newest 50) and the profiles opened (last
+   12, LRU) now each keep a sealed slot in the account's `feed_pages` store, on the peer-name
+   directory's epoch (ended at a sign-out or an account change), and paint at once then revalidate;
+   a failed revalidation keeps the copy; a profile drawn from the copy disables follow and block
+   until the answer. First paint with the network answering nothing: 0 requests on both, before
+   never (vitest model, not a clock)
+   ([local-first-ui](../frontend/local-first-ui.md#4ter-the-bell-and-profiles-already-opened-have-a-local-copy-2026-11-11)).
+   Owed: a DevTools-throttled dev read and the Mi 9T / iPhone cold-start readings on a shaped link;
+   nothing else (the typed extras and the feed-only delete scope landed with the review).
 3. Media seen once is not kept, within a size budget. (The CanaReels look-ahead of 2026-11-11 does
    not build this store: its heads live only while held, its pictures in the existing pool -
    [reels](../frontend/modules/reels.md#a-loading-reel-shows-its-first-frame-never-a-play-glyph-owner-2026-10-31).)
@@ -65,3 +75,21 @@ that closes a screen is its first paint with the network answering nothing.
 
 Already cut on the way (PR for `1.6.10`): today's birthdays read once per Paris day, the no-op
 retries silent ([birthdays](../birthdays.md)).
+
+**Carried from the first weak-network audit (2026-10-09, its P1 entry closed into this one on
+2026-11-11).** Its 103 s Slow 3G cold start is history: origin compression (WP-W1) and the WASM
+fetched beside the JS (WP-W2) shipped, the salon draft is never destroyed (WP-OFF-1), and the native
+apps embed their frontend. What is still real joins this chantier: the conversation list waits for
+the WASM by ORDER, not by data (WP-W3, diagnosed, not built,
+[offline-and-weak-network section 10.3](../frontend/offline-and-weak-network.md#103-wp-w3-the-first-list-render-depends-on-the-wasm-only-by-order-and-the-order-is-the-session));
+and the runs its section 8 still owes - delivery at the peer, and the Android and iPhone send, kill
+and relaunch rows on a shaped link
+([section 8](../frontend/offline-and-weak-network.md#8-not-measured-and-owed)).
+
+**Carried from the attachment-path audit (2026-10-10, its entry closed into this one on
+2026-11-11).** The upload bubble, the 8 MiB body budget, navigation never waiting on a post and
+the upload outside the send lane shipped, and the file's bytes left the outbox row (section 13.7).
+Still real: a CHAT attachment restarts at byte 0 after a failure - only a chat reel (RC-5) and a feed
+post resume, the general writer is S2 of [media-streaming-upload](../services/media-streaming-upload.md)
+([section 13](../frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for));
+and a salon poll is not queued while the link is down.

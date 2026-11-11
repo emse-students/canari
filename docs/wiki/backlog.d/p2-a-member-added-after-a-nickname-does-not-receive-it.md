@@ -1,6 +1,6 @@
 ## P2 - a member added to a group AFTER a nickname was set never shows it (reading 2 of "Modifier les pseudos" FAILED on `v1.6.9-alpha.1`, 2026-11-09) - BUILT (#3185), the re-reading owed
 
-Read on dev: the Mi 9T (inviter, sideloaded `1.6.9` build) and a web client (the invited account, a second signed-in browser profile that already held an MLS device). Entry: [the nicknames readings](p3-modifier-les-pseudos-built-readings-owed.md), item 2.
+Read on dev: the Mi 9T (inviter, sideloaded `1.6.9` build) and a web client (the invited account, a second signed-in browser profile that already held an MLS device). Entry: [the nicknames readings](../backlog.md#owed-a-verification-and-nothing-else), item 2.
 
 **What happened.**
 

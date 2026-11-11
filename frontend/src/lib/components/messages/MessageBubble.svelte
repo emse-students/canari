@@ -171,7 +171,7 @@
      * messages -> pas dans la bulle, dans le composer de message classique"*), so the bubble only
      * announces it. Omit to hide the edit action.
      */
-    onBeginEdit?: (messageId: string, text: string) => void;
+    onBeginEdit?: (messageId: string, text: string, captionOnly?: boolean) => void;
     /** ID of the authenticated user, used to highlight own reactions and gate edit/delete. */
     currentUserId?: string;
     /** Bearer token forwarded to MediaService for downloading and decrypting attachments. */
@@ -516,14 +516,21 @@
 
   /** Hands the message to the composer for editing, and closes whatever panel was open on it. */
   function startEdit() {
-    onBeginEdit?.(messageId, textContent);
+    onBeginEdit?.(messageId, textContent, !!mediaRef);
     emojiPickerOrigin = null;
     showInfo = false;
     showMobileActions = false;
   }
 
-  /** Only the author's own text message can be edited, and only where the parent can take it. */
-  const canEdit = $derived(!isDeleted && isOwn && !mediaRef && !pollEnvelope && !!onBeginEdit);
+  /**
+   * The author's own text message can be edited, and a media message's CAPTION (owner, 2026-11-11:
+   * the media stays, the bubble shows "modifié" like an edited text) - only where the parent can take
+   * it. A CanaReel sent here is a media message like a photo and its caption is text like a photo's;
+   * a voice note has no caption to edit, and a poll cannot be edited.
+   */
+  const canEdit = $derived(
+    !isDeleted && isOwn && !pollEnvelope && !mediaRef?.voiceNote && !!onBeginEdit
+  );
 
   /**
    * ONE TAP OPENS THE INFO PANEL, TWO TAPS LIKE - NEVER BOTH (user, 2026-10-12). The first tap used
@@ -1232,7 +1239,6 @@
             <MessageBubbleToolbar
               {isOwn}
               {isDeleted}
-              hasMedia={!!mediaRef}
               {showEmojiPicker}
               onReply={onReply ? () => onReply!(messageId) : undefined}
               onForward={forwardAction ? () => forwardAction!(messageId) : undefined}
@@ -1313,7 +1319,6 @@
       anchor={bubbleAnchor}
       {isOwn}
       {isDeleted}
-      hasMedia={!!mediaRef}
       userReactions={userOwnReactions}
       onReactEmoji={(emoji) => {
         onReact?.(messageId, emoji);
