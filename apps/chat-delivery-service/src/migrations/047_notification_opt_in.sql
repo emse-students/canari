@@ -12,6 +12,11 @@
 -- in 1.6.10-alpha.1 only, and its absence from `disabledCategories` is also what every save made by a
 -- build that never drew it (or that saved another switch) wrote. Every account therefore starts with
 -- the push of the opt-in categories off; one that switched the alpha.1 switch off keeps both off.
+-- That alpha.1 (a pre-release: its tester builds and web talk to the dev estate only, so production
+-- holds no row it wrote) drew "Suggestions" as an ordinary opt-out category - on by default, its GET
+-- the STORED set - so a `suggestions` it wrote into `disabledCategories` is an explicit off and an
+-- unrelated save left it as stored; it had no push opt-in, so no account carries an "on" from it.
+-- The client that defaulted Suggestions to off was this column's first draft and never shipped.
 -- social-service reads the same two columns (`push/notification-category.ts`), in the same database.
 --
 -- ADDITIVE ONLY: a new column with a constant default, a catalogue-only change on PostgreSQL 11+
