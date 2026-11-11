@@ -215,9 +215,13 @@ Every end records the help as seen: Next on the last step, "Passer", Esc, Back, 
 it (`replayGuide('welcome-tour')`, then the feed - the tour applies to `/posts`, where every control
 it points at is drawn). A replay ignores the seen set and still waits for the quiet state.
 
-**An unseen help starts only once the server has answered** (`seenHelps.ready`): starting on the
-local copy alone would replay on a new device a tour the account finished on another one. A device
-that cannot reach the server shows no new help; the next opening asks again.
+**An unseen help starts only on a copy the server has answered** (`seenHelps.ready`): starting on a
+copy the server never filled would replay on a new device a tour the account finished on another
+one. A device that never reached the server shows no new help; the next opening asks again. **Since
+2026-11-11 a copy the server once filled is ready at once** (the persisted `confirmed` flag), because
+the read waits for the session refresh at a cold start - 4 s on the owner's link - and is revalidated
+behind the drawing; the case taken knowingly is a help finished on ANOTHER device since that answer
+([local-first-ui](local-first-ui.md#4bis-the-session-refresh-no-longer-gates-the-boot-paths-first-paint-2026-11-11)).
 
 ## The first-time hints, batch 1 - create
 

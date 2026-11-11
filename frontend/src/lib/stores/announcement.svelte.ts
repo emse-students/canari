@@ -2,6 +2,7 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { getClientAppVersion } from '$lib/utils/appVersion';
 import { getLocale } from '$lib/paraglide/runtime';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /** What the server hands over: both languages, so this layer picks. */
 export type PlatformAnnouncement = {
@@ -27,6 +28,11 @@ let checked = false;
  * still in flight when its account signs out cannot land its announcement for the next one.
  */
 let generation = 0;
+/** The account the latch was taken for: whose device copy a dismissal drops. */
+let account: string | null = null;
+/** Ids closed in this process: an answer computed before the "seen" landed must not reopen one. */
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- nothing renders it; `pending` is the state
+const dismissedHere = new Set<string>();
 
 /** Parses the endpoint's JSON, rejecting anything that would render as a blank modal. */
 export function parseAnnouncement(raw: unknown): PlatformAnnouncement | null {
@@ -80,12 +86,21 @@ export function getPendingAnnouncement(): LocalizedAnnouncement | null {
  * captured by `/api/users/:id` and answered 404 on every opening, for weeks, and the line saying so
  * was indistinguishable from the ordinary quiet case. A status that is not 200 is now ACCUSED.
  */
-export async function refreshAnnouncement(): Promise<void> {
+export async function refreshAnnouncement(userId: string): Promise<void> {
   if (checked) return;
   checked = true;
+  account = userId;
   const asked = generation;
+  const clientVersion = getClientAppVersion();
+  // DRAWN FROM THE DEVICE FIRST (slow-link chantier, gap 1, 2026-11-11): the ask below needs a token,
+  // and a cold start's token is the session refresh - 4 s on the owner's link, server 17 ms.
+  const held = readHeldAnnouncement(userId, clientVersion);
+  if (held && !dismissedHere.has(held.id)) {
+    pending = held;
+    console.debug(`[announcement] showing ${held.id} from the device copy, asking the server`);
+  }
   try {
-    const url = `${coreUrl()}/api/users/me/announcement?clientVersion=${encodeURIComponent(getClientAppVersion())}`;
+    const url = `${coreUrl()}/api/users/me/announcement?clientVersion=${encodeURIComponent(clientVersion)}`;
     const res = await apiFetch(url);
     if (asked !== generation) {
       console.debug('[announcement] dropped an answer that belongs to the account that signed out');
@@ -103,10 +118,62 @@ export async function refreshAnnouncement(): Promise<void> {
       console.debug('[announcement] dropped an answer that belongs to the account that signed out');
       return;
     }
-    pending = parseAnnouncement(body?.announcement ?? null);
+    const answer = parseAnnouncement(body?.announcement ?? null);
+    // The server's answer replaces the copy - including with nothing (read on another device, or
+    // withdrawn). One closed here meanwhile stays closed: its "seen" may not have landed yet.
+    pending = answer && !dismissedHere.has(answer.id) ? answer : null;
+    holdAnnouncement(userId, clientVersion, pending);
     if (pending) console.debug(`[announcement] showing ${pending.id}`);
+    else if (held) console.debug(`[announcement] the server no longer lists ${held.id} - closed`);
   } catch (e) {
-    console.debug('[announcement] fetch failed, will ask again next opening:', e);
+    console.debug(
+      `[announcement] fetch failed, will ask again next opening (device copy ${held ? `${held.id} kept` : 'none'}):`,
+      e
+    );
+  }
+}
+
+/** The copy kept on the device: the server's last answer, and the client version it was asked for. */
+type HeldAnnouncement = { clientVersion: string; announcement: PlatformAnnouncement };
+
+/**
+ * The announcement held for `userId`, or `null`. ONLY THE CLIENT VERSION THAT ASKED may draw it: the
+ * server owns the range comparison, so a copy asked by another version says nothing about this one.
+ */
+function readHeldAnnouncement(userId: string, clientVersion: string): PlatformAnnouncement | null {
+  try {
+    const raw = localStorage.getItem(ACCOUNT_KEY.pendingAnnouncement(userId));
+    if (!raw) return null;
+    const held = JSON.parse(raw) as Partial<HeldAnnouncement> | null;
+    if (held?.clientVersion !== clientVersion) {
+      console.debug(
+        '[announcement] the device copy was asked by another client version - not drawn'
+      );
+      return null;
+    }
+    return parseAnnouncement(held.announcement ?? null);
+  } catch (e) {
+    console.warn('[announcement] the device copy could not be read - the server decides', e);
+    return null;
+  }
+}
+
+/** Keeps (or, with `null`, drops) the device copy of `userId`'s pending announcement. */
+function holdAnnouncement(
+  userId: string,
+  clientVersion: string,
+  announcement: PlatformAnnouncement | null
+): void {
+  try {
+    const key = ACCOUNT_KEY.pendingAnnouncement(userId);
+    if (!announcement) {
+      localStorage.removeItem(key);
+      return;
+    }
+    const held: HeldAnnouncement = { clientVersion, announcement };
+    localStorage.setItem(key, JSON.stringify(held));
+  } catch (e) {
+    console.warn('[announcement] the device copy could not be written', e);
   }
 }
 
@@ -121,6 +188,9 @@ export async function dismissAnnouncement(): Promise<void> {
   const announcement = pending;
   pending = null;
   if (!announcement) return;
+  dismissedHere.add(announcement.id);
+  // The device copy goes with it: the next opening draws nothing until the server says otherwise.
+  if (account) holdAnnouncement(account, getClientAppVersion(), null);
   try {
     const res = await apiFetch(
       `${coreUrl()}/api/users/me/announcement/${encodeURIComponent(announcement.id)}/seen`,
@@ -147,5 +217,7 @@ export function resetAnnouncementState(): void {
   );
   pending = null;
   checked = false;
+  account = null;
+  dismissedHere.clear();
   generation += 1;
 }

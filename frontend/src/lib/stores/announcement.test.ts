@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { parseAnnouncement, localizeAnnouncement } from './announcement.svelte';
 
 /**
@@ -76,6 +77,7 @@ describe('refreshAnnouncement', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    localStorage.clear();
     vi.doMock('$lib/utils/apiUrl', () => ({ coreUrl: () => 'https://example.test' }));
     vi.doMock('$lib/utils/appVersion', () => ({ getClientAppVersion: () => '0.14.0' }));
     vi.doMock('$lib/paraglide/runtime', () => ({ getLocale: () => 'fr' }));
@@ -88,7 +90,7 @@ describe('refreshAnnouncement', () => {
     vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch }));
 
     const mod = await load();
-    await mod.refreshAnnouncement();
+    await mod.refreshAnnouncement('u1');
 
     const url: string = apiFetch.mock.calls[0][0];
     expect(url).toContain('/api/users/me/announcement');
@@ -104,7 +106,7 @@ describe('refreshAnnouncement', () => {
     const accused = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const mod = await load();
-    await mod.refreshAnnouncement();
+    await mod.refreshAnnouncement('u1');
 
     expect(accused).toHaveBeenCalledTimes(1);
     expect(String(accused.mock.calls[0][0])).toContain('404');
@@ -119,7 +121,7 @@ describe('refreshAnnouncement', () => {
     const accused = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const mod = await load();
-    await mod.refreshAnnouncement();
+    await mod.refreshAnnouncement('u1');
 
     // 200 + null is the ordinary case and must never look like a failure.
     expect(accused).not.toHaveBeenCalled();
@@ -141,7 +143,7 @@ describe('refreshAnnouncement', () => {
     vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch }));
 
     const mod = await load();
-    await mod.refreshAnnouncement();
+    await mod.refreshAnnouncement('u1');
 
     expect(mod.getPendingAnnouncement()).toEqual({ id: 'a1', title: 'Titre', body: 'Corps' });
   });
@@ -161,15 +163,15 @@ describe('refreshAnnouncement', () => {
     vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch }));
 
     const mod = await load();
-    await mod.refreshAnnouncement();
+    await mod.refreshAnnouncement('u1');
     // Same account, same opening: the latch holds.
-    await mod.refreshAnnouncement();
+    await mod.refreshAnnouncement('u1');
     expect(apiFetch).toHaveBeenCalledTimes(1);
 
     mod.resetAnnouncementState();
     // The first account's announcement is not left for the next one to see.
     expect(mod.getPendingAnnouncement()).toBeNull();
-    await mod.refreshAnnouncement();
+    await mod.refreshAnnouncement('u1');
     expect(apiFetch).toHaveBeenCalledTimes(2);
   });
 
@@ -189,14 +191,115 @@ describe('refreshAnnouncement', () => {
     vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch }));
 
     const mod = await load();
-    const firstAsk = mod.refreshAnnouncement();
+    const firstAsk = mod.refreshAnnouncement('u1');
     // The first account signs out while its ask is in flight, and the next one is asked for.
     mod.resetAnnouncementState();
-    await mod.refreshAnnouncement();
+    await mod.refreshAnnouncement('u1');
     answerFirst({ ok: true, json: async () => ({ announcement }) });
     await firstAsk;
 
     expect(apiFetch).toHaveBeenCalledTimes(2);
     expect(mod.getPendingAnnouncement()).toBeNull();
+  });
+});
+
+/**
+ * SLOW-LINK CHANTIER, GAP 1 (2026-11-11): the ask waits for the token, which a cold start gets from
+ * the session refresh (4 s on the owner's link). The announcement the server last listed is drawn
+ * from the device at once - by the same client version only - and the answer replaces it.
+ */
+describe('refreshAnnouncement draws the device copy before the network answers', () => {
+  const announcement = {
+    id: 'a1',
+    titleFr: 'Titre',
+    titleEn: 'Title',
+    bodyFr: 'Corps',
+    bodyEn: 'Body',
+  };
+  let version = '0.14.0';
+  const load = async () => {
+    vi.resetModules();
+    return import('./announcement.svelte');
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+    version = '0.14.0';
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.doMock('$lib/utils/apiUrl', () => ({ coreUrl: () => 'https://example.test' }));
+    vi.doMock('$lib/utils/appVersion', () => ({ getClientAppVersion: () => version }));
+    vi.doMock('$lib/paraglide/runtime', () => ({ getLocale: () => 'fr' }));
+  });
+
+  /** One opening: the server lists `a1`, then the process ends (the module is loaded again). */
+  async function anOpeningThatListedIt() {
+    vi.doMock('$lib/utils/apiFetch', () => ({
+      apiFetch: vi.fn().mockResolvedValue({ ok: true, json: async () => ({ announcement }) }),
+    }));
+    const first = await load();
+    await first.refreshAnnouncement('u1');
+    expect(first.getPendingAnnouncement()?.id).toBe('a1');
+  }
+
+  it('is on screen at once while the network answers nothing, then the answer replaces it', async () => {
+    await anOpeningThatListedIt();
+    let answer: (value: unknown) => void = () => {};
+    vi.doMock('$lib/utils/apiFetch', () => ({
+      apiFetch: vi.fn().mockReturnValue(new Promise((resolve) => (answer = resolve))),
+    }));
+    const mod = await load();
+    const asking = mod.refreshAnnouncement('u1');
+    // Nothing has answered, not even the token: the modal is already decided.
+    expect(mod.getPendingAnnouncement()?.id).toBe('a1');
+    answer({ ok: true, json: async () => ({ announcement: null }) });
+    await asking;
+    // Read on another device meanwhile: the server's "none" closes it, and the copy goes.
+    expect(mod.getPendingAnnouncement()).toBeNull();
+    expect(localStorage.getItem('canari_announcement:v1:u1')).toBeNull();
+  });
+
+  it('is not drawn by another client version, nor for another account', async () => {
+    await anOpeningThatListedIt();
+    vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch: () => new Promise(() => {}) }));
+    version = '0.15.0';
+    const upgraded = await load();
+    void upgraded.refreshAnnouncement('u1');
+    expect(upgraded.getPendingAnnouncement()).toBeNull();
+
+    version = '0.14.0';
+    const other = await load();
+    void other.refreshAnnouncement('u2');
+    expect(other.getPendingAnnouncement()).toBeNull();
+  });
+
+  it('a transport failure keeps the copy; a dismissal drops it and is not reopened by a late answer', async () => {
+    await anOpeningThatListedIt();
+    let answer: (value: unknown) => void = () => {};
+    vi.doMock('$lib/utils/apiFetch', () => ({
+      apiFetch: vi
+        .fn()
+        .mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+        .mockResolvedValue({ ok: true }),
+    }));
+    const mod = await load();
+    const asking = mod.refreshAnnouncement('u1');
+    await mod.dismissAnnouncement();
+    expect(localStorage.getItem('canari_announcement:v1:u1')).toBeNull();
+    // The answer was computed before the "seen" landed: it still lists a1.
+    answer({ ok: true, json: async () => ({ announcement }) });
+    await asking;
+    expect(mod.getPendingAnnouncement()).toBeNull();
+
+    vi.doMock('$lib/utils/apiFetch', () => ({
+      apiFetch: vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
+    }));
+    localStorage.setItem(
+      'canari_announcement:v1:u1',
+      JSON.stringify({ clientVersion: '0.14.0', announcement })
+    );
+    const offline = await load();
+    await offline.refreshAnnouncement('u1');
+    expect(offline.getPendingAnnouncement()?.id).toBe('a1');
   });
 });

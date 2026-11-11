@@ -1465,6 +1465,35 @@ export async function loginImpl(
       storageOpen = getStorage(ctx.getUserId());
       startLandingPreview(storageOpen, deviceKeyB64);
     }
+    if (isBiometric && opts?.unattendedKeyRead === true && atRestScheme === 'hardware') {
+      // THE SAME HOLDS FOR A HARDWARE-HELD KEY READ WITH NO PROMPT (slow-link chantier, gap 1,
+      // 2026-11-11): "stay signed in" on such a phone, and the biometric cadence when no prompt is
+      // due. The key is a local keystore read that asks nobody, so the store can be opened and drawn
+      // now - the feed's stored page, the landing - instead of after the session refresh, which took
+      // 4 s on the owner's link while the server answered in 17 ms. `deviceKeyB64` stays empty: the
+      // native init still reads the keystore itself, and the vault write stays skipped.
+      //
+      // A read that fails here is not answered here: the init below reads the same alias and meets
+      // the same refusal on the login's own path, typed. This line says the early read lost its draw.
+      const early = await readHardwareHeldKey(tauriHardwareKeyPort, ctx.getUserId(), cb.log).catch(
+        (e: unknown) => {
+          cb.log(
+            `[AT_REST_KEY] WARN: the hardware-held key could not be read before the token - nothing drawn before the session (${String(e)})`
+          );
+          return null;
+        }
+      );
+      stopIfSignedOut('hardware-key-before-token');
+      if (early !== null && !isValidDeviceKeyB64(early)) {
+        cb.log('[AT_REST_KEY] WARN: the keystore answered a key that is not 32 bytes - not drawn');
+      } else if (early !== null) {
+        noteHardwareHeldDeviceKey(early);
+        ctx.setDeviceKey(early);
+        storageOpen = getStorage(ctx.getUserId());
+        startLandingPreview(storageOpen, early);
+        cb.log('[AT_REST_KEY] hardware-held key in hand before the token - local pages may draw');
+      }
+    }
     if (isBiometric) {
       cb.log('[BIOMETRIC] Skipping PIN verification - using device keystore...');
     } else {
@@ -1899,10 +1928,20 @@ export async function loginImpl(
       }
       // Read from the keystore: on a hardware-held phone no vault may copy it out (`saveDeviceKey`).
       if (atRestScheme === 'hardware') noteHardwareHeldDeviceKey(sessionKey);
+      // A key read before the token (an unattended hardware-held read) IS this one: the same alias.
+      // A difference would mean the store was drawn under another key - accused, and the session's
+      // key wins from here.
+      const drawnWith = ctx.getDeviceKey();
+      if (drawnWith && drawnWith !== sessionKey) {
+        cb.log(
+          '[AT_REST_KEY] ERROR: the key read before the token differs from the session key - the session key is kept'
+        );
+      }
       ctx.setDeviceKey(sessionKey);
-      // The keystore path learns its key only here, behind the single prompt and after the gate.
+      // The prompted keystore path learns its key only here, behind the single prompt and after the
+      // gate; the unattended hardware-held read already started its preview before the token.
       // Not awaited before the session flips: the landing selects the row whenever it arrives.
-      startLandingPreview(Promise.resolve(storageSettled.value), sessionKey);
+      if (!landingPreview) startLandingPreview(Promise.resolve(storageSettled.value), sessionKey);
     }
 
     ctx.setStorage(storageSettled.value);

@@ -32,8 +32,9 @@
   // One ask per app opening, and only once there IS an account to ask on behalf of: the endpoint
   // is authenticated, so asking before sign-in would spend a 401 to learn nothing.
   $effect(() => {
-    if (!currentUserId() || blocked) return;
-    void refreshAnnouncement();
+    const userId = currentUserId();
+    if (!userId || blocked) return;
+    void refreshAnnouncement(userId);
   });
 
   async function close() {

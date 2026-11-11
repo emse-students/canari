@@ -1,5 +1,6 @@
 import { SvelteSet } from 'svelte/reactivity';
 import { Log } from '$lib/utils/Log';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { fetchBirthdaysToday, fetchMyBirthday } from './api';
 
 /** The Paris calendar date (`YYYY-MM-DD`), the zone the server decides "today" in. */
@@ -108,34 +109,52 @@ export function followBirthdaysToday(account: string): () => void {
 
 /**
  * WHETHER THE SIGNED-IN ACCOUNT HAS ENTERED A BIRTHDAY - the fact the one-time birthday prompt reads
- * (`components/posts/BirthdayFeedCard.svelte`). `null` is "nobody could say" (offline, an older server): the prompt
- * is then NOT shown, since inviting a member to enter a date they may have entered is a wrong
- * statement. Only the account last passed to {@link OwnBirthdayFact.load} is held.
+ * (`components/posts/BirthdayFeedCard.svelte`). `null` is "nobody could say" (offline, an older
+ * server, a device that never asked): the prompt is then NOT shown, since inviting a member to enter
+ * a date they may have entered is a wrong statement. Only the account last passed to
+ * {@link OwnBirthdayFact.load} is held.
+ *
+ * DRAWN FROM THE DEVICE FIRST (slow-link chantier, gap 1, 2026-11-11). The read needs a token, and a
+ * cold start's token is the session refresh (4 s on the owner's link, server 17 ms). The last answer
+ * is kept per account (`ACCOUNT_KEY.ownBirthdayKnown`: one boolean about the account itself, never
+ * the date) and held at once; the server is still asked once per process and its answer replaces it.
  */
 export class OwnBirthdayFact {
   #account: string | null = null;
   #hasBirthday = $state<boolean | null>(null);
+  /** The server (or a save in the settings) answered for the account in this process. */
+  #answered = false;
 
   /** `true`/`false` for the loaded account, `null` while unknown. Reactive. */
   get hasBirthday(): boolean | null {
     return this.#hasBirthday;
   }
 
-  /** Asks the server about `account`; a repeat for the same account that has an answer is a no-op. */
+  /**
+   * Holds `account`'s device copy at once, then asks the server; a repeat for the same account the
+   * server already answered is a no-op.
+   */
   async load(account: string): Promise<void> {
-    if (this.#account === account && this.#hasBirthday !== null) return;
+    if (this.#account === account && this.#answered) return;
     if (this.#account !== account) {
       this.#account = account;
-      this.#hasBirthday = null;
+      this.#answered = false;
+      this.#hasBirthday = readOwnBirthdayCopy(account);
+      Log.d(
+        'birthdays',
+        `own birthday: device copy ${String(this.#hasBirthday)}, asking the server`
+      );
     }
     try {
       const { birthday } = await fetchMyBirthday();
       if (this.#account !== account) return;
       this.#hasBirthday = birthday !== null;
+      this.#answered = true;
+      writeOwnBirthdayCopy(account, this.#hasBirthday);
     } catch (e) {
       Log.i(
         'birthdays',
-        `own birthday: the server could not be asked, the prompt waits: ${String(e)}`
+        `own birthday: the server could not be asked, the device copy stands (${String(this.#hasBirthday)}): ${String(e)}`
       );
     }
   }
@@ -144,6 +163,30 @@ export class OwnBirthdayFact {
   set(account: string, hasBirthday: boolean): void {
     this.#account = account;
     this.#hasBirthday = hasBirthday;
+    this.#answered = true;
+    writeOwnBirthdayCopy(account, hasBirthday);
+  }
+}
+
+/** Reads the persisted fact of `account`, or `null` when none is held or it cannot be read. */
+function readOwnBirthdayCopy(account: string): boolean | null {
+  try {
+    const raw = localStorage.getItem(ACCOUNT_KEY.ownBirthdayKnown(account));
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    return null;
+  } catch (e) {
+    Log.i('birthdays', `own birthday: the device copy could not be read: ${String(e)}`);
+    return null;
+  }
+}
+
+/** Persists the fact of `account`; a refused write is logged and leaves the next opening asking. */
+function writeOwnBirthdayCopy(account: string, hasBirthday: boolean): void {
+  try {
+    localStorage.setItem(ACCOUNT_KEY.ownBirthdayKnown(account), String(hasBirthday));
+  } catch (e) {
+    Log.i('birthdays', `own birthday: the device copy could not be written: ${String(e)}`);
   }
 }
 

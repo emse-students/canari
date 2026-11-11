@@ -10,7 +10,13 @@ state first, then revalidates ([local-first-ui](../frontend/local-first-ui.md)).
 `canari-log-1.6.9-20261110-1810.txt`:
 
 1. The session refresh (4 s at the 20:58 boot, server 17 ms) gates the first reads: the feed,
-   the announcement, help-seen and the birthday.
+   the announcement, help-seen and the birthday. **Built 2026-11-11**: the reads still queue behind
+   the token (they must), the screens no longer do - first paint with the network answering nothing
+   went from never to 0 RTT for the feed on a hardware-held phone, the announcement, the help-seen
+   set and the "birthday entered" fact; the feed on a vault/web unlock was already 0 RTT
+   ([local-first-ui](../frontend/local-first-ui.md#4bis-the-session-refresh-no-longer-gates-the-boot-paths-first-paint-2026-11-11)).
+   Left: today's celebrants stay network-only (memory-only by the birthdays decision); the dev cold
+   boot re-read under DevTools throttling and the Mi 9T first-paint reading are owed.
 2. Some screens have no local copy: Pour toi, the bell, profiles already seen.
 3. Media seen once is not kept, within a size budget.
 4. Per-community triplet reads: 27 calls for 9 communities.
