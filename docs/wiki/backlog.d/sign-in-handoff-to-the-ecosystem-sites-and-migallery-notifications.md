@@ -86,9 +86,13 @@ same list heads `libs/contracts/ecosystem-sites.json`):
   ALWAYS (a session or none, section 3.7), and the user's click sends the same token again
   (section 8).
 
-**Not built yet:** H3 (the vendored verifier in `libs/`; the reference is `verifyHandoff` in
-`handoff-redeem.contract.spec.ts`, and section 8 is the contract), the `/ecosystem/[site]` tap route
-(it belongs with N1), and everything on a site (H4, H6, H7).
+**H3 built (2026-11-11):** `libs/handoff/handoff-verify.ts` (the verifier, on `jose`) and
+`libs/handoff/handoff-landing.ts` (the landing page's logic: the fragment read and removed, the
+redemption post, the step it answers), with `libs/handoff/handoff.test.ts` running every vector,
+the replay and the landing steps (`make test-ci-scripts`). `tools/ecosystem-shape/shape.mjs` claim 6
+compares MiGallery's three copies byte for byte, so the site's PR merges FIRST. **H4 (MiGallery)
+is a draft PR** (MiGallery #461). **Not built yet:** the `/ecosystem/[site]` tap route (it belongs
+with N1), H6, H7.
 
 Everything below is design. File:line references are against `main` on 2026-11-07. Sibling
 repositories are named relative to this one (`../MiGallery`, `../Sky`, `../le-cercle`,
@@ -273,7 +277,8 @@ The verification contract, in this order. Each step ends in a typed outcome, log
 and never the token:
 
 1. parse; `typ` = `canari-handoff+jwt`; `alg` in `{ES256}`, so `none` and HS256 are refused
-   (algorithm confusion); `kid` in the JWKS; signature (`invalid`);
+   (algorithm confusion); `kid` in the JWKS; signature (`invalid`); keys that cannot be fetched
+   are an outage, not the token's fault (`keys_unavailable`, 503);
 2. `iss` = the one configured issuer (`wrong_issuer`); `aud` = the site's own id (`wrong_audience`);
 3. `exp` not past, `iat` not in the future, each with 30 s of leeway for clock skew; **`exp - iat`
    no more than 60**, so even a signed token with a longer lifetime is refused (`expired`,
@@ -564,6 +569,10 @@ named and logged `[HANDOFF] refused class=<outcome> jti=<jti or none>` - **never
    rule): `JWTExpired` -> `expired`; `JWTClaimValidationFailed` with `claim === 'iss'` ->
    `wrong_issuer`, with `claim === 'aud'` -> `wrong_audience`; every other failure (signature,
    `alg`, `typ`, an unknown `kid`, a malformed token, a missing claim) -> `invalid`. All `400`.
+   **Except an outage:** when the key resolver cannot OBTAIN the keys (the JWKS unreachable, a
+   timeout, a non-200, a malformed set) -> `keys_unavailable`, `503`, logged at error. Decided
+   inside the resolver (review of 2026-11-11), so nothing a token carries can be classified as an
+   outage; an unknown or ambiguous `kid` stays `invalid`. The `keysUnavailable` vector pins it.
 2. On the verified payload: every claim of its type (`dest` a string, `iat` and `exp` numbers),
    else `invalid`; `iat > now + 30` -> `not_yet_valid`; `exp - iat > 60` -> `too_long`.
 3. `dest` through `safeRedirectTarget` (`src/lib/auth-redirect.ts`), else `bad_dest`.

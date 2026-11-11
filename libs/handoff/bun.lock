@@ -1,0 +1,15 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "canari-handoff-source",
+      "dependencies": {
+        "jose": "6.2.10",
+      },
+    },
+  },
+  "packages": {
+    "jose": ["jose@6.2.10", "", {}, "sha512-iiW7J9qRFlGxvCOIBDBDxFePQSn7ZMAnrYGhrrOo6siO/MIqwfyilLR27pkfDgUk+raLuzADS8A3S/KLBisc0g=="],
+  }
+}
