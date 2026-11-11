@@ -12,8 +12,9 @@
    * viewer's one implementation (`replayTimeLeft`), never from this phone's clock; a row without
    * the server's clock shows none.
    */
-  import { History, Play } from '@lucide/svelte';
+  import { History } from '@lucide/svelte';
   import type { PostEntity } from '$lib/posts/api';
+  import VideoGlassGlyph from '$lib/components/ui/player/VideoGlassGlyph.svelte';
   import LivePosterImage from '$lib/components/live/LivePosterImage.svelte';
   import { formatLiveElapsed } from '$lib/live/openLives';
   import { replayCoverOf, replayTimeLeft } from '$lib/live/replayTimeline';
@@ -80,9 +81,7 @@
         >
       {/if}
     </span>
-    <span class="relative flex size-14 items-center justify-center rounded-full bg-white/20">
-      <Play size={28} strokeWidth={2.25} class="translate-x-0.5 fill-white" aria-hidden="true" />
-    </span>
+    <VideoGlassGlyph kind="play" size={64} class="relative" />
     {#if fallbackTitle}
       <span
         class="absolute inset-x-0 bottom-0 truncate bg-linear-to-t from-black/70 to-transparent px-3 pt-6 pr-16 pb-2 text-left text-sm font-semibold"

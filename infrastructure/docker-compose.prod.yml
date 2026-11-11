@@ -423,6 +423,9 @@ services:
       # Signs the one-time sign-in handoff to the MiConnect sites (docs/wiki/sessions.md, "The
       # sign-in handoff"). Unset: no handoff is minted and every site opens plainly.
       HANDOFF_SIGNING_KEY: ${HANDOFF_SIGNING_KEY:-}
+      # The read-only MiConnect account a handoff mint asks whether the user may enter the site
+      # (F3-bound). Unset: every mint is refused HANDOFF_MICONNECT_UNAVAILABLE and the site opens plainly.
+      MICONNECT_READER_TOKEN: ${MICONNECT_READER_TOKEN:-}
       # The /adminer/ route (database admin UI, global admins only). PRODUCTION ONLY: the dev compose
       # does not set it, so core-service issues no session there and the route does not exist.
       # It also needs INTERNAL_SHARED_SECRET (32+ characters) and refuses to open without it.

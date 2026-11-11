@@ -37,8 +37,15 @@ export interface CiphertextRangeSource {
   /**
    * Bytes `[start, endExclusive)` of the stored blob - FEWER when the blob ends first, as an HTTP
    * range is clamped to the object's end. The reader is what turns "fewer" into a truncation.
+   * `rank` overrides the source's own lane for this read (a stream's tail, read out of order behind
+   * what plays, is `background`); a source with no network ignores it.
    */
-  read(start: number, endExclusive: number, signal?: AbortSignal): Promise<Uint8Array<ArrayBuffer>>;
+  read(
+    start: number,
+    endExclusive: number,
+    signal?: AbortSignal,
+    rank?: GateRank
+  ): Promise<Uint8Array<ArrayBuffer>>;
 }
 
 /**
@@ -85,7 +92,7 @@ export function httpRangeSource(
 ): CiphertextRangeSource {
   const url = `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`;
   return {
-    async read(start, endExclusive, signal) {
+    async read(start, endExclusive, signal, rank) {
       /** When the gate granted the slot: the measure starts there, never at the queue. */
       let grantedAt = 0;
       // Typed exactly as the whole download types them (`fetchMediaObject`), so a renderer reads
@@ -105,7 +112,7 @@ export function httpRangeSource(
           }
         },
         signal,
-        lane
+        rank ?? lane
       );
       if (res.status === 410) throw new MediaPurgedError();
       if (res.status === 404) throw new MediaNotFoundError();
@@ -171,7 +178,7 @@ export class SegmentedMediaReader {
    * @throws {SegmentedMediaError} `length` when the blob ends before the segment does (truncated),
    *   `segment-auth` when its tag does not verify (altered, reordered, a false final segment).
    */
-  async readSegment(index: number, signal?: AbortSignal): Promise<ArrayBuffer> {
+  async readSegment(index: number, signal?: AbortSignal, rank?: GateRank): Promise<ArrayBuffer> {
     if (index < 0 || index >= this.header.segmentCount) {
       throw new RangeError(`segment ${index} outside [0, ${this.header.segmentCount})`);
     }
@@ -181,7 +188,7 @@ export class SegmentedMediaReader {
       sealed = this.prefetchedFirst.slice(0, end - start);
       this.prefetchedFirst = null;
     } else {
-      sealed = await this.source.read(start, end, signal);
+      sealed = await this.source.read(start, end, signal, rank);
     }
     if (sealed.byteLength !== end - start) {
       console.error(

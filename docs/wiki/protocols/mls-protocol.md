@@ -2977,7 +2977,7 @@ has the before/after table).
   restart the browser and sign in again; meanwhile use the app or another browser, which are other
   devices and leave this one's state intact; ask support before any reset, which would erase it. The
   persistent case - what, if anything, the product offers after N starts - is an owed item
-  ([backlog](../backlog.md#p2---unreadable-right-now-on-every-start-has-no-exit-but-the-user)).
+  ([backlog](../backlog.d/p2-the-web-checkpoint-is-82-wasm-chacha20-seal-the-hardened-reader-mer.md), item 5).
 - **The seal runs on the calling thread, not the encrypt worker**: WebCrypto already runs the cipher
   off the JavaScript thread; what remains on it is the input copy, measured as the main thread's
   longest stall.

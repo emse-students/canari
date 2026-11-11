@@ -2060,6 +2060,7 @@
           {onCancelReply}
           {nicknameScope}
           editingText={editSession.original}
+          editingAllowsEmpty={editSession.emptyAllowed}
           onCancelEdit={editSession.cancel}
           onConfirmEdit={editSession.confirm}
           {onFilesSelected}

@@ -47,6 +47,11 @@ describe('ReplayCard', () => {
     // The live title is the post caption, drawn by the post: the card adds no second one.
     expect(target.querySelector('[data-replay-card-title]')).toBeNull();
   });
+  it('draws the house glass play triangle, not a disc with a Lucide icon', () => {
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const { target } = render({ durationMs: 1000 });
+    expect(target.querySelector('[data-video-glass-glyph="play"]')).not.toBeNull();
+  });
   it('names the live when it had no title', () => {
     const { target } = render({ durationMs: 60_000, markdown: '' });
     expect(target.querySelector('[data-replay-card-title]')?.textContent).toContain(

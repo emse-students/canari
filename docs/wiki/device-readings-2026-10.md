@@ -1277,3 +1277,48 @@ tab-swipe gestures (no touch input was driven).
   w2 profile hold on dev (the file wants a `clients` list per account, which today says nothing for
   them), or type the PIN once on the phone yourself.**
 
+## 2026-10-28 - sharing on the Mi 9T (1.5.1 rig builds)
+
+Moved here from the sharing backlog entry when it was closed into
+[the verification table](backlog.md#owed-a-verification-and-nothing-else) (backlog triage of
+2026-11-11); what is still owed is in [sharing](frontend/sharing.md#owed).
+
+**Mi 9T readings, 1.5.1 rig build `da43b8447` on dev (2026-10-28), all `PASS`:** a text share (warm,
+and cold behind the PIN: drained on mount, offered once unlocked) and a photo from the gallery land
+in the picked conversation with the conversation OPEN and the share staged, never sent (#2609); the
+text-only inbox folder is deleted at once and a removed staged file leaves `shared_inbox/` empty
+(#2620); a staged text stays with its conversation across a switch (#2614); a refused stream shows
+the `share_items_lost` toast ("1 item(s) lost" in the log); the keyboard rises with the composer
+and the staged file above it; the system sheet offers three Canari direct-share suggestions (S5); a
+post's sheet opens with its send-to grid, "Copier le lien" and "Partager via...", whose system
+chooser carries the post's link. **Second pass, same build and day, synthetic media only:** S3
+`PASS` - a PNG, a PDF and an MP4 sent into a bench DM each open the system chooser on the decrypted
+file ("Partager l'image" with its preview; "Partage de 1 fichier" named `.pdf` / `.mp4`), the log
+showing `share_staged` with the right type and size; deleting the three messages (one choice, a
+definitive delete) leaves three "message deleted" tombstones, and the last copy stays in `cache/share_out/` until the
+next share, a sign-out or a launch, as [share-out](frontend/share-out.md#the-decrypted-copy-and-how-long-it-lives)
+says (the launch sweep was read: `share_out: 1 removed`). Several photos `PASS` - three PNGs from
+Files in one share: `SEND_MULTIPLE`, `3 stream(s)`, three `copied`, "3 FICHIERS EN ATTENTE" in the
+open conversation; removing all three leaves `shared_inbox/` empty and no manifest. Kill-and-relaunch:
+a text share drained into the "Envoyer a..." picker, then `force-stop`, is **not offered again** -
+the drain had claimed `pending_share.json` (`drained (109 bytes)`), so the share lived only in the
+dead page; [sharing](frontend/sharing.md#owed) expects "the waiting share kept" across a kill, which
+covers an UNDRAINED manifest and says nothing of one already in the picker. S6 from a reel **`FAIL`**:
+publishing a reel from a gallery video works, its sheet draws the grid, "Copier le lien" and
+"Partager via...", but every row does nothing and throws (a defect fixed the same day), so #2609's dismissal could not be
+read; the same sheet from the reel's `/posts/<id>` page opens the chooser on the dev link. The reel
+was deleted from that page's menu - the viewer itself has no author menu.
+**The undrained half of kill-and-relaunch `PASS`** (Mi 9T, rig build `3ea795fd5`, 2026-10-28): a
+text share into a killed app is written natively at once (`ready` 10 ms after `share received`) and
+drained only at the page's mount, about 2 s later. A `force-stop` 0.8 s after the share left
+`pending_share.json` on disk with no drain line; a plain launcher relaunch drained it on mount (before
+the PIN), and after unlock "Envoyer a..." was offered; choosing the bench DM staged the shared text in
+the composer, unsent. (S6 from a reel and #2609's dismissal read `PASS` once that defect was
+fixed.)
+**Rig build `5c362c0e1`, same day:** a file saved twice from a conversation (#2648) `PASS` - the
+system save dialog shows the audio type, and the second save of a synthetic `.mp3` is
+`<name> (1).mp3`, no longer `<name>.mp3 (1)`.
+
+**Decided on reading (lead, 2026-11-11, reversible):** a share already drained into the "Envoyer a..."
+picker belongs to that page, and a kill of the page loses it, as a kill loses any picker; only an
+UNDRAINED manifest is promised to survive a kill ([sharing](frontend/sharing.md#owed)).

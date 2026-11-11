@@ -12,6 +12,7 @@ import type { MediaSourceConstructor } from './segmentedMediaStream';
 import { flushMacrotask } from '../../test/flush';
 import { readMp4Duration } from './mp4Duration';
 import { fragmentedMp4 } from './mp4Fixture.test-helper';
+import { GateRank, mediaRequestGate } from './requestGate';
 
 vi.mock('$lib/stores/auth', () => ({ getToken: () => Promise.resolve('token') }));
 
@@ -25,6 +26,9 @@ const {
 } = await import('./segmentedMediaStream');
 
 const WEBM = 'video/webm;codecs=vp9,opus';
+const MP4 = 'video/mp4; codecs="avc1.42c01e"';
+/** A request's byte range. */
+const RANGE = /bytes=(\d+)-(\d+)/;
 
 function ctor(supported: boolean): MediaSourceConstructor {
   return Object.assign(function FakeMediaSource() {} as unknown as MediaSourceConstructor, {
@@ -657,5 +661,321 @@ describe('openSegmentedStream', () => {
     handle.close();
 
     await expect(handle.done).rejects.toMatchObject({ name: 'AbortError' });
+  });
+  /**
+   * AN UNDECLARED MP4, STREAMED, LEARNS ITS LENGTH FROM ITS TAIL (owner, 2026-11-11: a CanaReel drew
+   * no seek line - `the engine knows no duration (Infinity, stream)`). The muxer's 10 s clip with a
+   * `free` box after its `moov` (its `tfra` offsets moved by as much), so the head holds the `moov`
+   * and the fragments and the `mfra` sit at the END. `mfraAt`, when given, is the absolute offset
+   * the `mfra` is moved to: on a segment boundary, the last fragment is in the segment before.
+   */
+  async function undeclaredMp4(
+    mediaId: string,
+    opts: { mfraAt?: number; hangFromRequest?: number } = {}
+  ) {
+    const movie = await fragmentedMp4(300);
+    const at = (type: string) => {
+      const code = Array.from(type, (c) => c.charCodeAt(0));
+      for (let i = 4; i + 4 <= movie.length; i++) {
+        if (code.every((c, k) => movie[i + k] === c)) return i - 4;
+      }
+      return -1;
+    };
+    const firstMoof = at('moof');
+    const pad = opts.mfraAt ? opts.mfraAt - at('mfra') : 3 * SEGMENTED_MEDIA_SEGMENT_BYTES;
+    const plain = new Uint8Array(movie.byteLength + pad);
+    plain.set(movie.subarray(0, firstMoof));
+    const view = new DataView(plain.buffer);
+    view.setUint32(firstMoof, pad);
+    plain.set([0x66, 0x72, 0x65, 0x65], firstMoof + 4);
+    plain.set(movie.subarray(firstMoof), firstMoof + pad);
+    // Every tfra moof_offset moves by the pad: entries of time and offset, then three small numbers.
+    const tfra = at('tfra') + pad;
+    const wide = plain[tfra + 8] === 1;
+    const sizes = view.getUint32(tfra + 16);
+    const count = view.getUint32(tfra + 20);
+    const stride =
+      (wide ? 16 : 8) + ((sizes >> 4) & 3) + 1 + (((sizes >> 2) & 3) + 1) + ((sizes & 3) + 1);
+    for (let k = 0; k < count; k++) {
+      const offsetAt = tfra + 24 + k * stride + (wide ? 8 : 4);
+      if (wide) view.setBigUint64(offsetAt, view.getBigUint64(offsetAt) + BigInt(pad));
+      else view.setUint32(offsetAt, view.getUint32(offsetAt) + pad);
+    }
+    expect(readMp4Duration(plain).samplesSeconds, 'the fixture is still a 10 s movie').toBeCloseTo(
+      10,
+      3
+    );
+    const { ciphertext, keyHex, ivHex } = await encryptSegmentedMedia(plain.buffer);
+    const sealed = new Uint8Array(ciphertext);
+    /** Each request's first plaintext segment index, and its abort signal. */
+    const requests: Array<{ segment: number; signal?: AbortSignal }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init: RequestInit) => {
+        const [, a, b] = RANGE.exec((init.headers as Record<string, string>).Range)!;
+        // 20 header bytes, then each segment and its 16-byte tag.
+        const segment = Math.max(
+          0,
+          Math.floor((Number(a) - 20) / (SEGMENTED_MEDIA_SEGMENT_BYTES + 16))
+        );
+        requests.push({ segment, signal: init.signal ?? undefined });
+        if (opts.hangFromRequest !== undefined && requests.length > opts.hangFromRequest) {
+          return new Promise<Response>((_resolve, reject) =>
+            init.signal?.addEventListener('abort', () =>
+              reject(new DOMException('aborted', 'AbortError'))
+            )
+          );
+        }
+        const part = sealed.slice(Number(a), Math.min(Number(b) + 1, sealed.byteLength));
+        return Promise.resolve(new Response(part, { status: 206 }));
+      })
+    );
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mp4');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const ref: MediaRef = {
+      type: 'video',
+      mediaId,
+      key: keyHex,
+      iv: ivHex,
+      mimeType: MP4,
+      size: plain.byteLength,
+      encoding: 'segmented-v1',
+    };
+    return {
+      ref,
+      requests,
+      segmentCount: Math.ceil(plain.byteLength / SEGMENTED_MEDIA_SEGMENT_BYTES),
+    };
+  }
+
+  /** An engine's source: `Infinity` until told, refusing a length set mid-update (the spec's rule). */
+  class LengthSource extends FakeMediaSource {
+    static lastLength: LengthSource | null = null;
+    sets: number[] = [];
+    current = Infinity;
+    updating = false;
+    constructor() {
+      super();
+      LengthSource.lastLength = this;
+      const append = this.buffer.appendBuffer.bind(this.buffer);
+      this.buffer.appendBuffer = (bytes: ArrayBuffer) => {
+        this.updating = true;
+        append(bytes);
+        queueMicrotask(() => (this.updating = false));
+      };
+    }
+    get duration() {
+      return this.current;
+    }
+    set duration(seconds: number) {
+      if (this.updating) throw new DOMException('updating', 'InvalidStateError');
+      this.sets.push(seconds);
+      this.current = seconds;
+    }
+  }
+  const LENGTH_STREAM = {
+    kind: 'stream' as const,
+    MediaSourceCtor: LengthSource as unknown as MediaSourceConstructor,
+    managed: false,
+  };
+
+  /** A viewer element whose buffer reaches `ahead` seconds past its playhead, told so by an event. */
+  function bufferAhead(element: FakeElement, ahead: number) {
+    element.bufferedEnd = element.currentTime + ahead;
+    element.dispatchEvent(new Event('progress'));
+  }
+
+  it('a viewer stream gives an undeclared MP4 the length read from its tail, once its buffer can spare it, in the background lane', async () => {
+    const { ref, requests, segmentCount } = await undeclaredMp4('undeclared');
+    const lanes: unknown[] = [];
+    const run = mediaRequestGate.run.bind(mediaRequestGate);
+    vi.spyOn(mediaRequestGate, 'run').mockImplementation((task, signal, lane) => {
+      lanes.push(lane instanceof GateRank ? `rank:${lane.lane}` : (lane ?? 'foreground'));
+      return run(task, signal, lane);
+    });
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const viewer = openSegmentedStream(
+      ref,
+      'https://media.test',
+      LENGTH_STREAM,
+      VIEWER_STREAM_PACING
+    );
+    const source = LengthSource.lastLength!;
+    const element = new FakeElement();
+    viewer.attach(element);
+    await vi.waitFor(() => expect(source.buffer.appended).toHaveLength(2));
+    await settle();
+    // The head is in, but less than the pacing's 30 s is buffered: no tail yet.
+    expect(requests.map((r) => r.segment)).toEqual([0, 1]);
+
+    bufferAhead(element, VIEWER_STREAM_PACING.aheadSeconds);
+    await vi.waitFor(() => expect(source.sets).toHaveLength(1));
+    expect(source.sets[0]).toBeCloseTo(10, 3);
+    expect(requests.map((r) => r.segment)).toEqual([0, 1, segmentCount - 1]);
+    expect(lanes.at(-1), 'the tail read waits behind what plays').toBe('rank:background');
+    expect(info.mock.calls.map((c) => String(c[0])).join(' ')).toContain(
+      'read from its last fragments'
+    );
+
+    // Reading on to the end takes the tail from the feed: each segment requested once.
+    viewer.fetchAll();
+    await viewer.done;
+    expect(requests).toHaveLength(segmentCount);
+    viewer.close();
+  });
+
+  it('reaches back a segment when the last fragment starts before the last segment', async () => {
+    const boundary = 3 * SEGMENTED_MEDIA_SEGMENT_BYTES;
+    const { ref, requests, segmentCount } = await undeclaredMp4('reach-back', { mfraAt: boundary });
+    expect(segmentCount).toBe(4);
+    const viewer = openSegmentedStream(
+      ref,
+      'https://media.test',
+      LENGTH_STREAM,
+      VIEWER_STREAM_PACING
+    );
+    const source = LengthSource.lastLength!;
+    const element = new FakeElement();
+    viewer.attach(element);
+    await vi.waitFor(() => expect(source.buffer.appended).toHaveLength(2));
+    bufferAhead(element, VIEWER_STREAM_PACING.aheadSeconds);
+    await vi.waitFor(() => expect(source.sets).toHaveLength(1));
+    expect(source.sets[0]).toBeCloseTo(10, 3);
+    // The mfra alone in the last segment, then the one before it, which holds the last fragment.
+    expect(requests.map((r) => r.segment)).toEqual([0, 1, 3, 2]);
+    viewer.close();
+  });
+
+  it('no tail is read while an in-order segment is still on the wire', async () => {
+    // Segment 2's request never answers: the element plays on what it has, short of 30 s.
+    const { ref, requests } = await undeclaredMp4('busy', { hangFromRequest: 2 });
+    const viewer = openSegmentedStream(
+      ref,
+      'https://media.test',
+      LENGTH_STREAM,
+      VIEWER_STREAM_PACING
+    );
+    const element = new FakeElement();
+    viewer.attach(element);
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    element.paused = false;
+    element.dispatchEvent(new Event('play'));
+    await vi.waitFor(() => expect(requests).toHaveLength(3));
+    bufferAhead(element, 5);
+    await settle();
+    expect(
+      requests.map((r) => r.segment),
+      'segment 2 outstanding, nothing more'
+    ).toEqual([0, 1, 2]);
+    viewer.close();
+  });
+
+  it('closing the viewer cancels a tail read on the wire, and none starts after the close', async () => {
+    // The tail's request (the third) never answers.
+    const { ref, requests } = await undeclaredMp4('closed', { hangFromRequest: 2 });
+    const card = openSegmentedStream(ref, 'https://media.test', LENGTH_STREAM, FEED_STREAM_PACING);
+    card.attach(new FakeElement());
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    const viewer = card.fork();
+    const source = LengthSource.lastLength!;
+    const element = new FakeElement();
+    viewer.attach(element);
+    await vi.waitFor(() => expect(source.buffer.appended).toHaveLength(2));
+    bufferAhead(element, VIEWER_STREAM_PACING.aheadSeconds);
+    await vi.waitFor(() => expect(requests).toHaveLength(3));
+    const tail = requests[2];
+    expect(tail.signal?.aborted).toBe(false);
+
+    viewer.close();
+    expect(tail.signal?.aborted, 'the viewer closed: its tail read is cancelled on the wire').toBe(
+      true
+    );
+    bufferAhead(element, 60);
+    await settle();
+    expect(requests).toHaveLength(3);
+    expect(source.sets).toEqual([]);
+    card.close();
+  });
+
+  it('a feed card, which draws no line, never fetches the tail out of order', async () => {
+    const { ref, requests } = await undeclaredMp4('card');
+    const card = openSegmentedStream(ref, 'https://media.test', LENGTH_STREAM, FEED_STREAM_PACING);
+    const source = LengthSource.lastLength!;
+    const element = new FakeElement();
+    card.attach(element);
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    bufferAhead(element, 60);
+    await settle();
+    expect(requests).toHaveLength(2);
+    expect(source.sets).toEqual([]);
+    card.close();
+  });
+
+  it('a declared length is the answer: the tail is not read', async () => {
+    const { ref, requests } = await undeclaredMp4('declared');
+    const viewer = openSegmentedStream(
+      { ...ref, durationMs: 10_000 },
+      'https://media.test',
+      LENGTH_STREAM,
+      VIEWER_STREAM_PACING
+    );
+    const source = LengthSource.lastLength!;
+    const element = new FakeElement();
+    viewer.attach(element);
+    await vi.waitFor(() => expect(source.buffer.appended).toHaveLength(2));
+    bufferAhead(element, 60);
+    await settle();
+    expect(requests).toHaveLength(2);
+    expect(source.sets).toEqual([10]);
+    viewer.close();
+  });
+
+  it('a tail it cannot read says why, as a warning, and the stream plays on', async () => {
+    const { ref } = await servedVideo(4);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const viewer = openSegmentedStream(
+      { ...ref('no-mfra'), mimeType: MP4 },
+      'https://media.test',
+      LENGTH_STREAM,
+      VIEWER_STREAM_PACING
+    );
+    const source = LengthSource.lastLength!;
+    const element = new FakeElement();
+    viewer.attach(element);
+    await vi.waitFor(() => expect(source.buffer.appended).toHaveLength(2));
+    bufferAhead(element, 60);
+    await vi.waitFor(() =>
+      expect(warn.mock.calls.map((c) => String(c[0])).join(' ')).toContain(
+        'none read from its tail - no moov in the head'
+      )
+    );
+    expect(source.sets).toEqual([]);
+    viewer.fetchAll();
+    await viewer.done;
+    viewer.close();
+  });
+
+  it('a seek ahead of the buffer drives the in-order fetch up to the segment holding the target', async () => {
+    const { ref } = await servedVideo(8);
+    const viewer = openSegmentedStream(
+      ref('seek'),
+      'https://media.test',
+      STREAM,
+      VIEWER_STREAM_PACING
+    );
+    const source = FakeMediaSource.last!;
+    // One second a segment: the element has buffered what was appended.
+    const element = Object.assign(new FakeElement(), { seeking: false });
+    Object.defineProperty(element, 'bufferedEnd', { get: () => source.buffer.appended.length });
+    viewer.attach(element);
+    await vi.waitFor(() => expect(source.buffer.appended).toHaveLength(2));
+    await settle();
+    expect(source.buffer.appended).toHaveLength(2);
+
+    element.currentTime = 6.5;
+    element.seeking = true;
+    element.dispatchEvent(new Event('seeking'));
+    await vi.waitFor(() => expect(source.buffer.appended.length).toBeGreaterThanOrEqual(7));
+    viewer.close();
   });
 });

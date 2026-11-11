@@ -166,6 +166,17 @@ export function ensurePeerNamesEpoch(userId: string): string | null {
   return epoch;
 }
 
+const endListeners = new Set<() => void>();
+
+/**
+ * Registers a holder of in-memory account data (the device copies of the bell and the profiles) to
+ * be emptied, synchronously, at the same moment the sealed names end - a sign-out or a change of
+ * account. Kept here because this light module is already what `stores/user.ts` calls.
+ */
+export function onPeerNamesEnded(listener: () => void): void {
+  endListeners.add(listener);
+}
+
 /**
  * Ends EVERY account's sealed directory and closes the memory copy, synchronously: a sign-out or a
  * change of account (`stores/user.ts`). No copy written before this call is read again; its bytes
@@ -176,6 +187,13 @@ export function ensurePeerNamesEpoch(userId: string): string | null {
  */
 export function endPeerNames(reason: string): void {
   forgetPeerNames();
+  for (const listener of endListeners) {
+    try {
+      listener();
+    } catch (error) {
+      console.warn(`[PEER-NAMES] an end listener failed (${reason}): ${String(error)}`);
+    }
+  }
   const keys: string[] = [];
   try {
     for (let i = 0; i < localStorage.length; i++) {

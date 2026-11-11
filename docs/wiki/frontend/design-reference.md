@@ -2556,7 +2556,7 @@ The height is MEASURED rather than counted, for the same reason `--chat-composer
 depends on how many banners are up, how their text wrapped and how wide the window is, so a constant
 per banner would be a sixth copy of a number that has already drifted five ways.
 
-The three window-scale banners (`EnvironmentBanner`, `MaintenanceAdminBanner`, `MlsFatalErrorBanner`;
+The two window-scale banners (`MaintenanceAdminBanner`, `MlsFatalErrorBanner`; `EnvironmentBanner` was the first until 2026-11-11, when the test-environment mark became a badge on the logo in `CanariBrand`;
 `OfflineBanner` was the fourth until 2026-11-11, when the connection became a ring on the header avatar -
 [offline-and-weak-network](offline-and-weak-network.md#the-connection-ring-owner-2026-11-11); `TabFollowerBanner` was the fifth until 2026-11-08, when a follower tab started handing
 its commits to the leader and the banner had nothing left to say - [chat](modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08))

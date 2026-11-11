@@ -106,6 +106,12 @@ const read = $state<{ data: FollowSuggestions | null; failed: boolean }>({
 });
 /** Cards dismissed in this session, `kind:id` - reactive, every carousel drops them at once. */
 const dismissed = new SvelteSet<string>();
+/**
+ * The card objects of the read in hand, built ONCE per read: a card keeps its identity while the
+ * list is filtered again, so a row's cards are not handed a new `card` prop (and their effects do
+ * not re-run) every time an unrelated ledger answer recomputes the list.
+ */
+let cardsOf: { people: SuggestedPerson[]; cards: SuggestionCard[] } | null = null;
 let epoch = 0;
 let asked = false;
 
@@ -117,6 +123,7 @@ export function resetSuggestions(): void {
   asked = false;
   read.data = null;
   read.failed = false;
+  cardsOf = null;
   dismissed.clear();
 }
 registerPerReaderCache(resetSuggestions);
@@ -151,11 +158,12 @@ export function suggestionsFollowingCount(): number | null {
  */
 export function feedSuggestionCards(): SuggestionCard[] {
   if (!read.data) return [];
+  const people = read.data.people;
+  if (cardsOf?.people !== people)
+    cardsOf = { people, cards: interleaveCards({ people, entities: [] }, Infinity) };
   // Filtered BEFORE the cap: a card that leaves (followed, requested, dismissed) lets the next one the
   // server sent slide in at the end of the row (owner, 2026-11-10) - the read carries up to 20 people.
-  return interleaveCards({ people: read.data.people, entities: [] }, Infinity)
-    .filter(cardDrawn)
-    .slice(0, CAROUSEL_CARDS_MAX);
+  return cardsOf!.cards.filter(cardDrawn).slice(0, CAROUSEL_CARDS_MAX);
 }
 
 /** Whether a card was dismissed in this session (the "Suivez aussi..." row reads it too). */

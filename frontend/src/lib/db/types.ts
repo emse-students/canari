@@ -1167,8 +1167,12 @@ export interface IStorage {
    * caller can tell "nothing stored" from "something stored that must go" and delete it.
    */
   getFeedPage(key: string, deviceKeyB64: string): Promise<unknown>;
-  /** Delete every stored feed page, returning how many went. Needs no key. */
-  deleteFeedPages(): Promise<number>;
+  /**
+   * Delete every stored page, or only those whose key starts with `keyPrefix`, returning how many
+   * went. Needs no key. The feed passes `feed:` so its churn leaves the device copies (`copy:`, the
+   * peer names) alone; a key change passes nothing and drops them all.
+   */
+  deleteFeedPages(keyPrefix?: string): Promise<number>;
   /** Delete the one stored feed page `key`, returning how many went (0 or 1). Needs no key. */
   deleteFeedPage(key: string): Promise<number>;
 

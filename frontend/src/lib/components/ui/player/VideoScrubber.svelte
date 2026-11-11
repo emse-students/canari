@@ -3,6 +3,7 @@
   import { clampFraction, formatVideoTime } from '$lib/utils/videoPlayback';
   import { videoGlass } from '$lib/utils/videoGlass';
   import { Log } from '$lib/utils/Log';
+  import { SEEK_LINE_TOUCH_REM } from './seekLineGeometry';
 
   /**
    * THE PLAYHEAD - ONE RECIPE, TWO SIZES (owner, 2026-11-09).
@@ -109,8 +110,9 @@
     bind:this={track}
     class="group/seek relative flex w-full cursor-pointer touch-none outline-none {variant ===
     'line'
-      ? 'h-8 items-end'
+      ? 'items-end'
       : 'h-11 items-center'}"
+    style={variant === 'line' ? `height: ${SEEK_LINE_TOUCH_REM}rem` : undefined}
     role="slider"
     tabindex="0"
     aria-label={m.video_seek_label()}
