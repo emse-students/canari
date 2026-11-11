@@ -31,6 +31,7 @@
   import { uploadCaption } from '$lib/utils/chat/uploadLabel';
   import type { UploadView } from '$lib/utils/chat/uploadProgress.svelte';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
+  import { NO_FURTHER_REELS } from '$lib/reels/allReels';
   import { isReelMessage, reelMessageAsPost, reelTombstoneOf } from '$lib/reels/chatReel';
   import { dropGoneReelCopy } from '$lib/reels/chatReelCache';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -672,7 +673,7 @@
     startPost={reelPost}
     {authToken}
     onClose={() => (showReelViewer = false)}
-    loadPage={async () => []}
+    loadPage={NO_FURTHER_REELS}
     onMediaGone={reelGone}
   />
 {/if}

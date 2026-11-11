@@ -33,12 +33,63 @@ export async function createPostNotificationsTable(
   for (const file of POST_NOTIFICATIONS_MIGRATIONS) {
     await q(readFileSync(join(__dirname, '..', 'migrations', file), 'utf8'));
   }
+  // A gated bell row (`BELL_ROW_GATE`) is written only for a reader whose category is on.
+  await createNotificationPreferenceTable(q);
+}
+
+/**
+ * Builds chat-delivery's `notification_preference` from the files the estates ran - its migration
+ * 028 and 047 (the opt-in categories, "Suggestions" off until turned on), the same database on every
+ * estate. Idempotent, so a spec may build it through more than one helper.
+ */
+export async function createNotificationPreferenceTable(
+  q: (sql: string) => Promise<unknown>
+): Promise<void> {
+  for (const file of ['028_notification_preferences.sql', '047_notification_opt_in.sql']) {
+    await q(
+      readFileSync(join(__dirname, '../../../chat-delivery-service/src/migrations', file), 'utf8')
+    );
+  }
+}
+
+/**
+ * Turns the PUSH of "Suggestions" on for each of `userIds` - opt-in since 2026-11-10 - as a
+ * `1.6.10` save of that switch writes it.
+ */
+export async function turnSuggestionPushOn(
+  q: (sql: string, params?: unknown[]) => Promise<unknown>,
+  userIds: readonly string[]
+): Promise<void> {
+  for (const id of userIds) {
+    await q(
+      `INSERT INTO notification_preference ("userId", "enabledCategories") VALUES ($1, '["suggestions"]')
+       ON CONFLICT ("userId") DO UPDATE SET "enabledCategories" = '["suggestions"]'`,
+      [id]
+    );
+  }
+}
+
+/**
+ * Switches "Suggestions dans l'app" OFF for each of `userIds` (on by default, owner's "Deux niveaux"
+ * of 2026-11-11) - the alpha.1 switch's "off" row, which also silences the push.
+ */
+export async function turnSuggestionsOffInApp(
+  q: (sql: string, params?: unknown[]) => Promise<unknown>,
+  userIds: readonly string[]
+): Promise<void> {
+  for (const id of userIds) {
+    await q(
+      `INSERT INTO notification_preference ("userId", "disabledCategories") VALUES ($1, '["suggestions"]')
+       ON CONFLICT ("userId") DO UPDATE SET "disabledCategories" = '["suggestions"]'`,
+      [id]
+    );
+  }
 }
 
 /**
  * Builds what the DAILY PUSH CAP reads (engagement WP-8): `engagement_push_days` (migration 157),
  * the weekly trend counters its GC also prunes (migration 163), chat-delivery's
- * `notification_preference` (its migration 028, the same database on every estate) - all read from
+ * `notification_preference` (its migrations 028 and 047, the same database on every estate) - all read from
  * the files the estates ran - and the two chat-delivery tables the claim's device floor reads,
  * `push_token` and `key_package`, which no migration creates (TypeORM did): only the columns the
  * claim reads, typed as the entities type them. Every spec that sends a COUNTED type through the
@@ -52,15 +103,7 @@ export async function createEngagementPushCapTables(
   for (const file of ['157_engagement_push_days.sql', '163_campus_trend_weeks.sql']) {
     await q(readFileSync(join(__dirname, '..', 'migrations', file), 'utf8'));
   }
-  await q(
-    readFileSync(
-      join(
-        __dirname,
-        '../../../chat-delivery-service/src/migrations/028_notification_preferences.sql'
-      ),
-      'utf8'
-    )
-  );
+  await createNotificationPreferenceTable(q);
   await q(`
     CREATE TABLE IF NOT EXISTS push_token (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       "userId" varchar(255) NOT NULL, "deviceId" varchar NOT NULL);

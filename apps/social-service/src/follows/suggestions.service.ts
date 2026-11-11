@@ -7,6 +7,7 @@ import {
   sameSideOfReviewCohortSql,
 } from '../spaces/reader-spaces';
 import { acceptedFollowSql } from './follow-status';
+import { suggestionsOn } from '../push/notification-category';
 import { short } from './follows.service';
 
 /**
@@ -200,6 +201,17 @@ export class SuggestionsService {
       Math.max(opts.peopleLimit ?? SUGGESTED_PEOPLE_MAX, 1),
       SUGGESTED_PEOPLE_MAX
     );
+    // ONE SWITCH, "Suggestions dans l'app", on by default and off in one gesture (owner, "Deux
+    // niveaux", 2026-11-11): the
+    // carousel, the onboarding banner and "Suivez aussi..." all read this route, so none is drawn.
+    // The follow count still answers: it is the reader's own fact, not a suggestion.
+    if (!(await suggestionsOn(this.db, viewerId))) {
+      const [following] = await this.db.query<{ n: string | number }[]>(FOLLOWING_COUNT_SQL, [
+        viewerId,
+      ]);
+      this.logger.debug(`[SUGGESTIONS] ${short(viewerId)} Suggestions off - none served`);
+      return { people: [], entities: [], followingCount: Number(following?.n ?? 0) };
+    }
     // One more than asked when a person is to be dropped, so dropping them never shortens the page.
     const fetch = opts.exclude ? limit + 1 : limit;
     const started = Date.now();

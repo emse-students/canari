@@ -65,6 +65,55 @@ describe('a play() aborted by scrolling past', () => {
     (action as { destroy?: () => void }).destroy?.();
   });
 
+  it('Jamais leaves a video come into view on its first frame; Toujours (the default) plays it', async () => {
+    const { settings } = await import('$lib/stores/settingsStore.svelte');
+    settings.setVideoAutoplay('never');
+    const still = document.createElement('video');
+    const stillPlay = vi.spyOn(still, 'play').mockResolvedValue(undefined);
+    const stillAction = playWhileVisible(still);
+    enter(still, true);
+    expect(stillPlay).not.toHaveBeenCalled();
+    (stillAction as { destroy?: () => void }).destroy?.();
+
+    settings.setVideoAutoplay('always');
+    const playing = document.createElement('video');
+    const play = vi.spyOn(playing, 'play').mockResolvedValue(undefined);
+    const action = playWhileVisible(playing);
+    enter(playing, true);
+    expect(play).toHaveBeenCalledTimes(1);
+    (action as { destroy?: () => void }).destroy?.();
+    settings.setVideoAutoplay('');
+  });
+
+  it('Jamais: a video the READER started plays again when a viewer over it closes (review of #3329)', async () => {
+    const { settings } = await import('$lib/stores/settingsStore.svelte');
+    const { holdPlayback } = await import('./playWhileVisible');
+    settings.setVideoAutoplay('never');
+    const video = document.createElement('video');
+    let paused = true;
+    Object.defineProperty(video, 'paused', { get: () => paused });
+    const play = vi.spyOn(video, 'play').mockImplementation(async () => {
+      paused = false;
+      video.dispatchEvent(new Event('play'));
+    });
+    vi.spyOn(video, 'pause').mockImplementation(() => {
+      paused = true;
+      video.dispatchEvent(new Event('pause'));
+    });
+    const action = playWhileVisible(video);
+    enter(video, true);
+    expect(play).not.toHaveBeenCalled();
+    // The reader's tap on the play button.
+    await video.play();
+    const release = holdPlayback('a viewer opens');
+    expect(paused).toBe(true);
+    release();
+    expect(play).toHaveBeenCalledTimes(2);
+    expect(paused).toBe(false);
+    (action as { destroy?: () => void }).destroy?.();
+    settings.setVideoAutoplay('');
+  });
+
   it('still warns on a refusal', async () => {
     const video = document.createElement('video');
     vi.spyOn(video, 'play').mockRejectedValue(new DOMException('no', 'NotAllowedError'));

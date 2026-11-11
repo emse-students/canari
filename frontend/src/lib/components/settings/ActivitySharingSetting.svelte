@@ -1,8 +1,9 @@
 <script lang="ts">
   /**
-   * "Partager mon activite" (engagement decision 9, WP-9): whether the member's reactions and
-   * comments are told to the people who follow them (friends' activity), ON by default. Turning it
-   * off stops every notice not yet sent and retracts none already sent. The switch shows the
+   * "Partager mon activite" (engagement decision 9): whether a campus trend may NAME the member to
+   * the people who follow them as someone who liked the post. OFF by default ("Nos principes", owner
+   * 2026-11-10, principle 1: privacy wins) - the server reads no row as off. Turning it off takes the
+   * name out of bell rows already written and stops every naming not yet sent. The switch shows the
    * SERVER's answer: it is drawn once that answer is read, and redrawn from what each write returns.
    * The shared `ui/Toggle` (docs/wiki/frontend/controls.md), never a hand-built switch.
    */

@@ -667,7 +667,7 @@ export function useMessaging() {
     // category; this is the half it cannot reach - a frame received over the socket raises its
     // notification here, with no push involved, and it must obey the same set.
     const category = categoryOfConversation(conversationKey);
-    if (!notificationPreferences.isEnabled(category)) {
+    if (!notificationPreferences.pushAllowed(category)) {
       console.log(
         `[NOTIF] Inbound in ${conversationKey} - category "${category}" is switched off for this account; nothing raised.`
       );

@@ -4,7 +4,7 @@ import { deliveryUrl } from '$lib/utils/apiUrl';
 import { channelService } from '$lib/services/ChannelService';
 import { Log } from '$lib/utils/Log';
 import { withClientVersionHeader } from '$lib/utils/appVersion';
-import { isNotificationCategory, type NotificationCategory } from './categories';
+import { isNotificationCategory, OPT_IN_CATEGORIES, type NotificationCategory } from './categories';
 import {
   isConversationNotificationLevel,
   type ConversationNotificationLevel,
@@ -25,6 +25,8 @@ export interface NotificationPreferencesSnapshot {
    * on every save, so a save from here never switches back on what another device switched off.
    */
   unknownDisabled: string[];
+  /** The opt-in categories (`OPT_IN_CATEGORIES`) whose PUSH the account turned on. */
+  pushEnabled: NotificationCategory[];
   /** Every private conversation made quieter than `all`, keyed by group id (absent = `all`). */
   groupLevels: Record<string, ConversationNotificationLevel>;
   /**
@@ -41,6 +43,7 @@ export async function fetchNotificationPreferences(): Promise<NotificationPrefer
   if (!res.ok) throw new Error(`notification-preferences ${res.status}`);
   const body = (await res.json()) as {
     disabled?: unknown;
+    enabled?: unknown;
     groupLevels?: unknown;
     groupCalls?: unknown;
   };
@@ -69,7 +72,11 @@ export async function fetchNotificationPreferences(): Promise<NotificationPrefer
       if (GROUP_ID_RE.test(groupId) && typeof allowed === 'boolean') groupCalls[groupId] = allowed;
     }
   }
-  return { disabled, unknownDisabled, groupLevels, groupCalls };
+  const enabledIds: unknown[] = Array.isArray(body.enabled) ? body.enabled : [];
+  const pushEnabled = enabledIds
+    .filter(isNotificationCategory)
+    .filter((c) => OPT_IN_CATEGORIES.includes(c));
+  return { disabled, unknownDisabled, pushEnabled, groupLevels, groupCalls };
 }
 
 /**
@@ -117,18 +124,24 @@ export async function saveGroupNotificationLevel(
  * Replaces the account's disabled set on the server, which applies it before every push. The ids
  * this build does not know (`unknownDisabled`, as read) go back unchanged, and the request NAMES THIS
  * BUILD (`X-Canari-Client-Version`): the server keeps the stored choice of any category the build
- * cannot name, so neither side alone has to be right. Throws on any non-2xx answer, and
+ * cannot name, so neither side alone has to be right. `pushEnabled` (the opt-in categories whose
+ * push is on) is ALWAYS sent: its presence is how this build declares it knows the opt-in reading -
+ * the server never lets a save without it turn a push on. Throws on any non-2xx answer, and
  * `NotFromApiError` on a 2xx that is not the API's JSON.
  */
 export async function saveDisabledCategories(
   disabled: readonly NotificationCategory[],
-  unknownDisabled: readonly string[] = []
+  unknownDisabled: readonly string[] = [],
+  pushEnabled: readonly NotificationCategory[] = []
 ): Promise<void> {
-  Log.d('notificationPreferences.save', { disabled, unknownDisabled });
+  Log.d('notificationPreferences.save', { disabled, unknownDisabled, pushEnabled });
   const res = await apiFetch(`${deliveryUrl()}${PATH}`, {
     method: 'PUT',
     headers: withClientVersionHeader({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ disabled: [...disabled, ...unknownDisabled] }),
+    body: JSON.stringify({
+      disabled: [...disabled, ...unknownDisabled],
+      enabled: [...pushEnabled],
+    }),
   });
   if (!res.ok) throw new Error(`notification-preferences ${res.status}`);
   assertAnsweredByApi(res, `PUT ${PATH}`);

@@ -7,6 +7,8 @@ const api = vi.hoisted(() => ({
   saveDisabledCategories: vi.fn(),
 }));
 vi.mock('$lib/notifications/preferencesApi', () => api);
+const suggestions = vi.hoisted(() => ({ resetSuggestions: vi.fn() }));
+vi.mock('$lib/follows/suggestions.svelte', () => suggestions);
 // The reduced-bells list is its own component with its own test; here it only has to be quiet.
 vi.mock('$lib/follows/bell', () => ({
   listReducedBells: vi.fn(() => Promise.resolve([])),
@@ -37,6 +39,7 @@ beforeEach(() => {
   api.fetchNotificationPreferences.mockResolvedValue({
     disabled: [],
     unknownDisabled: [],
+    pushEnabled: [],
     groupLevels: {},
     groupCalls: {},
   });
@@ -69,6 +72,7 @@ describe('SettingsNotificationsSection', () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: ['posts'],
       unknownDisabled: [],
+      pushEnabled: [],
       groupLevels: {},
       groupCalls: {},
     });
@@ -81,8 +85,40 @@ describe('SettingsNotificationsSection', () => {
     await render();
     switchOf('reactions').click();
     await settle();
-    expect(api.saveDisabledCategories).toHaveBeenCalledWith(['reactions'], []);
+    expect(api.saveDisabledCategories).toHaveBeenCalledWith(['reactions'], [], []);
     expect(switchOf('reactions').getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('a Suggestions change forgets the follow suggestions read for the old choice; another does not', async () => {
+    await render();
+    switchOf('reactions').click();
+    await settle();
+    expect(suggestions.resetSuggestions).not.toHaveBeenCalled();
+    switchOf('suggestions').click();
+    await settle();
+    expect(suggestions.resetSuggestions).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws the push of Suggestions apart, off by default; turning it on writes the push and keeps the app switch on', async () => {
+    await render();
+    const push = document.querySelector<HTMLInputElement>(
+      '[data-category-push="suggestions"] input[type="checkbox"]'
+    )!;
+    expect(push.checked).toBe(false);
+    expect(switchOf('suggestions').getAttribute('aria-checked')).toBe('true');
+    push.click();
+    await settle();
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith([], [], ['suggestions']);
+    expect(switchOf('suggestions').getAttribute('aria-checked')).toBe('true');
+    // One gesture switches both off.
+    switchOf('suggestions').click();
+    await settle();
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['suggestions'], [], []);
+    expect(
+      document.querySelector<HTMLInputElement>(
+        '[data-category-push="suggestions"] input[type="checkbox"]'
+      )!.checked
+    ).toBe(false);
   });
 
   it('puts the switch back and says so when the write fails', async () => {
