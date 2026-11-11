@@ -2269,7 +2269,9 @@ merges over it.
   `feedPages` object store on IndexedDB, a `feed_pages` table on SQLite (`IStorage.saveFeedPage`,
   `getFeedPage`, `deleteFeedPages`). The payload repeats its owner, and a page naming another
   account is deleted, never drawn. `IStorage.clear()` empties it with the rest; a backup export does
-  not carry it.
+  not carry it. One further slot, `peer-names`, holds the sealed peer-name directory
+  ([offline-and-weak-network](../offline-and-weak-network.md#the-connection-ring-owner-2026-11-11));
+  the four-page bound is the feed pages'.
 - **Without any of the reader's served rights.** Every `can*` field (`canManage`, `canPin`,
   `canReport`, `canUnmaskAnonymous`, `canRepublish`, `canProposeRepublication`,
   `canUnrepublishAs`, `canRequestRepublication`) is removed before the page is sealed, and so is

@@ -1,103 +1,110 @@
-import { Log } from '$lib/utils/Log';
+import { SvelteMap } from 'svelte/reactivity';
 
 /**
- * The names this device resolved before, kept across launches so a conversation row is NAMED ON THE
- * FIRST FRAME of a cold start instead of after a profile round trip (slow-link chantier, 2026-11-11).
+ * The names this device resolved before, held in MEMORY and read first, so a conversation row is
+ * NAMED WITHOUT A PROFILE ROUND TRIP at a cold start (slow-link chantier, 2026-11-11).
  *
- * WHY. `displayName.ts` keeps its names in a module Map, empty at every launch, and the only way to
+ * WHY. `displayName.ts` kept its names in a module Map, empty at every launch, and the only way to
  * fill it was `GET /api/users/...`. On a 250 kbps / +800 ms link (production 1.6.10 read through a
- * throttling proxy) most 1:1 rows read "Utilisateur inconnu" with initials for 12 s and more: no
- * screen may wait for the network to draw. This directory is the LOCAL SOURCE, read first and
- * synchronously; the network only refreshes it.
+ * throttling proxy) most 1:1 rows read "Utilisateur inconnu" for 12 s and more: no screen may wait
+ * for the network to draw. This directory is the LOCAL SOURCE; the network only refreshes it.
  *
- * WHAT IT IS NOT. It never decides a name is current: the cache and the profile fetch stay
- * authoritative, and a refreshed name overwrites the stored one. It holds only what a public
- * profile already shows (the formatted name), keyed by user id, for ONE account: the blob carries
- * its owner, and another account reading it gets nothing (and replaces it on its first write).
- * Written when a name CHANGES, coalesced into one write per task (a microtask, never a timer).
+ * THIS FILE IS THE LIGHT HALF, AND HOLDS NO DATABASE IMPORT ON PURPOSE (the rule of
+ * `posts/feedStoreEpoch.ts`): `stores/user.ts` calls {@link forgetPeerNames} at a sign-out and a
+ * change of account, and must not load the storage layer to do it. The sealed copy, its key and its
+ * read and write are `peerNameStore.ts`, which fills this directory through {@link openDirectory}
+ * and {@link mergeStoredNames} and learns of changes through {@link setChangeListener}.
+ *
+ * Reactive on purpose: a row drawn before the stored copy was read re-reads when it lands.
  */
 
-const STORAGE_KEY = 'canari.peerNames.v1';
 /** Newest entries kept; a Map keeps insertion order, so the oldest go first. */
 export const MAX_PEER_NAMES = 500;
 
-interface Blob {
-  owner: string;
-  names: Record<string, string>;
-}
+const names = new SvelteMap<string, string>();
+/** The account whose names `names` holds, once opened; null while no key is in hand. */
+let openFor: string | null = null;
+/**
+ * Names resolved BEFORE the key was in hand, for one account: fresher than any stored copy, folded
+ * in when the directory opens so a launch whose session comes up after its first lookups still
+ * persists them.
+ */
+const early = new Map<string, string>();
+let earlyOwner: string | null = null;
+let changeListener: (() => void) | null = null;
 
-let loadedFor: string | null = null;
-let names = new Map<string, string>();
-let scheduled = false;
-
-function storage(): Storage | null {
-  try {
-    return typeof localStorage === 'undefined' ? null : localStorage;
-  } catch {
-    return null;
-  }
-}
-
-function ensureLoaded(owner: string): void {
-  if (loadedFor === owner) return;
-  loadedFor = owner;
-  names = new Map();
-  const store = storage();
-  if (!store) return;
-  try {
-    const raw = store.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const blob = JSON.parse(raw) as Blob;
-    if (blob.owner !== owner) return;
-    for (const [id, name] of Object.entries(blob.names ?? {})) {
-      if (typeof name === 'string' && name.trim()) names.set(id, name);
-    }
-  } catch (e) {
-    // A swallowed branch logs: an unreadable blob is dropped and rebuilt by the next resolutions.
-    Log.d(`peerNameDirectory: unreadable blob dropped (${String(e)})`);
-  }
-}
-
-/** The stored name of `userId` (lower-case id) for `owner`, or null - never a placeholder. */
+/** The remembered name of `userId` (lower-case id) for `owner`, or null - never a placeholder. */
 export function readPeerName(owner: string | null | undefined, userId: string): string | null {
-  const o = owner?.trim().toLowerCase();
-  if (!o) return null;
-  ensureLoaded(o);
+  const o = owner?.trim();
+  if (!o || openFor !== o) return null;
   return names.get(userId) ?? null;
 }
 
-/** Records a resolved name for `owner` and schedules the coalesced write. */
+/** Records a resolved name for `owner`. Persisted by the store once a key is in hand. */
 export function notePeerName(owner: string | null | undefined, userId: string, name: string): void {
-  const o = owner?.trim().toLowerCase();
+  const o = owner?.trim();
   const trimmed = name.trim();
   if (!o || !trimmed) return;
-  ensureLoaded(o);
+  if (openFor !== o) {
+    if (earlyOwner !== o) {
+      early.clear();
+      earlyOwner = o;
+    }
+    early.set(userId, trimmed);
+    return;
+  }
   if (names.get(userId) === trimmed) return;
   names.delete(userId);
   names.set(userId, trimmed);
   while (names.size > MAX_PEER_NAMES) names.delete(names.keys().next().value as string);
-  if (scheduled) return;
-  scheduled = true;
-  queueMicrotask(() => {
-    scheduled = false;
-    const store = storage();
-    if (!store || !loadedFor) return;
-    try {
-      const blob: Blob = { owner: loadedFor, names: Object.fromEntries(names) };
-      store.setItem(STORAGE_KEY, JSON.stringify(blob));
-    } catch (e) {
-      Log.d(`peerNameDirectory: write failed (${String(e)})`);
-    }
-  });
+  changeListener?.();
 }
 
-/** Forgets everything stored (sign-out, tests). */
-export function clearPeerNames(): void {
-  names = new Map();
-  loadedFor = null;
-  try {
-    storage()?.removeItem(STORAGE_KEY);
-  } catch (e) {
-    Log.d(`peerNameDirectory: clear failed (${String(e)})`);
+/** Opens the directory for `owner` (empty, plus what was resolved before the key came). */
+export function openDirectory(owner: string): void {
+  const carried = earlyOwner === owner ? new Map(early) : new Map<string, string>();
+  forgetPeerNames();
+  openFor = owner;
+  for (const [id, name] of carried) names.set(id, name);
+  if (carried.size > 0) changeListener?.();
+}
+
+/** Whether the directory is open for `owner`. */
+export function isOpenFor(owner: string): boolean {
+  return openFor === owner;
+}
+
+/** Folds a stored copy in; what this launch already resolved is fresher and stays. Returns how many were taken. */
+export function mergeStoredNames(owner: string, stored: Readonly<Record<string, unknown>>): number {
+  if (openFor !== owner) return 0;
+  let taken = 0;
+  for (const [id, name] of Object.entries(stored)) {
+    if (typeof name === 'string' && name.trim() && !names.has(id)) {
+      names.set(id, name);
+      taken += 1;
+    }
   }
+  return taken;
+}
+
+/** The directory as a plain object, for sealing. */
+export function snapshotNames(): Record<string, string> {
+  return Object.fromEntries(names);
+}
+
+/** One listener, told of every change to an open directory (the store's coalesced write). */
+export function setChangeListener(listener: (() => void) | null): void {
+  changeListener = listener;
+}
+
+/**
+ * Forgets the in-memory directory: a sign-out, a change of account, a locked device. The sealed copy
+ * is ended by the feed epoch (`forgetStoredFeeds`, called beside this) and by the storage's own
+ * exits (`peerNameStore.ts`).
+ */
+export function forgetPeerNames(): void {
+  names.clear();
+  early.clear();
+  earlyOwner = null;
+  openFor = null;
 }

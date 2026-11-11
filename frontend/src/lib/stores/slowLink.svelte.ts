@@ -40,3 +40,22 @@ export const connection = {
     });
   },
 };
+
+/**
+ * The ring's colour class for a state, written out per state because Tailwind scans source text:
+ * green connected, amber slow, grey offline or reconnecting; transparent (with the old hover and
+ * focus accent) for a logged-out visitor. Pure, so the mapping is a test.
+ */
+export function connectionRingClass(state: ConnectionState | null): string {
+  switch (state) {
+    case 'connected':
+      return 'ring-green-ok';
+    case 'slow':
+      return 'ring-amber-warn';
+    case 'offline':
+    case 'reconnecting':
+      return 'ring-text-muted';
+    default:
+      return 'hover:ring-accent-icon focus-visible:ring-accent-icon ring-transparent';
+  }
+}

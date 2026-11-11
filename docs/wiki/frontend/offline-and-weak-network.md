@@ -472,7 +472,7 @@ the socket and the replay have all finished) and it should be its own package wi
 ## 11. WP-OFF-5 shipped: a deadline, a slow state, and lanes
 
 **What was built** (`utils/requestDeadline.ts`, `utils/trackedFetch.ts`, `stores/connectivity.svelte.ts`,
-`utils/apiFetch.ts`, `mls-client/mlsDeliveryApi.ts`, `utils/chat/outbox.ts`, `components/navigation/ProfileAvatarButton.svelte`, the connection ring):
+`utils/apiFetch.ts`, `mls-client/mlsDeliveryApi.ts`, `utils/chat/outbox.ts`, `components/navigation/Navbar.svelte` and `MobileHeader.svelte`, the connection ring):
 
 - **A response-head deadline per call class**, chosen from the method and the body, with its reason in
   the source: `read` 20 s (a GET is ~16 ms good, ~960 ms on the 2G-like profile; 20 s is twenty times
@@ -1148,8 +1148,8 @@ showed the splash until about 47 s. The unreachable screen arrives at the refres
 
 **Principle: discreet and informative, never verbose or useless** (owner, 2026-11-11: there is no rule
 that everything is invisible; a banner with a sentence was verbose). The connection is ONE ring around
-the header avatar, on the phone header and the desktop header alike (`ProfileAvatarButton.svelte`,
-state from `connection` in `stores/slowLink.svelte.ts`, one derivation shared with the announcer):
+the header avatar, on the phone header and the desktop header alike (the avatar button of `Navbar.svelte` and `MobileHeader.svelte`,
+state and colour from `connection` / `connectionRingClass` in `stores/slowLink.svelte.ts`, one derivation shared with the announcer):
 
 | Ring | State | Source |
 | --- | --- | --- |
@@ -1172,8 +1172,22 @@ between declared "Hors connexion" (production 1.6.10 through a throttling proxy,
 deadline that expired while ANY answer arrived after the request started is now logged as slow and
 counts for nothing; a real transport failure still marks the server unreachable.
 
-**Names are local first.** A conversation row's peer name was resolved by a profile round trip at
-every cold start (a module Map, empty each launch): "Utilisateur inconnu" for 12 s on that link.
-`utils/users/peerNameDirectory.ts` keeps the names this device resolved (per account, newest 500,
-written coalesced) and `peekUserDisplayName` / `getUserDisplayNameSync` read it before any network;
-the profile fetch still runs and refreshes it.
+**Names are local first, and sealed.** A conversation row's peer name was resolved by a profile round
+trip at every cold start (a module Map, empty each launch): "Utilisateur inconnu" for 12 s on that link.
+`utils/users/peerNameDirectory.ts` (memory, reactive) is read by `peekUserDisplayName` /
+`getUserDisplayNameSync` before any network; `utils/users/peerNameStore.ts` keeps it in the account's own
+ENCRYPTED database, never localStorage in clear: one more slot (`peer-names`) of the store that holds the
+feed's first pages (`feedPages` on IndexedDB, `feed_pages` on SQLite, `IStorage.saveFeedPage`, sealed under
+the device key, [posts](modules/posts.md)). The profile fetch still runs and refreshes it.
+
+- **The key is not there at the first frame.** It exists once the session is up or while the account's
+  unlock prompts nobody (`feedStoreAccess`, the feed's own gate; the layout binds the directory with it).
+  Until then rows show initials and the placeholder, exactly as before; the local read that follows touches
+  no network and fills the reactive directory, so the rows already drawn update. A locked device never has
+  a name drawn from it.
+- **The exits, enumerated.** Sign-out and change of account: `clearUserLocally` / `saveUserLocally` call
+  `forgetStoredFeeds` (the feed epoch ends synchronously; a copy with an ended epoch is deleted unread) and
+  `forgetPeerNames` (memory). PIN change: `dropStoredFeedPages` empties the whole table inside the storage
+  hold, the directory included. `IStorage.clear()` and a revoked-device wipe empty the table or delete the
+  database. A copy naming another account, or that cannot be opened, is deleted. Pinned by
+  `peerNameStore.test.ts` and `user.peerNameExits.test.ts`.

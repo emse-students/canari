@@ -16,13 +16,14 @@ vi.mock('$lib/paraglide/messages', () => ({
   m: { user_unknown_label: () => 'Utilisateur inconnu', user_deleted_label: () => 'Supprime' },
 }));
 
-import { notePeerName, clearPeerNames } from './peerNameDirectory';
+import { notePeerName, openDirectory, forgetPeerNames } from './peerNameDirectory';
 import { getUserDisplayNameSync, peekUserDisplayName } from './displayName';
 import * as userStore from '$lib/stores/user';
 
 describe('display name, local source first', () => {
   beforeEach(() => {
-    clearPeerNames();
+    forgetPeerNames();
+    openDirectory('me');
     vi.mocked(userStore.fetchUserProfile).mockClear();
   });
 

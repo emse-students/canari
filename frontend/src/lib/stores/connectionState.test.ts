@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveConnectionState } from './slowLink.svelte';
+import { connectionRingClass, deriveConnectionState } from './slowLink.svelte';
 
 const base = { isLoggedIn: true, isOffline: false, isOfflineSession: false, slow: false };
 
@@ -13,4 +13,12 @@ describe('deriveConnectionState (the avatar ring)', () => {
     expect(deriveConnectionState({ ...base, isOfflineSession: true })).toBe('reconnecting'));
   it('is nothing for a logged-out visitor', () =>
     expect(deriveConnectionState({ ...base, isLoggedIn: false, isOffline: true })).toBeNull());
+
+  it('draws green, amber or grey, as a circle ring colour', () => {
+    expect(connectionRingClass('connected')).toBe('ring-green-ok');
+    expect(connectionRingClass('slow')).toBe('ring-amber-warn');
+    expect(connectionRingClass('offline')).toBe('ring-text-muted');
+    expect(connectionRingClass('reconnecting')).toBe('ring-text-muted');
+    expect(connectionRingClass(null)).toContain('ring-transparent');
+  });
 });

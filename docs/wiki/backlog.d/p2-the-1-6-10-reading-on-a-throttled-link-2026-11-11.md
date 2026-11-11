@@ -14,12 +14,11 @@ fast). Read-only navigation. Principle held: discreet and informative, never ver
    banner and the desktop "connecte" pill. `ConnectionAnnouncer` keeps the screen-reader sentences.
 3. **"Utilisateur inconnu" on 1:1 rows for 12 s+.** Cause: names lived in a per-launch Map filled only by
    a profile fetch; the list and the conversation header share the same resolver, so the header was
-   fast only once its fetch had landed. Fixed: a per-account persisted name directory read first.
+   fast only once its fetch had landed. Fixed: a per-account name directory, sealed in the account's encrypted database (the feed pages' store) and read first.
 4. **Video first frame lost across tab switches** (~40 s, black again after a tab round trip): belongs to
    the media poster and preload work of #3337; not duplicated here.
 
 **Owed.** A re-reading on the Mi 9T under the same proxy after a pre-release: no grey ring while answers
 arrive, rows named on the first frame of a cold start, the ring a circle in light and dark on both
-headers, the live region announcing offline and back. The name directory is not cleared at sign-out
-(it is owner-keyed, another account reads nothing); clearing it there is a small follow-up. Mechanism:
+headers, the live region announcing offline and back. Also owed: the first frame before the device key is in hand (a cold start with a PIN to type) shows initials, then the names once unlocked. Mechanism:
 [offline-and-weak-network](../frontend/offline-and-weak-network.md#the-connection-ring-owner-2026-11-11).

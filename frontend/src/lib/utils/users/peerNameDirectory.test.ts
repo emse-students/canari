@@ -1,41 +1,52 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { MAX_PEER_NAMES, clearPeerNames, notePeerName, readPeerName } from './peerNameDirectory';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  MAX_PEER_NAMES,
+  forgetPeerNames,
+  mergeStoredNames,
+  notePeerName,
+  openDirectory,
+  readPeerName,
+} from './peerNameDirectory';
 
-const flushWrite = () => Promise.resolve();
+describe('peerNameDirectory (memory half)', () => {
+  beforeEach(() => forgetPeerNames());
 
-describe('peerNameDirectory', () => {
-  beforeEach(() => clearPeerNames());
-
-  it('answers a name noted by the same account, synchronously', () => {
-    notePeerName('me', 'peer-1', 'Alice Martin');
-    expect(readPeerName('me', 'peer-1')).toBe('Alice Martin');
+  it('answers nothing until opened, for any account', () => {
+    notePeerName('me', 'peer-1', 'Alice');
+    expect(readPeerName('me', 'peer-1')).toBeNull();
   });
 
-  it('survives a cold start: a fresh read of storage names the row before any network', async () => {
-    notePeerName('me', 'peer-1', 'Alice Martin');
-    await flushWrite();
-    // Cold start: the in-memory state is gone, only the stored blob remains.
-    vi.resetModules();
-    const cold = await import('./peerNameDirectory');
-    expect(cold.readPeerName('me', 'peer-1')).toBe('Alice Martin');
+  it('folds names resolved before the key came into the opened directory', () => {
+    notePeerName('me', 'peer-1', 'Alice');
+    openDirectory('me');
+    expect(readPeerName('me', 'peer-1')).toBe('Alice');
   });
 
-  it('never serves another account its names', async () => {
-    notePeerName('me', 'peer-1', 'Alice Martin');
-    await flushWrite();
-    vi.resetModules();
-    const cold = await import('./peerNameDirectory');
-    expect(cold.readPeerName('someone-else', 'peer-1')).toBeNull();
+  it('does not carry them to another account', () => {
+    notePeerName('me', 'peer-1', 'Alice');
+    openDirectory('other');
+    expect(readPeerName('other', 'peer-1')).toBeNull();
+    expect(readPeerName('me', 'peer-1')).toBeNull();
+  });
+
+  it('a stored copy never overrides what this launch resolved', () => {
+    openDirectory('me');
+    notePeerName('me', 'peer-1', 'Fresh');
+    expect(mergeStoredNames('me', { 'peer-1': 'Stale', 'peer-2': 'Bob' })).toBe(1);
+    expect(readPeerName('me', 'peer-1')).toBe('Fresh');
+    expect(readPeerName('me', 'peer-2')).toBe('Bob');
   });
 
   it('keeps only the newest entries', () => {
+    openDirectory('me');
     for (let i = 0; i < MAX_PEER_NAMES + 5; i++) notePeerName('me', `p${i}`, `Name ${i}`);
     expect(readPeerName('me', 'p0')).toBeNull();
-    expect(readPeerName('me', `p${MAX_PEER_NAMES + 4}`)).toBe(`Name ${MAX_PEER_NAMES + 4}`);
+    expect(readPeerName('me', `p${MAX_PEER_NAMES + 4}`)).not.toBeNull();
   });
 
   it('ignores an empty name or owner', () => {
+    openDirectory('me');
     notePeerName('me', 'peer-2', '   ');
     notePeerName(null, 'peer-2', 'X');
     expect(readPeerName('me', 'peer-2')).toBeNull();

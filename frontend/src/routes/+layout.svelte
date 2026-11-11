@@ -55,6 +55,9 @@
   import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import { feedStoreAccess } from '$lib/posts/feedStore';
+  import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
+  import { bindPeerNames } from '$lib/utils/users/peerNameStore';
   import { accountLiveness, clearAuthLocally } from '$lib/stores/auth';
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
@@ -250,6 +253,21 @@
   $effect(() => {
     setTabUnread(
       globalSession.isLoggedIn ? totalUnreadMessages(globalConvs.conversations.values()) : 0
+    );
+  });
+
+  // ── The device's own names, read before the network (slow-link chantier, 2026-11-11) ──────
+  // The directory opens with the SAME gate as the feed's stored pages: the account on screen, its
+  // device key, an unlocked session. While no key is in hand it is closed and rows wait as before.
+  $effect(() => {
+    bindPeerNames(
+      feedStoreAccess({
+        currentUserId: currentUserId(),
+        sessionUserId: globalSession.userId,
+        deviceKeyB64: globalSession.deviceKeyB64,
+        isLoggedIn: globalSession.isLoggedIn,
+        unattendedFor: unlockUnattendedFor(),
+      })
     );
   });
 

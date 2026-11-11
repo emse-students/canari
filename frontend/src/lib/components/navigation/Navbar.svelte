@@ -2,9 +2,13 @@
   import CanariBrand from './CanariBrand.svelte';
   import EcosystemLauncher from './EcosystemLauncher.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
-  import ProfileAvatarButton from './ProfileAvatarButton.svelte';
+  import Avatar from '../shared/Avatar.svelte';
+  import { connection, connectionRingClass } from '$lib/stores/slowLink.svelte';
+  import { goto } from '$app/navigation';
   import { signOutByChoice } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
+  import { m } from '$lib/paraglide/messages';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
 
   /** A sign-out is under way: it can wait up to the logout deadline, and a second tap is ignored. */
   let signingOut = $state(false);
@@ -58,7 +62,19 @@
       {/if}
       <SessionActionButtons onLogout={handleLogout} busy={signingOut} />
       {#if globalSession.isLoggedIn && globalSession.userId}
-        <ProfileAvatarButton userId={globalSession.userId} size="sm" boxClass="tap-target" />
+        <button
+          type="button"
+          onclick={() => goto('/profile')}
+          use:guideAnchor={'nav.profile'}
+          title={connection.state === 'slow' ? m.slow_indicator_label() : m.nav_my_profile_title()}
+          data-connection={connection.state ?? undefined}
+          class="tap-target rounded-full ring-3 transition-all duration-200 {connectionRingClass(
+            connection.state
+          )}"
+          aria-label={m.nav_my_profile_label()}
+        >
+          <Avatar userId={globalSession.userId} size="sm" />
+        </button>
       {/if}
     </div>
   </div>
