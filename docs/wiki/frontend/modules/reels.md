@@ -981,7 +981,10 @@ the lead's, taken 2026-11-06, reversible.
   `data-backdrop-ignore`, and the slide hands `ReelFrame` the visible index as `sourceKey`, so a
   swipe repaints it - otherwise a neighbour's picture that finished loading last painted the
   backdrop of the one being looked at (seen in the browser, 2026-11-06).
-- **The position** is a row of dots under the top bar, the visible one lit, named "2 sur 5" for
+- **The position** is a row of dots on the media's bottom edge, centred, the FIRST ROW of the caption
+  block just above the author line (owner, 2026-11-11: under the top bar they sat beneath the "Pour toi /
+  Recents" switch). Being in the block's flow they rise with "Voir plus" and never meet the rail or the
+  player's line; the visible one lit, named "2 sur 5" for
   assistive tech (`reels_carousel_position`).
 - **The visible media is kept PER POST** for the viewer's life (`mediaIndexById`): a post scrolled
   away and back opens where the reader left it.
