@@ -291,13 +291,18 @@ function digest(path, transform) {
 
 /** Assert that one path is identical across a set of repositories, and say so either way. */
 function compare(shared, repos, note = '', transform = undefined) {
+  compareCopies(shared, repos.map(([label, dir]) => [label, join(dir, shared)]), note, transform);
+}
+
+/** The same, for copies that sit at a different path in each repository: `[label, dir/path]`. */
+function compareCopies(shared, copies, note = '', transform = undefined) {
   const digests = new Map();
-  for (const [label, dir] of repos) {
-    const p = join(ROOT, dir, shared);
+  for (const [label, rel] of copies) {
+    const p = join(ROOT, rel);
     if (existsSync(p)) digests.set(label, digest(p, transform));
   }
   const name = basename(shared).padEnd(46);
-  const absent = repos.filter(([label]) => !digests.has(label)).map(([label]) => label);
+  const absent = copies.filter(([label]) => !digests.has(label)).map(([label]) => label);
   if (absent.length) {
     failures.push(`${shared} is missing from ${absent.join(', ')}`);
     console.log(`   FAIL  ${name} missing from ${absent.join(', ')}`);
@@ -329,6 +334,24 @@ compare(ARM, REPOS, '  [YAML only - the mechanism, Canari-only regions cut]', (r
 compare(ARM, SIBLINGS, '  [prose too; Canari cites measurements made only there]');
 
 for (const [shared, why] of SHARED_BY_SIBLINGS) compare(shared, SIBLINGS, `  [Canari excluded: ${why}]`);
+
+// THE SIGN-IN HANDOFF'S VENDORED FILES (Canari's design note on the sign-in handoff, section 4): the
+// verifier, the landing page's logic and the vectors, written in Canari and COPIED byte-identically
+// to every site that redeems a handoff, at that site's own path. Compared RAW: a copy is a copy. A
+// site joins this list in the pull request that vendors it (MiGallery first, WP-H4; Sky with WP-H6).
+// Le Cercle is on the school's GitLab, outside this tool's four checkouts: its copy is held only by
+// its own vector test.
+const HANDOFF_VENDORED = [
+  ['libs/handoff/handoff-verify.ts', { MiGallery: 'src/lib/server/handoff/handoff-verify.ts' }],
+  ['libs/handoff/handoff-landing.ts', { MiGallery: 'src/lib/handoff/handoff-landing.ts' }],
+  ['libs/contracts/handoff-token.cases.json', { MiGallery: 'tests/fixtures/handoff-token.cases.json' }],
+];
+for (const [source, sites] of HANDOFF_VENDORED) {
+  const dirOf = Object.fromEntries(REPOS);
+  const copies = [['Canari', join(dirOf.Canari, source)]];
+  for (const [label, path] of Object.entries(sites)) copies.push([label, join(dirOf[label], path)]);
+  compareCopies(source, copies, '  [the sign-in handoff, vendored]');
+}
 
 console.log(`\n${'='.repeat(72)}`);
 if (failures.length) {

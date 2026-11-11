@@ -27,7 +27,6 @@ function mountToolbar(): HTMLElement {
     props: {
       isOwn: false,
       isDeleted: false,
-      hasMedia: false,
       showEmojiPicker: false,
       onReact: () => {},
     },

@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ReelSlide from './ReelSlide.svelte';
 import type { PostEntity } from '$lib/posts/api';
+import { clearanceAboveSeekLineRem } from '$lib/components/ui/player/seekLineGeometry';
 import { m } from '$lib/paraglide/messages';
 import { fireResize, useResizeObserverStub } from '../../../test/resizeObserverStub';
 
@@ -267,7 +268,9 @@ it('unfolded on a letterboxed reel, the text never outgrows the frame, and outsi
   // A frame that does not reach the screen bottom (here: unmeasured) owes no safe-area inset; when
   // it does is `frameReachesBottom`'s, tested on its own (`reelFrame.test.ts`).
   expect(block.getAttribute('data-reel-caption-inset')).toBe('none');
-  expect(block.classList).toContain('pb-4');
+  // No inset, and the room the seek line's touch zone owes the "Voir plus" toggle above it.
+  expect(block.style.paddingBottom).not.toContain('safe-area');
+  expect(block.style.paddingBottom).toContain(`${clearanceAboveSeekLineRem(1)}rem`);
   expect(q('[data-reel-caption-open]')!.classList).toContain('min-h-0');
   expect(q('[data-reel-caption-toggle]')!.classList).toContain('shrink-0');
   // The tap-outside layer spans the whole slide, letterbox bands included, under the caption.
