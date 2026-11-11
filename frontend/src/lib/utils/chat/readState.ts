@@ -134,25 +134,29 @@ export function parseLocalReadSeed(raw: unknown): number | null {
 }
 
 /**
- * The upgrade's seed for one conversation, decided ONCE: the newest server-clock key among the
- * messages held when the conversation has NO saved read point, else 0 ("considered, nothing
- * seeded"). Every held row counts, own and foreign alike - the seed says "what this device already
- * held", not who wrote it.
+ * The upgrade's seed for one conversation, decided ONCE: the UPGRADE BOUNDARY - the newest server
+ * time this device held anywhere before this boot's pull (`newestServerTime`) - when the
+ * conversation has NO saved read point, else 0 ("considered, nothing seeded": its marks decide).
  */
 export function localReadSeedFor(
-  convo: {
-    messages: ReadonlyArray<Pick<ChatMessage, 'timestamp' | 'serverTimestamp'>>;
-    readWatermarks?: ReadWatermarks;
-    serverReadWatermarks?: ReadWatermarks;
-  },
-  userNorm: string
+  convo: { readWatermarks?: ReadWatermarks; serverReadWatermarks?: ReadWatermarks },
+  userNorm: string,
+  boundary: number
 ): number {
   const saved = readPointFor(convo, userNorm);
-  if (saved.stamped > 0 || saved.server > 0) return 0;
+  return saved.stamped > 0 || saved.server > 0 ? 0 : boundary;
+}
+
+/**
+ * The newest time THE SERVER stated among `rows`, 0 when none is dated. Only `serverTimestamp`: an
+ * undated row carries its author's clock, and one phone running fast would push a boundary past
+ * messages not yet received.
+ */
+export function newestServerTime(rows: ReadonlyArray<{ serverTimestamp?: number }>): number {
   let newest = 0;
-  for (const msg of convo.messages) {
-    const at = readOrderKey(msg);
-    if (Number.isFinite(at) && at > newest) newest = at;
+  for (const row of rows) {
+    const at = row.serverTimestamp;
+    if (typeof at === 'number' && Number.isFinite(at) && at > newest) newest = at;
   }
   return newest;
 }

@@ -4890,8 +4890,28 @@ received, so a group read but never marked, a first contact ignored, anything la
 marks existed (2026-08-12) has no read point, and deriving its count would light up to a page of
 "unread" on every such row the day this build lands - archived rows too, since they feed the total.
 So the first load of this build, and only it, gives every conversation an older build wrote and that
-has no read point a LOCAL point at the newest message it already held (`seedLocalReadPoint`, over
-the stored page, not over a message delivered live during that boot); a row with a read point gets 0.
+has no read point a LOCAL point at the **upgrade boundary**; a row with a read point gets 0
+(`seedLocalReadPoints`).
+
+- **The boundary is decided before this boot can store anything - by order, not by a race.** It is
+  the newest SERVER time among the newest stored rows (8 per row) of every row being seeded, and it
+  is computed AND persisted in the restore's first phase: before `notifyConversationRowsSeeded`
+  issues the boot pull, before the socket hold ends (`endRowSeedingHold`), and, at login, before the
+  push cache is consumed. What arrived while the app was killed is queued after the device last
+  stored a message, so it lies past the boundary and counts (`restoreUnreadCount.test.ts`, the pull
+  seam; it failed on the first version of this fix, which seeded in the second phase, after the pull
+  had stored those messages). Only server times: an undated row carries its author's clock.
+- **One boundary for every row, an empty one included.** A row holding nothing (or nothing dated)
+  gets the same point, meaning "nothing held before the upgrade is new": a first replay of history
+  the server already held - which CAN happen for an older row, a group joined whose archive was never
+  read, or one whose stored page an older build pruned - counts only what is past the boundary,
+  never a page of old history; what arrives after the upgrade counts normally. With nothing dated
+  anywhere in the store the boundary is 0 and nothing is seeded (a device that never received a
+  message has nothing to flood).
+- **A downgrade, then a re-upgrade, re-seeds** every row the older build re-created or rewrote
+  without the field, and swallows what arrived during the downgrade. Accepted: downgrades are rare
+  and need a manual sideload.
+
 It is a column of its own (`conversations.local_read_seed`, SQLite v20; the same field in
 IndexedDB), with three states the stores keep apart: NULL / absent = written by an older build, not
 considered yet (the migration leaves every existing row so); `0` = considered, never seeded again -

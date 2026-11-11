@@ -7,6 +7,7 @@ import {
   derivedUnreadCount,
   hasRead,
   localReadSeedFor,
+  newestServerTime,
   parseLocalReadSeed,
   isUnreadForUser,
   mergeReadWatermark,
@@ -250,11 +251,17 @@ describe('the read point an unread count is taken at', () => {
     expect(derivedUnreadCount({ ...seeded, serverReadWatermarks: { [ME]: 3000 } }, ME)).toBe(0);
   });
 
-  it('the seed for a conversation is its newest held row when it has no read point, else 0', () => {
-    const held = [dated('a', 1000), dated('r', 4000, ME), dated('b', 3000)];
-    expect(localReadSeedFor({ messages: held }, ME)).toBe(4000);
-    expect(localReadSeedFor({ messages: held, readWatermarks: { [ME]: 1 } }, ME)).toBe(0);
-    expect(localReadSeedFor({ messages: [] }, ME)).toBe(0);
+  it('the seed is the upgrade boundary when there is no read point, else 0', () => {
+    expect(localReadSeedFor({}, ME, 4000)).toBe(4000);
+    expect(localReadSeedFor({ readWatermarks: { [ME]: 1 } }, ME, 4000)).toBe(0);
+    expect(localReadSeedFor({ serverReadWatermarks: { [ME]: 1 } }, ME, 4000)).toBe(0);
+  });
+
+  it('the boundary is the newest SERVER time only: an undated row carries its author`s clock', () => {
+    expect(newestServerTime([dated('a', 1000), dated('b', 3000), msg('undated', 9_999_999)])).toBe(
+      3000
+    );
+    expect(newestServerTime([])).toBe(0);
   });
 
   it('reads a stored seed: a number, 0, or null for "not considered yet"', () => {

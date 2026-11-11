@@ -335,4 +335,48 @@ describe("the upgrade's local read seed", () => {
     expect(await coldStart(store)).toBe(1);
     expect(store.rows.get('g-1')?.localReadSeed).toBe(0);
   });
+
+  it('does not swallow what the boot pull delivers during the upgrade boot (seeded before the pull)', async () => {
+    // Two DMs reached the server while the app was killed; the new build's boot pull stores them.
+    const store = durableStore({}, false);
+    store.messages.push(row('m1', 'bob', 1_000));
+    const conversations = new SvelteMap<string, Conversation>();
+    const service = mls({
+      // THE SEAM: the pull is issued here, and stores what it delivers before phase 2 reads the
+      // store - the way `saveMessagesIfAbsent` does while the restore's loop runs.
+      notifyConversationRowsSeeded: vi.fn(() => {
+        store.messages.push(row('k1', 'bob', 5_000), row('k2', 'bob', 6_000));
+      }),
+    });
+
+    expect(await coldStart(store, { service, conversations })).toBe(2);
+    expect(store.rows.get('g-1')?.localReadSeed).toBe(1_000);
+    // And for good: the seed is written once.
+    expect(await coldStart(store)).toBe(2);
+  });
+
+  it('gives an EMPTY row the boundary too: old history replayed into it is not a page of unread', async () => {
+    const store = durableStore({}, false);
+    store.messages.push(row('m1', 'bob', 2_000));
+    // A second conversation an older build wrote, holding nothing.
+    store.rows.set('g-2', { id: 'g-2', name: 'Vide', lifecycle: 'active', updatedAt: 1 });
+    const conversations = new SvelteMap<string, Conversation>();
+    // Its first replay brings history the server held before this boot, and one new message.
+    replay.mockImplementation(async (opts: any) => {
+      if (opts.id === 'g-2' && !store.messages.some((m) => m.conversationId === 'g-2')) {
+        store.messages.push(
+          { ...row('old', 'bob', 1_500), conversationId: 'g-2' },
+          { ...row('new', 'bob', 3_000), conversationId: 'g-2' }
+        );
+      }
+      return undefined;
+    });
+
+    await coldStart(store, { conversations });
+    replay.mockReset();
+    replay.mockImplementation(async () => undefined);
+
+    expect(store.rows.get('g-2')?.localReadSeed).toBe(2_000);
+    expect(conversations.get('g-2')?.unreadCount).toBe(1);
+  });
 });
