@@ -349,6 +349,8 @@ therefore placed by what an error would take down with it, not by how important 
 | `src/routes/+layout.svelte` | `<ChatBackgroundService />` | invisible service - `onerror` that LOGS, no fallback UI |
 | SvelteKit's root (`kit/src/runtime/components/root.svelte`) | every route node | every page - `routes/+error.svelte`, reported by `handleClientError` ([below](#a-page-that-crashes)) |
 | `src/lib/components/MainChatPage.svelte` | the `{#key}` around `ChatArea` | component - `onerror` that logs |
+| `src/lib/components/reels/ReelViewer.svelte` | the whole full-screen viewer | visible feature - `onerror` logs, toasts and CLOSES the viewer, the page behind it kept ([reels](modules/reels.md#the-order-of-the-stream-and-a-change-of-order-is-a-new-list-owner-2026-11-10-crash-fixed-2026-11-11)) |
+| `src/routes/posts/+page.svelte` | each feed card (`guardedCard`) | visible feature - a `failed` snippet with Retry |
 
 The rule for anything new: a global service or a layout takes a logging `onerror` with no fallback; a
 visible feature inside a page takes a `failed` snippet with a reset; a whole page takes NOTHING (Kit

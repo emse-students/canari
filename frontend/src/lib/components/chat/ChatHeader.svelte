@@ -203,6 +203,12 @@
     return items;
   });
 
+  let searchToggleEl = $state<HTMLButtonElement | null>(null);
+  /** Hands the keyboard focus back to the magnifier when the search bar closes. */
+  export function focusSearchToggle() {
+    searchToggleEl?.focus();
+  }
+
   let isOnline = $derived($presenceMap[contactName] || false);
   /**
    * A DM is titled with its peer's name - the ONE resolver's, read with this conversation's scope so a
@@ -463,6 +469,7 @@
 
     {#if onToggleSearch}
       <button
+        bind:this={searchToggleEl}
         onclick={onToggleSearch}
         aria-label={m.chat_search_in_conversation_label()}
         title={m.chat_search_title()}

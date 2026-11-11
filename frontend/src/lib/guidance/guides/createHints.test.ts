@@ -33,6 +33,20 @@ const CASES = [
   { guide: createFormHint, route: '/forms/create', files: ['routes/forms/create/+page.svelte'] },
 ];
 
+describe('the bubbles keep clear of the bars', () => {
+  it('every bar the placement reads is marked in its component', () => {
+    for (const file of [
+      'lib/components/navigation/BottomNav.svelte',
+      'lib/components/navigation/MobileHeader.svelte',
+      'lib/components/navigation/Navbar.svelte',
+    ])
+      expect(src(file), file).toContain('data-guide-chrome');
+    expect(src('lib/components/guidance/GuideOverlay.svelte')).toContain(
+      'usableBand(window.innerHeight, chromeBars())'
+    );
+  });
+});
+
 describe.each(CASES)('$guide.id', ({ guide, route, files }) => {
   it('is a hint under a listed id, registered, applying to its route only', () => {
     expect(isHelpId(guide.id)).toBe(true);
