@@ -33,12 +33,20 @@ describe('a message notification names every author (user, 2026-10-01)', () => {
     expect(stringsEn).toContain('<string name="notif_sender_self">You</string>');
   });
 
-  it('gives a direct message the group shape, with no title', () => {
-    // From API 28 the platform decides one-to-one from isGroupConversation ALONE, and a one-to-one
-    // thread hides the other person's name above their lines - the asymmetry the user reported.
-    // Titled with the person, the Mi 9T printed the name twice; untitled, once.
-    expect(kotlin).toContain('val conversationTitle = if (isGroup) groupName else null');
-    expect(kotlin).toContain('if (isGroup || namesEachSender) style.isGroupConversation = true');
+  it('takes the title and the group flag from ConversationShape, after the shortcut is known', () => {
+    // On API 30+ SystemUI titles a shortcut-backed post with the shortcut's label, so a DM in the
+    // group shape read its sender twice (owner, 2026-11-11). The decision itself is pinned by the
+    // JVM test `ConversationShapeTest`; this pins that the builder applies it, and only once the
+    // shortcut has been published.
+    const shortcutAt = kotlin.indexOf('val conversationShortcutId = ');
+    const shapeAt = kotlin.indexOf('val shape = ConversationShape.of(');
+    expect(shortcutAt).toBeGreaterThan(-1);
+    expect(shapeAt).toBeGreaterThan(shortcutAt);
+    expect(kotlin).toContain('hasShortcut = conversationShortcutId != null');
+    expect(kotlin).toContain('style.isGroupConversation = shape.groupConversation');
+    expect(kotlin).not.toContain(
+      'if (isGroup || namesEachSender) style.isGroupConversation = true'
+    );
   });
 
   it('is asked for by the two MESSAGE triggers and the salon push, and by nothing else', () => {

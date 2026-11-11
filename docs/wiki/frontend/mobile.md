@@ -3145,6 +3145,29 @@ as its corner badge; the plain `setLargeIcon` stays only for the shortcut-less s
 NOTHING AND SEEN NOWHERE**: the Gradle project needs the Tauri-generated settings, and no Canari
 notification could be raised on the Mi 9T without a push - owed a look on that phone.
 
+**The shortcut put the name back twice on a DM, and a DM drawn as a conversation is one-to-one again
+(owner, Android 16, `1.6.10`, 2026-11-11).** The expanded DM read the sender in the header, beside the
+avatar, and again above the message line. The cause is in SystemUI, not in this code: from API 30 a
+`MessagingStyle` post with a long-lived shortcut is drawn by `ConversationLayout`, and
+`ConversationNotificationProcessor.processNotification` first OVERWRITES the style's
+`conversationTitle` with the shortcut's label - the other person, for a DM. Leaving the title unset
+(the 2026-10-01 decision) therefore stopped mattering the day the DM gained its shortcut (2026-10-05),
+and the group shape then names every line under that header. The one-to-one shape is what removes the
+repeat: `PeopleHelper.maybeHideFirstSenderName` hides the first group's sender when it equals the
+header, while our own inline reply ("Vous") and any later change of speaker stay named - which is the
+symmetry the 2026-10-01 decision wanted. **One pure function decides it**, `push/ConversationShape.kt`
+(pinned by `ConversationShapeTest`): a group keeps its title and the group shape; a DM with a
+published shortcut on API 30+ takes the untitled one-to-one shape; a DM with no shortcut, or below
+API 30, keeps the untitled group shape of 2026-10-01 (no shortcut label on top there); a reaction and
+a blind salon banner keep the old shape. A conversation the user demoted ("pas une conversation") is
+drawn by the legacy layout in the one-to-one shape: the name is the title once and the other person's
+lines carry none - the lopsided reading of 2026-10-01, taken knowingly for that opt-out. **iOS had no
+such repeat**: a decrypted DM is titled with the sender, carries no subtitle, and its body is the
+message (`applyMessageContent`, `NotificationService.swift`; `canari_push.mm` passes no subtitle for
+a DM). The BLIND fallback line ("Nouveau message de X" under the title X) repeats the name on both
+platforms - a decrypt failure's placeholder, not this defect. **Owed**: expand a DM on the Mi 9T and
+the iPhone 12, reply inline, and read the name once with "Vous" above the reply.
+
 **The group key is still ONE constant**, `setGroup(GROUP_KEY_MESSAGES)` at three call sites of `CanariFirebaseMessagingService.kt` with one summary, where Messenger keys per THREAD (`GROUP:<threadId>`) - open, P3 ([backlog](../backlog.md)); measure on the Mi 9T after any change, since nothing in CI sees which section of the shade a notification lands in.
 
 **What the shade's two actions cover (audited 2026-10-05).** Reply and "Marquer comme lu" exist on

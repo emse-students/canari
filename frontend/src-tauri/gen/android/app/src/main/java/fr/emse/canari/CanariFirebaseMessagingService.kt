@@ -43,6 +43,7 @@ import fr.emse.canari.push.CallSoundHold
 import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelBannerAuthor
 import fr.emse.canari.push.ChannelReadMark
+import fr.emse.canari.push.ConversationShape
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.KeyGroupPushJoin
@@ -2703,16 +2704,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 null
             }
 
+            // Its title and group flag are set below, once the shortcut is known: [ConversationShape].
             val style = NotificationCompat.MessagingStyle(selfPerson)
-            // THE GROUP SHAPE IS WHAT NAMES EVERY MESSAGE. From API 28 the platform decides
-            // one-to-one from `isGroupConversation` alone, and a one-to-one thread hides the other
-            // person's name above their lines. A direct message therefore takes the group shape
-            // too - and NO title: titled with the person, the collapsed line read
-            // "Name : Name : text" and the expanded one put the name twice on top of each other
-            // (both read on the Mi 9T, 2026-10-01). Untitled, the name sits once, above the line.
-            val conversationTitle = if (isGroup) groupName else null
-            if (conversationTitle != null) style.conversationTitle = conversationTitle
-            if (isGroup || namesEachSender) style.isGroupConversation = true
             // Re-inject the previous (bounded) messages, then add the new one.
             // THE FILTER COMES BEFORE THE BOUND, so superseding a line never costs a real one.
             existingNotif
@@ -2812,6 +2805,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     this, groupId, if (isGroup) groupName else senderName, largeIcon, senderPerson, tapIntent
                 )
             } else null
+
+            // ONE NAME ON A DIRECT MESSAGE. On API 30+ SystemUI titles a shortcut-backed post with the
+            // shortcut's label, so a DM in the group shape read its sender twice: in the header,
+            // then above the line (owner, 2026-11-11). [ConversationShape] decides title and shape.
+            val shape = ConversationShape.of(
+                isGroup = isGroup,
+                groupName = groupName,
+                namesEachSender = namesEachSender,
+                hasShortcut = conversationShortcutId != null,
+                sdkInt = android.os.Build.VERSION.SDK_INT,
+            )
+            shape.title?.let { style.conversationTitle = it }
+            style.isGroupConversation = shape.groupConversation
+            Log.d(TAG, "showMessageNotification: shape groupConversation=${shape.groupConversation} titled=${shape.title != null} shortcut=${conversationShortcutId != null} (groupId=${groupId.take(8)})")
 
             val notifBuilder = NotificationCompat.Builder(this, channel)
                 .setSmallIcon(R.drawable.ic_notification)
