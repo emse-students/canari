@@ -4054,12 +4054,20 @@ export class ChannelService implements OnApplicationBootstrap {
     const base = this.baseMemberRole(roles);
     if (!requestedName) return base;
     const wanted = this.mapRoleInputToWorkspaceRoleName(requestedName);
-    // "Membre" is how every client up to the current stable names the ordinary invitation, so it
-    // means the base role even in a community whose lowest role is called something else. Matching
-    // a role literally named Membre first waits for `minClientVersion` (see backlog).
-    if (wanted === 'Membre' || wanted === base?.name) return base;
+    if (wanted === base?.name) return base;
     const role = roles.find((r) => r.name === wanted) ?? null;
-    if (!role || role.id === base?.id) return role;
+    // A role is matched by its own name first, so a community that calls a higher role "Membre"
+    // can grant it by invitation. Only where no role carries that name does "Membre" (or "member")
+    // mean the base role: no client above the floor sends it for an ordinary invitation (#2277
+    // sends no role at all), and a caller naming the generic word still gets the base role.
+    if (!role) {
+      if (wanted !== 'Membre') return null;
+      this.logger.debug(
+        `[INVITE] "Membre" read as the base role=${base?.name ?? 'none'} workspace=${workspaceId}`
+      );
+      return base;
+    }
+    if (role.id === base?.id) return role;
 
     const actorPermissions = [...new Set(actorRoles.flatMap((r) => r.permissions))];
     if (actorMayGrantRole(actorPermissions, role.permissions)) {

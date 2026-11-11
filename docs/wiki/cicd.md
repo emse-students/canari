@@ -2299,14 +2299,23 @@ Neither mechanism above reaches a crate replaced through `[patch.crates-io]` by 
 `cargo audit` matches advisories against a PATH package was never verified. Job `vendored-upstream`
 of `scheduled.yml` (the Monday `0 4 * * 1` slot it shares with `cargo-unreachable`; by hand: dispatch
 job `vendored-upstream`) runs `.github/scripts/vendored-upstream-report.sh`, which compares, for each
-crate on its ALLOWLIST (`tauri-plugin-websocket`, `wry` and, since 2026-11-11,
-`tauri-plugin-system-components`; `tauri-plugin-keystore`, a fork of a pre-release with no stable
-upstream, is a [backlog](backlog.md#p3---two-vendored-forks-are-not-on-the-upstream-release-watch-2026-10-21-a-decision-owed) item), the fork's `[package]` version with crates.io's `max_stable_version`. Pre-releases are
-ignored on purpose: upstream has a `3.0.0-alpha` line, and a fork of a stable owes it nothing.
+crate on its ALLOWLIST (`tauri-plugin-websocket`, `wry`, and since 2026-11-11
+`tauri-plugin-system-components` and `tauri-plugin-keystore` - every `[patch.crates-io]` entry), the
+fork's `[package]` version with crates.io:
+
+- **a fork of a STABLE release is compared with `max_stable_version` only.** Upstream's pre-releases
+  are ignored: `tauri-plugin-websocket` has a `3.0.0-alpha` line, and a fork of a stable owes it
+  nothing;
+- **a fork of a PRE-release is compared with `max_version`, upstream's newest release of ANY kind**,
+  in semver precedence (`alpha.2` is past `alpha.1`, `rc.10` past `rc.2`, `2.1.0` past every
+  `2.1.0-*`). `tauri-plugin-keystore` is forked from `2.1.0-alpha.1` and the crate has never had a
+  stable release, so a stable-only rule would read null and watch nothing. **Lead decision,
+  2026-11-11, reversible**: the next alpha is exactly what such a fork owes a look at. Pinned by the
+  "a fork of a PRE-release" cases of `vendored-upstream-report.test.sh`.
 
 | Exit | Means | Title |
 | --- | --- | --- |
-| 0 | every watched fork is upstream's latest stable | - |
+| 0 | every watched fork is upstream's latest release of the kind it is compared with | - |
 | 1 | upstream released past the fork (the message names the rebase: the release, the `CANARI PATCH` hunk count, the pin to move), or the forked release was yanked | `Upstream <crate> released past the vendored fork`, `Upstream withdrew the release <crate> was forked from` |
 | 1 | the reporter is broken: an allowlist entry the manifest no longer patches, a pin that does not name the fork's version (the patch would silently not apply), a 404, any unexpected status, a response with no usable version | `Stale vendored-fork allowlist entry`, `Vendored fork and its pin disagree`, `Vendored-fork watch is broken` |
 | 75 | crates.io did not answer after curl's own bounded retries (transport, 408, 429, 5xx); a finding in the same run wins | `crates.io unreachable - not a finding` |

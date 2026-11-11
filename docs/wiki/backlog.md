@@ -1094,26 +1094,6 @@ A fallback is a signal, not a path. What is owed:
 - keep the empty-pool WARN as the accusing line it is.
 Not before the stable.
 
-## Decided by the user on 2026-10-22 - the local key on a phone is held by secure hardware
-
-On the phone apps the local at-rest key is held by the device's secure hardware, the PIN only
-unlocks it (and stays short), and backups get their own recovery secret. Web and desktop keep the
-PIN-derived key. MERGED as #2274 (2026-10-24), in no release yet; the mechanism is
-[auth](frontend/modules/auth.md#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22).
-Owed:
-
-- **Device readings, Mi 9T and iPhone**: the list is in
-  [auth](frontend/modules/auth.md#backups-get-their-own-recovery-secret) ("Owed on hardware"),
-  including the iOS build no gate here compiles.
-- **Decided (user, 2026-10-22): notifications stay complete on a locked phone, and the PIN is
-  verified by the server; the hardware key protects the device's stored data. Practicality first.**
-  The four lead decisions are BUILT and recorded with their costs in
-  [auth](frontend/modules/auth.md#decisions-taken-on-2026-10-22-and-what-each-costs).
-- **`minClientVersion`** follows [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24).
-- **Two keys stay on purpose**: #2271's push-cache key is not derived from the at-rest key, because it
-  must exist before the first push and stay stable, while the at-rest key rotates (migration, recovery,
-  reset). #2271 is merged with its own key; revisit only if a design that tolerates a rotation is proposed.
-
 ## A new person is admitted only by a member (decided by the user on 2026-10-23): step one built
 
 MERGED as #2358 (2026-10-24), the ask drawn as a card in the conversation by #2373: no automatic Add brings in a user absent from the adder's tree, web, native and the Android
@@ -1137,24 +1117,6 @@ admitted seats only (`ADMITTED_SEAT`), proven against PostgreSQL by `admission.i
 pending link joiner in the conversation, read in the `[ring]` lines (`not rung: ... hold no
 admitted seat`) - [calls](frontend/modules/calls.md).
 
-## New-device notices (decided by the user on 2026-10-22): built, owed readings and two decisions
-
-MERGED as #2278, in no release yet: the owner's in-app alert, the contact line in every DM and group shared with the contact
-(never in communities, wherever the device was first seen), the owner's notice of a refused device
-of their own with its remedy, and the native local notification on both background engines, one
-ledger between them - see
-[mls-protocol](protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day).
-Only CI compiles the Kotlin, the Swift and the Android/iOS Rust targets.
-
-Owed readings (Mi 9T and iPhone 12): add a web device to the account with both phones shut - a local
-notification on each (the iPhone at its next message push), then the in-app alert on opening, and
-no second notification; a line "X added a device" in a DM with a contact who adds a device; NO line
-in a community or salon. Owed decisions: whether a phone whose WebView is alive in the background
-should also raise the local notification (today the in-app alert only), and whether a device first
-seen in a tree this device joined should be announced; and whether 7 days is the right bound for
-a contact's line (a device first seen by the server earlier is a heal, not a new device - see the
-evidence table in mls-protocol).
-
 ## P1 - A new member of a group conversation receives its whole past; decided 2026-10-21 that they must not
 
 The adding device pushes its whole local store to the invitee (`sendFullHistoryBundle`, up to 5
@@ -1166,8 +1128,7 @@ history answer, the push included, is addressed to the asking device and filtere
 windows. **The two server holes shipped too (#2800, merged 2026-10-31 with #2791):** a link joiner's
 arrival is dated at the member's Add, not at their ask, and the history stream drops the span before
 arrival
-([history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)). Owed, in order: the rig row GRP-ADDR-1, with a link joiner who waited before the Add; `minClientVersion` past A by
-[the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24); option B, sealing the answer to the asker (X25519 in `mls-core`, an
+([history-reconciliation](protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21)). Owed, in order: the rig row GRP-ADDR-1, with a link joiner who waited before the Add; `minClientVersion` past A is MET (the floor is `1.6.6`, read on `GET /api/version` 2026-11-11); option B, sealing the answer to the asker (X25519 in `mls-core`, an
 ephemeral key carried inside the MLS-signed request). **DECIDED by
 the user, 2026-10-22:** a reply quoting a pre-arrival message SHOWS a newcomer the quoted text;
 nothing is built for it. Design and limits:
@@ -1179,18 +1140,31 @@ nothing is built for it. Design and limits:
 Restored history carries each message's author signature, and frames carry a signed epoch fingerprint ([history-reconciliation](protocols/history-reconciliation.md#restored-history-carries-its-authors-signature-2026-10-22), [mls-protocol](protocols/mls-protocol.md#fork-detection-a-signed-epoch-fingerprint-in-every-application-frame-2026-10-22)). Owed:
 
 - **Rig rows:** a history restore between two clients on a live local estate (a signed message verified, an older one marked "non verifie"), and a forced fork that must produce one `[INTEGRITY] fork` line on each side.
-- **The floor:** unsigned messages are only MARKED today, because every older client sends them. Refusing them outright waits until `minClientVersion` ([the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24)) is a signing build, plus the retention window of the oldest unsigned message.
-- **P3 - a history bundle has no byte cap per chunk, only a message count**, and each message now carries its body and proof beside its content (about 2.5x per message). A cap in bytes is owed before bundles of long messages are common.
+- **The floor:** unsigned messages are only MARKED today. Re-read 2026-11-11: `minClientVersion` is `1.6.6`, a signing build (#2276 is in every stable since `1.5.0`), so no client allowed to connect sends an unsigned message any more. Refusing them outright now waits only on the retention window of the oldest unsigned message still held on a device, which depends on the retention decision below (90 days today, 5 years if native is gated).
+- **P3 - a history bundle has no byte cap per chunk, only a message count** (re-read 2026-11-11: still none), and each message now carries its body and proof beside its content (about 2.5x per message). A cap in bytes is owed before bundles of long messages are common.
 
 ## P2 - Local retention is 90 days everywhere while 5 years was intended on native - decision owed (found 2026-10-22)
 
-`ChatBackgroundService.svelte:1789-1802` runs `deleteOldMessages(90 * 24 h)` every 6 hours with no
-platform check (`db/indexeddb.ts:924`, `db/sqlite.ts:773`), while `historyWindow.ts`
-(`NATIVE_DEVICE_WINDOW_MS`, 5 years) and
+`layout/ChatBackgroundService.svelte` (`MESSAGE_MAX_AGE`, line 2096) runs
+`deleteOldMessages(90 days)` every 6 hours with no platform check (`db/indexeddb.ts`, `db/sqlite.ts`),
+while `historyWindow.ts` (`NATIVE_DEVICE_WINDOW_MS`, 5 years) and
 [history-reconciliation](protocols/history-reconciliation.md#two-boundaries-not-one) promise 5 years
-on a phone or desktop. No decision that 90 days is intended was found. Whether native keeps 5 years
-(gate the GC on `deviceWindowMs()`) or the claim is lowered is a product decision; nothing was
-changed. Until it is taken, a native device claims coverage it deleted.
+on a phone or desktop. No decision that 90 days is intended was found. Re-read 2026-11-11: unchanged
+in code. Until it is taken, a native device claims coverage it deleted. **The owner decides; the two
+options and what each costs:**
+
+- **(a) Native keeps 5 years: gate the GC on `deviceWindowMs()`** (web stays at 90 days). A
+  one-line change plus its test; the code then matches the claim `historyWindow.ts` and the history
+  protocol already make, and a peer's history ask can be answered from 5 years. Cost: the local
+  database grows without the 90-day bound - every message, reaction and media reference kept on the
+  phone for 5 years - so storage on the phone, a heavier backup, slower cold queries on a big store
+  (the community-open budget is measured on the Mi 9T), and a longer window of plaintext-at-rest on
+  a lost device. It also lengthens the window that blocks refusing unsigned messages (entry above).
+- **(b) Lower the claim to 90 days everywhere.** `NATIVE_DEVICE_WINDOW_MS` and the history docs
+  change to what the GC does. Cost: a new device, or a newcomer's history ask, can be served at most
+  90 days by its peers, so "my history on my new phone" stops at 3 months; whatever relies on 5-year
+  coverage (the windows a device advertises, the history-reconciliation boundaries) is re-read and
+  lowered, and that is a protocol change with its own tests. Less data held on every phone.
 
 ## P3 - Edges of the community removal lock, left by the review of #2284 (2026-10-24)
 
@@ -1283,7 +1257,7 @@ key groups, and they are NOT the same question:
   old in a busy community. Owed before it is turned on: a redistribution that does not tighten the
   caps for a refresh-only epoch move (or caps counted from the redistribution), and the rotation rate
   re-measured with it.
-- **The revoked device's leaf - BUILT 2026-10-27, not shipped.** The key-group roster pass now asks
+- **The revoked device's leaf - BUILT 2026-10-27, shipped (the 400 fix, #2670, since `v1.5.1`; re-read 2026-11-11).** The key-group roster pass now asks
   `POST mls/groups/:groupId/revoked-leaves` which of the leaves it keeps belong to a revoked device
   and removes exactly those by device, staged on the published branch
   ([mls-protocol](protocols/mls-protocol.md#a-revoked-devices-leaf-is-removed-from-every-conversation)).
@@ -1398,10 +1372,6 @@ a deletion 14 days, stated, dumps to be encrypted; legacy cotisations of ~1400 n
 no purge date (flagged to the DPO); account deletion is a durable queue (#1965).
 
 **Still open from that pass:** sending the DPO dossier and the DSI log-retention request - each a line of the [owed table](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
-
-## Decided by the user on 2026-10-22 - the app needs iOS 16
-
-- **The iOS app's minimum is iOS 16**, so the native WebView can carry the same script policy as the web (`'wasm-unsafe-eval'`, which WebKit before 16 does not know). Built in the stricter-policy pull request (#2267). **Owed before that stable:** the console reading for policy refusals on the web, the Mi 9T and the iPhone, and the check of the edge features that inject scripts into a page ([cloudflare-edge](infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)). Delete this entry when it ships.
 
 ## P3 - iPhone sign-in: the login page stays on a disabled "Redirection..." after the in-app sheet is cancelled (read 2026-10-22)
 
@@ -1562,7 +1532,8 @@ A key-group external commit and a key group's Welcome target are now asked of so
 an unanswered call is a `503 entitlement_unavailable`, never an acceptance
 ([channel-encryption](protocols/channel-encryption.md#wp-21-and-the-gate-it-had-nowhere-to-live)).
 Shipped in `v1.4.0` (#2241). Owed: the rate of `[ENTITLEMENT] UNANSWERED` lines on dev, then production,
-against the ~77 key-group joins/day.
+against the ~77 key-group joins/day. Re-read 2026-11-11: the gate is unchanged in code; the rate is
+a log read on the hosts, not taken by the triage. Re-read again 2026-12-11.
 
 ## P3 - The key-group seat lock: what it does not yet carry (2026-10-22)
 
@@ -1612,21 +1583,12 @@ The push-triggered key-group joins of #2266 go through `POST /mls/push/key-group
 which has no throttler, so they do NOT count against this per-user quota. Owed: the production
 maximum per user and minute over 30 days (`mls_commit_log` joined to its sender device's user,
 grouped by minute), and the count of `[THROTTLE] REFUSED MessagingController.validateCommit` lines
-on dev then production, expected 0.
-
-## P3 - An invitation reads `Membre` as the base role, so a role literally named Membre is not grantable by invitation (2026-10-22)
-
-`inviteToChannel` maps `roleName: 'Membre'` (and the base role's own name) to the base role, because
-every client before #2277 sends `Membre` for an ordinary invitation, whatever the community calls its
-lowest role ([social-service](services/social-service.md#an-invitation-grants-only-a-role-the-inviter-may-grant-2026-10-22)).
-A community that names a higher role `Membre` cannot grant it by invitation; a role change after the
-join still can. **Lifted when `minClientVersion` ([the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24)) passes `v1.4.0`, the first stable carrying #2277's client**
-(which sends no `roleName` for an ordinary invitation): then match a role by its own name before the
-`Membre` fallback, with the test that a role literally named Membre above the base role is granted.
+on dev then production, expected 0. Re-read 2026-11-11: `MLS_COMMIT_LIMIT_PER_MINUTE` is still 600;
+the production read is owed, not taken by the triage. Re-read again 2026-12-11.
 
 ## P3 - A device id is held by one account, checked before the insert and not by an index (2026-10-22)
 
-Registration refuses a device id another account holds (`device_id_taken`) by a read before its write; `key_package` is unique on the pair only, so two concurrent registrations of one id by two accounts could both pass. Production held 0 shared ids on 2026-10-22, and a client mints its id per account. The fix is a unique index on `key_package."deviceId"`, a migration of its own.
+Registration refuses a device id another account holds (`device_id_taken`) by a read before its write; `key_package` is unique on the pair only, so two concurrent registrations of one id by two accounts could both pass. Production held 0 shared ids on 2026-10-22, and a client mints its id per account. The fix is a unique index on `key_package."deviceId"`, a migration of its own. Re-read 2026-11-11: still no such index (`key-package.entity.ts` is unique on the pair); before the migration, the shared-id count is re-read on production, since a unique index fails to build on one duplicate.
 
 ## P3 - The distribution path's device check: read dev on the alpha, production after the stable
 
@@ -1852,6 +1814,10 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a call survives the app leaving the screen: the Android microphone foreground service (WP-C-BG-A, #2162) and the iPhone's `audio` background mode (WP-C-BG-I, #2164), both in `v1.3.1` ([calls](frontend/modules/calls.md#the-blockers-each-with-its-evidence), rows B8 and B9) | the twelve Mi 9T readings of [WP-C-BG-A](frontend/modules/calls.md#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) and CALL-L1 row 12 on the iPhone 12 |
 | the native chat socket races IPv6 and IPv4 and closes a connect it abandoned (CALL-WS-V6, #2167, `v1.3.1`; [mobile](frontend/mobile.md#the-native-socket-races-ipv6-and-ipv4)) | on the Mi 9T, on the PC's hotspot with broken IPv6 (bench P6): `Connected to Chat Gateway` within a second, one `[WS-NET] ... while the preferred address was still pending` INFO line per connect (a WARN `... the preferred address FAILED` instead means IPv6 errored rather than hung - record which), no `[WS] native socket completed ... closing it` WARN, the iPhone's call ringing the phone; back on the bench Wi-Fi, no `[WS-NET]` line above debug |
 | EXIT-FORTIFY: closing the app on the Mi 9T logged `FORTIFY: pthread_mutex_lock called on a destroyed mutex`, recorded as a normal exit (`v1.3.1-alpha.5`, [device-readings](device-readings-2026-10.md), "the stable gate", #2178) | one Mi 9T app close with `logcat` kept: the name of the thread that locks after shutdown; and whether Play's crash list (`bun tools/play-vitals/vitals.mjs`) carries it |
+| the tab swipe to the camera on a slow start: the 8 px lock (#2179) and the left-edge exclusion (#2184, widened by #2369), `v1.4.0` ([design-reference](frontend/design-reference.md#the-swipe-to-the-camera-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-21)) | slow real-finger swipes to the camera on the Mi 9T, every one taken; class A (the lock) read on the iPhone 12, where it is unproven |
+| the stricter script policy and the iOS 16 minimum (#2267, every stable since `1.5.0`; [cloudflare-edge](infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)) | the console read for policy refusals on the web, the Mi 9T and the iPhone 12; the edge features that inject scripts into a page checked against the policy |
+| the at-rest key on a phone is held by secure hardware, backups have their own recovery secret (#2274, every stable since `1.5.0`; [auth](frontend/modules/auth.md#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22)) | the "Owed on hardware" list of [auth](frontend/modules/auth.md#backups-get-their-own-recovery-secret), on the Mi 9T and the iPhone 12 |
+| new-device notices (#2278, every stable since `1.5.0`; [mls-protocol](protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day)) | add a web device with both phones shut: a local notification on each (the iPhone at its next message push), the in-app alert on opening, no second notification; a line "X added a device" in a DM with a contact who adds one; NO line in a community or salon |
 
 ---
 
@@ -1895,19 +1861,9 @@ Mechanism of both: [calls](frontend/modules/calls.md#what-the-131-alpha2-bench-r
 **Re-read 2026-11-11: unchanged** - `CallService` still logs `selected path` once, at `connected`.
 The client's path line ([calls](frontend/modules/calls.md); a diagnostic since 2026-10-21 - the TURN budget reads Cloudflare's meter, never this line) is written ONCE, at `connected`; ICE may move to a better pair afterwards. Bench P1 logged `relayed=yes` on both ends while `getStats` read `host/udp -> host/udp` at the end ([readings](device-readings-2026-10.md)). Fix: log the pair again when the selected pair changes (or at hang-up), so the last line names the path the call ended on. Delete with its fix.
 
-## P3 - Two vendored forks are not on the upstream-release watch (2026-10-21, a decision owed)
-
-**Re-read 2026-11-11: one of the two is watched now.** `tauri-plugin-system-components` (`=0.1.8`)
-joined the allowlist of `vendored-upstream-report.sh` in the backlog triage of 2026-11-11, and the
-self-test asserts its pin names its fork ([cicd](cicd.md#a-vendored-fork-is-watched-for-upstream-releases-2026-10-21)).
-
-Left: **`tauri-plugin-keystore`**, forked from `2.1.0-alpha.1`. crates.io has NO stable release of it
-(`max_stable_version` null; `max_version` `2.1.0-alpha.2`, read 2026-11-11), so the watch's stable-only
-rule would call itself broken on it. It is also pinned `"2.1.0-alpha.1"`, not `"=..."`. Owed: decide
-whether a fork of a pre-release is compared against upstream's newest release of ANY kind (it would
-report `alpha.2` today, a real rebase owed), then pin it exactly and add it with a fixture test.
-
 ## P2 - The deploy's rolling replace: two POSTs answered 502 across a release, cause not settled (CI, 2026-10-22)
+
+Re-read 2026-11-11: nothing new; the retired replica's error log is still deleted with it, so the next occurrence will be as unreadable as the first. Re-read again 2026-12-11.
 
 `deploy-rolling.test.sh` (`make test-ci-scripts`, case 1, a release under load) failed ONCE: run 39796209603, attempt 1, head `537b4c736`. Tally `{"200":340,"502":2}`, slowest response 2155 ms, right after the frontend's old replica was retired with a 1 s drain. The rerun passed, and so does every other run read. The logs of attempt 1 are not retrievable: the API serves the passing attempt.
 
