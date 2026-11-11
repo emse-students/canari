@@ -1,3 +1,25 @@
+<script module lang="ts">
+  /**
+   * KEYBOARD MODALITY, ONE FOR EVERY SPEAKER: true after a Tab, false after a press. A speaker focused
+   * by a mouse click must NOT hold the volume pill open (it would stick after the pointer left); a Tab
+   * onto it must. One pair of window listeners, installed once.
+   */
+  let keyboardModality = false;
+  let modalityWatched = false;
+  function watchModality() {
+    if (modalityWatched || typeof window === 'undefined') return;
+    modalityWatched = true;
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.key === 'Tab') keyboardModality = true;
+      },
+      true
+    );
+    window.addEventListener('pointerdown', () => (keyboardModality = false), true);
+  }
+</script>
+
 <script lang="ts">
   import { Volume2, VolumeX } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -65,10 +87,73 @@
   let focused = $state(false);
   /** A thumb drag that leaves the pill (the pointer is captured) keeps it open until the release. */
   let dragging = false;
+  /** The Escape handler hands focus back to the speaker: that focus must not reopen the pill. */
+  let restoringFocus = false;
   let host: HTMLElement | null = $state(null);
-  onMount(() => watchFineHover((v) => (fineHover = v)));
+  let popover: HTMLElement | null = $state(null);
+  /** Where the pill hangs: the host's top-centre, in viewport coordinates (the pill is fixed). */
+  let anchor = $state({ x: 0, y: 0 });
+  onMount(() => {
+    watchModality();
+    return watchFineHover((v) => (fineHover = v));
+  });
   const showSlider = $derived(fineHover && !!onLevel && !disabled);
   const open = $derived(hovering || focused);
+
+  function place() {
+    if (!host) return;
+    const r = host.getBoundingClientRect();
+    anchor = { x: r.left + r.width / 2, y: r.top };
+  }
+
+  // THE PILL IS IN THE TOP LAYER while open (Popover API), so no `overflow-hidden` ancestor - a short
+  // card, a chat bubble - clips it and a transformed one does not move it. It stays a DOM child of the
+  // host, which is what keeps `pointerenter`/`pointerleave` and focus continuous across the two.
+  $effect(() => {
+    const pill = popover;
+    if (!pill || !open) return;
+    place();
+    try {
+      pill.showPopover?.();
+    } catch (err) {
+      console.warn('[VIDEO] the volume pill could not enter the top layer', err);
+    }
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+      try {
+        if (pill.hidePopover && pill.matches(':popover-open')) pill.hidePopover();
+      } catch (err) {
+        console.warn('[VIDEO] the volume pill could not leave the top layer', err);
+      }
+    };
+  });
+
+  /** A drag that leaves the pill keeps it open; its release re-reads whether the pointer is still on it. */
+  function beginDrag() {
+    dragging = true;
+    const end = () => {
+      window.removeEventListener('pointerup', end, true);
+      dragging = false;
+      hovering = host?.matches(':hover') ?? false;
+    };
+    window.addEventListener('pointerup', end, true);
+  }
+
+  function onHostKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !open) return;
+    // Closes the pill only (not the lightbox or the viewer behind it) and hands focus back.
+    e.preventDefault();
+    e.stopPropagation();
+    hovering = false;
+    focused = false;
+    restoringFocus = true;
+    host?.querySelector<HTMLElement>('button')?.focus();
+    restoringFocus = false;
+  }
+
   const accent = $derived(quiet ? '' : 'text-accent ');
 </script>
 
@@ -101,42 +186,69 @@
   </VideoChipButton>
 {/snippet}
 
-<svelte:window
-  onpointerupcapture={() => {
-    if (!dragging) return;
-    dragging = false;
-    hovering = host?.matches(':hover') ?? false;
-  }}
-/>
-
 {#if showSlider}
-  <!-- THE HOVER BRIDGE: the pill is a CHILD of the wrapper, flush against the speaker (padding, not a
-       gap), so the pointer moving from one to the other never leaves the wrapper and nothing closes. -->
-  <span
-    class="relative inline-flex {klass}"
-    role="group"
-    bind:this={host}
-    data-video-volume-host
-    onpointerenter={() => (hovering = true)}
-    onpointerleave={() => {
-      if (!dragging) hovering = false;
-    }}
-    onfocusin={() => (focused = true)}
-    onfocusout={(e) => {
-      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focused = false;
-    }}
-  >
-    {@render speaker('')}
+  <!-- The caller's classes (its corner on the player) stay on the OUTER box alone; the INNER box is the
+       pill's anchor, so there is never a second position class on one element. -->
+  <span class="inline-flex {klass}">
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions: the hover and focus bookkeeping of the pill; every control inside is a real button or range -->
     <span
-      class="absolute bottom-full left-1/2 z-30 -translate-x-1/2 pb-1 transition-opacity duration-150 motion-reduce:transition-none {open
-        ? 'opacity-100'
-        : 'pointer-events-none opacity-0'}"
-      onpointerdowncapture={() => (dragging = true)}
-      data-video-volume-popover={open ? 'open' : 'closed'}
+      class="relative inline-flex"
+      role="group"
+      bind:this={host}
+      data-video-volume-host
+      onpointerenter={(e) => {
+        if (e.pointerType === 'mouse') hovering = true;
+      }}
+      onpointerleave={(e) => {
+        if (e.pointerType === 'mouse' && !dragging) hovering = false;
+      }}
+      onfocusin={() => {
+        if (keyboardModality && !restoringFocus) focused = true;
+      }}
+      onfocusout={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focused = false;
+      }}
+      onkeydown={onHostKeydown}
     >
-      <VideoVolumeSlider value={muted ? 0 : videoSound.level} onChange={(v) => onLevel?.(v)} />
+      {@render speaker('')}
+      <!-- THE HOVER BRIDGE: the pill's box ends flush on the speaker's 44px target (its bottom padding
+           is the spacing), so the pointer crossing from one to the other never leaves the host. Closed:
+           `inert` and hidden, so neither Tab nor a screen reader meets a control that is not there. -->
+      <span
+        bind:this={popover}
+        popover="manual"
+        role="presentation"
+        inert={!open}
+        class="video-volume-popover -translate-x-1/2 -translate-y-full {open
+          ? 'visible'
+          : 'invisible'}"
+        style="left: {anchor.x}px; top: {anchor.y}px"
+        onpointerdowncapture={beginDrag}
+        data-video-volume-popover={open ? 'open' : 'closed'}
+      >
+        <VideoVolumeSlider
+          value={muted ? 0 : videoSound.level}
+          onChange={(v) => onLevel?.(v)}
+          onCommit={() => videoSound.commitLevel()}
+          flat={!glass}
+        />
+      </span>
     </span>
   </span>
 {:else}
   {@render speaker(klass)}
 {/if}
+
+<style>
+  /* The Popover API's defaults (a centred, bordered, scrolling box) undone: this is a fixed anchor. */
+  .video-volume-popover {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    padding: 0 0 0.25rem;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    overflow: visible;
+  }
+</style>

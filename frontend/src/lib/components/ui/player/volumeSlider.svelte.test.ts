@@ -34,6 +34,9 @@ function render(props: ComponentProps<typeof VideoSoundButton>) {
   return target;
 }
 
+const popoverOf = (target: HTMLElement) =>
+  target.querySelector<HTMLElement>('[data-video-volume-popover]')!;
+
 beforeEach(() => {
   localStorage.clear();
   videoSound.setVolume(1);
@@ -63,27 +66,57 @@ describe('the speaker with its slider', () => {
     const host = target.querySelector<HTMLElement>('[data-video-volume-host]')!;
     const popover = target.querySelector<HTMLElement>('[data-video-volume-popover]')!;
     expect(popover.dataset.videoVolumePopover).toBe('closed');
-    host.dispatchEvent(new PointerEvent('pointerenter'));
+    host.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
     flushSync();
     expect(popover.dataset.videoVolumePopover).toBe('open');
     // The pill is INSIDE the host: moving onto it fires no leave on the host.
     expect(host.contains(popover)).toBe(true);
-    host.dispatchEvent(new PointerEvent('pointerleave'));
+    host.dispatchEvent(new PointerEvent('pointerleave', { pointerType: 'mouse' }));
     flushSync();
     expect(popover.dataset.videoVolumePopover).toBe('closed');
   });
 
-  it('opens on keyboard focus and closes when focus leaves the host', () => {
+  it('ignores a touch pointer, so a hybrid laptop never sticks it open', () => {
     stubMedia(true);
     const target = render({ muted: false, onToggle: () => {}, onLevel: () => {} });
     const host = target.querySelector<HTMLElement>('[data-video-volume-host]')!;
-    const popover = target.querySelector<HTMLElement>('[data-video-volume-popover]')!;
+    host.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'touch' }));
+    flushSync();
+    expect(popoverOf(target).dataset.videoVolumePopover).toBe('closed');
+  });
+
+  it('a focus by a click does not open it; a focus by Tab does, and leaving closes it', () => {
+    stubMedia(true);
+    const target = render({ muted: false, onToggle: () => {}, onLevel: () => {} });
+    const host = target.querySelector<HTMLElement>('[data-video-volume-host]')!;
+    window.dispatchEvent(new Event('pointerdown'));
     host.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
     flushSync();
-    expect(popover.dataset.videoVolumePopover).toBe('open');
+    expect(popoverOf(target).dataset.videoVolumePopover, 'a click focus').toBe('closed');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab' }));
+    host.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    flushSync();
+    expect(popoverOf(target).dataset.videoVolumePopover).toBe('open');
     host.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: document.body }));
     flushSync();
-    expect(popover.dataset.videoVolumePopover).toBe('closed');
+    expect(popoverOf(target).dataset.videoVolumePopover).toBe('closed');
+  });
+
+  it('is inert while closed, and Escape closes it without reaching the player behind', () => {
+    stubMedia(true);
+    const target = render({ muted: false, onToggle: () => {}, onLevel: () => {} });
+    const host = target.querySelector<HTMLElement>('[data-video-volume-host]')!;
+    const behind = vi.fn();
+    document.body.addEventListener('keydown', behind);
+    expect(popoverOf(target).hasAttribute('inert'), 'closed').toBe(true);
+    host.dispatchEvent(new PointerEvent('pointerenter', { pointerType: 'mouse' }));
+    flushSync();
+    expect(popoverOf(target).hasAttribute('inert'), 'open').toBe(false);
+    host.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    flushSync();
+    expect(popoverOf(target).dataset.videoVolumePopover).toBe('closed');
+    expect(behind).not.toHaveBeenCalled();
+    document.body.removeEventListener('keydown', behind);
   });
 
   it('shows 0 while muted and the level otherwise, as a labelled range with a percentage', () => {
@@ -122,15 +155,53 @@ describe('the slider', () => {
     mounted.push(() => unmount(c));
     flushSync();
     const above = vi.fn();
-    for (const type of ['pointerdown', 'pointerup', 'click', 'keydown'])
+    for (const type of ['pointerdown', 'pointerup', 'click', 'keydown', 'wheel'])
       document.body.addEventListener(type, above);
     const range = target.querySelector('input')!;
     range.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     range.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    range.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    for (const key of ['ArrowUp', 'm', 'k', 'f', ' ', '5'])
+      range.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
     expect(above).not.toHaveBeenCalled();
     expect(target.querySelector('[data-video-volume]')!.hasAttribute('data-video-controls')).toBe(
       true
     );
+  });
+
+  it('a wheel turn changes the level, commits it, and goes no further', () => {
+    const onChange = vi.fn();
+    const onCommit = vi.fn();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const c = mount(VideoVolumeSlider, { target, props: { value: 0.5, onChange, onCommit } });
+    mounted.push(() => unmount(c));
+    flushSync();
+    const behind = vi.fn();
+    document.body.addEventListener('wheel', behind);
+    const wheel = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true });
+    target.querySelector('input')!.dispatchEvent(wheel);
+    document.body.removeEventListener('wheel', behind);
+    expect(onChange).toHaveBeenCalledWith(0.55);
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(behind).not.toHaveBeenCalled();
+  });
+
+  it('commits on release (change), not on each input tick', () => {
+    const onCommit = vi.fn();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const c = mount(VideoVolumeSlider, {
+      target,
+      props: { value: 1, onChange: () => {}, onCommit },
+    });
+    mounted.push(() => unmount(c));
+    flushSync();
+    const range = target.querySelector('input')!;
+    range.dispatchEvent(new Event('input', { bubbles: true }));
+    range.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(onCommit).not.toHaveBeenCalled();
+    range.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(onCommit).toHaveBeenCalledTimes(1);
   });
 });

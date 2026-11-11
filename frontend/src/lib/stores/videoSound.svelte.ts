@@ -110,6 +110,8 @@ let muted = $state(
 
 /** The last NON-ZERO level: what an unmute restores and what the volume slider rests at. */
 let level = $state(typeof localStorage === 'undefined' ? DEFAULT_VIDEO_LEVEL : readStoredLevel());
+/** What the device has stored (or the default): `commitLevel` writes only a difference. */
+let persistedLevel = level;
 
 export const videoSound = {
   /** The app's one volume, in (0, 1], applied to every video's `volume`; mute is separate. */
@@ -117,25 +119,39 @@ export const videoSound = {
     return level;
   },
   /**
-   * Sets the LEVEL only (the desktop volume slider, owner 2026-11-11), remembered on this device.
-   * Zero is not a level - it is mute - so the last non-zero one is kept and the caller mutes.
+   * Sets the LEVEL only, IN MEMORY (the desktop volume slider, owner 2026-11-11): every video follows
+   * at once, a drag ticks this many times, and nothing is written or logged per tick - the gesture
+   * ends in {@link videoSound.commitLevel}. Zero is not a level - it is mute - so the last non-zero
+   * one is kept and the caller mutes.
    */
   setLevel(next: number): void {
     const clamped = normalizeLevel(next);
     if (clamped <= 0 || clamped === level) return;
-    Log.d('VIDEO', `volume level ${Math.round(clamped * 100)}% for every video`);
     level = clamped;
+  },
+  /**
+   * ENDS A GESTURE: remembers the level on this device and logs it ONCE (the slider's `change`, a
+   * wheel notch, a viewer closing). A no-op when what is stored is already the level.
+   */
+  commitLevel(): void {
+    if (level === persistedLevel) return;
+    Log.d(
+      'VIDEO',
+      `volume level ${Math.round(level * 100)}% for every video (remembered on this device)`
+    );
+    persistedLevel = level;
     writeStoredLevel(level);
   },
   /**
    * The slider's answer for EVERY video: dragging to 0 is mute (the level is kept), dragging up from
-   * mute unmutes, anything else sets the level.
+   * mute unmutes, anything else sets the level (in memory, see {@link videoSound.setLevel}).
    */
   setVolume(next: number): void {
     const clamped = normalizeLevel(next);
     videoSound.setLevel(clamped);
     videoSound.setMuted(clamped <= 0);
   },
+
   /** True while every video in the app is silent. */
   get muted(): boolean {
     return muted;

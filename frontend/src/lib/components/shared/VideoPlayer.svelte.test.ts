@@ -342,13 +342,23 @@ it("a tap on a control is the control's, and is not the sound tap", () => {
 });
 
 it('draws one glass bar whose buttons wear no blur of their own, and a glass play triangle with no disc', () => {
+  // A MOUSE, so the speaker's volume pill is rendered: it too wears the FLAT tint inside the bar.
+  const fine = (q: string) =>
+    ({
+      matches: true,
+      media: q,
+      addEventListener() {},
+      removeEventListener() {},
+    }) as unknown as MediaQueryList;
+  vi.stubGlobal('matchMedia', fine);
+  window.matchMedia = fine;
   const { target, video } = mountPlayer();
   video.dispatchEvent(new Event('loadeddata'));
   flushSync();
-  // The volume pill floats ABOVE the speaker, outside the bar's own blur: it is the one glass allowed inside.
-  expect(
-    target.querySelectorAll('[data-video-bar] .glass-video:not([data-video-volume])').length
-  ).toBe(0);
+  const pill = target.querySelector<HTMLElement>('[data-video-bar] [data-video-volume]');
+  expect(pill, 'the pill is rendered inside the bar').not.toBeNull();
+  expect(pill!.dataset.glass, 'and flat, with no blur of its own').toBe('flat');
+  expect(target.querySelectorAll('[data-video-bar] .glass-video').length).toBe(0);
   expect(target.querySelector('[data-video-bar]')!.className).toContain('glass-video');
   const glyph = target.querySelector('[data-video-play-glyph]')!;
   expect(glyph.querySelector('.glass-video-shape'), 'the triangle is the glass').not.toBeNull();

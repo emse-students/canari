@@ -239,19 +239,38 @@ like the theme: not per account, not wiped by a sign-out.
   (forwarded by `followVideoSound`) finds the answer already muted and writes nothing. Before, that
   retry would have remembered "off" for good - a refusal turned into a preference.
 - **One volume LEVEL, and a desktop slider** (owner, 2026-11-11). `videoSound.level` is the last
-  NON-ZERO level in (0, 1], stored under `canari-video-volume` (every read and write in try/catch),
+  NON-ZERO level in (0, 1], stored under `canari-video-volume` (every read and write in try/catch) and
   applied to every video's `volume` (`VideoPlayer`'s effect, `LiveViewer`'s, `followVideoSound` for
-  the native-controls viewer, which also writes a native drag back as the level). Mute stays its own
-  toggle: the speaker unmutes at the stored level, `setVolume(0)` is mute and keeps the level, a drag
-  up from mute unmutes. The slider is `VideoVolumeSlider` (a real vertical `<input type=range>`,
-  `aria-valuetext` a percentage, `data-video-controls`, every press and arrow key stopped before the
-  player), mounted by `VideoSoundButton` ONLY when it is given `onLevel` and
-  `(hover: hover) and (pointer: fine)` holds (`watchFineHover`); a phone keeps its hardware buttons.
-  It opens on hover or focus-within and the pill is a child of the speaker's wrapper, flush against it,
-  so crossing from one to the other never closes it (a thumb drag leaving the pill keeps it open until
-  the release). Surfaces: the feed, the lightbox bar, the conversation viewer, the reel rail, the
-  live viewer. A chat video (`local`) shares the level but mutes only its own element; a `silent`
-  take has none. Tests: `volumeSlider.svelte.test.ts`, `volumeSlider.twoPlayers.svelte.test.ts`.
+  the native-controls viewer, which also takes a native drag back as the level). A drag ticks the level
+  IN MEMORY (`setLevel`/`setVolume`, nothing written or logged per tick); the gesture ends in
+  `commitLevel` (the range's `change`, a wheel notch, a viewer closing): one write, one log line.
+  Mute stays its own toggle: the speaker unmutes at the stored level, `setVolume(0)` is mute and keeps
+  the level, a drag up from mute unmutes.
+- **The slider** is `VideoVolumeSlider` (a real vertical `<input type=range>`, `aria-valuetext` a
+  percentage, `data-video-controls`), mounted by `VideoSoundButton` ONLY when it is given `onLevel`
+  and `(hover: hover) and (pointer: fine)` holds (`watchFineHover`); a phone keeps its hardware
+  buttons. Behaviours pinned (reviewed 2026-11-11, checked in a real Chrome):
+  - **Position**: the caller's corner classes sit on an OUTER box alone, the pill's anchor is an inner
+    `relative` box - never two position classes on one element.
+  - **Open**: `pointerenter`/`pointerleave` of a MOUSE pointer only (a hybrid laptop's touch never
+    sticks it open); keyboard focus only after a Tab (one shared modality flag), so a click-focused
+    speaker does not hold it open. A thumb drag leaving the pill keeps it open until the release.
+  - **Escape** closes the pill alone (not the lightbox behind) and returns focus to the speaker.
+  - **Top layer**: the pill is a `popover="manual"` shown while open, so no `overflow-hidden` card or
+    bubble clips it; it stays a DOM child of the speaker's host, which keeps hover and focus continuous.
+    Closed, it is `inert` and hidden - neither Tab nor a screen reader meets it.
+  - **Inputs**: every key the range handles (not Tab, not Escape) stops at the slider, so Space, `m`,
+    `f`, `k`, arrows never reach the player's keyboard map; the wheel over the pill is the volume's
+    (non-passive, 5 % a notch, stopped there; `wheelOverVolume` also guards the reel viewer and the
+    lightbox, which would page and zoom).
+  - **Glass**: its own `glass-video` blur on the feed, the rail and the conversation viewer; the FLAT
+    tint (`--glass-video-flat-bg`, no blur) inside the lightbox's glass bar - never a second blur
+    ([design-reference](../design-reference.md)).
+  - **A chat video's slider mutes only that video** (`soundScope="local"`): it moves the shared level
+    for everyone, but dragging to 0 or up from 0 mutes or unmutes only that element, and never writes
+    the app's mute answer. A `silent` take has no slider.
+  - Surfaces: the feed, the lightbox bar, the conversation viewer, the reel rail, the live viewer, the
+    chat video. Tests: `volumeSlider.svelte.test.ts`, `volumeSlider.twoPlayers.svelte.test.ts`.
 - **Not yet: the device volume.** No WebView exposes the system volume; following it (the struck
   glyph at volume 0, as Instagram does) needs a native bridge on each phone - owed in
   [backlog](../../backlog.d/video-sound-follows-the-device-volume.md).

@@ -116,6 +116,7 @@ describe('the volume level (owner, 2026-11-11)', () => {
   it('remembers the level across a reload', async () => {
     const first = await fresh();
     first.videoSound.setVolume(0.4);
+    first.videoSound.commitLevel();
     vi.resetModules();
     const second = await fresh();
     expect(second.videoSound.level).toBe(0.4);
@@ -137,6 +138,17 @@ describe('the volume level (owner, 2026-11-11)', () => {
     expect(videoSound.level).toBe(0.2);
   });
 
+  it('writes the level once per gesture, never per tick', async () => {
+    const { videoSound, VIDEO_VOLUME_KEY } = await fresh();
+    for (const v of [0.9, 0.8, 0.7, 0.6]) videoSound.setVolume(v);
+    expect(localStorage.getItem(VIDEO_VOLUME_KEY), 'nothing per tick').toBeNull();
+    videoSound.commitLevel();
+    expect(localStorage.getItem(VIDEO_VOLUME_KEY)).toBe('0.6');
+    localStorage.removeItem(VIDEO_VOLUME_KEY);
+    videoSound.commitLevel();
+    expect(localStorage.getItem(VIDEO_VOLUME_KEY), 'a second commit writes nothing').toBeNull();
+  });
+
   it('clamps, and ignores a stored value that is not a usable level', async () => {
     localStorage.setItem('canari-video-volume', 'loud');
     const { videoSound } = await fresh();
@@ -151,7 +163,10 @@ describe('the volume level (owner, 2026-11-11)', () => {
       throw new Error('quota');
     });
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(() => videoSound.setVolume(0.3)).not.toThrow();
+    expect(() => {
+      videoSound.setVolume(0.3);
+      videoSound.commitLevel();
+    }).not.toThrow();
     expect(videoSound.level).toBe(0.3);
   });
 });

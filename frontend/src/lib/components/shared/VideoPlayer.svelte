@@ -17,6 +17,7 @@
   import VideoChipButton from '$lib/components/ui/player/VideoChipButton.svelte';
   import VideoPlayGlyph from '$lib/components/ui/player/VideoPlayGlyph.svelte';
   import VideoScrubber from '$lib/components/ui/player/VideoScrubber.svelte';
+  import { applyVideoLevel } from '$lib/utils/videoVolume';
   import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
   import VideoExpandButton from '$lib/components/ui/player/VideoExpandButton.svelte';
   import VideoFeedbackGlyph, {
@@ -452,7 +453,7 @@
   // own mute: a newly bound element starts at the stored level, the slider moves them all at once.
   $effect(() => {
     const level = videoSound.level;
-    if (scope !== 'silent' && video && video.volume !== level) video.volume = level;
+    if (scope !== 'silent' && video) applyVideoLevel(video, level);
   });
 
   /**
@@ -1129,7 +1130,7 @@
             onToggle={toggleMute}
             onLevel={changeLevel}
             glass={false}
-            disabled={soundScope === 'silent'}
+            disabled={scope === 'silent'}
           />
 
           {#if canFullscreen}
