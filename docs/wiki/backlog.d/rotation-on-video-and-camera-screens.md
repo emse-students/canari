@@ -38,6 +38,20 @@ is letterboxed in the vertical pager.
      `ReelFrame` with the media's own ratio - already the case for a gallery import; read it on the
      phones with a reel filmed in landscape (below).
 
+### The landscape reel viewer (owner, 2026-11-11, ships after `1.6.11`) - built, draft PR
+
+A CanaReels video whose own file is wider than tall gets a "Plein ecran" chip; it opens that video in
+`MediaLightbox` forced to landscape (`forceLandscape`), from the blob or stream fork the slide already
+holds, and closing returns to the portrait pager on the same reel at the same position. Per media, from
+its recorded width and height; missing dimensions -> no chip, logged. **The owner also decided NOT to
+crop black bars baked into a video file (no detection, not now).** Mechanism and files:
+[reels](../frontend/modules/reels.md#a-landscape-file-gets-a-plein-ecran-chip-owner-2026-11-11),
+[screen-orientation](../frontend/screen-orientation.md#the-landscape-reel-viewer-owner-2026-11-11).
+Readings owed, Mi 9T and iPhone 12, lock off then on: the chip shows on a landscape reel only (not on the
+next vertical one); a press turns the screen to landscape with the lock ON; the picture resumes at the
+pager's time; closing returns to portrait on the same reel, at the viewer's time; the header clears the
+notch on both sides; desktop web opens the viewer without turning.
+
 ### Readings owed on a pre-release
 
 Native is verified by COMPILING (CI's Compile Android / Compile iOS), which proves nothing about

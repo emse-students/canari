@@ -114,6 +114,13 @@
     /** With `minimalPlayer`: whether its line pads for the home indicator (the frame reaches the bottom). */
     playerSafeBottom?: boolean;
     /**
+     * `galleryMode` + `minimalPlayer` only: this video's FILE is landscape (`isLandscapeMedia`, the
+     * caller decides), so its player draws the "Plein ecran" chip and the chip opens THIS component's
+     * own viewer, forced to landscape (owner, 2026-11-11). The viewer plays the blob or the stream
+     * fork this component already holds - no second download or decrypt - and hands its position back.
+     */
+    landscapeViewer?: boolean;
+    /**
      * `galleryMode` only: a picture of the video's first frame, drawn while the file loads and
      * until the player holds that frame (the reel viewer's poster, `reelPosters.svelte.ts`).
      */
@@ -160,6 +167,7 @@
     postInfo,
     minimalPlayer = false,
     playerSafeBottom = true,
+    landscapeViewer = false,
     poster = null,
     onLoaded,
     onPlaybackBlocked,
@@ -539,6 +547,61 @@
   }
 </script>
 
+{#snippet viewer()}
+  <!-- Lightbox for image/video -->
+  <!-- A STREAMED video's viewer opens AT THE TAP, on the poster, and plays from its own fork of the
+       stream (`viewerStream` above) as soon as its head is in: waiting for `blobUrl` here made a tap
+       on a paced feed video do nothing until the last segment, then pop the viewer up unasked
+       (review of #1744), and waiting for the file kept a 33 MB video from starting for 26 s. -->
+  {#if lightboxOpen && (blobUrl || streamUrl) && (mediaType === 'image' || mediaType === 'video')}
+    <MediaLightbox
+      open={lightboxOpen}
+      forceLandscape={galleryMode && landscapeViewer && mediaType === 'video'}
+      onClose={closeLightbox}
+      ariaLabel={mediaType === 'image' ? m.post_image_enlarged_alt() : m.post_fullscreen_label()}
+      title={media.fileName ??
+        (mediaType === 'image' ? m.post_image_label() : m.post_media_video_label())}
+      info={{
+        ...postInfo,
+        fileName: media.fileName,
+        sizeBytes: media.size,
+        width: media.width,
+        height: media.height,
+      }}
+      onDownload={blobUrl
+        ? () =>
+            downloadBlob(blobUrl!, media.fileName ?? (mediaType === 'image' ? 'image' : 'video'))
+        : undefined}
+    >
+      {#if mediaType === 'image'}
+        <img
+          src={blobUrl}
+          alt={media.fileName ?? m.post_image_enlarged_alt()}
+          class="max-h-full max-w-full object-contain select-none"
+        />
+      {:else}
+        <!-- Canari's player, never the engine's `controls` (`VideoPlayer`). Opened from a video
+             that is still STREAMING, the MSE URL feeds the one inline element only, so the viewer
+             plays its own fork of the stream; the poster shows only until the fork exists. -->
+        {#if viewerStream}
+          <VideoPlayer
+            src={viewerStream.url}
+            positionKey={media.mediaId}
+            streamed
+            disableRemotePlayback={streamManaged}
+            onVideo={attachViewer}
+            class="h-full w-full"
+          />
+        {:else if blobUrl}
+          <VideoPlayer src={blobUrl} positionKey={media.mediaId} class="h-full w-full" />
+        {:else}
+          <div class="relative h-full w-full"><VideoPoster /></div>
+        {/if}
+      {/if}
+    </MediaLightbox>
+  {/if}
+{/snippet}
+
 {#if galleryMode}
   <!-- Inside parent gallery lightbox - just render the content -->
   {#if loading}
@@ -588,6 +651,12 @@
         class="h-full w-full"
         positionKey={media.mediaId}
         variant={minimalPlayer ? 'reel' : 'lightbox'}
+        onOpen={minimalPlayer && landscapeViewer
+          ? () => {
+              Log.i('PostMedia', `${media.mediaId}: the landscape viewer is opened`);
+              lightboxOpen = true;
+            }
+          : undefined}
         safeBottom={playerSafeBottom}
         {poster}
         {onPlaybackBlocked}
@@ -599,6 +668,7 @@
       </div>
     {/if}
   {/if}
+  {@render viewer()}
 {:else}
   <!-- Standalone rendering -->
   {#if compactFile && !failure && !authMissing}
@@ -768,57 +838,7 @@
     />
   {/if}
 
-  <!-- Lightbox for image/video -->
-  <!-- A STREAMED video's viewer opens AT THE TAP, on the poster, and plays from its own fork of the
-       stream (`viewerStream` above) as soon as its head is in: waiting for `blobUrl` here made a tap
-       on a paced feed video do nothing until the last segment, then pop the viewer up unasked
-       (review of #1744), and waiting for the file kept a 33 MB video from starting for 26 s. -->
-  {#if lightboxOpen && (blobUrl || streamUrl) && (mediaType === 'image' || mediaType === 'video')}
-    <MediaLightbox
-      open={lightboxOpen}
-      onClose={closeLightbox}
-      ariaLabel={mediaType === 'image' ? m.post_image_enlarged_alt() : m.post_fullscreen_label()}
-      title={media.fileName ??
-        (mediaType === 'image' ? m.post_image_label() : m.post_media_video_label())}
-      info={{
-        ...postInfo,
-        fileName: media.fileName,
-        sizeBytes: media.size,
-        width: media.width,
-        height: media.height,
-      }}
-      onDownload={blobUrl
-        ? () =>
-            downloadBlob(blobUrl!, media.fileName ?? (mediaType === 'image' ? 'image' : 'video'))
-        : undefined}
-    >
-      {#if mediaType === 'image'}
-        <img
-          src={blobUrl}
-          alt={media.fileName ?? m.post_image_enlarged_alt()}
-          class="max-h-full max-w-full object-contain select-none"
-        />
-      {:else}
-        <!-- Canari's player, never the engine's `controls` (`VideoPlayer`). Opened from a video
-             that is still STREAMING, the MSE URL feeds the one inline element only, so the viewer
-             plays its own fork of the stream; the poster shows only until the fork exists. -->
-        {#if viewerStream}
-          <VideoPlayer
-            src={viewerStream.url}
-            positionKey={media.mediaId}
-            streamed
-            disableRemotePlayback={streamManaged}
-            onVideo={attachViewer}
-            class="h-full w-full"
-          />
-        {:else if blobUrl}
-          <VideoPlayer src={blobUrl} positionKey={media.mediaId} class="h-full w-full" />
-        {:else}
-          <div class="relative h-full w-full"><VideoPoster /></div>
-        {/if}
-      {/if}
-    </MediaLightbox>
-  {/if}
+  {@render viewer()}
 {/if}
 
 <!-- THE FILE CARD: a header row (icon, name, size, download) and, for a lone PDF, the first page.

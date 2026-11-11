@@ -10,6 +10,7 @@
   let {
     media,
     minimalPlayer,
+    landscapeViewer,
     poster,
     onLoaded,
     onPlaybackBlocked,
@@ -17,6 +18,7 @@
   }: {
     media: { mediaId: string };
     minimalPlayer?: boolean;
+    landscapeViewer?: boolean;
     poster?: string | null;
     onLoaded?: (url: string) => void;
     onPlaybackBlocked?: (cause: 'refused' | 'unplayable' | 'failed') => void;
@@ -43,6 +45,7 @@
 <div
   data-post-media-stub={media.mediaId}
   data-minimal-player={minimalPlayer ? '' : undefined}
+  data-landscape-viewer={landscapeViewer ? '' : undefined}
   data-poster={poster ?? undefined}
   bind:this={el}
 ></div>

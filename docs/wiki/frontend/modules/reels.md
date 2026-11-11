@@ -1622,6 +1622,28 @@ as Instagram and Shorts do on desktop - is one change in `ReelSlide`'s `ratio` (
 `REEL_FRAME_RATIO` on a wide stage); it is NOT taken here because a letterboxed clip would then be
 black inside a column rather than the blurred backdrop, and that is a design decision for the owner.
 
+### A landscape file gets a "Plein ecran" chip (owner, 2026-11-11)
+
+In the vertical pager a video whose FILE is wider than tall draws a labelled glass chip, "Plein ecran",
+top-right of its frame. It opens THAT video in the shared full-screen viewer (`MediaLightbox`) forced to
+landscape; closing returns to the pager, in portrait, on the same reel, at the playback position the
+viewer left it ([screen-orientation](../screen-orientation.md#the-landscape-reel-viewer-owner-2026-11-11)).
+
+- **The decision is per media, from its own recorded width and height** (`isLandscapeMedia`,
+  `reels/landscapeMedia.ts`): `width > height`. Square is not landscape. A media with missing or
+  unusable dimensions gets NO chip and is said once per media at warn level (`[reel-landscape]`), never
+  guessed. Only the ACTIVE pane mounts a player, so the chip is the visible video's alone - the next
+  reel, a neighbour, a carousel's other media are never affected. A photo and a live replay have none.
+- **No second download.** `ReelMediaPane` hands `landscapeViewer` to its `PostMedia`; the chip is the
+  reel `VideoPlayer`'s (`onOpen`, the same `openViewer` the feed's expand chip uses: it notes the
+  position and waits for the viewer's hand-back via `videoResume`), and the viewer is the `PostMedia`'s
+  OWN lightbox, which plays the blob it holds or a fork of its stream - the sibling code path of a feed
+  video's viewer. `PostMedia`'s lightbox is now one snippet rendered in both `galleryMode` and standalone.
+- **Black bars baked into a file are NOT cropped (owner, 2026-11-11): no detection, not now.** A
+  portrait file holding a letterboxed landscape picture is portrait here and gets no chip.
+- **Desktop web**: the chip still opens the viewer; `orientationCanBeForced()` is false, so nothing
+  turns.
+
 ## Decided by the owner, 2026-11-09/10
 
 Every vertical video of 90 s or less that is posted is a CanaReel, and a CanaReel lives 1 year.

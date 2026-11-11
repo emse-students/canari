@@ -159,8 +159,19 @@ pads its sides with `utils/sideSafeArea.ts`.
   the left side when turned (`landscape:max-w-md`), the on-air chat a column (`landscape:max-w-sm`).
   A double tap on the preview switches the lens (owner, 2026-11-09), exactly where the lens button is
   offered - the sheet and the chat are out of it (`data-no-double-tap`).
-- **The full-screen viewer and the live viewer**: owed, written in the backlog entry (their files are
-  being rewritten by the video-player stack).
+- **The live viewer, and the full-screen viewer for chat and feed videos**: owed, written in the
+  backlog entry. The CanaReels landscape viewer is built (below).
+
+## The landscape reel viewer (owner, 2026-11-11)
+
+The one full-screen viewer that turns today. A CanaReel whose file is landscape draws a "Plein ecran"
+chip ([reels](modules/reels.md#a-landscape-file-gets-a-plein-ecran-chip-owner-2026-11-11)); it opens
+`MediaLightbox` with `forceLandscape`, which `requestOrientation('landscape', 'media-lightbox')` while
+open and releases on close - the SAME stack, no second mechanism. The pager asks nothing, so the release
+is the way back to portrait. No rotate button there (the viewer is landscape by decision; closing is
+the way back). Its immersive header and footer pad the sides by the safe area (`sideSafePadding`, the
+notch in landscape) - the first piece of step 4 of the backlog entry. Not done: the photo lightbox, the
+live viewer and the feed's video viewer stay portrait.
 
 ## Known and accepted
 

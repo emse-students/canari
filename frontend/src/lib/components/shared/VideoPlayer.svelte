@@ -957,6 +957,28 @@
     <!-- THE GLYPH IS THE FEEDBACK OF A GESTURE, NEVER A STATE: a tap's sound, a reel's pause. -->
     <VideoFeedbackGlyph {feedback} />
 
+    {#if minimal && onOpen}
+      <!-- THE REEL'S "PLEIN ECRAN" CHIP (owner, 2026-11-11): drawn only for a media whose own file is
+           landscape (the caller decides, `reels/landscapeMedia.ts`). A labelled glass pill in the
+           kit's chip button (44 px target, `data-video-controls`: the viewer's swipe, the double tap
+           and the player's tap never see its press), top-right, clear of the rail and the caption. -->
+      <VideoChipButton
+        label={openLabel ?? m.post_fullscreen_label()}
+        onclick={openViewer}
+        glass={false}
+        class="absolute top-1 right-1 z-40"
+        data-reel-fullscreen
+      >
+        <span
+          class="glass-video text-2xs inline-flex h-7 items-center gap-1 rounded-full px-2.5 font-semibold"
+          data-glass={videoGlass()}
+        >
+          <Maximize size={14} strokeWidth={2.5} class="drop-shadow" aria-hidden="true" />
+          {openLabel ?? m.post_fullscreen_label()}
+        </span>
+      </VideoChipButton>
+    {/if}
+
     {#if inline}
       <!-- AN INLINE VIDEO'S CHROME (owner, 2026-11-10: minimal, as Instagram and CanaReels). The
            CHAT's expand chip top-right (its tap is the sound, not the viewer); the FEED has none,

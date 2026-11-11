@@ -57,6 +57,7 @@
   import { Log } from '$lib/utils/Log';
   import { holdPlayback } from '$lib/actions/playWhileVisible';
   import { claimTouchMove } from '$lib/utils/touchClaim';
+  import { requestOrientation } from '$lib/mobile/screenOrientation.svelte';
   import { provideViewerChrome } from '$lib/utils/videoViewerChrome.svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -77,6 +78,13 @@
     showNext?: boolean;
     onPrev?: () => void;
     onNext?: () => void;
+    /**
+     * Turns the screen to LANDSCAPE for as long as the viewer is open, even with the phone's rotation
+     * lock on (owner, 2026-11-11: the CanaReels "Plein ecran" chip of a landscape video). Closing
+     * releases the request, which returns the app to portrait (`screenOrientation`: the only way back).
+     * Where the build cannot turn the screen (the web) nothing is asked and the viewer just opens.
+     */
+    forceLandscape?: boolean;
     dotCount?: number;
     dotIndex?: number;
     onDotSelect?: (index: number) => void;
@@ -94,6 +102,7 @@
     showNext = false,
     onPrev,
     onNext,
+    forceLandscape = false,
     dotCount = 0,
     dotIndex = 0,
     onDotSelect,
@@ -117,6 +126,14 @@
   $effect.pre(() => {
     if (!open) return;
     return holdPlayback('the media lightbox is open');
+  });
+  // A LANDSCAPE VIEWER OWNS THE ORIENTATION WHILE IT IS OPEN: the newest request decides, and its
+  // release hands the turn back to whatever asked before it (the pager asks nothing: portrait).
+  $effect(() => {
+    if (!open || !forceLandscape) return;
+    const request = requestOrientation('landscape', 'media-lightbox');
+    Log.i('mediaLightbox', 'opened forced to landscape');
+    return () => request.release();
   });
   /** Every UI-triggered close (Back, Escape, swipe) goes through here, never straight to
    * `onClose`, so it stays in sync with the history entry pushed above. */

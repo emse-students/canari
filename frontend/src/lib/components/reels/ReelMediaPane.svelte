@@ -24,6 +24,7 @@
   import type { PostMediaRef } from '$lib/posts/api';
   import type { MediaFailureCause } from '$lib/utils/mediaErrors';
   import type { FullScreenMediaKind } from '$lib/reels/fullScreenPost';
+  import { isLandscapeMedia } from '$lib/reels/landscapeMedia';
   import { ReelPreload, worthPreloading } from '$lib/reels/reelPreload';
   import { captureReelPoster, reelPosterUrl } from '$lib/reels/reelPosters.svelte';
   import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
@@ -69,6 +70,13 @@
   }: Props = $props();
 
   const video = $derived(kind === 'video' ? media : undefined);
+  /**
+   * THIS VIDEO'S OWN FILE IS LANDSCAPE: its player draws the "Plein ecran" chip, which opens the
+   * viewer forced to landscape (owner, 2026-11-11). Decided per media from its own recorded
+   * dimensions, so a neighbour or the next reel is never affected; only the active pane mounts a
+   * player, so the chip is the visible video's alone.
+   */
+  const landscapeFile = $derived(!!video && isLandscapeMedia(video));
 
   /**
    * WHAT A VIDEO SHOWS BEFORE ITS FIRST FRAME IS DECODED (owner, 2026-10-31: never a play glyph on a
@@ -238,6 +246,7 @@
       galleryMode
       minimalPlayer
       {playerSafeBottom}
+      landscapeViewer={landscapeFile}
       {durationMs}
       poster={posterUrl}
       onLoaded={onMediaLoaded}
