@@ -1102,9 +1102,8 @@ conversation - Accepter / Refuser" (a PERSON, never a device: a member's device 
 ask since 2026-10-31), which replaces the group link's automatic admission (the server holds a link joiner outside, `awaitingAdmission`, until a
 member's Add); and an entry no member made is written in the conversation and reported
 (`[UNINVITED_ENTRY]`, with its `kind`) - see
-[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Migration 038 is applied in production; owed: `minClientVersion` raised by [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24), since a member client older
-than the rule still auto-Adds a link joiner and "only by a member" holds only from that floor
-([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)); the `[UNINVITED_ENTRY] kind=new-person` count on
+[mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23). Migration 038 is applied in production; the floor is MET (re-read 2026-11-11: `minClientVersion` is `1.6.6`, #2358 is in every stable since `v1.5.0`), so "only by a member" now holds for every client allowed to connect and
+[its legacy entry](legacy-compatibility.md#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically) is due to close; owed: the `[UNINVITED_ENTRY] kind=new-person` count on
 production once the build serves both stores; of the four review findings, the removed member's surviving leaf closed with ADM-3, the relay routes with #2870, the joiner's second device with no device row with the account-seat flag (`UserGroupRow.awaitingAdmission`, 2026-11-01), and the waiting-seat exclusion of calls owes one ring on dev (below). The receiving side (#2815, a closed group refusing such a commit and freezing) was DISARMED on 2026-10-31 -
 see [mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23); what it owes is in
 [backlog.d](backlog.d/p1-the-admission-rule-fix-forward.md).
@@ -1373,13 +1372,6 @@ no purge date (flagged to the DPO); account deletion is a durable queue (#1965).
 
 **Still open from that pass:** sending the DPO dossier and the DSI log-retention request - each a line of the [owed table](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
 
-## P3 - iPhone sign-in: the login page stays on a disabled "Redirection..." after the in-app sheet is cancelled (read 2026-10-22)
-
-On the iPhone (TestFlight `1.4.0`, build 100400001, `dev.canari-emse.fr`), cancelling the identity sheet
-(`Annuler`) returns to the login page with its button stuck on a disabled `Redirection...`; only a
-relaunch of the app brings the button back. Observed twice, driven over WDA; not read on a phone by hand,
-and not explained.
-
 ## P3 - The background Welcome route refuses `not_a_member` before it asks whether these bytes already landed (review of #2329, 2026-10-24)
 
 `POST /api/mls/push/send-welcome-and-commit` (`push.controller.ts`, `sendWelcomeAndCommitPush`) runs, in
@@ -1557,7 +1549,8 @@ Owed: (1) the counts of `[KEY_DISTRIBUTION] second eviction FAILED`, `departure 
 (`ADMIT_REFUSED`, `REFUSED` and `REJECT committer_not_member`), `[INTERNAL_DELETE] ... route(s) no
 seat stands behind outlived the cuts above and were removed` and `[SEAT_DRAIN]` outcomes on dev then production, expected near 0 (the
 unnamed line only during the deploy itself); (2) the latency of a key group's commit with admits
-(the questions are asked in parallel, one round trip) measured on dev.
+(the questions are asked in parallel, one round trip) measured on dev. Re-read 2026-11-11: log
+counts on the hosts, not taken by the triage; re-read again 2026-12-11.
 
 ## P2 - The mobile sign-in returns through a custom scheme: PKCE binds the code, not the app (2026-10-23)
 
@@ -1572,7 +1565,8 @@ registered on the providers in `infrastructure/authentik/blueprints/50-providers
 refuses a callback with no verifier
 ([legacy-compatibility](legacy-compatibility.md#no-date-yet---an-oidc-callback-with-no-pkce-verifier)).
 Owed first: whether `ASWebAuthenticationSession` and the Custom Tab both hand an `https` callback on a
-claimed host back to the app on the bench phones, a reading, since no gate here sees it.
+claimed host back to the app on the bench phones, a reading, since no gate here sees it. Re-read
+2026-11-11: `fr.emse.canari://callback` is still registered in `50-providers.yaml`; nothing moved.
 
 ## P3 - The commit rate limit is not yet checked against production (2026-10-22)
 
@@ -1674,14 +1668,6 @@ Not diagnosed: the test asserts a mount count, so a mount that has not settled y
 assertion runs (a timing dependency) is the first suspect, not proven. Owed: run it under
 `--repeat` with the full sweep's load, and name the condition before touching the test.
 
-## P3 - The eight service images run as root (Trivy DS-0002, measured 2026-10-23)
-
-Trivy's Dockerfile scan finds no non-root `USER` in any `infrastructure/local/Dockerfile.*`, and
-`--no-install-recommends` missing in the two Rust ones (DS-0029). Not gated: a `USER` on a
-production image needs the ownership of its volumes checked on a running estate first. Done when
-each image runs as a non-root user and `trivy config infrastructure/local` reports nothing HIGH
-([cicd](cicd.md#container-images-are-scanned-2026-10-23)).
-
 ## P3 - Bump the four Alpine pins when upstream rebuilds with brotli 1.2.1 (2026-10-24)
 
 Owner: Master. `CVE-2026-92392` (curl 8.22.0-r0, fixed in 8.23.0-r0) joined it on 2026-10-26 under the same conditions, so the rebuild must carry BOTH fixes and both entries go together. `CVE-2026-117610` and `CVE-2026-118370` (libexpat 2.9.0-r0, fixed in 2.10.0-r0, nginx pins only) joined on 2026-11-03: the rebuild must carry all three, and those two entries go with it. **The nginx half is done (2026-11-06):** the edge pin moved to a build carrying all three fixes and the libexpat entries were deleted; adminer and postgres are what is left. `CVE-2026-111497` (`brotli-libs` 1.2.0-r1) is allowlisted in
@@ -1712,7 +1698,7 @@ about them is open work** - the story is in `CHANGELOG.md`, the mechanism on the
 the rule in [durable-rules](durable-rules.md). Delete the line once the measurement is taken. The
 phone passes already taken are history: [device-readings-2026-10](device-readings-2026-10.md).
 
-**#2329, the background Welcome staged in the state file (merged 2026-10-24), owes two things before its stable.** (a) One Mi 9T reading: open the app INSIDE a background Welcome's round trip, between the stage written and the server's answer; the app's load reports the stage and settles it exactly once - merged on an acceptance, cleared otherwise - with no second Add and no `ACCEPTED AND NOT HELD`. It is the "app opened inside the round trip" variant of [the background Welcome reading](backlog.d/hardware-reading-owed-one-background-welcome-on-the-mi-9t-2026-10-22.md). (b) Its change to the iOS background-send FFI (a `max_attempts` argument, its header declaration and its Objective-C caller) agrees when read but has never been compiled: CI builds iOS only from a release or a manual dispatch. Owed: one manual `ios.yml` dispatch on `main`, green, before the next stable - otherwise the release is its first compile.
+**#2329, the background Welcome staged in the state file (merged 2026-10-24), owes two things before its stable.** (a) One Mi 9T reading: open the app INSIDE a background Welcome's round trip, between the stage written and the server's answer; the app's load reports the stage and settles it exactly once - merged on an acceptance, cleared otherwise - with no second Add and no `ACCEPTED AND NOT HELD`. It is the "app opened inside the round trip" variant of [the background Welcome reading](device-verification.md#one-background-welcome-on-the-mi-9t-the-procedure-2026-10-22). (b) Its change to the iOS background-send FFI (a `max_attempts` argument, its header declaration and its Objective-C caller) agrees when read but has never been compiled: CI builds iOS only from a release or a manual dispatch. Owed: one manual `ios.yml` dispatch on `main`, green, before the next stable - otherwise the release is its first compile.
 
 **The native caches sealed at rest (2026-10-22, [mobile](frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)) - built and compiled for Android, the Swift and Objective-C++ halves compiled by CI alone.** Owed on BOTH the Mi 9T and the iPhone, on an UPGRADE over a build that left plaintext files: (a) the first launch logs the key created (`NativeCacheKey: ensure: created` / `[CanariIOS] nativeCacheKey: created`) and the legacy pass (`[NATIVE_CACHE] ... now sealed`); (b) a DM and a salon message pushed with the app KILLED still show their text in the banner; (c) `graine_seeds.json` and `fcm_message_cache.ndjson` start with `CNSEAL1` / `cs1:` (`run-as` on Android, `bench_native_store list` on the iPhone) and the next start injects the cached message; (d) on the iPhone, `graine_seeds.json` and `fcm_message_cache.ndjson` read `isExcludedFromBackup` after a fresh write, in the data directory and in the App Group, while `mls.bin` and `push_context.json` do NOT. **And one rig change**: `phone.mjs graineMirrorSessions` now answers a sealed Android mirror with an error, so NOTIF-20's mirror count needs the app to answer through `bench_native_store` on Android as the iPhone rig already does.
 
@@ -1818,6 +1804,9 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | the stricter script policy and the iOS 16 minimum (#2267, every stable since `1.5.0`; [cloudflare-edge](infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22)) | the console read for policy refusals on the web, the Mi 9T and the iPhone 12; the edge features that inject scripts into a page checked against the policy |
 | the at-rest key on a phone is held by secure hardware, backups have their own recovery secret (#2274, every stable since `1.5.0`; [auth](frontend/modules/auth.md#the-at-rest-key-on-a-phone-is-held-by-the-hardware-2026-10-22)) | the "Owed on hardware" list of [auth](frontend/modules/auth.md#backups-get-their-own-recovery-secret), on the Mi 9T and the iPhone 12 |
 | new-device notices (#2278, every stable since `1.5.0`; [mls-protocol](protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day)) | add a web device with both phones shut: a local notification on each (the iPhone at its next message push), the in-app alert on opening, no second notification; a line "X added a device" in a DM with a contact who adds one; NO line in a community or salon |
+| a cancelled iPhone sign-in sheet hands the login button back (#2995, merged 2026-11-04) | on the iPhone 12, open the sign-in sheet, `Annuler`: the button is usable again at once, with no relaunch |
+| the background Welcome route validates its commit as the push-secret committer (2026-10-22; verified from source) | one background Welcome on the Mi 9T, by [the procedure](device-verification.md#one-background-welcome-on-the-mi-9t-the-procedure-2026-10-22): the three phone checks and the server's `START` / `accepted` / `DONE` |
+| a community's past goes only to a proven admission (#2273, #2264, `v1.5.0`; [channel-encryption section 25](protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)) | the rig rows COMM-26..31; the floor and the cut date (`ADMISSION_PROOF_SINCE` = 2026-10-27, the day `v1.5.0` shipped) are met |
 
 ---
 
@@ -2543,7 +2532,7 @@ nginx connection budget (G14, half answered in live-production).
 
 All taken in session on 2026-10-23. Bookings rows are D44-D54 in [bookings-chantier](bookings-chantier.md#redesign-decided-2026-10-23).
 
-**Release and priorities.** The next stable ships *"as soon as possible, we reach a big update"*; this REPLACES the 2026-10-27 date, and `ADMISSION_PROOF_SINCE` must follow the real day. UI changes ride the `1.4.1` pre-release after adversarial review and green CI, are read on the Mi 9T and the iPhone, then shown to the user. Priorities named: lives in production, video calls (lot 2), association enrolment with conditions and documents, dependency majors (SvelteKit 3, adapter-node 6, webrtc 0.21, mediabunny), bookings. Containers are a SEPARATE lot (non-root users, Debian trixie for the Rust runtimes), pre-release first. Store listings come AFTER the stable. The Pixel 6a is the user's personal phone, looked at only when the user asks.
+**Re-read 2026-11-11.** The release paragraph is spent: that stable was `v1.5.0` (2026-10-27, the day `ADMISSION_PROOF_SINCE` names), lives and video calls are in production. **Still open from it:** the Debian trixie base for the two Rust runtimes (the non-root half of the containers lot is done, [backlog](backlog.d/p3-two-service-images-still-run-as-root.md)); and, under MiConnect below, impersonation disabled and the profile-editor token restricted to non-admin accounts, neither visible in `infrastructure/authentik/`. The Pixel 6a is the user's personal phone, looked at only when the user asks.
 
 **Bookings redesign** (mockups first, built *"Tout de suite, en parallele de la stable"*): rows D44-D54 of [bookings-chantier](bookings-chantier.md#redesign-decided-2026-10-23).
 
@@ -2559,19 +2548,7 @@ All taken in session on 2026-10-23. Bookings rows are D44-D54 in [bookings-chant
 
 **Repository settings.** Secret-scanning push protection is enabled; a `code_scanning` rule (CodeQL, high or higher) was added to ruleset `22152902` on 2026-10-23.
 
-**#2273.** The cut date is the day the production stable carrying it ships (fixed constant `ADMISSION_PROOF_SINCE`, re-checked before the stable's final pre-release). Old invite links are accepted as a "from arrival" reading. A removed signer's voucher counts only if the device saw it BEFORE the removal. The invite-link grant expires with the link (30 days when it has none). Migration social-service 107 may ride the stable.
-
-## Decided by the user on 2026-10-23 - the night of the open pull requests
-
-Taken in session on 2026-10-23, one decision per open pull request. #2260, #2322, #2321, #2299 and
-#2269 are merged and ride the next stable (production calls stay closed by `calls_mode`); #2183's
-privacy text is merged, and the Cloudflare data-processing-addendum row of the register stays OPEN.
-#2282 (CLAUDE.md) merges LAST, just before that stable. Obsolete drafts are closed, each head archived
-as a tag first (#2316 closed). **Release branches (owner, 2026-10-24): every `release/v*` branch is
-deleted except the next stable's** ([durable-rules](durable-rules.md#release-and-ci---cicd)).
-
-- **Review of #2264** (history visibility reconciled with the proven-admission gate): an unknown rule parks the ask; `unverifiable` answers with silence on both paths; the "nothing for you" stays lasting, and only the repair path recovers the past.
-- **P3 - CI: split the 15-minute `Test Frontend (Svelte)` job into parallel jobs.** Not started ([cicd](cicd.md)).
+**#2273** shipped in `v1.5.0`; its rules are in [channel-encryption section 25](protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22).
 
 ## P3 - the vendored websocket plugin: four upstream behaviours found by the review of #2167
 
