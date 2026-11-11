@@ -65,3 +65,13 @@ that closes a screen is its first paint with the network answering nothing.
 
 Already cut on the way (PR for `1.6.10`): today's birthdays read once per Paris day, the no-op
 retries silent ([birthdays](../birthdays.md)).
+
+**Carried from the first weak-network audit (2026-10-09, its P1 entry closed into this one on
+2026-11-11).** Its 103 s Slow 3G cold start is history: origin compression (WP-W1) and the WASM
+fetched beside the JS (WP-W2) shipped, the salon draft is never destroyed (WP-OFF-1), and the native
+apps embed their frontend. What is still real joins this chantier: the conversation list waits for
+the WASM by ORDER, not by data (WP-W3, diagnosed, not built,
+[offline-and-weak-network section 10.3](../frontend/offline-and-weak-network.md#103-wp-w3-the-first-list-render-depends-on-the-wasm-only-by-order-and-the-order-is-the-session));
+and the runs its section 8 still owes - delivery at the peer, and the Android and iPhone send, kill
+and relaunch rows on a shaped link
+([section 8](../frontend/offline-and-weak-network.md#8-not-measured-and-owed)).

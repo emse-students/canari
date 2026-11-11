@@ -315,7 +315,7 @@ reached on a phone only by a long press (hard to hold without voting) and as tal
 ### The composer's layout: full screen, the text taking the height, the actions under the thumb (2026-09-29)
 
 Compared on the Mi 9T with Facebook's and Instagram's composers (the user's decisions C1-C10, and
-the stages still open, are in [backlog](../../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken)).
+the stages still open, are in [reels](reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29)).
 What it was: a modal over the feed holding three nested bordered boxes, three titles saying the
 same thing, a full-width "Publier en tant que" select, eight Markdown buttons on two rows above an
 empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it was taken from:
