@@ -27,7 +27,7 @@
    * is the PAGE's: once its first visible media settled, a media swipe keeps it, so the next post's
    * download is never aborted and restarted by a swipe inside the strip.
    */
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { holdPlayback } from '$lib/actions/playWhileVisible';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { ChevronDown, ChevronUp, X } from '@lucide/svelte';
@@ -39,12 +39,12 @@
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { PostEntity } from '$lib/posts/api';
+  import { ReelList, mountedReelSlots } from '$lib/reels/reelList.svelte';
   import { REEL_PAGE as PAGE, allReelsLoader, type ReelPageLoader } from '$lib/reels/allReels';
   import { REEL_ORDERS, type ReelOrder } from '$lib/reels/reelOrder';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
     mergeReelPage,
-    mountedReelIndices,
     reelDragOffset,
     reelReleaseVerdict,
     shouldLoadMoreReels,
@@ -145,24 +145,29 @@
   const releasePlayback = holdPlayback('the reel viewer is open');
   onDestroy(releasePlayback);
 
-  let reels = $state<PostEntity[]>([]);
-  let index = $state(0);
-  /** How many rows the server has handed over so far - the next page's offset. */
-  let fetched = 0;
-  let hasMore = $state(true);
-  let loadingMore = false;
+  /**
+   * THE LIST ON SCREEN, A `$derived` OF THE LOADER (`reels/reelList.svelte.ts`): a new loader - the
+   * stream's order changed - IS a new list, in the same instant the prop changes, starting over at the
+   * top with the post the opener hands (`startPost`, read once per list). Nothing of the old list is
+   * reset by an effect after a render, and nothing outlives it: its reels, its place, its pages, its
+   * settle, its carousels and its track move all go with the object.
+   */
+  /** How many lists this viewer has shown: the first is the opening, each later one a change of order. */
+  let listCount = 0;
+  const list = $derived.by(() => {
+    const start = untrack(() => startPost);
+    const next = new ReelList(
+      loadPage,
+      start,
+      untrack(() => startMediaIndex)
+    );
+    listCount += 1;
+    if (listCount > 1) console.debug(`[reel-viewer] a new list (${listCount}) from ${start.id}`);
+    return next;
+  });
 
   let frame = $state<HTMLDivElement | null>(null);
-  let offsetX = $state(0);
-  let offsetY = $state(0);
-  let settling = $state(false);
-  let afterSettle: (() => void) | null = null;
 
-  /**
-   * THE VISIBLE MEDIA OF EACH CAROUSEL, by post id, for the viewer's life: a post scrolled away and
-   * back opens where the reader left it. Absent means the first.
-   */
-  let mediaIndexById = $state<Record<string, number>>({});
   /** Where a held horizontal drag has taken the current carousel's strip (`reelDragOffset`). */
   let mediaDragX = $state(0);
   /** A drag is held: the strip follows the finger with no transition. */
@@ -172,7 +177,7 @@
   function mediaPositionOf(post: PostEntity | undefined): MediaPosition {
     if (!post || fullScreenPageOf(post) !== 'carousel') return { index: 0, count: 1 };
     const count = fullScreenMediaListOf(post).length;
-    return { index: Math.min(mediaIndexById[post.id] ?? 0, count - 1), count };
+    return { index: Math.min(list.mediaIndexById[post.id] ?? 0, count - 1), count };
   }
 
   /**
@@ -195,103 +200,83 @@
   onMount(() => {
     // The viewer paints black under the status bar: light icons while it is up, handed back after.
     const releaseBar = themeStore.holdNativeBar('dark');
-    reels = [startPost];
-    if (startMediaIndex > 0) mediaIndexById = { [startPost.id]: startMediaIndex };
     overlay.syncOpen();
     console.debug(`[reel-viewer] opened on ${startPost.id}`);
     return releaseBar;
   });
 
-  const mounted = $derived(mountedReelIndices(index, reels.length));
+  /**
+   * The pages mounted around the one on screen, EACH WITH ITS OWN POST (`mountedReelSlots`): a slide
+   * is keyed by and handed its slot's post, so one torn down after its list was replaced still holds
+   * the post it was drawn for.
+   */
+  const slots = $derived(mountedReelSlots(list));
 
   /**
    * THE REEL ON SCREEN THAT HAS SETTLED (`ReelSlide`'s `onReady`: whole and playing). The next
    * reel preloads only behind it, never beside it: on a weak link two downloads at once would
    * starve the one being watched. Every step CLEARS it (where `index` moves), so a return to a reel that
    * settled on an earlier visit withholds the preload until it settles again; and only the slide
-   * on screen may set it (`onReady` checks its index), never one torn down mid-swipe.
+   * on screen may set it (`onReady` checks its post), never one torn down mid-swipe.
    */
-  let settledId = $state<string | null>(null);
-  const currentSettled = $derived(settledId !== null && settledId === settleKeyOf(reels[index]));
+  const currentSettled = $derived(
+    list.settledId !== null && list.settledId === settleKeyOf(list.reels[list.index])
+  );
 
-  function markSettled(i: number) {
-    if (i !== index) {
-      console.debug(`[reel-viewer] slide ${i} settled off screen - ignored`);
+  function markSettled(post: PostEntity) {
+    if (post.id !== settleKeyOf(list.reels[list.index])) {
+      console.debug(`[reel-viewer] ${post.id} settled off screen - ignored`);
       return;
     }
-    settledId = settleKeyOf(reels[i]);
+    list.settledId = settleKeyOf(post);
   }
 
   // The next page, asked for as the reader nears the end of what is loaded.
   $effect(() => {
-    if (!shouldLoadMoreReels(index, reels.length, hasMore) || loadingMore || reels.length === 0) {
+    const current = list;
+    if (
+      !shouldLoadMoreReels(current.index, current.reels.length, current.hasMore) ||
+      current.loadingMore ||
+      current.reels.length === 0
+    ) {
       return;
     }
-    void loadMore();
+    void loadMore(current);
   });
 
   /**
-   * WHICH LIST IS ON SCREEN: bumped when the opener hands a new loader (another order). A page asked
-   * of the list before the change is dropped when it lands, so it never mixes into the new one.
+   * Reads the next page of `target`, into `target`: a page asked of a list that has since been
+   * replaced lands in the object nobody draws any more, and is said, never mixed into the new one.
    */
-  let listGeneration = 0;
-  let mountedLoader: ReelPageLoader | null = null;
-
-  // A NEW LOADER IS A NEW LIST (the stream's order changed): start over at the top of it, with the
-  // first page the opener read. The first run only records the loader `onMount` started with.
-  $effect(() => {
-    const loader = loadPage;
-    const start = startPost;
-    if (mountedLoader === null) {
-      mountedLoader = loader;
-      return;
-    }
-    if (loader === mountedLoader) return;
-    mountedLoader = loader;
-    listGeneration += 1;
-    console.debug(`[reel-viewer] a new list (generation ${listGeneration}) from ${start.id}`);
-    reels = [start];
-    index = 0;
-    fetched = 0;
-    hasMore = true;
-    loadingMore = false;
-    settledId = null;
-    mediaIndexById = {};
-    offsetX = 0;
-    offsetY = 0;
-  });
-
-  async function loadMore() {
-    loadingMore = true;
-    const generation = listGeneration;
+  async function loadMore(target: ReelList) {
+    target.loadingMore = true;
     try {
-      const page = await loadPage(fetched, PAGE);
-      if (generation !== listGeneration) {
+      const page = await target.loader(target.fetched, PAGE);
+      if (target !== list) {
         console.debug('[reel-viewer] a page of the previous list landed - dropped');
         return;
       }
-      fetched += page.length;
-      if (page.length < PAGE) hasMore = false;
-      reels = mergeReelPage(reels, page);
-      console.debug(`[reel-viewer] page of ${page.length}, ${reels.length} loaded`);
+      target.fetched += page.length;
+      if (page.length < PAGE) target.hasMore = false;
+      target.reels = mergeReelPage(target.reels, page);
+      console.debug(`[reel-viewer] page of ${page.length}, ${target.reels.length} loaded`);
     } catch (err) {
-      if (generation !== listGeneration) {
+      if (target !== list) {
         console.debug('[reel-viewer] a page of the previous list failed - its list is gone', err);
         return;
       }
       // The reels already loaded stay watchable; the list simply ends here.
       console.error('[reel-viewer] the next reels could not be loaded', err);
-      hasMore = false;
+      target.hasMore = false;
       showToast(m.reels_viewer_load_error(), 'error');
     } finally {
-      // Only this list's read may clear the flag: the new list may have a read of its own in flight.
-      if (generation === listGeneration) loadingMore = false;
+      target.loadingMore = false;
     }
   }
 
   /** Replaces the reactions of the loaded reel `postId`, wherever it now sits in the list. */
   function setReactions(postId: string, served: ServedReactions) {
-    reels = reels.map((r) => (r.id === postId ? { ...r, ...served } : r));
+    list.reels = list.reels.map((r) => (r.id === postId ? { ...r, ...served } : r));
   }
 
   /**
@@ -405,7 +390,7 @@
   /** The reel is a rounded card above the sheet (Instagram's): `scale` of the full screen. */
   const commentsCard = $derived(commentsFor !== null && !commentsLeaving);
   const commentsPost = $derived(
-    commentsFor ? (reels.find((r) => r.id === commentsFor) ?? null) : null
+    commentsFor ? (list.reels.find((r) => r.id === commentsFor) ?? null) : null
   );
 
   /**
@@ -430,7 +415,7 @@
 
   /** Replaces the loaded post `next.id` - a comment written in the sheet. */
   function setPost(next: PostEntity) {
-    reels = reels.map((r) => (r.id === next.id ? next : r));
+    list.reels = list.reels.map((r) => (r.id === next.id ? next : r));
   }
 
   /** The rail's actions for one page, or none outside a signed-in reader's posts. */
@@ -464,24 +449,24 @@
   function settle(x: number, y: number, then?: () => void) {
     // A LANDING IS NEVER DROPPED: a move started over one still pending (every entry point waits for
     // `settling` to clear, so this is a defect upstream) runs it first, and says so.
-    if (afterSettle) {
+    if (list.afterSettle) {
       console.error('[reel-viewer] a move started over a pending landing - the landing runs first');
-      const pending = afterSettle;
-      afterSettle = null;
+      const pending = list.afterSettle;
+      list.afterSettle = null;
       pending();
     }
-    if (reducedMotion() || (x === offsetX && y === offsetY)) {
-      offsetX = x;
-      offsetY = y;
-      settling = false;
-      afterSettle = null;
+    if (reducedMotion() || (x === list.offsetX && y === list.offsetY)) {
+      list.offsetX = x;
+      list.offsetY = y;
+      list.settling = false;
+      list.afterSettle = null;
       then?.();
       return;
     }
-    settling = true;
-    afterSettle = then ?? null;
-    offsetX = x;
-    offsetY = y;
+    list.settling = true;
+    list.afterSettle = then ?? null;
+    list.offsetX = x;
+    list.offsetY = y;
   }
 
   /**
@@ -495,9 +480,9 @@
     if (e.type === 'transitioncancel') {
       console.warn('[reel-viewer] the track move was cancelled - landing where it was going');
     }
-    settling = false;
-    const next = afterSettle;
-    afterSettle = null;
+    list.settling = false;
+    const next = list.afterSettle;
+    list.afterSettle = null;
     next?.();
   }
 
@@ -507,7 +492,7 @@
    * media that leaves unmounts its player at once (only the visible media plays).
    */
   function stepMedia(verdict: 'media-next' | 'media-prev') {
-    const post = reels[index];
+    const post = list.reels[list.index];
     const at = mediaPositionOf(post);
     const target = stepMediaIndex(at.index, verdict, at.count);
     mediaDragging = false;
@@ -515,7 +500,7 @@
     if (!post || target === at.index) return;
     console.debug(`[reel-viewer] ${verdict} on ${post.id}: ${at.index} -> ${target}`);
     // The page's settle is kept: the next post's preload goes on behind the strip.
-    mediaIndexById = { ...mediaIndexById, [post.id]: target };
+    list.mediaIndexById = { ...list.mediaIndexById, [post.id]: target };
   }
 
   /** Carries out a verdict: the track leaves towards it, then the index moves and the track rests. */
@@ -528,24 +513,26 @@
     mediaDragX = 0;
     const height = frame?.clientHeight ?? window.innerHeight;
     const width = frame?.clientWidth ?? window.innerWidth;
-    const target = stepReelIndex(index, verdict, reels.length);
+    const target = stepReelIndex(list.index, verdict, list.reels.length);
     if (verdict === 'close') {
       console.debug('[reel-viewer] closed by a swipe');
       settle(width, 0, () => overlay.dismissFromUi());
       return;
     }
-    if (target === index) {
+    if (target === list.index) {
       settle(0, 0);
       return;
     }
-    console.debug(`[reel-viewer] ${verdict}: ${index} -> ${target}`);
+    console.debug(`[reel-viewer] ${verdict}: ${list.index} -> ${target}`);
+    // The landing belongs to the list the move started on: a list replaced meanwhile keeps its own.
+    const moved = list;
     settle(0, verdict === 'next' ? -height : height, () => {
       // The track has landed one screen away; moving the index there is the same picture at rest.
-      settling = false;
+      moved.settling = false;
       // The reel landed on has not settled IN THIS VISIT, whatever it did before.
-      settledId = null;
-      index = target;
-      offsetY = 0;
+      moved.settledId = null;
+      moved.index = target;
+      moved.offsetY = 0;
     });
   }
 
@@ -567,7 +554,7 @@
       if (!step || commentsFor || shareFor || wheelOverScrollable(e.target, el!)) return;
       e.preventDefault();
       // Free when the wheel was quiet AND the last page has landed (`settling` clears on landing).
-      const free = lock.free && !settling;
+      const free = lock.free && !list.settling;
       lock.heard();
       if (!free) return;
       console.debug(`[reel-viewer] wheel: ${step}`);
@@ -596,7 +583,7 @@
 
     /** A press: whether it starts a gesture of ours. */
     function begin(target: EventTarget | null, at: Sample, pointers: number) {
-      if ((target as HTMLElement | null)?.closest?.(NOT_A_GESTURE) || settling) {
+      if ((target as HTMLElement | null)?.closest?.(NOT_A_GESTURE) || list.settling) {
         gesture = null;
         return;
       }
@@ -633,12 +620,12 @@
         gesture,
         dx,
         dy,
-        index > 0,
-        index < reels.length - 1,
-        mediaPositionOf(reels[index])
+        list.index > 0,
+        list.index < list.reels.length - 1,
+        mediaPositionOf(list.reels[list.index])
       );
-      offsetX = o.x;
-      offsetY = o.y;
+      list.offsetX = o.x;
+      list.offsetY = o.y;
       mediaDragging = true;
       mediaDragX = o.mediaX;
       return true;
@@ -658,9 +645,9 @@
           velocity: releaseVelocity(samples),
           width: el!.clientWidth,
           height: el!.clientHeight,
-          hasPrevious: index > 0,
-          hasNext: index < reels.length - 1,
-          media: mediaPositionOf(reels[index]),
+          hasPrevious: list.index > 0,
+          hasNext: list.index < list.reels.length - 1,
+          media: mediaPositionOf(list.reels[list.index]),
         })
       );
     }
@@ -790,12 +777,12 @@
   }
 
   /** The page on screen is a carousel: the left and right keys step its media. */
-  const carouselOnScreen = $derived(mediaPositionOf(reels[index]).count > 1);
+  const carouselOnScreen = $derived(mediaPositionOf(list.reels[list.index]).count > 1);
 
   /** The keyboard: up/down page, left/right a carousel's media, Escape closes. A key the player already used is left to it. */
   function onKeydown(e: KeyboardEvent) {
     // The comments sheet has the keyboard while it is open: its field types, and Escape closes IT.
-    if (e.defaultPrevented || settling || commentsFor || shareFor) return;
+    if (e.defaultPrevented || list.settling || commentsFor || shareFor) return;
     if (scrollOpenCaption(e)) return;
     if (e.key === 'ArrowDown' || e.key === 'PageDown') {
       e.preventDefault();
@@ -812,162 +799,185 @@
       overlay.dismissFromUi();
     }
   }
+
+  /**
+   * THE VIEWER'S BOUNDARY CAUGHT A THROW (a slide, a sheet, the rail): a defect of this viewer, said
+   * as one with the post on screen, then the viewer closes - the feed behind it stays as it was.
+   */
+  function closeOnCrash(error: unknown) {
+    console.error(
+      `[reel-viewer] the viewer failed on ${list.reels[list.index]?.id ?? '?'} - closed, the page behind it kept:`,
+      error
+    );
+    showToast(m.reels_viewer_crashed(), 'error');
+    overlay.dismissFromUi();
+  }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
-<div use:portal>
-  <div
-    bind:this={viewerEl}
-    use:coversScreen
-    class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white {expandOrigin
-      ? 'motion-expand-in'
-      : ''}"
-    style:transform-origin={expandOrigin ? `${expandOrigin.x}px ${expandOrigin.y}px` : undefined}
-    role="dialog"
-    aria-modal="true"
-    aria-label={m.reels_viewer_label()}
-    data-reel-viewer
-  >
-    <!-- THE REEL SHRINKS INTO A CARD while the comments are open (transform only, the motion scale of
+<!-- AN ERROR INSIDE THE VIEWER CLOSES THE VIEWER, NOT THE PAGE BEHIND IT (production, 1.6.10: a slide's
+     throw reached the route's boundary and took the whole feed down). A visible feature inside a page
+     takes its own boundary (architecture.md, "boundaries are placed by blast radius"): the line
+     accuses, the reader is told, and the viewer closes through its history entry - nothing is drawn
+     in its place, the feed under it never left. -->
+<svelte:boundary onerror={closeOnCrash}>
+  <div use:portal>
+    <div
+      bind:this={viewerEl}
+      use:coversScreen
+      class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white {expandOrigin
+        ? 'motion-expand-in'
+        : ''}"
+      style:transform-origin={expandOrigin ? `${expandOrigin.x}px ${expandOrigin.y}px` : undefined}
+      role="dialog"
+      aria-modal="true"
+      aria-label={m.reels_viewer_label()}
+      data-reel-viewer
+    >
+      <!-- THE REEL SHRINKS INTO A CARD while the comments are open (transform only, the motion scale of
          design-reference "Motion"; the global reduced-motion rule makes it instant). The corner radius is
          set at once, not animated, and is drawn at the card's scale, so it reads about 12 px. -->
-    <div
-      bind:this={frame}
-      class="absolute inset-0 touch-none {commentsCard ? 'overflow-hidden rounded-3xl' : ''}"
-      style:transform-origin="50% 0"
-      style:transform={commentsCard
-        ? 'translate3d(0, calc(var(--safe-area-inset-top, 0px) + 0.75rem), 0) scale(0.34)'
-        : 'none'}
-      style:transition="transform var(--motion-slow) var(--motion-ease-out)"
-      data-reel-card={commentsCard}
-    >
       <div
-        class="absolute inset-0"
-        style:transform="translate3d({offsetX}px, calc({-index * 100}% + {offsetY}px), 0)"
-        style:transition={settling
-          ? `transform ${GESTURE.SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`
+        bind:this={frame}
+        class="absolute inset-0 touch-none {commentsCard ? 'overflow-hidden rounded-3xl' : ''}"
+        style:transform-origin="50% 0"
+        style:transform={commentsCard
+          ? 'translate3d(0, calc(var(--safe-area-inset-top, 0px) + 0.75rem), 0) scale(0.34)'
           : 'none'}
-        ontransitionend={onTransitionEnd}
-        ontransitioncancel={onTransitionEnd}
-        data-reel-track
+        style:transition="transform var(--motion-slow) var(--motion-ease-out)"
+        data-reel-card={commentsCard}
       >
-        {#each mounted as i (reels[i].id)}
-          <div class="absolute inset-x-0 h-full" style:top="{i * 100}%">
-            <ReelSlide
-              post={reels[i]}
-              {authToken}
-              active={i === index}
-              preload={i === index + 1 && currentSettled}
-              onReady={() => markSettled(i)}
-              onMediaGone={onMediaGone ? () => onMediaGone(reels[i].id) : undefined}
-              onLike={likerId ? () => likeReel(reels[i]) : undefined}
-              rail={railFor(reels[i])}
-              mediaIndex={mediaPositionOf(reels[i]).index}
-              mediaDragX={i === index ? mediaDragX : 0}
-              mediaDragging={i === index && mediaDragging}
-              onMediaStep={(step) => !settling && i === index && go(step)}
-            />
-          </div>
-        {/each}
+        <div
+          class="absolute inset-0"
+          style:transform="translate3d({list.offsetX}px, calc({-list.index * 100}% + {list.offsetY}px),
+          0)"
+          style:transition={list.settling
+            ? `transform ${GESTURE.SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`
+            : 'none'}
+          ontransitionend={onTransitionEnd}
+          ontransitioncancel={onTransitionEnd}
+          data-reel-track
+        >
+          <!-- Each slide is keyed by and HANDED its slot's post, never `reels[i]` read again: a slide
+             torn down after a change of order still reads the post it was drawn for. -->
+          {#each slots as slot (slot.post.id)}
+            <div class="absolute inset-x-0 h-full" style:top="{slot.i * 100}%">
+              <ReelSlide
+                post={slot.post}
+                {authToken}
+                active={slot.i === list.index}
+                preload={slot.i === list.index + 1 && currentSettled}
+                onReady={() => markSettled(slot.post)}
+                onMediaGone={onMediaGone ? () => onMediaGone(slot.post.id) : undefined}
+                onLike={likerId ? () => likeReel(slot.post) : undefined}
+                rail={railFor(slot.post)}
+                mediaIndex={mediaPositionOf(slot.post).index}
+                mediaDragX={slot.i === list.index ? mediaDragX : 0}
+                mediaDragging={slot.i === list.index && mediaDragging}
+                onMediaStep={(step) => !list.settling && slot.i === list.index && go(step)}
+              />
+            </div>
+          {/each}
+        </div>
       </div>
-    </div>
 
-    <!-- THE TOP SCRIM (user, 2026-10-23: the status bar icons vanished on black) lies under the
+      <!-- THE TOP SCRIM (user, 2026-10-23: the status bar icons vanished on black) lies under the
          close button and the phone's status bar, so white icons read on a bright reel too; the
          native icons themselves are held light (`holdNativeBar`). The X has no disc: a disc
          against a letterboxed frame's rounded corner read as overlapping it. Safe-area aware. -->
-    <div
-      class="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
-      data-reel-top-scrim
-    >
-      <button
-        type="button"
-        class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full outline-none focus-visible:ring-2"
-        aria-label={m.reels_viewer_close()}
-        title={m.reels_viewer_close()}
-        onclick={() => overlay.dismissFromUi()}
+      <div
+        class="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-linear-to-b from-black/50 to-transparent px-2 pt-[calc(var(--safe-area-inset-top,0px)+0.5rem)] pb-6"
+        data-reel-top-scrim
       >
-        <X size={26} strokeWidth={2.5} class="drop-shadow-md" />
-      </button>
-      {#if orderChoice}
-        <!-- "Pour toi" / "Récents" (owner, 2026-11-10; restyled 2026-11-11 as TikTok and Instagram
+        <button
+          type="button"
+          class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full outline-none focus-visible:ring-2"
+          aria-label={m.reels_viewer_close()}
+          title={m.reels_viewer_close()}
+          onclick={() => overlay.dismissFromUi()}
+        >
+          <X size={26} strokeWidth={2.5} class="drop-shadow-md" />
+        </button>
+        {#if orderChoice}
+          <!-- "Pour toi" / "Récents" (owner, 2026-11-10; restyled 2026-11-11 as TikTok and Instagram
              draw it): bare white tabs on the video, the selected one brighter and underlined, a
              text shadow keeping both readable on a bright reel. The empty box after it balances the X. -->
-        <div class="pointer-events-auto {orderChoice.busy ? 'opacity-70' : ''}" data-reel-order>
-          <SegmentedControl
-            items={REEL_ORDERS.map((key) => ({ key, label: REEL_ORDER_LABELS[key]() }))}
-            value={orderChoice.value}
-            onSelect={(key) => orderChoice.onChange(key)}
-            label={m.reels_order_label()}
-            variant="overlay"
-            activation="manual"
-            class="w-56"
-          />
-        </div>
-        <span class="w-11 shrink-0" aria-hidden="true"></span>
+          <div class="pointer-events-auto {orderChoice.busy ? 'opacity-70' : ''}" data-reel-order>
+            <SegmentedControl
+              items={REEL_ORDERS.map((key) => ({ key, label: REEL_ORDER_LABELS[key]() }))}
+              value={orderChoice.value}
+              onSelect={(key) => orderChoice.onChange(key)}
+              label={m.reels_order_label()}
+              variant="overlay"
+              activation="manual"
+              class="w-56"
+            />
+          </div>
+          <span class="w-11 shrink-0" aria-hidden="true"></span>
+        {/if}
+      </div>
+
+      <!-- A pointer has no swipe: the two steps are buttons on a wide screen. -->
+      <div
+        class="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 flex-col gap-2 md:flex"
+      >
+        <button
+          type="button"
+          class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full bg-white/15 outline-none hover:bg-white/25 focus-visible:ring-2 disabled:opacity-30"
+          aria-label={m.reels_viewer_prev()}
+          title={m.reels_viewer_prev()}
+          disabled={list.index === 0}
+          onclick={() => !list.settling && go('prev')}
+        >
+          <ChevronUp size={22} strokeWidth={2.5} />
+        </button>
+        <button
+          type="button"
+          class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full bg-white/15 outline-none hover:bg-white/25 focus-visible:ring-2 disabled:opacity-30"
+          aria-label={m.reels_viewer_next()}
+          title={m.reels_viewer_next()}
+          disabled={list.index >= list.reels.length - 1}
+          onclick={() => !list.settling && go('next')}
+        >
+          <ChevronDown size={22} strokeWidth={2.5} />
+        </button>
+      </div>
+
+      {#if commentsPost && likerId}
+        <ReelCommentsSheet
+          post={commentsPost}
+          currentUserId={likerId}
+          {authToken}
+          onChange={setPost}
+          onClosing={() => (commentsLeaving = true)}
+          onClose={() => {
+            commentsFor = null;
+            commentsLeaving = false;
+          }}
+        />
+      {/if}
+
+      {#if ShareSheet && shareFor}
+        {@const sharedReel = list.reels.find((r) => r.id === shareFor)}
+        <ShareSheet
+          open
+          postId={shareFor}
+          onClose={() => (shareFor = null)}
+          canRepost={sharedReel?.canRepost === true}
+          repostedByMe={sharedReel?.repostedByMe === true}
+          onRepostChange={(id, reposted) => {
+            // WP-F6: the server's answer, written onto the reel so the next sheet offers the right row.
+            const reel = list.reels.find((r) => r.id === id);
+            if (reel) setPost({ ...reel, repostedByMe: reposted, canRepost: !reposted });
+          }}
+          onSentInApp={() => {
+            // The link waits in a conversation's composer, under this viewer: step aside for it.
+            console.debug('[reel-viewer] closed: the reel was sent into a conversation');
+            overlay.dismissFromUi();
+          }}
+        />
       {/if}
     </div>
-
-    <!-- A pointer has no swipe: the two steps are buttons on a wide screen. -->
-    <div
-      class="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 flex-col gap-2 md:flex"
-    >
-      <button
-        type="button"
-        class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full bg-white/15 outline-none hover:bg-white/25 focus-visible:ring-2 disabled:opacity-30"
-        aria-label={m.reels_viewer_prev()}
-        title={m.reels_viewer_prev()}
-        disabled={index === 0}
-        onclick={() => !settling && go('prev')}
-      >
-        <ChevronUp size={22} strokeWidth={2.5} />
-      </button>
-      <button
-        type="button"
-        class="ui-icon-button focus-visible:ring-accent-icon pointer-events-auto rounded-full bg-white/15 outline-none hover:bg-white/25 focus-visible:ring-2 disabled:opacity-30"
-        aria-label={m.reels_viewer_next()}
-        title={m.reels_viewer_next()}
-        disabled={index >= reels.length - 1}
-        onclick={() => !settling && go('next')}
-      >
-        <ChevronDown size={22} strokeWidth={2.5} />
-      </button>
-    </div>
-
-    {#if commentsPost && likerId}
-      <ReelCommentsSheet
-        post={commentsPost}
-        currentUserId={likerId}
-        {authToken}
-        onChange={setPost}
-        onClosing={() => (commentsLeaving = true)}
-        onClose={() => {
-          commentsFor = null;
-          commentsLeaving = false;
-        }}
-      />
-    {/if}
-
-    {#if ShareSheet && shareFor}
-      {@const sharedReel = reels.find((r) => r.id === shareFor)}
-      <ShareSheet
-        open
-        postId={shareFor}
-        onClose={() => (shareFor = null)}
-        canRepost={sharedReel?.canRepost === true}
-        repostedByMe={sharedReel?.repostedByMe === true}
-        onRepostChange={(id, reposted) => {
-          // WP-F6: the server's answer, written onto the reel so the next sheet offers the right row.
-          const reel = reels.find((r) => r.id === id);
-          if (reel) setPost({ ...reel, repostedByMe: reposted, canRepost: !reposted });
-        }}
-        onSentInApp={() => {
-          // The link waits in a conversation's composer, under this viewer: step aside for it.
-          console.debug('[reel-viewer] closed: the reel was sent into a conversation');
-          overlay.dismissFromUi();
-        }}
-      />
-    {/if}
   </div>
-</div>
+</svelte:boundary>
