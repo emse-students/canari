@@ -345,7 +345,10 @@ it('draws one glass bar whose buttons wear no blur of their own, and a glass pla
   const { target, video } = mountPlayer();
   video.dispatchEvent(new Event('loadeddata'));
   flushSync();
-  expect(target.querySelectorAll('[data-video-bar] .glass-video').length).toBe(0);
+  // The volume pill floats ABOVE the speaker, outside the bar's own blur: it is the one glass allowed inside.
+  expect(
+    target.querySelectorAll('[data-video-bar] .glass-video:not([data-video-volume])').length
+  ).toBe(0);
   expect(target.querySelector('[data-video-bar]')!.className).toContain('glass-video');
   const glyph = target.querySelector('[data-video-play-glyph]')!;
   expect(glyph.querySelector('.glass-video-shape'), 'the triangle is the glass').not.toBeNull();

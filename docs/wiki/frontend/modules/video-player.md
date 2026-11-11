@@ -238,6 +238,20 @@ like the theme: not per account, not wiped by a sign-out.
   first, which silences THIS session without writing the store, so the element's `volumechange`
   (forwarded by `followVideoSound`) finds the answer already muted and writes nothing. Before, that
   retry would have remembered "off" for good - a refusal turned into a preference.
+- **One volume LEVEL, and a desktop slider** (owner, 2026-11-11). `videoSound.level` is the last
+  NON-ZERO level in (0, 1], stored under `canari-video-volume` (every read and write in try/catch),
+  applied to every video's `volume` (`VideoPlayer`'s effect, `LiveViewer`'s, `followVideoSound` for
+  the native-controls viewer, which also writes a native drag back as the level). Mute stays its own
+  toggle: the speaker unmutes at the stored level, `setVolume(0)` is mute and keeps the level, a drag
+  up from mute unmutes. The slider is `VideoVolumeSlider` (a real vertical `<input type=range>`,
+  `aria-valuetext` a percentage, `data-video-controls`, every press and arrow key stopped before the
+  player), mounted by `VideoSoundButton` ONLY when it is given `onLevel` and
+  `(hover: hover) and (pointer: fine)` holds (`watchFineHover`); a phone keeps its hardware buttons.
+  It opens on hover or focus-within and the pill is a child of the speaker's wrapper, flush against it,
+  so crossing from one to the other never closes it (a thumb drag leaving the pill keeps it open until
+  the release). Surfaces: the feed, the lightbox bar, the conversation viewer, the reel rail, the
+  live viewer. A chat video (`local`) shares the level but mutes only its own element; a `silent`
+  take has none. Tests: `volumeSlider.svelte.test.ts`, `volumeSlider.twoPlayers.svelte.test.ts`.
 - **Not yet: the device volume.** No WebView exposes the system volume; following it (the struck
   glyph at volume 0, as Instagram does) needs a native bridge on each phone - owed in
   [backlog](../../backlog.d/video-sound-follows-the-device-volume.md).

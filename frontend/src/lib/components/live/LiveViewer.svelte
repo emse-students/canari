@@ -273,6 +273,12 @@
       });
   }
 
+  // The app's one volume level, on the live's element too (the slider of the speaker moves it).
+  $effect(() => {
+    const level = videoSound.level;
+    if (video && video.volume !== level) video.volume = level;
+  });
+
   /** A tap on the picture only turns the sound ON, never off (owner, 2026-11-10); the speaker mutes. */
   function onPictureTap() {
     if (videoSound.muted) toggleSound();
@@ -359,7 +365,12 @@
       </span>
       <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
       <!-- The kit's speaker, the same object as on every other video (owner, 2026-11-09). -->
-      <VideoSoundButton muted={videoSound.muted} onToggle={toggleSound} data-live-sound />
+      <VideoSoundButton
+        muted={videoSound.muted}
+        onToggle={toggleSound}
+        onLevel={(v) => videoSound.setVolume(v)}
+        data-live-sound
+      />
       <!-- Withheld: no toggle either - a button that shows and hides nothing is a dead control. -->
       {#if !chatWithheld}
         <button

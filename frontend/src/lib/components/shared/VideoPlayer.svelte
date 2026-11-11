@@ -448,6 +448,29 @@
     }
   });
 
+  // THE APP'S ONE VOLUME LEVEL (owner, 2026-11-11), on every video that follows the app or a chat's
+  // own mute: a newly bound element starts at the stored level, the slider moves them all at once.
+  $effect(() => {
+    const level = videoSound.level;
+    if (scope !== 'silent' && video && video.volume !== level) video.volume = level;
+  });
+
+  /**
+   * The volume slider's answer. `app`: the app's one volume (0 is mute, a drag up unmutes, for every
+   * video at once); `local` (a chat's video): the shared level, with the mute of this element only.
+   */
+  function changeLevel(next: number) {
+    if (!video || scope === 'silent') return;
+    showControls();
+    if (scope === 'app') {
+      videoSound.setVolume(next);
+    } else {
+      videoSound.setLevel(next);
+    }
+    video.muted = scope === 'app' ? videoSound.muted : next <= 0;
+    muted = video.muted;
+  }
+
   function showControls() {
     controlsVisible = true;
     poke += 1;
@@ -975,6 +998,7 @@
         <VideoSoundButton
           {muted}
           onToggle={toggleMute}
+          onLevel={changeLevel}
           quiet={variant === 'feed'}
           class="absolute right-0.5 bottom-0.5 z-20"
         />
@@ -1021,6 +1045,7 @@
       <VideoSoundButton
         {muted}
         onToggle={toggleMute}
+        onLevel={changeLevel}
         disabled={scope === 'silent'}
         class="absolute right-1 z-40 {safeBottom
           ? 'bottom-[calc(var(--safe-area-inset-bottom,0px)+2rem)]'
@@ -1102,6 +1127,7 @@
           <VideoSoundButton
             {muted}
             onToggle={toggleMute}
+            onLevel={changeLevel}
             glass={false}
             disabled={soundScope === 'silent'}
           />

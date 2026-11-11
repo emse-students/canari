@@ -249,13 +249,18 @@ export type VideoSoundScope = 'app' | 'local' | 'silent';
 export function followVideoSound(video: HTMLVideoElement, scope: VideoSoundScope = 'app') {
   Log.d('VIDEO', `viewer opens with ${scope === 'app' ? "the app's" : `its ${scope}`} sound`);
   openViewers += 1;
-  const onVolumeChange = () => videoSound.setMuted(video.muted);
+  const onVolumeChange = () => {
+    videoSound.setMuted(video.muted);
+    // A native control that dragged the volume BECOMES the app's level too (never 0: that is mute).
+    if (!video.muted) videoSound.setLevel(video.volume);
+  };
   const registration = arbitratePlayback(video);
   /** Puts the element on `next`'s answer; callable again when the scope changes under a live element. */
   const apply = (next: VideoSoundScope) => {
     video.removeEventListener('volumechange', onVolumeChange);
     if (next === 'app') {
       video.muted = videoSound.muted;
+      video.volume = videoSound.level;
       video.addEventListener('volumechange', onVolumeChange);
     } else {
       video.muted = next === 'silent';
