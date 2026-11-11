@@ -1,12 +1,9 @@
 <script lang="ts">
-  import StatusPill from '../shared/StatusPill.svelte';
-  import { isHeaderConnected } from '$lib/utils/chat/headerConnection';
-  import { leaderSocketConnected } from '$lib/mls-client/tabLeaderLink.svelte';
   import CanariBrand from './CanariBrand.svelte';
   import EcosystemLauncher from './EcosystemLauncher.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
   import Avatar from '../shared/Avatar.svelte';
-  import { slowLink } from '$lib/stores/slowLink.svelte';
+  import { connection, connectionRingClass } from '$lib/stores/slowLink.svelte';
   import { goto } from '$app/navigation';
   import { signOutByChoice } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
@@ -60,14 +57,6 @@
       app puts it (user, 2026-09-29: the launcher used to sit between the two account controls).
     -->
     <div class="ml-auto flex shrink-0 items-center gap-2">
-      <StatusPill
-        isConnected={isHeaderConnected({
-          isWsConnected: globalSession.isWsConnected,
-          isLoggedIn: globalSession.isLoggedIn,
-          isTabLeader: globalSession.isTabLeader,
-          leaderConnected: leaderSocketConnected(),
-        })}
-      />
       {#if globalSession.isLoggedIn}
         <EcosystemLauncher />
       {/if}
@@ -77,11 +66,11 @@
           type="button"
           onclick={() => goto('/profile')}
           use:guideAnchor={'nav.profile'}
-          title={slowLink.active ? m.slow_indicator_label() : m.nav_my_profile_title()}
-          data-slow-link={slowLink.active || undefined}
-          class="tap-target rounded-2xl ring-3 transition-all duration-200 {slowLink.active
-            ? 'ring-amber-warn'
-            : 'hover:ring-accent-icon focus-visible:ring-accent-icon ring-transparent'}"
+          title={connection.state === 'slow' ? m.slow_indicator_label() : m.nav_my_profile_title()}
+          data-connection={connection.state ?? undefined}
+          class="tap-target focus-visible:outline-accent-icon rounded-full ring-3 transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 {connectionRingClass(
+            connection.state
+          )}"
           aria-label={m.nav_my_profile_label()}
         >
           <Avatar userId={globalSession.userId} size="sm" />

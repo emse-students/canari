@@ -55,15 +55,17 @@
   import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import { feedStoreAccess } from '$lib/posts/feedStore';
+  import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
+  import { bindPeerNames } from '$lib/utils/users/peerNameStore';
   import { accountLiveness, clearAuthLocally } from '$lib/stores/auth';
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
-  import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
   import PublishQueueBanner from '$lib/components/posts/PublishQueueBanner.svelte';
   import { startPublishQueue, stopPublishQueue } from '$lib/posts/publishQueue/publishQueue.svelte';
   import { followBirthdaysToday } from '$lib/birthdays/birthdaysToday.svelte';
   import { startFormDraftResend, stopFormDraftResend } from '$lib/forms/draftResend';
-  import SlowLinkAnnouncer from '$lib/components/shared/SlowLinkAnnouncer.svelte';
+  import ConnectionAnnouncer from '$lib/components/shared/ConnectionAnnouncer.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
@@ -251,6 +253,21 @@
   $effect(() => {
     setTabUnread(
       globalSession.isLoggedIn ? totalUnreadMessages(globalConvs.conversations.values()) : 0
+    );
+  });
+
+  // ── The device's own names, read before the network (slow-link chantier, 2026-11-11) ──────
+  // The directory opens with the SAME gate as the feed's stored pages: the account on screen, its
+  // device key, an unlocked session. While no key is in hand it is closed and rows wait as before.
+  $effect(() => {
+    bindPeerNames(
+      feedStoreAccess({
+        currentUserId: currentUserId(),
+        sessionUserId: globalSession.userId,
+        deviceKeyB64: globalSession.deviceKeyB64,
+        isLoggedIn: globalSession.isLoggedIn,
+        unattendedFor: unlockUnattendedFor(),
+      })
     );
   });
 
@@ -769,15 +786,9 @@
          call in progress is what the reader is doing, and its hang-up must stay at the top of the
          screen, the one edge no native chrome is drawn over (CallBanner). -->
     <CallBanner />
-    <!-- THE OFFLINE BANNER JOINED THE COLUMN ON 2026-09-22, and it is the reason the column publishes
-         its height: rendered inside the CONTENT column instead, a banner sits inside the rail's 6rem
-         gutter and displaces the brand bar down INTO the rail, which is fixed to the window (measured
-         then with the follower-tab banner, removed 2026-11-08). Strong first, then the subtle one: an
-         interrupting fact is never pushed off by a transient. -->
-    <OfflineBanner />
     <!-- A post being sent in the background (owner, 2026-11-06): one discreet row per queued post. -->
     <PublishQueueBanner />
-    <SlowLinkAnnouncer />
+    <ConnectionAnnouncer />
     <!-- Only inside the browser built into Messenger, Facebook or Instagram; it decides itself. -->
     <OpenInAppBanner />
   </div>

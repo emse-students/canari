@@ -7,7 +7,7 @@
   import EcosystemLauncher from './EcosystemLauncher.svelte';
   import PostNotificationBell from './PostNotificationBell.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
-  import { slowLink } from '$lib/stores/slowLink.svelte';
+  import { connection, connectionRingClass } from '$lib/stores/slowLink.svelte';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
   import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
@@ -108,12 +108,12 @@
           type="button"
           onclick={() => goto('/profile')}
           use:guideAnchor={'nav.profile'}
-          title={slowLink.active ? m.slow_indicator_label() : m.nav_my_profile_title()}
+          title={connection.state === 'slow' ? m.slow_indicator_label() : m.nav_my_profile_title()}
           aria-label={m.nav_my_profile_label()}
-          data-slow-link={slowLink.active || undefined}
-          class="ui-icon-button rounded-2xl ring-3 transition-all duration-200 {slowLink.active
-            ? 'ring-amber-warn'
-            : 'hover:ring-accent-icon focus-visible:ring-accent-icon ring-transparent'}"
+          data-connection={connection.state ?? undefined}
+          class="ui-icon-button focus-visible:outline-accent-icon rounded-full ring-3 transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 {connectionRingClass(
+            connection.state
+          )}"
         >
           <Avatar userId={globalSession.userId} size="md" />
         </button>
