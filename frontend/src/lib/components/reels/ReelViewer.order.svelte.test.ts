@@ -97,7 +97,7 @@ function reel(id: string, landscape = false): PostEntity {
         iv: 'i',
         mimeType: 'video/mp4',
         size: 1,
-        ...(landscape ? { width: 1280, height: 720 } : {}),
+        ...(landscape ? { width: 1280, height: 720 } : { width: 720, height: 1280 }),
       },
     ],
     images: [],
