@@ -225,10 +225,12 @@ class OffScreenGate {
      * The activity resumed (its "on screen" flag already written). Calls [onResumed] with the call
      * whose start was refused, once, inside the lock; nothing when nothing is pending.
      */
-    fun resumed(onResumed: (String) -> Unit) = synchronized(lock) {
-        val callId = pending ?: return
-        pending = null
-        onResumed(callId)
+    fun resumed(onResumed: (String) -> Unit) {
+        synchronized(lock) {
+            val callId = pending ?: return
+            pending = null
+            onResumed(callId)
+        }
     }
 }
 

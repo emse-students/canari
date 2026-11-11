@@ -869,9 +869,11 @@ its old epoch (TOK-1; what the commit gate makes of each outcome is in
 [mls-protocol](protocols/mls-protocol.md)). Tests: `renewOn401.test.ts`,
 `mlsDeliveryApi.renewOn401.test.ts`, `productionDeliveryApi.test.ts`, `apiFetch.test.ts`.
 
-**What answers a 401 on the servers (2026-11-11, review of #2420).** The delivery services'
-`HeaderAuthGuard` answers an unset `INTERNAL_SHARED_SECRET` with a 500 - the service's own fault,
-read as "retry later" - never a 401 (`header-auth.guard.spec.ts`). An internal token that does not
+**What answers a 401 on the servers (2026-11-11, review of #2420).** An unset secret is the
+service's own fault, read as "retry later": it answers a 500 logged at ERROR, never a 401 - in
+chat-delivery's `HeaderAuthGuard` (`header-auth.guard.spec.ts`), the `NginxAuthGuard` of core- and
+social-service (`nginx-auth.guard.spec.ts`, 2026-11-12) and media-service's bearer check on an unset
+`JWT_SECRET` (`media.controller.verify-token.spec.ts`). An internal token that does not
 verify stays a 401 on purpose: the guard cannot tell an nginx fault from a caller that reached the
 container with forged headers, and the forged call is the one the 401 must answer. Social-service's
 two remaining `UnauthorizedException`s are authentication (no user on a feed that needs one, no user

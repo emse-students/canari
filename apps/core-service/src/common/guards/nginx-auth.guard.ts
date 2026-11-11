@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  InternalServerErrorException,
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -32,11 +33,14 @@ export class NginxAuthGuard implements CanActivate {
 
     const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
 
-    // Security: fail closed in EVERY environment - INTERNAL_SHARED_SECRET is required
+    // Security: fail closed in EVERY environment - INTERNAL_SHARED_SECRET is required. An unset
+    // secret is THIS service's misconfiguration, not a caller's missing credential: it answers 500,
+    // never a 401 a client would read as its session ending (the same as chat-delivery's
+    // HeaderAuthGuard, 2026-11-12).
     if (!internalSecret) {
       Logger.error('[AUTH_GUARD] INTERNAL_SHARED_SECRET is not configured - refusing the request');
-      throw new UnauthorizedException(
-        'INTERNAL_SHARED_SECRET is not configured — service cannot verify internal requests'
+      throw new InternalServerErrorException(
+        'INTERNAL_SHARED_SECRET is not configured - service cannot verify internal requests'
       );
     }
 

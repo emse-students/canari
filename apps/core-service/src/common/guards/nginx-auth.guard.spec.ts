@@ -1,6 +1,10 @@
 /// <reference types="jest" />
 
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  ExecutionContext,
+  InternalServerErrorException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { createHmac } from 'crypto';
 import { NginxAuthGuard } from './nginx-auth.guard';
 
@@ -26,14 +30,14 @@ describe('NginxAuthGuard', () => {
   });
 
   it.each(['development', 'test', undefined, 'production'])(
-    'FAILS CLOSED when no secret is set, with NODE_ENV=%s',
+    'FAILS CLOSED with a 500 (a server fault, never a 401) when no secret is set, with NODE_ENV=%s',
     (env) => {
       const saved = process.env.NODE_ENV;
       if (env === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = env;
       try {
         const ctx = makeContext({ 'x-user-id': 'user-1' });
-        expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
+        expect(() => guard.canActivate(ctx)).toThrow(InternalServerErrorException);
       } finally {
         process.env.NODE_ENV = saved;
       }
