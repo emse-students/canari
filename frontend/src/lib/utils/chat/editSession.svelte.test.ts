@@ -113,4 +113,20 @@ describe('createEditSession', () => {
     session.reset();
     expect(box.text).toBe('texte');
   });
+
+  it('saves an EMPTY text when the edit is a caption, and still refuses an unchanged one', () => {
+    const { box, session, save } = harness('brouillon');
+    session.begin('m1', 'old caption', true);
+    expect(session.emptyAllowed).toBe(true);
+    box.text = '  ';
+    session.confirm();
+    expect(save).toHaveBeenCalledExactlyOnceWith('m1', '');
+    expect(box.text).toBe('brouillon');
+    expect(session.emptyAllowed).toBe(false);
+
+    const unchanged = harness();
+    unchanged.session.begin('m1', 'old caption', true);
+    unchanged.session.confirm();
+    expect(unchanged.save).not.toHaveBeenCalled();
+  });
 });

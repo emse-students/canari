@@ -764,9 +764,9 @@ the bytes decrypted, and was red on the defect.
 2026-10-02). The bubble used to turn into a textarea with Save and Cancel buttons (`MessageEditForm`,
 deleted); it now only ANNOUNCES the edit.
 
-- **`MessageBubble` takes `onBeginEdit(messageId, text)`**, not `onEdit`. The toolbar's and the mobile
-  sheet's "edit" call it for the author's own text message (`canEdit`: not deleted, own, no media, a
-  parent able to take it). It is threaded `ChatArea` -> `ChatMessageGroups` -> `MessageBubble`.
+- **`MessageBubble` takes `onBeginEdit(messageId, text, captionOnly)`**, not `onEdit`. The toolbar's and the mobile
+  sheet's "edit" call it for the author's own message (`canEdit`: not deleted, own, not a poll, a
+  parent able to take it) - a media message's edit is its CAPTION's since 2026-11-11, [below](#a-media-messages-edit-is-a-caption-edit-2026-11-11). It is threaded `ChatArea` -> `ChatMessageGroups` -> `MessageBubble`.
 - **`createEditSession` (`utils/chat/editSession.svelte.ts`) holds the state.** `begin` loads the
   message into the composer's text and keeps the DRAFT it replaced; `cancel` and `confirm` give the
   draft back, so fixing a typo never eats the sentence the member was in the middle of. Switching
@@ -795,6 +795,67 @@ Verified in Chromium on the composer in edit mode at 390 and 1000 px. Tests:
 draft kept across two edits, unchanged and empty saved as nothing, reset). **Not exercised:** a real
 edit through `handleEditMessage` end to end on a phone.
 
+### A media message's edit is a caption edit (2026-11-11)
+
+Owner, 2026-11-11: a message carrying a photo, a video or a file is editable, **caption only** - the
+media stays the same and the bubble shows the same "modifié" mark as an edited text. A poll is not.
+Until then `canEdit` hid the action on a media message on purpose (`!mediaRef`, and `!hasMedia` in
+`MessageBubbleToolbar` and `MessageMobileActions`); both props are gone and the bubble's `canEdit` is
+the one rule.
+
+**NO NEW WIRE SHAPE, AND THAT IS THE DECISION.** The frame is the `edit_message` a text edit has
+always been, `{ messageId, newContent, editedAt }`, and `newContent` is the caption. Every applier
+already writes the text through `applyEditToBody`, whose media branch replaces `caption` and keeps
+`media` (blob id, key, iv) and `replyTo` - since #903 (`v0.18.18`), far under the `1.6.6` floor. So
+an old client never meets a shape it does not know, and none of them can replace the body with
+plain text and drop the photo: the one way that could happen (a whole-body write of `newContent`)
+was removed for the reply quote's sake in September. A new field (`caption`, `kind`) would have
+bought nothing and made older readers fall back on `newContent` anyway.
+
+**What each reader sees:**
+
+| Reader | Caption edited | Caption emptied |
+| --- | --- | --- |
+| this build, DM or group | new caption, media kept, "modifié" | photo bare, "modifié" |
+| older build (>= `1.6.6`), DM or group | same | **old caption kept, no mark**: its `data.newContent` truthiness check drops `''` |
+| this build, salon | new caption, media kept, "modifié" | photo bare, "modifié" |
+| older build, salon | **old caption kept, no mark**: `applyChannelEdit` refused every non-text target (`not plain text`, logged) | same |
+
+Every row keeps the media. The two degraded rows are a stale caption, never a loss, and they end
+with the floor passing this release.
+
+**An empty caption.** `editFitsBody(content, text)` (`envelope.ts`) is the one rule, asked by every
+applier before `applyEditToBody` - the live path, the replay, the post-save pass, a parked edit
+(`pendingMutations`), a restored signed edit and the sender's own write: any text fits a media
+message's caption, an empty one included, and only a non-empty text fits anything else (the old
+truthiness rule, unchanged for a text message). The live and replay paths now accept a STRING
+`newContent` rather than a truthy one, so `''` reaches that rule. `applyEditToBody` stores an
+emptied caption as NO caption, the shape of a photo sent without one, so the bubble draws it bare.
+In the composer, `editSession.begin(id, text, captionOnly)` records that the edit may be emptied and
+`ChatComposer`'s `editingAllowsEmpty` lets Save through on an empty field.
+
+**An edit of a file still queued (DM, group).** The edit goes into the outbox as usual and names the
+message, so `dependsOnAny` holds it behind the file: the peers receive the file, then the edit. The
+author's own row was the trap: the real envelope swapped in once the upload ends is built from the
+QUEUE ENTRY, which holds the caption typed at the tap, so `updateMessageContent` (`outbox.ts`) wrote
+the old caption back over the edit - and `persistSent` stored it. It now keeps an edited row's
+caption over the real attachment reference (`[OUTBOX] … keeps the caption edited while it was
+queued`). A salon echo still uploading is not editable at all (`awaitingServerId` withholds every
+action addressed by a server id), so the salon has no such window.
+
+**The sender's other devices** receive the edit like any member and apply it by the same rule; the
+conversation list follows because its preview is read from the row's body. The push and the native
+layers do not render an edit (`proto_fields.rs` silences `edit_message`).
+
+Tests: `envelope.editBody.test.ts` (caption replaced, emptied, media and quote kept; `editFitsBody`),
+`systemMessageHandler.captionEdit.test.ts` (live path, in memory and at rest; an empty text on a text
+row dropped), `messagingEditCaption.test.ts` (the frame's three keys, the empty string an older
+client drops), `channelEdit.test.ts` (salon caption edited and emptied),
+`outbox.captionEditedWhileQueued.test.ts`, `editSession.svelte.test.ts`,
+`ChatComposer.edit.svelte.test.ts`, `MessageBubble.editAction.svelte.test.ts` and
+`MessageMobileActions.row.svelte.test.ts` (Modifier offered on an own media message). **Not
+exercised:** a real caption edit between two phones, and a `1.6.x` store build receiving one.
+
 ### Editing your own message in a salon (2026-10-05)
 
 **An edit is a SILENT ENCRYPTED CHANNEL ROW, exactly like a reaction** ([channel-encryption 4.7](../../protocols/channel-encryption.md)): a new `EditMsg` (`AppMessage.edit`, field 13: the target's SERVER row id, the replacement TEXT, `edited_at`), sealed under the author's Graine session by `sendChannelEdit` (`channelCrypto.ts`). The server stores an opaque row flagged `silent`, so **there is no new push and no server change, no endpoint, no migration** - and none COULD validate it: it cannot tell the row is an edit or whose message it names.
@@ -802,7 +863,7 @@ edit through `handleEditMessage` end to end on a phone.
 - **Authorship is checked by every reader**, in ONE function, `applyChannelEdit` (`utils/chat/channelEdit.ts`), used by the live handler (`channelEventHandler`), a history page and the search sweep (`useConversations`) and the sender's own write (`editChannelMessage`). The edit's sender is the ROW's - what Graine v2 proves, unforgeable by the server and by other members - and it must equal the target's author. **A moderator may remove someone's message (`channel.moderate`), never rewrite it.** A refusal is logged (`REFUSED`), silent to the user.
 - **"Proven" holds for v2 sessions only.** A row opened under a v1 session has a server-supplied, unsigned `senderId`, so a malicious server or a pre-G2-5 v1 row could forge an edit from the author - the same trust level as DELETE today, not a regression, and deliberately not restricted. It ends with the v1 reader ([channel-encryption 21.5b](../../protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05), [backlog](../../backlog.md)).
 - **Paging limit, stated exactly.** `listMessages` returns silent rows only inside `[oldest body of the page, before)`, and the server cannot know which silent row targets which message (opaque), so no clean server-side fix exists. With a `before` cursor an edit made AFTER the cursor is not in that page. Nothing affected today: the history load takes the newest page (no cursor), channels have no older-page load (`loadOlderMessages` returns false), and the search sweep applies edits over ALL pages it collected. Reactions share the limit. Backlog item below.
-- It edits a plain TEXT message only: not a poll, a notice, a media message or a tombstone (a delete is final). Empty text is refused. Order is `editSupersedes` (later `editedAt` wins, tie on the text), so two devices converge in any arrival order; the author's own echo is a quiet no-op.
+- It edits a plain TEXT message, and a media message's CAPTION since 2026-11-11 ([below](#a-media-messages-edit-is-a-caption-edit-2026-11-11)): not a poll, a notice or a tombstone (a delete is final). Empty text is refused on a text, and removes a caption. Order is `editSupersedes` (later `editedAt` wins, tie on the text), so two devices converge in any arrival order; the author's own echo is a quiet no-op.
 - **The history load applies the edit rows after the page is built**, because a salon is not stored locally: the marker and the new text come back from the same silent rows. The page limit counts non-silent rows and brings every newer silent row, so an edit of a loaded message is always on the page.
 - UI: `MainChatPage` now passes `onEdit` for a channel (`channels.editChannelMessage`); the inline edit is the composer's, shared with DMs and groups, and the edited marker is the existing `isEdited`.
 - **Old clients** read `AppMessage` with an unknown oneof, which decodes to an empty frame: the row is not rendered and nothing breaks, they simply keep the original text. **Not exercised: two real devices round-trip, and the 365-day retention purge of an edit row whose (pinned) target outlives it** - the edit is then lost with its row, the original text stays.
@@ -2281,7 +2342,7 @@ showing the quote out of the in-memory `ChatMessage.replyTo` set at send time, s
 like a peer-side defect - it was reported as one, two screenshots of one message, quoted on its
 author's PC and bare on the peer's - and one reload would have lost it there too. `applyEditToBody`
 (`envelope.ts`) is the one implementation: it parses the stored body, replaces the text (or a media
-envelope's caption, unreachable from this UI and better than throwing the attachment away), and
+envelope's caption - reachable from the UI since 2026-11-11, [below](#a-media-messages-edit-is-a-caption-edit-2026-11-11)), and
 re-serializes, so every field the edit does not carry survives it.
 
 **THAT MADE THE TIE-BREAK READ THE ENVELOPE TOO**, and it is the part worth keeping. `editSupersedes`

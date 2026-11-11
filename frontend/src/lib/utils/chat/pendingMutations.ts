@@ -26,7 +26,7 @@ import type { MessageReaction } from '$lib/types';
 import type { PendingMutation } from '$lib/db/types';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
-import { applyEditToBody } from '$lib/envelope';
+import { applyEditToBody, editFitsBody } from '$lib/envelope';
 import { editSupersedes } from './editPrecedence';
 import { applyReaction } from './messageReactions';
 import { m } from '$lib/paraglide/messages';
@@ -151,7 +151,7 @@ export function settleAgainstPending(
     };
     let winner: PendingMutation | null = null;
     for (const edit of edits) {
-      if (edit.text === undefined) continue;
+      if (edit.text === undefined || !editFitsBody(target.content, edit.text)) continue;
       if (!editSupersedes({ editedAt: edit.rank, content: edit.text }, current)) continue;
       winner = edit;
       current = { editedAt: edit.rank, content: applyEditToBody(target.content, edit.text) };

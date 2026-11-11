@@ -35,6 +35,7 @@ import {
 import {
   serializeEnvelope,
   applyEditToBody,
+  editFitsBody,
   envelopeBodyText,
   mkChannelInviteEnvelope,
   mkChannelInviteSentEnvelope,
@@ -389,7 +390,11 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         by: senderNorm,
         ...(ctx.authorship ? { proof: ctx.authorship } : {}),
       });
-    } else if (parsed.system.event === 'edit_message' && data.messageId && data.newContent) {
+    } else if (
+      parsed.system.event === 'edit_message' &&
+      data.messageId &&
+      typeof data.newContent === 'string'
+    ) {
       // Dated by the sender, exactly as the live path and the pin path are, so a replay cannot undo
       // an edit this device already holds that is newer - and two devices replaying the same log in
       // different orders reach the same body. `editSupersedes` carries the whole rule; a frame from
@@ -423,6 +428,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // landing on a deleted row puts the deleted text back on screen. A delete seen earlier in
       // THIS page counts as much as one already on the row.
       if (known?.isDeleted || deletedMessages.has(data.messageId)) return;
+      // An empty text edits only a media message's caption (`editFitsBody`).
+      if (!editFitsBody(known.content, data.newContent)) return;
       // Both the in-memory row and anything an earlier entry of THIS page already accumulated have
       // to be outranked: the page is walked in log order, which is not edit order.
       const heldInPage = editedMessages.get(data.messageId);

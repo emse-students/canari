@@ -42,7 +42,14 @@ import {
   mkReply,
   mkText,
 } from '$lib/proto/codec';
-import { serializeEnvelope, mkMediaEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
+import {
+  applyEditToBody,
+  envelopeBodyText,
+  serializeEnvelope,
+  mkMediaEnvelope,
+  mkTextEnvelope,
+  parseEnvelope,
+} from '$lib/envelope';
 import { quotePreviewEntitled, type PlaceableMessage } from './historyEntitlement';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -1506,12 +1513,25 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       .catch((e) => log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… failed: ${String(e)}`));
   }
 
-  /** Replace a message's rendered content in memory (queued media -> real attachment on send). */
+  /**
+   * Replace a message's rendered content in memory (queued media -> real attachment on send).
+   *
+   * A CAPTION EDITED WHILE THE FILE WAS QUEUED IS KEPT (owner, 2026-11-11): the real envelope is
+   * built from the queue entry, which holds the caption typed at the tap, and writing it whole put
+   * the old caption back on the author's screen - and, through `persistSent`, at rest. The peers are
+   * not concerned: the edit's control frame names this message, so it waits behind it in the queue
+   * (`dependsOnAny`) and reaches them after it.
+   */
   function updateMessageContent(messageId: string, content: string): void {
     const found = findMessage(messageId);
     if (!found) return;
+    const held = found.convo.messages[found.idx];
+    const kept = held.isEdited ? applyEditToBody(content, envelopeBodyText(held.content)) : content;
+    if (kept !== content) {
+      log(`[OUTBOX] ${messageId.slice(0, 8)}… keeps the caption edited while it was queued`);
+    }
     const messages = [...found.convo.messages];
-    messages[found.idx] = { ...messages[found.idx], content };
+    messages[found.idx] = { ...held, content: kept };
     conversations.set(found.key, { ...found.convo, messages });
   }
 

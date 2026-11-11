@@ -27,7 +27,7 @@ import {
   type AuthorshipCheck,
   type RecordedAuthorship,
 } from '$lib/crypto/messageAuthorship';
-import { applyEditToBody } from '$lib/envelope';
+import { applyEditToBody, editFitsBody } from '$lib/envelope';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import type { MessageReaction } from '$lib/types';
 import { appMsgToEnvelope } from './messageUtils';
@@ -251,6 +251,11 @@ export async function vetRestoredEdit(
   const { newContent, editedAt } = signed.data;
   if (typeof newContent !== 'string' || typeof editedAt !== 'number' || editedAt <= 0) {
     return { kind: 'forged', why: 'the signed edit carries no text or time' };
+  }
+  // Signed, but empty on a body that is not a media message's: nothing a sender of this app makes.
+  if (!editFitsBody(target.content, newContent)) {
+    log(`[AUTHORSHIP] restored edit of ${target.id.slice(0, 8)} empties a text - not applied`);
+    return { kind: 'none' };
   }
   return {
     kind: 'apply',

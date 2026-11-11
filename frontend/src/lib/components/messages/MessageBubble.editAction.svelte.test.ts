@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 /**
- * "Modifier" is offered on a member's OWN plain-text message in a salon - and on nothing else.
+ * "Modifier" is offered on a member's OWN text message in a salon, and on its OWN media message,
+ * whose edit is a caption edit (owner, 2026-11-11) - and on nothing else.
  *
  * It was missing there for as long as salons existed: `MainChatPage` passed no `onEdit` for a
  * channel, so the bubble was never handed `onBeginEdit` and hid the action. The rule itself is the
@@ -15,7 +16,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 import MessageBubble from './MessageBubble.svelte';
-import { serializeEnvelope, mkPollEnvelope } from '$lib/envelope';
+import { serializeEnvelope, mkPollEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { m } from '$lib/paraglide/messages';
 
 const mounted: (() => void)[] = [];
@@ -74,6 +75,40 @@ describe('MessageBubble edit action in a salon', () => {
 
   it('hides it on a deleted message', () => {
     render({ isDeleted: true });
+    expect(editButtons()).toBe(0);
+  });
+
+  it("shows it on the author's own media message, and hands the composer its caption to edit", () => {
+    const onBeginEdit = vi.fn();
+    render({
+      onBeginEdit,
+      content: serializeEnvelope(
+        mkMediaEnvelope(
+          { type: 'image', mediaId: 'b1', key: 'k', iv: 'i', mimeType: 'image/jpeg', size: 10 },
+          'a caption'
+        )
+      ),
+    });
+    expect(editButtons()).toBeGreaterThan(0);
+    const edit = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) =>
+      el.textContent?.includes(m.common_edit_label())
+    );
+    edit?.click();
+    flushSync();
+    expect(onBeginEdit).toHaveBeenCalledWith('m1', 'a caption', true);
+  });
+
+  it("hides it on someone else's media message", () => {
+    render({
+      isOwn: false,
+      senderId: 'u-other',
+      content: serializeEnvelope(
+        mkMediaEnvelope(
+          { type: 'file', mediaId: 'b1', key: 'k', iv: 'i', mimeType: 'application/pdf', size: 10 },
+          'notes'
+        )
+      ),
+    });
     expect(editButtons()).toBe(0);
   });
 

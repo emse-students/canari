@@ -42,6 +42,22 @@ before the raise). An older figure on this page is the floor at the date its ent
 - **Removal.** Nothing to remove (no shim in the code): the degradation ends when `minClientVersion`
   passes the first stable carrying #3196, and this entry is then deleted.
 
+### A tolerated degradation: a media caption edit read by a build older than the caption edit (owner, 2026-11-11)
+
+- **What.** A media message's edit replaces its caption only, in the unchanged `edit_message` frame
+  ([chat](frontend/modules/chat.md#a-media-messages-edit-is-a-caption-edit-2026-11-11)). An older
+  build keeps the OLD caption, unmarked, in two cases: an emptied caption in a DM or group (its
+  `data.newContent` truthiness check drops `''`), and any caption edit in a salon (its
+  `applyChannelEdit` refuses every non-text target). A non-empty caption edit in a DM or group it
+  applies like this build, through `applyEditToBody`'s media branch (`v0.18.18`).
+- **Who.** Native apps at or above the floor `1.6.6` but older than the release carrying the caption
+  edit; the web app is always current.
+- **Why tolerated.** It is a stale caption, never a lost or corrupted attachment: no build at the
+  floor writes an edit's text over a whole body. A new wire field would not have reached those builds
+  either.
+- **Removal.** Nothing to remove (no shim in the code): the degradation ends when `minClientVersion`
+  passes the first stable carrying the caption edit, and this entry is then deleted.
+
 ### A tolerated breakage: an institution post from a build older than the reach (owner, 2026-11-10)
 
 - **What.** An institution's post must carry a reach (migration 162,

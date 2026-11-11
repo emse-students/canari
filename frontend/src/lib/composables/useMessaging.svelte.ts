@@ -88,6 +88,7 @@ import { capturePosterOf } from '$lib/reels/capturePoster';
 import { buildChatReelTake, type ChatReelTarget } from '$lib/reels/chatReelTake';
 import {
   applyEditToBody,
+  editFitsBody,
   envelopeBodyText,
   getPreviewText,
   mkMediaEnvelope,
@@ -3352,6 +3353,12 @@ export function useMessaging() {
     // Ownership check: only the sender can edit their own message
     const target = convo.messages.find((m) => m.id === messageId);
     if (!target || !isOwnMessage(target.senderId, ctx.userId)) return;
+    // The same rule every receiver applies: an empty text removes a media message's caption and
+    // empties nothing else (`editFitsBody`).
+    if (!editFitsBody(target.content, text)) {
+      ctx.log(`[EDIT] ${messageId.slice(0, 8)} not sent - an empty text edits only a caption`);
+      return;
+    }
 
     // ONE INSTANT FOR BOTH HALVES - see handleTogglePin below, which has always done this. Taking
     // it twice dated the local apply and the broadcast differently for the same act, and now that

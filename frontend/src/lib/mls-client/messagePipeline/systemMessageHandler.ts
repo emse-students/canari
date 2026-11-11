@@ -4,6 +4,7 @@ import { canonicalIdentity, canonicalUserId, canonicalUserOf } from '$lib/mls-cl
 import {
   serializeEnvelope,
   applyEditToBody,
+  editFitsBody,
   mkChannelInviteEnvelope,
   mkChannelInviteSentEnvelope,
   channelInviteMessageId,
@@ -374,6 +375,10 @@ async function applyEdit(
     return;
   }
   if (!mutationIsAuthorised(target, senderNorm, 'edit', log)) return;
+  if (!editFitsBody(target.content, newText)) {
+    log(`[MLS] Dropped an edit of ${targetId.slice(0, 8)} - an empty text edits only a caption`);
+    return;
+  }
   // A DELETE IS ABSORBING: THE TOMBSTONE WINS, WHATEVER THE ORDER. The tombstone lives in `content`,
   // so an edit applied on top of it would put the deleted text back on screen.
   if (target.isDeleted) {
@@ -422,7 +427,9 @@ async function applyEdit(
       convoKey,
       [targetId],
       (current) =>
-        current.isDeleted || !editSupersedes({ editedAt: editedAtMs, content: newText }, current)
+        current.isDeleted ||
+        !editFitsBody(current.content, newText) ||
+        !editSupersedes({ editedAt: editedAtMs, content: newText }, current)
           ? null
           : mergeStoredMessage(current, {
               content: applyEditToBody(current.content, newText),
@@ -1251,8 +1258,10 @@ export async function handleSystemEvent(
     return true;
   }
 
-  if (event === 'edit_message' && data.messageId && data.newContent) {
-    await applyEdit(String(data.messageId), String(data.newContent), data.editedAt, ctx);
+  // A STRING, NOT A TRUTHY ONE: an empty text removes a media message's caption, and whether it
+  // fits its target is `editFitsBody`'s to say once the target is known.
+  if (event === 'edit_message' && data.messageId && typeof data.newContent === 'string') {
+    await applyEdit(String(data.messageId), data.newContent, data.editedAt, ctx);
     return true;
   }
 
