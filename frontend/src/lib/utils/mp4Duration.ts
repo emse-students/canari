@@ -23,6 +23,15 @@
  * length, is left untouched: its header is the answer.
  */
 import { Log } from './Log';
+import { VIDEO_MIN_BITRATE } from '$lib/video/videoEncodingPlan';
+
+/**
+ * THE FEWEST BYTES A SECOND OF CANARI VIDEO CAN COST: a twentieth of the writer's lowest video
+ * target ({@link VIDEO_MIN_BITRATE}, 400 kb/s), the margin a variable-rate encoder takes on a still
+ * picture - 2.5 kB/s. A length read from a file's tail that would make the file cheaper than this
+ * is not believed: a corrupt `tfdt` or `trun` reads as hours, never as a plausible clip.
+ */
+export const MIN_VIDEO_BYTES_PER_SECOND = VIDEO_MIN_BITRATE / 8 / 20;
 
 /** One box: where its payload starts and ends, and where its header started. */
 interface Box {
@@ -122,14 +131,16 @@ function readTracks(view: DataView, moov: Box): Map<number, TrackFacts> {
  * The end time of one `traf`, in its track's timescale: `start` (its `tfdt`, else where the track's
  * previous fragment ended) plus the durations of its samples. The track's FIRST start is kept in
  * `starts`: a track whose decode time does not begin at 0 (an edit, a cut from a longer recording)
- * lasts `end - firstStart`, not `end`.
+ * lasts `end - firstStart`, not `end`. `untimedStart` is where a track's first traf WITHOUT a `tfdt`
+ * starts when no walked fragment precedes it (the tail reader's `tfra` time); it is never an end.
  */
 function trafEnd(
   view: DataView,
   traf: Box,
   tracks: Map<number, TrackFacts>,
   ends: Map<number, number>,
-  starts: Map<number, number>
+  starts: Map<number, number>,
+  untimedStart?: Map<number, number>
 ): void {
   const tfhd = child(view, traf, 'tfhd');
   if (!tfhd) return;
@@ -142,7 +153,9 @@ function trafEnd(
   if (flags & 0x8) defaultDuration = view.getUint32(at);
 
   const tfdt = child(view, traf, 'tfdt');
-  let time = ends.get(trackId) ?? 0;
+  // No `tfdt`: the traf continues the track's previous walked fragment, else starts where the
+  // caller says (`untimedStart`) - never a time merged into `ends` from anywhere but a walk.
+  let time = ends.get(trackId) ?? untimedStart?.get(trackId) ?? 0;
   if (tfdt) {
     const wide = view.getUint8(tfdt.body) === 1;
     time = wide ? Number(view.getBigUint64(tfdt.body + 4)) : view.getUint32(tfdt.body + 4);
@@ -335,9 +348,8 @@ export type Mp4TailReading =
   /** The tail cannot say: `why` names what was missing, for the caller's log. */
   | { kind: 'unreadable'; why: string };
 
-/** The `tfra` facts of one track: when its first and last random-access fragments start, and where the last one is. */
+/** The `tfra` facts of one track: when its last random-access fragment starts, and where it is. */
 interface TrackRandomAccess {
-  firstTime: number;
   lastTime: number;
   lastMoof: number;
 }
@@ -355,10 +367,8 @@ function readRandomAccess(view: DataView, mfra: Box): Map<number, TrackRandomAcc
     const stride = (wide ? 16 : 8) + tail;
     if (count === 0 || tfra.body + 16 + count * stride > tfra.end) continue;
     const read = (at: number) => (wide ? Number(view.getBigUint64(at)) : view.getUint32(at));
-    const first = tfra.body + 16;
-    const last = first + (count - 1) * stride;
+    const last = tfra.body + 16 + (count - 1) * stride;
     out.set(trackId, {
-      firstTime: read(first),
       lastTime: read(last),
       lastMoof: read(last + (wide ? 8 : 4)),
     });
@@ -376,16 +386,24 @@ function readRandomAccess(view: DataView, mfra: Box): Map<number, TrackRandomAcc
  * is, and that last fragment's `trun` says how long it lasts. So the length is read from the
  * `moov` (in the head) and the file's last bytes, never from the middle.
  *
+ * THE ANSWER IS THE ABSOLUTE END of the walked samples - what an MSE `duration` is - not the end
+ * minus the first decode time: a track that starts at 10 s ends its presentation at its end.
+ * The `tfra` says WHERE the last fragment is; its time is used only by a `traf` that carries no
+ * `tfdt`, and is never compared with a walked end, so a corrupt `tfra` cannot lengthen the clip.
+ *
  * @param head      The file's first bytes, holding the complete `moov` (the stream's first segment).
  * @param tail      The file's last bytes, ending exactly where the file ends.
  * @param tailStart The absolute offset of `tail`'s first byte in the file.
+ * @param fileBytes The file's size: a length that would make it cheaper than
+ *   {@link MIN_VIDEO_BYTES_PER_SECOND} is refused as implausible.
  * @returns The seconds; or `earlier` with the offset the tail must reach back to; or `unreadable`
  *   naming what was missing. Never throws.
  */
 export function readMp4TailDuration(
   head: Uint8Array,
   tail: Uint8Array,
-  tailStart: number
+  tailStart: number,
+  fileBytes: number
 ): Mp4TailReading {
   try {
     const headView = new DataView(head.buffer, head.byteOffset, head.byteLength);
@@ -420,22 +438,27 @@ export function readMp4TailDuration(
     }
     const ends = new Map<number, number>();
     const starts = new Map<number, number>();
-    // A traf with no tfdt continues from where the tfra says its fragment starts.
-    for (const [id, a] of access) ends.set(id, a.lastTime);
+    const untimedStart = new Map([...access].map(([id, a]) => [id, a.lastTime]));
     for (const moof of boxes.filter((b) => b.type === 'moof')) {
       for (const traf of childBoxes(view, moof.body, moof.end).filter((b) => b.type === 'traf')) {
-        trafEnd(view, traf, tracks, ends, starts);
+        trafEnd(view, traf, tracks, ends, starts, untimedStart);
       }
     }
     let longest = 0;
     for (const [id, end] of ends) {
       const timescale = tracks.get(id)?.timescale ?? 0;
-      const first = access.get(id)?.firstTime ?? 0;
-      if (timescale > 0 && end > first) longest = Math.max(longest, (end - first) / timescale);
+      if (timescale > 0 && end > 0) longest = Math.max(longest, end / timescale);
     }
-    return Number.isFinite(longest) && longest > 0
-      ? { kind: 'seconds', seconds: longest }
-      : { kind: 'unreadable', why: 'the last fragments carry no sample' };
+    if (!Number.isFinite(longest) || longest <= 0) {
+      return { kind: 'unreadable', why: 'the last fragments carry no sample' };
+    }
+    if (fileBytes / longest < MIN_VIDEO_BYTES_PER_SECOND) {
+      return {
+        kind: 'unreadable',
+        why: `${longest.toFixed(0)} s for ${fileBytes} bytes is implausible (under ${MIN_VIDEO_BYTES_PER_SECOND} B/s)`,
+      };
+    }
+    return { kind: 'seconds', seconds: longest };
   } catch (e) {
     return { kind: 'unreadable', why: `the tail could not be walked: ${String(e)}` };
   }

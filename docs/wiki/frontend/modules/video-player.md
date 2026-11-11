@@ -171,25 +171,48 @@ a carousel page, a post video, an old reel without it get nothing). Such an MSE 
 `mediaBlobCache` reads the length from the fragments only for a WHOLE file; a stream never held one.
 
 **The fix, in the stream** (`segmentedMediaStream.ts`, `readTailSeconds`; the reader is
-`mp4Duration.readMp4TailDuration`): the muxer ends every file with an `mfra` and an `mfro`. Once the
-head is appended, a consumer whose pacing `readsLength` (the viewer's, `VIEWER_STREAM_PACING`; a feed
-card draws no line and does not pay it) fetches the LAST segment through the shared feed, reads the
-`mfro` (the `mfra`'s size), the `tfra` entries (where each track's last fragment starts, in time and in
-bytes) and that fragment's `trun`s, and hands the length to `MediaSource.duration` **inside the append
-chain** - the spec refuses a `duration` while a `SourceBuffer` updates, and the chain is the one place
-that knows none is. Never below what is buffered; never over a length the engine already knows. When
-the last fragment starts before the tail, it reaches back a segment at a time, at most three. The tail
-segment stays in the feed, so the in-order fetch takes it from memory: nothing is downloaded twice
-(test: four segments, four requests).
+`mp4Duration.readMp4TailDuration`): the muxer ends every file with an `mfra` and an `mfro`. A consumer
+whose pacing `readsLength` (the viewer's, `VIEWER_STREAM_PACING`; a feed card draws no line and does
+not pay it) fetches the LAST segment through the shared feed and reads three things:
+- the `mfro`, which gives the `mfra`'s size;
+- the `tfra` entries, which say WHERE each track's last fragment starts;
+- that fragment's `tfdt` and `trun`s.
 
-- **A seek ahead of what is fetched** fills the gap IN ORDER: the segments are byte ranges, not
-  fragments, so one cannot be appended alone; a `seeking` element with nothing buffered at its new
-  time is a demand (`wanted`), and the loop runs up to the target. The cost is the bytes in between.
-- **A stream that cannot learn its length** says why, once, at info: `[media-seg] <label> <id>: no
+It hands the length to `MediaSource.duration` **inside the append chain**: the spec refuses a
+`duration` while a `SourceBuffer` updates, and the chain is the one place that knows none is.
+
+- **The length is the ABSOLUTE end of the walked samples**, which is what an MSE duration is. The
+  first decode time is not subtracted.
+- **A `tfra` time is never trusted.** It is used only by a `traf` with no `tfdt`, and never compared
+  with a walked end. A length that would make the file cheaper than `MIN_VIDEO_BYTES_PER_SECOND`
+  (2.5 kB/s, a twentieth of the writer's lowest target `VIDEO_MIN_BITRATE`) is refused as
+  implausible, with the reason. A fuzz test pins that every length it does give is finite, positive
+  and plausible.
+- **It never competes with playback.**
+  - It starts only once the in-order buffer holds the pacing's `aheadSeconds` (30 s) past the
+    playhead. That is a fact of the element, never a timer.
+  - Its requests wait in the gate's `background` lane (a `GateRank`). An in-order ask of the same
+    segment promotes it and holds it.
+  - Closing the viewer cancels it on the wire, unless an in-order ask holds it.
+  - A clip that ends before 30 s are buffered is fetched to its end, and `endOfStream` measures it.
+- It is never set below what is buffered, and never over a length the engine already knows.
+- When the last fragment starts before the tail, it reaches back one segment at a time, at most
+  three (a stream-level test covers it).
+- The tail segment stays in the feed, so the in-order fetch takes it from memory. Nothing is
+  downloaded twice (test: each segment requested once).
+
+- **A seek ahead of what is fetched fills the gap IN ORDER, and that costs every byte before the
+  target.** The segments are byte ranges, not fragments, so one cannot be appended alone. A
+  `seeking` element with nothing buffered at its new time is a demand (`wanted`), and the loop runs
+  up to the target. A seek to 90 % of a 60 MB video downloads 54 MB first: minutes on a weak link.
+  The `mfra` this reader now parses is the time-to-byte index a direct seek needs, which is
+  [its own entry](../../backlog.d/p2-a-seek-ahead-in-a-stream-fetches-every-segment-before-it.md).
+- **A stream that cannot learn its length** says why, once, at WARN (a fallback is a signal): `[media-seg] <label> <id>: no
   declared length, and none read from its tail - <why>` (`no mfro at the end of the file`, `no moov in
   the head`, its last segments did not arrive, ...). Its line still draws: `videoPlayback.scrubLength`
   maps it onto the end of the element's `seekable` range - what is buffered - so it moves and seeks
-  within what is there instead of vanishing.
+  within what is there instead of vanishing. The bar's BUFFERED part is drawn only against a real
+  length: mapped onto what is buffered it would always read full.
 - **The player's line** `the engine knows no duration` is gone for streams (at their metadata they
   hold only their head; the stream speaks for them). A FILE that declares none still says so:
   `[VideoPlayer] <variant>: the file declares no duration`.

@@ -4,11 +4,12 @@ import {
   declareMp4Duration,
   isMp4Type,
   readMp4Duration,
+  MIN_VIDEO_BYTES_PER_SECOND,
   readMp4TailDuration,
   writeMvhdDuration,
 } from './mp4Duration';
 import { fragmentedMp4 } from './mp4Fixture.test-helper';
-import { fragment, initSegment, join } from '$lib/live/fmp4.test-helper';
+import { box, fragment, initSegment, join } from '$lib/live/fmp4.test-helper';
 
 /** Offset of the first box of `type` (its size field), or -1. */
 function boxAt(bytes: Uint8Array, type: string): number {
@@ -225,13 +226,45 @@ describe('mp4Duration', () => {
   });
 
   describe('readMp4TailDuration - a stream learns its length from its head and its tail', () => {
+    /**
+     * The size the reader is told the file has. The fixture's frames are synthetic (3.5 kB for 10 s,
+     * far below any real encode); a real 10 s clip is megabytes, which is what the plausibility
+     * bound (`MIN_VIDEO_BYTES_PER_SECOND`) is measured against.
+     */
+    const CLIP_BYTES = 10 * 1024 * 1024;
+
+    /** The head a stream holds: cut inside the first fragment, as its first segment is. */
+    const headOf = (bytes: Uint8Array) => bytes.subarray(0, boxAt(bytes, 'moof') + 20);
+
+    /** Where the `tfra`'s entries are, and how wide each field is. */
+    function tfraLayout(bytes: Uint8Array) {
+      const at = boxAt(bytes, 'tfra');
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const wide = bytes[at + 8] === 1;
+      const sizes = view.getUint32(at + 16);
+      const stride =
+        (wide ? 16 : 8) + ((sizes >> 4) & 3) + 1 + (((sizes >> 2) & 3) + 1) + ((sizes & 3) + 1);
+      return { at, view, wide, count: view.getUint32(at + 20), entries: at + 24, stride };
+    }
+
+    /** Every answer the reader gives is either a refusal or a believable length for these bytes. */
+    function plausible(reading: ReturnType<typeof readMp4TailDuration>, fileBytes: number) {
+      if (reading.kind !== 'seconds') return;
+      expect(Number.isFinite(reading.seconds)).toBe(true);
+      expect(reading.seconds).toBeGreaterThan(0);
+      expect(fileBytes / reading.seconds).toBeGreaterThanOrEqual(MIN_VIDEO_BYTES_PER_SECOND);
+    }
+
     it("reads the muxer output's length from the moov and the file's last bytes only", async () => {
       const bytes = await fragmentedMp4(300);
-      // The head is cut inside the first fragment, as a stream's first segment is.
-      const head = bytes.subarray(0, boxAt(bytes, 'moof') + 20);
       for (const tailBytes of [bytes.byteLength, 1000]) {
         const start = bytes.byteLength - tailBytes;
-        const reading = readMp4TailDuration(head, bytes.subarray(start), start);
+        const reading = readMp4TailDuration(
+          headOf(bytes),
+          bytes.subarray(start),
+          start,
+          CLIP_BYTES
+        );
         expect(reading.kind).toBe('seconds');
         if (reading.kind === 'seconds') expect(reading.seconds).toBeCloseTo(10, 3);
       }
@@ -239,39 +272,111 @@ describe('mp4Duration', () => {
 
     it('a tail that starts after the last fragment asks for the bytes from where it starts', async () => {
       const bytes = await fragmentedMp4(300);
-      const mfra = boxAt(bytes, 'mfra');
-      const start = mfra - 8;
-      const reading = readMp4TailDuration(
-        bytes.subarray(0, boxAt(bytes, 'moof') + 20),
-        bytes.subarray(start),
-        start
-      );
+      const start = boxAt(bytes, 'mfra') - 8;
+      const n = CLIP_BYTES;
+      const reading = readMp4TailDuration(headOf(bytes), bytes.subarray(start), start, n);
       expect(reading.kind).toBe('earlier');
       if (reading.kind !== 'earlier') return;
       expect(reading.from).toBeLessThan(start);
       const wider = readMp4TailDuration(
-        bytes.subarray(0, boxAt(bytes, 'moof') + 20),
+        headOf(bytes),
         bytes.subarray(reading.from),
-        reading.from
+        reading.from,
+        n
       );
       expect(wider.kind).toBe('seconds');
     });
 
-    it('names what is missing, and never throws on a cut or damaged tail', async () => {
+    it('answers the ABSOLUTE end - what an MSE duration is - for a track that does not start at 0', () => {
+      // Two 3000-tick video fragments at 90 kHz, from 10 s; their mfra lists both.
+      const init = initSegment();
+      const a = fragment({ videoTime: 900_000n, flagsIn: 'per-sample' });
+      const b = fragment({ videoTime: 903_000n, flagsIn: 'per-sample' });
+      const u32 = (n: number) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+      const u64 = (n: number) => [...u32(Math.floor(n / 2 ** 32)), ...u32(n >>> 0)];
+      const entry = (time: number, offset: number) => [...u64(time), ...u64(offset), 1, 1, 1];
+      const tfra = box(
+        'tfra',
+        [1, 0, 0, 0],
+        u32(1),
+        u32(0),
+        u32(2),
+        entry(900_000, init.length),
+        entry(903_000, init.length + a.length)
+      );
+      const mfraSize = 8 + tfra.length + 16;
+      const file = join(init, a, b, box('mfra', tfra, box('mfro', [0, 0, 0, 0], u32(mfraSize))));
+      const reading = readMp4TailDuration(file, file, 0, 10_000_000);
+      expect(reading).toEqual({ kind: 'seconds', seconds: 906_000 / 90_000 });
+    });
+
+    it('a corrupt tfra time over intact fragments changes nothing: the tfdt and trun are the answer', async () => {
+      const bytes = await fragmentedMp4(300);
+      const { view, wide, count, entries, stride } = tfraLayout(bytes);
+      for (let k = 0; k < count; k++) {
+        const time = entries + k * stride;
+        if (wide) view.setBigUint64(time, 0xffff_ffff_ffff_f000n);
+        else view.setUint32(time, 0xffff_ff00);
+      }
+      const reading = readMp4TailDuration(headOf(bytes), bytes, 0, CLIP_BYTES);
+      expect(reading.kind).toBe('seconds');
+      if (reading.kind === 'seconds') expect(reading.seconds).toBeCloseTo(10, 3);
+    });
+
+    it('refuses a length the file is too small to hold, and names why', async () => {
+      const bytes = await fragmentedMp4(300);
+      // A 64-bit tfdt near 2^64 on the last fragment: hours of video in 3.5 kB.
+      const tfdtAt = (() => {
+        for (let i = boxAt(bytes, 'mfra'); i > 4; i--) {
+          if (String.fromCharCode(...bytes.subarray(i, i + 4)) === 'tfdt') return i - 4;
+        }
+        return -1;
+      })();
+      expect(tfdtAt).toBeGreaterThan(0);
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (bytes[tfdtAt + 8] === 1) view.setBigUint64(tfdtAt + 12, 0xffff_ffff_ffff_0000n);
+      else view.setUint32(tfdtAt + 12, 0xffff_0000);
+      const reading = readMp4TailDuration(headOf(bytes), bytes, 0, CLIP_BYTES);
+      expect(reading.kind).toBe('unreadable');
+      if (reading.kind === 'unreadable') expect(reading.why).toContain('implausible');
+    });
+
+    it('a timescale of 0 and a tfra count past its box give no length, and say why', async () => {
+      const zeroScale = await fragmentedMp4(60);
+      for (const at of [boxAt(zeroScale, 'mdhd')]) {
+        new DataView(zeroScale.buffer).setUint32(timescaleAt(zeroScale, at), 0);
+      }
+      expect(readMp4TailDuration(headOf(zeroScale), zeroScale, 0, CLIP_BYTES)).toMatchObject({
+        kind: 'unreadable',
+      });
+
+      const huge = await fragmentedMp4(60);
+      const { view, at } = tfraLayout(huge);
+      view.setUint32(at + 20, 0xffff_ffff);
+      expect(readMp4TailDuration(headOf(huge), huge, 0, CLIP_BYTES)).toEqual({
+        kind: 'unreadable',
+        why: 'the mfra lists no fragment',
+      });
+    });
+
+    it('fuzz: never throws, and every length it gives is finite, positive and plausible', async () => {
       const bytes = await fragmentedMp4(60);
-      const head = bytes.subarray(0, boxAt(bytes, 'moof') + 20);
-      const cut = bytes.subarray(0, bytes.byteLength - 3);
-      expect(readMp4TailDuration(head, cut, 0)).toMatchObject({ kind: 'unreadable' });
-      expect(readMp4TailDuration(new Uint8Array(16), bytes, 0)).toEqual({
+      const head = headOf(bytes);
+      expect(
+        readMp4TailDuration(head, bytes.subarray(0, bytes.byteLength - 3), 0, CLIP_BYTES)
+      ).toMatchObject({ kind: 'unreadable' });
+      expect(readMp4TailDuration(new Uint8Array(16), bytes, 0, CLIP_BYTES)).toEqual({
         kind: 'unreadable',
         why: 'no moov in the head',
       });
       const rand = seeded(7);
-      for (let k = 0; k < 200; k++) {
+      for (let k = 0; k < 400; k++) {
         const copy = new Uint8Array(bytes);
         const at = bytes.byteLength - 1 - Math.floor(rand() * 2048);
         copy[at] ^= 1 + Math.floor(rand() * 255);
-        expect(() => readMp4TailDuration(head, copy, 0)).not.toThrow();
+        let reading: ReturnType<typeof readMp4TailDuration> | undefined;
+        expect(() => (reading = readMp4TailDuration(head, copy, 0, CLIP_BYTES))).not.toThrow();
+        plausible(reading!, CLIP_BYTES);
       }
     });
   });

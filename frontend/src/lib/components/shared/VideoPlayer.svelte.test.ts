@@ -850,6 +850,24 @@ it('a stream with no length maps its line onto what it can seek, then onto the l
   expect(video.currentTime).toBe(61);
 });
 
+it('the bar draws no buffered part until the length is known - never a full bar of "what is loaded"', () => {
+  const { target, video } = mountPlayer('blob:bar-stream');
+  const ranges = (end: number) => ({ length: 1, start: () => 0, end: () => end });
+  Object.defineProperty(video, 'buffered', { configurable: true, get: () => ranges(8) });
+  Object.defineProperty(video, 'seekable', { configurable: true, get: () => ranges(8) });
+  withDuration(video, Number.POSITIVE_INFINITY);
+  video.dispatchEvent(new Event('progress'));
+  flushSync();
+  const bufferedBar = () =>
+    target.querySelector<HTMLElement>('[data-video-bar] .bg-white\\/35')!.getAttribute('style');
+  expect(bufferedBar()).toContain('width: 0%');
+
+  withDuration(video, 16);
+  video.dispatchEvent(new Event('durationchange'));
+  flushSync();
+  expect(bufferedBar()).toContain('width: 50%');
+});
+
 it('a FILE that declares no length is said, naming that it is the file', () => {
   const info = vi.spyOn(console, 'info').mockImplementation(() => {});
   const { video } = mountConversation('blob:undeclared-file');

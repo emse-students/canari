@@ -463,7 +463,9 @@
     currentTime = video.currentTime;
     duration = video.duration;
     length = seekLength(video);
-    buffered = bufferedFraction(video.buffered, video.currentTime, length);
+    // Against the REAL length only: mapped onto what is buffered, the buffered bar would always read
+    // full. No length yet, no buffered bar.
+    buffered = bufferedFraction(video.buffered, video.currentTime, video.duration);
   }
 
   /** {@link scrubLength} of the element - `seekable` absent (a test double) reads as nothing sought. */
