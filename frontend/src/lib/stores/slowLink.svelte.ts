@@ -2,19 +2,41 @@ import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte
 import { connectivity } from '$lib/stores/connectivity.svelte';
 
 /**
- * Whether the slow-link hint is on. Answers are arriving, slowly (`connectivity.slow`, derived from
- * observed latency, never a guess): the profile avatar in the header takes an amber ring. It is
- * never on while the offline banner is - a link that reaches nothing is not "slow" - and never
- * for a logged-out visitor. ONE derivation shared by the two headers (phone and desktop) and the
- * screen-reader announcer, so they cannot disagree.
+ * The ONE connection indicator, drawn as a ring around the header avatar (owner, 2026-11-11):
+ * - `connected` (green): nothing is wrong;
+ * - `slow` (amber): answers are arriving, slowly (`connectivity.slow`, derived from observed
+ *   latency, never a guess);
+ * - `offline` (grey): the transport reaches nothing (`connectivity.isOffline`);
+ * - `reconnecting` (grey too): the link is back but an offline unlock is not promoted yet.
+ * `null` for a logged-out visitor, who has no avatar and no connection to show.
  */
-export const slowLink = {
-  get active(): boolean {
-    return (
-      session.isLoggedIn &&
-      !connectivity.isOffline &&
-      !session.isOfflineSession &&
-      connectivity.slow
-    );
+export type ConnectionState = 'connected' | 'slow' | 'offline' | 'reconnecting';
+
+/** Pure derivation, exported for the tests; {@link connection} feeds it the live stores. */
+export function deriveConnectionState(input: {
+  isLoggedIn: boolean;
+  isOffline: boolean;
+  isOfflineSession: boolean;
+  slow: boolean;
+}): ConnectionState | null {
+  if (!input.isLoggedIn) return null;
+  if (input.isOffline) return 'offline';
+  if (input.isOfflineSession) return 'reconnecting';
+  return input.slow ? 'slow' : 'connected';
+}
+
+/**
+ * ONE derivation shared by the two headers (phone and desktop) and the screen-reader announcer, so
+ * they cannot disagree. It replaced the "Hors connexion" banner and the "Connecte" pill, which drew
+ * the same facts and moved the page.
+ */
+export const connection = {
+  get state(): ConnectionState | null {
+    return deriveConnectionState({
+      isLoggedIn: session.isLoggedIn,
+      isOffline: connectivity.isOffline,
+      isOfflineSession: session.isOfflineSession,
+      slow: connectivity.slow,
+    });
   },
 };

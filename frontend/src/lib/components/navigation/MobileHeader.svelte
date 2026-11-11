@@ -6,8 +6,7 @@
   import CanariBrand from './CanariBrand.svelte';
   import EcosystemLauncher from './EcosystemLauncher.svelte';
   import PostNotificationBell from './PostNotificationBell.svelte';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
-  import { slowLink } from '$lib/stores/slowLink.svelte';
+  import ProfileAvatarButton from './ProfileAvatarButton.svelte';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
   import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
@@ -104,19 +103,7 @@
       {/if}
       <EcosystemLauncher />
       {#if globalSession.userId}
-        <button
-          type="button"
-          onclick={() => goto('/profile')}
-          use:guideAnchor={'nav.profile'}
-          title={slowLink.active ? m.slow_indicator_label() : m.nav_my_profile_title()}
-          aria-label={m.nav_my_profile_label()}
-          data-slow-link={slowLink.active || undefined}
-          class="ui-icon-button rounded-2xl ring-3 transition-all duration-200 {slowLink.active
-            ? 'ring-amber-warn'
-            : 'hover:ring-accent-icon focus-visible:ring-accent-icon ring-transparent'}"
-        >
-          <Avatar userId={globalSession.userId} size="md" />
-        </button>
+        <ProfileAvatarButton userId={globalSession.userId} size="md" boxClass="ui-icon-button" />
       {/if}
     {/if}
   </div>

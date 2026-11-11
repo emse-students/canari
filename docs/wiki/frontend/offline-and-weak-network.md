@@ -472,7 +472,7 @@ the socket and the replay have all finished) and it should be its own package wi
 ## 11. WP-OFF-5 shipped: a deadline, a slow state, and lanes
 
 **What was built** (`utils/requestDeadline.ts`, `utils/trackedFetch.ts`, `stores/connectivity.svelte.ts`,
-`utils/apiFetch.ts`, `mls-client/mlsDeliveryApi.ts`, `utils/chat/outbox.ts`, `components/shared/OfflineBanner.svelte`):
+`utils/apiFetch.ts`, `mls-client/mlsDeliveryApi.ts`, `utils/chat/outbox.ts`, `components/navigation/ProfileAvatarButton.svelte`, the connection ring):
 
 - **A response-head deadline per call class**, chosen from the method and the body, with its reason in
   the source: `read` 20 s (a GET is ~16 ms good, ~960 ms on the 2G-like profile; 20 s is twenty times
@@ -1143,3 +1143,37 @@ what the screen said at 5 s, 25 s and 45 s, and when the unreachable screen repl
 
 Before the change, `/` showed the splash until about 43 s and then login; with only the root load fixed it
 showed the splash until about 47 s. The unreachable screen arrives at the refresh's own two 20 s deadlines.
+
+## The connection ring (owner, 2026-11-11)
+
+**Principle: discreet and informative, never verbose or useless** (owner, 2026-11-11: there is no rule
+that everything is invisible; a banner with a sentence was verbose). The connection is ONE ring around
+the header avatar, on the phone header and the desktop header alike (`ProfileAvatarButton.svelte`,
+state from `connection` in `stores/slowLink.svelte.ts`, one derivation shared with the announcer):
+
+| Ring | State | Source |
+| --- | --- | --- |
+| green | connected | nothing below applies |
+| amber | slow link | `connectivity.slow` (observed latency floor, never a guess) |
+| grey | offline, or reconnecting | `connectivity.isOffline`; or an offline unlock not yet promoted |
+
+It is a TRUE CIRCLE (`rounded-full`); the first version rode on a rounded square and read as "a
+strange square". It REPLACED three things: the "Hors connexion" `OfflineBanner` (which also shifted
+the whole page ~126 px, so a tap aimed at a tab landed elsewhere once it vanished - a ring reserves no
+layout space at all), the "Connecte" `StatusPill` of the wide layout, and the amber-only ring. The
+sentences stay for screen readers: `ConnectionAnnouncer.svelte` is an always-mounted live region
+carrying the offline description, the "syncing" line, the slow line, and "connection restored" once
+when a degraded state ends.
+
+**A slow request is not an unreachable server.** `connectivity.trackRequest().failed()` counted every
+`RequestDeadlineError` as a stall, two in a row meaning unreachable. On a 250 kbps link reads queue
+behind transfers and expire while other answers keep arriving, so two expiries with answers in
+between declared "Hors connexion" (production 1.6.10 through a throttling proxy, 2026-11-11). A
+deadline that expired while ANY answer arrived after the request started is now logged as slow and
+counts for nothing; a real transport failure still marks the server unreachable.
+
+**Names are local first.** A conversation row's peer name was resolved by a profile round trip at
+every cold start (a module Map, empty each launch): "Utilisateur inconnu" for 12 s on that link.
+`utils/users/peerNameDirectory.ts` keeps the names this device resolved (per account, newest 500,
+written coalesced) and `peekUserDisplayName` / `getUserDisplayNameSync` read it before any network;
+the profile fetch still runs and refreshes it.
