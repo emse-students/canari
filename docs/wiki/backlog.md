@@ -1807,6 +1807,7 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a cancelled iPhone sign-in sheet hands the login button back (#2995, merged 2026-11-04) | on the iPhone 12, open the sign-in sheet, `Annuler`: the button is usable again at once, with no relaunch |
 | the background Welcome route validates its commit as the push-secret committer (2026-10-22; verified from source) | one background Welcome on the Mi 9T, by [the procedure](device-verification.md#one-background-welcome-on-the-mi-9t-the-procedure-2026-10-22): the three phone checks and the server's `START` / `accepted` / `DONE` |
 | a community's past goes only to a proven admission (#2273, #2264, `v1.5.0`; [channel-encryption section 25](protocols/channel-encryption.md#25-a-member-hands-the-past-only-to-an-admission-it-can-verify-decided-by-the-user-2026-10-22)) | the rig rows COMM-26..31; the floor and the cut date (`ADMISSION_PROOF_SINCE` = 2026-10-27, the day `v1.5.0` shipped) are met |
+| six service images run as a non-root user (core, social, chat-delivery as `bun`; frontend-ssr as `node`; chat-gateway, call-service as `nobody`; batch 8, [cicd](cicd.md#container-images-are-scanned-2026-10-23)) | on dev after the next pre-release: each of the six containers up and healthy, no `EACCES` or `permission denied` in their logs; then one message, one media upload and one call on dev |
 
 ---
 
