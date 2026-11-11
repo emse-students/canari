@@ -257,6 +257,12 @@ cannot carry a border), and a blurred copy beneath as the soft shadow. The shado
 glass: a `filter` on an ancestor would make that ancestor the backdrop root and the glass would blur
 nothing but its own box.
 
+- **One glyph everywhere (owner, 2026-11-11)**: the chat reel tile (64 px), the replay card (64 px)
+  and the shared-media grid thumbnail (32 px) once drew their own disc around a Lucide `Play`; they
+  now render `VideoGlassGlyph kind="play"` directly (decorative, `pointer-events-none`: the tile's
+  own button stays the hit target). The blur samples whatever is behind it, so a poster or a video
+  thumbnail works as a frame does. `onePlayGlyph.test.ts` fails if one of them imports a Lucide `Play`
+  again. Left alone on purpose: the control-bar play/pause chips and the voice-message player.
 - **Hit target**: the button is an invisible 64 px square (72 px `lg`) around the triangle - the 44 px
   minimum holds whatever the glyph draws.
 - **Legibility**: the fill is white over the dark tint plus the shadow, so a white frame and a black
