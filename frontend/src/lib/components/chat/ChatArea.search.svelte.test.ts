@@ -118,22 +118,24 @@ describe('in-conversation search', () => {
     }
   });
 
-  it('scrolls to the first match as the term settles, then Enter and Shift+Enter step', async () => {
-    const s = setup(['m1', 'm2']);
+  it('lands on the NEWEST match, Enter goes toward newer and Shift+Enter toward older', async () => {
+    // `onSearchAll` answers oldest-first; the bar shows the newest as 1.
+    const s = setup(['m1', 'm2', 'm3']);
     try {
       s.magnifier.click();
       await s.type('hello');
-      expect(s.target.querySelector('.chat-search-count')?.textContent?.trim()).toBe('1/2');
-      expect(s.highlighted()).toBe('msg-m1');
+      const count = () => s.target.querySelector('.chat-search-count')?.textContent?.trim();
+      expect(count()).toBe('1/3');
+      expect(s.highlighted()).toBe('msg-m3');
 
-      s.press('Enter');
-      await vi.waitFor(() => expect(s.highlighted()).toContain('msg-m2'));
-      expect(s.target.querySelector('.chat-search-count')?.textContent?.trim()).toBe('2/2');
-
+      // Shift+Enter (the up arrow) climbs to older matches.
       s.press('Enter', true);
-      await vi.waitFor(() =>
-        expect(s.target.querySelector('.chat-search-count')?.textContent?.trim()).toBe('1/2')
-      );
+      await vi.waitFor(() => expect(s.highlighted()).toContain('msg-m2'));
+      expect(count()).toBe('2/3');
+
+      // Enter (the down arrow) comes back toward newer ones.
+      s.press('Enter');
+      await vi.waitFor(() => expect(count()).toBe('1/3'));
     } finally {
       s.dispose();
     }

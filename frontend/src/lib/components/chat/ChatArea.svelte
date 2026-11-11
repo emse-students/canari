@@ -1088,17 +1088,21 @@
     if (seq !== searchSeq) return; // a newer query superseded this one
 
     if (ids === null) {
-      searchMatches = inMemoryMatches(q);
+      // NEWEST FIRST: match 1 is the one nearest the bottom, as Messenger and WhatsApp land.
+      searchMatches = inMemoryMatches(q).reverse();
       searchLimitedToLoaded = isChannel;
     } else {
-      searchMatches = ids;
+      searchMatches = [...ids].reverse();
       searchLimitedToLoaded = false;
     }
     activeSearchIndex = searchMatches.length > 0 ? 0 : -1;
     // The list for THIS term is now known (a superseded one returned above): take the reader to
     // the match the counter calls 1, paging older history in exactly as the arrows do.
     if (activeSearchIndex === 0) {
-      Log.d('chat.search', `term settled: ${searchMatches.length} match(es), jumping to 1`);
+      Log.d(
+        'chat.search',
+        `term settled: ${searchMatches.length} match(es), jumping to 1 (the newest)`
+      );
       await navigateToMessageEnsureLoaded(searchMatches[0]);
     }
   }
@@ -1150,11 +1154,13 @@
       closeSearch();
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      void jumpSearch(e.shiftKey ? -1 : 1);
+      void jumpSearch(e.shiftKey ? 'older' : 'newer');
     }
   }
 
-  async function jumpSearch(delta: 1 | -1) {
+  /** Steps through the newest-first list: `older` is the up arrow, `newer` the down arrow. */
+  async function jumpSearch(direction: 'older' | 'newer') {
+    const delta = direction === 'older' ? 1 : -1;
     if (searchMatches.length === 0) return;
     const next = (activeSearchIndex + delta + searchMatches.length) % searchMatches.length;
     activeSearchIndex = next;
@@ -1642,7 +1648,7 @@
               </span>
               <button
                 type="button"
-                onclick={() => void jumpSearch(-1)}
+                onclick={() => void jumpSearch('older')}
                 class="ui-icon-button chat-search-action"
                 aria-label={m.chat_previous_match_label()}
                 disabled={searchMatches.length === 0}
@@ -1651,7 +1657,7 @@
               </button>
               <button
                 type="button"
-                onclick={() => void jumpSearch(1)}
+                onclick={() => void jumpSearch('newer')}
                 class="ui-icon-button chat-search-action"
                 aria-label={m.chat_next_match_label()}
                 disabled={searchMatches.length === 0}
