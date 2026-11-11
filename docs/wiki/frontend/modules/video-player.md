@@ -411,10 +411,12 @@ GainNode -> destination`, on ONE `AudioContext` for the app.
 **The fallback, and it is one** (`warn`, `[LOUDNESS] FALLBACK: <cause>`): no Web Audio, a source node
 the engine refuses, a context that stays suspended, a WebKit stream. A LOWERING then goes through
 `element.volume`; a raise cannot (a volume stops at 1) and the video plays as is. The written volume
-is READ BACK: iOS ignores it, and the line says so. **PR #3372 keeps every `video.volume` access in
-`utils/videoVolume.ts`: `applyVideoLevel` writes through `elementVolumeFor(video, level)` and
-`readVideoLevel` reads through `readerLevelOf(video)`** (the factor divided out), or its level would
-overwrite the fallback's attenuation; on the Web Audio route the two are independent.
+is READ BACK: iOS ignores it, and the line says so. **ONE rule decides an element's volume, in
+`utils/videoVolume.ts` (#3372's one place for `video.volume`): `applyVideoLevel` writes the reader's
+level TIMES the fallback's factor (`elementVolumeFor`), and `readVideoLevel` divides it back out
+(`readerLevelOf`)**, so the slider never erases the attenuation and the attenuation is never
+remembered as the reader's level (`videoVolume.test.ts`, on a loud WebKit stream). On the Web Audio
+route the factor is 1 and the gain is the graph's: the two multiply in the engine.
 
 **What a reader trusts.** The numbers come from another device. A loudness over 0 LUFS, or a peak more
 than 3 dB under the loudness, is no signal's and could only be a crafted entry meant to silence the
