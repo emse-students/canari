@@ -62,8 +62,8 @@
 with the call kept alive in the background on Android and on the iPhone; video follows later.
 The flip PR (2026-10-22) compiled in-app audio calls in (an invite, the per-conversation permission control and the sibling-status request also honour `calls_mode` client-side through `callsAvailable(serverCallsMode())`) (`CALLS_COMPILED = true`); what keeps production shut is the server's `calls_mode` (`off` at deploy), and the flip is merged and shipped only when every blocker below is lifted. This section is
 the only copy of the blocker list and of the order; [revival plan](calls-revival-plan.md) keeps the
-2026-10-15 design and the test matrix (section 7), the [backlog](../../backlog.d/p1-blocks-production-calls-mode-what-is-owed-before-production-calls-r.md)
-row points here. Investigated 2026-10-21 against `main` at `1.3.1-alpha.5`.
+2026-10-15 design and the test matrix (section 7). The readings still owed are the last column of
+the table below. Investigated 2026-10-21 against `main` at `1.3.1-alpha.5`.
 
 **The owner's answers, 2026-10-21** - not to be re-opened:
 
@@ -1672,7 +1672,7 @@ ring the in-app UI either: `handleCallSignal` asks `isBlockedWith` before it rin
 ask does not ring (logged at error). Pinned by `calls.service.spec.ts`, `callFailure.test.ts`,
 `CallService.callsEnabled.test.ts` and `CallService.p2p.test.ts`. **Any block with any other member
 refuses the WHOLE call** - right for 1:1, which only the client enforces today; WP-C11 must decide it
-for a group ([backlog](../../backlog.d/p1-blocks-production-calls-mode-what-is-owed-before-production-calls-r.md)).
+for a group ([group calls](../../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)).
 
 ## Audio quality, measured 2026-10-19
 
