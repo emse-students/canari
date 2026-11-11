@@ -1,6 +1,6 @@
 import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { leaderSocketConnected } from '$lib/mls-client/tabLeaderLink.svelte';
+import { leaderReportsNoSocket } from '$lib/mls-client/tabLeaderLink.svelte';
 
 /**
  * The ONE connection indicator, drawn as a ring around the header avatar (owner, 2026-11-11):
@@ -23,7 +23,8 @@ export function deriveConnectionState(input: {
   isOffline: boolean;
   isOfflineSession: boolean;
   /**
-   * A FOLLOWER tab whose leader publishes no open socket. A follower has no socket of its own, so
+   * A FOLLOWER tab whose leader EXPLICITLY reported no open socket (no answer yet is unknown: no grey,
+   * no announcement). A follower has no socket of its own, so
    * this is the one durable socket fact the code holds (`isHeaderConnected`'s old second half).
    */
   followerWithoutLeaderSocket: boolean;
@@ -46,7 +47,7 @@ export const connection = {
       isLoggedIn: session.isLoggedIn,
       isOffline: connectivity.isOffline,
       isOfflineSession: session.isOfflineSession,
-      followerWithoutLeaderSocket: !session.isTabLeader && !leaderSocketConnected(),
+      followerWithoutLeaderSocket: !session.isTabLeader && leaderReportsNoSocket(),
       slow: connectivity.slow,
     });
   },

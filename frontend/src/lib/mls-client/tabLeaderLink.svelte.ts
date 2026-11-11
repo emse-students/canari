@@ -46,6 +46,14 @@ export function leaderSocketConnected(): boolean {
 }
 
 /**
+ * Whether the leader EXPLICITLY said it has no open socket. Null (no answer yet, or another account's)
+ * is UNKNOWN and is not this: a follower tab shows nothing wrong before its leader has spoken.
+ */
+export function leaderReportsNoSocket(): boolean {
+  return leaderConnected === false;
+}
+
+/**
  * The leader's socket changed (or a query asked): publishes it. A no-op outside the leader. Called
  * by the session wherever it writes its own socket state.
  */

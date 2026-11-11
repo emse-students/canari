@@ -1205,8 +1205,8 @@ the device key, [posts](modules/posts.md)). The profile fetch still runs and ref
 witness of the WebSocket. The decision: a transient socket drop that the reconnect watchdog is handling keeps
 the ring as it is - the ladder has no last rung (`scheduleReconnectImpl`), so the code holds NO durable
 "gave up" fact for a leader tab, and none was invented (no timer). The one durable socket fact that exists is
-a FOLLOWER tab whose leader publishes no open socket (`leaderSocketConnected`, the old pill's second half):
-that is grey. **The limit, written down:** on a leader tab (and on every native app) the ring is green
+a FOLLOWER tab whose leader EXPLICITLY reported no open socket (`leaderReportsNoSocket`; no answer yet is
+UNKNOWN and draws nothing, so a follower tab's open is neither grey nor announced): that is grey. **The limit, written down:** on a leader tab (and on every native app) the ring is green
 independently of the socket; a socket that stays down while HTTP answers shows green.
 
 **Announcements.** "Connexion retablie" is said once after an offline or reconnecting spell only; a slow link

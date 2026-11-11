@@ -21,6 +21,7 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
 import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import {
   handleLeaderLinkEvent,
+  leaderReportsNoSocket,
   leaderSocketConnected,
   leadershipChanged,
   publishLeaderLink,
@@ -38,6 +39,14 @@ describe('the follower reads the leader socket', () => {
 
   it('reads offline until a leader answers', () => {
     expect(leaderSocketConnected()).toBe(false);
+  });
+
+  it('an unanswered leader is UNKNOWN, not "no socket": only an explicit false is', () => {
+    expect(leaderReportsNoSocket()).toBe(false);
+    handleLeaderLinkEvent({ type: 'leader_link', connected: false, account: 'u1' });
+    expect(leaderReportsNoSocket()).toBe(true);
+    handleLeaderLinkEvent({ type: 'leader_link', connected: true, account: 'u1' });
+    expect(leaderReportsNoSocket()).toBe(false);
   });
 
   it('follows the published state of the leader', () => {
