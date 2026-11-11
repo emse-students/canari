@@ -50,6 +50,10 @@ describe('Défilement infini des CanaReels', () => {
       '[data-infinite-reels-setting] input[type="checkbox"]'
     );
     expect(box?.checked).toBe(true);
+    // Same row as its neighbours: an icon tile on the left, the switch on the right.
+    const row = document.body.querySelector('[data-infinite-reels-setting] label')!;
+    expect(row.firstElementChild?.querySelector('svg')).not.toBeNull();
+    expect(row.lastElementChild).toBe(box!.parentElement);
     box!.click();
     flushSync();
     expect(settings.infiniteReelsEnabled).toBe(false);

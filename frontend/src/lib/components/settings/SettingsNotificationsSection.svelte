@@ -133,6 +133,7 @@
         {@const pushOn = notificationPreferences.isPushEnabled(category)}
         <div data-category-push={category}>
           <Toggle
+            layout="row"
             checked={pushOn}
             label={push.label()}
             hint={push.desc()}
