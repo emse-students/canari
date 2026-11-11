@@ -82,6 +82,7 @@ describe('PostMediaDto.loudness', () => {
   it('refuses values no real signal gives rather than storing them', () => {
     for (const loudness of [
       { integratedLufs: -90, samplePeakDbfs: -3 },
+      { integratedLufs: 29, samplePeakDbfs: 0 },
       { integratedLufs: 'loud', samplePeakDbfs: -3 },
       { integratedLufs: -20 },
     ]) {

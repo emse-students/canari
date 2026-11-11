@@ -72,6 +72,11 @@ describe('MediaMsg.loudness', () => {
       loudness: { integratedLufs: -95, samplePeakDbfs: -3 },
     }).finish();
     expect(mediaLoudnessFromProto(canari.MediaMsg.decode(bytes))).toEqual({});
+    const crafted = canari.MediaMsg.encode({
+      ...base,
+      loudness: { integratedLufs: 29, samplePeakDbfs: 0 },
+    }).finish();
+    expect(mediaLoudnessFromProto(canari.MediaMsg.decode(crafted))).toEqual({});
   });
 
   it('survives the stored envelope (JSON) a conversation row is drawn from', () => {

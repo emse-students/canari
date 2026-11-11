@@ -288,34 +288,43 @@ never lower); within **0.5 dB** nothing is applied and no graph is built. No mea
 (`(1/fullRangeGain)^0.6`) that would move every routed video's level and colour its transients; the
 measured peak clamp already proves a raise cannot clip on the samples measured.
 
-**The route** (`attachLoudnessGain`, attached by `VideoPlayer` for its element and its `loudness` prop,
-which every surface passes from its `MediaRef`: the feed, the lightbox, CanaReels, a chat's inline
-video and both conversation viewers): `MediaElementAudioSourceNode -> GainNode -> destination`, on
-ONE `AudioContext` for the app, made on first need.
+**The route** (`LoudnessAudio.attach`, one handle per `<video>` ELEMENT in `VideoPlayer`, which
+every surface feeds its `MediaRef.loudness`: the feed, the lightbox, CanaReels, a chat's inline video
+and both conversation viewers; the measurement is applied by a second effect keyed on its two
+NUMBERS, so a new object with the same values changes nothing): `MediaElementAudioSourceNode ->
+GainNode -> destination`, on ONE `AudioContext` for the app.
 
 | Constraint | How it is met |
 | --- | --- |
-| A context runs only after a gesture | the graph is built the first time the element is AUDIBLE (unmuted AND playing): the reader's tap, or an audible start the engine already allowed - the same permission resumes the context |
+| A context runs only after a gesture | the reader's unmute PRIMES it synchronously inside the gesture (`videoSound.setMuted(false)` -> `primeLoudnessAudio`, and the player's own speaker): the context is made and `resume()` called there, where WebKit honours it; the graph is built the first time the element is AUDIBLE (unmuted AND playing) |
 | Muted autoplay must not need the context | a muted element never asks for it (a test says so) |
-| A context that will not run | the element is left UNROUTED, so it is never silenced; the fallback below |
-| Once routed, an element sounds only through the graph | it stays routed for its life: a later attach with no gain re-connects it at unity, and a `play` resumes a context the system suspended |
-| `element.volume` and `muted` | applied by the engine BEFORE the source node, so the reader's mute silences the graph and the shared level of PR #3372 (`videoSound.level`, the desktop slider) multiplies with the gain; nothing on this route writes them |
-| Blob and MSE sources | same-origin, so the source node is never tainted into silence |
+| A context that will not run | the element is left UNROUTED, so it is never silenced; the fallback below. A `resume()` that never answers is said once (`has not answered ... unrouted, without its gain`) |
+| The app holds no audio output when nothing plays (the Pixel 6a AAudio defect, `utils/toneOutput.ts`) | the context is SUSPENDED when no routed element plays (`pause`, `ended`, unmount) and when the app leaves the screen, resumed on a routed `play`, and CLOSED when no routed element is mounted - never under a mounted one, since an element takes one source node in its life |
+| Once routed, an element sounds only through the graph | a new measurement only changes the gain (none = unity); a routed `play` whose context is not `running` after `resume()`, or a source left on a closed context, is logged at `error`: `routed and SILENT` |
+| `element.volume` and `muted` | applied by the engine BEFORE the source node, so the reader's mute silences the graph and the shared level of PR #3372 multiplies with the gain; nothing on this route writes them |
+| A blob source | same-origin, routed |
+| A STREAM on WebKit (`ManagedMediaSource` / MSE) | NOT routed (review of #3378): it may play silent through Web Audio with no exception. It takes only the fallback's attenuation, said once per element, until the iPhone 12 reading below proves sound |
 | Unmount | the source and the gain are disconnected: the graph keeps no element alive |
 
 **The fallback, and it is one** (`warn`, `[LOUDNESS] FALLBACK: <cause>`): no Web Audio, a source node
-the engine refuses, a context that stays suspended. A LOWERING then goes through `element.volume`; a
-raise cannot (a volume stops at 1) and the video plays as is. The written volume is READ BACK: iOS
-ignores it, and the line says so. **PR #3372 writes its level through `elementVolumeFor(video,
-level)`** (and divides by the same factor where it reads `video.volume` back), or its level would
+the engine refuses, a context that stays suspended, a WebKit stream. A LOWERING then goes through
+`element.volume`; a raise cannot (a volume stops at 1) and the video plays as is. The written volume
+is READ BACK: iOS ignores it, and the line says so. **PR #3372 keeps every `video.volume` access in
+`utils/videoVolume.ts`: `applyVideoLevel` writes through `elementVolumeFor(video, level)` and
+`readVideoLevel` reads through `readerLevelOf(video)`** (the factor divided out), or its level would
 overwrite the fallback's attenuation; on the Web Audio route the two are independent.
+
+**What a reader trusts.** The numbers come from another device. A loudness over 0 LUFS, or a peak more
+than 3 dB under the loudness, is no signal's and could only be a crafted entry meant to silence the
+video: `isMediaLoudness` refuses it and the video plays as is.
 
 **iOS (WKWebView).** `element.volume` is read-only there, so Web Audio is the ONLY way a gain reaches
 an iPhone. The silent switch is not a new risk: `audioSession.ts` already sets `playback` while an
 unmuted media plays (`reportAudibleMedia`), which covers a routed element. NOT known, and owed on the
 iPhone 12: a `ManagedMediaSource` stream through `createMediaElementSource` (older WebKit gave silence
-for MSE sources), whether the context resumes without a fresh gesture under
-`mediaTypesRequiringUserActionForPlayback = None`, and its `interrupted` state after a background.
+for MSE sources - so streams are not routed yet), whether a suspended context resumes on a routed
+`play` without a fresh gesture under `mediaTypesRequiringUserActionForPlayback = None` (the next reel
+after a swipe), and its `interrupted` state after a background.
 
 **Readings owed** (a pre-release carrying this; both phones):
 
@@ -323,8 +332,11 @@ for MSE sources), whether the context resumes without a fresh gesture under
 - a quiet clip and a loud clip, posted and sent in a chat: each logs `routed through Web Audio at
   +x / -y dB`, and they sound alike - on the feed after the tap, in CanaReels, inline in a chat and in
   the conversation viewer;
-- a STREAMED (segmented) reel through MSE on the iPhone: sound present after routing;
-- a routed video after the app went to the background and back: sound present;
+- **iPhone 12, the gate that would route WebKit streams:** a STREAMED (segmented) reel, routed by hand
+  on a bench build, has sound; until then `stream on WebKit is not routed` is the expected line;
+- the next reel after a swipe on the iPhone: no `routed and SILENT` line, sound present;
+- a routed video after the app went to the background and back: sound present; and on the Mi 9T,
+  `dumpsys audio` shows no started AAudio stream for the app while it is in the background;
 - the silent switch ON, a routed reel unmuted: it plays, as before;
 - an old video: `no measurement: played as is`, and no change by ear.
 

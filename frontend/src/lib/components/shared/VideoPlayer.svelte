@@ -31,7 +31,7 @@
   } from '$lib/actions/playWhileVisible';
   import { arbitratePlayback } from '$lib/actions/playbackArbiter';
   import { feedAutoplayPermitted } from '$lib/video/autoplayPolicy';
-  import { attachLoudnessGain } from '$lib/video/loudnessPlayback';
+  import { loudnessAudio, type LoudnessHandle } from '$lib/video/loudnessPlayback';
   import type { MediaLoudness } from '$lib/video/loudnessMeter';
   import { captureVideoFrame } from '$lib/utils/videoFrameBackdrop';
   import BlurredBackdrop from './BlurredBackdrop.svelte';
@@ -303,11 +303,30 @@
     return onVideo(video) ?? undefined;
   });
 
-  // ONE LOUDNESS FOR EVERY VIDEO (owner, 2026-11-11): the measured gain, routed the first time the
-  // element is audible - a muted autoplay never asks for the AudioContext - and released on unmount.
+  // ONE LOUDNESS FOR EVERY VIDEO (owner, 2026-11-11): the wiring lives as long as the ELEMENT (an
+  // element takes one source node in its life), and the measurement is applied to it - keyed on its
+  // two NUMBERS, so a parent handing a new object with the same values changes nothing.
+  let loudnessHandle: LoudnessHandle | null = null;
   $effect(() => {
     if (!video) return;
-    return attachLoudnessGain(video, loudness);
+    const handle = loudnessAudio.attach(video, { streamed: untrack(() => streamed) });
+    loudnessHandle = handle;
+    return () => {
+      handle.destroy();
+      if (loudnessHandle === handle) loudnessHandle = null;
+    };
+  });
+  const loudnessLufs = $derived(loudness?.integratedLufs);
+  const loudnessPeak = $derived(loudness?.samplePeakDbfs);
+  $effect(() => {
+    const integratedLufs = loudnessLufs;
+    const samplePeakDbfs = loudnessPeak;
+    if (!video) return;
+    untrack(() => loudnessHandle)?.setLoudness(
+      integratedLufs === undefined || samplePeakDbfs === undefined
+        ? null
+        : { integratedLufs, samplePeakDbfs }
+    );
   });
 
   /**
@@ -566,6 +585,8 @@
     showControls();
     if (scope === 'silent') return;
     video.muted = !video.muted;
+    // The unmute is the reader's GESTURE: a measured video's AudioContext is resumed inside it.
+    if (!video.muted) loudnessHandle?.prime();
     // Drawn from the element at once, not at its `volumechange`: the speaker is the answer.
     muted = video.muted;
     if (inline && scope === 'app') videoSound.setMuted(video.muted);

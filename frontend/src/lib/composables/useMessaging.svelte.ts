@@ -98,6 +98,7 @@ import {
 import {
   encodeAppMessage,
   mediaEncodingProtoField,
+  mediaLoudnessProtoField,
   mediaPlaceholderProtoField,
   mkMedia,
   MediaKind,
@@ -3511,6 +3512,8 @@ export function useMessaging() {
                 ...mediaPlaceholderProtoField(env.media.placeholder),
                 // A forward relays the blob as it was sealed, so it must relay how.
                 ...mediaEncodingProtoField(env.media.encoding),
+                // And its measured sound, so the forwarded video plays at the same loudness.
+                ...mediaLoudnessProtoField(env.media.loudness),
               }),
               messageId: crypto.randomUUID(),
               sentAt: Date.now(),
@@ -3552,6 +3555,7 @@ export function useMessaging() {
             ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
             ...mediaPlaceholderProtoField(media.placeholder),
             ...mediaEncodingProtoField(media.encoding),
+            ...mediaLoudnessProtoField(media.loudness),
           }),
           messageId,
           sentAt: Date.now(),

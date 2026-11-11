@@ -1,4 +1,5 @@
 import { Log } from '$lib/utils/Log';
+import { primeLoudnessAudio } from '$lib/video/loudnessPlayback';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 
 /**
@@ -91,6 +92,9 @@ export const videoSound = {
     Log.d('VIDEO', `sound ${next ? 'off' : 'on'} for every video (remembered on this device)`);
     muted = next;
     writeStored(next ? 'off' : 'on');
+    // INSIDE THE READER'S GESTURE: a measured video's AudioContext is resumed here, where WebKit
+    // honours it - never later, from the element's `volumechange` (loudnessPlayback.ts).
+    if (!next) primeLoudnessAudio();
   },
   /** Flips it - the speaker button's and the tap's action. */
   toggle(): void {

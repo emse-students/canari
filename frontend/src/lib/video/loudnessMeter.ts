@@ -229,10 +229,22 @@ function mean(values: number[]): number {
   return sum / values.length;
 }
 
+/** The loudest a real programme measures: a full-scale signal sits near 0 LUFS. */
+export const MAX_PLAUSIBLE_LUFS = 0;
+
+/**
+ * How far UNDER its loudness a sample peak may sit. A peak is never below the signal's RMS, and
+ * K-weighting adds at most a few dB; a measurement whose peak is lower than this is not one a signal
+ * makes - a crafted entry claiming a very loud, very low-peaked video to be muted by the gain.
+ */
+export const MAX_PEAK_BELOW_LOUDNESS_DB = 3;
+
 /**
  * Whether `value` is a measurement a reader may apply: two finite numbers in the ranges a real
- * signal gives. A ref from a newer or a broken writer that fails this is played as it is - the
- * metadata is decoration, never a reason to refuse a video.
+ * signal gives - a loudness between the absolute gate and {@link MAX_PLAUSIBLE_LUFS}, and a peak not
+ * more than {@link MAX_PEAK_BELOW_LOUDNESS_DB} under it. The values come from ANOTHER device, so a
+ * crafted one must not be able to silence a video: what fails this plays as it is - the metadata is
+ * decoration, never a reason to refuse a video.
  */
 export function isMediaLoudness(value: unknown): value is MediaLoudness {
   if (typeof value !== 'object' || value === null) return false;
@@ -241,9 +253,10 @@ export function isMediaLoudness(value: unknown): value is MediaLoudness {
     typeof integratedLufs === 'number' &&
     Number.isFinite(integratedLufs) &&
     integratedLufs > ABSOLUTE_GATE_LUFS &&
-    integratedLufs < 30 &&
+    integratedLufs <= MAX_PLAUSIBLE_LUFS &&
     typeof samplePeakDbfs === 'number' &&
     Number.isFinite(samplePeakDbfs) &&
-    samplePeakDbfs < 30
+    samplePeakDbfs < 30 &&
+    samplePeakDbfs >= integratedLufs - MAX_PEAK_BELOW_LOUDNESS_DB
   );
 }

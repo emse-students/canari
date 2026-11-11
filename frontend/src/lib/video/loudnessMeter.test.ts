@@ -89,4 +89,15 @@ describe('isMediaLoudness', () => {
     expect(isMediaLoudness({ integratedLufs: -80, samplePeakDbfs: -1 })).toBe(false);
     expect(isMediaLoudness({ integratedLufs: '-18', samplePeakDbfs: -1 })).toBe(false);
   });
+
+  it('refuses a CRAFTED entry that would silence a video', () => {
+    // Louder than any programme measures (0 LUFS is a full-scale signal).
+    expect(isMediaLoudness({ integratedLufs: 29, samplePeakDbfs: 0 })).toBe(false);
+    expect(isMediaLoudness({ integratedLufs: 0.5, samplePeakDbfs: 0 })).toBe(false);
+    // A peak far UNDER the loudness: no signal makes that.
+    expect(isMediaLoudness({ integratedLufs: -10, samplePeakDbfs: -30 })).toBe(false);
+    // A sine's own shape (peak 3 dB over its loudness, and the stereo pair's +3) passes.
+    expect(isMediaLoudness({ integratedLufs: -20, samplePeakDbfs: -20 })).toBe(true);
+    expect(isMediaLoudness({ integratedLufs: 0, samplePeakDbfs: 0 })).toBe(true);
+  });
 });

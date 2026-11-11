@@ -41,6 +41,8 @@ interface Script {
   decoderThrows?: boolean;
   /** The decoded sound: a 1 kHz sine at this PEAK level on both channels (default -20 dBFS). */
   toneDbfs?: number;
+  /** What the audio track's `canDecode()` answers (`true` unless a test says otherwise). */
+  canDecodeAudio?: boolean;
 }
 
 const FRAME = 1024 / 48_000;
@@ -88,6 +90,7 @@ vi.mock('mediabunny', () => {
       if (!state.script.audio) return null;
       return {
         getCodecParameterString: async () => state.script.audioCodec ?? 'opus',
+        canDecode: async () => state.script.canDecodeAudio ?? true,
         computePacketStats: async () => ({ averageBitrate: state.script.audioBitrate ?? 96_000 }),
         getNumberOfChannels: async () => 2,
         getSampleRate: async () => 48_000,
@@ -640,6 +643,18 @@ describe('the loudness measured at send (owner, 2026-11-11)', () => {
     expect(prepared.loudness).toBeNull();
     expect(prepared.file.size).toBeGreaterThan(0);
     expect(warn.mock.calls.flat().join('\n')).toContain('loudness NOT measured');
+    warn.mockRestore();
+  });
+
+  it('asks the engine first: no decoder is said ONCE per session, and no decode is attempted', async () => {
+    state.script.decodedChunks = second;
+    state.script.canDecodeAudio = false;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect((await prepareVideoForUpload(SOURCE)).loudness).toBeNull();
+    expect((await prepareVideoForUpload(SOURCE)).loudness).toBeNull();
+    expect(state.loudnessDecodes).toEqual([]);
+    const said = warn.mock.calls.flat().filter((l) => String(l).includes('cannot decode'));
+    expect(said).toHaveLength(1);
     warn.mockRestore();
   });
 });

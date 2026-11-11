@@ -569,6 +569,9 @@ async function placeAudioHoles(
   return audioHoleMap(paired, decoded);
 }
 
+/** The engine's missing audio decoder has been said this session (see {@link measureLoudness}). */
+let loudnessDecoderAbsenceSaid = false;
+
 /**
  * The integrated loudness of `track` over the conversion's window, from ONE decode of the audio
  * alone (`AudioSampleSink`), each chunk copied to planar floats and fed to {@link LoudnessMeter}.
@@ -580,6 +583,17 @@ async function measureLoudness(
   track: import('mediabunny').InputAudioTrack,
   window: { start: number; end: number; signal: AbortSignal | undefined }
 ): Promise<MediaLoudness | null> {
+  // Asked of the engine BEFORE decoding: one that has no decoder for this track says so once per
+  // session, not once per send, and the video is sent unmeasured.
+  if (!(await track.canDecode())) {
+    if (!loudnessDecoderAbsenceSaid) {
+      loudnessDecoderAbsenceSaid = true;
+      console.warn(
+        `[video-prep] loudness NOT measured: this engine cannot decode ${await track.getCodecParameterString()} (said once per session)`
+      );
+    }
+    return null;
+  }
   const started = performance.now();
   let meter: LoudnessMeter | null = null;
   let planes: Float32Array[] = [];

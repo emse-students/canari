@@ -63,7 +63,7 @@ export const MEDIA_PLACEHOLDER_MAX_LENGTH = 128;
 export class PostMediaLoudnessDto {
   @IsNumber({ allowNaN: false, allowInfinity: false })
   @Min(-70)
-  @Max(30)
+  @Max(0)
   integratedLufs: number;
 
   @IsNumber({ allowNaN: false, allowInfinity: false })
