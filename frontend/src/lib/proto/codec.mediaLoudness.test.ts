@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import protobuf from 'protobufjs';
 import { canari } from './canari.js';
-import { mediaLoudnessFromProto, mediaLoudnessProtoField } from './codec';
+import { forwardedMediaMsg, mediaLoudnessFromProto, mediaLoudnessProtoField } from './codec';
 import { mkMediaEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { MediaRef } from '$lib/media';
 
@@ -91,5 +91,36 @@ describe('MediaMsg.loudness', () => {
     };
     const parsed = parseEnvelope(serializeEnvelope(mkMediaEnvelope(ref)));
     expect(parsed.kind === 'media' && parsed.media.loudness).toEqual(measured);
+  });
+});
+
+describe('a forward keeps the loudness (forwardedMediaMsg, the DM and the salon forward)', () => {
+  const original: MediaRef = {
+    type: 'video',
+    mediaId: 'media-1',
+    key: 'ab'.repeat(32),
+    iv: 'cd'.repeat(12),
+    mimeType: 'video/mp4',
+    size: 4096,
+    width: 720,
+    height: 1280,
+    encoding: 'segmented-v1',
+    loudness: measured,
+  };
+
+  it('the forwarded proto carries the original measurement, decoded on the far side', () => {
+    const bytes = canari.MediaMsg.encode(forwardedMediaMsg(original, 'regarde')).finish();
+    const read = canari.MediaMsg.decode(bytes);
+    expect(read.kind).toBe(canari.MediaKind.MEDIA_KIND_VIDEO);
+    expect(read.mediaId).toBe('media-1');
+    expect(read.caption).toBe('regarde');
+    expect(mediaLoudnessFromProto(read).loudness?.integratedLufs).toBeCloseTo(-21.5, 4);
+    expect(mediaLoudnessFromProto(read).loudness?.samplePeakDbfs).toBeCloseTo(-2.25, 4);
+  });
+
+  it('a forward of an unmeasured video carries none', () => {
+    const { loudness: _measured, ...old } = original;
+    const read = canari.MediaMsg.decode(canari.MediaMsg.encode(forwardedMediaMsg(old)).finish());
+    expect(mediaLoudnessFromProto(read)).toEqual({});
   });
 });

@@ -11,7 +11,6 @@ import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
-import { fromHex } from '$lib/utils/hex';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
   sendChatMessage,
@@ -97,11 +96,9 @@ import {
 } from '$lib/envelope';
 import {
   encodeAppMessage,
-  mediaEncodingProtoField,
-  mediaLoudnessProtoField,
-  mediaPlaceholderProtoField,
+  forwardedMediaMsg,
+  mediaKindFromEnvelope,
   mkMedia,
-  MediaKind,
 } from '$lib/proto/codec';
 import type {
   AddMessageToChatOptions,
@@ -220,24 +217,6 @@ export interface MessagingContext {
   signalChannelRead?: (channelId: string) => void;
   /** See `SendMessageDeps.onChannelWriteRefused`. Optional: a context without it keeps the row. */
   onChannelWriteRefused?: SendMessageDeps['onChannelWriteRefused'];
-}
-
-/**
- * Maps an envelope media type to its protobuf {@link MediaKind}. A file has no dedicated kind,
- * so anything unrecognised falls through to UNSPECIFIED, which is what the renderer treats as
- * "generic attachment".
- */
-function mediaKindFromEnvelope(type: string): number {
-  switch (type) {
-    case 'image':
-      return MediaKind.MEDIA_KIND_IMAGE;
-    case 'video':
-      return MediaKind.MEDIA_KIND_VIDEO;
-    case 'audio':
-      return MediaKind.MEDIA_KIND_AUDIO;
-    default:
-      return MediaKind.MEDIA_KIND_UNSPECIFIED;
-  }
 }
 
 /** What an arriving body does against the store - see `storedBodyVerdict` inside {@link useMessaging}. */
@@ -3497,24 +3476,7 @@ export function useMessaging() {
           await sendEncryptedChannelMessage(
             targetName,
             encodeAppMessage({
-              ...mkMedia({
-                kind: mediaKindFromEnvelope(env.media.type),
-                mediaId: env.media.mediaId,
-                key: fromHex(env.media.key),
-                iv: fromHex(env.media.iv),
-                mimeType: env.media.mimeType,
-                size: env.media.size,
-                fileName: env.media.fileName ?? '',
-                caption: env.caption,
-                ...(env.media.width && env.media.height
-                  ? { width: env.media.width, height: env.media.height }
-                  : {}),
-                ...mediaPlaceholderProtoField(env.media.placeholder),
-                // A forward relays the blob as it was sealed, so it must relay how.
-                ...mediaEncodingProtoField(env.media.encoding),
-                // And its measured sound, so the forwarded video plays at the same loudness.
-                ...mediaLoudnessProtoField(env.media.loudness),
-              }),
+              ...mkMedia(forwardedMediaMsg(env.media, env.caption)),
               messageId: crypto.randomUUID(),
               sentAt: Date.now(),
             })
@@ -3543,20 +3505,7 @@ export function useMessaging() {
         const media = env.media;
         const messageId = crypto.randomUUID();
         const protoBytes = encodeAppMessage({
-          ...mkMedia({
-            kind: mediaKindFromEnvelope(media.type),
-            mediaId: media.mediaId,
-            key: fromHex(media.key),
-            iv: fromHex(media.iv),
-            mimeType: media.mimeType,
-            size: media.size,
-            fileName: media.fileName ?? '',
-            caption: env.caption,
-            ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
-            ...mediaPlaceholderProtoField(media.placeholder),
-            ...mediaEncodingProtoField(media.encoding),
-            ...mediaLoudnessProtoField(media.loudness),
-          }),
+          ...mkMedia(forwardedMediaMsg(media, env.caption)),
           messageId,
           sentAt: Date.now(),
         });
