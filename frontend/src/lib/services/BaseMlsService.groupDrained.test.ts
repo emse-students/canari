@@ -230,4 +230,16 @@ describe('whenGroupDrained', () => {
       (svc as unknown as { pendingGroupDrainWaiters(): number }).pendingGroupDrainWaiters()
     ).toBe(0);
   });
+
+  it('is rejected at once when asked AFTER the destroy - a late waiter is never left pending', async () => {
+    const svc = liveService();
+    Object.assign(svc, { destroyPlatformResources: () => undefined });
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    svc.destroy();
+
+    await expect(svc.whenGroupDrained('g-1')).rejects.toBeInstanceOf(GroupDrainAbandonedError);
+    expect(
+      (svc as unknown as { pendingGroupDrainWaiters(): number }).pendingGroupDrainWaiters()
+    ).toBe(0);
+  });
 });
