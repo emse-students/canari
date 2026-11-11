@@ -718,17 +718,34 @@ which also holds **the contract a site implements**. This section is what Canari
   payload `iss` (the origin of `FRONTEND_URL`'s first entry), `aud` (the site id), `sub` (the
   MiConnect sub, which IS `users.id`), `jti` (128 random bits), `iat`, `exp = iat + 60`, `dest` (a
   path). Its own key, `HANDOFF_SIGNING_KEY`, never `JWT_SECRET`: a separate key and an explicit type
-  keep it from ever being taken for an access token (see [Keys](#keys)). Sub only (F1): no claim
-  rides in it until the MiConnect read of the design note's F3 is proven.
+  keep it from ever being taken for an access token (see [Keys](#keys)). Sub only: no claim
+  rides in it (the design note's `preview_user` read is not wired).
+- **MiConnect still decides who enters (F3-bound, 2026-11-11).** Before signing, the mint asks
+  MiConnect, through the READ-ONLY service account `miconnect-canari-handoff-reader`
+  (`infrastructure/authentik/blueprints/55-handoff-reader.yaml`, token `MICONNECT_READER_TOKEN`),
+  the INPUTS of the target application's access decision (`auth/handoff/handoff-access.ts`,
+  `miconnect-reader.client.ts`): the account by `users.miconnect_uuid` must be active, the
+  application (`miconnectApplication` in the registry) must have no enabled policy binding, and the
+  tenant flag `core_default_app_access` must not be false (unset is authentik's default, true).
+  That is exactly when authentik's `check_access` answers passing; `check_access?for_user` itself
+  cannot be asked, because authentik 2026.8 honours `for_user` for a superuser only. A bound
+  application is REFUSED, never evaluated in Canari. Refusals are typed and logged
+  `[HANDOFF] refused class=<class> aud=<site> user=<sub>`: `not_linked`, `unknown_miconnect_user`,
+  `inactive`, `policy_bound`, `default_access_off` (403 `HANDOFF_ACCESS_REFUSED`, at warn), and
+  `miconnect_not_configured`, `miconnect_unreachable`, `miconnect_refused` (503
+  `HANDOFF_MICONNECT_UNAVAILABLE`, at error) - a MiConnect failure never mints. **The watch:** each
+  boot logs one `[HANDOFF_ACCESS]` line per handoff application, at warn when it has gained a
+  binding (its handoff is then refused until authentik can answer for a non-superuser). The
+  account's real API is proven in CI by `test-handoff-reader.py` (reads work; another application,
+  any write and any binding change are refused).
 - **The registry is closed and server-side.** `libs/contracts/ecosystem-sites.json`, copied by
   core-service (`handoff-sites.ts`) and by the client (`ecosystemSites.ts`), each asserting its copy
   equals the file. The client names a site by id; **core-service composes the URL**
   (`<origin>/auth/handoff#<token>`), so the route is no open redirect. `dest` must equal one path
   of the site's allowlist exactly (`{uuid}` one lowercase UUID segment; no query, no fragment, no
   normalisation). A site is minted for only while its `handoff` flag is true, and **every flag ships
-  false**. A flag goes on only when core-service runs MiConnect's access check at mint (the user
-  active, `check_access` on the target application - without it a handoff bypasses MiConnect's
-  decisions), the site's provider `sub_mode` was read as `hashed_user_id`, and the site's
+  false**. A flag goes on only when core-service runs MiConnect's access check at mint (F3-bound,
+  above - without it a handoff bypasses MiConnect's decisions), the site's provider `sub_mode` was read as `hashed_user_id`, and the site's
   redemption is live with handoff sessions MARKED and stepped up through a MiConnect sign-in before
   any state-changing action - the answer to login CSRF ([the design note](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md),
   sections 0 and 3.7).

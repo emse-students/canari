@@ -187,6 +187,9 @@ jobs:
           # Signs the sign-in handoff. Dev's OWN key, or none: a dev token is wrong_issuer at every
           # production site, so it stays unset until a site test instance trusts dev's issuer.
           DEV_HANDOFF_SIGNING_KEY: ${{ secrets.DEV_HANDOFF_SIGNING_KEY }}
+          # Read-only, so dev MAY hold it (unlike the editor's): the same value as production's, since
+          # both estates share ONE MiConnect. Unset, dev mints nothing - as without the signing key.
+          DEV_MICONNECT_READER_TOKEN: ${{ secrets.DEV_MICONNECT_READER_TOKEN }}
           DEV_APNS_VOIP_KEY_P8: ${{ secrets.DEV_APNS_VOIP_KEY_P8 }}
           DEV_APNS_VOIP_KEY_ID: ${{ secrets.DEV_APNS_VOIP_KEY_ID }}
           DEV_APNS_VOIP_TEAM_ID: ${{ secrets.DEV_APNS_VOIP_TEAM_ID }}

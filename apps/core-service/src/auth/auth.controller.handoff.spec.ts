@@ -38,7 +38,8 @@ function build(opts: { key?: boolean; live?: boolean } = {}) {
       .toString('base64');
   }
   const handoff = new HandoffService(
-    ECOSYSTEM_SITES.map((s) => (s.id === 'migallery' ? { ...s, handoff: true } : s))
+    ECOSYSTEM_SITES.map((s) => (s.id === 'migallery' ? { ...s, handoff: true } : s)),
+    { assertMayEnter: () => Promise.resolve() }
   );
   const sessions = { isLive: jest.fn(async () => opts.live ?? true) };
   const controller = new AuthController(

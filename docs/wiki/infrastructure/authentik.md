@@ -85,6 +85,16 @@ user and changing a flow answer `403`. The applier compares the token's `key` by
 secrets, and ignores `expires` on a non-expiring token, which authentik rewrites at every apply
 ([profiles-and-access](../profiles-and-access.md#the-work-packages-in-order)).
 
+**`55-handoff-reader.yaml` (F3-bound, 2026-11-11)** builds the READ-ONLY account Canari's handoff
+mint asks whether a person may enter a site: a role with global `view_user`, `view_policybinding`
+(global on purpose - a grant on today's bindings would not see tomorrow's) and
+`view_system_settings`, plus `view_application` on `migallery`, `sky` and `cercle` only, granted by
+the `permissions:` of those entries in `60-applications.yaml` (which is why the file sorts before
+it); the group, the account `miconnect-canari-handoff-reader` and its token, key `!Env
+MICONNECT_READER_TOKEN`. CI uses the token (`test-handoff-reader.py`): the four reads work, another
+application is `404`, and every write - a user, an application, a binding, the settings - is `403`
+([sessions](../sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08)).
+
 **What is NOT in the blueprints, deliberately:**
 
 - **Users and groups**: they are the population, not the configuration.

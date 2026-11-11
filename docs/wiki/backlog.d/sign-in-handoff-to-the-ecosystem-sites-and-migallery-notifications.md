@@ -49,6 +49,8 @@ same list heads `libs/contracts/ecosystem-sites.json`):
    **H0 ran on 2026-11-11: `check_access?for_user` honours `for_user` for a superuser only, so this
    condition cannot be met by a read-only account as written** - the measurement and the
    alternatives are [in section 9](#h0s-result-2026-11-11-read-only-on-the-running-authentik-202680---f3-as-designed-is-blocked).
+   **Decided the same day (lead, under the owner's delegation, reversible, fail-closed): F3-bound**,
+   built - the condition is now "the mint reads the INPUTS of `check_access`" ([sessions](../sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08)).
 2. **The site's provider `sub_mode` was read as `hashed_user_id`** on MiConnect (section 9), so the
    `sub` Canari signs is the `sub` the site keys its rows by.
 3. **The site's redemption is live with the login-CSRF answers of section 3.7**: handoff sessions
@@ -683,3 +685,15 @@ alternatives, for the lead/owner to choose (not taken here):
   OIDC today, no duplicated policy logic, no superuser.
 - **A superuser service account:** rejected - it can write everything.
 - **Wait for upstream:** no date.
+
+**DECIDED 2026-11-11 (the lead, under the owner's delegation; reversible, fail-closed): F3-bound,
+and BUILT.** The account is `55-handoff-reader.yaml`; core-service reads with it at every mint
+(`auth/handoff/handoff-access.ts`) and refuses with a typed class otherwise; each boot logs one
+`[HANDOFF_ACCESS]` line per handoff application, at warn when one has gained a binding. One
+departure from the brief: `view_policybinding` is GLOBAL, not scoped to the three applications - a
+binding is its own object, so an object grant would not see a binding created later and the mint
+would read "no binding" (fail-open); the CI test proves a binding added after the grant is seen.
+`preview_user` (claims) is NOT wired: the token stays sub-only and each site's admission stays F1's
+(its own row). **Rollout order:** the token goes into the MiConnect stack's `.env` and the worker is
+recreated BEFORE the merge (the applier refuses an unset `!Env`), then the GitHub secrets
+(`infrastructure/MIGRATION.md`); the next stable applies the blueprint.
