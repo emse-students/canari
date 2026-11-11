@@ -170,7 +170,8 @@
   import { serveDelegatedCommits } from '$lib/utils/chat/tabCommitDelegation';
   import { frameHandoverExecutors } from '$lib/mls-client/frameFromAnyTab';
   import { salonSealExecutors } from '$lib/utils/graine/channelSeal';
-  import { seedRepairExecutors } from '$lib/utils/graine/repair';
+  import { forgetSeedsHandedToLeader, seedRepairExecutors } from '$lib/utils/graine/repair';
+  import { onLeaderTabChanged } from '$lib/mls-client/tabLeader';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
   import { mergeAnnouncedMessage } from '$lib/utils/chat/salonEcho';
@@ -2084,6 +2085,8 @@
       ...salonSealExecutors,
       ...seedRepairExecutors,
     });
+    // A missing seed handed to a leader lived in its memory: a new leader is handed it again.
+    const stopForgettingHandedSeeds = onLeaderTabChanged(forgetSeedsHandedToLeader);
 
     // ── FCM cache polling (Tauri/Android only) ────────────────────────────
     // Messages received via FCM while the app is in the foreground are written
@@ -2126,6 +2129,7 @@
       stopServingConversationCommits();
       stopServingKeyGroupCommits();
       stopServingFollowerSends();
+      stopForgettingHandedSeeds();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);
       stopForegroundHeartbeat?.();

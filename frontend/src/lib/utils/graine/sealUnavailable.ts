@@ -14,6 +14,10 @@
  * - `main-tab-gone`, `main-tab-unavailable`, `main-tab-not-delegable`, `main-tab-failed`: this is a
  *   follower tab, which seals nothing itself, and the leader tab did not seal it - it closed while
  *   sealing, it is locked or signed out, it cannot be asked, or it failed (`channelSeal.ts`).
+ * - `main-tab-key-changed`: the leader tab could not open what this follower sealed for it - the
+ *   device key changed in between (a PIN change); nothing was sealed.
+ * - `tab-reloading`: this tab has just become the leader and reloads to read the MLS state as it now
+ *   stands; until then it may not seal, and no other tab would seal for it.
  */
 export type GraineSealUnavailableReason =
   | 'no-session'
@@ -25,7 +29,9 @@ export type GraineSealUnavailableReason =
   | 'main-tab-gone'
   | 'main-tab-unavailable'
   | 'main-tab-not-delegable'
-  | 'main-tab-failed';
+  | 'main-tab-failed'
+  | 'main-tab-key-changed'
+  | 'tab-reloading';
 
 /**
  * Base of every error meaning "this device cannot seal for this scope RIGHT NOW, and nothing was

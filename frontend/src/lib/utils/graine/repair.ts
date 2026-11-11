@@ -1,10 +1,11 @@
 import { canari } from '$lib/proto/canari';
 import { encodeAppMessage, mkGraineRequest } from '$lib/proto/codec';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
-import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
+import { promotedSinceLoad, refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import {
   delegateCommitToLeader,
   type DelegatedCommitExecutors,
+  type DelegatedCommitOp,
 } from '$lib/utils/chat/tabCommitDelegation';
 import {
   type DistributionScope,
@@ -283,7 +284,7 @@ export function noteMissingSeed(
   // only the leader's copy sends, and the answer reaches the leader's socket. The want is handed to
   // the leader, whose own repair asks, records and receives it; the seed lands in the shared store.
   if (refusesCommitsHere()) {
-    handMissingSeedToLeader({ channelId, sessionId, senderId, sentAt, reason });
+    handMissingSeedToLeader(channelId, { sessionId, senderId, sentAt, reason });
     return;
   }
   const perChannel = outstanding.get(channelId) ?? new Map<string, MissingSeed>();
@@ -1707,6 +1708,7 @@ export function releaseRequestsHeldForKeyGroup(groupId: string, rejoinedWorkspac
 export function resetGraineRepairState(): void {
   asked.clear();
   handedToLeader.clear();
+  handoverLanes.clear();
   askedOn.clear();
   askedRequest.clear();
   heldForKeyGroup.clear();
@@ -1724,47 +1726,107 @@ export function resetGraineRepairState(): void {
   flushing = false;
 }
 
-/** The sessions this follower tab has already handed to the leader: one handover per session. */
+/**
+ * The sessions this follower tab has handed to the CURRENT leader: one handover per session. Emptied
+ * when the leader changes ({@link forgetSeedsHandedToLeader}) - what the previous leader was asked
+ * lived in its memory and went with it, so the next row naming such a seed hands it again.
+ */
 const handedToLeader = new Set<string>();
 
+/** One missing seed as handed to the leader. */
+type HandedSeed = Extract<DelegatedCommitOp, { kind: 'note-missing-seeds' }>['seeds'][number];
+
+/**
+ * ONE HANDOVER PER CHANNEL AT A TIME: the seeds a channel's rows name while its handover is in flight
+ * wait in `next` and leave together, as ONE record, when it is answered - a page of N unreadable rows
+ * is one or two records, never N.
+ */
+const handoverLanes = new Map<string, { next: Map<string, HandedSeed> }>();
+
+/**
+ * The leader tab changed (the election said so): every seed handed to the previous one is handed
+ * again by the next row naming it. Wired by the session to the election's `onLeaderTabChanged`.
+ */
+export function forgetSeedsHandedToLeader(): void {
+  if (handedToLeader.size === 0) return;
+  console.info(
+    `[GRAINE] the leader tab changed - ${handedToLeader.size} missing seed(s) handed to the previous one are handed again on their next row`
+  );
+  handedToLeader.clear();
+}
+
 /** The follower half of {@link noteMissingSeed}: the leader asks for the seed. Never rejects. */
-function handMissingSeedToLeader(want: {
-  channelId: string;
-  sessionId: string;
-  senderId: string;
-  sentAt: number | undefined;
-  reason: AskReason;
-}): void {
+function handMissingSeedToLeader(
+  channelId: string,
+  want: { sessionId: string; senderId: string; sentAt: number | undefined; reason: AskReason }
+): void {
   if (handedToLeader.has(want.sessionId)) return;
+  if (promotedSinceLoad()) {
+    // This tab leads on a follower's copy, its reload owed: nobody would run the request, and the
+    // reloaded page reads the row again on its own state.
+    console.debug(
+      `[GRAINE] missing seed ${want.sessionId} of channel ${channelId.slice(0, 8)} not handed: this tab reloads as the leader`
+    );
+    return;
+  }
   handedToLeader.add(want.sessionId);
-  void delegateCommitToLeader({
-    kind: 'note-missing-seed',
-    channelId: want.channelId,
+  const seed: HandedSeed = {
     sessionId: want.sessionId,
     senderId: want.senderId,
     ...(typeof want.sentAt === 'number' && Number.isFinite(want.sentAt)
       ? { sentAt: want.sentAt }
       : {}),
     reason: want.reason,
-  }).then((answer) => {
-    if (answer.status === 'done') {
-      console.debug(
-        `[GRAINE] missing seed ${want.sessionId} of channel ${want.channelId.slice(0, 8)} handed to the leader tab`
+  };
+  const lane = handoverLanes.get(channelId);
+  if (lane) {
+    lane.next.set(seed.sessionId, seed);
+    return;
+  }
+  const opened = { next: new Map([[seed.sessionId, seed]]) };
+  handoverLanes.set(channelId, opened);
+  void runHandoverLane(channelId, opened);
+}
+
+/** Hands a channel's waiting seeds over, one record at a time, until none waits. */
+async function runHandoverLane(
+  channelId: string,
+  lane: { next: Map<string, HandedSeed> }
+): Promise<void> {
+  // The rows decoded in this same turn join the first record.
+  await Promise.resolve();
+  try {
+    while (lane.next.size > 0) {
+      const seeds = [...lane.next.values()];
+      lane.next.clear();
+      const answer = await delegateCommitToLeader({
+        kind: 'note-missing-seeds',
+        channelId,
+        seeds,
+      });
+      if (answer.status === 'done') {
+        console.debug(
+          `[GRAINE] ${seeds.length} missing seed(s) of channel ${channelId.slice(0, 8)} handed to the leader tab`
+        );
+        continue;
+      }
+      // Not asked by anybody: the next row naming one of them may hand it again.
+      for (const handed of seeds) handedToLeader.delete(handed.sessionId);
+      console.warn(
+        `[GRAINE] ${seeds.length} missing seed(s) of channel ${channelId.slice(0, 8)} not handed to the leader tab: ${answer.reason}`
       );
-      return;
     }
-    // Not asked by anybody: the next row naming it may hand it again.
-    handedToLeader.delete(want.sessionId);
-    console.warn(
-      `[GRAINE] missing seed ${want.sessionId} of channel ${want.channelId.slice(0, 8)} not handed to the leader tab: ${answer.reason}`
-    );
-  });
+  } finally {
+    if (handoverLanes.get(channelId) === lane) handoverLanes.delete(channelId);
+  }
 }
 
 /** The leader half: asks for a seed a follower tab found missing, as for one of its own rows. */
-export const seedRepairExecutors: Pick<DelegatedCommitExecutors, 'note-missing-seed'> = {
-  'note-missing-seed': async (op) => {
-    noteMissingSeed(op.channelId, op.sessionId, op.senderId, op.sentAt, op.reason);
+export const seedRepairExecutors: Pick<DelegatedCommitExecutors, 'note-missing-seeds'> = {
+  'note-missing-seeds': async (op) => {
+    for (const seed of op.seeds) {
+      noteMissingSeed(op.channelId, seed.sessionId, seed.senderId, seed.sentAt, seed.reason);
+    }
     return 'noted';
   },
 };

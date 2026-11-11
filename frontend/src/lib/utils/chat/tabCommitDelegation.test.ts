@@ -8,6 +8,7 @@ import type { TabCommitEvent } from '$lib/mls-client/tabMessageSync';
 import {
   createDelegationClient,
   createDelegationServer,
+  createOrderKeys,
   type DelegatedCommitExecutors,
   type DelegationEnv,
   type DelegationLocks,
@@ -67,7 +68,13 @@ function sharedDatabases() {
     };
     return {
       get: (id) => tx(() => clone(rows.get(id)) ?? null),
-      list: () => tx(() => [...rows.values()].map(clone)),
+      // `getAll` answers in KEY order, as IndexedDB does - never in the order records were written.
+      list: () =>
+        tx(() =>
+          [...rows.entries()]
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+            .map(([, record]) => clone(record))
+        ),
       put: (record) => tx(() => void rows.set(record.id, clone(record))),
       delete: (id) => tx(() => void rows.delete(id)),
       update: (id, change) =>
@@ -176,6 +183,8 @@ interface Role {
   readiness?: DelegationReadiness | (() => DelegationReadiness);
   /** The accounts whose data this document saw wiped. */
   wiped?: Set<string>;
+  /** Request ids that sort against the order the requests were made in. */
+  idsAgainstOrder?: boolean;
 }
 
 function makeWorld() {
@@ -198,7 +207,12 @@ function tab(doc: string, world: ReturnType<typeof makeWorld>, role: Role) {
     readiness: () =>
       typeof role.readiness === 'function' ? role.readiness() : (role.readiness ?? 'ready'),
     wiped: (account) => role.wiped?.has(account) ?? false,
-    newId: () => `${doc}-req-${++n}`,
+    // Ids that sort AGAINST the order the requests are made in, as random ones may: nothing may
+    // hang on the store's key order.
+    newId: () => (role.idsAgainstOrder ? `${doc}-req-${9999 - ++n}` : `${doc}-req-${++n}`),
+    // A clock that never moves: the order holds by the per-tab counter alone.
+    orderKey: createOrderKeys(() => 0),
+    documentId: () => doc,
     log: (message, level) => void lines.push({ message, level }),
   };
   const client = createDelegationClient(env);
@@ -257,8 +271,8 @@ function recordingExecutors() {
       runs.push(`seal-salon-message:${channelId}`);
       return { unavailable: 'key-group-not-held' };
     },
-    'note-missing-seed': async ({ sessionId }) => {
-      runs.push(`note-missing-seed:${sessionId}`);
+    'note-missing-seeds': async ({ seeds }) => {
+      runs.push(`note-missing-seeds:${seeds.map((s) => s.sessionId).join(',')}`);
       return 'noted';
     },
   };
@@ -648,6 +662,82 @@ describe('round 2 of the review of #3160', () => {
   );
 });
 
+describe("one tab's requests run in the order it made them (review of #3371)", () => {
+  const frame = { iv: '', cipherText: '' };
+
+  it('several pending records of one follower are run in the order it made them, never in key order', async () => {
+    const w = makeWorld();
+    const { leader, runs } = servingLeader('L', w, { readiness: 'starting' });
+    const follower = tab('F', w, { leader: false, idsAgainstOrder: true });
+
+    // A call invitation, its hangup, then two salon messages typed quickly - all before the leader
+    // can run anything, so all four rest in the store together.
+    const answers = [
+      follower.delegate({ kind: 'invite', groupId: 'g1', memberIds: ['bob'] }),
+      follower.delegate({ kind: 'emit-frame', groupId: 'g1', frame, delivery: 'transport' }),
+      follower.delegate({ kind: 'seal-salon-message', channelId: 's1', payload: frame }),
+      follower.delegate({ kind: 'seal-salon-message', channelId: 's2', payload: frame }),
+    ];
+    await settle();
+    expect(runs).toEqual([]);
+    expect(w.databases.ids()).toHaveLength(4);
+
+    leader.role.readiness = 'ready';
+    await leader.server.drain('the session is up');
+    await Promise.all(answers);
+
+    expect(runs).toEqual([
+      'invite:g1:bob',
+      'emit-frame:g1:transport',
+      'seal-salon-message:s1',
+      'seal-salon-message:s2',
+    ]);
+  });
+
+  it("a follower's later request waits while its earlier one runs in another document", async () => {
+    const w = makeWorld();
+    const slow = tab('L1', w, { leader: true });
+    const follower = tab('F', w, { leader: false, idsAgainstOrder: true });
+    const ran: string[] = [];
+    let finish: (v: 'committed') => void = () => {};
+    slow.server.listen();
+    slow.server.register({
+      remove: () => new Promise<'committed'>((resolve) => (finish = resolve)),
+      'create-group': async ({ name }) => {
+        ran.push(`L1:create-group:${name}`);
+        return { ok: true, key: `g-${name}` };
+      },
+    });
+
+    const first = follower.delegate({ kind: 'remove', groupId: 'g1', memberId: 'bob' });
+    await settle();
+    const second = follower.delegate({ kind: 'create-group', name: 'club' });
+    await settle();
+
+    // A second document that believes it leads drains: the first request's run lock is held, so the
+    // second - made AFTER it - is held back rather than run ahead of it.
+    const other = servingLeader('L2', w);
+    await other.leader.server.drain('a second leader');
+    await settle();
+    expect(other.runs).toEqual([]);
+    expect(
+      other.leader.lines.some((l) => l.message.includes('an earlier request of the same tab'))
+    ).toBe(true);
+
+    finish('committed');
+    expect(await first).toEqual({ status: 'done', value: 'committed' });
+    expect(await second).toEqual({ status: 'done', value: { ok: true, key: 'g-club' } });
+  });
+
+  it('an order key only grows in one tab, whatever its clock does', () => {
+    const times = [5, 5, 3, 7, 7];
+    const next = createOrderKeys(() => times.shift() ?? 0);
+    const keys = [next(), next(), next(), next(), next()];
+    expect([...keys].sort()).toEqual(keys);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
 describe('a follower tab hands its MLS frames to the leader tab (2026-11-11)', () => {
   beforeEach(() => {
     deviceKey.b64 = toBase64(crypto.getRandomValues(new Uint8Array(32)));
@@ -656,7 +746,16 @@ describe('a follower tab hands its MLS frames to the leader tab (2026-11-11)', (
   it('the leader sends the very frame the follower sealed, on its own state, and answers its time', async () => {
     const w = makeWorld();
     const leader = tab('L', w, { leader: true });
-    const leaderMls = { sendMessage: vi.fn().mockResolvedValue({ receivedAt: 1234 }) };
+    // What the two tabs share, read AS STORED at the moment the leader sends - the record is
+    // deleted once answered, so it is read while it still exists.
+    const stored: DelegationRecord[] = [];
+    const leaderMls = {
+      sendMessage: vi.fn(async () => {
+        stored.push(...(await w.databases.storeFor('alice').list()));
+        // Only the time is read from a sent frame here.
+        return { receivedAt: 1234 } as never;
+      }),
+    };
     leader.server.listen();
     leader.server.register(frameHandoverExecutors(() => leaderMls));
     const follower = tab('F', w, { leader: false });
@@ -674,12 +773,16 @@ describe('a follower tab hands its MLS frames to the leader tab (2026-11-11)', (
     expect(leaderMls.sendMessage).toHaveBeenCalledTimes(1);
     expect(leaderMls.sendMessage).toHaveBeenCalledWith('group-1', frame, 'm-1', DELIVERY.transport);
     // Nothing the member wrote rests in clear in the record the two tabs share.
-    const sealed = await sealForHandover(frame);
-    expect(sealed.cipherText).not.toContain(toBase64(frame));
+    expect(stored).toHaveLength(1);
+    expect(stored[0].op.kind).toBe('emit-frame');
+    expect(JSON.stringify(stored[0])).not.toContain(toBase64(frame));
+    const op = stored[0].op as Extract<DelegationRecord['op'], { kind: 'emit-frame' }>;
+    expect(Object.keys(op.frame).sort()).toEqual(['cipherText', 'iv']);
+    expect(op.frame.cipherText).not.toContain(toBase64(frame));
     expect(w.databases.ids()).toEqual([]);
   });
 
-  it('a frame the leader could not open or send is the request failed, never a frame sent twice', async () => {
+  it('a frame the leader cannot open (device key changed) is a typed answer, nothing sent, nothing said at error', async () => {
     const w = makeWorld();
     const leader = tab('L', w, { leader: true });
     const leaderMls = { sendMessage: vi.fn().mockResolvedValue({ receivedAt: 1 }) };
@@ -697,8 +800,9 @@ describe('a follower tab hands its MLS frames to the leader tab (2026-11-11)', (
       delivery: 'visible',
     });
 
-    expect(answer).toEqual({ status: 'refused', reason: 'failed' });
+    expect(answer).toEqual({ status: 'done', value: { unopened: 'device-key-changed' } });
     expect(leaderMls.sendMessage).not.toHaveBeenCalled();
+    expect(leader.lines.filter((l) => l.level === 'error')).toEqual([]);
   });
 
   it('a leader that registered no frame executor answers not-delegable', async () => {
@@ -709,11 +813,9 @@ describe('a follower tab hands its MLS frames to the leader tab (2026-11-11)', (
     const follower = tab('F', w, { leader: false });
 
     const answer = await follower.delegate({
-      kind: 'note-missing-seed',
+      kind: 'note-missing-seeds',
       channelId: 'c',
-      sessionId: 's',
-      senderId: 'u',
-      reason: 'unreadable-row',
+      seeds: [{ sessionId: 's', senderId: 'u', reason: 'unreadable-row' }],
     });
 
     expect(answer).toEqual({ status: 'refused', reason: 'not-delegable' });

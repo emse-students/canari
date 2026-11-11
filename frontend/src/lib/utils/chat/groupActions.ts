@@ -1750,6 +1750,7 @@ export async function sendHistoryBundleForIds(
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
   const { to, chunkSize = 200, since, requestId, withTombstones = false } = opts;
+  if (followerTabSendsNoHistoryFrame('bundle for ids', groupId, log)) return;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
@@ -1844,6 +1845,7 @@ export async function sendHistoryRangeBundle(
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
   const { to, before, limit, since = 0, requestId } = opts;
+  if (followerTabSendsNoHistoryFrame('range bundle', groupId, log)) return;
   if (!storage) {
     log(`[HISTORY_RANGE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;

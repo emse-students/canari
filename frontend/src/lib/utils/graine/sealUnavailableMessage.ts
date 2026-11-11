@@ -36,6 +36,10 @@ export function sealUnavailableMessage(reason: GraineSealUnavailableReason): str
       return m.chat_error_follower_tab();
     case 'main-tab-failed':
       return m.chat_error_main_tab_failed();
+    case 'main-tab-key-changed':
+      return m.chat_error_main_tab_key_changed();
+    case 'tab-reloading':
+      return m.chat_error_tab_reloading();
   }
 }
 

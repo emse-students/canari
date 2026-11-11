@@ -234,6 +234,29 @@ describe('BaseMlsService in a follower tab sends nothing and judges no ledger', 
     expect(errors.some((l) => l.includes('not routed to the leader tab'))).toBe(true);
   });
 
+  it('a tab promoted in place refuses a frame as reload-owed, at warn - not the routing defect', async () => {
+    noteMlsStateLoaded(false);
+    role.now = 'leader'; // promoted: it leads, on the copy it loaded as a follower
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((line: string) => void errors.push(line));
+    vi.spyOn(console, 'warn').mockImplementation((line: string) => void warnings.push(line));
+    const doc = { waitForCatchUpIdle: vi.fn(), settleBeforeSend: vi.fn(), emitFrame: vi.fn() };
+    const send = (
+      BaseMlsService.prototype as unknown as {
+        sendMessage(groupId: string, bytes: Uint8Array): Promise<unknown>;
+      }
+    ).sendMessage.call(doc, 'group-123456789', new Uint8Array([1]));
+
+    await expect(send).rejects.toMatchObject({
+      name: 'FollowerTabSendError',
+      refusal: 'reload-owed',
+    });
+    expect(doc.emitFrame).not.toHaveBeenCalled();
+    expect(errors).toEqual([]);
+    expect(warnings.some((l) => l.includes('reloads'))).toBe(true);
+  });
+
   it('leaves the shared send ledger to the leader: no reset, no forget, no burn', async () => {
     role.now = 'follower';
     localStorage.clear();

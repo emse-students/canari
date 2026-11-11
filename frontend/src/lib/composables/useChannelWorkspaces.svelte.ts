@@ -75,7 +75,10 @@ import {
 import { requestCommunityHistory } from '$lib/utils/graine/repair';
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
-import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
+import {
+  salonGateRefusalMessage,
+  sealUnavailableMessage,
+} from '$lib/utils/graine/sealUnavailableMessage';
 import {
   beginSalonEntry,
   beginSalonListing,
@@ -83,6 +86,7 @@ import {
   isCurrentSalonSession,
   openSalonSendGate,
   resetSalonSendGate,
+  SalonNotLoadableError,
   settleSalonEntry,
   settleSalonListing,
   type SettledListing,
@@ -955,6 +959,10 @@ export function useChannelWorkspaces() {
       // Nothing was sent: this device holds no key for the scope yet (join not landed, session not
       // wired). Said as a TYPE at the throw, so it no longer lands in the nameless arm below.
       message = sealUnavailableMessage(error.reason);
+    } else if (error instanceof SalonNotLoadableError) {
+      // Nothing was sealed: the salon cannot be loaded (here, or in the leader tab that seals for
+      // this one) without something new happening.
+      message = salonGateRefusalMessage(error.reason);
     } else if (isRetryableLoadError(error)) {
       // ONE PREDICATE, NOT TWO. "Worth retrying" and "say it is the network" are the same
       // question - the server did not decide anything - and they were two hand-kept lists that

@@ -184,6 +184,8 @@
   "chat_error_main_tab_gone": "L'onglet principal de Canari s'est fermé pendant l'opération : vérifiez son résultat avant de réessayer.",
   "chat_error_main_tab_unavailable": "L'onglet principal de Canari n'est pas prêt (verrouillé ou déconnecté) : déverrouillez-le, ou faites-le depuis cet onglet.",
   "chat_error_main_tab_failed": "L'onglet principal de Canari n'a pas pu terminer l'opération.",
+  "chat_error_main_tab_key_changed": "Le code PIN a changé pendant l'envoi : rien n'est parti, réessayez.",
+  "chat_error_tab_reloading": "Cet onglet devient l'onglet principal de Canari et se recharge : réessayez dans un instant.",
   "chat_modal_creation_in_progress_label": "Création en cours…",
   "chat_modal_community_name_label": "Nom de la communauté",
   "chat_modal_community_name_placeholder": "ex : BDE 2026",

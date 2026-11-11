@@ -70,8 +70,46 @@ let decided = armDecided();
  * answered.
  */
 function decide(state: 'leader' | 'follower'): void {
+  const before = leadership;
   leadership = state;
   resolveDecided(state);
+  if (before !== 'undecided' && before !== state)
+    notifyLeaderTabChanged(`this tab is now ${state}`);
+}
+
+/** Told whenever the tab that leads may have changed - see {@link onLeaderTabChanged}. */
+const leaderChangeHandlers = new Set<(why: string) => void>();
+
+/**
+ * Registers `handler`, called whenever the tab that leads may have changed: this document's own role
+ * moved, or another tab said it took the lead (`leader_promoted`) or is giving it up
+ * (`leader_closing`). What a follower handed to the PREVIOUS leader's memory is to be handed again.
+ * Returns the removal.
+ */
+export function onLeaderTabChanged(handler: (why: string) => void): () => void {
+  leaderChangeHandlers.add(handler);
+  return () => leaderChangeHandlers.delete(handler);
+}
+
+function notifyLeaderTabChanged(why: string): void {
+  for (const handler of leaderChangeHandlers) {
+    // Isolated per subscriber: one that throws must not keep the others from hearing it.
+    try {
+      handler(why);
+    } catch (e) {
+      console.warn(`[TAB] a leader-change subscriber threw (${why}): ${String(e)}`);
+    }
+  }
+}
+
+/** Hears another tab's announcements on the election channel, whichever election path created it. */
+function hearLeaderAnnouncements(channel: BroadcastChannel): void {
+  channel.addEventListener('message', (ev: MessageEvent) => {
+    const type = ev.data?.type;
+    if (type === 'leader_promoted' || type === 'leader_closing') {
+      notifyLeaderTabChanged(`another tab sent ${type}`);
+    }
+  });
 }
 
 /** What this tab currently knows: `undecided` until the election resolves, then its side of it. */
@@ -202,6 +240,7 @@ function handOver(): void {
 function ensureTabChannelForLocalStorage(log: (msg: string) => void): void {
   if (tabChannel) return;
   tabChannel = new BroadcastChannel('canari-mls-tab');
+  hearLeaderAnnouncements(tabChannel);
   tabChannel.addEventListener('message', (ev: MessageEvent) => {
     if (ev.data?.type === 'leader_closing' && leadership !== 'leader') {
       const delay = Math.random() * 300;
@@ -338,7 +377,10 @@ function queueForPromotion(log: (msg: string) => void): void {
  * Returns true if this tab immediately became leader.
  */
 async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
-  if (!tabChannel) tabChannel = new BroadcastChannel('canari-mls-tab');
+  if (!tabChannel) {
+    tabChannel = new BroadcastChannel('canari-mls-tab');
+    hearLeaderAnnouncements(tabChannel);
+  }
 
   const reclaim = consumePromotionReload();
   if (reclaim) log('[TAB] Reloaded after a promotion - reclaiming the leader lock.');

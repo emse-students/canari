@@ -362,10 +362,21 @@ export class FollowerTabKeyPackageError extends Error {
  * (`mls-client/frameFromAnyTab.ts`), so reaching this is a caller that was not routed there.
  */
 export class FollowerTabSendError extends Error {
-  constructor(readonly groupId: string) {
+  /**
+   * @param refusal `follower`: the tab follows - its caller was not routed to the leader (a defect);
+   *   `reload-owed`: the tab was promoted in place and reloads - an expected refusal, the gesture is
+   *   refused rather than lost.
+   */
+  constructor(
+    readonly groupId: string,
+    readonly refusal: 'follower' | 'reload-owed' = 'follower'
+  ) {
     super(
-      `an MLS frame of ${groupId.slice(0, 8)}... was asked of a follower tab - only the leader tab ` +
-        'sends, so nothing was encrypted'
+      refusal === 'reload-owed'
+        ? `an MLS frame of ${groupId.slice(0, 8)}... was asked of a tab that has just become the ` +
+            'leader and reloads - nothing was encrypted'
+        : `an MLS frame of ${groupId.slice(0, 8)}... was asked of a follower tab - only the leader tab ` +
+            'sends, so nothing was encrypted'
     );
     this.name = 'FollowerTabSendError';
   }

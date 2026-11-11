@@ -3167,8 +3167,8 @@ web device. Now:
   message it gets back. A refusal is a `GraineSealUnavailableError` (`main-tab-gone`,
   `main-tab-unavailable`, `main-tab-not-delegable`, `main-tab-failed`), so the member reads the
   existing main-tab sentences and nothing is kept on screen as sent.
-- **A missing seed** is handed to the leader (`note-missing-seed`), whose own repair asks and receives;
-  a follower asks no community history.
+- **A missing seed** is handed to the leader (`note-missing-seeds`), whose own repair asks and
+  receives; a follower asks no community history.
 - **History reconciliation frames** (state key, digest, pulls, coverage, bundles) are not sent from a
   follower - the leader holds the same conversations and answers for the device - and a follower's
   scrollback says "scroll in the main tab" (`main-tab`) rather than asking.
@@ -3180,9 +3180,49 @@ web device. Now:
 
 Not covered, filed: the leader lock is one per BROWSER, so a tab of another account is a follower its
 leader will not serve ([backlog](../backlog.d/p2-the-tab-leader-lock-is-per-browser-not-per-account.md)).
+**And the second review of #3371, same day - order, the leader's own gate, the promotion window:**
+
+- **A follower's requests run in the order it made them.** A record was keyed by a random UUID and
+  the drain read the store in key order, so a call's hangup could run before its invitation and two
+  salon messages typed quickly could swap. A record now carries an `order` key that only grows in its
+  tab (the time, never allowed back, then a per-tab counter - `createOrderKeys`) and its tab's
+  `requester` id; the follower writes its records one after another, the drain sorts on the key, and
+  a request still waiting (its run lock held by another document, this leader not ready) holds back
+  every LATER request of the same tab until a drain finds it settled. One leader serves one record at
+  a time, so the order holds end to end.
+- **The leader seals behind its OWN salon gate.** The `seal-salon-message` executor waits on
+  `whenSalonSendable` before sealing, exactly as `deliverSalonSend` does for its own sends: a main
+  tab just reloaded has not listed its salons yet, and the follower's request stays pending meanwhile
+  instead of being refused. Only the gate's `refused` is an answer (`{ gate }`), thrown in the
+  follower as `SalonNotLoadableError` and read like this tab's own gate refusal (row `error`, the
+  gate's sentence, `nothingLeftTheDevice`). The cost, taken knowingly: while one seal waits on the
+  leader's gate, the leader's drain serves nothing else - it is the same wait a single tab's send
+  makes, and it ends on the listing's answer, never a clock.
+- **The promotion window.** A follower promoted in place leads on a copy it loaded as a follower until
+  its reload. The outbox flush is gated on `refusesCommitsHere()` (it was `getIsTabLeader()`), so that
+  window flushes nothing and the reloaded page drains; a frame or a seal asked there is refused at
+  once, typed (`FrameNotHandedError('reload-owed')`, seal reason `tab-reloading`, its own sentence),
+  never written as a request no tab would run; `sendMessage` classifies the case at the throw
+  (`FollowerTabSendError.refusal === 'reload-owed'`, at warn) so the routing-defect line accuses only
+  a real defect; a missing seed is not handed (the reloaded page reads the row again).
+- **A missing seed handed to a leader that has since changed is handed again**: the election tells
+  (`onLeaderTabChanged` - this tab's role moved, or another tab sent `leader_promoted` /
+  `leader_closing`) and the follower forgets what it handed. And one record per channel: the seeds
+  named while a channel's handover is in flight leave together when it is answered.
+- **A device-key change between seal and open is an answer**, `{ unopened: 'device-key-changed' }`,
+  not an executor throw logged at `error`: the frame is `FrameNotHandedError('device-key-changed')`,
+  the seal `main-tab-key-changed` ("the PIN changed while sending").
+- `sendHistoryBundleForIds` and `sendHistoryRangeBundle` are gated like the other history senders.
+- `GraineSealHandoverRefusedError` with `leader-gone` is NOT "nothing happened": the leader may have
+  minted and distributed a seed before it died. A retry is safe - the message keeps its `messageId`
+  and the server deduplicates a row posted twice under it; a seed minted for nothing is a rotation.
+
 Guarded by `tabCommitDelegation.test.ts` (two simulated tabs: the leader sends the very frame the
-follower sealed; a frame it cannot open is `failed`, never sent), `channelSeal.followerTab.test.ts`,
-`repair.followerTab.test.ts` and `BaseMlsService.followerTabCheckpoint.test.ts`.
+follower sealed, and the record as STORED holds it sealed; a frame it cannot open is answered
+`unopened`, never sent; four pending records of one tab run in the order made, whatever their ids; a
+later record waits while an earlier one runs in another document), `channelSeal.followerTab.test.ts`
+(the leader's gate held and refused), `repair.followerTab.test.ts` (coalescing, a leader change) and
+`BaseMlsService.followerTabCheckpoint.test.ts`.
 
 ### A tab queued behind itself and went read-only for ever - FIXED 2026-09-21
 

@@ -1,6 +1,14 @@
 // @vitest-environment happy-dom
-const state = vi.hoisted(() => ({ follower: true, deviceKey: '' }));
-vi.mock('$lib/mls-client/stateAuthority', () => ({ refusesCommitsHere: () => state.follower }));
+const state = vi.hoisted(() => ({ follower: true, promoted: false, deviceKey: '' }));
+vi.mock('$lib/mls-client/stateAuthority', () => ({
+  refusesCommitsHere: () => state.follower,
+  promotedSinceLoad: () => state.promoted,
+}));
+const whenSalonSendable = vi.hoisted(() => vi.fn());
+vi.mock('./salonSendGate', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./salonSendGate')>()),
+  whenSalonSendable,
+}));
 vi.mock('./runtime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./runtime')>()),
   requireGraineRuntime: () => ({ deviceKey: () => state.deviceKey }),
@@ -13,9 +21,14 @@ vi.mock('./graineMirror', () => ({ mirrorGraineSeed }));
 const delegateCommitToLeader = vi.hoisted(() => vi.fn());
 vi.mock('$lib/utils/chat/tabCommitDelegation', () => ({ delegateCommitToLeader }));
 
-import { GraineSealHandoverRefusedError, sealChannelMessage } from './channelSeal';
+import {
+  GraineSealHandoverRefusedError,
+  salonSealExecutors,
+  sealChannelMessage,
+} from './channelSeal';
 import { GraineSealUnavailableError } from './sealUnavailable';
-import { openHandedOver } from '$lib/mls-client/frameFromAnyTab';
+import { SalonNotLoadableError, type SalonGateOutcome } from './salonSendGate';
+import { openHandedOver, sealForHandover } from '$lib/mls-client/frameFromAnyTab';
 import { toBase64 } from '$lib/utils/hex';
 
 /**
@@ -37,6 +50,7 @@ describe('sealChannelMessage in a follower tab', () => {
 
   beforeEach(() => {
     state.follower = true;
+    state.promoted = false;
     state.deviceKey = toBase64(crypto.getRandomValues(new Uint8Array(32)));
     vi.clearAllMocks();
   });
@@ -76,5 +90,76 @@ describe('sealChannelMessage in a follower tab', () => {
     const sealing = sealChannelMessage('abcdef123456', new Uint8Array([1]));
     await expect(sealing).rejects.toBeInstanceOf(GraineSealUnavailableError);
     await expect(sealing).rejects.toMatchObject({ reason: 'key-group-catching-up' });
+  });
+
+  it("the leader's OWN salon gate refusing is the gate's typed refusal here, nothing sealed", async () => {
+    delegateCommitToLeader.mockResolvedValue({ status: 'done', value: { gate: 'left' } });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sealing = sealChannelMessage('abcdef123456', new Uint8Array([1]));
+    await expect(sealing).rejects.toBeInstanceOf(SalonNotLoadableError);
+    await expect(sealing).rejects.toMatchObject({ reason: 'left' });
+  });
+
+  it('a payload the leader could not open (device key changed) is a typed seal refusal', async () => {
+    delegateCommitToLeader.mockResolvedValue({
+      status: 'done',
+      value: { unopened: 'device-key-changed' },
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sealing = sealChannelMessage('abcdef123456', new Uint8Array([1]));
+    await expect(sealing).rejects.toMatchObject({ reason: 'main-tab-key-changed' });
+  });
+
+  it('a tab promoted in place, its reload owed, refuses at once and hands nothing over', async () => {
+    state.promoted = true;
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sealing = sealChannelMessage('abcdef123456', new Uint8Array([1]));
+    await expect(sealing).rejects.toMatchObject({ reason: 'tab-reloading' });
+    expect(delegateCommitToLeader).not.toHaveBeenCalled();
+  });
+});
+
+describe("the leader seals a follower's salon message behind its OWN salon gate", () => {
+  beforeEach(() => {
+    state.follower = false;
+    state.promoted = false;
+    state.deviceKey = toBase64(crypto.getRandomValues(new Uint8Array(32)));
+    vi.clearAllMocks();
+  });
+
+  it('waits on the gate - nothing sealed meanwhile - and answers its refusal as a value', async () => {
+    let decide: (outcome: SalonGateOutcome) => void = () => {};
+    whenSalonSendable.mockReturnValue(new Promise<SalonGateOutcome>((r) => (decide = r)));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let answered = false;
+    const answer = salonSealExecutors['seal-salon-message']({
+      kind: 'seal-salon-message',
+      channelId: 'abcdef123456',
+      payload: await sealForHandover(new Uint8Array([3])),
+    }).finally(() => (answered = true));
+
+    await new Promise((r) => setTimeout(r, 0));
+    // A main tab that has not listed its salons yet HOLDS the message, as a single tab does.
+    expect(answered).toBe(false);
+    expect(whenSalonSendable).toHaveBeenCalledWith('abcdef123456');
+    expect(reserveOutboundSlot).not.toHaveBeenCalled();
+
+    decide({ kind: 'refused', reason: 'not-listed' });
+    await expect(answer).resolves.toEqual({ gate: 'not-listed' });
+    expect(reserveOutboundSlot).not.toHaveBeenCalled();
+  });
+
+  it('a payload sealed under a device key since changed is answered unopened, never thrown', async () => {
+    const payload = await sealForHandover(new Uint8Array([3]));
+    state.deviceKey = toBase64(crypto.getRandomValues(new Uint8Array(32)));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(
+      salonSealExecutors['seal-salon-message']({
+        kind: 'seal-salon-message',
+        channelId: 'abcdef123456',
+        payload,
+      })
+    ).resolves.toEqual({ unopened: 'device-key-changed' });
+    expect(whenSalonSendable).not.toHaveBeenCalled();
   });
 });

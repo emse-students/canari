@@ -159,7 +159,7 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getTabLeadership, leaderLockReleasedForUnload } from '$lib/mls-client/tabLeader';
-import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
+import { promotedSinceLoad, refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import {
   checkpointWroteNothing,
   fromBase64,
@@ -8623,10 +8623,18 @@ export abstract class BaseMlsService implements IMlsService {
     // a commit. AT A LEVEL THAT ACCUSES: every path a follower reaches hands its frame to the leader
     // (`frameFromAnyTab.ts`, the salon seal, the outbox), so this line is a caller that was not routed.
     if (refusesCommitsHere()) {
+      // CLASSIFIED HERE, AT THE THROW: a leader promoted in place, its reload owed, has nobody to
+      // route to - an expected refusal, not the routing defect the line below accuses.
+      if (promotedSinceLoad()) {
+        console.warn(
+          `[SEND] ${groupId.slice(0, 8)}... frame refused: this tab has just become the leader and reloads to read the MLS state as it stands - nothing encrypted`
+        );
+        throw new FollowerTabSendError(groupId, 'reload-owed');
+      }
       console.error(
         `[SEND] ${groupId.slice(0, 8)}... frame refused in a tab that does not own the MLS state (${getTabLeadership()}) - its caller is not routed to the leader tab`
       );
-      throw new FollowerTabSendError(groupId);
+      throw new FollowerTabSendError(groupId, 'follower');
     }
     await this.waitForCatchUpIdle();
     // NOTHING IS SEALED ON TOP OF A COMMIT WHOSE OUTCOME IS UNKNOWN: whether this device is at N or
