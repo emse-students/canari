@@ -1,9 +1,9 @@
 import { writable, get } from 'svelte/store';
+import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import type { CallEndTime } from '$lib/utils/chat/callSystemMessages';
 import { resolveServiceUrl } from '$lib/utils/apiUrl';
 import type { IMlsService } from '$lib/mls-client';
-import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { holdLeafRefresh } from '$lib/mls-client/leafRefresh';
 import { canari } from '../proto/canari.js';
 import {
@@ -3949,7 +3949,10 @@ export class CallService {
     // protos must never surface as "new message" pushes (they used to, as generic fallbacks).
     // Ephemeral too: signalling is only meaningful while the call is live, so replaying it out of
     // the shared log would ring a device about a call that ended.
-    const sent = await this.mlsService.sendMessage(groupId, buffer, undefined, DELIVERY.transport);
+    // From whichever tab is in the call: a follower hands its signal to the leader (`frameFromAnyTab`).
+    const sent = await sendFrameFromThisTab(this.mlsService, groupId, buffer, {
+      delivery: 'transport',
+    });
     if (sent.receivedAt === null) {
       console.error(
         `[Call] signal sent in ${groupId.slice(0, 8)}... but the server answered no receive time - its record is ordered by sentAt alone`

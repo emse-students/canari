@@ -3147,6 +3147,43 @@ so a follower's backgrounding raises no unhandled rejection, and the logout's fi
 accuse a refusal. Guarded by `BaseMlsService.followerTabCheckpoint.test.ts` (two documents, each its
 own `hex` module, over one IndexedDB).
 
+**And it never EMITS either - the second half, same day (review of #3371).** The checkpoint gate
+left a follower's SENDS open: `sendMessage` had no gate, and a follower reached it by forwarding an
+attachment into a DM or a group, by a salon invitation card, a group notice, a call signal, a history
+ask, and - the one with a reading behind it - by a SALON message: `sealChannelMessage` reserved an
+outbound index in the shared Graine store and, on a rotation, minted a seed and DISTRIBUTED it with a
+key-group frame sealed on the follower's forked copy, mirrored the seed and bumped the shared send
+ledger. A phone of the owner's holds salon rows "no seed for session" whose seed holder is the owner's
+web device. Now:
+
+- `BaseMlsService.sendMessage` refuses in a tab that does not own the state, BEFORE the catch-up wait
+  and the settle (which may resubmit a commit): `FollowerTabSendError`, at `error` - every path a
+  follower reaches is routed, so reaching it is a caller that was not.
+- **One frame a gesture awaits** goes through `sendFrameFromThisTab` (`mls-client/frameFromAnyTab.ts`):
+  `sendMessage` in the leader, the gesture handover (`tabCommitDelegation.ts`, kind `emit-frame`) in a
+  follower - the leader sends it on its own state and answers the server's time. Used by the media
+  forward, the salon invitation card, `sendVisibleNotice`, and call signalling.
+- **A salon message** is sealed by the leader (`seal-salon-message`): the follower posts the sealed
+  message it gets back. A refusal is a `GraineSealUnavailableError` (`main-tab-gone`,
+  `main-tab-unavailable`, `main-tab-not-delegable`, `main-tab-failed`), so the member reads the
+  existing main-tab sentences and nothing is kept on screen as sent.
+- **A missing seed** is handed to the leader (`note-missing-seed`), whose own repair asks and receives;
+  a follower asks no community history.
+- **History reconciliation frames** (state key, digest, pulls, coverage, bundles) are not sent from a
+  follower - the leader holds the same conversations and answers for the device - and a follower's
+  scrollback says "scroll in the main tab" (`main-tab`) rather than asking.
+- Every payload a handover record carries rests SEALED under the device key (`sealForHandover`): the
+  record is IndexedDB, and nothing a member wrote rests there in clear.
+- The shared send ledger is judged by the leader only: `reconcileSendRatchets` returns at once in a
+  follower (no reset, no forget, no burn). An in-session PIN change is refused in a leader promoted in
+  place, as in a follower.
+
+Not covered, filed: the leader lock is one per BROWSER, so a tab of another account is a follower its
+leader will not serve ([backlog](../backlog.d/p2-the-tab-leader-lock-is-per-browser-not-per-account.md)).
+Guarded by `tabCommitDelegation.test.ts` (two simulated tabs: the leader sends the very frame the
+follower sealed; a frame it cannot open is `failed`, never sent), `channelSeal.followerTab.test.ts`,
+`repair.followerTab.test.ts` and `BaseMlsService.followerTabCheckpoint.test.ts`.
+
 ### A tab queued behind itself and went read-only for ever - FIXED 2026-09-21
 
 **MEASURED ON W2 ON THE RUNNING PRODUCT.** `navigator.locks.query()` answered `canari-tab-leader`

@@ -627,6 +627,11 @@ export function savedStateFailure(
   // wrote the stored one after this login loaded it (`BaseMlsService.rotateDeviceIdentity`).
   // Nothing was moved, so the remedy is the other tab, never the PIN or a reset.
   if (reason instanceof MlsStateWriteRefusedError) {
+    // Refused before any write, because this tab does not own the state (a follower): nobody wrote
+    // over anything, so "another tab has just saved" would be false.
+    if (reason.outcome === 'follower-tab') {
+      return new LoginFailure('state_owned_by_another_tab', m.auth_state_owned_by_another_tab());
+    }
     return new LoginFailure('state_written_by_another_tab', m.auth_state_written_by_another_tab());
   }
   if (reason instanceof SavedStateOfAnotherAccountError) {

@@ -158,7 +158,7 @@ import {
   GatewayOpenAbandonedError,
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
-import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { getTabLeadership, leaderLockReleasedForUnload } from '$lib/mls-client/tabLeader';
 import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import {
   checkpointWroteNothing,
@@ -217,6 +217,7 @@ import {
   AcceptedCommitNotMergedError,
   CommitStageNotSavedError,
   FollowerTabCommitError,
+  FollowerTabSendError,
   FollowerTabKeyPackageError,
   PreviousCommitUnresolvedError,
   StagedCommitPendingError,
@@ -5054,12 +5055,20 @@ export abstract class BaseMlsService implements IMlsService {
     // ahead every leader write was refused as stale and the disk held the follower's copy, behind
     // every frame and commit the leader had applied. Refused here, before anything is captured, so
     // nothing marks the send ledger or the replay marks durable either: the leader's checkpoints do.
+    //
+    // A LEADER UNLOADING IS REFUSED TOO, and rightly: on `beforeunload` it releases the leader lock
+    // (`holdLeaderLockUntilUnload`), so its `pagehide` flush runs in a document another tab may
+    // already have replaced as leader - one that loaded the state on disk, which this late write
+    // would overwrite or collide with. What the unload loses is what any kill loses (the advance
+    // since the last checkpoint), recovered by the send ledger's burn and by inbound replay.
     if (refusesCommitsHere()) {
       if (!this.followerStateWriteRefusalSaid) {
         this.followerStateWriteRefusalSaid = true;
         Log.i(
           'MLS',
-          `checkpoint not written: this tab does not own the MLS state (${getTabLeadership()}) - its copy is read-only and the leader tab writes it. Said once per page.`
+          leaderLockReleasedForUnload()
+            ? 'checkpoint not written: this tab released the leader lock to unload - a tab elected after it reads the state on disk, so nothing is written over it'
+            : `checkpoint not written: this tab does not own the MLS state (${getTabLeadership()}) - its copy is read-only and the leader tab writes it. Said once per page.`
         );
       }
       throw new MlsStateWriteRefusedError('follower-tab');
@@ -5168,6 +5177,18 @@ export abstract class BaseMlsService implements IMlsService {
   protected async reconcileSendRatchets(): Promise<void> {
     this.owedSendBurns.clear();
     this.unprovenSendRatchets.clear();
+    // THE LEDGER IS THE LEADER'S, AND SO IS ITS VERDICT. It is shared by every tab of the account
+    // (`localStorage`), and judged here against the state this document loaded - in a follower, a copy
+    // the leader keeps moving. A follower that judged it reset the ledger on a fresh start, forgot
+    // entries its copy did not hold (a group the leader joined after that copy was loaded), and burnt
+    // generations into a copy that never sends (`sendMessage` refuses in a follower). It touches
+    // nothing: the leader's own load judged the ledger against the state on disk.
+    if (refusesCommitsHere()) {
+      console.debug(
+        `[MLS] Send ledger left to the leader tab: this tab does not own the MLS state (${getTabLeadership()})`
+      );
+      return;
+    }
     if (this.freshStart) {
       resetSendRatchetLedger(this.userId);
       return;
@@ -5251,9 +5272,12 @@ export abstract class BaseMlsService implements IMlsService {
     // checkpoint is what closes the ledger: it commits `persisted = emitted` through the pairing
     // above. A failure leaves the deficit standing, which repairs itself on the next load.
     if (repaired > 0) {
-      await this.persistCheckpoint().catch((e) =>
-        console.warn('[MLS] Checkpoint after the ratchet burn failed:', String(e).slice(0, 160))
-      );
+      await this.persistCheckpoint().catch((e) => {
+        // A refusal has been said where it was decided (the version guard, or this document's own
+        // latch); a follower never reaches here (gated above).
+        if (e instanceof MlsStateWriteRefusedError) return;
+        console.warn('[MLS] Checkpoint after the ratchet burn failed:', String(e).slice(0, 160));
+      });
     }
   }
 
@@ -8592,6 +8616,18 @@ export abstract class BaseMlsService implements IMlsService {
     _messageId?: string,
     frameDelivery: FrameDelivery = DELIVERY.visible
   ): Promise<SentFrame> {
+    // A FOLLOWER TAB NEVER EMITS (`refusesCommitsHere`, the fact that refuses its commits and its
+    // checkpoints): a frame sealed on its copy spends a generation the leader's state never learns
+    // of, bumps the shared send ledger for a ratchet no disk holds, and - for a key group - mints a
+    // seed from a forked copy. Refused BEFORE anything else runs here: the settle below may resubmit
+    // a commit. AT A LEVEL THAT ACCUSES: every path a follower reaches hands its frame to the leader
+    // (`frameFromAnyTab.ts`, the salon seal, the outbox), so this line is a caller that was not routed.
+    if (refusesCommitsHere()) {
+      console.error(
+        `[SEND] ${groupId.slice(0, 8)}... frame refused in a tab that does not own the MLS state (${getTabLeadership()}) - its caller is not routed to the leader tab`
+      );
+      throw new FollowerTabSendError(groupId);
+    }
     await this.waitForCatchUpIdle();
     // NOTHING IS SEALED ON TOP OF A COMMIT WHOSE OUTCOME IS UNKNOWN: whether this device is at N or
     // N+1 is exactly what that outcome decides, so it is asked first, by the same resubmission.

@@ -1,3 +1,9 @@
+// A device key both tabs of the account hold (the handover seals a frame under it).
+const deviceKey = vi.hoisted(() => ({ b64: '' }));
+vi.mock('$lib/utils/graine/runtime', () => ({
+  requireGraineRuntime: () => ({ deviceKey: () => deviceKey.b64 }),
+}));
+
 import type { TabCommitEvent } from '$lib/mls-client/tabMessageSync';
 import {
   createDelegationClient,
@@ -10,6 +16,9 @@ import {
   sessionDelegationReadiness,
 } from './tabCommitDelegation';
 import type { TabCommitStore } from './tabCommitStore';
+import { frameHandoverExecutors, sealForHandover } from '$lib/mls-client/frameFromAnyTab';
+import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { toBase64 } from '$lib/utils/hex';
 
 /**
  * A FOLLOWER TAB'S COMMIT, DONE BY THE LEADER - two tabs simulated in one realm.
@@ -239,6 +248,18 @@ function recordingExecutors() {
     'enter-salon-group': async ({ channelId }) => {
       runs.push(`salon:${channelId}`);
       return 'entered';
+    },
+    'emit-frame': async ({ groupId, delivery }) => {
+      runs.push(`emit-frame:${groupId}:${delivery}`);
+      return { receivedAt: 42 };
+    },
+    'seal-salon-message': async ({ channelId }) => {
+      runs.push(`seal-salon-message:${channelId}`);
+      return { unavailable: 'key-group-not-held' };
+    },
+    'note-missing-seed': async ({ sessionId }) => {
+      runs.push(`note-missing-seed:${sessionId}`);
+      return 'noted';
     },
   };
   return { runs, executors };
@@ -625,4 +646,76 @@ describe('round 2 of the review of #3160', () => {
       expect(sessionDelegationReadiness(isLoggedIn, isLoginInProgress)).toBe(readiness);
     }
   );
+});
+
+describe('a follower tab hands its MLS frames to the leader tab (2026-11-11)', () => {
+  beforeEach(() => {
+    deviceKey.b64 = toBase64(crypto.getRandomValues(new Uint8Array(32)));
+  });
+
+  it('the leader sends the very frame the follower sealed, on its own state, and answers its time', async () => {
+    const w = makeWorld();
+    const leader = tab('L', w, { leader: true });
+    const leaderMls = { sendMessage: vi.fn().mockResolvedValue({ receivedAt: 1234 }) };
+    leader.server.listen();
+    leader.server.register(frameHandoverExecutors(() => leaderMls));
+    const follower = tab('F', w, { leader: false });
+    const frame = new Uint8Array([7, 7, 7, 1]);
+
+    const answer = await follower.delegate({
+      kind: 'emit-frame',
+      groupId: 'group-1',
+      frame: await sealForHandover(frame),
+      messageId: 'm-1',
+      delivery: 'transport',
+    });
+
+    expect(answer).toEqual({ status: 'done', value: { receivedAt: 1234 } });
+    expect(leaderMls.sendMessage).toHaveBeenCalledTimes(1);
+    expect(leaderMls.sendMessage).toHaveBeenCalledWith('group-1', frame, 'm-1', DELIVERY.transport);
+    // Nothing the member wrote rests in clear in the record the two tabs share.
+    const sealed = await sealForHandover(frame);
+    expect(sealed.cipherText).not.toContain(toBase64(frame));
+    expect(w.databases.ids()).toEqual([]);
+  });
+
+  it('a frame the leader could not open or send is the request failed, never a frame sent twice', async () => {
+    const w = makeWorld();
+    const leader = tab('L', w, { leader: true });
+    const leaderMls = { sendMessage: vi.fn().mockResolvedValue({ receivedAt: 1 }) };
+    leader.server.listen();
+    leader.server.register(frameHandoverExecutors(() => leaderMls));
+    const follower = tab('F', w, { leader: false });
+    const sealed = await sealForHandover(new Uint8Array([1]));
+    // The device key changed between the follower's seal and the leader's open.
+    deviceKey.b64 = toBase64(crypto.getRandomValues(new Uint8Array(32)));
+
+    const answer = await follower.delegate({
+      kind: 'emit-frame',
+      groupId: 'group-1',
+      frame: sealed,
+      delivery: 'visible',
+    });
+
+    expect(answer).toEqual({ status: 'refused', reason: 'failed' });
+    expect(leaderMls.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('a leader that registered no frame executor answers not-delegable', async () => {
+    const w = makeWorld();
+    const leader = tab('L', w, { leader: true });
+    leader.server.listen();
+    leader.server.register({});
+    const follower = tab('F', w, { leader: false });
+
+    const answer = await follower.delegate({
+      kind: 'note-missing-seed',
+      channelId: 'c',
+      sessionId: 's',
+      senderId: 'u',
+      reason: 'unreadable-row',
+    });
+
+    expect(answer).toEqual({ status: 'refused', reason: 'not-delegable' });
+  });
 });

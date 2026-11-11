@@ -28,6 +28,14 @@ export function sealUnavailableMessage(reason: GraineSealUnavailableReason): str
       return m.chat_send_error_seal_key_group_unsettled();
     case 'key-group-catching-up':
       return m.chat_send_error_seal_key_group_catching_up();
+    case 'main-tab-gone':
+      return m.chat_error_main_tab_gone();
+    case 'main-tab-unavailable':
+      return m.chat_error_main_tab_unavailable();
+    case 'main-tab-not-delegable':
+      return m.chat_error_follower_tab();
+    case 'main-tab-failed':
+      return m.chat_error_main_tab_failed();
   }
 }
 

@@ -354,6 +354,24 @@ export class FollowerTabKeyPackageError extends Error {
 }
 
 /**
+ * An MLS frame of `groupId` was asked of a tab whose copy of the MLS state is not the leader's (a
+ * follower, or a leader promoted in place before its reload), and refused before anything was
+ * encrypted. Same fact as {@link FollowerTabCommitError} (`refusesCommitsHere`): a frame sealed on a
+ * copy spends a send generation the leader's state never learns of, and the shared send ledger it
+ * bumps then describes neither. A follower hands a frame to the leader instead
+ * (`mls-client/frameFromAnyTab.ts`), so reaching this is a caller that was not routed there.
+ */
+export class FollowerTabSendError extends Error {
+  constructor(readonly groupId: string) {
+    super(
+      `an MLS frame of ${groupId.slice(0, 8)}... was asked of a follower tab - only the leader tab ` +
+        'sends, so nothing was encrypted'
+    );
+    this.name = 'FollowerTabSendError';
+  }
+}
+
+/**
  * Whether a THROWN FIRST submission is a definitive refusal: the server answered with a 4xx, which
  * it sends only before the epoch gate is reached (a malformed commit, a committer not allowed, an
  * expired token, a rate limit) - so the commit did not land, and no earlier request of it exists.

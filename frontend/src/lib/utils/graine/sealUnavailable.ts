@@ -11,6 +11,9 @@
  *   whether its base won the first publish.
  * - `key-group-catching-up`: the key group is behind the server and a catch-up is in progress, so
  *   anything sealed now would be sealed at an epoch the other members have left.
+ * - `main-tab-gone`, `main-tab-unavailable`, `main-tab-not-delegable`, `main-tab-failed`: this is a
+ *   follower tab, which seals nothing itself, and the leader tab did not seal it - it closed while
+ *   sealing, it is locked or signed out, it cannot be asked, or it failed (`channelSeal.ts`).
  */
 export type GraineSealUnavailableReason =
   | 'no-session'
@@ -18,7 +21,11 @@ export type GraineSealUnavailableReason =
   | 'key-group-unregistered'
   | 'key-group-not-held'
   | 'key-group-unsettled'
-  | 'key-group-catching-up';
+  | 'key-group-catching-up'
+  | 'main-tab-gone'
+  | 'main-tab-unavailable'
+  | 'main-tab-not-delegable'
+  | 'main-tab-failed';
 
 /**
  * Base of every error meaning "this device cannot seal for this scope RIGHT NOW, and nothing was

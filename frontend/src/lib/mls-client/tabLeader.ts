@@ -137,6 +137,20 @@ export function setTabLeaderDemotedHandler(handler: (() => 'reloads' | void) | n
   leaderDemotedHandler = handler;
 }
 
+/** This document held the leader lock and released it on `beforeunload` (see {@link leaderLockReleasedForUnload}). */
+let releasedForUnload = false;
+
+/**
+ * Whether this document was the leader and LET GO of the lock to unload. From then on it reads as a
+ * `follower` - which is right for every write it might still start (a `pagehide` flush): the lock is
+ * free, another tab may already be elected and have read the state on disk, and a write landing
+ * after that read is the fork the single-writer rule exists to prevent. Read by the log lines of
+ * those refusals, so they say what happened rather than call a leader a follower.
+ */
+export function leaderLockReleasedForUnload(): boolean {
+  return releasedForUnload;
+}
+
 function holdLeaderLockUntilUnload(): Promise<void> {
   return new Promise<void>((release) => {
     if (typeof window === 'undefined') {
@@ -146,6 +160,7 @@ function holdLeaderLockUntilUnload(): Promise<void> {
     window.addEventListener(
       'beforeunload',
       () => {
+        releasedForUnload = true;
         decide('follower');
         release();
       },

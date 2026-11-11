@@ -45,6 +45,9 @@
  * executor threw instead of answering, the visible end of a defect).
  */
 import type { MemberRemovalOutcome } from '$lib/utils/chat/groupActions';
+import type { SealedChannelMessage } from '$lib/utils/graine/channelSeal';
+import type { GraineSealUnavailableReason } from '$lib/utils/graine/sealUnavailable';
+import type { AskReason } from '$lib/utils/graine/repair';
 import type { BulkAdditionOutcome, ConversationOutcome } from '$lib/utils/chat/groupCreation';
 import {
   postTabCommitEvent,
@@ -73,7 +76,34 @@ export type DelegatedCommitOp =
   /** The community's Graine key group (`ensureCommunityDistributionGroup`). */
   | { kind: 'enter-community-key-group'; workspaceId: string }
   /** A salon's own key group, entered by a member who has access (`enterPrivateSalonGroup`). */
-  | { kind: 'enter-salon-group'; workspaceId: string; channelId: string; isPrivate: boolean };
+  | { kind: 'enter-salon-group'; workspaceId: string; channelId: string; isPrivate: boolean }
+  /**
+   * One MLS application frame, sent by the leader (`mls-client/frameFromAnyTab.ts`). The frame's
+   * plaintext is SEALED under the device key in the record ({@link HandedOverBytes}): a record is
+   * IndexedDB, and nothing a member wrote rests there in clear.
+   */
+  | {
+      kind: 'emit-frame';
+      groupId: string;
+      frame: HandedOverBytes;
+      messageId?: string;
+      delivery: HandedFrameDelivery;
+    }
+  /**
+   * One salon message, SEALED by the leader under its Graine session (`channelSeal.ts`): only the
+   * leader reserves an outbound index, mints or distributes a seed, and writes the Graine store. The
+   * payload rests sealed under the device key, like a frame's.
+   */
+  | { kind: 'seal-salon-message'; channelId: string; payload: HandedOverBytes }
+  /** A Graine seed a follower could not open a row for, asked for by the leader (`repair.ts`). */
+  | {
+      kind: 'note-missing-seed';
+      channelId: string;
+      sessionId: string;
+      senderId: string;
+      sentAt?: number;
+      reason: AskReason;
+    };
 
 export type DelegatedCommitKind = DelegatedCommitOp['kind'];
 
@@ -95,7 +125,29 @@ export interface DelegatedCommitResults {
   remove: DelegatedRemovalResult;
   'enter-community-key-group': 'entered';
   'enter-salon-group': 'entered';
+  /** The server's acceptance time of the frame, `null` when it answered none (`SentFrame`). */
+  'emit-frame': { receivedAt: number | null };
+  /** The sealed message, or the typed reason the leader could not seal for that salon. */
+  'seal-salon-message':
+    | { sealed: SealedChannelMessage }
+    | { unavailable: GraineSealUnavailableReason };
+  'note-missing-seed': 'noted';
 }
+
+/**
+ * Bytes a follower hands to the leader, sealed under the account's device key (`encryption.ts`
+ * `sealBytes`), base64 so a structured clone and JSON both carry them.
+ */
+export interface HandedOverBytes {
+  iv: string;
+  cipherText: string;
+}
+
+/**
+ * The delivery class of a handed frame, BY NAME: a `FrameDelivery` is compared by identity
+ * (`DELIVERY.visible`), which a record cannot carry, and an addressed delivery is never handed.
+ */
+export type HandedFrameDelivery = 'visible' | 'mutation' | 'transport';
 
 /** Why the leader did not answer the gesture itself (see the module comment). */
 export type DelegationRefusal = 'leader-gone' | 'leader-unavailable' | 'not-delegable' | 'failed';
@@ -180,6 +232,12 @@ function describe(op: DelegatedCommitOp): string {
       return `key group of ${op.workspaceId.slice(0, 8)}...`;
     case 'enter-salon-group':
       return `salon group ${op.channelId.slice(0, 8)}...`;
+    case 'emit-frame':
+      return `frame in ${op.groupId.slice(0, 8)}... (${op.delivery})`;
+    case 'seal-salon-message':
+      return `salon message for ${op.channelId.slice(0, 8)}...`;
+    case 'note-missing-seed':
+      return `missing seed ${op.sessionId} of ${op.channelId.slice(0, 8)}...`;
   }
 }
 

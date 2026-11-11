@@ -105,6 +105,7 @@ import {
   reportMemberRemovalFailure,
 } from '$lib/utils/chat/conversationRefusalMessage';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import {
   delegateCommitToLeader,
   type DelegatedCommitExecutors,
@@ -1639,13 +1640,23 @@ export function useConversations() {
    * @returns `asked` when a peer was elected and the ask went out - the messages arrive later, as an
    *          ordinary bundle; `no-peer` when nobody was online to answer, which is the one outcome
    *          worth telling the reader about; `complete` when this conversation has no past to ask
-   *          for; `unavailable` when this device cannot ask at all.
+   *          for; `unavailable` when this device cannot ask at all; `main-tab` in a follower tab,
+   *          which sends no frame (the reader is told the main tab asks).
    */
   async function requestOlderFromPeers(
     contactName: string,
     ctx: ConversationContext
-  ): Promise<'asked' | 'no-peer' | 'complete' | 'unavailable'> {
+  ): Promise<'asked' | 'no-peer' | 'complete' | 'unavailable' | 'main-tab'> {
     if (isChannelConversationId(contactName)) return 'unavailable';
+    // A FOLLOWER TAB ASKS NO PEER: the ask is an MLS frame, which only the leader's copy sends, and
+    // the answer arrives on the leader's socket, which only the leader stores. The reader is told to
+    // scroll in the main tab - a typed refusal, never a silent `unavailable`.
+    if (refusesCommitsHere()) {
+      ctx.log(
+        `[HISTORY_RANGE] ${contactName.slice(0, 8)}… not asked from a follower tab - the main tab asks`
+      );
+      return 'main-tab';
+    }
     const convo = conversations.get(contactName);
     if (!convo || !ctx.storage) return 'unavailable';
 

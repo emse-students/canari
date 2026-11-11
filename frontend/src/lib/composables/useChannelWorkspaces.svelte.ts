@@ -1,4 +1,5 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import { slugify } from '$lib/utils/textFold';
 import { conversationBeingRead } from '$lib/utils/chat/arrivalRuntime';
 import {
@@ -2029,7 +2030,8 @@ export function useChannelWorkspaces() {
                 )
               );
               try {
-                await mlsService.sendMessage(directConvo[1].id, invitationMsg);
+                // From whichever tab invites: a follower hands it to the leader (`frameFromAnyTab`).
+                await sendFrameFromThisTab(mlsService, directConvo[1].id, invitationMsg);
                 // MLS never hands a device back its own application message, so the inviter's
                 // copy of the card would never appear on THIS device. Insert it locally; their
                 // other devices build the same envelope from the incoming event.

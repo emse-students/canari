@@ -1,6 +1,11 @@
 import { canari } from '$lib/proto/canari';
 import { encodeAppMessage, mkGraineRequest } from '$lib/proto/codec';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
+import {
+  delegateCommitToLeader,
+  type DelegatedCommitExecutors,
+} from '$lib/utils/chat/tabCommitDelegation';
 import {
   type DistributionScope,
   scopeLabel,
@@ -274,6 +279,13 @@ export function noteMissingSeed(
   reason: AskReason = 'unreadable-row'
 ): void {
   if (!sessionId || asked.has(sessionId)) return;
+  // A FOLLOWER TAB ASKS NOBODY ITSELF (2026-11-11): the ask is an MLS frame on the key group, which
+  // only the leader's copy sends, and the answer reaches the leader's socket. The want is handed to
+  // the leader, whose own repair asks, records and receives it; the seed lands in the shared store.
+  if (refusesCommitsHere()) {
+    handMissingSeedToLeader({ channelId, sessionId, senderId, sentAt, reason });
+    return;
+  }
   const perChannel = outstanding.get(channelId) ?? new Map<string, MissingSeed>();
   const sender = senderId.toLowerCase();
   const dated = typeof sentAt === 'number' && Number.isFinite(sentAt) ? sentAt : Infinity;
@@ -1061,6 +1073,14 @@ export async function requestCommunityHistory(
   // this device holds was handed over floored at its member's arrival, so it is no evidence that it
   // holds the past it may now read. The FIRST sight of the widening re-arms the ask even if this
   // session already asked (under the floor); later passes follow the ordinary once-per-session rule.
+  // A follower tab asks nothing (the ask is a frame only the leader sends); the leader runs the same
+  // triggers for this device - its own join, its re-join, a widening it receives.
+  if (refusesCommitsHere()) {
+    console.debug(
+      `[GRAINE] history of community ${workspaceId.slice(0, 8)} not asked from a follower tab - the leader tab asks for this device`
+    );
+    return;
+  }
   const widening = historyWidening(workspaceId);
   if (historyAsked.has(workspaceId) && !evenIfSeedsHeld && widening !== 'first') return;
   const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
@@ -1686,6 +1706,7 @@ export function releaseRequestsHeldForKeyGroup(groupId: string, rejoinedWorkspac
 /** Test seam: drops every in-memory trace of what has been asked. */
 export function resetGraineRepairState(): void {
   asked.clear();
+  handedToLeader.clear();
   askedOn.clear();
   askedRequest.clear();
   heldForKeyGroup.clear();
@@ -1702,3 +1723,48 @@ export function resetGraineRepairState(): void {
   historyParked.clear();
   flushing = false;
 }
+
+/** The sessions this follower tab has already handed to the leader: one handover per session. */
+const handedToLeader = new Set<string>();
+
+/** The follower half of {@link noteMissingSeed}: the leader asks for the seed. Never rejects. */
+function handMissingSeedToLeader(want: {
+  channelId: string;
+  sessionId: string;
+  senderId: string;
+  sentAt: number | undefined;
+  reason: AskReason;
+}): void {
+  if (handedToLeader.has(want.sessionId)) return;
+  handedToLeader.add(want.sessionId);
+  void delegateCommitToLeader({
+    kind: 'note-missing-seed',
+    channelId: want.channelId,
+    sessionId: want.sessionId,
+    senderId: want.senderId,
+    ...(typeof want.sentAt === 'number' && Number.isFinite(want.sentAt)
+      ? { sentAt: want.sentAt }
+      : {}),
+    reason: want.reason,
+  }).then((answer) => {
+    if (answer.status === 'done') {
+      console.debug(
+        `[GRAINE] missing seed ${want.sessionId} of channel ${want.channelId.slice(0, 8)} handed to the leader tab`
+      );
+      return;
+    }
+    // Not asked by anybody: the next row naming it may hand it again.
+    handedToLeader.delete(want.sessionId);
+    console.warn(
+      `[GRAINE] missing seed ${want.sessionId} of channel ${want.channelId.slice(0, 8)} not handed to the leader tab: ${answer.reason}`
+    );
+  });
+}
+
+/** The leader half: asks for a seed a follower tab found missing, as for one of its own rows. */
+export const seedRepairExecutors: Pick<DelegatedCommitExecutors, 'note-missing-seed'> = {
+  'note-missing-seed': async (op) => {
+    noteMissingSeed(op.channelId, op.sessionId, op.senderId, op.sentAt, op.reason);
+    return 'noted';
+  },
+};

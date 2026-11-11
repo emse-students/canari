@@ -30,6 +30,13 @@ import { reserveOutboundSlot } from './sessionManager';
 import { endorseNewSession } from './endorseSession';
 import { mirrorGraineSeed } from './graineMirror';
 import { fromBase64 } from '$lib/utils/hex';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
+import { openHandedOver, sealForHandover } from '$lib/mls-client/frameFromAnyTab';
+import {
+  delegateCommitToLeader,
+  type DelegatedCommitExecutors,
+  type DelegationRefusal,
+} from '$lib/utils/chat/tabCommitDelegation';
 
 /**
  * Sealing and opening ONE channel message under a Graine session.
@@ -218,6 +225,11 @@ export async function sealChannelMessage(
   payload: Uint8Array
 ): Promise<SealedChannelMessage> {
   const channel = rawChannelId(channelId);
+  // A FOLLOWER TAB SEALS NOTHING ITSELF (2026-11-11): reserving an index writes the shared Graine
+  // store, a rotation mints and DISTRIBUTES a seed with an MLS frame from its forked copy, and the
+  // frame bumps the shared send ledger. The leader seals on its own session and hands the sealed
+  // message back; this tab posts it as it would its own.
+  if (refusesCommitsHere()) return sealOnLeaderTab(channel, payload);
   const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
     `cannot seal a message for channel ${channel.slice(0, 8)}`
   );
@@ -577,3 +589,73 @@ async function finishChannelMessage(
   }
   return bytes;
 }
+
+/**
+ * A follower's salon message the leader tab did not seal, for the typed reason it gave: nothing left
+ * this device, exactly like any {@link GraineSealUnavailableError}, and the member reads the sentence
+ * of that reason (`sealUnavailableMessage`).
+ */
+export class GraineSealHandoverRefusedError extends GraineSealUnavailableError {
+  constructor(
+    readonly channelId: string,
+    readonly refusal: DelegationRefusal
+  ) {
+    super(
+      `[GRAINE] the leader tab did not seal for channel ${channelId.slice(0, 8)} (${refusal})`,
+      refusal === 'leader-gone'
+        ? 'main-tab-gone'
+        : refusal === 'leader-unavailable'
+          ? 'main-tab-unavailable'
+          : refusal === 'not-delegable'
+            ? 'main-tab-not-delegable'
+            : 'main-tab-failed'
+    );
+    this.name = 'GraineSealHandoverRefusedError';
+  }
+}
+
+/** The follower half of {@link sealChannelMessage}: the leader seals, this tab posts. */
+async function sealOnLeaderTab(
+  channel: string,
+  payload: Uint8Array
+): Promise<SealedChannelMessage> {
+  const answer = await delegateCommitToLeader({
+    kind: 'seal-salon-message',
+    channelId: channel,
+    payload: await sealForHandover(payload),
+  });
+  if (answer.status === 'refused') {
+    console.warn(
+      `[SEND] seal of a message for channel ${channel.slice(0, 8)} handed to the leader tab ended ${answer.reason}`
+    );
+    throw new GraineSealHandoverRefusedError(channel, answer.reason);
+  }
+  if ('unavailable' in answer.value) {
+    // The leader's own refusal, said by it where it was decided; carried here as the same type.
+    throw new GraineSealUnavailableError(
+      `[GRAINE] the leader tab cannot seal for channel ${channel.slice(0, 8)} (${answer.value.unavailable})`,
+      answer.value.unavailable
+    );
+  }
+  console.debug(`[SEND] message for channel ${channel.slice(0, 8)} sealed by the leader tab`);
+  return answer.value.sealed;
+}
+
+/** The leader half: seals a follower's salon message on this tab's own Graine session. */
+export const salonSealExecutors: Pick<DelegatedCommitExecutors, 'seal-salon-message'> = {
+  'seal-salon-message': async (op) => {
+    const payload = await openHandedOver(op.payload);
+    try {
+      const sealed = await sealChannelMessage(op.channelId, payload);
+      console.debug(
+        `[SEND] message for channel ${op.channelId.slice(0, 8)} sealed for a follower tab`
+      );
+      return { sealed };
+    } catch (e) {
+      // A seal this tab cannot make is an ANSWER (typed, already said where it was decided), never
+      // the request's `failed`.
+      if (e instanceof GraineSealUnavailableError) return { unavailable: e.reason };
+      throw e;
+    }
+  },
+};
