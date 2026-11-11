@@ -62,6 +62,7 @@ import {
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
+import { ATTENTION_WINDOW_MS, windowAttention } from '$lib/utils/windowAttention.svelte';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
   activeReactions,
@@ -790,7 +791,10 @@ export function useMessaging() {
         : `the app is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`
       : document.visibilityState !== 'visible' || !document.hasFocus()
         ? `the tab is ${document.visibilityState}${document.hasFocus() ? '' : ' and unfocused'}`
-        : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
+        : // In front, but nobody has touched it for the attention window (`windowAttention`).
+          !windowAttention.attentive
+          ? `the window is in front but idle (no gesture for ${ATTENTION_WINDOW_MS / 1000} s)`
+          : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
     console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
     const notificationBody = preview || m.notif_new_message();

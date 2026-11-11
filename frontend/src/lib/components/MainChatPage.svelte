@@ -23,7 +23,11 @@
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
   import { onAppScreenChange } from '$lib/utils/appForeground';
   import { createResumeReadGate } from '$lib/utils/chat/resumeOpening.svelte';
-  import { ATTENTION_WINDOW_MS, windowAttention } from '$lib/utils/windowAttention.svelte';
+  import {
+    ATTENTION_WINDOW_MS,
+    windowAttention,
+    windowReadVerdict,
+  } from '$lib/utils/windowAttention.svelte';
   import { Log } from '$lib/utils/Log';
   import { readMarkTarget, watermarkFor, withOwnReadAdvanced } from '$lib/utils/chat/readState';
   import { serverTimeSeen } from '$lib/utils/chat/serverClock';
@@ -802,7 +806,15 @@
     // API, so the two terms above keep deciding web and desktop exactly as before. It is STATE, so
     // the app coming back to the foreground on an open conversation runs this effect again and marks
     // what landed while it was away - read as a bare global, nothing re-ran it (owner, 2026-11-02).
-    if (!isWindowFocused || !isTabVisible || !appForeground.current) return;
+    // AND A PERSON AT THE WINDOW (owner, 2026-11-11): see `windowReadVerdict` and the `idle` branch
+    // below, where a withheld mark is reported.
+    const verdict = windowReadVerdict({
+      focused: isWindowFocused,
+      visible: isTabVisible,
+      foreground: appForeground.current,
+      attentive: windowAttention.attentive,
+    });
+    if (verdict === 'away') return;
     // The app came back to open something else (a tapped notification): what it shows until the
     // landing selects that is not being read (`resumeOpening.svelte.ts`).
     if (appForeground.holds(convs.selectedContact)) return;
@@ -830,10 +842,11 @@
     if (target <= held) return;
     // NOBODY AT THE WINDOW, NO READ (owner, 2026-11-11). A window left in front stays visible and
     // focused with nobody there; a person's gesture in the last two minutes is what says someone is
-    // (`windowAttention.svelte.ts`, always true on native mobile). Read here, after the target, so
-    // only a mark actually withheld is reported - and read as STATE: the first gesture after idleness
-    // runs this effect again and marks what landed meanwhile. The threshold elapsing runs nothing.
-    if (!windowAttention.attentive) {
+    // (`windowAttention.svelte.ts`, always true on native mobile). Reported here, after the target,
+    // so only a mark actually withheld is said - and read above as STATE: the first gesture after
+    // idleness runs this effect again and marks what landed meanwhile. The threshold elapsing runs
+    // nothing.
+    if (verdict === 'idle') {
       Log.d(
         `[READ] ${convs.selectedContact.slice(0, 12)} not marked: nobody has touched this window ` +
           `for ${ATTENTION_WINDOW_MS / 1000} s - the first gesture marks it`

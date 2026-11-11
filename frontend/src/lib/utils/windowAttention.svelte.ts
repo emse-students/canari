@@ -70,23 +70,29 @@ export interface AttentionSignal {
    * threshold elapsed.
    */
   readonly attentive: boolean;
-  /** Records a gesture. The listeners call it; so do tests. */
+  /** Records a gesture. The listeners call it. */
   noteGesture(): void;
+  /** Back to idle, as at load: no gesture known. */
+  reset(): void;
   /** Removes the listeners. */
   destroy(): void;
 }
 
-/**
- * Builds one window's attention signal and installs its passive listeners on `target`.
- *
- * @param exempt answered at each read: `true` where attention is not asked (native mobile).
- * @param now the clock the threshold is read against (injected for the tests).
- */
-export function createAttentionSignal(
-  target: EventTarget | null,
-  exempt: () => boolean,
-  now: () => number = Date.now
-): AttentionSignal {
+/** What one window's attention signal is built from. */
+export interface AttentionSource {
+  /** Where the gesture listeners go (`window`), or `null` where there is none (SSR). */
+  target: EventTarget | null;
+  /** Answered at each read: `true` where attention is not asked (native mobile). */
+  exempt: () => boolean;
+  /** The clock the threshold is read against. */
+  now?: () => number;
+  /** Whether an event is a person's gesture ({@link isPersonGesture}). */
+  isGesture?: (event: Event) => boolean;
+}
+
+/** Builds one window's attention signal and installs its passive listeners on `source.target`. */
+export function createAttentionSignal(source: AttentionSource): AttentionSignal {
+  const { target, exempt, now = () => Date.now(), isGesture = isPersonGesture } = source;
   let lastGestureAt: number | null = null;
   // Bumped on the idle -> attended edge only, so a gesture while attended re-runs nothing.
   let wakes = $state(0);
@@ -101,7 +107,7 @@ export function createAttentionSignal(
   }
 
   const onEvent = (event: Event) => {
-    if (isPersonGesture(event)) noteGesture();
+    if (isGesture(event)) noteGesture();
   };
   const options: AddEventListenerOptions = { passive: true, capture: true };
   for (const type of ATTENTION_GESTURES) target?.addEventListener(type, onEvent, options);
@@ -112,6 +118,10 @@ export function createAttentionSignal(
       return exempt() || isAttentiveAt(lastGestureAt, now());
     },
     noteGesture,
+    reset() {
+      Log.d('[ATTENTION] reset - this window is idle until its next gesture');
+      lastGestureAt = null;
+    },
     destroy() {
       for (const type of ATTENTION_GESTURES) target?.removeEventListener(type, onEvent, options);
     },
@@ -123,7 +133,24 @@ export function createAttentionSignal(
  * through `arrivalRuntime.ts`. It starts IDLE: a page load is not a gesture (a reload can be
  * automatic), so nothing loaded is read until the person touches the window.
  */
-export const windowAttention: AttentionSignal = createAttentionSignal(
-  typeof window === 'undefined' ? null : window,
-  () => isMobileTauriRuntime()
-);
+export const windowAttention: AttentionSignal = createAttentionSignal({
+  target: typeof window === 'undefined' ? null : window,
+  exempt: () => isMobileTauriRuntime(),
+});
+
+/**
+ * What the receipt effect may do for the conversation on screen, from the window's state:
+ * `away` - not in front (hidden, unfocused, the app in the background): nothing, silently;
+ * `idle` - in front with nobody at it: nothing, and the withheld mark is reported;
+ * `reading` - the mark moves. Pure: `MainChatPage` hands in its reactive state, so reading
+ * `attentive` there is what re-runs the effect at the first gesture.
+ */
+export function windowReadVerdict(w: {
+  focused: boolean;
+  visible: boolean;
+  foreground: boolean;
+  attentive: boolean;
+}): 'away' | 'idle' | 'reading' {
+  if (!w.focused || !w.visible || !w.foreground) return 'away';
+  return w.attentive ? 'reading' : 'idle';
+}

@@ -162,9 +162,28 @@ nobody saw.
 the shell states the foreground). **A desktop app window is NOT exempt**: it is a PC window left open
 exactly like a browser tab.
 
-Tests: `windowAttention.svelte.test.ts` (idle 2 min then an arrival -> no mark; then a gesture ->
-mark; attended -> mark as before; native -> unchanged; the receipt effect's gate sits before every
-write), `arrivalRuntime.attention.test.ts`.
+The receipt effect takes its decision from `windowReadVerdict` (`away` / `idle` / `reading`, pure),
+which the tests drive with the live signal.
+
+**Accepted trade-offs** (adversarial review of #3349), each one a mark that comes later, never one
+that comes wrongly:
+
+- a screen reader's browse mode reads without pointer or key events reaching the page in some
+  combinations, and is not counted;
+- WebKit reports `movementX`/`movementY` as 0 on some hover-only moves, so a mouse moved without a
+  click may not count there;
+- gestures inside an iframe (an embedded video, a map) do not reach the window's listeners;
+- marks arrive at the FIRST gesture, so a reader who reads without touching anything is marked
+  when they next move;
+- `selectConversation` with no gesture (a landing) zeroes the LOCAL badge at once, while the server
+  count waits for the mark - the two agree again at the first gesture.
+
+Tests: `windowAttention.svelte.test.ts` (real `pointerdown`/`keydown`/`wheel`/`touchstart` events on
+the target flip the signal, a scripted one does not - the trust predicate is injected, happy-dom marks
+every dispatched event untrusted; an injected clock; idle 2 min then an arrival -> no mark; then a
+gesture -> mark; attended -> mark as before; native -> unchanged; the verdict table),
+`arrivalRuntime.attention.test.ts` (the singleton under a fake `Date`, reset between tests). The
+harness rule that follows: [cross-client-harness](../../tools/cross-client-harness/README.md#rules-that-make-a-result-trustworthy).
 
 **Owed readings.** Web: a conversation open in a focused window, hands off for 2 min, a message from
 another account -> the row stays bold, a notification is raised, the sender keeps "Envoye"; one mouse

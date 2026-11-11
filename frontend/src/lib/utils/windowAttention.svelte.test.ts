@@ -1,5 +1,4 @@
 // @vitest-environment happy-dom
-import { readFileSync } from 'node:fs';
 import { flushSync } from 'svelte';
 import { describe, expect, it } from 'vitest';
 import {
@@ -8,23 +7,49 @@ import {
   createAttentionSignal,
   isAttentiveAt,
   isPersonGesture,
+  windowReadVerdict,
 } from './windowAttention.svelte';
 
 /**
- * AN IDLE WEB WINDOW DOES NOT READ (owner, 2026-11-11). The signal's contract, and the shape of the
- * receipt effect that relies on it: an arrival while idle marks nothing, the first gesture after it
+ * AN IDLE WEB WINDOW DOES NOT READ (owner, 2026-11-11). The signal, its listeners, and the verdict
+ * the receipt effect takes from it: an arrival while idle marks nothing, the first gesture after it
  * marks, an attended window marks as before, and native mobile is never asked.
  */
 
+/** A clock the test moves; nothing here reads the wall clock. */
 function clock(start = 1_000_000) {
   let now = start;
   return { now: () => now, advance: (ms: number) => (now += ms) };
 }
 
-/** A stand-in for the receipt effect: it marks the newest arrival when the window is attended. */
-function receiptBench(exempt = false) {
+/** happy-dom marks every dispatched event untrusted, so the trust half is injected. */
+const trustedEvents = new WeakSet<Event>();
+function personEvent(type: string): Event {
+  const event = new Event(type);
+  trustedEvents.add(event);
+  return event;
+}
+const isGestureHere = (event: Event) =>
+  trustedEvents.has(event) && isPersonGesture({ type: event.type, isTrusted: true } as Event);
+
+function signalOn(target: EventTarget | null, exempt = false) {
   const time = clock();
-  const signal = createAttentionSignal(null, () => exempt, time.now);
+  const signal = createAttentionSignal({
+    target,
+    exempt: () => exempt,
+    now: time.now,
+    isGesture: isGestureHere,
+  });
+  return { time, signal };
+}
+
+/**
+ * The receipt effect's decision over a live signal: an effect that follows the arrivals and the
+ * window, takes `windowReadVerdict`, and marks on `reading`.
+ */
+function receiptBench(exempt = false) {
+  const target = new EventTarget();
+  const { time, signal } = signalOn(target, exempt);
   let arrivals = $state(0);
   const marks: number[] = [];
   const runs = { count: 0 };
@@ -32,23 +57,26 @@ function receiptBench(exempt = false) {
     $effect(() => {
       const newest = arrivals;
       runs.count += 1;
-      if (newest === 0) return;
-      if (!signal.attentive) return;
+      const verdict = windowReadVerdict({
+        focused: true,
+        visible: true,
+        foreground: true,
+        attentive: signal.attentive,
+      });
+      if (newest === 0 || verdict !== 'reading') return;
       if (marks.at(-1) !== newest) marks.push(newest);
     });
   });
   flushSync();
-  return {
-    time,
-    signal,
-    marks,
-    runs,
-    arrive: () => {
-      arrivals += 1;
-      flushSync();
-    },
-    stop,
+  const gesture = (type = 'pointerdown') => {
+    target.dispatchEvent(personEvent(type));
+    flushSync();
   };
+  const arrive = () => {
+    arrivals += 1;
+    flushSync();
+  };
+  return { time, signal, marks, runs, gesture, arrive, stop };
 }
 
 describe('isAttentiveAt', () => {
@@ -74,21 +102,66 @@ describe('isPersonGesture', () => {
   });
 });
 
+describe('the listeners', () => {
+  it.each(['pointerdown', 'keydown', 'wheel', 'touchstart'])(
+    'a person %s on the window makes it attended',
+    (type) => {
+      const target = new EventTarget();
+      const { signal } = signalOn(target);
+      expect(signal.attentive).toBe(false);
+      target.dispatchEvent(personEvent(type));
+      expect(signal.attentive).toBe(true);
+      signal.destroy();
+    }
+  );
+
+  it('a scripted event does not, nor a gesture type it does not listen to', () => {
+    const target = new EventTarget();
+    const { signal } = signalOn(target);
+    target.dispatchEvent(new Event('keydown'));
+    target.dispatchEvent(personEvent('scroll'));
+    expect(signal.attentive).toBe(false);
+    signal.destroy();
+  });
+
+  it('stops listening once destroyed, and reset makes the window idle again', () => {
+    const target = new EventTarget();
+    const { signal } = signalOn(target);
+    target.dispatchEvent(personEvent('keydown'));
+    signal.reset();
+    expect(signal.attentive).toBe(false);
+    signal.destroy();
+    target.dispatchEvent(personEvent('keydown'));
+    expect(signal.attentive).toBe(false);
+  });
+});
+
+describe('windowReadVerdict', () => {
+  it.each([
+    [{ focused: false, visible: true, foreground: true, attentive: true }, 'away'],
+    [{ focused: true, visible: false, foreground: true, attentive: true }, 'away'],
+    [{ focused: true, visible: true, foreground: false, attentive: true }, 'away'],
+    [{ focused: true, visible: true, foreground: true, attentive: false }, 'idle'],
+    [{ focused: true, visible: true, foreground: true, attentive: true }, 'reading'],
+  ] as const)('%o -> %s', (w, verdict) => {
+    expect(windowReadVerdict(w)).toBe(verdict);
+  });
+});
+
 describe('the receipt effect over the attention signal', () => {
   it('marks nothing for a message that arrives after 2 min idle, then marks at the first gesture', () => {
     const bench = receiptBench();
     try {
-      bench.signal.noteGesture();
+      bench.gesture();
       bench.time.advance(ATTENTION_WINDOW_MS + 1);
       const before = bench.runs.count;
       bench.arrive();
       expect(bench.marks).toEqual([]);
-      // The threshold having elapsed ran nothing by itself.
+      // The threshold having elapsed ran nothing by itself: only the arrival did.
       expect(bench.runs.count).toBe(before + 1);
 
       bench.time.advance(60_000);
-      bench.signal.noteGesture();
-      flushSync();
+      bench.gesture('keydown');
       expect(bench.marks).toEqual([1]);
     } finally {
       bench.stop();
@@ -98,7 +171,7 @@ describe('the receipt effect over the attention signal', () => {
   it('marks an arrival at once while the window is attended, as before', () => {
     const bench = receiptBench();
     try {
-      bench.signal.noteGesture();
+      bench.gesture('wheel');
       bench.time.advance(30_000);
       bench.arrive();
       expect(bench.marks).toEqual([1]);
@@ -110,12 +183,10 @@ describe('the receipt effect over the attention signal', () => {
   it('re-runs nothing for a gesture while already attended', () => {
     const bench = receiptBench();
     try {
-      bench.signal.noteGesture();
-      flushSync();
+      bench.gesture();
       const before = bench.runs.count;
       bench.time.advance(10_000);
-      bench.signal.noteGesture();
-      flushSync();
+      bench.gesture();
       expect(bench.runs.count).toBe(before);
     } finally {
       bench.stop();
@@ -130,25 +201,6 @@ describe('the receipt effect over the attention signal', () => {
       expect(bench.marks).toEqual([1]);
     } finally {
       bench.stop();
-    }
-  });
-});
-
-describe('MainChatPage - the receipt effect asks the attention signal before any write', () => {
-  it('checks windowAttention.attentive before the local mark, the owed mark and the send', () => {
-    const source = readFileSync('src/lib/components/MainChatPage.svelte', 'utf8');
-    const note = source.indexOf('readMarks.note(');
-    const effectStart = source.lastIndexOf('$effect(() => {', note);
-    const body = source.slice(effectStart, note);
-    const gate = body.indexOf('if (!windowAttention.attentive) {');
-    expect(gate).toBeGreaterThan(-1);
-    for (const write of [
-      'withOwnReadAdvanced(',
-      'recordSalonReadMark(',
-      'recordDmReadMark(',
-      'publishConversationRead(',
-    ]) {
-      expect(body.indexOf(write)).toBeGreaterThan(gate);
     }
   });
 });

@@ -55,7 +55,8 @@ export class GateRank {
   promote(): void {
     if (this.#lane === 'foreground') return;
     this.#lane = 'foreground';
-    for (const watcher of [...this.#watchers]) watcher();
+    // A snapshot: a watcher may unsubscribe itself (or another) while being told.
+    for (const watcher of Array.from(this.#watchers)) watcher();
   }
 
   /** Told when the rank is promoted; returns the unsubscribe. The gate's own use. */
