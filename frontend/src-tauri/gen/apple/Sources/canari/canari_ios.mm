@@ -626,7 +626,7 @@ static BOOL CanariInstallCaptureInteraction(void) {
       return NO;
     }
     AVCaptureEventInteraction *interaction =
-        [[AVCaptureEventInteraction alloc] initWithHandler:^(AVCaptureEvent *event) {
+        [[AVCaptureEventInteraction alloc] initWithEventHandler:^(AVCaptureEvent *event) {
           NSString *phase = nil;
           switch (event.phase) {
             case AVCaptureEventPhaseBegan:
