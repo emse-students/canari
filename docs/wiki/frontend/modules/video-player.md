@@ -471,3 +471,70 @@ judge) and it is not a clip with a duration - and takes the kit around it:
 | C | CanaReels (`variant="reel"`): tap = sound, hold = pause, the rail's speaker is the kit's | built - readings owed (a reel tap, a hold, a double-tap like on both phones) |
 | D | feed (`variant="feed"`) and chat (`variant="chat"`); `InlineVideo` deleted | built - readings owed (a feed tap and the expand chip, a chat disc, a hold that opens no sheet) |
 | E | the live viewer: the kit's speaker, tap = sound, no hold; a refused audible start no longer remembered as "off" | built - readings owed (a live tap and the speaker on both phones) |
+
+## A link slower than the video: one honest load (2026-11-11)
+
+**The defect** (slow-link chantier, [gap 6](../../backlog.d/slow-link-local-first-chantier.md)). On
+the owner's link (about 262 KB/s) a reel at about 318 KB/s stalled 29 times: every segment that
+landed was appended at once, the engine resumed on it, played its 3 s and starved again. A longer
+lookahead does not help - the buffer never grows past what the link brings - and the total waiting is
+about `size / link - duration` whatever the rule. Draft #3322 (an adaptive lookahead) was closed for
+that reason; its rate measurement and its fake-fetch tests were kept. Its wording also read the
+ratio backwards ("slower than 0.8x the media" for a test that fired at `media / link >= 0.8`, i.e.
+for a link up to 1.25x the media): every ratio here is `link / media`, said that way round.
+
+**The rule** (`utils/segmentedMediaStream.ts`, `holdTargetSeconds`). When `link / media < 1` and the
+element has fired `waiting`, the stream keeps fetching but APPENDS NOTHING until it holds, buffered
+plus kept back, `B >= R x (1 - link / media)` - `R` the playing time left - times a 1.1 margin, and
+never more than the slow cap (30 s or 6 MiB of media, whichever is less). It computes the same bound
+as `B >= (U / m) x (m / l - 1)` from the bytes `U` still to fetch, so it never needs the element's
+`duration`. Then it appends everything in one go and the element plays to the end. A slow link also
+fetches WITHOUT a pause up to that cap, rather than idling at the pacing's 10 s.
+
+**When a hold ends** - the precise claim (review of #3333). A hold starts only on a `waiting`. It ends
+at its target, or EARLIER, on purpose, when: the link is called fast again (slow below 1x, fast again
+only from 1.15x - the hysteresis is on the link's verdict, so a rate hovering around 1x flips
+nothing); the element is paused, played, sought into what it buffers (it fires `playing`) or
+detached; every segment is fetched (`fetchedAll`, a FACT - not `U` reaching 0, which a wrong or
+absent `ref.size`, or a partial last segment, would never let happen). **A drain, once started,
+appends everything held** and does not re-check the hold: those bytes are already here, and the
+burst is what the element was waiting for, so no new `waiting` can arise mid-burst. A failed range or
+append rejects `done` as before, and a closed stream holds nothing. The `[media-seg]` log says when a
+hold starts (with what is in and its target) and when it is released; that is its only trace.
+
+**The cap is a bound kept small, not a measured quota.** A hold appends all of it at once, so it is
+6 MiB (it was 12 in the first draft). The engines' quotas were not measured here; an append the
+engine refuses (`QuotaExceededError`) goes through `appendSegmentEvicting`, which trims what was
+played (keeping 10 s behind the playhead) and tries once more - tested on a drain.
+
+**The measure** (`utils/segmentedMediaReader.ts`, `httpRangeSource`). Each ranged read reports its
+bytes and the seconds from the moment `mediaRequestGate` GRANTED its slot to its last byte - the queue
+is not the link. The feed smooths them (half weight to the newest read; reads under 64 KiB are not
+samples). The media's rate is `size / durationMs`, else bytes appended over seconds buffered.
+
+**What the reader sees: nothing new - the owner's decision, 2026-11-11.** *"Tout doit etre invisible
+pour l'utilisateur."* A hold has no label, no percent and no control. The element is simply waiting,
+so the player draws what it draws for any wait (the reel's spinner on `waiting`, nothing new
+elsewhere). This replaces two things the lead had built the same day and that were removed before
+merge: a "Chargement pour une lecture sans coupure... n %" label, and a reversible "Lire quand meme"
+button that let the reader take the stalls instead. A link faster than the media never holds, so it
+starts as soon as before.
+
+**Measured in the model** (`segmentedMediaStream.slowLink.test.ts`: an element whose buffer grows by
+what is appended and whose playhead advances on a fake clock, resuming as soon as it has data, as an
+engine does; a link at a set rate). A 30-segment reel (99 s) at 318 KB/s on a 262 KB/s link: **29
+stalls before, 1 after** (the 6 MiB cap splits that long reel's wait in two: a first hold before it
+starts, one later); it starts at 27 s instead of 4.5 s and ends at 139.5 s instead of 138 s. On a 2
+MB/s link: 0 stalls, the same start to the clock's step. The same file pins the end below the target
+(an unknown size, a size declared too large), a refused append in a drain, a pause and a seek
+during a hold, and the cap. A hold is observed there as segments fetched and not yet appended.
+
+**What it does NOT do.** A reel whose autoplay is asked only at `loadedmetadata` (`variant="reel"`)
+has its first segment appended while paused, so it plays that segment and holds ONCE at its end;
+only an element already asked to play (a feed card on screen) holds before its first frame. A
+very long video on a very slow link meets the cap and holds again later. **The other route, a
+lower-bitrate rendition for a slow link, is not built**: it is the follow-up that would remove the
+wait itself rather than group it.
+
+**Readings owed.** A reel and a feed video on a throttled link (about 250 KB/s) on both phones: one
+wait, then no stop.
