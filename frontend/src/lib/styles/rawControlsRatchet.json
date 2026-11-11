@@ -994,11 +994,6 @@
     "select": 0,
     "input": 0
   },
-  "src/lib/components/shared/EnvironmentBanner.svelte": {
-    "button": 1,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/shared/FullScreenViewer.svelte": {
     "button": 2,
     "select": 0,

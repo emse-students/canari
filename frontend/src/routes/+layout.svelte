@@ -52,7 +52,6 @@
   import { bootSessionBlocks } from '$lib/stores/bootSession.svelte';
   import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
   import IdentitySplitOverlay from '$lib/components/shared/IdentitySplitOverlay.svelte';
-  import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { feedStoreAccess } from '$lib/posts/feedStore';
@@ -775,9 +774,6 @@
     class="app-banner-column z-(--z-banner) flex shrink-0 flex-col"
     inert={bootBlocked}
   >
-    <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
-         property of the whole deployment, so a transient notice must not push it off screen. -->
-    <EnvironmentBanner />
     {#if showMaintenanceAdminBanner}
       <MaintenanceAdminBanner />
     {/if}

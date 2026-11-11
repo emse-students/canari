@@ -56,7 +56,7 @@ const NAVBAR = read('../navigation/Navbar.svelte');
 const POSTS_PANEL = read('../posts/ConversationsMiniPanel.svelte');
 
 /** Everything that announces an app-wide fact, in the order the shell column renders them. */
-const WINDOW_SCALE_BANNERS = ['EnvironmentBanner', 'MaintenanceAdminBanner', 'MlsFatalErrorBanner'];
+const WINDOW_SCALE_BANNERS = ['MaintenanceAdminBanner', 'MlsFatalErrorBanner'];
 
 describe('--app-content-top - the one answer to "where does the content start"', () => {
   it('is the only thing in app.css that adds the bar height to an offset', () => {
