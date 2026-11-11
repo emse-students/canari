@@ -4,7 +4,7 @@
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount, tick, untrack } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
   import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import {
@@ -64,12 +64,13 @@
     encodeDrag,
     groupAssociationsByZone,
     moveZoneId,
-    planAssociationDrop,
-    planZoneReorder,
+    planDrop,
     type CarteDrag,
   } from '$lib/carte/editorDnd';
   import { barPublishAction, overflowActions, type OverflowAction } from '$lib/carte/publishAction';
   import { buildPublishedCarte, fingerprintPublishedCarte } from '$lib/carte/publish';
+  import { publishAfterSave } from '$lib/carte/publishAfterSave';
+  import ZoneGrip from '$lib/carte/ZoneGrip.svelte';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
   import { MonitorSmartphone } from '@lucide/svelte';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
@@ -93,9 +94,6 @@
     TextAlignEnd,
     ArrowLeft,
     Ellipsis,
-    Map as MapIcon,
-    Users,
-    GripVertical,
     PanelRightClose,
     PanelRightOpen,
     ZoomIn,
@@ -114,6 +112,9 @@
   import { m } from '$lib/paraglide/messages';
   import { portalWhile } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
+  import { inertAppShell } from '$lib/actions/inertAppShell';
+  import { gotoAppPath } from '$lib/navigation/gotoAppPath';
+  import { appPathFromPathname } from '$lib/utils/internalPath';
 
   let ready = $state(false);
   let loading = $state(true);
@@ -330,8 +331,11 @@
     await tick();
     if (!viewportEl) return;
     if (next === 'directory') {
-      viewportEl.scrollLeft = (dirBox.x + dirBox.w / 2) * viewScale - viewportWidth / 2;
-      viewportEl.scrollTop = (dirBox.y + dirBox.h / 2) * viewScale - viewportHeight / 2;
+      // The canvas is padded by CANVAS_PAD on every side, which shifts the poster's own origin.
+      viewportEl.scrollLeft =
+        CANVAS_PAD + (dirBox.x + dirBox.w / 2) * viewScale - viewportWidth / 2;
+      viewportEl.scrollTop =
+        CANVAS_PAD + (dirBox.y + dirBox.h / 2) * viewScale - viewportHeight / 2;
     } else {
       viewportEl.scrollLeft = 0;
       viewportEl.scrollTop = 0;
@@ -486,27 +490,41 @@
   );
 
   let newZoneLabel = $state('');
-  let zoneBusy = $state(false);
+  /** Zone writes queued or running; the add and delete buttons wait while it is above zero. */
+  let zonePending = $state(0);
+  const zoneBusy = $derived(zonePending > 0);
+  /** The tail of the zone writes: each one runs after the previous, in the order it was asked. */
+  let zoneQueue: Promise<void> = Promise.resolve();
   /** Bumped by a refused zone write: re-draws the inputs from the stored zones. */
   let zoneRefusals = $state(0);
 
-  /** Runs one zone write, then redraws the directory groups. */
-  async function zoneWrite(label: string, run: () => Promise<void>): Promise<void> {
-    if (!project || zoneBusy) return;
-    zoneBusy = true;
-    error = null;
-    try {
-      await run();
-      rebuildModel();
-      void refreshPublishFingerprint();
-      Log.d(`admin.carte.id.${label}`, { zones: zones.length });
-    } catch (e) {
-      Log.d(`admin.carte.id.${label} failed`, e);
-      error = m.common_save_error();
-      zoneRefusals++;
-    } finally {
-      zoneBusy = false;
-    }
+  /**
+   * Runs one zone write, then redraws the directory groups.
+   *
+   * QUEUED, never dropped: a rename commits on blur, and the blur that follows a click on the grip
+   * or on another row lands while the previous write is still running - dropping it lost the
+   * author's text without a trace.
+   */
+  function zoneWrite(label: string, run: () => Promise<void>): Promise<void> {
+    if (!project) return Promise.resolve();
+    zonePending++;
+    const job = zoneQueue.then(async () => {
+      error = null;
+      try {
+        await run();
+        rebuildModel();
+        void refreshPublishFingerprint();
+        Log.d(`admin.carte.id.${label}`, { zones: zones.length });
+      } catch (e) {
+        Log.d(`admin.carte.id.${label} failed`, e);
+        error = m.common_save_error();
+        zoneRefusals++;
+      } finally {
+        zonePending--;
+      }
+    });
+    zoneQueue = job;
+    return job;
   }
 
   function addZone(): Promise<void> {
@@ -553,18 +571,29 @@
     });
   }
 
-  /** Keyboard path of the zone drag: Up and Down on a zone's grip move it one step. */
-  function onZoneGripKey(e: KeyboardEvent, zone: PosterZone): void {
-    const delta = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
-    if (delta === 0) return;
-    e.preventDefault();
-    void applyZoneOrder(
-      moveZoneId(
-        zones.map((z) => z.id),
-        zone.id,
-        delta
-      )
+  /** What a screen reader hears after a keyed move (a polite live region in the panel). */
+  let zoneAnnouncement = $state('');
+
+  /**
+   * Keyboard path of the zone drag: the grip's Up and Down move the zone one step, and the new
+   * position is announced. The grip itself guards against a press while this write is running.
+   */
+  async function moveZone(zone: PosterZone, delta: -1 | 1): Promise<void> {
+    const ids = moveZoneId(
+      zones.map((z) => z.id),
+      zone.id,
+      delta
     );
+    if (!ids) return;
+    await applyZoneOrder(ids);
+    const position = zones.findIndex((z) => z.id === zone.id) + 1;
+    if (position === ids.indexOf(zone.id) + 1) {
+      zoneAnnouncement = m.carte_zone_moved({
+        label: zone.label,
+        position,
+        total: zones.length,
+      });
+    }
   }
 
   // -- Drag and drop in the panel: an association onto a zone, a zone onto a zone --
@@ -603,20 +632,15 @@
     e.preventDefault();
     const drag = decodeDrag(e.dataTransfer?.getData(CARTE_DRAG_MIME)) ?? dragging;
     endDrag();
-    const assignment = planAssociationDrop(drag, zoneId, classified.zoneOf);
-    if (assignment) {
-      Log.d('admin.carte.id.dropAssociation', assignment);
-      void writeEntries([assignment]);
-      return;
-    }
-    if (zoneId === null) return;
-    const order = planZoneReorder(
-      zones.map((z) => z.id),
+    const plan = planDrop(
       drag,
-      zoneId
+      zoneId,
+      zones.map((z) => z.id),
+      classified.zoneOf
     );
-    Log.d('admin.carte.id.dropZone', { zoneId, moved: order !== null });
-    void applyZoneOrder(order);
+    Log.d('admin.carte.id.drop', { zoneId, plan: plan?.kind ?? null });
+    if (plan?.kind === 'assign') void writeEntries(plan.rows);
+    else if (plan?.kind === 'reorder') void applyZoneOrder(plan.order);
   }
 
   /** Attaches a map left without a space by migration 147, then reopens it. */
@@ -765,12 +789,6 @@
    */
   let liveFingerprint = $state<string | null>(null);
   let savedFingerprintValue = $state<string | null>(null);
-  /** True only when BOTH are known AND they differ: an unknown answers nothing. */
-  const publicationStale = $derived(
-    liveFingerprint !== null &&
-      savedFingerprintValue !== null &&
-      liveFingerprint !== savedFingerprintValue
-  );
 
   /**
    * Recomputes the fingerprint of what would be published.
@@ -803,20 +821,32 @@
   /**
    * Publishes this poster to the public showcase (portail-etu), replacing whatever was live - the
    * server allows exactly one published map at a time.
+   *
+   * It saves FIRST, abandons if that save failed, and publishes the document read BEFORE the save,
+   * so an edit made while the save was in flight is never put online unsaved
+   * ({@link publishAfterSave}).
    */
+  const publishOnce = publishAfterSave({
+    snapshot: () => ({ key: fingerprint, params: $state.snapshot(publishParams()) }),
+    save: handleSave,
+    savedKey: () => savedFingerprint,
+    publish: async (params) => {
+      if (!project) return;
+      const carte = buildPublishedCarte(params);
+      const published = await fingerprintPublishedCarte(carte);
+      project = await publishPosterProject(project.id, carte, published);
+      liveFingerprint = published;
+    },
+  });
+
   async function handlePublish() {
     if (!project || publishing) return;
     Log.d('admin.carte.id.handlePublish', { projectId: project.id });
     publishing = true;
     error = null;
     try {
-      // A publish saves FIRST, and abandons if that save failed: putting a map online that no
-      // reopen could reproduce is worse than not publishing at all.
-      if (!(await handleSave())) return;
-      const carte = buildPublishedCarte(publishParams());
-      const fingerprint = await fingerprintPublishedCarte(carte);
-      project = await publishPosterProject(project.id, carte, fingerprint);
-      liveFingerprint = fingerprint;
+      const outcome = await publishOnce();
+      Log.d('admin.carte.id.handlePublish outcome', { outcome });
     } catch (e) {
       Log.d('admin.carte.id.handlePublish failed', e);
       const code = refusalCode(e);
@@ -865,7 +895,11 @@
     liveFingerprint,
     savedFingerprint: savedFingerprintValue,
   });
-  const barAction = $derived(barPublishAction(publicationFacts));
+  // Nothing is offered about a LIVE map until its saved fingerprint is known: before that the facts
+  // read "unknown", which asks for an update - a button that flashed on every open.
+  const barAction = $derived(
+    isPublished && savedFingerprintValue === null ? null : barPublishAction(publicationFacts)
+  );
 
   // The "..." menu: the rare actions, out of the bar's way (owner, 2026-11-11).
   let menuOpen = $state(false);
@@ -934,6 +968,35 @@
   let coarsePointer = $state(false);
   const canEdit = $derived(!coarsePointer);
 
+  // -- Leaving the editor with work that is not on the server --
+  /** Edits the server has not taken: a save is queued, running, or failed (the state still differs). */
+  const workPending = $derived(saving || unsavedChanges);
+
+  // In-app navigation: flush the save and WAIT for it, then go. A failed save keeps the author here,
+  // where its error is on screen. No timer: the autosave's 4 s is a debounce, never a promise.
+  beforeNavigate((nav) => {
+    if (!workPending || nav.willUnload || !nav.to) return;
+    nav.cancel();
+    const to = nav.to.url;
+    Log.d('admin.carte.id.beforeNavigate flushing the save', { to: to.pathname });
+    void handleSave().then((ok) => {
+      if (ok) void gotoAppPath(appPathFromPathname(to.pathname) + to.search + to.hash);
+      else Log.d('admin.carte.id.beforeNavigate save failed, staying');
+    });
+  });
+
+  // Closing the tab or following an external link cannot wait on a request: the browser's own
+  // prompt, and only while something is unsaved.
+  $effect(() => {
+    if (!workPending) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  });
+
   // An `$effect` rather than `onMount`: this one is async, and Svelte honours a returned teardown
   // only from a synchronous `onMount`. The subscription would never be detached.
   $effect(() => {
@@ -961,6 +1024,7 @@
   <div
     use:portalWhile={true}
     use:coversScreen
+    use:inertAppShell
     class="bg-cn-bg text-text-main fixed inset-0 z-(--z-page-overlay) flex flex-col pt-(--safe-area-inset-top,0px)"
   >
     {#if loading}
@@ -1032,6 +1096,7 @@
           <SegmentedControl
             class="mx-2 w-48 shrink-0"
             label={m.carte_view_label()}
+            idPrefix="carte-editor-"
             value={view}
             items={[
               { key: 'map', label: m.carte_tab_map() },
@@ -1211,6 +1276,10 @@
             bind:this={viewportEl}
             bind:clientWidth={viewportWidth}
             bind:clientHeight={viewportHeight}
+            role="tabpanel"
+            id="carte-editor-tabpanel-{view}"
+            aria-labelledby="carte-editor-tab-{view}"
+            tabindex="-1"
             class="min-h-0 flex-1 overflow-auto"
           >
             <div class="flex min-h-full w-max min-w-full" style:padding="{CANVAS_PAD}px">
@@ -1644,6 +1713,8 @@
                   <p class="text-text-muted text-xs">{m.carte_assos_empty()}</p>
                 {:else}
                   <p class="text-text-muted text-xs">{m.carte_assos_drag_hint()}</p>
+                  <!-- The keyed move of a zone has no other feedback for a screen reader. -->
+                  <p class="sr-only" aria-live="polite">{zoneAnnouncement}</p>
                   <!-- Re-keyed on a refused write: a switch or a label the server did not take is
                        drawn from what the map stores again. -->
                   {#key `${entryRefusals}-${zoneRefusals}`}
@@ -1660,41 +1731,36 @@
                               ? 'bg-accent/15 ring-accent/60 ring-2'
                               : ''}"
                             ondragover={(e) => overZone(e, group.zoneId)}
-                            ondragleave={() => {
+                            ondragleave={(e) => {
+                              // Moving onto a child fires dragleave on the group first: only a
+                              // pointer that really left it clears the highlight.
+                              const into = e.relatedTarget;
+                              if (into instanceof Node && e.currentTarget.contains(into)) return;
                               if (dropTarget === (group.zoneId ?? '')) dropTarget = null;
                             }}
                             ondrop={(e) => dropOnZone(e, group.zoneId)}
                           >
                             {#if zone}
                               <div data-zone-head class="flex items-center gap-1 px-0.5">
-                                <Button
-                                  variant="ghost"
-                                  size="compact"
-                                  icon
-                                  class="cursor-grab"
-                                  draggable="true"
-                                  disabled={zoneBusy}
-                                  aria-label={m.carte_zone_drag({ label: zone.label })}
-                                  title={m.carte_zone_drag({ label: zone.label })}
-                                  ondragstart={(e: DragEvent) => {
+                                <ZoneGrip
+                                  zoneId={zone.id}
+                                  label={m.carte_zone_drag({ label: zone.label })}
+                                  onMove={(delta) => moveZone(zone, delta)}
+                                  onDragStart={(e) => {
                                     const head = (e.currentTarget as HTMLElement).closest(
                                       '[data-zone-head]'
                                     );
                                     if (head) e.dataTransfer?.setDragImage(head, 12, 12);
                                     startDrag(e, { kind: 'zone', id: zone.id });
                                   }}
-                                  ondragend={endDrag}
-                                  onkeydown={(e: KeyboardEvent) => onZoneGripKey(e, zone)}
-                                >
-                                  <GripVertical size={14} />
-                                </Button>
+                                  onDragEnd={endDrag}
+                                />
                                 <Input
                                   value={zone.label}
                                   maxlength={120}
                                   aria-label={m.carte_zone_rename({ label: zone.label })}
                                   onblur={(e: FocusEvent & { currentTarget: HTMLInputElement }) =>
                                     void renameZone(zone, e.currentTarget.value)}
-                                  disabled={zoneBusy}
                                   density="compact"
                                   class="min-w-0 flex-1 font-bold"
                                 />

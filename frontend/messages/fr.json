@@ -2246,7 +2246,7 @@
   "carte_asso_shown": "Afficher {name} sur la carte",
   "carte_zone_drag": "Déplacer la zone {label} : glisser, ou flèches haut et bas",
   "carte_zone_drop_here": "Glisser une association ici",
-  "carte_zone_count": "{count} sur la carte",
+  "carte_zone_moved": "Zone {label} : position {position} sur {total}",
   "carte_assos_drag_hint": "Glissez une association sur une zone pour l'y classer.",
   "carte_overlaps_title": [
     {

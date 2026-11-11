@@ -117,3 +117,28 @@ export function groupAssociationsByZone<T extends { id: string; name: string }>(
       );
   return [null, ...zoneIds].map((zoneId) => ({ zoneId, items: bucket(zoneId) }));
 }
+
+/** What a drop writes: switch rows for an association, a new order for a zone. */
+export type DropPlan =
+  | { kind: 'assign'; rows: ZoneAssignment[] }
+  | { kind: 'reorder'; order: string[] };
+
+/**
+ * The ONE decision a drop on a zone group makes, so the page only executes it: an association
+ * dropped on a zone is the `setPosterEntries` payload `rows`, a zone dropped on a zone is the new
+ * order, and anything that changes nothing is `null` (no write is sent for it).
+ *
+ * @param targetZoneId - The zone dropped on; `null` for the "no zone" group.
+ */
+export function planDrop(
+  drag: CarteDrag | null,
+  targetZoneId: string | null,
+  zoneIds: readonly string[],
+  zoneOf: Readonly<Record<string, string | null>>
+): DropPlan | null {
+  const assignment = planAssociationDrop(drag, targetZoneId, zoneOf);
+  if (assignment) return { kind: 'assign', rows: [assignment] };
+  if (targetZoneId === null) return null;
+  const order = planZoneReorder(zoneIds, drag, targetZoneId);
+  return order ? { kind: 'reorder', order } : null;
+}

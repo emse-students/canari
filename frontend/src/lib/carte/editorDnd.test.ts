@@ -5,6 +5,7 @@ import {
   groupAssociationsByZone,
   moveZoneId,
   planAssociationDrop,
+  planDrop,
   planZoneReorder,
 } from './editorDnd';
 
@@ -88,5 +89,33 @@ describe('groupAssociationsByZone', () => {
       ['z1', ['1', '2']],
       ['z2', []],
     ]);
+  });
+});
+
+describe('planDrop - what the page writes for a drop', () => {
+  const zoneIds = ['z1', 'z2'];
+  const zoneOf = { a: null, b: 'z1' };
+  it('a row dropped on a zone is the setPosterEntries payload', () => {
+    expect(planDrop({ kind: 'asso', id: 'a' }, 'z2', zoneIds, zoneOf)).toEqual({
+      kind: 'assign',
+      rows: [{ associationId: 'a', zoneId: 'z2' }],
+    });
+  });
+  it('a row dropped on the no-zone group clears its zone', () => {
+    expect(planDrop({ kind: 'asso', id: 'b' }, null, zoneIds, zoneOf)).toEqual({
+      kind: 'assign',
+      rows: [{ associationId: 'b', zoneId: null }],
+    });
+  });
+  it('a zone dropped on a zone is the new order', () => {
+    expect(planDrop({ kind: 'zone', id: 'z1' }, 'z2', zoneIds, zoneOf)).toEqual({
+      kind: 'reorder',
+      order: ['z2', 'z1'],
+    });
+  });
+  it('changes nothing: same zone, zone on the no-zone group, foreign drag', () => {
+    expect(planDrop({ kind: 'asso', id: 'b' }, 'z1', zoneIds, zoneOf)).toBeNull();
+    expect(planDrop({ kind: 'zone', id: 'z1' }, null, zoneIds, zoneOf)).toBeNull();
+    expect(planDrop(null, 'z1', zoneIds, zoneOf)).toBeNull();
   });
 });

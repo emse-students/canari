@@ -111,12 +111,26 @@ ne prend qu'une petite partie de l'ecran"*. It was reworked in depth (`routes/ad
 - **Associations and zones are one list.** A zone is a header the rows hang under; a row is a small
   checkbox (on the map or not), the name and a short zone picker. Dragging a row onto a zone files
   it there, dragging a zone's grip onto another zone reorders them. The decisions are pure
-  functions in `carte/editorDnd.ts` (`planAssociationDrop`, `planZoneReorder`, `moveZoneId`,
-  `groupAssociationsByZone`) and a no-op drop writes nothing. **Keyboard path:** the zone picker on
-  every row, and Up/Down on a zone's grip.
+  functions in `carte/editorDnd.ts` (`planDrop` - the one decision a drop makes, built on
+  `planAssociationDrop` and `planZoneReorder` - `moveZoneId`, `groupAssociationsByZone`) and a
+  no-op drop writes nothing. **Keyboard path:** the zone picker on every row, and Up/Down on a zone's
+  grip (`carte/ZoneGrip.svelte`): one step per press, any number of presses in a row (the grip is
+  never disabled during the write, a press while one is running is ignored, focus is handed back
+  after the move), the new position announced in a polite live region. `draggable` sits on a
+  wrapper, not the button (Firefox). Zone writes are QUEUED, so a rename's blur during another write
+  is run after it rather than lost.
+- **Leaving never loses an edit.** An in-app navigation with unsaved or saving work is cancelled,
+  the save is flushed and awaited, and the navigation resumes only if it succeeded (a failed save
+  keeps the author on the page with its error). Closing the tab shows the browser's prompt, only
+  while something is unsaved. While the editor is mounted the app shell is `inert`
+  (`actions/inertAppShell.ts`), so Tab and screen readers do not reach the page behind it.
 - **Updating the publication needs no server change.** `publish` is already a replacement (one
   transaction clears the space's live map and sets this one), so "Mettre à jour la publication" is
-  the same call as Publier: save first, publish the saved state, record its fingerprint. The bar
+  the same call as Publier: save first, publish the saved state, record its fingerprint
+  (`carte/publishAfterSave.ts`: the document is read BEFORE the save and published only if the
+  save wrote that state, so an edit made while the save is in flight is never published unsaved; a
+  failed save publishes nothing; a double click publishes once). The bar offers nothing about a LIVE
+  map until its saved fingerprint is computed, so the button does not flash on open. The bar
   shows it when the live map is OLDER than the saved one **or cannot be compared** (a map published
   before the fingerprint has none: unknown is never "current", see above); when it is current, the
   "..." menu still offers it. The rule is `carte/publishAction.ts`.

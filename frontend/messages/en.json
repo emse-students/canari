@@ -2214,7 +2214,7 @@
   "carte_asso_shown": "Show {name} on the map",
   "carte_zone_drag": "Move the zone {label}: drag it, or use the up and down arrows",
   "carte_zone_drop_here": "Drop an association here",
-  "carte_zone_count": "{count} on the map",
+  "carte_zone_moved": "Zone {label}: position {position} of {total}",
   "carte_assos_drag_hint": "Drag an association onto a zone to file it there.",
   "carte_overlaps_title": [
     {
