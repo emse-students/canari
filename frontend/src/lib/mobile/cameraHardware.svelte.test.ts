@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync } from 'svelte';
 import {
+  CAMERA_BRIDGE_EVENT,
   CAMERA_KEY_EVENT,
   DEVICE_ANGLE_EVENT,
   captureTurn,
@@ -126,12 +127,13 @@ describe('the flag native holds', () => {
     const release = holdCameraHardware('camera', (p) => keys.push(p));
     key('down');
     key('up');
+    key('down');
     key('cancel');
     key('sideways');
     release();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     key('down');
-    expect(keys).toEqual(['down', 'up', 'cancel']);
+    expect(keys).toEqual(['down', 'up', 'down', 'cancel']);
   });
 
   it('a second camera keeps the flag up when the first releases', () => {
@@ -165,7 +167,7 @@ describe('the flag native holds', () => {
     release();
   });
 
-  it('the phone turn follows the sensor while armed, and starts upright at the next arming', () => {
+  it('the phone turn follows the sensor, and outlives a disarm (a review) for the next shot', () => {
     const release = holdCameraHardware('camera', () => {});
     angle(85);
     flushSync();
@@ -173,7 +175,57 @@ describe('the flag native holds', () => {
     angle(40);
     expect(deviceTurn.quadrant).toBe(90);
     release();
-    expect(deviceTurn.quadrant).toBeNull();
+    // Cleared only when the camera UNMOUNTS (useCameraHardware), never by a release.
+    expect(deviceTurn.quadrant).toBe(90);
+  });
+
+  it('a post to a bridge not registered yet is not cached, and the bridge arrival says it again', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const set = (window as Win).canariCamera!.set;
+    delete (window as Win).canariCamera;
+    const release = holdCameraHardware('camera', () => {});
+    expect(sent).toEqual([]);
+    (window as Win).canariCamera = { set };
+    window.dispatchEvent(new CustomEvent(CAMERA_BRIDGE_EVENT));
+    expect(sent).toEqual(['on']);
+    release();
+    expect(sent).toEqual(['on', 'off']);
+  });
+
+  it("a release with a key held cancels the hold, and the late up is nobody's", () => {
+    const keys: string[] = [];
+    const release = holdCameraHardware('camera', (p) => keys.push(p));
+    key('down');
+    release();
+    expect(keys).toEqual(['down', 'cancel']);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    key('up');
+    expect(keys).toEqual(['down', 'cancel']);
+  });
+
+  it('the app leaving the screen with a key held cancels the hold; its up after the return is dropped', () => {
+    const keys: string[] = [];
+    const release = holdCameraHardware('camera', (p) => keys.push(p));
+    key('down');
+    foreground(false);
+    expect(keys).toEqual(['down', 'cancel']);
+    foreground(true);
+    key('up');
+    expect(keys).toEqual(['down', 'cancel']);
+    // A new press after the return is a press again.
+    key('down');
+    key('up');
+    expect(keys).toEqual(['down', 'cancel', 'down', 'up']);
+    release();
+  });
+
+  it('a release with no key held sends nothing to the holder', () => {
+    const keys: string[] = [];
+    const release = holdCameraHardware('camera', (p) => keys.push(p));
+    key('down');
+    key('up');
+    release();
+    expect(keys).toEqual(['down', 'up']);
   });
 
   it('posts nothing on the web', () => {

@@ -11,6 +11,7 @@ import {
   coverCropRect,
   cropFor,
   draw,
+  effectiveTurn,
   FramedStream,
   type FrameSource,
   framedOutputSize,
@@ -382,6 +383,45 @@ describe('the turn of a capture made with the phone sideways (owner, 2026-11-11)
       'drawImage',
       'restore',
     ]);
+  });
+
+  it('an engine that already turned the frame to the device is not turned twice', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const portraitBox = { width: 360, height: 640 };
+    // The expected case: a portrait frame in a portrait preview, turned.
+    expect(effectiveTurn({ width: 720, height: 1280 }, portraitBox, 90)).toBe(90);
+    expect(error).not.toHaveBeenCalled();
+    // A landscape frame in a portrait preview: refused at ERROR, the frame kept as it came.
+    expect(effectiveTurn({ width: 1280, height: 720 }, portraitBox, 270)).toBe(0);
+    expect(error).toHaveBeenCalledTimes(1);
+    // No quarter turn asked: nothing to refuse.
+    expect(effectiveTurn({ width: 1280, height: 720 }, portraitBox, 0)).toBe(0);
+    expect(effectiveTurn({ width: 1280, height: 720 }, portraitBox, 180)).toBe(180);
+    expect(error).toHaveBeenCalledTimes(1);
+    error.mockRestore();
+  });
+
+  it('a photo of a frame the engine already turned is not turned again', async () => {
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({
+        save: vi.fn(),
+        restore: vi.fn(),
+        translate: vi.fn(),
+        rotate: vi.fn(),
+        scale: vi.fn(),
+        drawImage: vi.fn(),
+      }),
+      toDataURL: () => `data:image/jpeg;base64,${btoa('jpeg')}`,
+    };
+    vi.spyOn(document, 'createElement').mockReturnValueOnce(canvas as unknown as HTMLElement);
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const video = { videoWidth: 1280, videoHeight: 720 } as HTMLVideoElement;
+    await takeFramedPhoto(video, { width: 360, height: 640, dpr: 2, mirror: false, turn: 90 });
+    expect(canvas.height).toBeGreaterThan(canvas.width);
+    vi.restoreAllMocks();
   });
 
   it('a photo made turned is a landscape file', async () => {

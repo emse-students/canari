@@ -305,6 +305,12 @@ class MainActivity : TauriActivity() {
      */
     @Volatile private var cameraArmed = false
 
+    /**
+     * The volume keys whose `down` the camera took and whose `up` has not come: their repeats and
+     * their `up` stay the camera's even after a disarm ([cameraKeyAction]). UI thread only.
+     */
+    private val cameraKeysHeld = mutableSetOf<Int>()
+
     /** The angle last sent to the page, null until the first reading of this arming. */
     private var cameraAngleSent: Int? = null
 
@@ -379,10 +385,19 @@ class MainActivity : TauriActivity() {
      * every other key, the platform's own path runs.
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        when (cameraKeyAction(cameraArmed, event.keyCode, event.action, event.repeatCount)) {
+        val held = event.keyCode in cameraKeysHeld
+        val action = cameraKeyAction(cameraArmed, held, event.keyCode, event.action, event.repeatCount)
+        if (event.action == KeyEvent.ACTION_UP) cameraKeysHeld.remove(event.keyCode)
+        when (action) {
             CameraKeyAction.PASS -> return super.dispatchKeyEvent(event)
-            CameraKeyAction.SWALLOW -> return true
+            CameraKeyAction.SWALLOW -> {
+                if (!cameraArmed && event.action == KeyEvent.ACTION_UP) {
+                    Log.d("MainActivity", "volume key ${event.keyCode} up after a disarm: swallowed, the page cancelled the hold")
+                }
+                return true
+            }
             CameraKeyAction.PRESS -> {
+                cameraKeysHeld.add(event.keyCode)
                 Log.d("MainActivity", "volume key ${event.keyCode} down: the camera's shutter press")
                 pushCameraEvent("canari:camera-key", "{phase:'down'}")
             }

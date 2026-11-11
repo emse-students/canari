@@ -18,30 +18,40 @@ class CameraHardwareTest {
     @Test
     fun aVolumeKeyIsTheSystemsWhileTheCameraIsNotArmed() {
         for (key in listOf(up, down)) {
-            assertEquals(CameraKeyAction.PASS, cameraKeyAction(false, key, Keys.ACTION_DOWN, 0))
-            assertEquals(CameraKeyAction.PASS, cameraKeyAction(false, key, Keys.ACTION_UP, 0))
+            assertEquals(CameraKeyAction.PASS, cameraKeyAction(false, false, key, Keys.ACTION_DOWN, 0))
+            assertEquals(CameraKeyAction.PASS, cameraKeyAction(false, false, key, Keys.ACTION_UP, 0))
         }
     }
 
     @Test
     fun armedEitherVolumeKeyIsAPressThenARelease() {
         for (key in listOf(up, down)) {
-            assertEquals(CameraKeyAction.PRESS, cameraKeyAction(true, key, Keys.ACTION_DOWN, 0))
-            assertEquals(CameraKeyAction.RELEASE, cameraKeyAction(true, key, Keys.ACTION_UP, 0))
+            assertEquals(CameraKeyAction.PRESS, cameraKeyAction(true, false, key, Keys.ACTION_DOWN, 0))
+            assertEquals(CameraKeyAction.RELEASE, cameraKeyAction(true, false, key, Keys.ACTION_UP, 0))
         }
     }
 
     @Test
     fun aHeldKeysRepeatsAreSwallowedNeverSentAndNeverTheSystems() {
-        assertEquals(CameraKeyAction.SWALLOW, cameraKeyAction(true, down, Keys.ACTION_DOWN, 1))
-        assertEquals(CameraKeyAction.SWALLOW, cameraKeyAction(true, down, Keys.ACTION_DOWN, 30))
+        assertEquals(CameraKeyAction.SWALLOW, cameraKeyAction(true, false, down, Keys.ACTION_DOWN, 1))
+        assertEquals(CameraKeyAction.SWALLOW, cameraKeyAction(true, false, down, Keys.ACTION_DOWN, 30))
+    }
+
+    @Test
+    fun aKeyHeldWhenTheCameraDisarmsStaysSwallowedToItsUpAndNothingIsSent() {
+        assertEquals(CameraKeyAction.SWALLOW, cameraKeyAction(false, true, down, Keys.ACTION_DOWN, 5))
+        assertEquals(CameraKeyAction.SWALLOW, cameraKeyAction(false, true, down, Keys.ACTION_UP, 0))
+        // Armed again before the up: its repeats stay swallowed, its up is the release.
+        assertEquals(CameraKeyAction.SWALLOW, cameraKeyAction(true, true, down, Keys.ACTION_DOWN, 6))
+        assertEquals(CameraKeyAction.RELEASE, cameraKeyAction(true, true, down, Keys.ACTION_UP, 0))
     }
 
     @Test
     fun everyOtherKeyPassesEvenArmed() {
         val back = 4
-        assertEquals(CameraKeyAction.PASS, cameraKeyAction(true, back, Keys.ACTION_DOWN, 0))
-        assertEquals(CameraKeyAction.PASS, cameraKeyAction(true, back, Keys.ACTION_UP, 0))
+        assertEquals(CameraKeyAction.PASS, cameraKeyAction(true, false, back, Keys.ACTION_DOWN, 0))
+        assertEquals(CameraKeyAction.PASS, cameraKeyAction(true, false, back, Keys.ACTION_UP, 0))
+        assertEquals(CameraKeyAction.PASS, cameraKeyAction(false, true, back, Keys.ACTION_UP, 0))
     }
 
     @Test

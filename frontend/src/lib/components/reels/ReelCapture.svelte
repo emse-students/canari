@@ -849,6 +849,12 @@
    * it only while the camera's live preview is in front (`cameraHardware.svelte.ts`).
    */
   function onVolumeKey(phase: CameraKeyPhase) {
+    if (destroyed) {
+      // The camera's release cancels a held key at its teardown; the screen is already gone and its
+      // own teardown abandoned the take.
+      console.debug(`[reel-capture] volume ${phase} after the screen was torn down - ignored`);
+      return;
+    }
     const event = hardwareShutterEvent(phase, performance.now(), !shutterDisabled);
     if (!event) {
       console.debug(`[reel-capture] volume ${phase} refused: the shutter is disabled`);

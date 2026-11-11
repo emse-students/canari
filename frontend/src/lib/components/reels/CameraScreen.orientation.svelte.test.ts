@@ -17,6 +17,7 @@ import {
 import {
   CAMERA_KEY_EVENT,
   DEVICE_ANGLE_EVENT,
+  deviceTurn,
   resetCameraHardwareForTest,
 } from '$lib/mobile/cameraHardware.svelte';
 import CameraScreen from './CameraScreen.svelte';
@@ -78,6 +79,7 @@ afterEach(() => {
 async function mountCamera(props: {
   recording: boolean;
   paused?: boolean;
+  deferOpen?: boolean;
   onvolumekey?: (phase: string) => void;
 }) {
   const session = new CameraSession(() => Promise.resolve(liveStream()));
@@ -92,6 +94,9 @@ async function mountCamera(props: {
       },
       get paused() {
         return props.paused ?? false;
+      },
+      get deferOpen() {
+        return props.deferOpen ?? false;
       },
       get onvolumekey() {
         return props.onvolumekey;
@@ -159,6 +164,63 @@ describe('CameraScreen - the camera keeps its layout (owner, 2026-11-11)', () =>
     props.paused = true;
     flushSync();
     expect(camera).toEqual(['on', 'off']);
+  });
+
+  it('drops the volume keys while the gallery picker (deferOpen) is over the preview', async () => {
+    const keys: string[] = [];
+    const props = $state({
+      recording: false,
+      deferOpen: false,
+      onvolumekey: (phase: string) => keys.push(phase),
+    });
+    await mountCamera(props);
+    expect(camera).toEqual(['on']);
+    props.deferOpen = true;
+    flushSync();
+    expect(camera).toEqual(['on', 'off']);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    window.dispatchEvent(new CustomEvent(CAMERA_KEY_EVENT, { detail: { phase: 'down' } }));
+    expect(keys).toEqual([]);
+    props.deferOpen = false;
+    flushSync();
+    expect(camera).toEqual(['on', 'off', 'on']);
+  });
+
+  it('keeps the phone turn across a review, and forgets it at unmount', async () => {
+    const props = $state({ recording: false, paused: false });
+    const { app, target } = await mountCamera(props);
+    window.dispatchEvent(new CustomEvent(DEVICE_ANGLE_EVENT, { detail: { degrees: 270 } }));
+    flushSync();
+    props.paused = true;
+    flushSync();
+    const section = target.querySelector<HTMLElement>('section')!;
+    expect(section.dataset.cameraGlyphRotation).toBe('90');
+    mounted.pop();
+    unmount(app);
+    expect(deviceTurn.quadrant).toBeNull();
+  });
+
+  it("re-reads the screen's angle at a screen.orientation change (a tablet's 180-degree flip)", async () => {
+    const api = Object.assign(new EventTarget(), { angle: 90 });
+    const original = Object.getOwnPropertyDescriptor(screen, 'orientation');
+    Object.defineProperty(screen, 'orientation', { configurable: true, get: () => api });
+    try {
+      const { target } = await mountCamera({ recording: false });
+      // A tablet's layout turned with the phone (angle 90, phone 270): nothing to turn.
+      window.dispatchEvent(new CustomEvent(DEVICE_ANGLE_EVENT, { detail: { degrees: 270 } }));
+      flushSync();
+      const section = target.querySelector<HTMLElement>('section')!;
+      expect(section.dataset.cameraGlyphRotation).toBe('0');
+      // Flipped to the other landscape side while the sensor's quadrant is still being decided.
+      api.angle = 270;
+      api.dispatchEvent(new Event('change'));
+      flushSync();
+      // A half turn: either way round is the short way; the tie goes backwards.
+      expect(section.dataset.cameraGlyphRotation).toBe('-180');
+    } finally {
+      if (original) Object.defineProperty(screen, 'orientation', original);
+      else delete (screen as unknown as Record<string, unknown>).orientation;
+    }
   });
 
   it('drops the volume keys at unmount, deterministically', async () => {

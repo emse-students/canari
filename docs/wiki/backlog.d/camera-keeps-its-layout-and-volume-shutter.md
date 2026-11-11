@@ -39,5 +39,15 @@ Compile iOS is the first compile of the iOS half.
   question**: Apple delivers these events only to an app using the camera, and this app's camera is
   WebKit's `getUserMedia`. If no `volume button` line comes and the volume moves, WebKit's capture
   does not count - say it, and the iOS half is withdrawn rather than patched.
+- **iOS, the frame's orientation** (next to the question above, on the same iPhone 12 session): with
+  the phone sideways, the `[framed-capture] photo ... from WxH` line must show a PORTRAIT frame
+  (`W < H`) and `turn=90` or `270`. A line `the frame WxH is already turned against the box` means
+  WebKit delivers frames turned to the device: the guard then keeps the frame as it came, and the
+  turn is the wrong mechanism on iOS - say it.
+- **A hold cut short**: hold a volume key to film, then press Home - the take is kept in the review
+  on return, and on Android the volume did not move (`up after a disarm: swallowed`). Open the
+  gallery picker and press a volume key behind it: no photo, the volume moves (`disarmed`).
+- **During a call** (accepted, 2026-11-11): with a call running, the camera's volume keys are its
+  shutter; the call's volume works again as soon as the camera is closed.
 - **The sensor ignores the rotation lock**: with the lock ON, the glyphs still turn (Android
   `OrientationEventListener`, iOS `CMMotionManager`).

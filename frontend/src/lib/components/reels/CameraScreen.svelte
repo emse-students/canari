@@ -149,28 +149,45 @@
 
   /**
    * THE FLAG NATIVE HOLDS FOR THE CAMERA IN FRONT: the volume keys are the shutter and the
-   * accelerometer says how the phone is held - armed only while the preview is live and not held
-   * off by a review, released by this effect's teardown (an unmount included).
+   * accelerometer says how the phone is held - armed only while the preview is live and IN FRONT:
+   * not held off by a review (`paused`), and not under the gallery picker or anything the owner
+   * opened over it (`deferOpen`; iOS's PHPicker runs in the app's own process, so a key pressed
+   * behind it would shoot). Released by this effect's teardown (an unmount included).
    */
   useCameraHardware(
     'camera',
-    () => session.phase === 'live' && !paused,
+    () => session.phase === 'live' && !paused && !deferOpen,
     (phase) => onvolumekey?.(phase)
   );
 
   /** `screen.orientation.angle`: 0 on a phone locked upright; a tablet's layout may still turn. */
-  function screenAngle(): number {
+  function readScreenAngle(): number {
     return typeof screen !== 'undefined' ? (screen.orientation?.angle ?? 0) : 0;
   }
+
+  /**
+   * The screen's angle, re-read at every `screen.orientation` change: a tablet's 180-degree flip
+   * between its two landscape sides changes the angle and NOT the viewport's orientation, so the
+   * viewport alone would leave the glyphs on the old turn.
+   */
+  let screenAngle = $state(readScreenAngle());
+  $effect(() => {
+    const orientationApi = typeof screen !== 'undefined' ? screen.orientation : undefined;
+    if (!orientationApi || typeof orientationApi.addEventListener !== 'function') return;
+    const onChange = () => {
+      screenAngle = readScreenAngle();
+      console.debug(`[camera] the screen turned to ${screenAngle}`);
+    };
+    orientationApi.addEventListener('change', onChange);
+    return () => orientationApi.removeEventListener('change', onChange);
+  });
 
   /**
    * How far a capture is turned to come out upright: the phone's turn as the sensor reads it, less
    * what the screen turned itself. A photo or take made with the phone sideways is a LANDSCAPE file.
    */
   function currentTurn(): Quadrant {
-    // Read for its reactivity: a tablet's turn changes `screen.orientation.angle` with it.
-    void viewportOrientation.landscape;
-    return captureTurn(deviceTurn.quadrant, screenAngle());
+    return captureTurn(deviceTurn.quadrant, screenAngle);
   }
 
   /**

@@ -212,6 +212,36 @@ export function cropFor(video: HTMLVideoElement, box: PreviewBox): { crop: CropR
   };
 }
 
+/**
+ * The turn a capture of `frame` really takes. The turn ASSUMES the engine delivers the frame upright
+ * for the SCREEN - a portrait frame in a portrait preview - and that the world lies on its side in
+ * it. An engine that delivers the frame already turned to the DEVICE (a landscape frame in a portrait
+ * preview: suspected of WebKit, unverified) would be turned twice. That case is refused at ERROR -
+ * it names a broken assumption, owed an iPhone reading - and the capture keeps the frame as it came.
+ * A square frame or box says nothing either way: the turn stands.
+ */
+export function effectiveTurn(frame: Size, box: Size, turn: Quadrant): Quadrant {
+  if (turn !== 90 && turn !== 270) return turn;
+  const frameLandscape = frame.width > frame.height;
+  const boxLandscape = box.width > box.height;
+  const squareish = frame.width === frame.height || box.width === box.height;
+  if (squareish || frameLandscape === boxLandscape) return turn;
+  console.error(
+    `[framed-capture] the frame ${frame.width}x${frame.height} is already turned against the box ` +
+      `${box.width}x${box.height}: the engine follows the device, the turn ${turn} is not applied`
+  );
+  return 0;
+}
+
+/** The turn {@link effectiveTurn} keeps for a capture of `video` in `box`. */
+function turnFor(video: HTMLVideoElement, box: PreviewBox): Quadrant {
+  return effectiveTurn(
+    { width: video.videoWidth, height: video.videoHeight },
+    { width: box.width, height: box.height },
+    box.turn ?? 0
+  );
+}
+
 /** The canvas a capture of `out` is drawn into once turned by `turn`: a quarter turn swaps the sides. */
 export function turnedSize(out: Size, turn: Quadrant = 0): Size {
   return turn === 90 || turn === 270 ? { width: out.height, height: out.width } : out;
@@ -273,7 +303,7 @@ export function draw(
  */
 export function takeFramedPhoto(video: HTMLVideoElement, box: PreviewBox): Promise<Blob | null> {
   const { crop, out } = cropFor(video, box);
-  const turn = box.turn ?? 0;
+  const turn = turnFor(video, box);
   const file = turnedSize(out, turn);
   const canvas = document.createElement('canvas');
   canvas.width = file.width;
@@ -308,7 +338,7 @@ export function thumbnailSize(out: Size): Size {
 export function takeFramedThumbnail(video: HTMLVideoElement, box: PreviewBox): Blob | null {
   const { crop, out } = cropFor(video, box);
   const size = thumbnailSize(out);
-  const turn = box.turn ?? 0;
+  const turn = turnFor(video, box);
   const file = turnedSize(size, turn);
   const canvas = document.createElement('canvas');
   canvas.width = file.width;
@@ -429,7 +459,7 @@ export class FramedStream {
       return null;
     }
     const { out } = cropFor(first.video, first.box);
-    const turn = first.box.turn ?? 0;
+    const turn = turnFor(first.video, first.box);
     const file = turnedSize(out, turn);
     const canvas = document.createElement('canvas');
     canvas.width = file.width;

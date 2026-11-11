@@ -615,12 +615,15 @@ static BOOL CanariCameraAngleWorthSending(NSInteger last, NSInteger now) {
   return MIN(d, 360 - d) >= kCanariCameraAngleStep;
 }
 
-static void CanariInstallCaptureInteraction(void) {
+/// Installs the volume buttons' interaction. NO only when it SHOULD be installed and could not be
+/// (no WebView yet): the caller then stays disarmed, so the page's next `on` tries again. YES once
+/// installed, and on iOS before 17.2, where there is nothing to install.
+static BOOL CanariInstallCaptureInteraction(void) {
   if (@available(iOS 17.2, *)) {
     WKWebView *webView = CanariFindWebView();
     if (webView == nil) {
-      NSLog(@"[CanariCamera] ERROR armed with no WebView: the volume buttons stay the system's");
-      return;
+      NSLog(@"[CanariCamera] ERROR asked to arm with no WebView: stays disarmed, the volume buttons stay the system's");
+      return NO;
     }
     AVCaptureEventInteraction *interaction =
         [[AVCaptureEventInteraction alloc] initWithHandler:^(AVCaptureEvent *event) {
@@ -647,8 +650,10 @@ static void CanariInstallCaptureInteraction(void) {
     [webView addInteraction:interaction];
     g_canariCaptureInteraction = interaction;
     NSLog(@"[CanariCamera] AVCaptureEventInteraction installed on the WebView");
+    return YES;
   } else {
     NSLog(@"[CanariCamera] iOS before 17.2: no AVCaptureEventInteraction, the volume buttons stay the system's");
+    return YES;
   }
 }
 
@@ -689,12 +694,16 @@ static void CanariStartCameraAngle(void) {
 /// Arms or disarms the volume shutter and the angle together; one line per change. Main thread.
 static void CanariApplyCameraArmed(BOOL on, NSString *why) {
   if (on == g_canariCameraArmed) return;
-  g_canariCameraArmed = on;
-  NSLog(@"[CanariCamera] %@ by %@", on ? @"armed" : @"disarmed", why);
   if (on) {
-    CanariInstallCaptureInteraction();
+    // ARMED ONLY ONCE THE INTERACTION IS IN PLACE: a flag set without it would claim the buttons
+    // while the system still owns them, and refuse the page's next `on` as a repeat.
+    if (!CanariInstallCaptureInteraction()) return;
+    g_canariCameraArmed = YES;
+    NSLog(@"[CanariCamera] armed by %@", why);
     CanariStartCameraAngle();
   } else {
+    g_canariCameraArmed = NO;
+    NSLog(@"[CanariCamera] disarmed by %@", why);
     CanariRemoveCaptureInteraction();
     [g_canariMotion stopAccelerometerUpdates];
   }
@@ -725,6 +734,8 @@ static void CanariObserveCamera(void) {
   handler = [CanariCameraHandler new];
   [webView.configuration.userContentController addScriptMessageHandler:handler name:@"canariCamera"];
   NSLog(@"[CanariCamera] listening for the page's camera");
+  // A page that posted before this registration was heard by nobody: it says again what it holds.
+  CanariPushCameraEvent(@"canari:camera-bridge", @"null");
 }
 
 /// THE SCREEN GOES DARK AGAINST THE CHEEK DURING A CALL ON THE RECEIVER. iOS turns the screen off

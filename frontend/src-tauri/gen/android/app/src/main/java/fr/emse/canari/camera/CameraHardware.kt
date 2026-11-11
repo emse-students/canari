@@ -38,13 +38,19 @@ enum class CameraKeyAction {
 }
 
 /**
- * The fate of a key event: only a VOLUME key, only while the camera is [armed]. A held key repeats
- * its `down` (`repeatCount` > 0); only the first is the press, and the repeats are swallowed so the
- * system volume never moves during a take filmed with the key held.
+ * The fate of a key event: only a VOLUME key, only while the camera is [armed] - or while [held], a
+ * key whose `down` this camera already took. A held key repeats its `down` (`repeatCount` > 0); only
+ * the first is the press, and the repeats are swallowed so the system volume never moves during a
+ * take filmed with the key held.
+ *
+ * DISARMED MID-HOLD (the page disarmed, the app paused): the key's repeats and its `up` are still
+ * swallowed - the volume does not ramp, and the system never receives the `up` of a `down` it never
+ * saw. Nothing is sent: the page already gave its holder a `cancel`. The caller forgets the key at
+ * its `up`, whatever was returned.
  */
-fun cameraKeyAction(armed: Boolean, keyCode: Int, action: Int, repeatCount: Int): CameraKeyAction {
-    if (!armed) return CameraKeyAction.PASS
+fun cameraKeyAction(armed: Boolean, held: Boolean, keyCode: Int, action: Int, repeatCount: Int): CameraKeyAction {
     if (keyCode != Keys.KEYCODE_VOLUME_UP && keyCode != Keys.KEYCODE_VOLUME_DOWN) return CameraKeyAction.PASS
+    if (!armed) return if (held) CameraKeyAction.SWALLOW else CameraKeyAction.PASS
     return when {
         action == Keys.ACTION_DOWN && repeatCount == 0 -> CameraKeyAction.PRESS
         action == Keys.ACTION_UP -> CameraKeyAction.RELEASE

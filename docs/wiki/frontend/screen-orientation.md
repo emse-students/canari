@@ -230,13 +230,32 @@ broadcaster keeps its own); a take still holds `locked`, which binds a tablet wh
 ### One flag, owned by the live camera
 
 `frontend/src/lib/mobile/cameraHardware.svelte.ts` is the ONE owner. `CameraScreen` holds the flag
-(`useCameraHardware`) while its preview is LIVE and not held off by a review (`paused`): the
-`$effect` arms it and its teardown - an unmount included - is the only way down on screen. Native
+(`useCameraHardware`) while its preview is LIVE and IN FRONT: not held off by a review (`paused`),
+and not under the gallery picker or anything else its owner opened over it (`deferOpen` - iOS's
+PHPicker runs in the app's own process, so a key pressed behind it would have shot). The `$effect`
+arms it and its teardown - an unmount included - is the only way down on screen. Native
 also clears it ITSELF when the app leaves the screen (Android `onPause`, iOS `didEnterBackground`),
 so no stale flag survives the background; the page re-arms it on the return
 (`onAppScreenChange`) only if a camera still holds it. Every page load posts what that page holds
 (`initCameraHardware`, from the root layout), so a reload never leaves native swallowing the volume
 keys. No timer anywhere. `[CAMERA-HW] armed / disarmed (why)` is the page's line per change.
+
+- **What native holds is cached only when native HEARD it.** iOS registers `canariCamera` at the
+  app's activation, which can follow a page's first post; a post to an absent handler leaves the
+  cache empty, and the handler's registration dispatches `canari:camera-bridge`, on which the page
+  says again what it holds. iOS sets its own armed flag only once the volume interaction is actually
+  installed (no WebView: it stays disarmed and the next `on` tries again).
+- **A hold cut short is CANCELLED, never lost.** A disarm while a volume key is down (a release, the
+  app leaving the screen) hands the holder `cancel`: a take started by the key is ended and kept, an
+  undecided press takes no photo, and the key's late `up` is dropped. On Android the key's repeats
+  and its `up` stay swallowed after the disarm (`cameraKeysHeld`), so the volume never ramps and the
+  system never receives the `up` of a `down` it did not see.
+- **The phone's last quadrant outlives a disarm** (a review, the background) and is forgotten at the
+  camera's unmount, so the first shot after a review is not taken upright while the sensor's first
+  reading is on its way.
+- **During a call the camera takes the volume keys too** (decided 2026-11-11, accepted): the camera
+  is in front, so a press is the shutter, not the call's volume; the call's volume is back the moment
+  the camera leaves the screen.
 
 - Page -> native: `window.canariCamera.set('on' | 'off')` (Android), `webkit.messageHandlers.canariCamera`
   (iOS).
@@ -249,7 +268,9 @@ keys. No timer anywhere. `[CAMERA-HW] armed / disarmed (why)` is the page's line
   the diagonal, so a phone held near 45 degrees does not flicker.
 - **The capture's turn** (`captureTurn`) is the phone's turn plus `screen.orientation.angle` - 0 on a
   phone locked upright; on a tablet whose layout turned with it, the two cancel. No sensor (the web)
-  means no turn: a browser tab turns its own layout.
+  means no turn: a browser tab turns its own layout. The angle is re-read at every
+  `screen.orientation` `change`, because a tablet's 180-degree flip between its landscape sides
+  changes it without changing the viewport's orientation.
 - **The glyphs** turn by the opposite angle, the SHORT way from the angle drawn now
   (`nextGlyphRotation`, cumulative, so 270 -> 0 is one quarter forward), through
   `--camera-glyph-rotation` on the camera's section and `.camera-glyph-turn` (`app.css`, the CSS
@@ -261,6 +282,10 @@ keys. No timer anywhere. `[CAMERA-HW] armed / disarmed (why)` is the page's line
   and the take's canvas are landscape, mirrored first in the preview's frame for the front lens. A
   take reads the turn ONCE, at its start - its canvas has one size, as a system camera's take keeps
   the orientation it began in.
+- **The assumption is guarded** (`effectiveTurn`): a frame whose orientation disagrees with the
+  preview box (a LANDSCAPE frame in a portrait preview - an engine that already turned it to the
+  device, suspected of WebKit and unverified) is not turned a second time; the capture keeps it as it
+  came and says so at ERROR (`the frame WxH is already turned against the box`).
 
 ### The volume keys
 
