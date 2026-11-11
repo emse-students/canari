@@ -154,6 +154,7 @@ import {
 } from './visibility';
 import {
   assertDeclaredOptionAnswers,
+  assertMultipleChoiceGridOneGroup,
   assertUniqueItemIds,
   decidesPrice,
   freeFallbackCells,
@@ -881,6 +882,10 @@ export class FormsService {
     assertFormItemsShape(input.items);
     this.assertFormOptionsCoherent(input);
     this.assertPublicConfigValid(input);
+    assertMultipleChoiceGridOneGroup(
+      input.priceMatrix as PriceMatrix | null | undefined,
+      (input.items ?? []) as PricedItem[]
+    );
     this.assertFileQuestionConfigValid(input);
     input = {
       ...input,
@@ -1337,6 +1342,10 @@ export class FormsService {
     } as CreateFormDto & { anonymous: boolean };
     this.assertFormOptionsCoherent(effective, form as unknown as CreateFormDto);
     this.assertPublicConfigValid(effective);
+    assertMultipleChoiceGridOneGroup(
+      effective.priceMatrix as PriceMatrix | null | undefined,
+      (items ?? []) as PricedItem[]
+    );
     // An absent condition keeps the stored one, which still meets the questions sent now.
     this.assertFileQuestionConfigValid({
       items,

@@ -4648,6 +4648,7 @@
   "form_criterion_group_remove": "Remove this group",
   "form_criterion_others": "Everyone else",
   "form_criterion_others_hint": "added automatically: nobody is left without a price",
+  "form_criterion_multiple_choice_one_group": "Multiple choice: one group only",
   "form_criterion_any_tier": "Any membership tier",
   "form_criterion_no_formations": "No track is known yet.",
   "form_criterion_no_options": "Choose a question first.",

@@ -138,6 +138,32 @@ export function assertDeclaredOptionAnswers(
 }
 
 /**
+ * Refuses a grid criterion on a MULTIPLE-choice question that has more than one group.
+ *
+ * A person may tick options from two groups at once, and `bucketFor` takes the first group, in the
+ * grid's order, that any ticked option matches: the price would then depend on the order of the
+ * groups, and adding an option could pick a cheaper cell. The overlap refusal
+ * (`findOverlappingBuckets`) cannot see this - two groups holding different options do not overlap
+ * as option sets, only as answers. One group (and "everyone else") stays allowed: its cell is either
+ * "ticked at least one of these" or not. Judged at save, on the form as it will be stored.
+ */
+export function assertMultipleChoiceGridOneGroup(
+  matrix: PriceMatrix | null | undefined,
+  items: readonly PricedItem[]
+): void {
+  for (const dimension of matrix?.dimensions ?? []) {
+    if (dimension.kind !== 'answer' || dimension.buckets.length < 2) continue;
+    const item = items.find((i) => i.id === dimension.questionId);
+    if (item?.type !== MULTIPLE_CHOICE_TYPE) continue;
+    throw new BadRequestException(
+      `The price grid splits the multiple-choice question "${item.label ?? item.id}" into ` +
+        `${dimension.buckets.length} groups: a person can tick options of two groups, so the price ` +
+        'would depend on their order. Keep one group for it, or make it a single-choice question.'
+    );
+  }
+}
+
+/**
  * Whether a grid dimension's "everyone else" group can be reached by a submitter: its question may
  * be left empty (not required), hidden (it has a condition), answered with an option no group
  * holds, or is not a choice question at all. A required, unconditional choice question whose every

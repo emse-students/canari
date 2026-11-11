@@ -567,6 +567,73 @@ describe('FormsService - public forms', () => {
 
     // A charging grid must not give a guest a FREE seat by default. Control (2026-10-22): the
     // `freeFallbackCells` refusal removed from `assertPublicConfigValid` -> the three refusals save.
+    // A multiple-choice answer can tick options of two groups, and the first group in the grid's
+    // order would win: the price would depend on that order (backlog triage of 2026-11-11).
+    describe('a grid on a multiple-choice question', () => {
+      const extras = {
+        id: 'q_extras',
+        label: 'Extras',
+        type: 'multiple_choice',
+        options: [
+          { id: 'opt_a', label: 'A', priceModifier: 0 },
+          { id: 'opt_b', label: 'B', priceModifier: 0 },
+        ],
+      };
+      const twoGroups = {
+        dimensions: [
+          {
+            id: 'd1',
+            kind: 'answer',
+            questionId: 'q_extras',
+            buckets: [
+              { id: 'b1', label: 'A', values: ['opt_a'] },
+              { id: 'b2', label: 'B', values: ['opt_b'] },
+            ],
+          },
+        ],
+        cells: { b1: 1000, b2: 1500, [OTHERS_BUCKET_ID]: 1200 },
+      };
+      const oneGroup = {
+        dimensions: [
+          {
+            id: 'd1',
+            kind: 'answer',
+            questionId: 'q_extras',
+            buckets: [{ id: 'b1', label: 'A ou B', values: ['opt_a', 'opt_b'] }],
+          },
+        ],
+        cells: { b1: 1000, [OTHERS_BUCKET_ID]: 1200 },
+      };
+
+      it('refuses its options in two groups', async () => {
+        const { service, formRepo } = makeService();
+        await expect(
+          service.create(input({ requiresPayment: true, items: [extras], priceMatrix: twoGroups }))
+        ).rejects.toThrow(/multiple-choice question "Extras" into 2 groups/);
+        expect(formRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('accepts every option in one group', async () => {
+        const { service, formRepo } = makeService();
+        await service.create(
+          input({ requiresPayment: true, items: [extras], priceMatrix: oneGroup })
+        );
+        expect(formRepo.save).toHaveBeenCalled();
+      });
+
+      it('accepts two groups on a single-choice question', async () => {
+        const { service, formRepo } = makeService();
+        await service.create(
+          input({
+            requiresPayment: true,
+            items: [{ ...extras, type: 'single_choice' }],
+            priceMatrix: twoGroups,
+          })
+        );
+        expect(formRepo.save).toHaveBeenCalled();
+      });
+    });
+
     describe('the "everyone else" price of a charging grid', () => {
       const grid = (others: number | null) => ({
         dimensions: [
