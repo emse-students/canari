@@ -65,6 +65,62 @@ export function readPointFor(
   };
 }
 
+/**
+ * THE READ POINT AN UNREAD COUNT IS TAKEN AT - the one every writer of `unreadCount` asks, so the
+ * count derived at a cold start and the one kept up live can never disagree.
+ *
+ * It is this user's saved marks ({@link readPointFor}) whenever either map holds one. With NO saved
+ * mark at all - a conversation never read since read state became durable (2026-08-12), or one a
+ * new device holds before any mark reached it - the point is the stamped time of this user's NEWEST
+ * OWN message held: a reply is written with the conversation open, so whatever came before it was
+ * on screen. With no own message either (a first contact, never opened), the point is 0 and every
+ * foreign message counts - which is what a first message from someone new is: unread.
+ *
+ * Why not 0 for every unmarked conversation: the count would be "every foreign message held",
+ * up to a whole page, on every conversation last read before 2026-08-12 that has had nothing new
+ * since. Why not "count nothing": that is the defect this replaces - a first contact never opened
+ * lost its badge at the second cold start. See chat.md, "A DM's unread count is derived from its
+ * read point at every load (2026-11-11)".
+ *
+ * `implied` says the point came from an own message, not from a saved mark - for the log only.
+ */
+export function countingReadPoint(
+  convo: {
+    messages: ReadonlyArray<Pick<ChatMessage, 'isOwn' | 'timestamp'>>;
+    readWatermarks?: ReadWatermarks;
+    serverReadWatermarks?: ReadWatermarks;
+  },
+  userNorm: string
+): { stamped: number; server: number; implied: boolean } {
+  const saved = readPointFor(convo, userNorm);
+  if (saved.stamped > 0 || saved.server > 0) return { ...saved, implied: false };
+  let newestOwn = 0;
+  for (const msg of convo.messages) {
+    if (!msg.isOwn) continue;
+    const at = stampedTime(msg);
+    if (Number.isFinite(at) && at > newestOwn) newestOwn = at;
+  }
+  return { stamped: newestOwn, server: 0, implied: newestOwn > 0 };
+}
+
+/**
+ * The unread count a conversation's held messages DERIVE, at its {@link countingReadPoint}. What a
+ * load assigns, and what every live writer's `+1` must add up to.
+ */
+export function derivedUnreadCount(
+  convo: {
+    messages: Array<
+      Pick<ChatMessage, 'isOwn' | 'isSystem' | 'senderId' | 'timestamp' | 'serverTimestamp'>
+    >;
+    readWatermarks?: ReadWatermarks;
+    serverReadWatermarks?: ReadWatermarks;
+  },
+  userNorm: string
+): number {
+  const point = countingReadPoint(convo, userNorm);
+  return countUnreadForUser(convo.messages, point.stamped, point.server);
+}
+
 /** This user's watermark, or 0 - which reads as "has read nothing", the correct default. */
 export function watermarkFor(watermarks: ReadWatermarks | undefined, userNorm: string): number {
   return watermarks?.[userNorm.toLowerCase()] ?? 0;
@@ -325,7 +381,7 @@ export function withOwnReadAdvanced<
 >(convo: C, userId: string, at: number, clock: ReadClock): C {
   const field = clock === 'server' ? 'serverReadWatermarks' : 'readWatermarks';
   const merged = mergeReadWatermark(convo[field], userId, at);
-  const point = readPointFor({ ...convo, ...(merged ? { [field]: merged } : {}) }, userId);
+  const point = countingReadPoint({ ...convo, ...(merged ? { [field]: merged } : {}) }, userId);
   const held = convo.unreadCount ?? 0;
   const next = Math.min(held, countUnreadForUser(convo.messages, point.stamped, point.server));
   if (!merged && next === held) return convo;

@@ -27,7 +27,7 @@ import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/di
 import { foldForSearch } from '$lib/utils/textFold';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
-import { isUnreadForUser, readPointFor } from './readState';
+import { countingReadPoint, derivedUnreadCount } from './readState';
 import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { isUuidLike } from '$lib/utils/uuidShape';
@@ -879,6 +879,44 @@ export function restoredConversationRow(
 }
 
 /**
+ * THE UNREAD COUNT A LOAD ASSIGNS to a DM or group row: derived from the saved read point over the
+ * messages the row holds ({@link derivedUnreadCount}), never from what arrived in this session.
+ *
+ * `unreadCount` is not persisted; the read marks are. Counting "not held before this replay" lost a
+ * message stored by an earlier session (a push stored at a resume, then the process died): the next
+ * cold start found it held, counted 0, and the badge was gone with nothing read (owner, Android
+ * 1.6.9, 2026-11-11). The marks are what says "read", so they are all the count is taken from.
+ *
+ * Over the rows HELD - the stored page (`INITIAL_MESSAGES_PAGE`) merged with what arrived live -
+ * so a conversation with more unread messages than one page counts one page's worth: a lower bound,
+ * over the rows the open thread first draws. See chat.md, "A DM's unread count is derived from
+ * its read point at every load (2026-11-11)".
+ */
+function bootUnreadCount(
+  id: string,
+  convo: Pick<Conversation, 'messages' | 'readWatermarks' | 'serverReadWatermarks'>,
+  userId: string,
+  log: (msg: string) => void
+): number {
+  const userNorm = userId.toLowerCase();
+  const point = countingReadPoint(convo, userNorm);
+  const count = derivedUnreadCount(convo, userNorm);
+  // One line per conversation that HAS a badge, saying which read point decided it; a row with
+  // nothing unread says nothing, so a boot over a hundred read conversations prints nothing.
+  if (count > 0) {
+    log(
+      `[RESTORE] ${id.slice(0, 8)} unread ${count} of ${convo.messages.length} held, at ` +
+        (point.implied
+          ? 'the newest own message (no saved read point)'
+          : point.stamped > 0 || point.server > 0
+            ? 'the saved read point'
+            : 'no read point and no own message (first contact)')
+    );
+  }
+  return count;
+}
+
+/**
  * Full startup loader that bootstraps all conversations from local storage.
  *
  * Phase 1: For each conversation in the DB, a lightweight stub (no messages) is
@@ -1175,14 +1213,17 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             meta.id,
             ctx.deviceKeyB64
           );
-          const preReplayMsgIds = new Set(msgs.map((m) => m.id));
           const existing = ctx.conversations.get(meta.id);
           if (existing && msgs.length > 0) {
             // MERGED, NEVER ASSIGNED (`mergeMessagePage`): the rows are seeded before this read, so a
             // message delivered live since then is already on the row and is not in this page.
+            // THE COUNT IS DERIVED HERE TOO, before any network: a boot with no link (`unreachable`
+            // below) never reaches the recount after the replay, and its badges must not be 0.
+            const messages = mergeMessagePage(existing.messages, msgs);
             ctx.conversations.set(meta.id, {
               ...existing,
-              messages: mergeMessagePage(existing.messages, msgs),
+              messages,
+              unreadCount: bootUnreadCount(meta.id, { ...existing, messages }, ctx.userId, ctx.log),
             });
 
             // Restore reactions into the shared messageReactions map
@@ -1228,19 +1269,21 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           );
           const current = ctx.conversations.get(meta.id);
           if (current) {
-            // "Arrived during this replay" is only a PROXY for "not seen yet", and it breaks when
-            // the replay carries a history bundle - hence the watermark check in isUnreadForUser.
+            // DERIVED FROM THE READ POINT, NEVER FROM "ARRIVED DURING THIS REPLAY" (2026-11-11). That
+            // proxy counted a message only in the session that STORED it: once a push or a resume had
+            // stored it, the next cold start found it held and the badge was gone, nothing read
+            // (`bootUnreadCount`).
             //
             // COUNTED OVER THE MERGED LIST, NOT OVER THE PAGE. The page is one window of the store and
             // a message delivered live while the replay ran is not in it, so counting the page alone
             // both dropped that message from the display and then wrote a badge that did not include
             // it - the same stale read, once as a loss and once as an undercount.
-            const mine = readPointFor(current, ctx.userId.toLowerCase());
             const messages = mergeMessagePage(current.messages, refreshedMsgs);
-            const newUnreadCount = messages.filter(
-              (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, mine.stamped, mine.server)
-            ).length;
-            ctx.conversations.set(meta.id, { ...current, messages, unreadCount: newUnreadCount });
+            ctx.conversations.set(meta.id, {
+              ...current,
+              messages,
+              unreadCount: bootUnreadCount(meta.id, { ...current, messages }, ctx.userId, ctx.log),
+            });
             for (const m of refreshedMsgs) {
               if (m.reactions && m.reactions.length > 0) {
                 ctx.messageReactions.set(m.id, m.reactions);

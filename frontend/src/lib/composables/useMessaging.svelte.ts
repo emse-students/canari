@@ -60,7 +60,7 @@ import {
   tabSeed,
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
-import { isUnreadForUser, readPointFor } from '$lib/utils/chat/readState';
+import { countingReadPoint, isUnreadForUser, readPointFor } from '$lib/utils/chat/readState';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -1269,7 +1269,7 @@ export function useMessaging() {
     // the watermark AND counted system messages, so a replayed frame taking the single path could
     // still raise a badge for something already read, and a "X joined" notice raised one for
     // something nobody reads at all.
-    const mineNow = readPointFor(convo, ctx.userId.toLowerCase());
+    const mineNow = countingReadPoint(convo, ctx.userId.toLowerCase());
     const shouldMarkUnread =
       !isConversationOpen &&
       !isSalonMuted(normalized) &&
@@ -1855,7 +1855,7 @@ export function useMessaging() {
     const base = current ?? convo;
     const heldNow = current && current !== convo ? indexMessagesById(current.messages) : null;
     const toAdd = heldNow ? brandNew.filter((m) => !heldNow.has(m.id)) : brandNew;
-    const mine = readPointFor(base, ctx.userId.toLowerCase());
+    const mine = countingReadPoint(base, ctx.userId.toLowerCase());
     // A MUTED SALON RAISES NOTHING, the server's count of it being zero by the same rule.
     const addedUnread = isSalonMuted(normalized)
       ? 0

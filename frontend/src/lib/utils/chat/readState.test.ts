@@ -3,6 +3,8 @@ import { compareMessageOrder } from './messageOrder';
 import {
   countUnreadBelow,
   countUnreadForUser,
+  countingReadPoint,
+  derivedUnreadCount,
   hasRead,
   isUnreadForUser,
   mergeReadWatermark,
@@ -186,6 +188,49 @@ describe('the unread badge', () => {
     const read = watermarkAfterReading(onScreen, 0);
     expect(countUnreadForUser(onScreen, read)).toBe(0);
     expect(countUnreadForUser(afterScrollingUp, read)).toBe(0);
+  });
+});
+
+describe('the read point an unread count is taken at', () => {
+  const convo = (
+    messages: ChatMessage[],
+    marks: Partial<Record<'readWatermarks' | 'serverReadWatermarks', ReadWatermarks>> = {}
+  ) => ({
+    messages,
+    ...marks,
+  });
+
+  it('is the saved mark whenever one is saved, own messages after it changing nothing', () => {
+    const c = convo([msg('a', 1000), msg('r', 3000, ME), msg('b', 4000)], {
+      serverReadWatermarks: { [ME]: 2000 },
+    });
+    expect(countingReadPoint(c, ME)).toEqual({ stamped: 0, server: 2000, implied: false });
+    expect(derivedUnreadCount(c, ME)).toBe(1);
+  });
+
+  it('with no saved mark, is my newest own message: a reply was written with the thread open', () => {
+    const c = convo([
+      msg('a', 1000),
+      msg('r1', 2000, ME),
+      msg('b', 3000),
+      msg('r2', 4000, ME),
+      msg('c', 5000),
+    ]);
+    expect(countingReadPoint(c, ME)).toEqual({ stamped: 4000, server: 0, implied: true });
+    expect(derivedUnreadCount(c, ME)).toBe(1);
+  });
+
+  it('with no saved mark and no own message (a first contact), is 0: every foreign message counts', () => {
+    const c = convo([msg('a', 1000), msg('b', 2000), msg('n', 3000, 'system')]);
+    expect(countingReadPoint(c, ME)).toEqual({ stamped: 0, server: 0, implied: false });
+    expect(derivedUnreadCount(c, ME)).toBe(2);
+  });
+
+  it('is what withOwnReadAdvanced recounts at, so a read leaves the derived count', () => {
+    const c = { ...convo([msg('a', 1000), msg('r', 2000, ME), msg('b', 3000)]), unreadCount: 1 };
+    const next = withOwnReadAdvanced(c, ME, 3000, 'stamped');
+    expect(next.unreadCount).toBe(0);
+    expect(derivedUnreadCount(next, ME)).toBe(0);
   });
 });
 

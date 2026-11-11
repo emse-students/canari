@@ -213,3 +213,29 @@ describe('a system notice from the FCM cache is not activity', () => {
     expect(conversations.get('grp-aaaa-bbbb')?.lastMessageAt).toBe(100);
   });
 });
+
+describe('the badge a push merge adds is the one the next load derives', () => {
+  it('counts a message past the read point', () => {
+    const conversations = new Map([
+      ['grp-aaaa-bbbb', existing({ serverReadWatermarks: { me: 500 }, unreadCount: 0 })],
+    ]);
+    mergeFcmMessagesIntoConversations(
+      [message({ id: 'm1', timestamp: 900, serverTimestamp: 900 })],
+      conversations,
+      'me'
+    );
+    expect(conversations.get('grp-aaaa-bbbb')?.unreadCount).toBe(1);
+  });
+
+  it('does not count a message the read point already covers (read in the shade or elsewhere)', () => {
+    const conversations = new Map([
+      ['grp-aaaa-bbbb', existing({ serverReadWatermarks: { me: 1_000 }, unreadCount: 0 })],
+    ]);
+    mergeFcmMessagesIntoConversations(
+      [message({ id: 'm1', timestamp: 900, serverTimestamp: 900 })],
+      conversations,
+      'me'
+    );
+    expect(conversations.get('grp-aaaa-bbbb')?.unreadCount).toBe(0);
+  });
+});

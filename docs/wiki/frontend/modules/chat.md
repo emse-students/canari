@@ -4843,6 +4843,58 @@ only a leader sends. Tests: `readSync.devices.test.ts` (both review cases mutati
   shell drains the durable owed marks itself, under the same task, the way the quick reply sends
   without the page. That variant is designed and not built, because only that reading tells us whether it is needed.
 
+### A DM's unread count is derived from its read point at every load (2026-11-11)
+
+**Reported by the owner (Android `1.6.9`):** a DM whose last message was never opened showed no
+badge in the list, and the peer still saw "Envoyé" - no read mark had left.
+
+**Cause.** `unreadCount` is not persisted (`ConversationMeta` carries the read marks, not the
+count), so every row starts at 0 at a cold start. The load (`loadExistingConversations`) then set the
+count to the unread messages its archive replay ADDED - `!preReplayMsgIds.has(m.id)`, a proxy from
+May 2026 that predates the watermark (2026-08-12), when "arrived now" was the only signal there was.
+A message was therefore counted only in the session that STORED it: on Android a resume stored the
+push cache (`consumeFcmCache`) and counted it (+1 in `fcmMemoryMerge.ts`), the process died, and the
+next cold start found the message already held and counted 0. A load with no link was worse: it
+`continue`d before the recount and left every badge at 0. Salons had the same gap and were fixed by
+the server's count ([above](#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08));
+DMs and groups (the same loop - only salons skip it) never were.
+
+**The rule: the count is derived from durable state, never from what arrived this session.** At
+every load, after the stored page AND again after the replay, the row's count is
+`derivedUnreadCount` (`readState.ts`): the held messages `isUnreadForUser` calls unread at the
+`countingReadPoint`. The live writers ask the same point, so the `+1` they add is what the next load
+re-derives: `mergeFcmMessagesIntoConversations` (which used to add 1 for any foreign row, even one the
+shade had already marked read), both add paths of `useMessaging`, the `history_bundle` recount, and
+`withOwnReadAdvanced`.
+
+**The read point, and the case with none.**
+
+| Saved mark | Own message held | Read point | Why |
+| --- | --- | --- | --- |
+| yes (either map) | any | the saved marks | the marks are what says "read" |
+| no | yes | the stamped time of my NEWEST own message | a reply is written with the thread open, so what came before it was on screen; this is what keeps a conversation last read before 2026-08-12 (no mark ever written) from showing a page of "unread" |
+| no | no | 0 - every foreign message counts | a first contact never opened: its messages ARE unread, and counting 0 here is the reported defect again |
+
+The residue, accepted: a conversation read before 2026-08-12, never replied to, and not opened since
+shows its held foreign messages once; opening it writes a mark and the count is 0 for good.
+
+**History bundles** count only past the read point: the bundle carries the read marks (step 0 of
+`history_bundle`, persisted before the messages), so what was read on another device is covered. A
+bundle answering an ask (`addOnly`) carries no marks; its rows then count past the point above, as
+the live recount already did. **Own messages and system notices** never count (`isUnreadForUser`).
+
+**One page, a lower bound - chosen, not a store count.** The count is taken over the rows HELD: the
+stored page (`INITIAL_MESSAGES_PAGE`, 60) merged with what arrived live. A conversation with more
+than a page unread shows a page's worth until it is opened. A store count would need a query in both
+backends (SQLite and IndexedDB) over encrypted rows for a badge that reads "many" either way; the
+page is also exactly the rows the open thread first draws.
+
+**Logs:** one `[RESTORE] <id> unread N of M held, at <which point>` per conversation with a badge;
+`[FCM_CACHE] message <id> is already covered by the read point - no badge` when a push row is not
+counted. Tests: `restoreUnreadCount.test.ts` (two cold starts against one store - five of seven fail
+on the old code), `readState.test.ts` ("the read point an unread count is taken at"),
+`fcmMemoryMerge.test.ts`. **Owed:** the owner's reading on the Android phone.
+
 ## A community's salons have an order everyone shares, and a name that is only a name (2026-10-05)
 
 **Order.** `channels."sortOrder"` (migration 076; the backfill numbers each never-arranged community
