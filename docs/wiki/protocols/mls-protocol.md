@@ -643,6 +643,8 @@ ends a lost race the same way (CC-1, CC-2, CC-4 of the 1.4.1 campaign):
   The pending sweep reads a confirmed tree once per pass of a group (`pendingAddFactsOf`), but never
   keeps an UNCONFIRMED one: the next row of the group reads afresh (2026-11-11,
   `pendingAddFacts.test.ts`), so one failed confirmation no longer aborts the rest of the sweep.
+  The cost is paid per row, not per pass: while its tree stays unconfirmed, a group's every row pays
+  one `fetchCommitsSince` and a replay, and the sweep's own log says so for each.
 - **No progress is surfaced, or kept durable - never dropped.** An invitation is a gesture with no
   durable row (a new person enters only by a member's own Add), so its refusal comes back as a typed
   reason - `commit-race-lost`, `add-lock-busy`, `removed-meanwhile`, `tree-unconfirmed` - and every reason is a sentence the member sees

@@ -212,16 +212,17 @@ export function pendingAddFactsOf(deps: {
   groupId: string;
   userId: string;
   myDeviceId: string;
+  /** The sweep's own log, so the re-read line sits at the sweep's level beside its other lines. */
+  log: (msg: string) => void;
 }): (fresh: boolean) => Promise<PendingAddFacts> {
-  const { mlsService, groupId, userId, myDeviceId } = deps;
+  const { mlsService, groupId, userId, myDeviceId, log } = deps;
   let pass: { epoch: number; tree: Promise<TreeReading>; unconfirmed?: true } | null = null;
   return async (fresh) => {
     const epoch = mlsService.getEpoch(groupId);
     if (fresh || pass === null || pass.epoch !== epoch || pass.unconfirmed) {
       if (pass?.unconfirmed && !fresh && pass.epoch === epoch) {
-        Log.d(
-          'PENDING',
-          `the pass tree was unconfirmed - this row reads it afresh group=${groupId}`
+        log(
+          `[PENDING] Group ${groupId.slice(0, 8)}...: the pass tree was unconfirmed - this row reads it afresh`
         );
       }
       // Always confirmed: the one read serves every row, whichever user each names.
@@ -705,7 +706,7 @@ export async function processPendingInvitations(params: {
       // Only 'pending' status exists now (stale removed - RFC 9420).
       const currentPending = invitations.filter((inv) => inv.status === 'pending');
       // The server state every Add of this group is judged against, read once per pass.
-      const pendingAddFacts = pendingAddFactsOf({ mlsService, groupId, userId, myDeviceId });
+      const pendingAddFacts = pendingAddFactsOf({ mlsService, groupId, userId, myDeviceId, log });
 
       for (const inv of currentPending) {
         const deviceKey = `${inv.userId}:${inv.deviceId}`;

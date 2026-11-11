@@ -20,11 +20,15 @@ const service = (epoch = 4) =>
     getPendingInvitations: async () => [],
   }) as unknown as IMlsService;
 
+const log = vi.fn();
 const factsOf = (mlsService: IMlsService) =>
-  pendingAddFactsOf({ mlsService, groupId: 'g1', userId: 'u1', myDeviceId: 'd1' });
+  pendingAddFactsOf({ mlsService, groupId: 'g1', userId: 'u1', myDeviceId: 'd1', log });
 
 describe('pendingAddFactsOf', () => {
-  beforeEach(() => readConfirmedTree.mockReset());
+  beforeEach(() => {
+    readConfirmedTree.mockReset();
+    log.mockReset();
+  });
 
   it('reads a confirmed tree once for every row of the pass', async () => {
     readConfirmedTree.mockResolvedValue({ status: 'read', identities: ['u1:d1'] });
@@ -42,6 +46,9 @@ describe('pendingAddFactsOf', () => {
     expect((await facts(false)).tree).toEqual({ status: 'unconfirmed' });
     expect((await facts(false)).tree).toEqual({ status: 'read', identities: ['u1:d1'] });
     expect(readConfirmedTree).toHaveBeenCalledTimes(2);
+    // The re-read is said once, on the sweep's own log, naming the group by 8 characters.
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(log.mock.calls[0][0]).toContain('[PENDING] Group g1...: the pass tree was unconfirmed');
     // Once confirmed, the pass keeps it again.
     await facts(false);
     expect(readConfirmedTree).toHaveBeenCalledTimes(2);
