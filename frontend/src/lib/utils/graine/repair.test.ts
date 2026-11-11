@@ -94,6 +94,8 @@ let sendMessage: ReturnType<typeof vi.fn>;
  * replaces it with a promise it resolves itself.
  */
 let whenGroupDrained: ReturnType<typeof vi.fn>;
+/** The sessions the fake store holds a seed for, as `getGraineSession` reads them. */
+let storedSeeds: Set<string>;
 /** What the fake store answers for the community - empty means "this device has no history". */
 let heldSessions: StoredGraineSession[];
 /**
@@ -131,6 +133,7 @@ beforeEach(() => {
   listMembers.mockResolvedValue(roster);
   listWorkspaceMembers.mockResolvedValue(roster);
   heldSessions = [];
+  storedSeeds = new Set();
   ownDevices = ['device-1'];
   distributionEpoch = 7;
   getDistributionGroup.mockImplementation(async () => ({
@@ -145,6 +148,8 @@ beforeEach(() => {
   setGraineRuntime({
     storage: {
       getGraineSessionsForWorkspace: async () => heldSessions,
+      getGraineSession: async (sessionId: string) =>
+        storedSeeds.has(sessionId) ? ({ sessionId } as unknown as StoredGraineSession) : null,
     } as never,
     deviceKey: () => 'device-key',
     userId: 'alice',
@@ -295,6 +300,11 @@ describe('noteMissingSeed', () => {
  * decoded during the send re-noted a session not yet marked as asked.
  */
 describe('a missing seed and this device own backlog', () => {
+  /** Every `console.info` line the test produced, as strings. */
+  function infoLines(spy: { mock: { calls: unknown[][] } }): string[] {
+    return spy.mock.calls.map((c) => String(c[0]));
+  }
+
   it('waits for the key group to be drained, and asks nothing for a seed the drain brought', async () => {
     let drained!: () => void;
     whenGroupDrained.mockReturnValueOnce(new Promise<void>((r) => (drained = r)));
@@ -306,7 +316,8 @@ describe('a missing seed and this device own backlog', () => {
     expect(whenGroupDrained).toHaveBeenCalledWith('dist-group');
     expect(sendMessage).not.toHaveBeenCalled();
 
-    // The queued seed frame of sess-1 is applied by the drain: the seed store discharges it.
+    // The queued seed frame of sess-1 is applied by the drain: stored, then the want discharged.
+    storedSeeds.add('sess-1');
     forgetAskedSession('sess-1');
     drained();
     await settle();
@@ -314,38 +325,108 @@ describe('a missing seed and this device own backlog', () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const request = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest;
     expect(request?.sessionIds).toEqual(['sess-2']);
-    expect(info.mock.calls.map((c) => String(c[0]))).toContainEqual(
+    expect(infoLines(info)).toContainEqual(
       expect.stringContaining(
-        "1 of 2 missing seed(s) of channel chan-1 arrived with this device's own backlog"
+        "1 of 2 missing seed(s) of channel chan-1 not asked for - 1 arrived with this device's own backlog"
       )
     );
     info.mockRestore();
   });
 
-  it('asks nothing at all when the MLS service closes before the drain', async () => {
+  it('counts an arrival only when the seed is held, and names every other discharge', async () => {
+    let drained!: () => void;
+    whenGroupDrained.mockReturnValueOnce(new Promise<void>((r) => (drained = r)));
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    noteMissingSeed('chan-1', 'sess-2', 'bob', SENT_AT);
+    noteMissingSeed('chan-1', 'sess-3', 'bob', SENT_AT);
+    await settle();
+    // Discharged while waiting, for three different reasons - none of them a seed now held.
+    forgetAskedSession('sess-1', 'retention');
+    forgetAskedSession('sess-2', 'left-community');
+    forgetAskedSession('sess-3');
+    drained();
+    await settle();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    const line = infoLines(info).find((l) => l.includes('not asked for'));
+    expect(line).toContain('3 of 3 missing seed(s) of channel chan-1 not asked for');
+    expect(line).toContain('1 dropped by the retention sweep');
+    expect(line).toContain('1 left with their community');
+    expect(line).toContain('1 discharged as held but not in the store');
+    expect(line).not.toContain('arrived');
+    info.mockRestore();
+  });
+
+  it('ends the whole flush when the MLS service closes, and a later note flushes again', async () => {
     const { GroupDrainAbandonedError } = await import('$lib/mls-client/IMlsService');
+    registerChannelWorkspace('chan-2', 'ws-1', false);
     whenGroupDrained.mockRejectedValueOnce(new GroupDrainAbandonedError('dist-group'));
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    noteMissingSeed('chan-2', 'sess-2', 'bob', SENT_AT);
+    await settle();
+
+    // ONE waiter, never one per channel: the second channel registered none.
+    expect(whenGroupDrained).toHaveBeenCalledTimes(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(infoLines(info)).toContainEqual(
+      expect.stringContaining('closed before key group dist-gro')
+    );
+
+    // The flush is over, not wedged: a fresh note starts a fresh one.
+    noteMissingSeed('chan-2', 'sess-2', 'bob', SENT_AT);
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    info.mockRestore();
+  });
+
+  it('ends the flush, said, when the runtime is gone before the wait', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    whenGroupDrained.mockRejectedValueOnce(new Error('runtime gone'));
 
     noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
     await settle();
 
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(info.mock.calls.map((c) => String(c[0]))).toContainEqual(
-      expect.stringContaining('closed before key group dist-gro')
+    expect(warn.mock.calls.map((c) => String(c[0]))).toContainEqual(
+      expect.stringContaining('failed - Error: runtime gone')
     );
-    info.mockRestore();
+    warn.mockRestore();
   });
 
-  it('a follower tab does not wait for a drain it does not run', async () => {
+  it('a follower tab asks nothing, and says so', async () => {
     tabLeadership = 'follower';
-    whenGroupDrained.mockReturnValue(new Promise<void>(() => undefined));
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
     noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
     await settle();
 
+    expect(listMembers).not.toHaveBeenCalled();
     expect(whenGroupDrained).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(infoLines(info)).toContainEqual(
+      expect.stringContaining('this tab is a follower - asking nothing for 1 missing seed(s)')
+    );
+    info.mockRestore();
+  });
+
+  it('a leader demoted while it waited asks nothing', async () => {
+    let drained!: () => void;
+    whenGroupDrained.mockReturnValueOnce(new Promise<void>((r) => (drained = r)));
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+    tabLeadership = 'follower';
+    drained();
+    await settle();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(infoLines(info)).toContainEqual(expect.stringContaining('this tab is a follower'));
+    info.mockRestore();
   });
 
   it('a row re-noted while its request is being sent does not send a second one', async () => {
@@ -361,6 +442,43 @@ describe('a missing seed and this device own backlog', () => {
     sent();
     await settle();
 
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('a row re-noted during the history rule read does not send a second one', async () => {
+    // Under `joined`, the request first reads the roster for our own arrival (`withheldFromUs`).
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    let roster!: (rows: unknown[]) => void;
+    listWorkspaceMembers.mockReturnValueOnce(new Promise((r) => (roster = r)));
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    roster([{ userId: 'alice', joinedAt: new Date(SENT_AT - 1000).toISOString() }]);
+    await settle();
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('a session out of reach is un-marked, so a later decode decides again', async () => {
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    // We arrived AFTER the row: the session is withheld from us, and nothing is asked.
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'alice', joinedAt: new Date(SENT_AT + 1000).toISOString() },
+    ]);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // The community widens its past, and the next decode names the row again.
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 

@@ -332,14 +332,32 @@ were asked at 11.19 s and 11.42 s, the pull's drain applied the very frames carr
 from 11.27 s to 11.78 s, and the salon re-read clean at 11.86 s - nothing was lost, but three
 requests and three answer frames crossed an eleven-leaf key group for seeds already on the device.
 So `flushRepairs` (`utils/graine/repair.ts`) now awaits `whenGroupDrained` on the key group
-(`ownBacklogApplied`) - the mailbox listed on this link and the group's frames applied, an event and
-never a clock - and drops every session a seed reached meanwhile (`wants` is the record
-`forgetAskedSession` clears), saying the count:
-`[GRAINE] n of m missing seed(s) of channel x arrived with this device's own backlog - not asked for`.
-A web FOLLOWER tab does not wait (no socket, no drain of its own). The same reading showed one
-request sent twice, 380 ms apart, and answered twice: a session was marked `asked` only after its
-send resolved, and the send waits its turn behind the drain, so a page decoded meanwhile put it back
-in the accumulator. It is now marked before the send and un-marked if the send fails.
+(`whenAskable`) - the mailbox listed on this link and the group's frames applied, an event and never
+a clock - and drops every session no longer wanted, with a count per reason (`stillToAsk`):
+`[GRAINE] n of m missing seed(s) of channel x not asked for - 2 arrived with this device's own
+backlog, 1 left with their community`. Each path that discharges a want stamps WHY
+(`DischargeReason`: `seed-held`, `left-community`, `retention`, `out-of-reach`, `no-holder`), and an
+arrival is counted only when the store holds the seed now.
+
+- **What ends the wait ends the flush**, for every channel: the MLS service destroyed (`whenGroupDrained`
+  rejects at once on a destroyed service, `GroupDrainAbandonedError`), the runtime gone (said at
+  warn, never thrown - the flush is fire-and-forget), or this tab a follower. The accumulator is
+  emptied, the wants kept; the next decode naming the rows starts a fresh flush.
+- **A web follower tab asks nothing**, said once per flush: it holds no socket and drains nothing,
+  and the state a request is sealed with is the leader's to advance; the leader decodes the same
+  salon and asks for itself. Leadership is read again after the wait, so a leader demoted while it
+  waited stops too.
+- **Asked once, never twice.** The same reading showed one request sent twice, 380 ms apart, and
+  answered twice: a session was marked `asked` only after its send resolved, and the batch crosses
+  awaits before that (the history rule's roster read, the send waiting behind the drain), so a page
+  decoded meanwhile put it back in the accumulator. It is now marked the moment its batch leaves the
+  accumulator, and un-marked on every path that sends nothing - out of reach, nobody online, no
+  holder left, an epoch gap, a failed send. Nothing re-asks on its own after a failed send: the next
+  decode naming the row, or the next start, does.
+- **A cost taken knowingly: one community's wait delays the others.** One flush serves the channels
+  in turn, so a key group whose drain is slow (a long backlog, a link down) holds the asks of every
+  other salon behind it. They wait for the same link anyway, and a per-group flush would buy little
+  for a second accumulator to keep in step.
 
 ### 4.6 Ordering rule: remove, THEN distribute
 

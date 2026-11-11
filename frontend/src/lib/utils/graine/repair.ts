@@ -11,6 +11,7 @@ import {
 import { type ChannelMemberDto, ChannelService } from '$lib/services/ChannelService';
 import { whenAnyComesOnline } from '$lib/stores/presenceStore';
 import {
+  cachedGraineSession,
   isGraineReady,
   knownHistoryVisibility,
   requireGraineRuntime,
@@ -136,7 +137,30 @@ interface MissingSeed {
   sentAt: number;
   /** Why it is asked for now - see {@link AskReason}. */
   reason: AskReason;
+  /**
+   * Set when the want was discharged while this entry waited in the accumulator - see
+   * {@link DischargeReason}. Read once, by `stillToAsk`, to say why it was not asked for.
+   */
+  discharged?: DischargeReason;
 }
+
+/**
+ * WHY a wanted session stopped being wanted - each path that clears {@link wants} names itself, so
+ * the line saying what a flush did NOT ask for counts real arrivals as arrivals and nothing else.
+ *
+ * - `seed-held`: a seed for it was stored, or found held - {@link forgetAskedSession}'s default.
+ *   Still VERIFIED against the store before it is counted as an arrival.
+ * - `left-community`: the community left this device ({@link forgetWorkspaceRepairState}).
+ * - `retention`: the retention sweep dropped it (`retention.ts`).
+ * - `out-of-reach`: the community closes its past and every row naming it predates our arrival.
+ * - `no-holder`: the roster is exhausted - nobody left who could hold it.
+ */
+export type DischargeReason =
+  | 'seed-held'
+  | 'left-community'
+  | 'retention'
+  | 'out-of-reach'
+  | 'no-holder';
 
 /** Communities whose history has been asked for in this app session. Same lifetime, same reason. */
 const historyAsked = new Set<string>();
@@ -288,11 +312,27 @@ export function noteMissingSeed(
   if (!flushing) void flushRepairs();
 }
 
-/** Drains {@link outstanding}, one request per (channel, answerer). */
+/**
+ * Drains {@link outstanding}, one request per (channel, answerer).
+ *
+ * A session is marked {@link asked} THE MOMENT ITS BATCH LEAVES THE ACCUMULATOR, not after its send:
+ * the batch then crosses several awaits (the history rule's roster read in {@link withheldFromUs},
+ * the send itself, which waits its turn behind the group's drain), and a page decoded meanwhile
+ * re-notes the same rows - which, with the mark still to come, put the session back in the
+ * accumulator and out again as a second request to the same member (measured on an Android `1.6.10`
+ * phone, 2026-11-11: 380 ms apart, answered twice). Every path that ends WITHOUT a request on the
+ * wire un-marks it - out of reach, nobody online, no holder left, an epoch gap, a failed send. Nothing
+ * re-asks on its own after that: the next decode naming the row, or the next start, does.
+ */
 async function flushRepairs(): Promise<void> {
   flushing = true;
   try {
     while (outstanding.size > 0) {
+      // A FOLLOWER ASKS NOTHING, and says so before spending a roster read: see {@link whenAskable}.
+      if (getTabLeadership() === 'follower') {
+        abandonOutstanding('follower');
+        return;
+      }
       const channelId = [...outstanding.keys()][0];
       // The roster is resolved BEFORE the accumulator is read, so the rest of the page decodes
       // during that hop and lands in this same batch. Reading it first would defeat the point:
@@ -308,29 +348,37 @@ async function flushRepairs(): Promise<void> {
         );
         continue;
       }
-      // NOT WHILE THE GROUP'S EPOCH IS STILL BEING ESTABLISHED, and not at all while it is behind:
-      // a request is sealed at this device's epoch, and one sealed at an epoch every member has left
-      // is read by nobody. Awaited BEFORE the accumulator is read, for the coalescing reason above.
-      await requireGraineRuntime(
-        'cannot ask for a missing seed'
-      ).mlsService.whenDistributionEpochSettled(targets.groupId);
-      if (!(await ownBacklogApplied(targets.groupId, channelId))) {
-        outstanding.delete(channelId);
-        continue;
+      // Awaited BEFORE the accumulator is read, for the coalescing reason above.
+      const gate = await whenAskable(targets.groupId, channelId);
+      if (gate !== 'ask') {
+        // THE WHOLE FLUSH ENDS, never just this channel: what ended the wait (the MLS service or the
+        // runtime gone, this tab demoted) ends it for every key group, and going on would only
+        // register, channel after channel, a waiter that nothing will ever resolve.
+        abandonOutstanding(gate);
+        return;
       }
-      const sessions = withoutSeedsHeldMeanwhile(
+      const sessions = await stillToAsk(
         channelId,
         outstanding.get(channelId) ?? new Map<string, MissingSeed>()
       );
       outstanding.delete(channelId);
+      for (const sessionId of sessions.keys()) asked.add(sessionId);
       if (sessions.size === 0) continue;
       if (isInEpochGap(targets.groupId)) {
+        // Un-marked: held, not sent. The release puts them back in the accumulator itself, and a
+        // re-note meanwhile lands on the same key there.
+        for (const sessionId of sessions.keys()) asked.delete(sessionId);
         holdForKeyGroup(targets.groupId, channelId, sessions);
         continue;
       }
       try {
         await requestSeedsForChannel(channelId, sessions, targets);
       } catch (e) {
+        // What did not go out is un-marked (`askedOn` is written only once a request has left), so
+        // the next decode naming it, or the next start, asks again.
+        for (const sessionId of sessions.keys()) {
+          if (!askedOn.has(sessionId)) asked.delete(sessionId);
+        }
         // Best-effort, and therefore said out loud: the only other symptom is a salon whose older
         // messages stay unreadable with nothing anywhere naming the reason.
         console.warn(
@@ -344,10 +392,15 @@ async function flushRepairs(): Promise<void> {
   }
 }
 
+/** Why a flush may not ask now: see {@link whenAskable}. */
+type AskGate = 'ask' | 'follower' | 'closed';
+
 /**
- * Waits until THIS device has applied everything the server queued for it on `groupId`, and says
- * whether the ask may go ahead (`false`: the MLS service was torn down first, so nobody is left to
- * send it).
+ * Waits until a request on `groupId` is worth sending, and says whether it may go: `ask`, or why not.
+ *
+ * **NOT WHILE THE GROUP'S EPOCH IS STILL BEING ESTABLISHED**, and not at all while it is behind: a
+ * request is sealed at this device's epoch, and one sealed at an epoch every member has left is read
+ * by nobody (`whenDistributionEpochSettled`).
  *
  * **A SEED IN OUR OWN MAILBOX IS NOT A SEED TO ASK A PEER FOR.** A seed travels as a durable frame
  * on the key group, so a device that was away finds it in its pending queue - and a salon opened
@@ -359,50 +412,132 @@ async function flushRepairs(): Promise<void> {
  * 11.86 s - three requests and three answer frames on an eleven-leaf key group, for seeds already
  * on the device. The answer is not a retry and not a delay: it is the event that says the backlog is
  * in, {@link IMlsService.whenGroupDrained} (the mailbox listed on this link, the group's frames
- * applied), after which a seed that is still missing is one this device was never sent.
+ * applied), after which a seed that is still missing is one this device was never sent. One flush
+ * serves every channel in turn, so a key group whose drain is slow holds the others' asks behind it
+ * - a cost taken knowingly (channel-encryption 4.5).
  *
- * A FOLLOWER TAB DOES NOT WAIT: it holds no socket and drains nothing (its leader does), so the
- * event never comes for it. What a follower may send at all is the tab leadership's rule
- * (`mls-client/tabLeader.ts`), not this one's.
+ * **A FOLLOWER TAB ASKS NOTHING (`follower`).** It holds no socket and drains nothing, so the wait
+ * would never end for it, and the MLS state a request is sealed with is the leader's to advance
+ * (`mls-client/tabLeader.ts`): the leader decodes the same salon and asks for itself. Read again
+ * AFTER the wait, because a leader demoted while it waited is a follower by the time it would send.
+ *
+ * `closed`: the MLS service was destroyed, or the runtime is gone, before the wait ended - nobody is
+ * left to send anything. Said, never thrown: the flush is a fire-and-forget promise, and a rejection
+ * out of it would be unhandled.
  */
-async function ownBacklogApplied(groupId: string, channelId: string): Promise<boolean> {
-  if (getTabLeadership() === 'follower') return true;
+async function whenAskable(groupId: string, channelId: string): Promise<AskGate> {
   try {
-    await requireGraineRuntime('cannot ask for a missing seed').mlsService.whenGroupDrained(
-      groupId
-    );
-    return true;
+    const { mlsService } = requireGraineRuntime('cannot ask for a missing seed');
+    await mlsService.whenDistributionEpochSettled(groupId);
+    await mlsService.whenGroupDrained(groupId);
   } catch (e) {
-    if (!(e instanceof GroupDrainAbandonedError)) throw e;
+    if (e instanceof GroupDrainAbandonedError) {
+      console.info(
+        `[GRAINE] not asking for missing seed(s): the MLS service closed before key group ` +
+          `${groupId.slice(0, 8)}... (channel ${channelId.slice(0, 8)}) was drained - the next start asks again`
+      );
+    } else {
+      console.warn(
+        `[GRAINE] not asking for missing seed(s): waiting for key group ${groupId.slice(0, 8)}... ` +
+          `(channel ${channelId.slice(0, 8)}) failed - ${String(e)}; the next decode naming them asks again`
+      );
+    }
+    return 'closed';
+  }
+  return getTabLeadership() === 'follower' ? 'follower' : 'ask';
+}
+
+/**
+ * Empties the accumulator because the flush ends (see {@link whenAskable}). The wants stay: a later
+ * decode naming the same rows notes them again, and a fresh flush decides afresh.
+ */
+function abandonOutstanding(why: Exclude<AskGate, 'ask'>): void {
+  const channels = outstanding.size;
+  const seeds = [...outstanding.values()].reduce((n, perChannel) => n + perChannel.size, 0);
+  outstanding.clear();
+  // `closed` was said by `whenAskable`, with its cause.
+  if (why === 'follower') {
     console.info(
-      `[GRAINE] not asking for the missing seed(s) of channel ${channelId.slice(0, 8)}: the MLS service ` +
-        `closed before key group ${groupId.slice(0, 8)}... was drained - the next start asks again`
+      `[GRAINE] this tab is a follower - asking nothing for ${seeds} missing seed(s) in ${channels} ` +
+        `channel(s): the leader tab holds the socket, drains the key groups and asks for itself`
     );
+  }
+}
+
+/** Why an accumulated session is not asked for, as {@link stillToAsk} counts it. */
+type NotAskedReason = DischargeReason | 'already-asked' | 'marked-held';
+
+/** How each {@link NotAskedReason} reads in {@link stillToAsk}'s line. */
+const NOT_ASKED_LABEL: Record<NotAskedReason, string> = {
+  'seed-held': "arrived with this device's own backlog",
+  'marked-held': 'discharged as held but not in the store',
+  'left-community': 'left with their community',
+  retention: 'dropped by the retention sweep',
+  'out-of-reach': 'out of reach (the community closes its past)',
+  'no-holder': 'with no holder left',
+  'already-asked': 'already asked',
+};
+
+/**
+ * `sessions` without the ones that must not be asked for any more - said once, with a count PER
+ * REASON, because each is a request {@link whenAskable} saved and the line is what proves the wait
+ * earns its place.
+ *
+ * Wanted is read from {@link wants}; WHY a session stopped being wanted is the stamp its discharge
+ * left on the entry ({@link DischargeReason}), and an arrival is counted as one ONLY when a seed for
+ * it is held now - the stamp says what a path believed, the store says what is true.
+ */
+async function stillToAsk(
+  channelId: string,
+  sessions: Map<string, MissingSeed>
+): Promise<Map<string, MissingSeed>> {
+  const kept = new Map<string, MissingSeed>();
+  const notAsked = new Map<NotAskedReason, number>();
+  const count = (why: NotAskedReason) => notAsked.set(why, (notAsked.get(why) ?? 0) + 1);
+  for (const [sessionId, seed] of sessions) {
+    if (asked.has(sessionId)) count('already-asked');
+    else if (wants.has(sessionId)) kept.set(sessionId, seed);
+    else if (seed.discharged && seed.discharged !== 'seed-held') count(seed.discharged);
+    else count((await seedHeldNow(sessionId)) ? 'seed-held' : 'marked-held');
+  }
+  if (notAsked.size > 0) {
+    const reasons = [...notAsked].map(([why, n]) => `${n} ${NOT_ASKED_LABEL[why]}`).join(', ');
+    console.info(
+      `[GRAINE] ${sessions.size - kept.size} of ${sessions.size} missing seed(s) of channel ` +
+        `${channelId.slice(0, 8)} not asked for - ${reasons}`
+    );
+  }
+  return kept;
+}
+
+/** Whether this device holds a seed for `sessionId` right now, from the cache or the store. */
+async function seedHeldNow(sessionId: string): Promise<boolean> {
+  if (cachedGraineSession(sessionId)) return true;
+  try {
+    const { storage, deviceKey } = requireGraineRuntime('cannot read a held seed');
+    return (await storage.getGraineSession(sessionId, deviceKey())) !== null;
+  } catch (e) {
+    console.warn(`[GRAINE] could not read whether seed ${sessionId} is held: ${String(e)}`);
     return false;
   }
 }
 
 /**
- * `sessions` without the ones a seed has reached since they were noted - said once, with the count,
- * because each is a request {@link ownBacklogApplied} saved and the line is what proves the wait
- * earns its place.
- *
- * Read from {@link wants}, the one record every path that ends with this device holding a seed
- * clears ({@link forgetAskedSession}); `outstanding` is the accumulator and is never told.
+ * Stamps every accumulated entry for `sessionId` with why it stopped being wanted - see
+ * {@link DischargeReason}. Only the accumulator and the held-for-key-group map are touched: both are
+ * small, and nothing else is read for the reason.
  */
-function withoutSeedsHeldMeanwhile(
-  channelId: string,
-  sessions: Map<string, MissingSeed>
-): Map<string, MissingSeed> {
-  const stillWanted = new Map([...sessions].filter(([sessionId]) => wants.has(sessionId)));
-  const arrived = sessions.size - stillWanted.size;
-  if (arrived > 0) {
-    console.info(
-      `[GRAINE] ${arrived} of ${sessions.size} missing seed(s) of channel ${channelId.slice(0, 8)} arrived ` +
-        `with this device's own backlog - not asked for`
-    );
+function stampDischarge(sessionId: string, reason: DischargeReason): void {
+  for (const perChannel of outstanding.values()) {
+    const entry = perChannel.get(sessionId);
+    if (entry) entry.discharged = reason;
   }
-  return stillWanted;
+  for (const byChannel of heldForKeyGroup.values()) {
+    for (const perChannel of byChannel.values()) {
+      const entry = perChannel.get(sessionId);
+      if (entry) entry.discharged = reason;
+    }
+  }
 }
 
 /** Everything a request needs that is not the sessions themselves. */
@@ -739,9 +874,7 @@ async function requestSeedsForChannel(
   const beyondReach = await withheldFromUs(workspaceId, userId, sessions);
   for (const sessionId of beyondReach) {
     sessions.delete(sessionId);
-    wants.delete(sessionId);
-    askedRequest.delete(sessionId);
-    declined.delete(sessionId);
+    forgetAskedSession(sessionId, 'out-of-reach');
   }
   if (beyondReach.length > 0) {
     console.info(
@@ -765,6 +898,9 @@ async function requestSeedsForChannel(
       ownOtherDevices
     );
     if (election.kind === 'wait') {
+      // Un-marked: nothing is sent, and the presence waiter re-asks through `noteMissingSeed`,
+      // which declines anything still marked.
+      asked.delete(sessionId);
       waiting.set(sessionId, election.offline);
       continue;
     }
@@ -781,9 +917,7 @@ async function requestSeedsForChannel(
           // the first is the walk terminating on a proof.
           (ownOtherDevices ? ', our own other device(s) included' : ' (we have no other device)')
       );
-      wants.delete(sessionId);
-      askedRequest.delete(sessionId);
-      declined.delete(sessionId);
+      forgetAskedSession(sessionId, 'no-holder');
       continue;
     }
     const { answerer } = election;
@@ -810,21 +944,12 @@ async function requestSeedsForChannel(
     sessionIds.forEach((id) =>
       askedRequest.set(id, { requestId, answerer: answerer.toLowerCase(), named })
     );
-    // `asked` TOO, for the same reason on the other side: the send can take a whole drain (it waits
-    // its turn on the group), and a page decoded meanwhile re-notes the same rows. Marked after the
-    // send, the session was not yet "asked", so it went back into the accumulator and out again as
-    // a second request to the same member - measured on the same 1.6.10 phone, 380 ms apart, and
-    // answered twice. Un-marked if the send fails, so the next row naming it asks again.
-    sessionIds.forEach((id) => asked.add(id));
-    try {
-      // Transport, never durable: a request restates state held elsewhere, so replaying it from the
-      // shared log would be circular - and that log is capped per group, so writing requests into it
-      // would evict the seeds it exists to carry.
-      await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
-    } catch (e) {
-      sessionIds.forEach((id) => asked.delete(id));
-      throw e;
-    }
+    // `asked` was marked when the batch left the accumulator (`flushRepairs`), which also un-marks
+    // what a failed send leaves unsent - `askedOn` below is the proof a request left.
+    // Transport, never durable: a request restates state held elsewhere, so replaying it from the
+    // shared log would be circular - and that log is capped per group, so writing requests into it
+    // would evict the seeds it exists to carry.
+    await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
     const sealedAt = mlsService.getEpoch(groupId);
     // Only what is still asked: a seed landing during the send already discharged its session.
     sessionIds
@@ -1551,14 +1676,18 @@ export function noteHistoryHeldNothing(
 }
 
 /**
- * The seed arrived: this session is no longer wanted.
+ * This session is no longer wanted: its seed arrived, or one of the other {@link DischargeReason}s.
  *
  * Called from the frame handler on EVERY path a seed can land by, so `asked` holds only requests
  * still outstanding. Leaving a satisfied session in it costs nothing today and would cost a silence
  * the day a later miss on the same id needs to ask - a repaired seed can still carry a `firstIndex`
  * above the rows that prompted the ask.
+ *
+ * @param reason Why the session stops being wanted - a seed arriving unless said otherwise. Stamped
+ *   on any accumulated entry for it, so the flush can say why it was not asked for.
  */
-export function forgetAskedSession(sessionId: string): void {
+export function forgetAskedSession(sessionId: string, reason: DischargeReason = 'seed-held'): void {
+  stampDischarge(sessionId, reason);
   asked.delete(sessionId);
   askedOn.delete(sessionId);
   askedRequest.delete(sessionId);
@@ -1680,7 +1809,7 @@ export function forgetWorkspaceRepairState(
   historyParked.delete(workspaceId);
   // A parked channel waiter of this community may still fire; it re-asks only what is still in
   // `wants`, which the loop below empties of this community's sessions.
-  for (const sessionId of sessionIds) forgetAskedSession(sessionId);
+  for (const sessionId of sessionIds) forgetAskedSession(sessionId, 'left-community');
 }
 
 /** Puts `sessions` aside until `groupId` catches up, and says so once per batch. */
