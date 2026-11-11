@@ -16,7 +16,7 @@
     Pin,
     ChartColumn,
   } from '@lucide/svelte';
-  import { onDestroy, tick, untrack } from 'svelte';
+  import { flushSync, onDestroy, tick, untrack } from 'svelte';
   import { createEditSession } from '$lib/utils/chat/editSession.svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
@@ -450,6 +450,8 @@
   /** Monotonic token to drop stale async search results. */
   let searchSeq = 0;
   let showSearch = $state(false);
+  let searchInputEl = $state<HTMLInputElement | null>(null);
+  let chatHeaderRef = $state<{ focusSearchToggle: () => void } | null>(null);
   /** Whether local DB may have messages older than what's currently in memory. */
   let hasMoreInDb = $state(true);
   let isLoadingOlder = $state(false);
@@ -1093,6 +1095,12 @@
       searchLimitedToLoaded = false;
     }
     activeSearchIndex = searchMatches.length > 0 ? 0 : -1;
+    // The list for THIS term is now known (a superseded one returned above): take the reader to
+    // the match the counter calls 1, paging older history in exactly as the arrows do.
+    if (activeSearchIndex === 0) {
+      Log.d('chat.search', `term settled: ${searchMatches.length} match(es), jumping to 1`);
+      await navigateToMessageEnsureLoaded(searchMatches[0]);
+    }
   }
 
   /**
@@ -1112,6 +1120,38 @@
       if (!hasMore) break;
     }
     await navigateToMessage(messageId);
+  }
+
+  /**
+   * Opens the bar and focuses its field in the SAME call stack as the tap: `flushSync` mounts the
+   * input now, because iOS raises the keyboard only for a focus made inside the user gesture.
+   */
+  function openSearch() {
+    showSearch = true;
+    flushSync();
+    Log.d('chat.search', `opened, field ${searchInputEl ? 'focused' : 'missing'}`);
+    searchInputEl?.focus();
+  }
+
+  /** Closes the bar, resets the search and hands the focus back to the magnifier. */
+  function closeSearch() {
+    showSearch = false;
+    searchQuery = '';
+    searchMatches = [];
+    activeSearchIndex = -1;
+    searchLimitedToLoaded = false;
+    Log.d('chat.search', 'closed, focus returned to the magnifier');
+    chatHeaderRef?.focusSearchToggle();
+  }
+
+  function onSearchKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeSearch();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      void jumpSearch(e.shiftKey ? -1 : 1);
+    }
   }
 
   async function jumpSearch(delta: 1 | -1) {
@@ -1558,14 +1598,8 @@
         {onStartVideoCall}
         {onOpenMembers}
         {membersActive}
-        onToggleSearch={() => {
-          showSearch = !showSearch;
-          if (!showSearch) {
-            searchQuery = '';
-            searchMatches = [];
-            activeSearchIndex = -1;
-          }
-        }}
+        bind:this={chatHeaderRef}
+        onToggleSearch={() => (showSearch ? closeSearch() : openSearch())}
         searchActive={showSearch}
         {onOpenMedia}
       />
@@ -1577,7 +1611,9 @@
               <Search size={15} class="opacity-60" />
               <input
                 type="text"
+                bind:this={searchInputEl}
                 value={searchQuery}
+                onkeydown={onSearchKeydown}
                 oninput={(e) => (searchQuery = e.currentTarget.value)}
                 placeholder={m.chat_search_in_conversation_placeholder()}
                 class="chat-search-input"
