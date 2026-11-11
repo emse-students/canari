@@ -235,7 +235,7 @@ that build predates the fix (#2583); the AFTER readings are on `1.5.1-alpha.1`, 
 ## FOL - a follow request between two accounts (WP-F4)
 
 Every personal account is private (decided 2026-10-25): a follow of a person is a request the person
-answers (profiles-and-access.md#follow-requests-member-reposts-and-visibility-between-spaces---the-decisions-of-2026-10-25-all-shipped)).
+answers ([profiles-and-access](profiles-and-access.md#follow-requests-member-reposts-and-visibility-between-spaces---the-decisions-of-2026-10-25-all-shipped)).
 No runner yet: the row is the spec the runner implements, and nothing is recorded before the
 pre-release carrying WP-F1..F4 is on dev. Every wait is counted in rounds, never a clock. The profile
 button's state is read off its `data-follow-status`, and every list off its own rows

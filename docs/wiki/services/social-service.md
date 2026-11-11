@@ -1055,7 +1055,7 @@ pushed all three (`[INTERNAL_PUSH]` in chat-delivery), which is the baseline.
 
 ### A follow of a PERSON is a request first (WP-F1, migration 114; decided 2026-10-25)
 
-Every personal account is private (../profiles-and-access.md#follow-requests-member-reposts-and-visibility-between-spaces---the-decisions-of-2026-10-25-all-shipped)):
+Every personal account is private ([profiles-and-access](../profiles-and-access.md#follow-requests-member-reposts-and-visibility-between-spaces---the-decisions-of-2026-10-25-all-shipped)):
 `POST /api/posts/users/:userId/follow` writes a `user_follows` row with `status = 'pending'`, and
 only the followed person's answer makes it `accepted`. An association, a list or an institution
 (`association_follows`) is followed at once and has no status.

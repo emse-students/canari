@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  InternalServerErrorException,
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -39,11 +40,13 @@ export class NginxAuthGuard implements CanActivate {
     // on trust, and an unset NODE_ENV was refused only because the mode could not be guessed. With
     // one rule for all modes the mode no longer matters. The local nginx is the same file as
     // production's and forwards `X-Internal-Token` on every route this service serves, and the
-    // local compose, the dev estate and the CI boot job all set the secret.
+    // local compose, the dev estate and the CI boot job all set the secret. An unset secret is THIS
+    // service's misconfiguration, so it answers 500, never a 401 a client would read as its session
+    // ending (the same as chat-delivery's HeaderAuthGuard, 2026-11-12).
     const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
     if (!internalSecret) {
       Logger.error('[AUTH_GUARD] INTERNAL_SHARED_SECRET is not configured - refusing the request');
-      throw new UnauthorizedException(
+      throw new InternalServerErrorException(
         'INTERNAL_SHARED_SECRET is not configured - service cannot verify internal requests'
       );
     }
