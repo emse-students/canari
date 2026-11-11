@@ -46,6 +46,9 @@ same list heads `libs/contracts/ecosystem-sites.json`):
    alone (sub only) a handoff BYPASSES MiConnect's access decisions for every site - a deactivated
    account, Sky's ICM policy, any future D15 rule - so **F1 is never enough to turn a flag on**.
    MiGallery's flag stays OFF until the H0 check confirms the MiConnect reads (owner, 2026-11-08).
+   **H0 ran on 2026-11-11: `check_access?for_user` honours `for_user` for a superuser only, so this
+   condition cannot be met by a read-only account as written** - the measurement and the
+   alternatives are [in section 9](#h0s-result-2026-11-11-read-only-on-the-running-authentik-202680---f3-as-designed-is-blocked).
 2. **The site's provider `sub_mode` was read as `hashed_user_id`** on MiConnect (section 9), so the
    `sub` Canari signs is the `sub` the site keys its rows by.
 3. **The site's redemption is live with the login-CSRF answers of section 3.7**: handoff sessions
@@ -646,3 +649,37 @@ application or provider. The exact codenames, and whether `check_access?for_user
 lookup or `check_access` is missing, **no flag goes on** and this section records why; if only
 `preview_user` is missing, the access check ships without claims (the site keeps its own row, F1's
 admission) and this section records that.
+
+#### H0's result (2026-11-11, read-only, on the running authentik 2026.8.0) - F3 AS DESIGNED IS BLOCKED
+
+Read in the running server's own source and through read-only ORM queries; **nothing was created**
+(no account, role or token), because the second read cannot be made by a read-only account.
+
+| Read | On 2026.8.0 | Usable by a read-only account? |
+| --- | --- | --- |
+| user by `uuid` | `core/api/users.py`: a `UUIDFilter` on `uuid` | **yes**, with `view_user` |
+| `check_access?for_user` | `core/api/applications.py`, `check_access`: `for_user` is honoured **only when the caller `is_superuser`**; for anyone else it is silently IGNORED and the policy engine runs for the CALLER | **no** - a non-superuser gets the service account's own answer, a silent wrong answer, and a superuser token is the opposite of read-only |
+| `preview_user` | `providers/oauth2/api/providers.py`: `view_oauth2provider` on the provider + `authentik_core.preview_user` on the user | **yes** |
+| `sub_mode` | read from each provider row | **`hashed_user_id` on all three**: `miconnect-migallery`, `miconnect-sky`, `miconnect-cercle` (and on every other production provider) |
+
+**What decides access today, measured.** The three production applications (`migallery`, `sky`,
+`cercle`) have **zero enabled policy bindings** (engine mode `any`), and the tenant flag
+`core_default_app_access` (`AppAccessWithoutBindings`) is **`True`**. So MiConnect's only decision
+for these three today is "the account exists and is active"; Sky's ICM rule lives in Sky's own code
+(`callback/+server.ts`, `gateHandler`), not in MiConnect. The policy `test` endpoint
+(`policies/api/policies.py`) runs ONE policy, not an application's engine (bindings to groups and
+users, negation, mode, the empty-result flag), so evaluating it from Canari would duplicate
+MiConnect's decision - rejected for the reason F2 was.
+
+**Condition 1 of section 0 therefore cannot be met as written**, and no flag goes on. The
+alternatives, for the lead/owner to choose (not taken here):
+
+- **F3-bound (recommended):** read-only account with `view_user`, `view_application` and
+  `authentik_policies.view_policybinding` on the three applications. At mint: the user by uuid must
+  be `is_active`; the target application must have **zero enabled bindings** and
+  `core_default_app_access` must be `True` - exactly the inputs from which `check_access` would
+  answer `passing` - else refuse (`policy_bound`, fail-closed). A binding added later turns the
+  handoff OFF for that site until authentik honours `for_user` for a non-superuser. Same answer as
+  OIDC today, no duplicated policy logic, no superuser.
+- **A superuser service account:** rejected - it can write everything.
+- **Wait for upstream:** no date.
