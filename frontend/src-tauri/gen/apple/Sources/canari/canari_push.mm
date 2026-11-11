@@ -708,10 +708,13 @@ static NSString *CanariLocalized(NSString *key) {
 
 /**
  * Whether a message notification is titled with a GROUP rather than with its sender. NO is a direct
- * message, titled with the sender. Twins: `NotificationService.titledByGroup`,
- * `ConversationShape.isGroup` (Android).
+ * message, titled with the sender. `declared` is the payload's `isGroup` and wins: a third of groups
+ * carry no name (`push-payload.ts`); nil (not said) falls back to the name rule. Twins:
+ * `NotificationService.titledByGroup`, `ConversationShape.isGroup` (Android).
  */
-static BOOL CanariTitledByGroup(NSString *groupName, NSString *senderName) {
+static BOOL CanariTitledByGroup(NSString *groupName, NSString *senderName,
+                                NSNumber *_Nullable declared) {
+  if (declared != nil) return declared.boolValue;
   return groupName.length > 0 && ![groupName isEqualToString:senderName];
 }
 
@@ -721,11 +724,12 @@ static BOOL CanariTitledByGroup(NSString *groupName, NSString *senderName) {
  * group, so its line says who wrote (owner, 2026-11-11). Twins: `NotificationService.fallbackText`,
  * `FallbackLine` (Android).
  */
-static NSString *CanariBuildFallbackText(NSString *senderName, NSString *groupName) {
+static NSString *CanariBuildFallbackText(NSString *senderName, NSString *groupName,
+                                         NSNumber *_Nullable declaredGroup) {
   if (senderName.length == 0) {
     return CanariLocalized(@"notif.message.encrypted");
   }
-  if (CanariTitledByGroup(groupName, senderName)) {
+  if (CanariTitledByGroup(groupName, senderName, declaredGroup)) {
     return [NSString stringWithFormat:CanariLocalized(@"notif.message.from"), senderName];
   }
   return CanariLocalized(@"notif.message.new");
@@ -3479,12 +3483,17 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
                                           CanariDecryptedMessage *_Nullable decrypted,
                                           BOOL mentionedByServer, NSString *_Nullable initialsName,
                                           BOOL namesMentionAuthor, BOOL scansBodyForMention,
-                                          CanariNameBook *_Nullable salonNames) {
+                                          CanariNameBook *_Nullable salonNames,
+                                          NSNumber *_Nullable declaredGroup) {
   if (canari_ios_is_in_foreground()) {
     return;
   }
-  BOOL isGroup = CanariTitledByGroup(groupName, senderName);
-  NSString *title = isGroup ? groupName : (senderName.length > 0 ? senderName : @"Canari");
+  BOOL isGroup = CanariTitledByGroup(groupName, senderName, declaredGroup);
+  // An unnamed group is titled "Conversation de groupe", never with its first speaker.
+  NSString *groupTitle =
+      groupName.length > 0 ? groupName : CanariLocalized(@"notif.group.unnamed");
+  NSLog(@"[CanariPush] message shape isGroup=%d declared=%@", isGroup, declaredGroup);
+  NSString *title = isGroup ? groupTitle : (senderName.length > 0 ? senderName : @"Canari");
   NSString *deepLink =
       (groupId.length > 0 ? CanariChatLink(groupId, @"") : nil) ?: @"fr.emse.canari://chat";
   int notifId = CanariStableNotifId(groupId);
@@ -4355,15 +4364,16 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
         CanariRunBackgroundCleanup();
         NSLog(@"[CanariPush] decrypt failed - cleanup pending db");
       }
-      body = CanariBuildFallbackText(senderName, groupName);
+      body = CanariBuildFallbackText(senderName, groupName, isGroup);
     } else {
       CanariWriteFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted);
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
-      // MLS: the server cannot know who is mentioned, so the body scan inside decides.
+      // MLS: the server cannot know who is mentioned, so the body scan inside decides. The
+      // payload's `isGroup` decides the shape: an unnamed group is still a group.
       CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted, NO,
-                                    senderName, NO, YES, nil);
+                                    senderName, NO, YES, nil, isGroup);
     });
 
     CanariPushContext *drainCtx = CanariLoadPushContext();
@@ -4545,9 +4555,11 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       // An opened line has a speaker and the salon is the group: the subtitle names them, as an MLS
       // group does. A blind banner keeps the salon as its title alone. No media thumbnail for
       // channels (WP-XP-3 is MLS DM/group only) -> pass nil.
+      // The last `nil`: group or DM is NOT declared, because a blind banner passes the salon as
+      // its SENDER and no group name, titled with the salon alone - the name rule keeps that.
       CanariShowMessageNotification(speaker ?: displayName, speaker != nil ? displayName : @"", body,
                                     conversationId, speakerId, nil, shownMentionsMe,
-                                    initialsName, YES, NO, names);
+                                    initialsName, YES, NO, names, nil);
     });
   });
 }

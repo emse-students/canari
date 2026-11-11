@@ -37,19 +37,31 @@ object ConversationShape {
     data class Shape(val title: String?, val groupConversation: Boolean)
 
     /**
-     * Whether a message post is titled with a GROUP rather than with its sender: a named group
-     * distinct from the sender. False is a direct message, whose title (or shortcut header) is the
+     * Whether a message post is a GROUP conversation, titled with the group rather than with its
      * sender - the ONE predicate both the shape below and [FallbackLine] read.
+     *
+     * [declared] is the push payload's `isGroup` (or the WebView's conversation type) and WINS when
+     * present: a third of production groups carry no name (`push-payload.ts`), and a group may be
+     * named like one of its members, so the name alone cannot answer. Null - the server could not
+     * read the row, or a caller that has no such fact (a reaction) - falls back to the name rule:
+     * a named group distinct from the sender.
      */
-    fun isGroup(groupName: String, senderName: String): Boolean =
-        groupName.isNotEmpty() && groupName != senderName
+    fun isGroup(groupName: String, senderName: String, declared: Boolean? = null): Boolean =
+        declared ?: (groupName.isNotEmpty() && groupName != senderName)
+
+    /**
+     * The title a group post carries: its name, else [unnamedGroup] ("Conversation de groupe").
+     * Never the sender's name: a group titled with its first speaker reads as a direct message with
+     * them, which is what the payload's `isGroup` was introduced to stop (2026-09-21).
+     */
+    fun groupTitle(groupName: String, unnamedGroup: String): String = groupName.ifEmpty { unnamedGroup }
 
     /** The first API level whose SystemUI draws a shortcut-backed post as a conversation. */
     const val CONVERSATION_LAYOUT_API = 30
 
     /**
-     * @param isGroup           the conversation is a group (a named group distinct from its sender).
-     * @param groupName         the group's title, read only when [isGroup].
+     * @param isGroup           the conversation is a group - [isGroup].
+     * @param groupName         the group's title ([groupTitle]), read only when [isGroup].
      * @param namesEachSender   the post is a message between people (see `showMessageNotification`).
      * @param hasShortcut       a conversation shortcut was published for this post.
      * @param sdkInt            `Build.VERSION.SDK_INT`, passed in so this stays Android-free.
@@ -68,7 +80,7 @@ object ConversationShape {
             Shape(title = null, groupConversation = false)
         // No shortcut label on top: the group shape is the only place the name appears.
         namesEachSender -> Shape(title = null, groupConversation = true)
-        // A reaction, or a blind salon banner: the old one-to-one shape, unchanged.
+        // A reaction (a sentence about its actor, not a message by them): the old one-to-one shape.
         else -> Shape(title = null, groupConversation = false)
     }
 }

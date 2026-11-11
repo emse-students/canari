@@ -3,6 +3,8 @@ package fr.emse.canari
 import fr.emse.canari.push.ConversationShape
 import fr.emse.canari.push.ConversationShape.Shape
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -50,7 +52,51 @@ class ConversationShapeTest {
     }
 
     @Test
-    fun `a reaction or a blind salon banner keeps the old untitled one-to-one shape`() {
+    fun `the declared isGroup wins over the name - an unnamed group is a group`() {
+        // A third of production groups carry no name; the name rule read them as a DM with their
+        // first speaker (review of #3344, M1).
+        assertTrue(ConversationShape.isGroup(groupName = "", senderName = "Alice", declared = true))
+        // A group named like one of its members is still a group.
+        assertTrue(ConversationShape.isGroup(groupName = "Alice", senderName = "Alice", declared = true))
+        // A DM the server named is still a DM.
+        assertFalse(ConversationShape.isGroup(groupName = "Alice", senderName = "Bob", declared = false))
+    }
+
+    @Test
+    fun `not said falls back to the name rule`() {
+        assertTrue(ConversationShape.isGroup(groupName = "Groupe", senderName = "Alice", declared = null))
+        assertFalse(ConversationShape.isGroup(groupName = "", senderName = "Alice", declared = null))
+        assertFalse(ConversationShape.isGroup(groupName = "Alice", senderName = "Alice", declared = null))
+        assertFalse(ConversationShape.isGroup(groupName = "", senderName = "Alice"))
+    }
+
+    @Test
+    fun `an unnamed group keeps the group shape, titled as a group, with a shortcut on API 36`() {
+        val title = ConversationShape.groupTitle(groupName = "", unnamedGroup = "Conversation de groupe")
+        assertEquals("Conversation de groupe", title)
+        assertEquals(
+            Shape(title = "Conversation de groupe", groupConversation = true),
+            ConversationShape.of(
+                isGroup = ConversationShape.isGroup(groupName = "", senderName = "Alice", declared = true),
+                groupName = title, namesEachSender = true, hasShortcut = true, sdkInt = api36,
+            ),
+        )
+        assertEquals("Les gourmands", ConversationShape.groupTitle(groupName = "Les gourmands", unnamedGroup = "x"))
+    }
+
+    @Test
+    fun `a group named like a member keeps the group shape and its name`() {
+        assertEquals(
+            Shape(title = "Alice", groupConversation = true),
+            ConversationShape.of(
+                isGroup = ConversationShape.isGroup(groupName = "Alice", senderName = "Alice", declared = true),
+                groupName = "Alice", namesEachSender = true, hasShortcut = true, sdkInt = api36,
+            ),
+        )
+    }
+
+    @Test
+    fun `a reaction keeps the old untitled one-to-one shape`() {
         for (shortcut in listOf(false, true)) for (sdk in listOf(api29, api36)) {
             assertEquals(
                 Shape(title = null, groupConversation = false),

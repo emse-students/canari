@@ -27,6 +27,14 @@ class FallbackLineTest {
     }
 
     @Test
+    fun `the payload's isGroup decides, so an unnamed group still names its sender`() {
+        assertEquals(Kind.FROM_SENDER, FallbackLine.of(senderName = "Alice", groupName = "", declared = true))
+        assertEquals(Kind.FROM_SENDER, FallbackLine.of(senderName = "Alice", groupName = "Alice", declared = true))
+        assertEquals(Kind.NEW_MESSAGE, FallbackLine.of(senderName = "Alice", groupName = "Groupe", declared = false))
+        assertEquals(Kind.NEW_MESSAGE, FallbackLine.of(senderName = "Alice", groupName = "", declared = null))
+    }
+
+    @Test
     fun `nobody to name reads the generic encrypted line`() {
         assertEquals(Kind.ENCRYPTED, FallbackLine.of(senderName = "", groupName = ""))
         assertEquals(Kind.ENCRYPTED, FallbackLine.of(senderName = "", groupName = "Groupe"))

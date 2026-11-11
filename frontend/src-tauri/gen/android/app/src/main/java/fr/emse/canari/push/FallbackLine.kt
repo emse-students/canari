@@ -10,7 +10,7 @@ package fr.emse.canari.push
  * title is the group, and the sentence is what says who wrote. With no sender name at all, the
  * generic "encrypted message" sentence is unchanged.
  *
- * The iOS twin is `NotificationService.fallbackText` (NSE) and `CanariFallbackText` (`canari_push.mm`).
+ * The iOS twin is `NotificationService.fallbackText` (NSE) and `CanariBuildFallbackText` (`canari_push.mm`).
  *
  * Compiled by the JVM test project too, so nothing here may import Android - see
  * [PushRecoveryLadder] for why that is the guard.
@@ -26,9 +26,10 @@ object FallbackLine {
         ENCRYPTED,
     }
 
-    fun of(senderName: String, groupName: String): Kind = when {
+    /** @param declared the push payload's `isGroup`, null when it did not say - see [ConversationShape.isGroup]. */
+    fun of(senderName: String, groupName: String, declared: Boolean? = null): Kind = when {
         senderName.isEmpty() -> Kind.ENCRYPTED
-        ConversationShape.isGroup(groupName, senderName) -> Kind.FROM_SENDER
+        ConversationShape.isGroup(groupName, senderName, declared) -> Kind.FROM_SENDER
         else -> Kind.NEW_MESSAGE
     }
 }
