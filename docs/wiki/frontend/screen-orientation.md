@@ -1,10 +1,12 @@
 # Screen orientation - portrait everywhere, rotation on the video and camera screens
 
 **Decided by the owner, 2026-11-09.** The app stays PORTRAIT (the feed, the conversations, the
-settings). Four kinds of screen may turn: the full-screen video viewer, the live viewer, the live
-broadcaster and the camera (chat and post photos and videos, AND CanaReels - a reel filmed in
-landscape is stored with its real aspect and shown letterboxed in the vertical pager). On those
-screens:
+settings). Three kinds of screen may turn: the full-screen video viewer, the live viewer and the
+live broadcaster. **The camera (chat and post photos and videos, AND CanaReels) no longer turns
+since 2026-11-11**: its layout stays upright like the system camera apps', its glyphs turn in place,
+and a photo or reel made sideways is still a landscape file, letterboxed in the vertical pager
+([below](#the-camera-keeps-its-layout-and-the-volume-keys-are-its-shutter-2026-11-11)). On the
+turning screens:
 
 - **auto-rotation follows the accelerometer and RESPECTS the phone's rotation lock**;
 - **a rotate button forces landscape even with the lock on** (YouTube's full-screen button), and a
@@ -146,12 +148,11 @@ The rotate button is the kit's `ui/player/RotateButton.svelte` (a `VideoChipButt
 its label from Paraglide `screen_rotate_landscape` / `screen_rotate_portrait`), and a row of controls
 pads its sides with `utils/sideSafeArea.ts`.
 
-- **The camera** (`CameraScreen`, the reel tab and both composers' overlays): the frame follows the
-  screen - 9:16 upright, 16:9 turned (`ReelFrame`'s `ratio`) - so a capture is cropped to what the
-  preview showed in either orientation (`framedCapture.ts` already sizes the output from the box). The
-  review, the editor and the reel slide already take the MEDIA's own ratio (a gallery import has
-  always been allowed to be landscape), so a landscape reel is letterboxed in the vertical pager with
-  the blurred backdrop (`ReelBackdrop`). A take freezes the orientation.
+- **The camera** (`CameraScreen`, the reel tab and both composers' overlays): no longer turns - see
+  [its own section](#the-camera-keeps-its-layout-and-the-volume-keys-are-its-shutter-2026-11-11). The
+  frame still follows the SCREEN (9:16 upright, 16:9 where the screen itself is landscape: a tablet,
+  a browser window), and the review, the editor and the reel slide take the MEDIA's own ratio, so a
+  landscape reel is letterboxed in the vertical pager with the blurred backdrop (`ReelBackdrop`).
 - **The live broadcaster**: the recorder records the camera track as it comes (no 9:16 canvas, no
   rotation metadata), so a live filmed in landscape IS a 16:9 stream; the viewer's player already
   takes a new initialization segment whose resolution differs ([live](modules/live.md)). The
@@ -212,3 +213,75 @@ full-screen place on every device, with its own close button.
 turned, beside 44 px circles. It is now `ui/CameraControlButton.svelte` - the ONE round control of the
 camera and the broadcaster (close, flip, flash, rotate, share, chat) - with the siblings' 22 px glyph.
 The ratchet of hand-built controls went down by the buttons it replaced.
+
+## The camera keeps its layout, and the volume keys are its shutter (2026-11-11)
+
+**Owner, 2026-11-11, on a screenshot of the camera drawn for portrait on a phone held sideways:** the
+controls must not move - the shutter stays under the thumb, close / flip / flash keep their places -
+and each glyph turns in place to read upright, as the system camera apps do; and a volume key takes
+the picture as the white shutter does.
+
+**Decided (lead): the camera's layout is LOCKED PORTRAIT, and the phone's angle is read from the
+sensor.** The turning camera of 2026-11-09 moved every control with the screen, which is exactly
+what was refused; the system camera apps keep their layout and read the accelerometer. So
+`CameraScreen` requests `portrait` (not `auto`) for its mount and has no rotate button (the
+broadcaster keeps its own); a take still holds `locked`, which binds a tablet whose `portrait` is free.
+
+### One flag, owned by the live camera
+
+`frontend/src/lib/mobile/cameraHardware.svelte.ts` is the ONE owner. `CameraScreen` holds the flag
+(`useCameraHardware`) while its preview is LIVE and not held off by a review (`paused`): the
+`$effect` arms it and its teardown - an unmount included - is the only way down on screen. Native
+also clears it ITSELF when the app leaves the screen (Android `onPause`, iOS `didEnterBackground`),
+so no stale flag survives the background; the page re-arms it on the return
+(`onAppScreenChange`) only if a camera still holds it. Every page load posts what that page holds
+(`initCameraHardware`, from the root layout), so a reload never leaves native swallowing the volume
+keys. No timer anywhere. `[CAMERA-HW] armed / disarmed (why)` is the page's line per change.
+
+- Page -> native: `window.canariCamera.set('on' | 'off')` (Android), `webkit.messageHandlers.canariCamera`
+  (iOS).
+- Native -> page: `canari:camera-key` (`{phase: 'down' | 'up' | 'cancel'}`) and `canari:device-angle`
+  (`{degrees}`, the phone's clockwise turn from upright, sent when it moved by 10 degrees or more).
+
+### The glyphs turn, the file comes out upright
+
+- **The quarter turn** (`quadrantFor`) keeps the current quadrant until the phone is 15 degrees past
+  the diagonal, so a phone held near 45 degrees does not flicker.
+- **The capture's turn** (`captureTurn`) is the phone's turn plus `screen.orientation.angle` - 0 on a
+  phone locked upright; on a tablet whose layout turned with it, the two cancel. No sensor (the web)
+  means no turn: a browser tab turns its own layout.
+- **The glyphs** turn by the opposite angle, the SHORT way from the angle drawn now
+  (`nextGlyphRotation`, cumulative, so 270 -> 0 is one quarter forward), through
+  `--camera-glyph-rotation` on the camera's section and `.camera-glyph-turn` (`app.css`, the CSS
+  `rotate` property, 250 ms, none under reduced motion) on every `CameraControlButton` and the
+  gallery button. The shutter is a circle and is left alone.
+- **The file**: the engines deliver the frame upright FOR THE SCREEN, and the screen stays portrait,
+  so a phone held sideways films a portrait frame with the world on its side. `framedCapture.ts`
+  turns the capture by `PreviewBox.turn` (`turnedSize`, `turnTransform`): the photo, its thumbnail
+  and the take's canvas are landscape, mirrored first in the preview's frame for the front lens. A
+  take reads the turn ONCE, at its start - its canvas has one size, as a system camera's take keeps
+  the orientation it began in.
+
+### The volume keys
+
+**A key mirrors the finger on the white button** (`hardwareShutterEvent`, `reelCapture.ts`): down is
+the press, up the release, so a short press is a photo and a key held past the hold threshold films
+until it is let go - the same reducer and threshold as a touch. A press the button would refuse
+(`shutterDisabled`) is refused; a release always passes, so a take started by the key ends when it is
+let go. iOS's `cancelled` is the reducer's cancelled touch (no photo; a take is ended and kept).
+
+- **Android**: `MainActivity.dispatchKeyEvent` sees every key before the WebView and the system.
+  While armed, `cameraKeyAction` (`camera/CameraHardware.kt`, JVM-tested in `CameraHardwareTest`)
+  consumes `KEYCODE_VOLUME_UP/DOWN`: the first `down` is the press, `up` the release, a held key's
+  auto-repeat is swallowed - so the volume never moves on the camera. Disarmed, or any other key:
+  `super.dispatchKeyEvent`. The angle comes from an `OrientationEventListener`, enabled only while
+  armed, filtered by `angleWorthSending`.
+- **iOS**: Apple's public API for camera apps, `AVCaptureEventInteraction` (AVKit, iOS 17.2+), added
+  to the WebView while armed and removed when disarmed; `began` / `ended` / `cancelled` become `down` /
+  `up` / `cancel`. Before 17.2 nothing is installed and the buttons stay the system's. The angle comes
+  from `CMMotionManager`'s accelerometer (`UIDevice.orientation` stops at the rotation lock; a camera
+  must not). **Apple delivers capture events only to an app using the camera, and this app's camera
+  is WebKit's `getUserMedia`**: whether that counts is the first iOS reading.
+- **Web**: nothing - no volume key reaches a page.
+
+Readings owed: [the entry](../backlog.d/camera-keeps-its-layout-and-volume-shutter.md).

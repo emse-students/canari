@@ -7,7 +7,8 @@
    * siblings (the rotate button shipped as a 28px bordered chip beside 44px circles, 2026-11-11).
    *
    * A `.ui-icon-button` (44px on a touch screen) on a translucent black disc, hover and focus ring
-   * included. The caller draws the glyph at `size` 22-24 and `strokeWidth` 2.25-2.5, as the
+   * included. It turns in place with the phone on a camera whose layout stays upright
+   * (`.camera-glyph-turn`; still everywhere else). The caller draws the glyph at `size` 22-24 and `strokeWidth` 2.25-2.5, as the
    * siblings do. `data-*` markers of the call site land on the `<button>`.
    */
   interface Props {
@@ -36,7 +37,7 @@
 
 <button
   type="button"
-  class="ui-icon-button focus-visible:ring-accent-icon rounded-full bg-black/30 text-white outline-none hover:bg-black/50 focus-visible:ring-2 disabled:opacity-40 {klass}"
+  class="ui-icon-button camera-glyph-turn focus-visible:ring-accent-icon rounded-full bg-black/30 text-white outline-none hover:bg-black/50 focus-visible:ring-2 disabled:opacity-40 {klass}"
   aria-label={label}
   aria-pressed={pressed}
   title={label}

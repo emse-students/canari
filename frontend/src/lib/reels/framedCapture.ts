@@ -16,9 +16,16 @@
  * decoded frame, never the CSS transform, so the saved photo was the un-mirrored frame: left and right
  * swapped against what the member had just looked at, and against the review that follows. The saved
  * photo and take now REPRODUCE THE PREVIEW (WYSIWYG, Snapchat's convention): the front lens is drawn
- * flipped horizontally ({@link shouldMirrorCapture}), the rear lens never. The sensor's frame is never
- * rotated - the engine delivers it upright, and a canvas read applies no EXIF.
+ * flipped horizontally ({@link shouldMirrorCapture}), the rear lens never.
+ *
+ * TURNING (owner, 2026-11-11). The engine delivers the frame upright FOR THE SCREEN, and the camera's
+ * screen stays portrait however the phone is held (screen-orientation.md, "The camera keeps its
+ * layout"). A phone held sideways therefore films a portrait frame with the world lying on its side;
+ * the capture is TURNED by {@link PreviewBox.turn} (the phone's quarter turn, read from the sensor) so
+ * the file comes out the way the phone was held - a landscape photo or take, as a system camera
+ * makes. A canvas read applies no EXIF, so the turn is drawn into the pixels.
  */
+import type { Quadrant } from '$lib/mobile/cameraHardware.svelte';
 import { canvasToBlob } from '$lib/utils/canvasBlob';
 import { digitalZoomCrop } from './cameraZoom';
 
@@ -170,6 +177,11 @@ export interface PreviewBox {
    * centred sub-rectangle. Absent or 1 for no zoom and for a HARDWARE zoom, whose frame arrives zoomed.
    */
   zoom?: number;
+  /**
+   * How far the capture is turned, clockwise, to come out upright (`captureTurn`): 90 or 270 make a
+   * portrait preview a landscape file. Absent or 0 for no turn. A take reads it ONCE, at its start.
+   */
+  turn?: Quadrant;
 }
 
 /**
@@ -200,21 +212,59 @@ export function cropFor(video: HTMLVideoElement, box: PreviewBox): { crop: CropR
   };
 }
 
-/** Draws the crop into the canvas, flipped horizontally when `mirror` (the transform is undone after). */
+/** The canvas a capture of `out` is drawn into once turned by `turn`: a quarter turn swaps the sides. */
+export function turnedSize(out: Size, turn: Quadrant = 0): Size {
+  return turn === 90 || turn === 270 ? { width: out.height, height: out.width } : out;
+}
+
+/**
+ * The canvas transform that draws an `out`-sized picture turned `turn` degrees clockwise into its
+ * {@link turnedSize} canvas: translate by (`dx`, `dy`), then rotate by `radians`.
+ */
+export function turnTransform(
+  out: Size,
+  turn: Quadrant
+): { dx: number; dy: number; radians: number } {
+  switch (turn) {
+    case 90:
+      return { dx: out.height, dy: 0, radians: Math.PI / 2 };
+    case 180:
+      return { dx: out.width, dy: out.height, radians: Math.PI };
+    case 270:
+      return { dx: 0, dy: out.width, radians: -Math.PI / 2 };
+    default:
+      return { dx: 0, dy: 0, radians: 0 };
+  }
+}
+
+/**
+ * Draws the crop into the canvas as an `out`-sized picture, flipped horizontally when `mirror` (in the
+ * preview's own frame, as the preview shows it), then turned by `turn` into a {@link turnedSize}
+ * canvas. The transform is undone after.
+ */
 export function draw(
   context: CanvasRenderingContext2D,
   video: HTMLVideoElement,
   crop: CropRect,
   out: Size,
-  mirror: boolean
+  mirror: boolean,
+  turn: Quadrant = 0
 ): void {
-  if (mirror) {
+  const plain = !mirror && turn === 0;
+  if (!plain) {
     context.save();
-    context.translate(out.width, 0);
-    context.scale(-1, 1);
+    if (turn !== 0) {
+      const { dx, dy, radians } = turnTransform(out, turn);
+      context.translate(dx, dy);
+      context.rotate(radians);
+    }
+    if (mirror) {
+      context.translate(out.width, 0);
+      context.scale(-1, 1);
+    }
   }
   context.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, out.width, out.height);
-  if (mirror) context.restore();
+  if (!plain) context.restore();
 }
 
 /**
@@ -223,18 +273,20 @@ export function draw(
  */
 export function takeFramedPhoto(video: HTMLVideoElement, box: PreviewBox): Promise<Blob | null> {
   const { crop, out } = cropFor(video, box);
+  const turn = box.turn ?? 0;
+  const file = turnedSize(out, turn);
   const canvas = document.createElement('canvas');
-  canvas.width = out.width;
-  canvas.height = out.height;
+  canvas.width = file.width;
+  canvas.height = file.height;
   const context = canvas.getContext('2d');
   if (!context) {
     console.error('[framed-capture] photo: no canvas context');
     return Promise.resolve(null);
   }
-  draw(context, video, crop, out, box.mirror);
+  draw(context, video, crop, out, box.mirror, turn);
   console.debug(
-    `[framed-capture] photo ${out.width}x${out.height} from ${video.videoWidth}x${video.videoHeight}` +
-      ` mirror=${box.mirror}`
+    `[framed-capture] photo ${file.width}x${file.height} from ${video.videoWidth}x${video.videoHeight}` +
+      ` mirror=${box.mirror} turn=${turn}`
   );
   // Synchronous on purpose: `toBlob` waited ~4 s on the Android WebView (canvasBlob.ts).
   const blob = canvasToBlob(canvas, 'image/jpeg', PHOTO_QUALITY);
@@ -256,18 +308,20 @@ export function thumbnailSize(out: Size): Size {
 export function takeFramedThumbnail(video: HTMLVideoElement, box: PreviewBox): Blob | null {
   const { crop, out } = cropFor(video, box);
   const size = thumbnailSize(out);
+  const turn = box.turn ?? 0;
+  const file = turnedSize(size, turn);
   const canvas = document.createElement('canvas');
-  canvas.width = size.width;
-  canvas.height = size.height;
+  canvas.width = file.width;
+  canvas.height = file.height;
   const context = canvas.getContext('2d');
   if (!context) {
     console.error('[framed-capture] thumbnail: no canvas context');
     return null;
   }
-  draw(context, video, crop, size, box.mirror);
+  draw(context, video, crop, size, box.mirror, turn);
   const blob = canvasToBlob(canvas, 'image/jpeg', THUMBNAIL_QUALITY);
   if (!blob) console.error('[framed-capture] thumbnail: the canvas produced no blob');
-  else console.debug(`[framed-capture] thumbnail ${size.width}x${size.height}, ${blob.size} bytes`);
+  else console.debug(`[framed-capture] thumbnail ${file.width}x${file.height}, ${blob.size} bytes`);
   return blob;
 }
 
@@ -286,8 +340,12 @@ export function takeFramedThumbnail(video: HTMLVideoElement, box: PreviewBox): B
  */
 export class FramedStream {
   readonly stream: MediaStream;
+  /** The recorded (canvas) size: the preview's crop, turned. */
   readonly size: Size;
   readonly bitrate: number;
+  /** The picture's size before the turn, and the turn: both fixed for the whole take. */
+  readonly #picture: Size;
+  readonly #turn: Quadrant;
   #frame: number | null = null;
   #stopped = false;
   /** Frames re-painted from the canvas's own last picture since the take began (lens flips). */
@@ -299,9 +357,13 @@ export class FramedStream {
     source: FrameSource,
     canvas: HTMLCanvasElement,
     context: CanvasRenderingContext2D,
-    audio: MediaStreamTrack[]
+    audio: MediaStreamTrack[],
+    picture: Size,
+    turn: Quadrant
   ) {
     this.size = { width: canvas.width, height: canvas.height };
+    this.#picture = picture;
+    this.#turn = turn;
     this.bitrate = videoBitrateFor(this.size);
     const canvasStream = canvas.captureStream(REEL_CAPTURE_FPS);
     this.stream = new MediaStream([...canvasStream.getVideoTracks(), ...audio]);
@@ -313,7 +375,7 @@ export class FramedStream {
     this.#paint(source, canvas, context);
     this.#frame = requestAnimationFrame(tick);
     console.debug(
-      `[framed-capture] take ${this.size.width}x${this.size.height} at ${this.bitrate} b/s`
+      `[framed-capture] take ${this.size.width}x${this.size.height} turn=${turn} at ${this.bitrate} b/s`
     );
   }
 
@@ -333,7 +395,15 @@ export class FramedStream {
         );
         this.#holding = null;
       }
-      draw(context, now.video, cropFor(now.video, now.box).crop, this.size, now.box.mirror);
+      // The turn of the take's START, whatever the phone does after: the canvas has one size.
+      draw(
+        context,
+        now.video,
+        cropFor(now.video, now.box).crop,
+        this.#picture,
+        now.box.mirror,
+        this.#turn
+      );
       return;
     }
     // No frame of the current lens: the canvas paints its own last picture again, so the canvas
@@ -359,9 +429,11 @@ export class FramedStream {
       return null;
     }
     const { out } = cropFor(first.video, first.box);
+    const turn = first.box.turn ?? 0;
+    const file = turnedSize(out, turn);
     const canvas = document.createElement('canvas');
-    canvas.width = out.width;
-    canvas.height = out.height;
+    canvas.width = file.width;
+    canvas.height = file.height;
     const context = canvas.getContext('2d');
     if (!context || typeof canvas.captureStream !== 'function') {
       console.error('[framed-capture] take: no canvas context or no canvas.captureStream');
@@ -371,7 +443,7 @@ export class FramedStream {
       `[framed-capture] take from ${first.video.videoWidth}x${first.video.videoHeight} ` +
         `(box ${first.box.width}x${first.box.height} @${first.box.dpr})`
     );
-    return new FramedStream(source, canvas, context, audio);
+    return new FramedStream(source, canvas, context, audio, out, turn);
   }
 
   /** Stops drawing and the canvas's own track; the audio belongs to the camera session. */
