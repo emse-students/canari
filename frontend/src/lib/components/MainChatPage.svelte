@@ -23,6 +23,8 @@
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
   import { onAppScreenChange } from '$lib/utils/appForeground';
   import { createResumeReadGate } from '$lib/utils/chat/resumeOpening.svelte';
+  import { ATTENTION_WINDOW_MS, windowAttention } from '$lib/utils/windowAttention.svelte';
+  import { Log } from '$lib/utils/Log';
   import { readMarkTarget, watermarkFor, withOwnReadAdvanced } from '$lib/utils/chat/readState';
   import { serverTimeSeen } from '$lib/utils/chat/serverClock';
   import { createReadMarkDebounce } from '$lib/utils/chat/readMarkDebounce';
@@ -353,8 +355,13 @@
 
   /** Message pending forwarding (opens ForwardMessageModal when non-null). */
   let forwardingMessage = $state<ChatMessage | null>(null);
-  let isWindowFocused = $state(true);
-  let isTabVisible = $state(true);
+  // READ FROM THE DOCUMENT, NOT ASSUMED: the receipt effect is declared above the `onMount` that
+  // listens, so its first run saw `true`/`true` and a page mounted in a hidden or unfocused window
+  // with a conversation already selected could mark it (read-receipt-privacy, 2026-11-11).
+  let isWindowFocused = $state(typeof document !== 'undefined' && document.hasFocus());
+  let isTabVisible = $state(
+    typeof document !== 'undefined' && document.visibilityState === 'visible'
+  );
   /**
    * The Android foreground, as state the receipt effect FOLLOWS: read as the bare global it stopped
    * the effect while the app was in the background and nothing ran it again on the way back
@@ -821,6 +828,18 @@
       serverTimeSeen(session.userId)
     );
     if (target <= held) return;
+    // NOBODY AT THE WINDOW, NO READ (owner, 2026-11-11). A window left in front stays visible and
+    // focused with nobody there; a person's gesture in the last two minutes is what says someone is
+    // (`windowAttention.svelte.ts`, always true on native mobile). Read here, after the target, so
+    // only a mark actually withheld is reported - and read as STATE: the first gesture after idleness
+    // runs this effect again and marks what landed meanwhile. The threshold elapsing runs nothing.
+    if (!windowAttention.attentive) {
+      Log.d(
+        `[READ] ${convs.selectedContact.slice(0, 12)} not marked: nobody has touched this window ` +
+          `for ${ATTENTION_WINDOW_MS / 1000} s - the first gesture marks it`
+      );
+      return;
+    }
 
     const currentContact = convs.selectedContact;
     // The account that READ, captured with the reading: the window can be delivered after a

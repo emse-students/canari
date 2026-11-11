@@ -34,7 +34,8 @@ export type ArrivalContext = {
   pathname: string;
   /**
    * Whether the app itself is in front of the reader: the Android activity resumed, or a browser tab
-   * both visible and focused. NOT the document's opinion on mobile, which reports a backgrounded
+   * visible, focused and touched by a person in the last two minutes (`windowAttention.svelte.ts`).
+   * NOT the document's opinion on mobile, which reports a backgrounded
    * Tauri app as `visible`/`hasFocus` byte for byte - see `appForeground.ts`.
    */
   appOnScreen: boolean;
