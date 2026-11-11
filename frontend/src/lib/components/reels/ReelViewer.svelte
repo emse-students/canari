@@ -42,6 +42,7 @@
   import { ReelList, mountedReelSlots } from '$lib/reels/reelList.svelte';
   import { REEL_PAGE as PAGE, allReelsLoader, type ReelPageLoader } from '$lib/reels/allReels';
   import { REEL_ORDERS, type ReelOrder } from '$lib/reels/reelOrder';
+  import type { ReelOrderChoice } from '$lib/reels/reelStream.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
     mergeReelPage,
@@ -106,11 +107,12 @@
     startMediaIndex?: number;
     /**
      * THE STREAM'S ORDER, "Pour toi" or "Récents" ("Nos principes", owner 2026-11-10: a chronological
-     * view must always exist), drawn at the top - the CanaReels entry's stream only; an opener that
-     * shows one post's media passes none. A change hands this viewer a new `loadPage` and
-     * `startPost`, and the viewer starts over at the top of the new list.
+     * view must always exist), drawn at the top - for the CanaReels stream, from its entry or from a
+     * feed video (`reels/reelStream.svelte.ts`); an opener that shows one post's media passes none. A
+     * change hands this viewer a new `loadPage` (and the entry a new `startPost`), and the viewer
+     * starts over at the top of the new list.
      */
-    orderChoice?: { value: ReelOrder; busy?: boolean; onChange: (order: ReelOrder) => void };
+    orderChoice?: ReelOrderChoice;
   }
 
   let {

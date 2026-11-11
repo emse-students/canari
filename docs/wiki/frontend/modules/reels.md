@@ -1153,9 +1153,22 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
 
 "Pour toi" or "Récents" is drawn at the top of the viewer (`orderChoice`, `reels/reelOrder.ts`,
 remembered on the device): "Nos principes", principle 3 - a chronological view must always exist. A
-change reads the first page of the other order, then hands the viewer a new loader and a new
-`startPost`, and the viewer starts over at the top of the new list. A refused or empty read keeps the
-stream as it was.
+change reads the first page of the other order, then hands the viewer a new loader, and the viewer
+starts over at the top of the new list. A refused or empty read keeps the stream as it was.
+
+**EVERY OPENER OF THE STREAM SHARES ONE IMPLEMENTATION** (`reels/reelStream.svelte.ts`, `ReelStream`:
+the order, the change, the first page read in it, the loader built from both, the switch handed to
+the viewer):
+
+- **The CanaReels entry** (`ReelsEntryButton`) reads the first page in the remembered order before it
+  opens (an empty stream opens nothing); its `startPost` is that page's first reel, and a change
+  starts over at the new order's first reel.
+- **A feed video opened full screen** (`PostContent`, owner 2026-11-11) continues in the REMEMBERED
+  order - it used to go on in "Pour toi" whatever the reader had chosen, with no switch - and draws
+  the switch too. Its `startPost` is the opened post, kept first on a change: the new list is that
+  post, then the new order's reels (the post itself once, `mergeReelPage`). With "Défilement infini
+  des CanaReels" off (`feedReelsContinue`) the viewer is handed `NO_FURTHER_REELS` and NO switch:
+  there is no list to order ([engagement](../../engagement.md)).
 
 **THE LIST IS A `$derived` OF THE LOADER** (`reels/reelList.svelte.ts`, `ReelList`): its reels, the
 reel on screen, its pages read, its settle, each carousel's visible media and the track's move all

@@ -10,7 +10,10 @@
  * was the reel before the one on screen (a kept slide, so the old ones are torn down in the same
  * pass); every case stays here, since which one trips depends on the order Svelte tears slides down.
  *
- * And a throw inside the viewer closes the VIEWER, with a toast and an accusing line, never the page.
+ * The same swap from a FEED video's viewer (owner, 2026-11-11: the stream after a feed video follows
+ * the reader's order, with the switch - `reels/reelStream.svelte.ts`) starts over with the OPENED
+ * post first. And a throw inside the viewer closes the VIEWER, with a toast and an accusing line,
+ * never the page.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -18,6 +21,8 @@ import ReelViewer from './ReelViewer.svelte';
 import type { PostEntity } from '$lib/posts/api';
 import type { ReelPageLoader } from '$lib/reels/allReels';
 import { m } from '$lib/paraglide/messages';
+import { ReelStream } from '$lib/reels/reelStream.svelte';
+import { settings } from '$lib/stores/settingsStore.svelte';
 
 const preloads: string[] = [];
 vi.mock('$lib/reels/reelPreload', () => ({
@@ -51,6 +56,13 @@ vi.mock('$lib/reels/fullScreenPost', async (orig) => {
     },
   };
 });
+/** What the server lists, by order: `ranked` (Pour toi) or not (Récents). */
+const served: { ranked: PostEntity[]; recent: PostEntity[] } = { ranked: [], recent: [] };
+vi.mock('$lib/posts/api', async (orig) => ({
+  ...(await orig<typeof import('$lib/posts/api')>()),
+  listPosts: async (o: { ranked?: boolean; offset?: number }) =>
+    (o.offset ?? 0) > 0 ? [] : o.ranked ? served.ranked : served.recent,
+}));
 vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
   ...(await orig<typeof import('$lib/utils/historyOverlayStack')>()),
   pushHistoryOverlay: vi.fn(),
@@ -210,5 +222,53 @@ describe('ReelViewer - a throw inside it', () => {
       )
     ).toBe(true);
     errors.mockRestore();
+  });
+});
+
+describe('ReelViewer - a change of order from a feed video', () => {
+  afterEach(() => settings.setReelsOrder('ranked'));
+
+  it('starts over with the opened post first, in the new order, from deep in the stream', async () => {
+    served.ranked = ['k0', 'k1', 'k2', 'k3', 'k4'].map((id) => reel(id, id === 'k3'));
+    served.recent = ['r0', 'r1', 'r2'].map((id) => reel(id));
+    const opened = reel('opened');
+    const stream = new ReelStream();
+    stream.open();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    host = mount(ReelViewer, {
+      target,
+      props: {
+        startPost: opened,
+        get loadPage() {
+          return stream.loader;
+        },
+        get orderChoice() {
+          return stream.choice;
+        },
+        authToken: 'tok',
+        onClose: () => {},
+      },
+    });
+    await settle();
+    expect(onScreen()).toBe('m-opened');
+    for (const expected of ['m-k0', 'm-k1', 'm-k2']) {
+      await key('ArrowDown');
+      expect(onScreen()).toBe(expected);
+    }
+    const stub = document.querySelector('[data-post-media-stub]')!;
+    stub.dispatchEvent(new Event('stubloaded'));
+    stub.dispatchEvent(new Event('playing'));
+    await settle();
+
+    const recentTab = [
+      ...document.querySelectorAll<HTMLButtonElement>('[data-reel-order] button'),
+    ].find((b) => b.textContent?.trim() === m.reels_order_recent())!;
+    recentTab.click();
+    await settle();
+    expect(stream.order).toBe('recent');
+    expect(onScreen(), 'the opened post is first again').toBe('m-opened');
+    await key('ArrowDown');
+    expect(onScreen(), 'then the stream in the new order').toBe('m-r0');
   });
 });
