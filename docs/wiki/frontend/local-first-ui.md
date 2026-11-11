@@ -156,6 +156,12 @@ map at that moment so a later arrival starts afresh instead of joining a doomed 
 with no signal can never be abandoned. `mediaBlobCache.shared.test.ts` queues the request behind a
 saturated gate, which is the state the defect needs; three of its four cases fail on the old cache.
 
+**AND SINCE 2026-11-11 A STARTED LOAD NOBODY HOLDS IS STOPPED TOO** (lead decision, reversible): the
+"runs to completion on purpose" above kept a reel wheeled past downloading its whole file. Cancelling
+it no longer cancels somebody else's - the count says nobody is left - so the controller now reaches
+`fetch` and its body, decided once the turn is over so a same-turn re-render still joins. The
+measurement and the rule: [reels](modules/reels.md).
+
 ## 3quater. Six taps that waited to be told what they already knew (2026-09-23)
 
 SHAPE 2, AND THE WHOLE OF IT IS ONE QUESTION: does the device already know what the control is

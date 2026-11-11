@@ -755,6 +755,8 @@ whole (`no-codecs`), none of those with a placeholder, and no carousel. The dev 
 | 2 s | `1.6.10` (dev) | 11 | 9 reels never drew, 1 reel 1.6 s, 1 photo 1.3 s |
 | 2 s | this change | 4 | 3 reels never drew, 1 reel 1.7 s; 6 reels drew their sharp frame from the first paint |
 | 1 s | this change | 9 | the heads behind a 3 MB foreground download cannot all arrive at ~780 KiB/s |
+| 2 s | this change + a whole read nobody holds stopped | 3 | 3 reels drew their frame after 0.1-0.6 s; 8 reels drew it from the first paint |
+| 1 s | this change + a whole read nobody holds stopped | 9 | the link, not a missing picture: ~1 MiB per page at ~750 KiB/s |
 
 No black page was a player failing to draw a poster it had (d): every page with a picture drew it
 at once. A warm cache (the ciphertext in the Cache API) showed no black page at all, which is why
@@ -792,12 +794,30 @@ wheel never waits for; (b) photos carried no placeholder.
 The `ReelPreload` behind the settled reel is kept: it reads the next reel whole after the settle,
 and now joins its head.
 
-*Left, and said*: (1) a reel the reader passes before its whole read is in keeps downloading - a
-load that left the gate's queue is kept joinable on purpose (`mediaBlobCache.ts`, `SharedLoad`), so
-on a slow link a wheel through ten reels downloads ten files; changing that is a decision about
-the shared cache, not this page. (2) The dev reels are fragmented MP4 with no codecs in their
+**A whole read nobody holds is stopped too - the lead's decision of 2026-11-11, reversible.** It
+replaces the 2026-10-05 rule that a load already on the wire stays joinable (`mediaBlobCache.ts`,
+`SharedLoad`): with it, a reel the reader wheeled past kept downloading its whole file, so on a slow
+link a wheel through ten reels downloaded ten files while the one on screen waited. Now the load
+owns the request's signal, and when its LAST holder leaves (counted, like a head's) it is aborted -
+dropped from the gate's queue, or stopped on the wire, `fetch` and body. The decision is taken once
+the current turn is over (a microtask - an ordering, never a clock), so a holder that joins in the
+same turn keeps it: the player of the page becoming current mounts in the same flush that stops its
+`ReelPreload`, and a re-rendered chat row (the 2026-10-05 case) re-joins the same way. A holder
+with no signal - and a visible card or player, which leaves only when it unmounts - never lets it
+go. A partial body is never cached: the Cache API copy is written only from a body read to its end
+(`mediaBlobCache.shared.test.ts` pins all three). Measured on the same cold 1 s wheel (15 pages, 11
+reels): `1.6.10` downloaded 11.4 MiB during the wheel and 6.5 MiB more in the 8 s after it, nine
+requests still open; with the decision, 11.4 MiB and nothing after, every request passed cancelled.
+The link stays saturated during a 1 s wheel either way - what changes is that the bytes go to the
+pages ahead and nothing outlives the wheel. Revert: give `fetchMediaObject` no signal again
+and drop the microtask's abort.
+
+*Left, and said*: (1) The dev reels are fragmented MP4 with no codecs in their
 `mimeType`, so they are read whole instead of streamed (`no-codecs`); a writer naming its codecs
-would let them stream. (3) Owed: the same scroll on production's link, and on both phones.
+would let them stream - not changed here. (2) A head is fetched again when the look-ahead count
+drops from three to one and comes back (seen once on the 2 s wheel: half a head cancelled, then the
+whole head re-read); the verdict's hysteresis bounds it, a head store that outlives its holders
+would end it. (3) Owed: the same scroll on production's link, and on both phones.
 
 **Owed on the bench phones** (none of this was read on a device): see
 [device-verification](../../device-verification.md) and the PR's reading list - per phone, the

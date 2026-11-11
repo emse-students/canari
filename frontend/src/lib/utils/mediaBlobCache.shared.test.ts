@@ -113,14 +113,19 @@ describe('a download shared by several rows', () => {
     const release = saturateGate();
 
     const gone = new AbortController();
-    const abandoned = acquireDecryptedMediaBlobUrl(ref, BASE, gone.signal).catch(() => {});
+    const abandoned = acquireDecryptedMediaBlobUrl(ref, BASE, gone.signal).catch((err) => err);
     gone.abort();
-    // It must not join the doomed load - the starter's abort has not even settled yet.
+    // The turn ends: the abandonment is decided, and the entry leaves the map.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const later = acquireDecryptedMediaBlobUrl(ref, BASE, new AbortController().signal);
     release();
 
     await expect(later).resolves.toBe('blob:again');
-    await abandoned;
+    expect((await abandoned) as Error).toBeInstanceOf(Error);
+    expect(
+      fetchMock,
+      'only the later row asked: the abandoned one never left the queue'
+    ).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -133,8 +138,11 @@ describe('a download shared by several rows', () => {
    * load used to leave the map, so the re-rendered row started a SECOND download of the same object.
    * The first one landed and was pooled; the second one's blob URL was then revoked by the pool (the
    * blob already displayed wins) and handed to the row anyway: an `<img>` on a dead URL for good.
+   *
+   * Since 2026-11-11 a load nobody holds is stopped on the wire too - but only once the turn is
+   * over, so the re-render, which joins in the same turn, still keeps the one request.
    */
-  it('keeps a load already on the wire joinable, and never hands out a URL it revoked', async () => {
+  it('keeps a load on the wire for a row re-rendered in the same turn, and never hands out a URL it revoked', async () => {
     const { ref, ciphertext } = await sealed();
     const answers: ((r: Response) => void)[] = [];
     const fetchMock = vi.fn(() => new Promise<Response>((resolve) => answers.push(resolve)));
@@ -178,5 +186,84 @@ describe('a download shared by several rows', () => {
 
     await expect(unsignalled).resolves.toBe('blob:nosignal');
     await starter;
+  });
+
+  /**
+   * A LOAD NOBODY HOLDS IS STOPPED ON THE WIRE (lead decision, 2026-11-11): a reel wheeled past
+   * kept downloading its whole 3 MB, sharing a slow link with the reel being watched.
+   */
+  it('stops a load on the wire once its last holder leaves and nobody rejoins it', async () => {
+    const { ref } = await sealed();
+    let wireSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          wireSignal = init.signal ?? undefined;
+          wireSignal?.addEventListener('abort', () => reject(wireSignal?.reason));
+        })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+    const passed = new AbortController();
+    const load = acquireDecryptedMediaBlobUrl(ref, BASE, passed.signal);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    passed.abort();
+
+    await expect(load).rejects.toBeDefined();
+    expect(wireSignal?.aborted, 'the request itself was aborted').toBe(true);
+    expect(
+      debug.mock.calls.some((c) => String(c[0]).includes('stopped on the wire')),
+      'the abandonment is said'
+    ).toBe(true);
+    expect(
+      debug.mock.calls.some((c) => String(c[0]).includes(ref.key)),
+      'the line names the media, never its key'
+    ).toBe(false);
+  });
+
+  it('never caches a download stopped half way, and a later row downloads it whole', async () => {
+    const { ref, ciphertext } = await sealed();
+    const put = vi.fn();
+    const store = new Map<string, Response>();
+    vi.stubGlobal('caches', {
+      open: async () => ({
+        match: async (k: string) => store.get(k)?.clone(),
+        put: async (k: string, r: Response) => {
+          put(k);
+          store.set(k, r);
+        },
+        delete: async (k: string) => store.delete(k),
+      }),
+    });
+    // The first answer's BODY stalls after its headers, then honours the abort.
+    let first = true;
+    const fetchMock = vi.fn((_url: string, init: RequestInit) => {
+      if (!first) return Promise.resolve(new Response(ciphertext.slice(0)));
+      first = false;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(ciphertext.slice(0, 4)));
+          init.signal?.addEventListener('abort', () => controller.error(init.signal?.reason));
+        },
+      });
+      return Promise.resolve(new Response(body));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:whole');
+
+    const passed = new AbortController();
+    const load = acquireDecryptedMediaBlobUrl(ref, BASE, passed.signal);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    passed.abort();
+    await expect(load).rejects.toBeDefined();
+    expect(put, 'nothing partial was cached').not.toHaveBeenCalled();
+
+    await expect(
+      acquireDecryptedMediaBlobUrl(ref, BASE, new AbortController().signal)
+    ).resolves.toBe('blob:whole');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(put).toHaveBeenCalledTimes(1);
   });
 });
