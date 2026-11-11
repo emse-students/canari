@@ -1,3 +1,0 @@
-### Changed - "Nos principes": suggestions in two levels, "Partager mon activité" off until chosen, and three reading settings
-
-"Suggestions dans l'app" (the follow suggestions, the suggested posts of Pour toi, the trend bell rows) stays on by default and goes off in one gesture; the suggestion push is off until turned on (chat-delivery migration 047); the bell withholds only suggestion and engagement rows (one allowlist); "Partager mon activité" is off unless chosen; Preferences gains "Défilement infini des CanaReels" and "Lecture automatique des vidéos", and CanaReels a "Pour toi / Récents" order ([engagement](docs/wiki/engagement.md#aligned-with-the-charter-owner-2026-11-10)).

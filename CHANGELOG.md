@@ -14,6 +14,88 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.10] - 2026-11-11
+
+### Fixed - a reply kept when a photo or a file is attached
+
+Replying to a message and attaching a photo sent the photo as a plain message: the reply was consumed at the tap and only the text path read it, and a file message had no place on the wire for it. The first file now carries the reply (`MediaMsg.reply_to`) in direct messages, groups and salons, and the reply is given back if that file is refused ([chat](docs/wiki/frontend/modules/chat.md#a-reply-survives-attaching-a-file-2026-11-10)).
+
+### Fixed - a tap on a full-screen video no longer cuts its sound
+
+In the viewers a tap plays or pauses like Reels and Shorts, turns a muted sound on, and only the speaker or `m` mutes; a refused audible start plays muted with a warning ([video-player](docs/wiki/frontend/modules/video-player.md#a-tap-in-full-screen-never-mutes-owner-2026-11-10)).
+
+### Added - the agenda can be narrowed to one campus or one formation
+
+A reader whose agenda reaches several spaces gets a "Space" filter in place of the useless "Association" select; the choice is remembered per reader and only narrows the view ([profiles-and-access](docs/wiki/profiles-and-access.md#the-agendas-space-filter-owner-2026-11-10)).
+
+### Fixed - the App Store submission waits for its screenshots to finish processing
+
+The `v1.6.9` stable was refused by Apple with `Asset is being processed` because screenshots had been replaced an hour before; `tools/app-store/submit.mjs` now waits on each asset's delivery state like it waits on the build, and refuses one that can never finish ([app-store](tools/app-store/README.md)).
+
+### Fixed - a booking you are only invited to no longer reads "Ma réservation"
+
+In the day planner, a slot the reader is invited to now names its booker (avatar and name) with a small "Invité" mention and keeps the highlight; "Ma réservation" is for a booking the reader made ([bookings](docs/wiki/bookings-chantier.md)).
+
+### Fixed - a deploy announced a backlog of campus trends, to builds that could not draw them
+
+The 1.6.9 deploy told 498 readers of five trends in eight minutes. A trend is now announced only on a crossing recorded from durable state, at most once per reader per day, as "Suggestion :" under its own Suggestions switch. No notification type is sent to a build too old to draw it ([engagement](docs/wiki/engagement.md#the-deploy-of-2026-11-10-and-what-it-changed), [legacy-compatibility](docs/wiki/legacy-compatibility.md#the-client-floor-of-every-notification-type-owner-2026-11-10)).
+
+### Operations - 75 production posts stamped as trended, under the owner's explicit yes
+
+On 2026-11-10 at about 19:45 Paris time, `UPDATE posts SET "trendAnnouncedAt" = now() WHERE "trendAnnouncedAt" IS NULL AND "publishedAt" > now() - interval '7 days'` stamped 75 posts. 1.6.9's level-based trend at threshold 4 kept announcing each post to about 500 recipients, with three more bursts after 17:00. The write is reversible and deleted no row ([engagement](docs/wiki/engagement.md#the-deploy-of-2026-11-10-and-what-it-changed)).
+
+### Changed - fewer engagement notifications: friends named in a trend, two trends a week, three pushes a day
+
+Friends' activity no longer notifies: a campus trend names one followed person who liked the post ("Suggestion : ... - aimée par Léa et 9 autres"). A reader gets at most two trends a week, and at most three engagement-only pushes a day. Birthdays, association posts, mentions, replies, bookings and messages are not counted, and anything over the cap stays in the bell ([engagement](docs/wiki/engagement.md#the-owners-decisions-of-2026-11-10---quieter-1610)).
+
+### Changed - "Suivre" is a quiet text link, suggested cards leave once followed, and a new feed tab opens at its top
+
+On post headers, directory rows and association cards "Suivre" is plain accent text on the meta line (`19 h · Suggestion · Suivre`), the yellow "Suggestion" badge is gone, the suggestion carousel's button is a neutral secondary one and its card slides out when followed, with a toast; switching between Associations, Pour toi and Campus scrolls back to the top ([engagement](docs/wiki/engagement.md#wp-2---suivre-everywhere-built)).
+
+### Changed - a feed video card is minimal
+
+No expand button (the tap opens full screen), a bare white speaker drawn only while the video plays, a smaller play triangle on the placeholder ([video-player](docs/wiki/frontend/modules/video-player.md)).
+
+### Added - an institution chooses the reach of each post
+
+When publishing as an institution, the author ticks the spaces of the institution's audience the post targets and its public (everyone, students or staff) - mandatory, no default, editable afterwards both ways; the rule lives in the one visibility predicate, so every path follows it at once ([profiles-and-access](docs/wiki/profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10)).
+
+### Fixed - the first MiConnect sign-in drew its campus, status and formation choices in black on the dark page
+
+On a phone or computer in light mode, authentik kept PatternFly's light-theme ink on the radios and checkboxes (1.02:1); the brand now pins authentik's dark theme, and the required asterisk and the field placeholder were brought above 4.5:1 too ([authentik](docs/wiki/infrastructure/authentik.md#login-page-branding)).
+
+### Changed - "Nos principes": suggestions in two levels, "Partager mon activité" off until chosen, and three reading settings
+
+"Suggestions dans l'app" (the follow suggestions, the suggested posts of Pour toi, the trend bell rows) stays on by default and goes off in one gesture; the suggestion push is off until turned on (chat-delivery migration 047); the bell withholds only suggestion and engagement rows (one allowlist); "Partager mon activité" is off unless chosen; Preferences gains "Défilement infini des CanaReels" and "Lecture automatique des vidéos", and CanaReels a "Pour toi / Récents" order ([engagement](docs/wiki/engagement.md#aligned-with-the-charter-owner-2026-11-10)).
+
+### Changed
+
+- The invitation to add a profile photo (and its reminder) is temporarily offered only to ICM accounts at Saint-Etienne, a server setting (`PROFILE_PHOTO_PROMPT_SPACES`) rather than a release: [guided help](docs/wiki/frontend/guided-help.md#the-profile-photo-prompt-owner-2026-11-07).
+
+### Fixed - fewer repeated reads and false alarms in the feed on a slow link
+
+Today's birthdays are read once per Paris day instead of at every focus, a video scrolled past while its play was pending no longer logs a refusal, and the peer-return history retry and the follow retry run (and speak) only when something is owed. See [birthdays](docs/wiki/birthdays.md).
+
+### Fixed - your own reaction pill under a chat bubble is opaque again
+
+It was see-through since the 1.6.9 accent change (`bg-accent/20` over the bubble edge); it is an opaque tint again ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Changed - the header pill fits its content again, a quiet birthday card, "Organisations", a Games page, a calmer profile header
+
+The conversation title pill adapts to its content once more (the full-width pill of 1.6.9 is reverted); the birthday prompt is a small dismissible feed card instead of a modal and its settings are minimal; the "Associations" tab and directory read "Organisations"; a Games page in the dashboard holds the Minesweeper with an overall and a per-promo ranking; a profile header is a name, one muted line and a rank badge, and the correction request moved to the account information ([minesweeper](docs/wiki/frontend/modules/minesweeper.md), [birthdays](docs/wiki/birthdays.md), [chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a second browser tab no longer reads "Hors-ligne" while the account is online
+
+The follower's question to the leader tab went out before the account was known and was dropped as another account's; it is now sent when the account becomes known and when the election is decided ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a feed video opens full screen in CanaReels, and every video can be sought again
+
+A tap on a feed video opens the CanaReels viewer on it at the time it had reached, and closing resumes it there; the conversation viewer is a line and a speaker; every uploaded video declared no length (the muxer's `mvhd` said 0), which showed `0:00` and broke seeking - fixed at the container ([video-player](docs/wiki/frontend/modules/video-player.md#the-owners-decisions-of-2026-11-10---full-screen-is-canareels)).
+
+### Fixed - on a weak link, five chains of reads that waited for each other now leave together, and a push registration is no longer refused at a cold start
+
+Key-group status reads at every connection, a person's profile, repeated photo-presence questions and the dismissed-groups read no longer wait in series; push registration was counted in one rate-limit bucket shared by the whole estate and now counts per user ([weak-network-audit-2026-11-10](docs/wiki/frontend/weak-network-audit-2026-11-10.md)).
+
 ## [1.6.9] - 2026-11-10
 
 ### Fixed - scrolling the GIF tab no longer crashes the chat page when KLIPY repeats an item across two pages
