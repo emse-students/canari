@@ -323,6 +323,24 @@ deterministic, need no clock and no coordination, and leave nothing for a race t
 requesting device only, never to the whole group
 ([section 23](#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)).
 
+**A REQUEST WAITS FOR THIS DEVICE'S OWN BACKLOG (2026-11-11).** A seed is a durable frame on the key
+group, so a device that was away holds it in its pending queue - and a salon opened from its banner
+on resume decodes its page before the resume's pull has listed that queue. Read on an Android
+`1.6.10` phone after 30 minutes in the background: ten rows of three sessions (two minted by another
+member's phone, one by the owner's own browser) read "no seed" at 10.69 s and 11.22 s, two members
+were asked at 11.19 s and 11.42 s, the pull's drain applied the very frames carrying the three seeds
+from 11.27 s to 11.78 s, and the salon re-read clean at 11.86 s - nothing was lost, but three
+requests and three answer frames crossed an eleven-leaf key group for seeds already on the device.
+So `flushRepairs` (`utils/graine/repair.ts`) now awaits `whenGroupDrained` on the key group
+(`ownBacklogApplied`) - the mailbox listed on this link and the group's frames applied, an event and
+never a clock - and drops every session a seed reached meanwhile (`wants` is the record
+`forgetAskedSession` clears), saying the count:
+`[GRAINE] n of m missing seed(s) of channel x arrived with this device's own backlog - not asked for`.
+A web FOLLOWER tab does not wait (no socket, no drain of its own). The same reading showed one
+request sent twice, 380 ms apart, and answered twice: a session was marked `asked` only after its
+send resolved, and the send waits its turn behind the drain, so a page decoded meanwhile put it back
+in the accumulator. It is now marked before the send and un-marked if the send fails.
+
 ### 4.6 Ordering rule: remove, THEN distribute
 
 When a sender rotates because a member left, the removal commit on the distribution group must land

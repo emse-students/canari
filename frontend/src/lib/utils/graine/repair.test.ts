@@ -79,7 +79,21 @@ function comesOnline(userId: string): void {
   live[0].fn([userId]);
 }
 
+/**
+ * This tab's side of the leadership election. A web follower holds no socket, so it never waits for
+ * a drain it does not run; every other test is the leader (or a native client, which is one).
+ */
+let tabLeadership: 'undecided' | 'leader' | 'follower';
+vi.mock('$lib/mls-client/tabLeader', () => ({
+  getTabLeadership: () => tabLeadership,
+}));
+
 let sendMessage: ReturnType<typeof vi.fn>;
+/**
+ * What `whenGroupDrained` answers - at once by default (the backlog is in). A test about the backlog
+ * replaces it with a promise it resolves itself.
+ */
+let whenGroupDrained: ReturnType<typeof vi.fn>;
 /** What the fake store answers for the community - empty means "this device has no history". */
 let heldSessions: StoredGraineSession[];
 /**
@@ -126,6 +140,8 @@ beforeEach(() => {
     memberDevices: ownDevices,
   }));
   sendMessage = vi.fn().mockResolvedValue(undefined);
+  whenGroupDrained = vi.fn().mockResolvedValue(undefined);
+  tabLeadership = 'leader';
   setGraineRuntime({
     storage: {
       getGraineSessionsForWorkspace: async () => heldSessions,
@@ -138,6 +154,7 @@ beforeEach(() => {
       // The drain has settled and the group is current: a request waits on this, and none here is
       // about a group catching up.
       whenDistributionEpochSettled: async () => {},
+      whenGroupDrained,
       getDeviceId: () => 'device-1',
       // The history ask reads the distribution epoch, because "nobody to ask" is an answer about a
       // roster and the epoch is that roster's version. `distributionEpoch` is what a test moves to
@@ -266,6 +283,97 @@ describe('noteMissingSeed', () => {
     noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+});
+
+/**
+ * THE DEVICE'S OWN BACKLOG FIRST (Android `1.6.10`, 2026-11-11). A salon opened from its banner on
+ * resume decodes before the resume's pull lists the key-group frames carrying its seeds; every row
+ * minted while the phone was away read "no seed" and was asked of a peer - three requests and three
+ * answers for seeds already queued on the device - and one of them went out twice, because a page
+ * decoded during the send re-noted a session not yet marked as asked.
+ */
+describe('a missing seed and this device own backlog', () => {
+  it('waits for the key group to be drained, and asks nothing for a seed the drain brought', async () => {
+    let drained!: () => void;
+    whenGroupDrained.mockReturnValueOnce(new Promise<void>((r) => (drained = r)));
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    noteMissingSeed('chan-1', 'sess-2', 'carol', SENT_AT);
+    await settle();
+    expect(whenGroupDrained).toHaveBeenCalledWith('dist-group');
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // The queued seed frame of sess-1 is applied by the drain: the seed store discharges it.
+    forgetAskedSession('sess-1');
+    drained();
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const request = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest;
+    expect(request?.sessionIds).toEqual(['sess-2']);
+    expect(info.mock.calls.map((c) => String(c[0]))).toContainEqual(
+      expect.stringContaining(
+        "1 of 2 missing seed(s) of channel chan-1 arrived with this device's own backlog"
+      )
+    );
+    info.mockRestore();
+  });
+
+  it('asks nothing at all when the MLS service closes before the drain', async () => {
+    const { GroupDrainAbandonedError } = await import('$lib/mls-client/IMlsService');
+    whenGroupDrained.mockRejectedValueOnce(new GroupDrainAbandonedError('dist-group'));
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(info.mock.calls.map((c) => String(c[0]))).toContainEqual(
+      expect.stringContaining('closed before key group dist-gro')
+    );
+    info.mockRestore();
+  });
+
+  it('a follower tab does not wait for a drain it does not run', async () => {
+    tabLeadership = 'follower';
+    whenGroupDrained.mockReturnValue(new Promise<void>(() => undefined));
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+
+    expect(whenGroupDrained).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('a row re-noted while its request is being sent does not send a second one', async () => {
+    let sent!: () => void;
+    sendMessage.mockReturnValueOnce(new Promise<void>((r) => (sent = r)));
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    // A second page decoded while the first send waits its turn on the group.
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    sent();
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('a send that fails leaves the session askable again', async () => {
+    sendMessage.mockRejectedValueOnce(new Error('socket gone'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
     warn.mockRestore();
   });
 });

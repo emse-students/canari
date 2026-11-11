@@ -1,6 +1,8 @@
 import { canari } from '$lib/proto/canari';
 import { encodeAppMessage, mkGraineRequest } from '$lib/proto/codec';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
+import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import {
   type DistributionScope,
   scopeLabel,
@@ -312,8 +314,16 @@ async function flushRepairs(): Promise<void> {
       await requireGraineRuntime(
         'cannot ask for a missing seed'
       ).mlsService.whenDistributionEpochSettled(targets.groupId);
-      const sessions = outstanding.get(channelId) ?? new Map<string, MissingSeed>();
+      if (!(await ownBacklogApplied(targets.groupId, channelId))) {
+        outstanding.delete(channelId);
+        continue;
+      }
+      const sessions = withoutSeedsHeldMeanwhile(
+        channelId,
+        outstanding.get(channelId) ?? new Map<string, MissingSeed>()
+      );
       outstanding.delete(channelId);
+      if (sessions.size === 0) continue;
       if (isInEpochGap(targets.groupId)) {
         holdForKeyGroup(targets.groupId, channelId, sessions);
         continue;
@@ -332,6 +342,67 @@ async function flushRepairs(): Promise<void> {
   } finally {
     flushing = false;
   }
+}
+
+/**
+ * Waits until THIS device has applied everything the server queued for it on `groupId`, and says
+ * whether the ask may go ahead (`false`: the MLS service was torn down first, so nobody is left to
+ * send it).
+ *
+ * **A SEED IN OUR OWN MAILBOX IS NOT A SEED TO ASK A PEER FOR.** A seed travels as a durable frame
+ * on the key group, so a device that was away finds it in its pending queue - and a salon opened
+ * from a push on resume decodes its page BEFORE the resume's pull has even listed that queue. Every
+ * row of a session minted while it was away then reads "no seed", and before this wait each one sent
+ * a request: measured on an Android `1.6.10` phone (2026-11-11), a salon opened from its banner after
+ * 30 minutes in the background asked two members for three seeds at 10.69 s and 11.22 s past the
+ * minute, the pull listed the frames carrying all three at 11.27 s, and the salon re-read clean at
+ * 11.86 s - three requests and three answer frames on an eleven-leaf key group, for seeds already
+ * on the device. The answer is not a retry and not a delay: it is the event that says the backlog is
+ * in, {@link IMlsService.whenGroupDrained} (the mailbox listed on this link, the group's frames
+ * applied), after which a seed that is still missing is one this device was never sent.
+ *
+ * A FOLLOWER TAB DOES NOT WAIT: it holds no socket and drains nothing (its leader does), so the
+ * event never comes for it. What a follower may send at all is the tab leadership's rule
+ * (`mls-client/tabLeader.ts`), not this one's.
+ */
+async function ownBacklogApplied(groupId: string, channelId: string): Promise<boolean> {
+  if (getTabLeadership() === 'follower') return true;
+  try {
+    await requireGraineRuntime('cannot ask for a missing seed').mlsService.whenGroupDrained(
+      groupId
+    );
+    return true;
+  } catch (e) {
+    if (!(e instanceof GroupDrainAbandonedError)) throw e;
+    console.info(
+      `[GRAINE] not asking for the missing seed(s) of channel ${channelId.slice(0, 8)}: the MLS service ` +
+        `closed before key group ${groupId.slice(0, 8)}... was drained - the next start asks again`
+    );
+    return false;
+  }
+}
+
+/**
+ * `sessions` without the ones a seed has reached since they were noted - said once, with the count,
+ * because each is a request {@link ownBacklogApplied} saved and the line is what proves the wait
+ * earns its place.
+ *
+ * Read from {@link wants}, the one record every path that ends with this device holding a seed
+ * clears ({@link forgetAskedSession}); `outstanding` is the accumulator and is never told.
+ */
+function withoutSeedsHeldMeanwhile(
+  channelId: string,
+  sessions: Map<string, MissingSeed>
+): Map<string, MissingSeed> {
+  const stillWanted = new Map([...sessions].filter(([sessionId]) => wants.has(sessionId)));
+  const arrived = sessions.size - stillWanted.size;
+  if (arrived > 0) {
+    console.info(
+      `[GRAINE] ${arrived} of ${sessions.size} missing seed(s) of channel ${channelId.slice(0, 8)} arrived ` +
+        `with this device's own backlog - not asked for`
+    );
+  }
+  return stillWanted;
 }
 
 /** Everything a request needs that is not the sessions themselves. */
@@ -739,15 +810,26 @@ async function requestSeedsForChannel(
     sessionIds.forEach((id) =>
       askedRequest.set(id, { requestId, answerer: answerer.toLowerCase(), named })
     );
-    // Transport, never durable: a request restates state held elsewhere, so replaying it from the
-    // shared log would be circular - and that log is capped per group, so writing requests into it
-    // would evict the seeds it exists to carry.
-    await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
+    // `asked` TOO, for the same reason on the other side: the send can take a whole drain (it waits
+    // its turn on the group), and a page decoded meanwhile re-notes the same rows. Marked after the
+    // send, the session was not yet "asked", so it went back into the accumulator and out again as
+    // a second request to the same member - measured on the same 1.6.10 phone, 380 ms apart, and
+    // answered twice. Un-marked if the send fails, so the next row naming it asks again.
+    sessionIds.forEach((id) => asked.add(id));
+    try {
+      // Transport, never durable: a request restates state held elsewhere, so replaying it from the
+      // shared log would be circular - and that log is capped per group, so writing requests into it
+      // would evict the seeds it exists to carry.
+      await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
+    } catch (e) {
+      sessionIds.forEach((id) => asked.delete(id));
+      throw e;
+    }
     const sealedAt = mlsService.getEpoch(groupId);
-    sessionIds.forEach((id) => {
-      asked.add(id);
-      askedOn.set(id, { groupId, epoch: sealedAt });
-    });
+    // Only what is still asked: a seed landing during the send already discharged its session.
+    sessionIds
+      .filter((id) => asked.has(id))
+      .forEach((id) => askedOn.set(id, { groupId, epoch: sealedAt }));
     console.info(
       `[GRAINE] asked ${answerer} (${describeNamedDevices(answererDevices)}) for ${sessionIds.length} ` +
         `seed(s) in community ${workspaceId.slice(0, 8)} at epoch ${sealedAt} - ` +
