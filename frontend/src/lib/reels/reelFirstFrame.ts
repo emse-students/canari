@@ -83,3 +83,16 @@ export async function firstFramePlaceholder(video: Blob): Promise<string | null>
   console.debug(`[reel-frame] first-frame placeholder ${hash ? 'made' : 'not made'}`);
   return hash;
 }
+
+/**
+ * The placeholder a post's media is published with (`MediaRef.placeholder`): a video's first frame,
+ * a picture's own ThumbHash - or `null` for anything else, or a file this engine cannot decode. ONE
+ * place for every publisher (the publish queue, a post's edit), so a picture never goes out without
+ * the one a video gets (owner, 2026-11-11: a CanaReels photo page was black until its file came).
+ */
+export async function preparedMediaPlaceholder(file: File): Promise<string | null> {
+  if (file.type.startsWith('video/')) return firstFramePlaceholder(file);
+  if (!file.type.startsWith('image/')) return null;
+  const { placeholderForImageFile } = await import('$lib/utils/mediaPlaceholder');
+  return placeholderForImageFile(file);
+}

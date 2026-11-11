@@ -19,9 +19,18 @@
  * other holder of the same object through `mediaBlobCache`'s in-flight map, so cancelling it would
  * cancel somebody else's.
  */
+/**
+ * Which queue a task waits in. A `background` task is work fetched AHEAD of the reader (the reel
+ * viewer's next pages, `reels/reelAhead.ts`): it takes a slot only when no foreground task is
+ * waiting, and never the LAST free slot - so a request for what is on screen always finds one at
+ * once, however many pages are being fetched ahead.
+ */
+export type GateLane = 'foreground' | 'background';
+
 export class RequestGate {
   private active = 0;
   private readonly waiting: (() => void)[] = [];
+  private readonly waitingBackground: (() => void)[] = [];
 
   /** @param limit How many tasks may run at once. */
   constructor(private readonly limit: number) {}
@@ -31,20 +40,32 @@ export class RequestGate {
     return this.active;
   }
 
-  /** How many are queued behind them. */
+  /** How many are queued behind them, in both lanes. */
   get queued(): number {
-    return this.waiting.length;
+    return this.waiting.length + this.waitingBackground.length;
   }
 
   /**
    * Runs `task` once a slot is free, and rejects with `signal.reason` if `signal` aborts first.
    *
+   * A slot is COUNTED at the moment it is handed over, so a task arriving between a release and
+   * the woken waiter's resumption cannot take it from under that waiter.
+   *
+   * @param lane `background` waits behind every foreground task and leaves one slot free
+   *   ({@link GateLane}).
    * @throws whatever `task` throws, or the abort reason when the wait was abandoned.
    */
-  async run<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  async run<T>(
+    task: () => Promise<T>,
+    signal?: AbortSignal,
+    lane: GateLane = 'foreground'
+  ): Promise<T> {
     if (signal?.aborted) throw signal.reason;
+    const queue = lane === 'background' ? this.waitingBackground : this.waiting;
 
-    if (this.active >= this.limit) {
+    if (this.admits(lane)) {
+      this.active++;
+    } else {
       await new Promise<void>((resolve, reject) => {
         const release = () => {
           signal?.removeEventListener('abort', onAbort);
@@ -52,32 +73,56 @@ export class RequestGate {
         };
         const onAbort = () => {
           // Leave the queue rather than taking a slot and doing nothing with it.
-          const i = this.waiting.indexOf(release);
-          if (i >= 0) this.waiting.splice(i, 1);
+          const i = queue.indexOf(release);
+          if (i >= 0) queue.splice(i, 1);
           reject(signal?.reason);
         };
         signal?.addEventListener('abort', onAbort, { once: true });
-        this.waiting.push(release);
+        queue.push(release);
       });
-      // The signal may have fired between the slot being handed over and this line.
+      // The slot was counted when it was handed over; the signal may have fired since.
       if (signal?.aborted) {
-        this.next();
+        this.leave();
         throw signal.reason;
       }
     }
 
-    this.active++;
     try {
       return await task();
     } finally {
-      this.active--;
-      this.next();
+      this.leave();
     }
   }
 
+  /** Whether a task of `lane` may start now, with nobody of its rank queued ahead of it. */
+  private admits(lane: GateLane): boolean {
+    if (lane === 'foreground') return this.active < this.limit && this.waiting.length === 0;
+    return (
+      this.waiting.length === 0 &&
+      this.waitingBackground.length === 0 &&
+      this.active < this.limit - 1
+    );
+  }
+
+  private leave(): void {
+    this.active--;
+    this.next();
+  }
+
+  /** Hands free slots on: every foreground waiter first, then background ones, one slot kept free. */
   private next(): void {
-    if (this.active >= this.limit) return;
-    this.waiting.shift()?.();
+    while (this.active < this.limit && this.waiting.length > 0) {
+      this.active++;
+      this.waiting.shift()!();
+    }
+    while (
+      this.waiting.length === 0 &&
+      this.active < this.limit - 1 &&
+      this.waitingBackground.length > 0
+    ) {
+      this.active++;
+      this.waitingBackground.shift()!();
+    }
   }
 }
 

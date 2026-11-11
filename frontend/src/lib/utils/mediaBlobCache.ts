@@ -16,8 +16,9 @@ import {
   MediaUnreachableError,
 } from './mediaErrors';
 import { noteMediaCacheHit } from './mediaTouch';
-import { mediaRequestGate } from './requestGate';
+import { mediaRequestGate, type GateLane } from './requestGate';
 import { declareMp4Duration, isMp4Type } from './mp4Duration';
+import { joinMediaHead, readAfterHead } from './mediaHeadStore';
 
 /** Exported so `deviceStorage.ts` can measure/clear it without duplicating the literal. */
 export const CIPHER_CACHE_NAME = 'canari-media-ciphertext-v1';
@@ -167,25 +168,37 @@ function cipherCacheKey(baseUrl: string, mediaId: string): string {
  * rejects from the gate with its own `AbortError`, which the caller ignores and must keep seeing.
  *
  * @param onStart Called when the request leaves the gate's queue - the moment an abort stops counting.
+ * @param options.from Asks only for the bytes from this offset on (`Range: bytes=N-`): the rest of a
+ *   media whose head is already held (`mediaHeadStore.ts`). A `416` - the file ends exactly there -
+ *   is then an answer, returned as is.
+ * @param options.lane The gate's lane: `background` for a picture fetched ahead (`reelAhead.ts`).
  */
 async function fetchMediaObject(
   mediaId: string,
   baseUrl: string,
   signal?: AbortSignal,
-  onStart?: () => void
+  onStart?: () => void,
+  options: { from?: number; lane?: GateLane } = {}
 ): Promise<Response> {
+  const { from, lane } = options;
   const url = `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`;
-  const res = await mediaRequestGate.run(async () => {
-    // Out of the queue: from here the gate no longer honours an abort (see `SharedLoad`).
-    onStart?.();
-    const headers = { Authorization: `Bearer ${await getToken()}` };
-    try {
-      return await fetch(url, { headers });
-    } catch (err) {
-      throw new MediaUnreachableError(err);
-    }
-  }, signal);
+  const res = await mediaRequestGate.run(
+    async () => {
+      // Out of the queue: from here the gate no longer honours an abort (see `SharedLoad`).
+      onStart?.();
+      const headers: Record<string, string> = { Authorization: `Bearer ${await getToken()}` };
+      if (from !== undefined) headers.Range = `bytes=${from}-`;
+      try {
+        return await fetch(url, { headers });
+      } catch (err) {
+        throw new MediaUnreachableError(err);
+      }
+    },
+    signal,
+    lane
+  );
   if (res.ok) return res;
+  if (from !== undefined && res.status === 416) return res;
   if (res.status === 410) throw new MediaPurgedError();
   if (res.status === 404) throw new MediaNotFoundError();
   throw new MediaDownloadError(res.status);
@@ -235,7 +248,8 @@ async function fetchCiphertext(
   mediaId: string,
   baseUrl: string,
   signal?: AbortSignal,
-  onStart?: () => void
+  onStart?: () => void,
+  options: DownloadOptions = {}
 ): Promise<ArrayBuffer> {
   const cacheKey = cipherCacheKey(baseUrl, mediaId);
 
@@ -261,8 +275,7 @@ async function fetchCiphertext(
   // THE CACHE LOOKUP ABOVE IS FREE AND IS NOT GATED; ONLY THE BYTES ARE. An object already held
   // answers instantly whatever else is in flight, which is what makes the cap invisible to a
   // reader scrolling back through media they have seen.
-  const res = await fetchMediaObject(mediaId, baseUrl, signal, onStart);
-  const ciphertext = await res.arrayBuffer();
+  const ciphertext = await downloadCiphertext(mediaId, baseUrl, signal, onStart, options);
 
   if (typeof caches !== 'undefined' && ciphertext.byteLength > 0) {
     try {
@@ -277,6 +290,43 @@ async function fetchCiphertext(
   }
 
   return ciphertext;
+}
+
+/** How a ciphertext is downloaded. */
+interface DownloadOptions {
+  /** The ref is `segmented-v1`: a head fetched ahead may be joined. */
+  segmented?: boolean;
+  /** The gate's lane ({@link GateLane}). */
+  lane?: GateLane;
+}
+
+/**
+ * The ciphertext from the network. A SEGMENTED media whose head the reel viewer fetched ahead
+ * (`mediaHeadStore.ts`) joins that head - in flight or in - and asks only for the rest: the bytes
+ * fetched ahead are never fetched again (owner, 2026-11-11).
+ */
+async function downloadCiphertext(
+  mediaId: string,
+  baseUrl: string,
+  signal: AbortSignal | undefined,
+  onStart: (() => void) | undefined,
+  { segmented = false, lane }: DownloadOptions
+): Promise<ArrayBuffer> {
+  const head = segmented ? joinMediaHead(mediaId) : null;
+  if (!head) {
+    const res = await fetchMediaObject(mediaId, baseUrl, signal, onStart, { lane });
+    return res.arrayBuffer();
+  }
+  console.debug(`[mediaBlobCache] ${mediaId}: joins the head fetched ahead, asks for the rest`);
+  try {
+    return await readAfterHead(
+      head,
+      (from) => fetchMediaObject(mediaId, baseUrl, signal, onStart, { from, lane }),
+      signal
+    );
+  } finally {
+    head.release();
+  }
 }
 
 /**
@@ -304,7 +354,8 @@ async function decryptByEncoding(ref: MediaRef, ciphertext: ArrayBuffer): Promis
 function loadDecryptedBlobUrl(
   ref: MediaRef,
   baseUrl: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  lane?: GateLane
 ): Promise<string> {
   return sharedPooledLoad(
     decryptedPool,
@@ -312,7 +363,10 @@ function loadDecryptedBlobUrl(
     decryptedKey(ref),
     signal,
     async (loadSignal, onStart) => {
-      const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl, loadSignal, onStart);
+      const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl, loadSignal, onStart, {
+        segmented: ref.encoding === SEGMENTED_MEDIA_ENCODING,
+        lane,
+      });
       let plaintext: ArrayBuffer;
       try {
         plaintext = await decryptByEncoding(ref, ciphertext);
@@ -365,13 +419,16 @@ function loadRawBlobUrl(mediaId: string, baseUrl: string, signal?: AbortSignal):
  * decrypted blobs when possible.
  *
  * @param signal Drops the request from `mediaRequestGate`'s queue if it has not started yet.
+ * @param lane   The gate's lane: `background` for media fetched ahead of the reader. A load already
+ *   running keeps the lane it started in.
  */
 export async function acquireDecryptedMediaBlobUrl(
   ref: MediaRef,
   baseUrl: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  lane?: GateLane
 ): Promise<string> {
-  return loadDecryptedBlobUrl(ref, baseUrl, signal);
+  return loadDecryptedBlobUrl(ref, baseUrl, signal, lane);
 }
 
 /**

@@ -347,6 +347,76 @@ it('the reel on screen hands its first frame to the player while it loads', () =
   );
 });
 
+/**
+ * A PHOTO PAGE WAS BLACK, A SPINNER, UNTIL ITS FILE CAME (owner, 2026-11-11): it now draws its
+ * ThumbHash from the first paint - handed to `PostMedia` on screen, drawn by itself off screen - and
+ * a carousel's media do the same, each its own.
+ */
+const photo = (placeholder?: string) => ({
+  type: 'image' as const,
+  mediaId: 'm-p1',
+  key: 'k',
+  iv: 'i',
+  mimeType: 'image/webp',
+  size: 1,
+  ...(placeholder ? { placeholder } : {}),
+});
+
+it('a photo page on screen hands its ThumbHash to the picture while it loads', () => {
+  const { q } = render(reel({ kind: 'post', media: [photo('PHASH')] }), true);
+  expect(q('[data-post-media-stub]')!.getAttribute('data-poster')).toBe(
+    'data:image/png;thumbhash,PHASH'
+  );
+});
+
+it('a photo page off screen draws its ThumbHash', () => {
+  const { q } = render(reel({ kind: 'post', media: [photo('PHASH')] }), false);
+  expect(q('img[aria-hidden="true"][src^="data:image/png;thumbhash"]')!.getAttribute('src')).toBe(
+    'data:image/png;thumbhash,PHASH'
+  );
+});
+
+it('an old photo with no ThumbHash hands no poster - nothing is invented', () => {
+  const { q } = render(reel({ kind: 'post', media: [photo()] }), true);
+  expect(q('[data-post-media-stub]')!.hasAttribute('data-poster')).toBe(false);
+});
+
+it('a carousel page draws each media its own best picture: sharp frame, ThumbHash, ThumbHash', () => {
+  devicePosters.set('m-v2', 'blob:frame-v2');
+  const post = reel({
+    kind: 'post',
+    media: [
+      photo('PHASH'),
+      {
+        type: 'video',
+        mediaId: 'm-v2',
+        key: 'k',
+        iv: 'i',
+        mimeType: 'video/mp4',
+        size: 1,
+        placeholder: 'VHASH',
+      },
+      {
+        type: 'video',
+        mediaId: 'm-v3',
+        key: 'k',
+        iv: 'i',
+        mimeType: 'video/mp4',
+        size: 1,
+        placeholder: 'V3HASH',
+      },
+    ],
+  });
+  // On screen, on its second media: the photo before it and the video after it are drawn pictures.
+  const { target, q } = render(post, true, { mediaIndex: 1 });
+  const panes = [...target.querySelectorAll('[data-reel-media]')];
+  expect(panes[0].querySelector('img')!.getAttribute('src')).toBe('data:image/png;thumbhash,PHASH');
+  expect(q('[data-post-media-stub]')!.getAttribute('data-poster')).toBe('blob:frame-v2');
+  expect(panes[2].querySelector('img')!.getAttribute('src')).toBe(
+    'data:image/png;thumbhash,V3HASH'
+  );
+});
+
 it('an old reel with no picture of its frame draws the black frame, not a play glyph', () => {
   const { q } = render(reel(), false);
   expect(q('[data-video-first-frame-poster]')).toBeNull();

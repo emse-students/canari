@@ -12,6 +12,7 @@
   import { slide } from 'svelte/transition';
   import { onMount, untrack } from 'svelte';
   import { MediaService, preparePostMedia } from '$lib/media';
+  import { preparedMediaPlaceholder } from '$lib/reels/reelFirstFrame';
   import { getToken } from '$lib/stores/auth';
   import {
     updatePost,
@@ -335,7 +336,13 @@
         }
         const ref = await mediaService.encryptAndUpload(file, uploadToken, dims, 'archive');
         const caption = newMediaCaptions[i]?.trim();
-        uploadedRefs.push({ ...ref, ...(caption ? { caption } : {}) });
+        // The same placeholder the publish queue sends: a reader draws it before a byte arrives.
+        const placeholder = await preparedMediaPlaceholder(file);
+        uploadedRefs.push({
+          ...ref,
+          ...(placeholder ? { placeholder } : {}),
+          ...(caption ? { caption } : {}),
+        });
       }
 
       const allMedia = [...existingMedia, ...uploadedRefs];

@@ -666,7 +666,19 @@ decoded is now a picture of that frame**, in this order (`ReelSlide`'s `posterUr
    from the very first paint, before a byte of the video, including the first reel opened. The
    server still makes nothing: a feed reel's blob is AES-GCM ciphertext there (C3).
 3. **Nothing - the frame's black**, for a reel published before 2026-10-31 that this device has not
-   decoded yet. It gets its sharp frame the first time it is preloaded or watched.
+   decoded yet. It gets its sharp frame the first time it is preloaded or watched - and, since
+   2026-11-11, as soon as its HEAD is fetched ahead (below), before the reader reaches it. A
+   single-block video (no `encoding`) has no head: it stays black until its file is in. No
+   backfill is invented for old media: a ThumbHash only a publisher can make.
+
+**A photo page draws its ThumbHash too (owner, 2026-11-11).** Photos were published with NO
+placeholder (`publishQueue.svelte.ts` made one for videos only), so a photo page was the black
+frame and the spinner until its file came. Every post's picture now carries its ThumbHash
+(`preparedMediaPlaceholder` in `reelFirstFrame.ts`, called by the publish queue and the post edit:
+the DTO's `placeholder` field and the `whitelist` pipe already took it for any media), and
+`ReelMediaPane` hands it to the photo's `PostMedia` as its loading picture, on screen or not. A
+photo published before 2026-11-11 has none, and stays black until its file - or its fetch ahead -
+is in. A carousel draws, per media, the same order: sharp frame, ThumbHash, black.
 
 **The play button answers a DECIDED OUTCOME, never a load.** The minimal reel player asks `play()`
 itself (the `autoplay` attribute fails silently) and draws its amber button only when the reader
@@ -725,18 +737,67 @@ language, one label (`video_loading_label`). Pinned by `PostMedia.loading.svelte
 progress figure**: `MediaService.downloadAndDecrypt` reports none (the bytes land decrypted in one
 piece), so a percentage would be invented; adding one means changing the media service, not the page.
 
-**The preload stays behind the settled reel - decided, not changed (2026-11-04).** Starting the next
-reel's fetch beside the current one's was weighed and refused: (1) on one weak link the two downloads
-share the bandwidth, so the reel being watched gets roughly half of it (~110 s instead of ~55 s for
-the same file at 400 kbps) - the cost lands on the reel the reader is looking at, the gain on one they
-may never reach; (2) the swipe's handover is not a clean win either way: `ReelPreload.stop()` only aborts the
-preload's HOLD on the shared load (`mediaBlobCache.ts`); a request already on the wire is kept
-joinable, so a reel read WHOLE (this defect's path) joins the preload's bytes and loses nothing, but a
-STREAMED segmented reel opens its own fetch (`openSegmentedStream`) and the preload's partial bytes
-are dropped; (3) the order is a correctness fact elsewhere (`settledId`), not a tuning knob. What
-would reopen it: a preload whose bytes the streamed path also joins AND a measurement that the
-reader's dwell on a settled reel is shorter than the next fetch. Neither exists; nothing was measured on
-a device, this is a derivation from the link's arithmetic and the code.
+**The next pages are fetched ahead in parallel - the owner's decision of 2026-11-11, replacing the
+refusal of 2026-11-04.** *Reported:* production `1.6.10`, desktop, a fast link, wheel-scrolling the
+viewer: the stage is black, sometimes with a spinner, for about a second on most pages. The owner
+asked for two things - a first frame or a low-quality picture before the media is ready, and the
+next 2-3 media preloaded in parallel.
+
+*Measured on dev first* (2026-11-11, the W3 harness Chrome driven over CDP, a sampler reading every
+animation frame what the page on screen paints, the ciphertext cache emptied before each run). The
+dev list is 15 pages: one streamed reel with a ThumbHash, 3 photos and 10 reels of ~3 MB read
+whole (`no-codecs`), none of those with a placeholder, and no carousel. The dev link delivers
+~780 KiB/s, so one of those reels takes ~3.5 s whole.
+
+| Wheel step | Build | Black pages (of 15) | of which |
+| --- | --- | --- | --- |
+| 1 s | `1.6.10` (dev) | 11 | 10 reels with no ThumbHash, read whole, preload behind the settle never started (a); 1 photo, 1.8 s (b) |
+| 2 s | `1.6.10` (dev) | 11 | 9 reels never drew, 1 reel 1.6 s, 1 photo 1.3 s |
+| 2 s | this change | 4 | 3 reels never drew, 1 reel 1.7 s; 6 reels drew their sharp frame from the first paint |
+| 1 s | this change | 9 | the heads behind a 3 MB foreground download cannot all arrive at ~780 KiB/s |
+
+No black page was a player failing to draw a poster it had (d): every page with a picture drew it
+at once. A warm cache (the ciphertext in the Cache API) showed no black page at all, which is why
+the first runs looked clean. The black came from two facts: (a) a reel with nothing to draw
+reached before its bytes - the one preload starts only once the page on screen PLAYS, which a
+wheel never waits for; (b) photos carried no placeholder.
+
+*What is built* (`reels/reelAhead.ts`, `utils/mediaHeadStore.ts`):
+
+- **The next pages, at once, not behind the settle**: `REEL_AHEAD_FAST` = 3 pages when the
+  link keeps up with the media, 1 when it does not - #3333's verdict (`linkIsSlow`, slow below
+  1x, fast again from 1.15x) on the session's measured rate (`sessionLinkRate`, fed by the same
+  ranged reads as the streams, measured after the gate grants the slot) against the media rate of
+  the reel on screen. Unknown (nothing measured) is slow: one page, whose own read is the first
+  sample. No clock.
+- **Heads, not files**: a segmented video's header and FIRST SEGMENT (1 MiB), one ranged read,
+  decoded at once into its sharp first frame (`reelPosters`). Two segments were tried first and
+  never arrived within a 1 s step on dev (two thirds of a 3 MB reel). A picture is fetched whole
+  (pictures are small). A single-block video gets nothing.
+- **Both read paths JOIN the head - the precondition the 2026-11-04 refusal named**: a streamed
+  reel's segment feed wraps its network source in `headedRangeSource` (a read inside the head is
+  answered from it, in flight or in); a reel read whole (`mediaBlobCache`) takes the head and asks
+  for the rest only (`Range: bytes=N-`). Pinned by `mediaHeadStore.test.ts`, which counts the
+  requests.
+- **The reel being watched keeps the link**: every byte fetched ahead goes through the gate's
+  BACKGROUND lane (`requestGate.ts`): behind every foreground request, never in the last free slot.
+- **A fast scroll leaves nothing behind**: a page passed is dropped at the update that passed it;
+  its head's last holder aborts it (queued: the gate drops it; on the wire: `fetch` is aborted). The
+  page that becomes the one on screen keeps its head, so its player joins it.
+- **Bounded by its holders, not by a new store**: gap 3's 200 MB store does not exist yet
+  ([slow-link chantier](../../backlog.d/slow-link-local-first-chantier.md)), so the heads live only
+  while held (at most four: the page on screen and three ahead), pictures in the existing decrypted
+  pool (`blobUrlPool`, its byte cap and eviction), posters in `reelPosters` (eight).
+
+The `ReelPreload` behind the settled reel is kept: it reads the next reel whole after the settle,
+and now joins its head.
+
+*Left, and said*: (1) a reel the reader passes before its whole read is in keeps downloading - a
+load that left the gate's queue is kept joinable on purpose (`mediaBlobCache.ts`, `SharedLoad`), so
+on a slow link a wheel through ten reels downloads ten files; changing that is a decision about
+the shared cache, not this page. (2) The dev reels are fragmented MP4 with no codecs in their
+`mimeType`, so they are read whole instead of streamed (`no-codecs`); a writer naming its codecs
+would let them stream. (3) Owed: the same scroll on production's link, and on both phones.
 
 **Owed on the bench phones** (none of this was read on a device): see
 [device-verification](../../device-verification.md) and the PR's reading list - per phone, the

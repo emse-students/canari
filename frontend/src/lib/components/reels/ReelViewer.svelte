@@ -55,6 +55,7 @@
     type ReelSwipeVerdict,
   } from '$lib/reels/reelViewerNav';
   import { fullScreenMediaListOf, fullScreenPageOf } from '$lib/reels/fullScreenPost';
+  import { ReelAhead, aheadPagesOf } from '$lib/reels/reelAhead';
   import {
     GESTURE,
     classifyMove,
@@ -262,6 +263,28 @@
     }
     list.settledId = settleKeyOf(post);
   }
+
+  /**
+   * THE NEXT PAGES, FETCHED AHEAD IN PARALLEL (owner, 2026-11-11): their heads or pictures, at once
+   * and whether or not the page on screen has settled - in the gate's background lane, so the page
+   * on screen is always served first (`reels/reelAhead.ts`). It only READS the list on screen: a
+   * new list (another order) simply names other pages, and the old ones are dropped.
+   */
+  const ahead = new ReelAhead();
+  $effect(() => {
+    // This effect lives OUTSIDE the viewer's `svelte:boundary`: a post that throws when read must
+    // cost the look-ahead, never the page - the slide that reads it trips the boundary itself.
+    let pages: ReturnType<typeof aheadPagesOf>;
+    try {
+      pages = aheadPagesOf(list);
+    } catch (err) {
+      console.error('[reel-ahead] the pages ahead could not be read - nothing fetched ahead', err);
+      ahead.update(null, []);
+      return;
+    }
+    ahead.update(pages.current, pages.next);
+  });
+  $effect(() => () => ahead.stop());
 
   // The next page, asked for as the reader nears the end of what is loaded.
   $effect(() =>
