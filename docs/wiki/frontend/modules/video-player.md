@@ -496,10 +496,11 @@ at its target, or EARLIER, on purpose, when: the link is called fast again (slow
 only from 1.15x - the hysteresis is on the link's verdict, so a rate hovering around 1x flips
 nothing); the element is paused, played, sought into what it buffers (it fires `playing`) or
 detached; every segment is fetched (`fetchedAll`, a FACT - not `U` reaching 0, which a wrong or
-absent `ref.size`, or a partial last segment, would never let happen); or the reader chose "Lire
-quand meme". **A drain, once started, appends everything held** and does not re-check the hold: those
-bytes are already here, and the burst is what the element was waiting for, so no new `waiting` can
-arise mid-burst. A failed range or append, and `close()`, clear the hold and tell the player.
+absent `ref.size`, or a partial last segment, would never let happen). **A drain, once started,
+appends everything held** and does not re-check the hold: those bytes are already here, and the
+burst is what the element was waiting for, so no new `waiting` can arise mid-burst. A failed range or
+append rejects `done` as before, and a closed stream holds nothing. The `[media-seg]` log says when a
+hold starts (with what is in and its target) and when it is released; that is its only trace.
 
 **The cap is a bound kept small, not a measured quota.** A hold appends all of it at once, so it is
 6 MiB (it was 12 in the first draft). The engines' quotas were not measured here; an append the
@@ -511,19 +512,13 @@ bytes and the seconds from the moment `mediaRequestGate` GRANTED its slot to its
 is not the link. The feed smooths them (half weight to the newest read; reads under 64 KiB are not
 samples). The media's rate is `size / durationMs`, else bytes appended over seconds buffered.
 
-**What the reader sees.** `StreamProgress.hold` carries the percent; the stream fires
-`canari-stream-hold` on the element when it changes and `VideoPlayer` draws `MediaSpinner` with
-"Chargement pour une lecture sans coupure... n %" (`video_buffering_progress`) on every variant.
-Within one hold the percent only goes up (`setHold` keeps the larger value): a link that drops
-mid-hold raises the target, and the bar waits at its last value rather than going backwards. A link
-faster than the media never holds, so it starts as soon as before.
-
-**"Lire quand meme" - the lead's decision, 2026-11-11, reversible.** Under the percent, a
-`ui/Button` (`video_play_anyway`, fr "Lire quand meme", en "Play anyway", 44 px tall) lets the reader
-choose the stalls over the wait. The player dispatches `canari-stream-play-anyway` on the element;
-the stream appends what it holds and never holds that consumer again - a new `src` is a new stream,
-which holds again. Why: a forced wait of half a minute with no way out reads as a broken video to
-someone who would rather watch with stops; the default stays the single wait.
+**What the reader sees: nothing new - the owner's decision, 2026-11-11.** *"Tout doit etre invisible
+pour l'utilisateur."* A hold has no label, no percent and no control. The element is simply waiting,
+so the player draws what it draws for any wait (the reel's spinner on `waiting`, nothing new
+elsewhere). This replaces two things the lead had built the same day and that were removed before
+merge: a "Chargement pour une lecture sans coupure... n %" label, and a reversible "Lire quand meme"
+button that let the reader take the stalls instead. A link faster than the media never holds, so it
+starts as soon as before.
 
 **Measured in the model** (`segmentedMediaStream.slowLink.test.ts`: an element whose buffer grows by
 what is appended and whose playhead advances on a fake clock, resuming as soon as it has data, as an
@@ -531,8 +526,8 @@ engine does; a link at a set rate). A 30-segment reel (99 s) at 318 KB/s on a 26
 stalls before, 1 after** (the 6 MiB cap splits that long reel's wait in two: a first hold before it
 starts, one later); it starts at 27 s instead of 4.5 s and ends at 139.5 s instead of 138 s. On a 2
 MB/s link: 0 stalls, the same start to the clock's step. The same file pins the end below the target
-(an unknown size, a size declared too large), a failed range and a close mid-hold, a refused append
-in a drain, a link dropping mid-hold, a seek during a hold, the cap and "Lire quand meme".
+(an unknown size, a size declared too large), a refused append in a drain, a pause and a seek
+during a hold, and the cap. A hold is observed there as segments fetched and not yet appended.
 
 **What it does NOT do.** A reel whose autoplay is asked only at `loadedmetadata` (`variant="reel"`)
 has its first segment appended while paused, so it plays that segment and holds ONCE at its end;
@@ -542,4 +537,4 @@ lower-bitrate rendition for a slow link, is not built**: it is the follow-up tha
 wait itself rather than group it.
 
 **Readings owed.** A reel and a feed video on a throttled link (about 250 KB/s) on both phones: one
-hold with its percent, then no stop.
+wait, then no stop.

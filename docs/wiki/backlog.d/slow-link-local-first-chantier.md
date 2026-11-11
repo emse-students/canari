@@ -35,8 +35,9 @@ state first, then revalidates ([local-first-ui](../frontend/local-first-ui.md)).
    - tests with an element model whose buffer grows and whose playhead advances on a fake clock,
      counting stalls before and after.
 
-   **Built 2026-11-11** (the hold, the measure after the gate, the hysteresis, the progress label;
-   #3322 closed): 29 stalls become 1 in the model
+   **Built 2026-11-11** (the hold, the measure after the gate, the hysteresis; #3322 closed). The
+   owner decided on 2026-11-11 that the hold is invisible: no label, no percent, no control. 29
+   stalls become 1 in the model
    ([video-player](../frontend/modules/video-player.md#a-link-slower-than-the-video-one-honest-load-2026-11-11)).
    Left: the throttled-link reading on both phones, and the lower-bitrate rendition (not built).
 

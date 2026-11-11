@@ -902,8 +902,6 @@
   "video_player_label": "Video player",
   "video_play_label": "Play",
   "video_loading_label": "Loading the video",
-  "video_buffering_progress": "Loading to play without stopping… {percent}%",
-  "video_play_anyway": "Play anyway",
   "video_pause_label": "Pause",
   "video_seek_label": "Position in the video",
   "video_time_value": "{elapsed} of {duration}",

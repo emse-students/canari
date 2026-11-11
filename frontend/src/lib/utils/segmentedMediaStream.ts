@@ -49,8 +49,8 @@
  * again - 29 stalls on the owner's link (slow-link chantier, gap 6). So when the measured link is
  * slower than the media ({@link linkIsSlow}, with hysteresis) and the element has fired `waiting`,
  * the stream keeps fetching but holds the segments back until the rest can play through
- * ({@link holdTargetSeconds}), then appends them in one go; {@link StreamProgress.hold} says how far
- * that load is, for the player to draw. The link is measured in `httpRangeSource`, after the request
+ * ({@link holdTargetSeconds}), then appends them in one go. Nothing of it is shown (owner,
+ * 2026-11-11): the element just waits, as it would for any slow byte. The link is measured in `httpRangeSource`, after the request
  * gate granted the slot. Mechanism and numbers: `docs/wiki/frontend/modules/video-player.md`.
  *
  * # What is NOT here yet
@@ -199,28 +199,10 @@ export function holdTargetSeconds(input: {
   return Math.min(capSeconds, (u / m) * (m / l - 1) * HOLD_SAFETY);
 }
 
-/**
- * Fired on the attached element whenever {@link StreamProgress.hold} changes, so the player redraws
- * its "loading, n %" without polling.
- */
-export const STREAM_HOLD_EVENT = 'canari-stream-hold';
-
-/**
- * Dispatched ON the attached element by the player when the reader chose "Lire quand meme": the
- * stream appends what it holds and never holds that element again - the stalls are the reader's
- * choice. A new source is a new stream, which holds again.
- */
-export const STREAM_PLAY_ANYWAY_EVENT = 'canari-stream-play-anyway';
-
 /** What a paced stream reads of its element - an `HTMLMediaElement`, or a test's stand-in. */
 export type PacingElement = Pick<
   HTMLMediaElement,
-  | 'paused'
-  | 'currentTime'
-  | 'buffered'
-  | 'addEventListener'
-  | 'removeEventListener'
-  | 'dispatchEvent'
+  'paused' | 'currentTime' | 'buffered' | 'addEventListener' | 'removeEventListener'
 >;
 
 /** The element events after which its demand may have changed. */
@@ -284,12 +266,6 @@ export interface StreamProgress {
    * ever be buffered again: a seek there would wait for ever ({@link streamSeekFloor}).
    */
   trimmedBefore: number;
-  /**
-   * THE STREAM IS HOLDING ITS ELEMENT on a slow link ({@link holdTargetSeconds}): `percent` of
-   * what it must buffer before playing on is in. `null` while it holds nothing. The player draws it
-   * ({@link STREAM_HOLD_EVENT}).
-   */
-  hold: { percent: number } | null;
 }
 
 /**
@@ -601,7 +577,6 @@ function openConsumer(
     appended: 0,
     bytes: 0,
     trimmedBefore: 0,
-    hold: null,
   };
   progressByUrl.set(url, progress);
   let closed = false;
@@ -613,8 +588,8 @@ function openConsumer(
   let slow = false;
   /** Every segment is fetched: nothing a hold could still wait for (set after the fetch loop). */
   let fetchedAll = false;
-  /** The reader chose to play through the stalls ({@link STREAM_PLAY_ANYWAY_EVENT}). */
-  let holdsRefused = false;
+  /** A hold is on: said once in the log when it starts, once when it ends. */
+  let holding = false;
   /**
    * Segments fetched and not appended yet, in order: what a hold keeps from a starved element so it
    * plays once, to the end, instead of a second at a time.
@@ -703,16 +678,18 @@ function openConsumer(
   }
 
   /**
-   * How much of its hold a starved element has, in percent - `null` when no hold applies: the
-   * element is not stalling, the link keeps up, or enough is in for it to play to the end
-   * ({@link holdTargetSeconds}). A hold starts only on a `waiting` and ends at its target - or
-   * earlier, on purpose, when the link is called fast again (from 1.15x), when the element is
-   * paused, played or detached, when every segment is fetched, or when the reader refused it.
+   * What a starved element still lacks before it may play on: the seconds it has (buffered plus
+   * held) and the {@link holdTargetSeconds} it needs - `null` when no hold applies: the element is
+   * not stalling, the link keeps up, or enough is in for it to play to the end. A hold starts only
+   * on a `waiting` and ends at its target - or earlier, on purpose, when the link is called fast
+   * again (from 1.15x), when the element is paused, played or detached, or when every segment is
+   * fetched. NOTHING OF IT IS SHOWN (owner, 2026-11-11): the element is simply waiting, and the
+   * player draws what it draws for any wait.
    */
-  function holdPercent(): number | null {
+  function holdShortfall(): { ahead: number; target: number } | null {
     // A FACT, NOT ARITHMETIC: once every segment is in, nothing is left to wait for, whatever a
     // wrong or absent `ref.size` makes `unfetchedBytes` say.
-    if (fetchedAll || holdsRefused) return null;
+    if (fetchedAll) return null;
     if (!pacing || !element || element.paused || !starved) return null;
     const rates = linkRates();
     if (!rates || !slow) return null;
@@ -725,38 +702,32 @@ function openConsumer(
       capSeconds: slowAheadCapSeconds(pacing.aheadSeconds, rates.media),
     });
     const ahead = aheadWithHeld(element, rates.media);
-    if (ahead >= target) return null;
-    return Math.floor((ahead / target) * 100);
+    return ahead >= target ? null : { ahead, target };
   }
 
-  /**
-   * Publishes the hold on {@link StreamProgress.hold} and tells the element, on a change only.
-   * Within one hold the percent only goes UP: a link that drops mid-hold raises the target, and a
-   * bar going backwards reads as broken - it waits at its last value until the buffer catches up.
-   */
-  function setHold(next: number | null): void {
-    const current = progress.hold?.percent ?? null;
-    const percent = next === null || current === null ? next : Math.max(current, next);
-    if (current === percent) return;
-    if (current === null) {
-      console.debug(`[media-seg] ${label} ${ref.mediaId}: holding a stall at ${percent} %`);
-    } else if (percent === null) {
+  /** Logs a hold's start (with its target) and its end - the only trace a hold leaves. */
+  function noteHold(shortfall: { ahead: number; target: number } | null): void {
+    if ((shortfall !== null) === holding) return;
+    holding = shortfall !== null;
+    if (shortfall) {
+      console.debug(
+        `[media-seg] ${label} ${ref.mediaId}: holding a stall, ${shortfall.ahead.toFixed(1)} s of ${shortfall.target.toFixed(1)} s in`
+      );
+    } else {
       console.debug(
         `[media-seg] ${label} ${ref.mediaId}: hold released, ${held.length} held segment(s) appended`
       );
     }
-    progress.hold = percent === null ? null : { percent };
-    element?.dispatchEvent(new Event(STREAM_HOLD_EVENT));
   }
 
   /**
-   * Appends what is held unless a hold applies ({@link holdPercent}). Called after every fetch and
+   * Appends what is held unless a hold applies ({@link holdShortfall}). Called after every fetch and
    * on every element event; the appends themselves go through ONE chain, so they stay in order.
    */
   function release(): void {
-    const percent = holdPercent();
-    setHold(percent);
-    if (percent !== null || held.length === 0 || !buffer) return;
+    const shortfall = holdShortfall();
+    noteHold(shortfall);
+    if (shortfall !== null || held.length === 0 || !buffer) return;
     appendChain = appendChain.then(drain);
     // The fetch loop awaits the chain: a failed append rejects `done` there, said by its consumer.
     appendChain.catch(() => {});
@@ -780,17 +751,6 @@ function openConsumer(
       progress.bytes += part.byteLength;
       parts.push(segment);
     }
-  }
-
-  /** "Lire quand meme": what is held goes in, and this element is never held again. */
-  function onPlayAnyway(): void {
-    if (holdsRefused) return;
-    holdsRefused = true;
-    console.info(
-      `[media-seg] ${label} ${ref.mediaId}: the reader plays through the stalls - ${held.length} held segment(s) appended`
-    );
-    release();
-    poke();
   }
 
   /** An element event: its stall state first, then what it releases and what it asks for. */
@@ -829,7 +789,7 @@ function openConsumer(
       held.push(segment);
       heldBytes += segment.size;
       // Appended at once - unless a starved element on a slow link is being held, in which case
-      // the loop fetches on and the segment waits with the others (`holdPercent`).
+      // the loop fetches on and the segment waits with the others (`holdShortfall`).
       release();
       await appendChain;
     }
@@ -846,8 +806,6 @@ function openConsumer(
   // that got no answer is the expected state of an absent link, not an error. Logging here too
   // printed every failure twice, once at `error` whatever its cause (production 1.5.1).
   done.catch(() => {
-    // A broken stream holds nothing: the player's "n %" goes with it.
-    setHold(null);
     if (closed) return;
     // Tells the element the stream is broken rather than leaving it waiting for bytes for ever.
     if (source.readyState === 'open') source.endOfStream('decode');
@@ -861,11 +819,9 @@ function openConsumer(
       element = next;
       starved = false;
       for (const type of DEMAND_EVENTS) next.addEventListener(type, onElementEvent);
-      next.addEventListener(STREAM_PLAY_ANYWAY_EVENT, onPlayAnyway);
       poke();
       return () => {
         for (const type of DEMAND_EVENTS) next.removeEventListener(type, onElementEvent);
-        next.removeEventListener(STREAM_PLAY_ANYWAY_EVENT, onPlayAnyway);
         if (element === next) {
           element = null;
           starved = false;
@@ -887,8 +843,6 @@ function openConsumer(
     close() {
       if (closed) return;
       closed = true;
-      // Said before the URL goes: a player still showing "n %" redraws to nothing.
-      setHold(null);
       abort.abort();
       progressByUrl.delete(url);
       URL.revokeObjectURL(url);

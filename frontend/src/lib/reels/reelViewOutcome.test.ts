@@ -39,13 +39,7 @@ describe('ReelView', () => {
     const c = clock();
     const view = new ReelView({ ...start, preload: 'ready' }, c.now);
     const el = element(4, 1);
-    const progress = {
-      segmentCount: 12,
-      appended: 3,
-      bytes: 3_100_000,
-      trimmedBefore: 0,
-      hold: null,
-    };
+    const progress = { segmentCount: 12, appended: 3, bytes: 3_100_000, trimmedBefore: 0 };
     c.at(20);
     view.event('loadstart', el, progress);
     c.at(500);
@@ -72,7 +66,6 @@ describe('ReelView', () => {
       appended: 0,
       bytes: 0,
       trimmedBefore: 0,
-      hold: null,
     });
     c.at(34_200);
     expect(view.end({ inFlight: 3, queued: 2 })).toBe(
@@ -93,7 +86,7 @@ describe('ReelView', () => {
 
     const streamed = new ReelView(start, c.now);
     expect(reelViewStoppedAt(streamed.facts)).toBe('stream never reached the element');
-    const progress = { segmentCount: 4, appended: 0, bytes: 0, trimmedBefore: 0, hold: null };
+    const progress = { segmentCount: 4, appended: 0, bytes: 0, trimmedBefore: 0 };
     streamed.event('loadstart', element(), progress);
     expect(reelViewStoppedAt(streamed.facts)).toBe('header read, no segment appended');
     progress.appended = 1;

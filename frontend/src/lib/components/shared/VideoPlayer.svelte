@@ -55,8 +55,6 @@
   import VideoPoster from './VideoPoster.svelte';
   import {
     isTimeBuffered,
-    STREAM_HOLD_EVENT,
-    STREAM_PLAY_ANYWAY_EVENT,
     streamProgressOf,
     streamSeekFloor,
   } from '$lib/utils/segmentedMediaStream';
@@ -391,43 +389,6 @@
    * outcome earns. Cleared by `playing`, a pause or a new load.
    */
   let buffering = $state(false);
-  /**
-   * A STREAM ON A LINK SLOWER THAN THE MEDIA HOLDS ITS STALL until the rest can play through
-   * (`segmentedMediaStream`, `holdTargetSeconds`): how much of that load is in, in percent - `null`
-   * while nothing is held. Drawn on every variant, so one honest load never reads as a broken video.
-   */
-  let holdPercent = $state<number | null>(null);
-  $effect(() => {
-    const el = video;
-    const url = src;
-    if (!el || !streamed) {
-      holdPercent = null;
-      return;
-    }
-    /** The last value drawn - kept outside the state, so this effect never depends on it. */
-    let shown: number | null = null;
-    const read = () => {
-      const next = streamProgressOf(url)?.hold?.percent ?? null;
-      if ((next === null) !== (shown === null)) {
-        Log.d('VideoPlayer', `${variant}: ${next === null ? 'hold over' : `holding at ${next} %`}`);
-      }
-      shown = next;
-      holdPercent = next;
-    };
-    read();
-    el.addEventListener(STREAM_HOLD_EVENT, read);
-    return () => el.removeEventListener(STREAM_HOLD_EVENT, read);
-  });
-  /**
-   * "Lire quand meme" (lead's decision, 2026-11-11, reversible): the reader would rather watch with
-   * stalls than wait. Told to the stream through its element - the one object both hold - and the
-   * stream never holds this source again.
-   */
-  function playAnyway() {
-    if (!video) return;
-    Log.d('VideoPlayer', `${variant}: the reader plays through the hold at ${holdPercent} %`);
-    video.dispatchEvent(new Event(STREAM_PLAY_ANYWAY_EVENT));
-  }
   let controlsVisible = $state(true);
   /** Bumped by every interaction: the fade timer restarts from it. */
   let poke = $state(0);
@@ -988,10 +949,7 @@
       <VideoPlayGlyph onclick={togglePlay} size={minimal ? 'lg' : 'md'} tabindex={-1} />
     {/if}
 
-    {#if holdPercent !== null}
-      <!-- A LINK SLOWER THAN THE VIDEO: one load, said with its progress, then no stop. -->
-      <MediaSpinner percent={holdPercent} onPlayAnyway={playAnyway} />
-    {:else if minimal && buffering}
+    {#if minimal && buffering}
       <!-- A SLOW NETWORK, NOT A REFUSAL: the reel was asked to play and waits for its data. -->
       <MediaSpinner />
     {/if}

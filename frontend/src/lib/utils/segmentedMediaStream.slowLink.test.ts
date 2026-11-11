@@ -52,8 +52,6 @@ vi.mock('./segmentedMediaReader', async (importActual) => {
 const {
   openSegmentedStream,
   FEED_STREAM_PACING,
-  STREAM_HOLD_EVENT,
-  STREAM_PLAY_ANYWAY_EVENT,
   SLOW_AHEAD_MAX_BYTES,
   SLOW_AHEAD_MAX_SECONDS,
   streamProgressOf,
@@ -169,9 +167,8 @@ interface RunResult {
   stalls: number;
   startedAt: number | null;
   endedAt: number | null;
-  holdsSeen: number[];
-  /** Every hold event as the player reads it: a percent, or `null` once a hold is over. */
-  holdEvents: Array<number | null>;
+  /** The most segments ever fetched and kept back from the element at once: a hold's trace. */
+  mostHeld: number;
 }
 
 /** A link delivering one range at a time at `rate` bytes per second, on the fake clock. */
@@ -274,14 +271,6 @@ async function startStream(segments: number, rate: number, options: StartOptions
   const element = new ModelElement(duration);
   element.paused = !askedToPlay;
   target = element;
-  const holdsSeen: number[] = [];
-  /** What the player would read on every hold event: the percent, or `null` for none. */
-  const holdEvents: Array<number | null> = [];
-  element.addEventListener(STREAM_HOLD_EVENT, () => {
-    const hold = streamProgressOf('blob:model')?.hold ?? null;
-    holdEvents.push(hold?.percent ?? null);
-    if (hold) holdsSeen.push(hold.percent);
-  });
   const handle = openSegmentedStream(
     ref,
     'https://media.test',
@@ -305,8 +294,7 @@ async function startStream(segments: number, rate: number, options: StartOptions
     element.dispatchEvent(new Event('play'));
     element.dispatchEvent(new Event('waiting'));
   }
-  const signature = () =>
-    `${link.calls()}|${appends}|${streamProgressOf('blob:model')?.hold?.percent}`;
+  const signature = () => `${link.calls()}|${link.delivered()}|${appends}`;
   // The opening read is asked at t = 0, as the reference's is.
   await settleUntilStable(signature);
   /** One tick of the clock: the link answers, the stream acts, the element plays. */
@@ -320,27 +308,25 @@ async function startStream(segments: number, rate: number, options: StartOptions
     element,
     handle,
     tick,
-    holdsSeen,
-    holdEvents,
     duration,
     clock,
     signature,
     link,
     failure: () => failure,
     finished: () => finished,
-    hold: () => streamProgressOf('blob:model')?.hold ?? null,
+    /** Segments fetched and not appended: a hold is on while this is above 0 (settled). */
+    held: () => link.delivered() - appends,
   };
 }
 
 /** Plays `segments` of media over a link at `rate` through the REAL stream; returns what happened. */
 async function runStream(segments: number, rate: number): Promise<RunResult> {
-  const { element, handle, tick, holdsSeen, holdEvents, duration, clock } = await startStream(
-    segments,
-    rate
-  );
+  const { element, handle, tick, held, duration, clock } = await startStream(segments, rate);
+  let mostHeld = 0;
   let endedAt: number | null = null;
   for (let steps = 0; steps < (4 * (duration + (segments * SEG) / rate)) / DT; steps++) {
     await tick();
+    mostHeld = Math.max(mostHeld, held());
     if (element.state === 'ended') {
       endedAt = clock.now;
       break;
@@ -348,7 +334,7 @@ async function runStream(segments: number, rate: number): Promise<RunResult> {
   }
   handle.close();
   await flushMacrotask();
-  return { stalls: element.stalls, startedAt: element.startedAt, endedAt, holdsSeen, holdEvents };
+  return { stalls: element.stalls, startedAt: element.startedAt, endedAt, mostHeld };
 }
 
 /**
@@ -387,20 +373,8 @@ function referencePump(segments: number, rate: number): RunResult {
     stalls: element.stalls,
     startedAt: element.startedAt,
     endedAt,
-    holdsSeen: [],
-    holdEvents: [],
+    mostHeld: 0,
   };
-}
-
-/** Whether every hold's percents, between two `null`s, only go up. */
-function risesWithinEachHold(events: Array<number | null>): boolean {
-  let last = -1;
-  for (const percent of events) {
-    if (percent === null) last = -1;
-    else if (percent < last) return false;
-    else last = percent;
-  }
-  return true;
 }
 
 afterEach(() => {
@@ -460,22 +434,22 @@ describe('a reel played over the model link', { timeout: 60_000 }, () => {
     // hold's margin (what is still buffered when the last byte lands).
     const duration = (SEGMENTS * SEG) / MEDIA;
     expect(after.endedAt!).toBeLessThanOrEqual(before.endedAt! + 0.1 * duration);
-    // The hold was shown, and within each hold its percentage only ever went up.
-    expect(after.holdsSeen.length).toBeGreaterThan(0);
-    expect(risesWithinEachHold(after.holdEvents)).toBe(true);
+    // It did so by holding: segments were kept back from the starved element.
+    expect(after.mostHeld).toBeGreaterThan(0);
     expect(streamProgressOf('blob:model')).toBeUndefined();
   });
 
   it('a paused element is held by nobody: what was kept from it goes in at once', async () => {
-    const { element, handle, tick, signature, link } = await startStream(12, SLOW_LINK);
+    const run = await startStream(12, SLOW_LINK);
+    const { element, handle, tick, signature, link } = run;
     // Until two segments have landed and are held: the third is on the wire.
     for (let i = 0; i < 200 && link.calls() < 3; i++) await tick();
-    expect(streamProgressOf('blob:model')?.hold).not.toBeNull();
+    expect(run.held()).toBe(2);
     expect(appends).toBe(0);
     element.paused = true;
     element.dispatchEvent(new Event('pause'));
     await settleUntilStable(signature);
-    expect(streamProgressOf('blob:model')?.hold).toBeNull();
+    expect(run.held()).toBe(0);
     expect(appends, 'the two held segments are appended').toBe(2);
     handle.close();
   });
@@ -484,7 +458,7 @@ describe('a reel played over the model link', { timeout: 60_000 }, () => {
     const before = referencePump(SEGMENTS, FAST_LINK);
     const after = await runStream(SEGMENTS, FAST_LINK);
     expect(after.stalls).toBe(0);
-    expect(after.holdsSeen).toEqual([]);
+    expect(after.mostHeld, 'nothing is ever held on a fast link').toBe(0);
     expect(after.startedAt).not.toBeNull();
     // The first segment lands in about half a second here, and plays on the step it lands.
     expect(after.startedAt).toBe(before.startedAt);
@@ -499,7 +473,7 @@ async function tickUntil(
   max = 600
 ) {
   for (let i = 0; i < max && !until(); i++) await run.tick();
-  const state = `t=${run.clock.now} calls=${run.link.calls()} delivered=${run.link.delivered()} appends=${appends} hold=${run.hold()?.percent} element=${run.element.state}@${run.element.currentTime}/${run.element.bufferedEnd}`;
+  const state = `t=${run.clock.now} calls=${run.link.calls()} delivered=${run.link.delivered()} appends=${appends} held=${run.held()} element=${run.element.state}@${run.element.currentTime}/${run.element.bufferedEnd}`;
   expect(until(), `the model reached the state the test waits for (${state})`).toBe(true);
 }
 
@@ -521,31 +495,12 @@ describe('what ends or interrupts a hold (review of #3333)', { timeout: 60_000 }
     });
     await tickUntil(run, () => appends === 2);
     run.element.play();
-    await tickUntil(run, () => run.hold() !== null);
+    await tickUntil(run, () => run.held() > 0);
     await tickUntil(run, () => run.finished());
     expect(appends, 'the held segments went in').toBe(4);
-    expect(run.hold()).toBeNull();
+    expect(run.held()).toBe(0);
     await tickUntil(run, () => run.element.state === 'ended');
     run.handle.close();
-  });
-
-  it('a failed range mid-hold clears the hold the player draws', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const run = await startStream(12, SLOW_LINK);
-    await tickUntil(run, () => run.hold() !== null && run.link.calls() >= 2);
-    run.link.failPending();
-    await settleUntilStable(() => `${run.failure() !== null}|${run.holdEvents.length}`);
-    expect(run.failure()).not.toBeNull();
-    expect(run.hold()).toBeNull();
-    expect(run.holdEvents.at(-1), 'the player was told').toBeNull();
-    run.handle.close();
-  });
-
-  it('closing mid-hold tells the player the hold is over', async () => {
-    const run = await startStream(12, SLOW_LINK);
-    await tickUntil(run, () => run.hold() !== null);
-    run.handle.close();
-    expect(run.holdEvents.at(-1)).toBeNull();
   });
 
   it('a refused append in a drain trims what was played and goes on', async () => {
@@ -554,9 +509,9 @@ describe('what ends or interrupts a hold (review of #3333)', { timeout: 60_000 }
     const run = await startStream(40, FAST_LINK);
     await tickUntil(run, () => run.element.currentTime > 15);
     run.link.setRate(SLOW_LINK / 2);
-    await tickUntil(run, () => run.hold() !== null);
+    await tickUntil(run, () => run.held() > 0);
     quotaArmed = true;
-    await tickUntil(run, () => run.hold() === null && !quotaArmed);
+    await tickUntil(run, () => run.held() === 0 && !quotaArmed);
     await settleUntilStable(run.signature);
     expect(removed.length).toBe(1);
     expect(removed[0][1]).toBeGreaterThan(0);
@@ -565,27 +520,16 @@ describe('what ends or interrupts a hold (review of #3333)', { timeout: 60_000 }
     run.handle.close();
   });
 
-  it('a link that drops mid-hold never makes the percent go back', async () => {
-    const run = await startStream(30, SLOW_LINK);
-    await tickUntil(run, () => (run.hold()?.percent ?? 0) > 0);
-    run.link.setRate(SLOW_LINK / 3);
-    const first = run.holdsSeen.length;
-    await tickUntil(run, () => run.link.delivered() >= 6);
-    expect(run.holdsSeen.length).toBeGreaterThanOrEqual(first);
-    expect(risesWithinEachHold(run.holdEvents)).toBe(true);
-    run.handle.close();
-  });
-
   it('a seek into what is buffered during a hold ends it: the element plays, nothing stays held', async () => {
     const run = await startStream(12, SLOW_LINK, { askedToPlay: false });
     await tickUntil(run, () => appends === 2);
     run.element.play();
-    await tickUntil(run, () => run.hold() !== null && run.link.delivered() >= 3);
+    await tickUntil(run, () => run.held() > 0 && run.link.delivered() >= 3);
     const fetched = run.link.delivered();
     run.element.seek(1);
     await run.tick();
     expect(run.element.state).toBe('playing');
-    expect(run.hold()).toBeNull();
+    expect(run.held()).toBe(0);
     expect(appends).toBeGreaterThanOrEqual(fetched);
     run.handle.close();
   });
@@ -603,27 +547,13 @@ describe('what ends or interrupts a hold (review of #3333)', { timeout: 60_000 }
       await run.tick();
       const keptBack = ((run.link.delivered() - appends) * SEG) / MEDIA;
       most = Math.max(most, run.element.bufferedEnd - run.element.currentTime + keptBack);
-      if (run.hold() !== null) held = true;
-      if (held && run.hold() === null) break;
+      if (run.held() > 0) held = true;
+      if (held && run.held() === 0) break;
     }
     expect(held).toBe(true);
-    expect(run.hold(), 'released at the cap').toBeNull();
+    expect(run.held(), 'released at the cap').toBe(0);
     expect(run.link.calls()).toBeLessThan(40);
     expect(most).toBeLessThanOrEqual(cap + SEG / MEDIA);
-    run.handle.close();
-  });
-
-  it('"Lire quand meme": what is held goes in, and that element is never held again', async () => {
-    const run = await startStream(12, SLOW_LINK);
-    await tickUntil(run, () => run.hold() !== null && run.link.delivered() >= 2);
-    run.element.dispatchEvent(new Event(STREAM_PLAY_ANYWAY_EVENT));
-    await settleUntilStable(run.signature);
-    expect(run.hold()).toBeNull();
-    expect(appends).toBe(run.link.delivered());
-    const seen = run.holdsSeen.length;
-    await tickUntil(run, () => run.element.state === 'ended', 800);
-    expect(run.element.stalls, 'the stalls the reader chose').toBeGreaterThan(0);
-    expect(run.holdsSeen.length, 'no hold after the refusal').toBe(seen);
     run.handle.close();
   });
 });

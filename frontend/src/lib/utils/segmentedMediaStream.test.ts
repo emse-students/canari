@@ -139,13 +139,7 @@ describe('openSegmentedStream', () => {
     expect(handle.url).toBe('blob:stream');
     // The progress a reel view's outcome line reads: nothing known before the header is read.
     const progress = streamProgressOf('blob:stream')!;
-    expect(progress).toEqual({
-      segmentCount: null,
-      appended: 0,
-      bytes: 0,
-      trimmedBefore: 0,
-      hold: null,
-    });
+    expect(progress).toEqual({ segmentCount: null, appended: 0, bytes: 0, trimmedBefore: 0 });
 
     const blob = await handle.done;
     // Byte-compared rather than deep-equalled: two megabytes element by element take seconds.
@@ -159,13 +153,7 @@ describe('openSegmentedStream', () => {
     expect(FakeMediaSource.last!.ended).toBeUndefined();
     expect(ranges).toHaveLength(3);
     expect(ranges[0].startsWith('bytes=0-')).toBe(true);
-    expect(progress).toEqual({
-      segmentCount: 3,
-      appended: 3,
-      bytes: n,
-      trimmedBefore: 0,
-      hold: null,
-    });
+    expect(progress).toEqual({ segmentCount: 3, appended: 3, bytes: n, trimmedBefore: 0 });
     handle.close();
     // A closed stream owns no URL; the object a caller kept still says where it got to.
     expect(streamProgressOf('blob:stream')).toBeUndefined();

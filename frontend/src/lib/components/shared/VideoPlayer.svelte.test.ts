@@ -18,17 +18,6 @@ import { CONTROLS_FADE_MS } from '$lib/utils/videoPlayback';
 import { m } from '$lib/paraglide/messages';
 import type { AutoplayBlockCause } from '$lib/utils/videoAutoplay';
 import { HOLD_TO_PAUSE_MS } from '$lib/actions/videoGestures';
-import { STREAM_HOLD_EVENT, STREAM_PLAY_ANYWAY_EVENT } from '$lib/utils/segmentedMediaStream';
-
-/** A stream's progress by URL, as a test sets it; any other URL is the real registry's. */
-const { heldProgress } = vi.hoisted(() => ({ heldProgress: new Map<string, unknown>() }));
-vi.mock('$lib/utils/segmentedMediaStream', async (importActual) => {
-  const actual = await importActual<typeof import('$lib/utils/segmentedMediaStream')>();
-  return {
-    ...actual,
-    streamProgressOf: (url: string) => heldProgress.get(url) ?? actual.streamProgressOf(url),
-  };
-});
 
 const mounted: (() => void)[] = [];
 
@@ -822,59 +811,6 @@ it('the line seeks where it is pressed once the duration is known, and not befor
   flushSync();
   press(150);
   expect(video.currentTime).toBe(30);
-});
-
-/**
- * ONE HONEST LOAD, NEVER A BROKEN-LOOKING VIDEO (slow-link chantier, gap 6): a stream holding its
- * stall on a link slower than the media says how much is in, on every variant, and the label goes
- * when the hold does.
- */
-it('a stream holding on a slow link shows its progress, and nothing once it plays on', () => {
-  const { target, video } = mountConversation('blob:held', true);
-  const progress = target.querySelector.bind(target, '[data-video-hold-progress]');
-  expect(progress()).toBeNull();
-
-  heldProgress.set('blob:held', { hold: { percent: 40 } });
-  video.dispatchEvent(new Event(STREAM_HOLD_EVENT));
-  flushSync();
-  expect(progress()!.textContent!.trim()).toBe(m.video_buffering_progress({ percent: 40 }));
-  expect(target.querySelector('[data-video-buffering]')!.getAttribute('aria-label')).toBe(
-    m.video_buffering_progress({ percent: 40 })
-  );
-
-  heldProgress.set('blob:held', { hold: null });
-  video.dispatchEvent(new Event(STREAM_HOLD_EVENT));
-  flushSync();
-  expect(progress()).toBeNull();
-  heldProgress.clear();
-});
-
-it('"Lire quand meme" on a hold tells the stream through its element, and is not a tap', () => {
-  const { target, video } = mountConversation('blob:held-anyway', true);
-  heldProgress.set('blob:held-anyway', { hold: { percent: 20 } });
-  video.dispatchEvent(new Event(STREAM_HOLD_EVENT));
-  flushSync();
-  const told = vi.fn();
-  video.addEventListener(STREAM_PLAY_ANYWAY_EVENT, told);
-  const muted = video.muted;
-  const button = target.querySelector<HTMLButtonElement>('[data-video-play-anyway] button')!;
-  expect(button.textContent!.trim()).toBe(m.video_play_anyway());
-  // A 44 px target on a phone.
-  expect(button.className).toContain('min-h-11');
-  button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
-  flushSync();
-  expect(told).toHaveBeenCalledTimes(1);
-  expect(video.muted, 'the tap was the button, not the sound').toBe(muted);
-  heldProgress.clear();
-});
-
-it('a whole file never reads a hold', () => {
-  heldProgress.set('blob:whole', { hold: { percent: 40 } });
-  const { target, video } = mountConversation('blob:whole', false);
-  video.dispatchEvent(new Event(STREAM_HOLD_EVENT));
-  flushSync();
-  expect(target.querySelector('[data-video-hold-progress]')).toBeNull();
-  heldProgress.clear();
 });
 
 /**
