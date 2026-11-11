@@ -99,9 +99,9 @@ async function settle() {
 }
 
 /** The first page as `load` hands it over, never answering: the refresh it waits on is stuck. */
-const silentData = () => ({
+const silentData = (feed: 'all' | 'foryou' = 'all') => ({
   posts: new Promise<PostEntity[]>(() => {}),
-  feedParams: { feed: 'all' as const },
+  feedParams: { feed },
 });
 
 describe('the feed on a link that answers nothing', () => {
@@ -115,6 +115,24 @@ describe('the feed on a link that answers nothing', () => {
       {
         feed: 'all',
       }
+    );
+    expect(
+      mounts()
+        .filter((id) => id === 'a' || id === 'b')
+        .sort()
+    ).toEqual(['a', 'b']);
+  });
+
+  it('draws Pour toi (the ranked tab) from its own stored first page the same way', async () => {
+    // Gap 2 of the slow-link chantier: Pour toi keeps its first page under `feed:foryou` like every
+    // bare tab, and draws it with no token and no answer.
+    const app = mount(Page, { target: document.body, props: { data: silentData('foryou') } });
+    mounted.push(() => unmount(app));
+    await settle();
+
+    expect(loadStoredFeed).toHaveBeenCalledWith(
+      { userId: 'u1', deviceKeyB64: 'k' },
+      { feed: 'foryou' }
     );
     expect(
       mounts()

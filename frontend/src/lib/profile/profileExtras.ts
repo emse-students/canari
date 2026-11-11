@@ -10,9 +10,31 @@ import {
 
 /** The three reads under a person's profile, each already settled into a value. */
 export interface ProfileExtrasReads {
-  memberships: Promise<UserMembershipRow[]>;
-  roleHistory: Promise<UserRoleHistoryRow[]>;
-  parrainage: Promise<SkyEntourage | null>;
+  memberships: Promise<ExtraRead<UserMembershipRow[]>>;
+  roleHistory: Promise<ExtraRead<UserRoleHistoryRow[]>>;
+  parrainage: Promise<ExtraRead<SkyEntourage | null>>;
+}
+
+/**
+ * One section's read, TYPED: `answered` is true when the server answered (an empty list is then a
+ * real "none"), false when the read failed and `value` is only the section's empty stand-in. A
+ * caller holding a stored copy keeps its lists on a failure instead of replacing them with `[]`
+ * (review of #3347) - the difference cannot be recovered from the value alone.
+ */
+export interface ExtraRead<T> {
+  answered: boolean;
+  value: T;
+}
+
+/** Settles one read into an {@link ExtraRead}, saying why on a failure. */
+function settle<T>(read: Promise<T>, empty: T, why: string): Promise<ExtraRead<T>> {
+  return read.then(
+    (value): ExtraRead<T> => ({ answered: true, value }),
+    (e: unknown): ExtraRead<T> => {
+      Log.d(why, e);
+      return { answered: false, value: empty };
+    }
+  );
 }
 
 /**
@@ -36,18 +58,9 @@ export interface ProfileExtrasReads {
  */
 export function readProfileExtras(userId: string): ProfileExtrasReads {
   return {
-    memberships: fetchUserMemberships(userId).catch((e: unknown): UserMembershipRow[] => {
-      Log.d('profile.loadMemberships failed', e);
-      return [];
-    }),
-    roleHistory: fetchUserRoleHistory(userId).catch((e: unknown): UserRoleHistoryRow[] => {
-      Log.d('profile.loadRoleHistory failed', e);
-      return [];
-    }),
-    parrainage: fetchUserParrainage(userId).catch((e: unknown): SkyEntourage | null => {
-      Log.d('profile.loadParrainage failed', e);
-      return null;
-    }),
+    memberships: settle(fetchUserMemberships(userId), [], 'profile.loadMemberships failed'),
+    roleHistory: settle(fetchUserRoleHistory(userId), [], 'profile.loadRoleHistory failed'),
+    parrainage: settle(fetchUserParrainage(userId), null, 'profile.loadParrainage failed'),
   };
 }
 
