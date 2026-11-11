@@ -239,7 +239,7 @@ export interface Conversation {
   serverReadWatermarks?: ReadWatermarks;
   /**
    * The upgrade's one-time LOCAL read point (`ConversationMeta.localReadSeed`): read by the unread
-   * count only (`countingReadPoint`), never a mark, never sent. `null`/absent = not considered yet.
+   * count only (`countingReadPoint`), never a mark, never sent. Written by the store migration only.
    */
   localReadSeed?: number | null;
   /**

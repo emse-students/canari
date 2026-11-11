@@ -6,8 +6,6 @@ import {
   countingReadPoint,
   derivedUnreadCount,
   hasRead,
-  localReadSeedFor,
-  newestServerTime,
   parseLocalReadSeed,
   isUnreadForUser,
   mergeReadWatermark,
@@ -241,30 +239,27 @@ describe('the read point an unread count is taken at', () => {
     expect(derivedUnreadCount(c, ME)).toBe(2);
   });
 
-  it("adds the upgrade's local seed, and never lowers anything with it", () => {
+  it("with no saved mark, takes the upgrade's local seed (the max with my newest own message)", () => {
     const seeded = { messages: [dated('a', 1000), dated('b', 3000)], localReadSeed: 2000 };
     expect(countingReadPoint(seeded, ME)).toEqual({ stamped: 0, server: 2000, source: 'seed' });
     expect(derivedUnreadCount(seeded, ME)).toBe(1);
-    // A later mark from another device below the seed does not bring 'a' back.
-    expect(derivedUnreadCount({ ...seeded, serverReadWatermarks: { [ME]: 500 } }, ME)).toBe(1);
-    // One above it decides.
-    expect(derivedUnreadCount({ ...seeded, serverReadWatermarks: { [ME]: 3000 } }, ME)).toBe(0);
+    const replied = { ...seeded, messages: [...seeded.messages, dated('r', 3500, ME)] };
+    expect(countingReadPoint(replied, ME)).toEqual({ stamped: 0, server: 3500, source: 'own' });
   });
 
-  it('the seed is the upgrade boundary when there is no read point, else 0', () => {
-    expect(localReadSeedFor({}, ME, 4000)).toBe(4000);
-    expect(localReadSeedFor({ readWatermarks: { [ME]: 1 } }, ME, 4000)).toBe(0);
-    expect(localReadSeedFor({ serverReadWatermarks: { [ME]: 1 } }, ME, 4000)).toBe(0);
+  it('a saved mark decides alone: the seed covers nothing past what this user read', () => {
+    // The migration seeds EVERY row; a row with a mark at 1500 holding 'b' at 3000 has 'b' unread,
+    // and a seed of 3000 must not hide it.
+    const marked = {
+      messages: [dated('a', 1000), dated('b', 3000)],
+      localReadSeed: 3000,
+      serverReadWatermarks: { [ME]: 1500 },
+    };
+    expect(countingReadPoint(marked, ME)).toEqual({ stamped: 0, server: 1500, source: 'saved' });
+    expect(derivedUnreadCount(marked, ME)).toBe(1);
   });
 
-  it('the boundary is the newest SERVER time only: an undated row carries its author`s clock', () => {
-    expect(newestServerTime([dated('a', 1000), dated('b', 3000), msg('undated', 9_999_999)])).toBe(
-      3000
-    );
-    expect(newestServerTime([])).toBe(0);
-  });
-
-  it('reads a stored seed: a number, 0, or null for "not considered yet"', () => {
+  it('reads a stored seed: a number, 0, or null (absent, covers nothing)', () => {
     expect(parseLocalReadSeed(2000)).toBe(2000);
     expect(parseLocalReadSeed('2000')).toBe(2000);
     expect(parseLocalReadSeed(0)).toBe(0);

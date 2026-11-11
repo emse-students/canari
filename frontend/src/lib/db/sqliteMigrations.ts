@@ -187,10 +187,9 @@ export function conversationStartedAtStatement(columns: readonly string[]): stri
 }
 
 /**
- * The v19 -> v20 step: the conversation row gains `local_read_seed` (`ConversationMeta.localReadSeed`),
- * the upgrade's one-time local read point. NULL on every existing row, which is what MARKS it as
- * written by an older build: the next load seeds it once. A row inserted afterwards is born 0
- * ({@link CONVERSATION_LOCAL_READ_SEED_VALUE}). Returns `null` when the column is there.
+ * The v19 -> v20 step, first half: the conversation row gains `local_read_seed`
+ * (`ConversationMeta.localReadSeed`), the upgrade's one-time LOCAL read point. Returns `null` when
+ * the column is there. The second half, {@link CONVERSATION_LOCAL_READ_SEED_FILL}, writes it.
  *
  * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
  */
@@ -201,10 +200,32 @@ export function conversationLocalReadSeedStatement(columns: readonly string[]): 
 }
 
 /**
+ * The v19 -> v20 step, second half: EVERY conversation's local read seed, written INSIDE THE
+ * MIGRATION. It runs at open, before `init` resolves, so no app code - no push-cache poll, no boot
+ * pull, no socket - can have stored a message yet: "held before the upgrade" is a property of the
+ * store, never of an app-level order.
+ *
+ * PER ROW, from its OWN messages: the newest server time among them, read in the clear from the order
+ * key (`order_at` is `messageTime`: the server's time when the row knows it, its `sentAt` otherwise,
+ * `messagePayload.ts`). A row whose `order_at` equals its `timestamp` is undated (or still
+ * provisional, `order_pending`) and says nothing about the server's clock - one phone running fast
+ * would otherwise push the seed past messages not received yet - so it is skipped. A conversation
+ * with no dated row reads 0: nothing held before the upgrade is covered, everything later counts.
+ * `WHERE local_read_seed IS NULL`, so a second run - a crash before the version stamp - changes
+ * nothing it already wrote.
+ */
+export const CONVERSATION_LOCAL_READ_SEED_FILL =
+  'UPDATE conversations SET local_read_seed = COALESCE((' +
+  'SELECT MAX(m.order_at) FROM messages m WHERE m.conversation_id = conversations.id ' +
+  'AND m.order_at IS NOT NULL AND m.order_at > 0 AND m.order_at <> m.timestamp ' +
+  'AND (m.order_pending IS NULL OR m.order_pending <> 1)' +
+  '), 0) WHERE local_read_seed IS NULL';
+
+/**
  * The value `saveConversation` writes into `local_read_seed` (parameters: `$1` the id, `$11` the
- * caller's value or NULL). The caller's value when it states one; else what the row already holds,
- * NULL included - a row an older build wrote stays "not considered" until the load seeds it; else,
- * for a row that does not exist yet, 0 - new on this install, never seeded.
+ * caller's value or NULL). The caller's value when it states one; else what the row already holds
+ * (a save that does not know the seed must not erase it); else, for a row that does not exist yet,
+ * 0 - new on this install, nothing to cover.
  */
 export const CONVERSATION_LOCAL_READ_SEED_VALUE =
   'CASE WHEN $11 IS NOT NULL THEN $11 ' +

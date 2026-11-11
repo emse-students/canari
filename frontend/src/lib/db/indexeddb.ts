@@ -86,7 +86,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** The schema version `init` opens; every branch of its upgrade handler is written against it. */
-const IDB_SCHEMA_VERSION = 13;
+const IDB_SCHEMA_VERSION = 14;
 
 /** The store of mutations whose message is not here yet (`PendingMutation`), since v13. */
 const PENDING_MUTATIONS = 'pendingMutations';
@@ -257,6 +257,85 @@ function keyStoredRowsProvisionally(tx: IDBTransaction): void {
       }
     }
     cursor.continue();
+  };
+}
+
+/**
+ * THE v13 -> v14 STEP: every conversation's one-time LOCAL READ SEED (`ConversationMeta.localReadSeed`),
+ * decided INSIDE the versionchange transaction - which is exclusive: no tab, no poll, no push-cache
+ * write of this or any other bundle can touch the store until it commits (an older tab gets
+ * `versionchange` and closes, {@link IndexedDbStorage.onVersionChange}; a blocked open is rejected
+ * and logged). So "held before the upgrade" is a property of the store, not of an app-level order.
+ *
+ * PER ROW, from its OWN rows: the newest server time among them, read in the clear from the order
+ * key (`orderAt` is `messageTime` - the server's time when the row knows it, its `sentAt` otherwise,
+ * `messagePayload.ts`). A row whose `orderAt` equals its `timestamp` is undated (or still provisional)
+ * and says nothing about the server's clock, so it is skipped: one phone running fast would otherwise
+ * push the seed past messages not received yet. A conversation with no dated row gets 0 - nothing
+ * held before the upgrade is covered, and everything that arrives counts. A row that already holds a
+ * number keeps it, so the step is a no-op twice. Two walks in sequence, never two cursors at once.
+ */
+export function seedLocalReadPointsInUpgrade(tx: IDBTransaction): void {
+  const names = tx.objectStoreNames;
+  if (!names.contains('messages') || !names.contains('conversations')) {
+    console.info('[IDB] Migration v13->v14: no conversations or no messages - nothing to seed');
+    return;
+  }
+  const newest = new Map<string, number>();
+  const walk = tx.objectStore('messages').openCursor();
+  walk.onerror = () => {
+    console.error('[IDB] Migration v13->v14: message cursor error', walk.error);
+    tx.abort();
+  };
+  walk.onsuccess = () => {
+    const cursor = walk.result;
+    if (cursor) {
+      const row = cursor.value as {
+        conversationId?: unknown;
+        orderAt?: unknown;
+        orderPending?: unknown;
+        timestamp?: unknown;
+      };
+      const at = row.orderAt;
+      const stamped = readStoredTimestampMs(row.timestamp);
+      if (
+        typeof row.conversationId === 'string' &&
+        typeof at === 'number' &&
+        Number.isFinite(at) &&
+        at > 0 &&
+        stamped !== undefined &&
+        at !== stamped &&
+        row.orderPending !== ORDER_PENDING
+      ) {
+        newest.set(row.conversationId, Math.max(newest.get(row.conversationId) ?? 0, at));
+      }
+      cursor.continue();
+      return;
+    }
+    let seeded = 0;
+    let considered = 0;
+    const rows = tx.objectStore('conversations').openCursor();
+    rows.onerror = () => {
+      console.error('[IDB] Migration v13->v14: conversation cursor error', rows.error);
+      tx.abort();
+    };
+    rows.onsuccess = () => {
+      const conv = rows.result;
+      if (!conv) {
+        console.info(
+          `[IDB] Migration v13->v14: local read seed written on ${considered} conversation(s), ${seeded} of them past a dated message`
+        );
+        return;
+      }
+      const value = conv.value as ConversationMeta;
+      if (typeof value.localReadSeed !== 'number') {
+        const localReadSeed = newest.get(value.id) ?? 0;
+        conv.update({ ...value, localReadSeed });
+        considered++;
+        if (localReadSeed > 0) seeded++;
+      }
+      conv.continue();
+    };
   };
 }
 
@@ -439,6 +518,7 @@ export class IndexedDbStorage implements IStorage {
       // Version 10: adds the `feedPages` store (the feed's stored first pages, sealed).
       // Version 11: adds the `byConversationTime` index on messages ([conversationId, timestamp]).
       // Version 13: adds the `pendingMutations` store (mutations whose message is not here yet).
+      // Version 14: writes each conversation's local read seed (`seedLocalReadPointsInUpgrade`).
       const request = indexedDB.open(this.dbName, IDB_SCHEMA_VERSION);
 
       request.onerror = () =>
@@ -629,6 +709,12 @@ export class IndexedDbStorage implements IStorage {
         };
         if (oldVersion < 11 && oldVersion >= 6) normalizeStoredTimestamps(tx, keyProvisionally);
         else keyProvisionally();
+
+        // v13 -> v14: the local read seed, per conversation, inside this exclusive transaction.
+        // Only from v12 on: below it every stored row was just keyed provisionally (its `orderAt` is
+        // its `timestamp`), so there is no dated row to seed from and every conversation reads 0
+        // ("absent" reads as 0 too) - the walk would race the provisional one for nothing.
+        if (oldVersion >= 12 && oldVersion < 14) seedLocalReadPointsInUpgrade(tx);
 
         if (oldVersion < 3 && oldVersion >= 2) {
           // Migrate v2→v3: set conversation.id = conversation.groupId for all existing rows,

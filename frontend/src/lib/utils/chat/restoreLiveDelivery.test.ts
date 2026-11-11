@@ -65,11 +65,7 @@ function mls(overrides: Record<string, unknown> = {}) {
 
 function storage(overrides: Record<string, unknown> = {}) {
   return {
-    // Written by this build (`localReadSeed: 0`): the upgrade's one-time seed is not this file's
-    // subject, and its store reads before the pull are pinned on their own below.
-    getConversations: vi.fn(async () => [
-      { id: 'g-1', name: 'Equipe', lifecycle: 'active', localReadSeed: 0 },
-    ]),
+    getConversations: vi.fn(async () => [{ id: 'g-1', name: 'Equipe', lifecycle: 'active' }]),
     saveConversation: vi.fn(async () => {}),
     getMessagesPage: vi.fn(async () => []),
     deleteMessagesForConversation: vi.fn(async () => {}),
@@ -126,32 +122,6 @@ describe('the restore and a live delivery', () => {
     expect(order[0]).toBe('seeded:g-1');
     expect(order.indexOf('seeded:g-1')).toBeLessThan(order.indexOf('phase2'));
     expect(log).toHaveBeenCalledWith('[RESTORE] 1 conversation row(s) seeded - history follows');
-  });
-
-  it('at the UPGRADE boot only, reads the newest stored rows for the local seed BEFORE the pull, and nothing else', async () => {
-    // A row an older build wrote: no `localReadSeed`. Its seed must be decided before the pull can
-    // store anything (`seedLocalReadPoints`), so its probe is the one read allowed ahead of it.
-    const conversations = new SvelteMap<string, Conversation>();
-    const order: string[] = [];
-    const service = mls({
-      notifyConversationRowsSeeded: vi.fn(() => order.push('seeded')),
-      getUserGroups: vi.fn(async () => {
-        order.push('phase2');
-        return [];
-      }),
-    });
-    const store = storage({
-      getConversations: vi.fn(async () => [{ id: 'g-1', name: 'Equipe', lifecycle: 'active' }]),
-      getMessagesPage: vi.fn(async (_id: string, _key: string, limit: number) => {
-        order.push(`page:${limit}`);
-        return [];
-      }),
-    });
-
-    await restore(conversations, service, store);
-
-    expect(order.slice(0, 2)).toEqual(['page:8', 'seeded']);
-    expect(order.indexOf('seeded')).toBeLessThan(order.indexOf('phase2'));
   });
 
   it('merges the stored page into a row a live delivery wrote after the rows were seeded', async () => {

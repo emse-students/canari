@@ -4876,51 +4876,59 @@ already marked read), both add paths of `useMessaging`, the `history_bundle` rec
 row older than the reader's own newest post; the server's count (`unread-counts`, merged at a
 reconnect) still does. Pinned by `readState.test.ts`, "PINS THE SALON BEHAVIOUR".
 
-**The read point - ONE clock, the server's, for all it adds to the saved marks.**
+**The read point.** A saved mark decides alone; without one, ONE clock, the server's.
 
 | What applies | Server point | Why |
 | --- | --- | --- |
-| a saved mark (either map) | the saved marks, max the seed below | the marks are what says "read" |
-| the upgrade's local seed (`localReadSeed`) | the seed | see below |
+| a saved mark (either map) | the saved marks, nothing else | the marks are what says "read"; the seed below never covers a message past what this user read |
+| no saved mark, the upgrade's local seed (`localReadSeed`) | the seed, max the row below | see below |
 | no saved mark, an own message the server dated | its SERVER time, max the seed | a reply is written with the thread open, so what the server holds before it was on screen. The server's clock, never the author's: a phone an hour fast hid the peer's later answer, one an hour slow counted an earlier message (both cases tested). An own row not yet dated (queued) implies nothing |
 | none of them | 0 - every foreign message counts | a conversation new on this install, never opened, never answered: a first contact, which IS unread |
 
-**The upgrade's local seed - no flood on upgrade (owner).** Older builds counted only what a session
-received, so a group read but never marked, a first contact ignored, anything last read before the
-marks existed (2026-08-12) has no read point, and deriving its count would light up to a page of
-"unread" on every such row the day this build lands - archived rows too, since they feed the total.
-So the first load of this build, and only it, gives every conversation an older build wrote and that
-has no read point a LOCAL point at the **upgrade boundary**; a row with a read point gets 0
-(`seedLocalReadPoints`).
+**The upgrade's local seed - no flood on upgrade (owner), written INSIDE the store migration.**
+Older builds counted only what a session received, so a group read but never marked, a first contact
+ignored, anything last read before the marks existed (2026-08-12) has no read point, and deriving its
+count would light up to a page of "unread" on every such row the day this build lands. So each
+conversation gets a LOCAL point: **the newest server time among ITS OWN stored messages, written by
+the store migration that adds the field** - SQLite v20 (`CONVERSATION_LOCAL_READ_SEED_FILL`, one
+`UPDATE` before the version is stamped), IndexedDB 14 (`seedLocalReadPointsInUpgrade`, in the
+`versionchange` transaction). The restore only READS it.
 
-- **The boundary is decided before this boot can store anything - by order, not by a race.** It is
-  the newest SERVER time among the newest stored rows (8 per row) of every row being seeded, and it
-  is computed AND persisted in the restore's first phase: before `notifyConversationRowsSeeded`
-  issues the boot pull, before the socket hold ends (`endRowSeedingHold`), and, at login, before the
-  push cache is consumed. What arrived while the app was killed is queued after the device last
-  stored a message, so it lies past the boundary and counts (`restoreUnreadCount.test.ts`, the pull
-  seam; it failed on the first version of this fix, which seeded in the second phase, after the pull
-  had stored those messages). Only server times: an undated row carries its author's clock.
-- **One boundary for every row, an empty one included.** A row holding nothing (or nothing dated)
-  gets the same point, meaning "nothing held before the upgrade is new": a first replay of history
-  the server already held - which CAN happen for an older row, a group joined whose archive was never
-  read, or one whose stored page an older build pruned - counts only what is past the boundary,
-  never a page of old history; what arrives after the upgrade counts normally. With nothing dated
-  anywhere in the store the boundary is 0 and nothing is seeded (a device that never received a
-  message has nothing to flood).
-- **A downgrade, then a re-upgrade, re-seeds** every row the older build re-created or rewrote
-  without the field, and swallows what arrived during the downgrade. Accepted: downgrades are rare
-  and need a manual sideload.
+- **Why in the migration, and not in the app (two versions of this fix were refuted on that).** The
+  first seeded in the restore's second phase, after the boot pull had stored what arrived while the
+  app was killed, and swallowed it; the second moved the seeding before the pull, which is an
+  app-level order, and every other writer (the push cache at a resume, a login) is one more order to
+  prove. A migration needs no proof: SQLite's `init` resolves only after it, and nothing writes
+  through a store whose `init` has not resolved; an IndexedDB `versionchange` transaction is
+  exclusive - an older tab gets `versionchange` and closes (`onVersionChange`), an open blocked by
+  one is rejected and logged, and any other connection's write waits for the upgrade to commit
+  (`localReadSeedStore.test.ts` queues one during the upgrade). **What is held at the migration is
+  "before the upgrade" by construction; everything stored after counts.**
+- **Per row, never a global boundary**: one row's newest time cannot cover another row's older
+  message (tested on both backends).
+- **The server time, read in the clear.** `serverTimestamp` is inside the encrypted payload; the
+  migration cannot decrypt (it has no device key). It reads the ORDER KEY instead, which is plain:
+  `order_at` / `orderAt` is `messageTime`, the server's time when the row knows it, the author's
+  `sentAt` otherwise. A row whose order key equals its `timestamp` is undated (or still provisional,
+  `order_pending` / `orderPending`) and is skipped - one phone running fast would otherwise push the
+  seed past messages not received yet. A row with nothing dated (or nothing at all) is seeded **0**:
+  it covers nothing, and what is replayed into it afterwards counts.
+- **Idempotent**: the SQLite fill writes only rows still NULL, the IndexedDB walk only rows holding no
+  number, so a migration run twice (a crash before the version stamp) changes nothing it wrote
+  (tested on both).
+- **Limits, accepted.** A message the server held before the upgrade, older than the newest one this
+  device held in the same conversation, but not yet delivered to it, is covered - the device's queue
+  delivers in the server's order, so this needs an out-of-order delivery. An IndexedDB store below
+  version 12 holds only provisional keys and is seeded 0 everywhere (nothing dated to read). A
+  downgrade to an older build that re-creates a row without the field leaves it NULL, which covers
+  nothing.
 
-It is a column of its own (`conversations.local_read_seed`, SQLite v20; the same field in
-IndexedDB), with three states the stores keep apart: NULL / absent = written by an older build, not
-considered yet (the migration leaves every existing row so); `0` = considered, never seeded again -
-and every row this build INSERTS is born 0, so what is new on this install is never seeded; `> 0` =
-the seed. A save that does not state the field keeps the row's (`CONVERSATION_LOCAL_READ_SEED_VALUE`,
-`localReadSeedStore.test.ts` on both backends). **It is local**: neither mark map moves, no frame or
-receipt is sent, no bundle carries it, and a backup import keeps the state it was exported with.
-Messages arriving after the seed count normally. **Accepted consequence:** a first contact never
-opened and held before the upgrade shows 0, as it did before.
+It is a column of its own (`conversations.local_read_seed`; the same field in IndexedDB). A row this
+build INSERTS is born `0`; a save that does not state the field keeps the row's
+(`CONVERSATION_LOCAL_READ_SEED_VALUE`, `localReadSeedStore.test.ts` on both backends). **It is
+local**: neither mark map moves, no frame or receipt is sent, no bundle carries it, and a backup
+import keeps the state it was exported with. **Accepted consequence:** a first contact never opened
+and held before the upgrade shows 0, as it did before.
 
 **History bundles** count only past the read point: the bundle carries the read marks (step 0 of
 `history_bundle`, persisted before the messages), so what was read on another device is covered. A
@@ -4932,13 +4940,16 @@ stored page (`INITIAL_MESSAGES_PAGE`, 60) merged with what arrived live. A conve
 than a page unread shows a page's worth until it is opened. A store count would need a query in both
 backends over encrypted rows for a badge that reads "many" either way.
 
-**Logs:** ONE census line per load, `[RESTORE] unread census: N conversation(s) seeded with a local
-read point, N with a badge, N unread in all`; per row, at debug only, the count and the point that
-decided it (`saved`, `seed`, `own`, `none`) and the seed written. `[FCM_CACHE] message <id> is already
-covered by the read point - no badge` when a push row is not counted. Tests:
+**Logs:** ONE census line per load, `[RESTORE] unread census: N conversation(s) counted from the
+upgrade's local read seed, N with a badge, N unread in all`; per row, at debug only, the count and
+the point that decided it (`saved`, `seed`, `own`, `none`). The migrations say once how many rows they
+seeded (`[SQLITE] Migration v19->v20: ...`, `[IDB] Migration v13->v14: ...`). `[FCM_CACHE] message
+<id> is already covered by the read point - no badge` when a push row is not counted. Tests:
 `restoreUnreadCount.test.ts` (cold starts against one store: the reported defect, offline, skew both
-ways, non-active rows, no rise-then-fall, the seed written once, local, never on a row new on this
-install), `localReadSeedStore.test.ts`, `readState.test.ts`, `fcmMemoryMerge.test.ts`,
+ways, non-active rows, no rise-then-fall; the seed only read, a push-cache row stored before, at the
+pull, during the replay or after the load counted), `localReadSeedStore.test.ts` (both migrations:
+per row, undated and provisional skipped, empty 0, run twice a no-op, a write queued during the
+IndexedDB upgrade), `readState.test.ts`, `fcmMemoryMerge.test.ts`,
 `useMessaging.unreadReadPoint.svelte.test.ts` (both add paths), `systemMessageHandler.readState.test.ts`
 (the bundle recount); each fails on the code it replaced. **Owed:** the owner's reading on the
 Android phone.

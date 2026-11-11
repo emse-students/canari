@@ -27,13 +27,7 @@ import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/di
 import { foldForSearch } from '$lib/utils/textFold';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
-import {
-  countingReadPoint,
-  derivedUnreadCount,
-  localReadSeedFor,
-  newestServerTime,
-  parseLocalReadSeed,
-} from './readState';
+import { countingReadPoint, derivedUnreadCount } from './readState';
 import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { isUuidLike } from '$lib/utils/uuidShape';
@@ -106,7 +100,7 @@ export function toConversationMeta(
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
     // A number when this session knows it; absent otherwise, which the store reads as "keep what
-    // the row holds" - never as "not considered", never as 0.
+    // the row holds", never as 0: the store migration wrote it, and only it.
     ...(typeof convo.localReadSeed === 'number' ? { localReadSeed: convo.localReadSeed } : {}),
     imageMediaId: convo.imageMediaId ?? null,
     awaitingAdmission: convo.awaitingAdmission === true,
@@ -513,8 +507,8 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   const historyFloor = spec.historyFloor ?? existing?.historyFloor;
   const startedAt = spec.startedAt ?? existing?.startedAt;
   const awaitingAdmission = spec.awaitingAdmission ?? existing?.awaitingAdmission;
-  // A number, or nothing: `null` ("not considered yet") is the STORE's state, which a save that
-  // states nothing keeps (`saveConversation`).
+  // A number, or nothing: the seed is written by the STORE MIGRATION (SQLite v20, IndexedDB 14), and a save that
+  // states nothing keeps it (`saveConversation`).
   const localReadSeed =
     typeof spec.localReadSeed === 'number' ? spec.localReadSeed : existing?.localReadSeed;
   const directPeerId = identity.directPeerId ?? existing?.directPeerId;
@@ -919,10 +913,10 @@ function bootUnreadCount(
     'messages' | 'readWatermarks' | 'serverReadWatermarks' | 'localReadSeed' | 'lifecycle'
   >,
   userId: string
-): number {
+): { count: number; source: ReturnType<typeof countingReadPoint>['source'] } {
   if (convo.lifecycle !== 'active') {
     console.debug(`[RESTORE] ${id.slice(0, 8)} is ${convo.lifecycle} - unread 0, it takes no mark`);
-    return 0;
+    return { count: 0, source: 'none' };
   }
   const userNorm = userId.toLowerCase();
   const point = countingReadPoint(convo, userNorm);
@@ -933,97 +927,8 @@ function bootUnreadCount(
       `[RESTORE] ${id.slice(0, 8)} unread ${count} of ${convo.messages.length} held, read point: ${point.source}`
     );
   }
-  return count;
+  return { count, source: point.source };
 }
-
-/**
- * THE UPGRADE'S ONE-TIME LOCAL SEED for one conversation (`ConversationMeta.localReadSeed`).
- *
- * Builds before 2026-11-11 counted only what arrived in a session, so a conversation never opened
- * since read state became durable (2026-08-12) - a group read but never marked, a first contact
- * ignored, anything read before the marks existed - has NO read point, and deriving its count from
- * one would light up to a page of "unread" on every such row at the upgrade (owner: no flood on
- * upgrade). So the FIRST load of this build, and only it, gives each row an older build wrote and
- * that has no read point a LOCAL point at the UPGRADE BOUNDARY; a row with a read point is stamped
- * 0. Written once and durable: a stored value, 0 included, is never seeded again, and a row first
- * written by this build is born 0 (`saveConversation`), so what is new on this install is never
- * seeded at all.
- *
- * THE BOUNDARY IS DECIDED FROM WHAT WAS STORED BEFORE THIS BOOT, BY ORDER, NOT BY A RACE. It is the
- * newest SERVER time among the newest stored rows of every row being seeded, and it is computed
- * AND persisted here, in the restore's first phase - before `notifyConversationRowsSeeded` issues the
- * boot pull and before the socket hold ends (`endRowSeedingHold`), and at login before the push
- * cache is consumed. Nothing delivered by this boot can be in the store yet, and everything it
- * delivers was queued after the device last stored a message, so it lies past the boundary and
- * counts. One boundary for every row, not a row's own newest: an EMPTY row (or one whose newest
- * rows are undated) gets it too, so history the server already held before this boot - a first
- * replay into a row that never received anything - is not counted as a page of unread, while what
- * arrives after it is.
- *
- * LOCAL ONLY: it touches neither read-mark map and sends nothing - no receipt, no frame, no bundle
- * ever carries it. Accepted consequences: a first contact never opened and held before the upgrade
- * shows 0, as it did before; and a DOWNGRADE to an older build followed by a re-upgrade re-seeds
- * every row that older build re-created or rewrote without the field, swallowing what arrived
- * during the downgrade - downgrades are rare and need a manual sideload.
- *
- * @returns how many rows were given a point (> 0), for the load's census
- */
-async function seedLocalReadPoints(
-  ctx: LoadConversationsContext,
-  metas: readonly ConversationMeta[]
-): Promise<number> {
-  const unseeded = metas.filter(
-    (m) => !isChannelConversationId(m.id) && parseLocalReadSeed(m.localReadSeed) === null
-  );
-  if (unseeded.length === 0) return 0;
-  const userNorm = ctx.userId.toLowerCase();
-  // THE NEWEST STORED ROWS OF EVERY ROW BEING SEEDED, read now - before any pull exists.
-  let boundary = 0;
-  for (const meta of unseeded) {
-    try {
-      const newest = await ctx.storage.getMessagesPage(
-        meta.id,
-        ctx.deviceKeyB64,
-        UPGRADE_SEED_PROBE_PAGE
-      );
-      boundary = Math.max(boundary, newestServerTime(newest));
-    } catch (e) {
-      // This row adds nothing to the boundary; the others still decide it.
-      console.error(
-        `[RESTORE] ${meta.id.slice(0, 8)} unreadable for the upgrade seed: ${String(e)}`
-      );
-    }
-  }
-  let seeded = 0;
-  for (const meta of unseeded) {
-    const row = ctx.conversations.get(meta.id);
-    const localReadSeed = localReadSeedFor(row ?? meta, userNorm, boundary);
-    if (localReadSeed > 0) seeded += 1;
-    if (row) ctx.conversations.set(meta.id, { ...row, localReadSeed });
-    console.debug(
-      `[RESTORE] ${meta.id.slice(0, 8)} seeded: ${localReadSeed > 0 ? `local read point ${localReadSeed}` : '0 (it has a read point, or nothing stored is dated)'}`
-    );
-    try {
-      await ctx.storage.saveConversation(
-        row
-          ? toConversationMeta(meta.id, { ...row, localReadSeed }, ctx.userId)
-          : { ...meta, localReadSeed }
-      );
-    } catch (e) {
-      // ACCUSED: the point holds for this session, but the next load seeds again with a later
-      // boundary and would swallow what this session received.
-      console.error(`[RESTORE] ${meta.id.slice(0, 8)} upgrade seed NOT persisted: ${String(e)}`);
-    }
-  }
-  return seeded;
-}
-
-/**
- * How many of a row's newest stored rows the upgrade seed reads: enough to find a server-dated one
- * among a few undated ones (a queued send, a local notice), and cheap enough to read for every
- * conversation once, at the one boot that needs it.
- */
-const UPGRADE_SEED_PROBE_PAGE = 8;
 
 /**
  * Full startup loader that bootstraps all conversations from local storage.
@@ -1162,9 +1067,6 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // to wait for every conversation's history replay. Phase 2 is safe against what this delivers
   // because each of its writes below MERGES into the row instead of replacing it, and each archive
   // replay waits for this pull at its barrier (see `notifyConversationRowsSeeded`).
-  // THE UPGRADE'S LOCAL SEED, HERE AND NOT LATER: before the pull below can store anything, so what
-  // it delivers is past the boundary by construction (`seedLocalReadPoints`).
-  const seededAtUpgrade = await seedLocalReadPoints(ctx, mergedConvMetas);
   ctx.log(`[RESTORE] ${ctx.conversations.size} conversation row(s) seeded - history follows`);
   ctx.mlsService.notifyConversationRowsSeeded();
 
@@ -1259,15 +1161,16 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       }
 
       // THE UNREAD CENSUS OF THIS LOAD, said in ONE line after the loop (per row at debug only).
-      const census = { seeded: seededAtUpgrade, withBadge: 0, total: 0 };
+      const census = { seeded: 0, withBadge: 0, total: 0 };
       const published = new Set<string>();
       /** Assigns a row its derived count, ONCE per load, and adds it to the census. */
       const publishBootCount = (id: string): void => {
         const row = ctx.conversations.get(id);
         if (!row || published.has(id)) return;
         published.add(id);
-        const unreadCount = bootUnreadCount(id, row, ctx.userId);
+        const { count: unreadCount, source } = bootUnreadCount(id, row, ctx.userId);
         ctx.conversations.set(id, { ...row, unreadCount });
+        if (source === 'seed') census.seeded += 1;
         if (unreadCount > 0) {
           census.withBadge += 1;
           census.total += unreadCount;
@@ -1426,7 +1329,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         }
       }
       ctx.log(
-        `[RESTORE] unread census: ${census.seeded} conversation(s) seeded with a local read point, ` +
+        `[RESTORE] unread census: ${census.seeded} conversation(s) counted from the upgrade's local read seed, ` +
           `${census.withBadge} with a badge, ${census.total} unread in all`
       );
       // Nothing to commit is said as `undefined`, so the helper owes no checkpoint for it.

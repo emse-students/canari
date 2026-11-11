@@ -54,9 +54,9 @@ const row = (id: string, senderId: string, at: number, stamp = at - 5): StoredMe
 /**
  * ONE durable store, shared by every boot. Its conversation row follows the storage contract of
  * `localReadSeed`: a stated value is written, an unstated one keeps the row's, a new row is born 0.
- * `meta.localReadSeed` absent from the initial row = a row an older build wrote.
+ * `initial.localReadSeed` is what the store migration left on the row.
  */
-function durableStore(initial: Partial<ConversationMeta> = {}, newOnThisInstall = true) {
+function durableStore(initial: Partial<ConversationMeta> = {}) {
   const messages: StoredMessage[] = [];
   const rows = new Map<string, ConversationMeta>([
     [
@@ -66,7 +66,7 @@ function durableStore(initial: Partial<ConversationMeta> = {}, newOnThisInstall 
         name: 'Equipe',
         lifecycle: 'active',
         updatedAt: 1,
-        ...(newOnThisInstall ? { localReadSeed: 0 } : {}),
+        localReadSeed: 0,
         ...initial,
       },
     ],
@@ -261,32 +261,36 @@ describe('the unread count a load derives', () => {
   });
 });
 
-describe("the upgrade's local read seed", () => {
+/**
+ * The seed is written by the STORE MIGRATION (`localReadSeedStore.test.ts` pins the SQL and the
+ * versionchange walk); here the store hands it over as the migration left it, and the restore only
+ * READS it.
+ */
+describe("the upgrade's local read seed, read by the restore", () => {
   let debug: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
-    replay.mockClear();
+    replay.mockReset();
+    replay.mockImplementation(async () => undefined);
     connectivity.reset();
     debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
   });
   afterEach(() => debug.mockRestore());
 
-  it('lights nothing at the upgrade: what an older build held with no read point is seeded as read', async () => {
-    // A group I lurk in, written by an older build: no read point, a page of foreign messages.
-    const store = durableStore({}, false);
+  it('lights nothing at the upgrade: what the row held at the migration is read', async () => {
+    // A group I lurk in: no read point, a page of foreign messages, seeded at its newest by the migration.
+    const store = durableStore({ localReadSeed: 2_000 });
     store.messages.push(row('m1', 'bob', 1_000), row('m2', 'carol', 2_000));
     const log = vi.fn();
 
     expect(await coldStart(store, { log })).toBe(0);
-    expect(store.rows.get('g-1')?.localReadSeed).toBe(2_000);
     expect(log).toHaveBeenCalledWith(
-      '[RESTORE] unread census: 1 conversation(s) seeded with a local read point, 0 with a badge, 0 unread in all'
+      "[RESTORE] unread census: 1 conversation(s) counted from the upgrade's local read seed, 0 with a badge, 0 unread in all"
     );
   });
 
-  it('is LOCAL: no read mark moves, nothing is sent, and the row carries no mark it did not have', async () => {
-    const store = durableStore({}, false);
+  it('only READS it: the restore writes no seed, moves no read mark and sends nothing', async () => {
+    const store = durableStore({ localReadSeed: 1_000 });
     store.messages.push(row('m1', 'bob', 1_000));
-    // Every way a mark leaves this device, spied: a read-watermark frame, any control frame.
     const sends = {
       sendReadWatermark: vi.fn(async () => {}),
       enqueueControlEvent: vi.fn(async () => {}),
@@ -296,87 +300,72 @@ describe("the upgrade's local read seed", () => {
 
     await coldStart(store, { service: mls(sends), conversations });
 
-    expect(store.rows.get('g-1')?.localReadSeed).toBe(1_000);
+    for (const call of store.saveConversation.mock.calls) {
+      expect((call as unknown as [ConversationMeta])[0].localReadSeed ?? 1_000).toBe(1_000);
+    }
     const saved = store.rows.get('g-1');
+    expect(saved?.localReadSeed).toBe(1_000);
     expect(saved?.readWatermarks).toBeUndefined();
     expect(saved?.serverReadWatermarks).toBeUndefined();
-    expect(conversations.get('g-1')?.readWatermarks).toBeUndefined();
     expect(conversations.get('g-1')?.serverReadWatermarks).toBeUndefined();
     expect(sends.sendReadWatermark).not.toHaveBeenCalled();
     expect(sends.enqueueControlEvent).not.toHaveBeenCalled();
     expect(sends.sendMessage).not.toHaveBeenCalled();
   });
 
-  it('is written ONCE: a message arriving after it counts, and the seed is never moved', async () => {
-    const store = durableStore({}, false);
-    store.messages.push(row('m1', 'bob', 1_000));
-    expect(await coldStart(store)).toBe(0);
-    expect(store.rows.get('g-1')?.localReadSeed).toBe(1_000);
+  it.each([
+    ['before the restore', 'before'],
+    ['at the boot pull (the rows-seeded seam)', 'pull'],
+    ['during the replay', 'replay'],
+    ['after the load, through the push cache', 'after'],
+  ] as const)(
+    'counts a message the push-cache path stores %s: the seed never covers it',
+    async (_label, when) => {
+      const store = durableStore({ localReadSeed: 1_000 });
+      store.messages.push(row('m1', 'bob', 1_000));
+      const late = row('k1', 'bob', 5_000);
+      if (when === 'before') store.messages.push(late);
+      if (when === 'replay') {
+        replay.mockImplementationOnce(async () => {
+          store.messages.push(late);
+          return undefined;
+        });
+      }
+      const service = mls({
+        notifyConversationRowsSeeded: vi.fn(() => {
+          if (when === 'pull') store.messages.push(late);
+        }),
+      });
+      const conversations = new SvelteMap<string, Conversation>();
 
-    store.messages.push(row('m2', 'bob', 2_000));
-    expect(await coldStart(store)).toBe(1);
-    expect(await coldStart(store)).toBe(1);
-    expect(store.rows.get('g-1')?.localReadSeed).toBe(1_000);
-  });
+      await coldStart(store, { service, conversations });
+      if (when === 'after') {
+        store.messages.push(late);
+        mergeFcmMessagesIntoConversations([late], conversations, ME);
+        expect(conversations.get('g-1')?.unreadCount).toBe(1);
+      }
 
-  it('seeds 0 where a read point exists, and the count follows that point', async () => {
-    const store = durableStore({ serverReadWatermarks: { [ME]: 1_000 } }, false);
+      // Whatever the session saw, the next cold start derives it from the store.
+      expect(await coldStart(store)).toBe(1);
+      expect(store.rows.get('g-1')?.localReadSeed).toBe(1_000);
+    }
+  );
+
+  it('yields to a saved mark: the seed covers nothing past what this user read', async () => {
+    const store = durableStore({ localReadSeed: 2_000, serverReadWatermarks: { [ME]: 1_000 } });
     store.messages.push(row('m1', 'bob', 1_000), row('m2', 'bob', 2_000));
 
     expect(await coldStart(store)).toBe(1);
-    expect(store.rows.get('g-1')?.localReadSeed).toBe(0);
   });
 
-  it('never seeds a conversation new on this install: a first contact stays counted', async () => {
-    const store = durableStore();
-    store.messages.push(row('m1', 'bob', 1_000));
-
-    expect(await coldStart(store)).toBe(1);
-    expect(await coldStart(store)).toBe(1);
-    expect(store.rows.get('g-1')?.localReadSeed).toBe(0);
-  });
-
-  it('does not swallow what the boot pull delivers during the upgrade boot (seeded before the pull)', async () => {
-    // Two DMs reached the server while the app was killed; the new build's boot pull stores them.
-    const store = durableStore({}, false);
-    store.messages.push(row('m1', 'bob', 1_000));
-    const conversations = new SvelteMap<string, Conversation>();
-    const service = mls({
-      // THE SEAM: the pull is issued here, and stores what it delivers before phase 2 reads the
-      // store - the way `saveMessagesIfAbsent` does while the restore's loop runs.
-      notifyConversationRowsSeeded: vi.fn(() => {
-        store.messages.push(row('k1', 'bob', 5_000), row('k2', 'bob', 6_000));
-      }),
-    });
-
-    expect(await coldStart(store, { service, conversations })).toBe(2);
-    expect(store.rows.get('g-1')?.localReadSeed).toBe(1_000);
-    // And for good: the seed is written once.
-    expect(await coldStart(store)).toBe(2);
-  });
-
-  it('gives an EMPTY row the boundary too: old history replayed into it is not a page of unread', async () => {
-    const store = durableStore({}, false);
-    store.messages.push(row('m1', 'bob', 2_000));
-    // A second conversation an older build wrote, holding nothing.
-    store.rows.set('g-2', { id: 'g-2', name: 'Vide', lifecycle: 'active', updatedAt: 1 });
-    const conversations = new SvelteMap<string, Conversation>();
-    // Its first replay brings history the server held before this boot, and one new message.
-    replay.mockImplementation(async (opts: any) => {
-      if (opts.id === 'g-2' && !store.messages.some((m) => m.conversationId === 'g-2')) {
-        store.messages.push(
-          { ...row('old', 'bob', 1_500), conversationId: 'g-2' },
-          { ...row('new', 'bob', 3_000), conversationId: 'g-2' }
-        );
-      }
+  it('an EMPTY row is seeded 0 by the migration: what is replayed into it after counts', async () => {
+    const store = durableStore({ localReadSeed: 0 });
+    replay.mockImplementationOnce(async () => {
+      store.messages.push(row('old', 'bob', 1_500), row('new', 'bob', 3_000));
       return undefined;
     });
 
-    await coldStart(store, { conversations });
-    replay.mockReset();
-    replay.mockImplementation(async () => undefined);
-
-    expect(store.rows.get('g-2')?.localReadSeed).toBe(2_000);
-    expect(conversations.get('g-2')?.unreadCount).toBe(1);
+    await coldStart(store);
+    expect(await coldStart(store)).toBe(2);
   });
 });

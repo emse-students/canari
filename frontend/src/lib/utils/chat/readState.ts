@@ -71,12 +71,14 @@ export function readPointFor(
  * add path and the salon self-mark ask it too, so a salon with no mark of its own does not count a
  * row older than this reader's own newest post (the server's count, which a reconnect merges, does).
  *
- * ONE CLOCK, THE SERVER'S, for everything this function adds to the saved marks:
- * - the saved marks ({@link readPointFor}), as they are;
- * - the upgrade's LOCAL seed (`localReadSeed`, server clock): the newest message this device held
- *   when this build first met the conversation with no read point. Local: it is never a mark, never
- *   a receipt, never in a bundle - nothing but this count reads it;
- * - with no saved mark, the SERVER time of this user's newest own message held: a reply is written
+ * - the saved marks ({@link readPointFor}), as they are, when this user has one: they are what this
+ *   user READ, and nothing else moves them here;
+ * - with no saved mark, ONE CLOCK, THE SERVER'S, for both of these, and the max of them:
+ * - the upgrade's LOCAL seed (`localReadSeed`, server clock): the newest dated message THIS
+ *   conversation held when the store migration that added the field ran (SQLite v20, IndexedDB 14) -
+ *   before any code of this build could store a message. Local: it is never a mark, never a receipt,
+ *   never in a bundle - nothing but this count reads it;
+ * - the SERVER time of this user's newest own message held: a reply is written
  *   with the conversation open, so what the server holds before it was on screen. Compared on the
  *   server's clock, never the author's: two phones' clocks would otherwise decide it (a fast phone
  *   hid a later reply of the peer, a slow one counted an earlier one). An own row the server has not
@@ -99,14 +101,10 @@ export function countingReadPoint(
   userNorm: string
 ): { stamped: number; server: number; source: 'saved' | 'seed' | 'own' | 'none' } {
   const saved = readPointFor(convo, userNorm);
-  const seed = parseLocalReadSeed(convo.localReadSeed) ?? 0;
   if (saved.stamped > 0 || saved.server > 0) {
-    return {
-      stamped: saved.stamped,
-      server: Math.max(saved.server, seed),
-      source: seed > saved.server ? 'seed' : 'saved',
-    };
+    return { stamped: saved.stamped, server: saved.server, source: 'saved' };
   }
+  const seed = parseLocalReadSeed(convo.localReadSeed) ?? 0;
   let newestOwn = 0;
   for (const msg of convo.messages) {
     if (!msg.isOwn) continue;
@@ -122,43 +120,15 @@ export function countingReadPoint(
 }
 
 /**
- * Reads a stored `localReadSeed`: a usable instant, 0 ("considered, nothing seeded"), or `null` -
- * absent or unusable, which reads as "not considered yet". On Android the SQLite plugin returns an
- * INTEGER column as a string.
+ * Reads a stored `localReadSeed`: a usable instant, 0 (nothing covered), or `null` - absent or
+ * unusable, which covers nothing either (a row a downgraded build wrote). On Android the SQLite
+ * plugin returns an INTEGER column as a string.
  */
 export function parseLocalReadSeed(raw: unknown): number | null {
   if (raw === null || raw === undefined || raw === '') return null;
   const at = typeof raw === 'number' ? raw : Number(raw);
   if (!Number.isFinite(at) || at < 0) return null;
   return Math.floor(at);
-}
-
-/**
- * The upgrade's seed for one conversation, decided ONCE: the UPGRADE BOUNDARY - the newest server
- * time this device held anywhere before this boot's pull (`newestServerTime`) - when the
- * conversation has NO saved read point, else 0 ("considered, nothing seeded": its marks decide).
- */
-export function localReadSeedFor(
-  convo: { readWatermarks?: ReadWatermarks; serverReadWatermarks?: ReadWatermarks },
-  userNorm: string,
-  boundary: number
-): number {
-  const saved = readPointFor(convo, userNorm);
-  return saved.stamped > 0 || saved.server > 0 ? 0 : boundary;
-}
-
-/**
- * The newest time THE SERVER stated among `rows`, 0 when none is dated. Only `serverTimestamp`: an
- * undated row carries its author's clock, and one phone running fast would push a boundary past
- * messages not yet received.
- */
-export function newestServerTime(rows: ReadonlyArray<{ serverTimestamp?: number }>): number {
-  let newest = 0;
-  for (const row of rows) {
-    const at = row.serverTimestamp;
-    if (typeof at === 'number' && Number.isFinite(at) && at > newest) newest = at;
-  }
-  return newest;
 }
 
 /**

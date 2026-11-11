@@ -81,6 +81,7 @@ import {
   conversationStartedAtStatement,
   conversationLocalReadSeedStatement,
   CONVERSATION_LOCAL_READ_SEED_VALUE,
+  CONVERSATION_LOCAL_READ_SEED_FILL,
   isFreshDatabase,
   legacyBlobPurgeStatement,
   LEGACY_MESSAGE_TIME_INDEX_DROP,
@@ -620,11 +621,16 @@ export class SqliteStorage implements IStorage {
 
     if (currentVersion < 20) {
       // v19->v20: the conversation gains `local_read_seed`, the upgrade's one-time LOCAL read point
-      // (`ConversationMeta.localReadSeed`). NULL on every existing row - "written by an older build,
-      // not considered yet" - so the next load seeds each one once.
+      // (`ConversationMeta.localReadSeed`), and every row gets it HERE, per row, from its own stored
+      // messages - before `init` resolves, so before anything this boot delivers can be stored
+      // (`CONVERSATION_LOCAL_READ_SEED_FILL`). Idempotent: it fills only what is still NULL.
       const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
       const add = conversationLocalReadSeedStatement(cols.map((c) => String(c.name)));
       if (add) await this.db.execute(add);
+      const filled = await this.db.execute(CONVERSATION_LOCAL_READ_SEED_FILL);
+      console.info(
+        `[SQLITE] Migration v19->v20: local read seed written on ${filled?.rowsAffected ?? '?'} conversation(s)`
+      );
       // Stamped at 20, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 20');
     }

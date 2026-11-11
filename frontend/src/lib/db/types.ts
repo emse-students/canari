@@ -58,16 +58,16 @@ export interface ConversationMeta {
    */
   awaitingAdmission?: boolean;
   /**
-   * THE UPGRADE'S LOCAL READ SEED (2026-11-11), on the server clock (`messageTime`): the newest
-   * message this device already held when the first build to derive unread counts from the read
-   * point found this conversation with no read point of its own. Counted as read on THIS device only
-   * - never a read mark, never a receipt, never in a bundle (`countingReadPoint`).
+   * THE UPGRADE'S LOCAL READ SEED (2026-11-11), on the server clock: the newest server-dated message
+   * THIS conversation held when the store migration that added the field ran (SQLite v20, IndexedDB
+   * 14) - inside the migration, so before this build could store anything. Applies ONLY while this
+   * user has no saved read mark, and on THIS device only - never a read mark, never a receipt, never
+   * in a bundle (`countingReadPoint`).
    *
-   * Three states, and the storage keeps them apart:
-   * - `null` / absent - a row written by an older build, not considered yet: the next load seeds it;
-   * - `0` - considered, nothing seeded (it had a read point, or it is new on this install); never
-   *   seeded again. A row first inserted by this build is born `0` (`saveConversation`);
-   * - `> 0` - the seed.
+   * Written by the migration and nowhere else: `0` when the conversation held nothing dated (and for
+   * a row this build creates, `saveConversation`), the newest time otherwise. A save that does not
+   * state it keeps the stored value. `null` / absent - a row a downgraded build re-created - covers
+   * nothing.
    */
   localReadSeed?: number | null;
 }
