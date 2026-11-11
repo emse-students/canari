@@ -75,3 +75,9 @@ running. Owed on the **Mi 9T** and the **iPhone 12**, each with the rotation loc
   (`safe area published to the page: ... left N pt, right N pt` in the syslog).
 - **A reload while turned** (Android: kill the WebView renderer; iOS: a WebContent kill) comes back
   portrait.
+
+### Defects of the `1.6.10` reading, fixed 2026-11-11
+
+Chrome back around the camera when turned, and the rotate button unlike its siblings: cause and fix in
+[screen-orientation](../frontend/screen-orientation.md#a-turned-phone-is-still-a-phone-and-a-full-screen-place-draws-no-chrome-2026-11-11).
+Owed: a Mi 9T reading turned on `/camera` (no header, no rail, the rotate button the size of flip).
