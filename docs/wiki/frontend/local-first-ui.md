@@ -461,9 +461,9 @@ screen drawn before the bind reads again when it opens. Never localStorage, exce
   says, so a row seen as new is not demoted by the answer; the read receipt still goes only after the
   answer (`markAllRead` on the server's list).
 - *Bounded*: 50 notifications, 12 profiles; a profile reopened moves to the front, the oldest leaves.
-- *A feed refusal's `deleteFeedPages()` empties the shared table*, taking these copies with it; the
-  next answer writes them again. A PIN change drops them with every stored page and the stores seal
-  what they hold in memory under the new key.
+- *Feed churn does not touch them.* The feed deletes only its own keys (`deleteFeedPages('feed:')`, on every new feed epoch and on a bad feed page - routine events), so `copy:*` and the peer names survive. A PIN change passes no prefix and drops every page; the stores seal what they hold in memory under the new key.
+- *Typed extras.* `readProfileExtras` returns `{ answered, value }` per section: a section whose read failed keeps the copy's list on screen and in the store, never an empty stand-in. Only an ANSWER (the account is gone) withholds a copy; a transport failure landing before the copy read does not.
+- *The account is taken before the request.* The bell captures the signed-in account before its read and drops an answer that lands after a switch; the lists are emptied at a sign-out (`onPeerNamesEnded`), and a write refuses unless the device is still signed in as the bound account. The read receipt waits for an answer, and only the 50-row page seals, only when it changed.
 
 **What was measured (vitest, every read held unanswered; the number that closes a screen).**
 
@@ -478,9 +478,7 @@ tests' own, the model of the owner's link, not a clock. Owed on a pre-release: t
 iPhone cold start on a shaped link (bell, a profile seen yesterday), and the hardware-held key path
 for the bell (its key arrives before the token only since gap 1).
 
-**Left, taken knowingly.** A profile whose three extras fail on the revalidation replaces the copy's
-associations with empty lists (`readProfileExtras` resolves a failure to `[]`, indistinguishable from
-"none" - the other chantier's seam); the entourage is not kept; today's celebrants stay network-only.
+**Left, taken knowingly.** The entourage is not kept; today's celebrants stay network-only.
 
 ## 5. The tools, and where they live
 

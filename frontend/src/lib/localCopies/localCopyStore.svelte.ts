@@ -1,5 +1,6 @@
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { SvelteMap } from 'svelte/reactivity';
 import { getStorage } from '$lib/db';
+import { getSavedUserId } from '$lib/stores/user';
 import { FeedPageUnreadableError } from '$lib/db/types';
 import type { FeedStoreAccess } from '$lib/posts/feedStore';
 import { currentPeerNamesEpoch, ensurePeerNamesEpoch } from '$lib/utils/users/peerNameDirectory';
@@ -17,9 +18,9 @@ import { currentPeerNamesEpoch, ensurePeerNamesEpoch } from '$lib/utils/users/pe
  * THE LIFETIME IS THE PEER-NAME DIRECTORY'S, ON PURPOSE: the same epoch (`peerNameDirectory.ts`),
  * started with the first write and ended ONLY by a sign-out or a change of account (`stores/user.ts`
  * -> `endPeerNames`). A copy carrying an ended epoch, another account or another slot is deleted
- * unread. It is NOT the feed's epoch, so an audience verdict does not cost these copies; but a feed
- * refusal's `deleteFeedPages()` empties the shared table, and a copy lost that way is rewritten by
- * the next answer. A PIN change drops every stored page (`dropStoredFeedPages`); a store holding its
+ * unread. It is NOT the feed's epoch, so an audience verdict does not cost these copies, and the feed's
+ * own deletes are scoped to its `feed:` keys (`deleteFeedPages('feed:')`).
+ * A PIN change drops every stored page (`dropStoredFeedPages`); a store holding its
  * list in memory seals it again when {@link bindLocalCopies} hands it the new key.
  *
  * THE KEY IS NOT THERE AT THE FIRST FRAME. {@link bindLocalCopies} gets the feed's own gate
@@ -45,7 +46,9 @@ let access: FeedStoreAccess | null = null;
 /** The account the copies are open for, reactive (a plain `let` tracks nothing). */
 const openCell = new SvelteMap<'owner', string | null>();
 type Opener = (access: FeedStoreAccess) => void;
-const openers = new SvelteSet<Opener>();
+// A plain Set: a reactive one would re-run the layout effect that binds the copies.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- a registry, not state a screen reads
+const openers = new Set<Opener>();
 
 /** The account whose copies may be read and written now, or `null` while no key is in hand. */
 export function localCopiesOpenFor(): string | null {
@@ -153,6 +156,15 @@ export async function readLocalCopy<T>(
 export async function writeLocalCopy(slot: string, body: unknown): Promise<void> {
   const target = access;
   if (!target) return;
+  // `access` lags the sign-out by an effect: between `endPeerNames` (synchronous) and the rebind, the
+  // device's own sign-in record is the truth. Refused BEFORE the epoch, or the write would mint a
+  // new epoch for an account that has just left, under which its stale copy would be drawable.
+  if (getSavedUserId() !== target.userId) {
+    console.warn(
+      `[LOCAL-COPIES] ${slot} not stored - the device is no longer signed in as its account`
+    );
+    return;
+  }
   const epoch = ensurePeerNamesEpoch(target.userId);
   if (!epoch) return;
   try {

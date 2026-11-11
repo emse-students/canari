@@ -22,6 +22,7 @@ import {
 } from '$lib/localCopies/localCopyStore.svelte';
 import type { FeedStoreAccess } from '$lib/posts/feedStore';
 import { getSavedUserId } from '$lib/stores/user';
+import { onPeerNamesEnded } from '$lib/utils/users/peerNameDirectory';
 
 /** The newest notifications kept on the device: the bell page asks for 50, the dropdown for 30. */
 export const MAX_STORED_NOTIFICATIONS = 50;
@@ -44,11 +45,30 @@ function isStoredNotification(value: unknown): value is PostNotification {
   return !!value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string';
 }
 
-/** Seals the newest rows (a no-op while no key is in hand or the list is another account's). */
+/** What was last handed to the sealed store, so an unchanged list is not sealed again. */
+let lastSealed: string | null = null;
+
+/**
+ * Seals the newest rows (a no-op while no key is in hand, the list is another account's, or it is
+ * what was sealed last - the 60 s poll answers the same list almost every time).
+ */
 function persist(): void {
   if (!listOwner || localCopiesAccess()?.userId !== listOwner) return;
-  void writeLocalCopy(BELL_SLOT, { items: notifications.slice(0, MAX_STORED_NOTIFICATIONS) });
+  const items = notifications.slice(0, MAX_STORED_NOTIFICATIONS);
+  const json = JSON.stringify(items);
+  if (json === lastSealed) return;
+  lastSealed = json;
+  void writeLocalCopy(BELL_SLOT, { items });
 }
+
+/** A sign-out or a change of account: the list leaves memory with the account (never drawn for the next). */
+onPeerNamesEnded(() => {
+  notifications = [];
+  fromCopy = false;
+  listOwner = null;
+  answered = false;
+  lastSealed = null;
+});
 
 /**
  * Copies opened (or re-keyed) for `access`: another account's list leaves memory; an empty list is
@@ -62,7 +82,8 @@ async function openFor(access: FeedStoreAccess): Promise<void> {
   }
   if (listOwner !== access.userId) answered = false;
   if (notifications.length > 0) {
-    // The key changed, or the answer beat the key: seal what is held.
+    // The key changed, or the answer beat the key: seal what is held, even if sealed before.
+    lastSealed = null;
     persist();
     return;
   }
@@ -104,14 +125,23 @@ export const postNotifStore = {
   async load(limit = 30): Promise<void> {
     if (loading) return;
     loading = true;
+    // THE ACCOUNT IS TAKEN BEFORE THE REQUEST, never when the answer lands (review of #3347, as
+    // `feedWriteEpoch` does): a poll answered after a sign-out and a sign-in as someone else - no page
+    // reload on mobile - is that account's list and must not be drawn or sealed under the new one.
+    const owner = getSavedUserId();
     try {
-      notifications = await getPostNotifications(limit);
+      const answer = await getPostNotifications(limit);
+      if (getSavedUserId() !== owner) {
+        console.log('[postNotifStore] an answer for an account that has left - dropped');
+        return;
+      }
+      notifications = answer;
       unanswered = false;
       answered = true;
       fromCopy = false;
-      // The account the answer was asked for: the token's, which is the signed-in one.
-      listOwner = getSavedUserId();
-      persist();
+      listOwner = owner;
+      // Only the full page seals: the dropdown's shorter one must not shrink the sealed list.
+      if (limit >= MAX_STORED_NOTIFICATIONS) persist();
     } catch (e) {
       // Stale data is better than an error screen. A load that got NO ANSWER is the link, which the
       // session already reports: said once per spell, not on every minute's poll while offline. Any
@@ -132,8 +162,16 @@ export const postNotifStore = {
   /** Marks all notifications as read in the backend and locally. */
   async markAllRead(): Promise<void> {
     if (notifications.every((n) => n.read)) return;
+    // A list still drawn from the device is not what the server holds: the read receipt goes once an
+    // answer has replaced it (the bell page awaits `load` first).
+    if (fromCopy) {
+      console.log('[postNotifStore] markAllRead skipped - the list is still the device copy');
+      return;
+    }
+    const owner = getSavedUserId();
     try {
       await markPostNotificationsRead();
+      if (getSavedUserId() !== owner) return; // another account's list now: not marked locally
       notifications = notifications.map((n) => ({ ...n, read: true }));
       persist();
     } catch (e) {

@@ -72,6 +72,8 @@
    * for the answer.
    */
   let fromCopy = $state(false);
+  /** The server ANSWERED that this account is gone: the only failure that withholds a copy. */
+  let absent = $state(false);
   let error = $state('');
   /** Where the reader stands with this person: a request, a follow, or neither (WP-F4). */
   let followStatus = $state<FollowStatus | null>(null);
@@ -125,39 +127,49 @@
     try {
       const [prof, status, blocks] = await profileRead;
       if (token !== loadToken) return;
+      // The copy's lists are on screen: a section whose read FAILED keeps them (typed, not `[]`).
+      const heldCopy = fromCopy;
       profile = prof;
       fromCopy = false;
       followStatus = status;
       blocked = blocks.some((b) => b.userId === userId);
       extrasLoading = true;
       const [rows, history, entourage] = await Promise.all([
-        extras.memberships.then((v) => {
-          if (token === loadToken) memberships = v;
-          return v;
+        extras.memberships.then((r) => {
+          if (token === loadToken && (r.answered || !heldCopy)) memberships = r.value;
+          return r;
         }),
-        extras.roleHistory.then((v) => {
-          if (token === loadToken) roleHistory = v;
-          return v;
+        extras.roleHistory.then((r) => {
+          if (token === loadToken && (r.answered || !heldCopy)) roleHistory = r.value;
+          return r;
         }),
-        extras.parrainage.then((v) => {
-          if (token === loadToken) parrainage = v;
-          return v;
+        extras.parrainage.then((r) => {
+          if (token === loadToken) parrainage = r.value;
+          return r;
         }),
       ]);
       Log.d(
         'profile.extras',
-        `${rows.length} membership(s), ${history.length} role(s), entourage ${entourage ? 'read' : 'none'}`
+        `${rows.value.length} membership(s), ${history.value.length} role(s), entourage ${entourage.value ? 'read' : 'none'}`
       );
       if (token === loadToken) extrasLoading = false;
-      // Kept for the next visit, whatever the link: sealed on the device, never in clear.
-      void rememberProfile({ profile: prof, memberships: rows, roleHistory: history });
+      // Kept for the next visit, whatever the link: sealed on the device, never in clear. The lists
+      // are those ON SCREEN; with no copy behind them and a failed section there is nothing true to
+      // seal, so nothing is.
+      if (token === loadToken && ((rows.answered && history.answered) || heldCopy)) {
+        void rememberProfile({
+          profile: prof,
+          memberships: $state.snapshot(memberships),
+          roleHistory: $state.snapshot(roleHistory),
+        });
+      }
     } catch (err) {
       Log.d('profile.load failed', err);
       if (token !== loadToken) return;
       if (fromCopy && !isAbsentUserError(err)) {
         // THE COPY STAYS: a failed revalidation says nothing about the profile. Logged, not shown.
         console.warn(
-          `[PROFILE-COPIES] ${userId} not refreshed, the device copy stays: ${String(err)}`
+          `[PROFILE-COPIES] ${userId.slice(0, 8)} not refreshed, the device copy stays: ${String(err)}`
         );
         extrasLoading = false;
         return;
@@ -165,6 +177,7 @@
       if (isAbsentUserError(err)) {
         // An ANSWER: the account is gone, its copy goes with it.
         forgetProfileCopy(userId);
+        absent = true;
         fromCopy = false;
         profile = null;
       }
@@ -186,6 +199,7 @@
     profile = null;
     fromCopy = false;
     error = '';
+    absent = false;
     memberships = [];
     roleHistory = [];
     parrainage = null;
@@ -213,24 +227,27 @@
   /**
    * DRAWS THE PROFILE FROM THE DEVICE while its read is on the wire (slow-link chantier, gap 2).
    * Re-runs when the device's copies open (the key may arrive after the first frame). Never over
-   * anything already drawn - an answer that won the race is newer - and never with an error up.
+   * anything already drawn - an answer that won the race is newer. ONLY AN ANSWER (the account is
+   * gone) withholds it: a transport failure that lands before the slower copy read must not beat it
+   * (the feed's `storedCopyMayDraw` rule), offline being the case the copy exists for.
    */
   $effect(() => {
     const userId = page.params.id;
     const open = localCopiesOpenFor();
     if (!userId || !open) return;
     const token = untrack(() => loadToken);
-    if (untrack(() => profile !== null || error !== '')) return;
+    if (untrack(() => profile !== null || absent)) return;
     let cancelled = false;
     void readProfileCopy(userId).then((copy) => {
-      if (cancelled || !copy || token !== loadToken || profile !== null || error !== '') return;
+      if (cancelled || !copy || token !== loadToken || profile !== null || absent) return;
       profile = copy.profile;
       memberships = copy.memberships;
       roleHistory = copy.roleHistory;
       fromCopy = true;
       loading = false;
       extrasLoading = false;
-      Log.d('profile.copy', `${userId} drawn from the device, no network`);
+      error = '';
+      Log.d('profile.copy', `${userId.slice(0, 8)} drawn from the device, no network`);
     });
     return () => {
       cancelled = true;

@@ -4,6 +4,7 @@ import type { UserProfile } from '$lib/stores/user';
 
 const sealed = vi.hoisted(() => ({ rows: new Map<string, unknown>() }));
 
+vi.mock('$lib/stores/user', () => ({ getSavedUserId: () => 'me' }));
 vi.mock('$lib/db', () => ({
   // One database per account, as on a device.
   getStorage: async (userId: string) => ({

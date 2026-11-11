@@ -148,10 +148,13 @@ async function deleteOnePage(storage: IStorage, key: string, why: string): Promi
   }
 }
 
-/** Deletes every stored page, logging rather than throwing: it runs on a read or write path. */
+/**
+ * Deletes every stored FEED page - the keys `feed:*` only, never the device copies that share the
+ * table (`copy:*`, the peer names) - logging rather than throwing: it runs on a read or write path.
+ */
 async function deleteAllPages(storage: IStorage, why: string): Promise<void> {
   try {
-    const deleted = await storage.deleteFeedPages();
+    const deleted = await storage.deleteFeedPages('feed:');
     console.log(`[FEED-STORE] ${deleted} stored feed page(s) deleted (${why})`);
   } catch (error) {
     console.warn(`[FEED-STORE] stored feed pages could not be deleted (${why}): ${String(error)}`);

@@ -48,7 +48,7 @@ const ME = { userId: 'me', deviceKeyB64: 'KEY' };
 async function sealOneList(rows: PostNotification[]) {
   api.get.mockResolvedValueOnce(rows);
   bindLocalCopies(ME);
-  await postNotifStore.load();
+  await postNotifStore.load(50);
   await settle();
 }
 
@@ -138,6 +138,59 @@ describe('the bell, drawn from the device first', () => {
     bindLocalCopies(null);
     await settle();
     expect(postNotifStore.notifications).toEqual([]);
+  });
+
+  it('drops an answer that lands after an account switch, never drawing or sealing it for the next one', async () => {
+    bindLocalCopies(ME);
+    let answerA!: (rows: PostNotification[]) => void;
+    api.get.mockReturnValueOnce(new Promise((resolve) => (answerA = resolve)));
+    const poll = postNotifStore.load(50); // A's poll, in flight
+    // Sign-out, sign-in as B on the same page (mobile: no reload).
+    endPeerNames('sign-out');
+    saved.id = 'bob';
+    bindLocalCopies({ userId: 'bob', deviceKeyB64: 'KB' });
+    await settle();
+    answerA([n('secret-of-A')]);
+    await poll;
+    await settle();
+    expect(postNotifStore.notifications).toEqual([]);
+    expect(sealed.rows.has(`bob/${BELL_SLOT}`)).toBe(false);
+    expect(sealed.rows.has(`me/${BELL_SLOT}`)).toBe(false);
+  });
+
+  it('empties the list at a sign-out, so the next account never meets it', async () => {
+    await sealOneList([n('a')]);
+    expect(postNotifStore.notifications).toHaveLength(1);
+    endPeerNames('sign-out');
+    expect(postNotifStore.notifications).toEqual([]);
+  });
+
+  it('seals only the full page, and only when it changed', async () => {
+    bindLocalCopies(ME);
+    await settle();
+    api.get.mockResolvedValue([n('a')]);
+    await postNotifStore.load(30); // the dropdown's page: not sealed
+    await settle();
+    expect(sealed.rows.has(`me/${BELL_SLOT}`)).toBe(false);
+    await postNotifStore.load(50);
+    await settle();
+    const first = sealed.rows.get(`me/${BELL_SLOT}`);
+    expect(first).toBeDefined();
+    sealed.rows.delete(`me/${BELL_SLOT}`);
+    await postNotifStore.load(50); // the 60 s poll, same list: nothing written
+    await settle();
+    expect(sealed.rows.has(`me/${BELL_SLOT}`)).toBe(false);
+  });
+
+  it('does not send the read receipt while the list is still the device copy', async () => {
+    await sealOneList([n('a')]);
+    bindLocalCopies({ userId: 'other', deviceKeyB64: 'K2' });
+    await settle();
+    bindLocalCopies(ME);
+    await settle();
+    expect(postNotifStore.fromCopy).toBe(true);
+    await postNotifStore.markAllRead();
+    expect(api.markAll).not.toHaveBeenCalled();
   });
 
   it('seals a read-all so the copy does not bring the badge back', async () => {

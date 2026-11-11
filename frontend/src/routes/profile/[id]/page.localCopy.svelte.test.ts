@@ -10,7 +10,14 @@ import type { UserProfile } from '$lib/stores/user';
 import { flushMacrotask } from '../../../test/flush';
 
 const sealed = vi.hoisted(() => ({ rows: new Map<string, unknown>() }));
-const reads = vi.hoisted(() => ({ profile: vi.fn(), follow: vi.fn(), blocks: vi.fn() }));
+const reads = vi.hoisted(() => ({
+  profile: vi.fn(),
+  follow: vi.fn(),
+  blocks: vi.fn(),
+  memberships: vi.fn(),
+  roles: vi.fn(),
+  entourage: vi.fn(),
+}));
 
 vi.mock('$lib/db', () => ({
   getStorage: async (userId: string) => ({
@@ -45,9 +52,9 @@ vi.mock('$lib/users/blocks', async (orig) => ({
 }));
 vi.mock('$lib/profile/api', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
-  fetchUserMemberships: () => new Promise(() => {}),
-  fetchUserRoleHistory: () => new Promise(() => {}),
-  fetchUserParrainage: () => new Promise(() => {}),
+  fetchUserMemberships: (...a: unknown[]) => reads.memberships(...a),
+  fetchUserRoleHistory: (...a: unknown[]) => reads.roles(...a),
+  fetchUserParrainage: (...a: unknown[]) => reads.entourage(...a),
 }));
 
 vi.mock(
@@ -60,6 +67,16 @@ vi.mock(
   async () => import('../../../test/stubs/ProfileHeaderStub.svelte')
 );
 
+vi.mock(
+  '$lib/components/profile/ProfileAssociationsSection.svelte',
+  async () => import('../../../test/stubs/MountCounter.svelte')
+);
+vi.mock(
+  '$lib/components/profile/ProfileRoleHistorySection.svelte',
+  async () => import('../../../test/stubs/MountCounter.svelte')
+);
+
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import Page from './+page.svelte';
 import { bindLocalCopies } from '$lib/localCopies/localCopyStore.svelte';
 import { rememberProfile } from '$lib/profile/profileCopies';
@@ -68,6 +85,13 @@ const ME = { userId: 'me', deviceKeyB64: 'KEY' };
 const mounted: (() => void)[] = [];
 
 beforeEach(async () => {
+  // happy-dom rejects a cancelled animation; the page's error block slides in and out.
+  Element.prototype.animate = (() => ({
+    cancel() {},
+    finished: Promise.resolve(),
+    onfinish: null,
+    effect: null,
+  })) as never;
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'debug').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -76,13 +100,16 @@ beforeEach(async () => {
   reads.profile.mockReset().mockReturnValue(new Promise(() => {}));
   reads.follow.mockReset().mockReturnValue(new Promise(() => {}));
   reads.blocks.mockReset().mockReturnValue(new Promise(() => {}));
+  for (const r of [reads.memberships, reads.roles, reads.entourage]) {
+    r.mockReset().mockReturnValue(new Promise(() => {}));
+  }
   // A previous launch opened this profile and sealed it.
   bindLocalCopies(null);
   bindLocalCopies(ME);
   await rememberProfile({
     profile: { id: 'peer-1', displayName: 'Alice Martin', bio: 'Hello' } as unknown as UserProfile,
-    memberships: [],
-    roleHistory: [],
+    memberships: [{ id: 'm1' }] as never,
+    roleHistory: [{ id: 'r1' }] as never,
   });
   await flushMacrotask();
   bindLocalCopies({ userId: 'other', deviceKeyB64: 'K2' });
@@ -131,5 +158,39 @@ describe('a profile already opened, on a link that answers nothing', () => {
     flushSync();
     expect(target.textContent).toContain('Alice Martin');
     expect(target.querySelector('.animate-spin')).toBeNull();
+  });
+
+  it('draws the copy even when a transport failure landed BEFORE the copy was read (offline)', async () => {
+    // The read fails at once, copies are closed: the error is up before the slower copy read.
+    reads.profile.mockReset().mockRejectedValue(new TransportFailureError('no link'));
+    const target = await render();
+    expect(target.textContent).not.toContain('Alice Martin');
+
+    bindLocalCopies(ME);
+    await flushMacrotask();
+    flushSync();
+    expect(target.textContent).toContain('Alice Martin');
+    expect(target.querySelector('.animate-spin')).toBeNull();
+  });
+
+  it('keeps the copy lists, on screen and sealed, when an extras read FAILED', async () => {
+    let answer!: (p: unknown) => void;
+    reads.profile.mockReset().mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    reads.follow.mockReset().mockResolvedValue(null);
+    reads.blocks.mockReset().mockResolvedValue([]);
+    reads.memberships.mockReset().mockRejectedValue(new TransportFailureError('no link'));
+    reads.roles.mockReset().mockResolvedValue([]); // an ANSWER: "none"
+    reads.entourage.mockReset().mockResolvedValue(null);
+    bindLocalCopies(ME);
+    const target = await render();
+    expect(target.textContent).toContain('Alice Martin'); // the copy is on screen first
+    answer({ id: 'peer-1', displayName: 'Alice M.', bio: null });
+    await flushMacrotask();
+    flushSync();
+    const stored = sealed.rows.get('me/copy:profiles') as {
+      body: { profiles: { memberships: unknown[]; roleHistory: unknown[] }[] };
+    };
+    expect(stored.body.profiles[0].memberships).toEqual([{ id: 'm1' }]); // failed: the copy's stays
+    expect(stored.body.profiles[0].roleHistory).toEqual([]); // answered empty: replaces
   });
 });

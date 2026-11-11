@@ -8,6 +8,7 @@ import {
   writeLocalCopy,
 } from '$lib/localCopies/localCopyStore.svelte';
 import type { FeedStoreAccess } from '$lib/posts/feedStore';
+import { onPeerNamesEnded } from '$lib/utils/users/peerNameDirectory';
 
 /**
  * THE PROFILES ALREADY OPENED, DRAWN BEFORE THE SERVER ANSWERS (slow-link chantier, gap 2,
@@ -94,6 +95,13 @@ function ensureLoaded(access: FeedStoreAccess): Promise<void> {
   loaded = read;
   return read;
 }
+
+/** A sign-out or a change of account: the profiles leave memory with the account. */
+onPeerNamesEnded(() => {
+  entries = new Map();
+  entriesOwner = null;
+  loaded = null;
+});
 
 onLocalCopiesOpen((access) => {
   if (entriesOwner !== access.userId) {

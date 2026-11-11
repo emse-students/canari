@@ -7,6 +7,8 @@ const sealed = vi.hoisted(() => ({
   keyUsed: [] as string[],
   failRead: false as false | 'unreadable' | 'store',
 }));
+const saved = vi.hoisted(() => ({ id: 'me' as string | null }));
+vi.mock('$lib/stores/user', () => ({ getSavedUserId: () => saved.id }));
 import { FeedPageUnreadableError } from '$lib/db/types';
 
 vi.mock('$lib/db', () => ({
@@ -40,6 +42,7 @@ const asList = (body: unknown) => ((body as { items?: unknown[] })?.items ? (bod
 
 describe('localCopyStore', () => {
   beforeEach(() => {
+    saved.id = 'me';
     localStorage.clear();
     sealed.rows.clear();
     sealed.keyUsed = [];
@@ -79,6 +82,16 @@ describe('localCopyStore', () => {
     bindLocalCopies({ userId: 'me', deviceKeyB64: 'NEW' }); // unchanged: no call
     expect(early).toHaveBeenCalledTimes(2);
     off();
+  });
+
+  it('refuses a write once the device is no longer signed in as the bound account, minting no epoch', async () => {
+    bindLocalCopies(ME);
+    // Between the synchronous sign-out and the effect that rebinds, `access` still names `me`.
+    endPeerNames('sign-out');
+    saved.id = null;
+    await writeLocalCopy(BELL_SLOT, { items: [{ id: 'stale' }] });
+    expect(sealed.rows.has(BELL_SLOT)).toBe(false);
+    expect(JSON.stringify({ ...localStorage })).not.toContain('canari_peer_names_epoch');
   });
 
   it('does not read a copy once a sign-out ended the epoch, and deletes it', async () => {
