@@ -261,8 +261,8 @@ nothing but its own box.
   and the shared-media grid thumbnail (32 px) once drew their own disc around a Lucide `Play`; they
   now render `VideoGlassGlyph kind="play"` directly (decorative, `pointer-events-none`: the tile's
   own button stays the hit target). The blur samples whatever is behind it, so a poster or a video
-  thumbnail works as a frame does. `onePlayGlyph.test.ts` fails if one of them imports a Lucide `Play`
-  again. Left alone on purpose: the control-bar play/pause chips and the voice-message player.
+  thumbnail works as a frame does. `ChatReelTile`, `ReplayCard` and `SharedMediaThumb` each have a render
+  test asserting the glass glyph is mounted and no `.lucide-play` is. Left alone on purpose: the control-bar play/pause chips and the voice-message player.
 - **Hit target**: the button is an invisible 64 px square (72 px `lg`) around the triangle - the 44 px
   minimum holds whatever the glyph draws.
 - **Legibility**: the fill is white over the dark tint plus the shadow, so a white frame and a black
