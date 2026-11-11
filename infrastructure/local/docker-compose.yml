@@ -303,6 +303,7 @@ services:
       AVATAR_TOKEN_SECRET: ${AVATAR_TOKEN_SECRET:-dev-avatar-token-secret-change-me-0123456789}
       # The sign-in handoff (docs/wiki/sessions.md). Unset locally: no site trusts a local issuer.
       HANDOFF_SIGNING_KEY: ${HANDOFF_SIGNING_KEY:-}
+      MICONNECT_READER_TOKEN: ${MICONNECT_READER_TOKEN:-}
       # No /adminer/ route on a laptop stack: the database is one `docker exec` away.
       ADMINER_ENABLED: "false"
       DB_HOST: postgres
