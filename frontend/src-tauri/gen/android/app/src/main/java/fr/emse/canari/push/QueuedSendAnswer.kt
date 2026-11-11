@@ -11,8 +11,13 @@ package fr.emse.canari.push
  * - a 2xx whose body is NOT JSON: a captive portal's page, not the server (the web send's rule,
  *   chat.md "A 2xx a captive portal answered is no answer") - kept;
  * - a 2xx whose body could not be READ: the transport failed after the status line - the server may
- *   have taken it, but nothing proves it, and the next attempt is deduplicated by its `messageId` -
- *   kept, logged as a transport failure and not as a non-JSON body (#3366 review, 2026-11-12).
+ *   have taken it, but nothing proves it - kept, logged as a transport failure and not as a non-JSON
+ *   body (#3366 review, 2026-11-12). The retry may deliver the message twice: `mls/push/send` does
+ *   not hand `messageId` to the server's send, so the SERVER deduplicates nothing. The next drain
+ *   encrypts the kept entry afresh (`encryptQueuedMessages`), so the second copy is a new frame
+ *   carrying the same inner message id, and the RECIPIENT drops it: every deduplication of a
+ *   received message compares that id (`addMessageToChat`, chat.md "Every deduplication in the
+ *   application compares ids").
  *
  * The JSON parse stays in the service (`org.json` is Android's); this decides from what the read
  * produced. Compiled by the JVM test project too, so nothing here may import Android - see

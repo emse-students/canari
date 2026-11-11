@@ -46,6 +46,10 @@ describe('HeaderAuthGuard', () => {
     }
   });
 
+  it('answers the same 500 with NO header at all when no secret is configured: the secret is asked first', () => {
+    expect(() => guard.canActivate(makeContext({}))).toThrow(InternalServerErrorException);
+  });
+
   it('refuses a signed token when x-user-id is empty', () => {
     process.env.INTERNAL_SHARED_SECRET = 'test-secret-32bytes-long-enough';
     try {
@@ -59,16 +63,19 @@ describe('HeaderAuthGuard', () => {
   });
 
   it('throws when x-user-logged-in is absent', () => {
+    process.env.INTERNAL_SHARED_SECRET = 'test-secret-32bytes-long-enough';
     const ctx = makeContext({});
     expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
   });
 
   it('throws when x-user-logged-in is "false"', () => {
+    process.env.INTERNAL_SHARED_SECRET = 'test-secret-32bytes-long-enough';
     const ctx = makeContext({ 'x-user-logged-in': 'false' });
     expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
   });
 
   it('throws when x-user-logged-in is "True" (case-sensitive check)', () => {
+    process.env.INTERNAL_SHARED_SECRET = 'test-secret-32bytes-long-enough';
     const ctx = makeContext({ 'x-user-logged-in': 'True' });
     expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
   });

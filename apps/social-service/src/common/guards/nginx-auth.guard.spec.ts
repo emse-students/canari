@@ -48,6 +48,10 @@ describe('NginxAuthGuard (social-service)', () => {
     );
   });
 
+  it('answers the same 500 with NO header at all when the secret is unset: the secret is asked first', () => {
+    expect(() => guard.canActivate(makeContext({}))).toThrow(InternalServerErrorException);
+  });
+
   it('does not need NODE_ENV once the secret and a valid token are present', () => {
     delete process.env.NODE_ENV;
     process.env.INTERNAL_SHARED_SECRET = SECRET;
@@ -75,8 +79,10 @@ describe('NginxAuthGuard (social-service)', () => {
     it('does not accept a bare X-User-Id even when a legacy nginx secret is present', () => {
       // The deleted branch read this variable. Setting it must no longer buy a caller anything.
       process.env.NGINX_AUTH_SECRET = 'legacy-value';
+      // The secret IS set, so the refusal is about the missing internal token, not a 500.
+      process.env.INTERNAL_SHARED_SECRET = SECRET;
       const ctx = makeContext({ 'x-user-id': 'user-1', 'x-nginx-auth': 'legacy-value' });
-      expect(() => guard.canActivate(ctx)).toThrow(InternalServerErrorException);
+      expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
     });
 
     it('throws when X-User-Id is missing', () => {

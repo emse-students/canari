@@ -44,12 +44,18 @@ describe('NginxAuthGuard', () => {
     }
   );
 
+  it('answers the same 500 with NO header at all when no secret is set: the secret is asked first', () => {
+    expect(() => guard.canActivate(makeContext({}))).toThrow(InternalServerErrorException);
+  });
+
   it('throws when X-User-Id is missing', () => {
+    process.env.INTERNAL_SHARED_SECRET = 'test-secret-32bytes-long-enough';
     const ctx = makeContext({});
     expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
   });
 
   it('throws when X-User-Id is an empty string', () => {
+    process.env.INTERNAL_SHARED_SECRET = 'test-secret-32bytes-long-enough';
     const ctx = makeContext({ 'x-user-id': '   ' });
     expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
   });
