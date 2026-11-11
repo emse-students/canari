@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ECOSYSTEM_SITES, type EcosystemSiteContract } from './handoff-sites';
 import { HandoffService } from './handoff.service';
+import type { HandoffAccess } from './handoff-access';
 import {
   HANDOFF_TOKEN_ALG,
   HANDOFF_TOKEN_LIFETIME_SECONDS,
@@ -48,6 +49,8 @@ interface VerifyConfig {
   ledger: Set<string>;
 }
 
+/** MiConnect lets everybody in: what is pinned here is what a SITE does with the token. */
+const OPEN: HandoffAccess = { assertMayEnter: () => Promise.resolve() };
 const LEEWAY_SECONDS = 30;
 
 const decodePart = (part: string): unknown =>
@@ -211,9 +214,9 @@ describe('a token this service mints, redeemed by a site', () => {
     ledger,
   });
 
-  it('is redeemed once, and a replay is refused', () => {
-    const service = new HandoffService(SITES);
-    const token = tokenOf(service.mint('user-a', 'migallery', '/mes-photos', NOW_MS).url);
+  it('is redeemed once, and a replay is refused', async () => {
+    const service = new HandoffService(SITES, OPEN);
+    const token = tokenOf((await service.mint('user-a', 'migallery', '/mes-photos', NOW_MS)).url);
     const ledger = new Set<string>();
     expect(verifyHandoff(token, migallery(service, ledger))).toMatchObject({
       outcome: 'ok',
@@ -223,41 +226,43 @@ describe('a token this service mints, redeemed by a site', () => {
     expect(verifyHandoff(token, migallery(service, ledger))).toEqual({ outcome: 'replayed' });
   });
 
-  it('expires: honoured within the leeway, refused past it', () => {
-    const service = new HandoffService(SITES);
-    const token = tokenOf(service.mint('user-a', 'migallery', '/', NOW_MS).url);
+  it('expires: honoured within the leeway, refused past it', async () => {
+    const service = new HandoffService(SITES, OPEN);
+    const token = tokenOf((await service.mint('user-a', 'migallery', '/', NOW_MS)).url);
     const exp = NOW + HANDOFF_TOKEN_LIFETIME_SECONDS;
     expect(verifyHandoff(token, migallery(service, new Set(), exp + 30)).outcome).toBe('ok');
     expect(verifyHandoff(token, migallery(service, new Set(), exp + 31)).outcome).toBe('expired');
   });
 
-  it('is bound to its audience: a Sky token is refused by MiGallery', () => {
-    const service = new HandoffService(SITES);
-    const token = tokenOf(service.mint('user-a', 'sky', '/', NOW_MS).url);
+  it('is bound to its audience: a Sky token is refused by MiGallery', async () => {
+    const service = new HandoffService(SITES, OPEN);
+    const token = tokenOf((await service.mint('user-a', 'sky', '/', NOW_MS)).url);
     expect(verifyHandoff(token, migallery(service)).outcome).toBe('wrong_audience');
   });
 
-  it('is bound to its user: a sub edited to another account fails the signature', () => {
-    const service = new HandoffService(SITES);
-    const [h, p, s] = tokenOf(service.mint('user-a', 'migallery', '/', NOW_MS).url).split('.');
+  it('is bound to its user: a sub edited to another account fails the signature', async () => {
+    const service = new HandoffService(SITES, OPEN);
+    const [h, p, s] = tokenOf((await service.mint('user-a', 'migallery', '/', NOW_MS)).url).split(
+      '.'
+    );
     const forged = Buffer.from(
       JSON.stringify({ ...(decodePart(p) as object), sub: 'user-b' })
     ).toString('base64url');
     expect(verifyHandoff(`${h}.${forged}.${s}`, migallery(service)).outcome).toBe('invalid');
   });
 
-  it('is wrong_issuer at a site that trusts another estate (dev token, production site)', () => {
+  it('is wrong_issuer at a site that trusts another estate (dev token, production site)', async () => {
     process.env.FRONTEND_URL = 'https://dev.canari.example';
-    const dev = new HandoffService(SITES);
-    const token = tokenOf(dev.mint('user-a', 'migallery', '/', NOW_MS).url);
+    const dev = new HandoffService(SITES, OPEN);
+    const token = tokenOf((await dev.mint('user-a', 'migallery', '/', NOW_MS)).url);
     expect(verifyHandoff(token, migallery(dev)).outcome).toBe('wrong_issuer');
   });
 
-  it('is invalid under a key the site does not hold (a foreign or rotated-out signer)', () => {
-    const service = new HandoffService(SITES);
+  it('is invalid under a key the site does not hold (a foreign or rotated-out signer)', async () => {
+    const service = new HandoffService(SITES, OPEN);
     process.env.HANDOFF_SIGNING_KEY = keyB64();
-    const other = new HandoffService(SITES);
-    const token = tokenOf(other.mint('user-a', 'migallery', '/', NOW_MS).url);
+    const other = new HandoffService(SITES, OPEN);
+    const token = tokenOf((await other.mint('user-a', 'migallery', '/', NOW_MS)).url);
     expect(verifyHandoff(token, migallery(service)).outcome).toBe('invalid');
   });
 });

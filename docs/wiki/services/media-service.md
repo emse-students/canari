@@ -684,7 +684,7 @@ exercised only by gate 3 of the design (S5), not by these specs. (5) Part size, 
 
 **Why.** A single-block blob ends with the one GCM tag that authenticates all of it, so no byte may
 be used before the last one has arrived: a 28 MB reel shows a black box until it is all here
-([backlog](../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken),
+([reels](../frontend/modules/reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29),
 R2). Sealing it in independently authenticated segments is what lets segment 0 play while segment 1
 is on the wire.
 

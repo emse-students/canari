@@ -1125,9 +1125,10 @@ three pushes carry `commentId`, and `socialDeepLink` writes `post/<id>?comment=<
 query, so a build that predates it still opens the post. `appRouteForDeepLink` keeps that one
 parameter (`POST_COMMENT_PARAM`), the post page hands it to `PostComments`, which scrolls the row
 (`id="comment-<id>"`) into view once drawn and rings its bubble; a comment deleted since the push
-leaves the post at its top and logs why. The in-app bell still opens the post without it: the
-notification ROW stores no comment id. Tests: `post-interactions.comment-notify.spec.ts`,
-`push-target.spec.ts`, `deepLinkRoutes.test.ts`, `PostComments.focus.svelte.test.ts`.
+leaves the post at its top and logs why. The in-app bell does the same since 2026-11-11: the row
+has carried `commentId` since migration 132, and `notificationHref` writes the same
+`?comment=` through `postHref`, the one spelling both surfaces share. Tests: `post-interactions.comment-notify.spec.ts`,
+`push-target.spec.ts`, `deepLinkRoutes.test.ts`, `notificationTarget.test.ts`, `PostComments.focus.svelte.test.ts`.
 
 **Not measured on the iPhone yet** - see the verification note appended below when it is.
 

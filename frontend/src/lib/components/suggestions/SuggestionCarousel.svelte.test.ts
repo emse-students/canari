@@ -133,14 +133,65 @@ describe('SuggestionCarousel', () => {
     expect(faces.avatars).toEqual(['ann', 'f1', 'f2', 'f3', 'bob']);
   });
 
-  it('the first card snaps to the inset, not the scroller edge (scroll padding matches px-4)', async () => {
+  it('a card that leaves while a finger is down waits for the touch to end, then lands', async () => {
     renderRow();
     await settle();
-    // snap-start aligns to the snapport, which ignores padding: without scroll-padding the first
-    // card lands flush against the left edge once the row is swiped back.
     const row = document.querySelector('[data-suggestion-id="ann"]')!.closest('ul')!;
-    expect(row.classList).toContain('px-4');
-    expect(row.classList).toContain('scroll-px-4');
+    row.dispatchEvent(new Event('touchstart'));
+    (
+      document.querySelector('[data-suggestion-id="bob"] [data-suggestion-dismiss]') as HTMLElement
+    ).click();
+    await settle();
+    // The server side has the dismissal, but the row under the finger is untouched.
+    expect(api.dismissFollowSuggestion).toHaveBeenCalledWith('user', 'bob');
+    expect(cardIds()).toEqual(['ann', ENTITY, 'bob']);
+    row.dispatchEvent(new Event('touchend'));
+    await settle();
+    expect(cardIds()).toEqual(['ann', ENTITY]);
+  });
+
+  it('with scrollend, a card waits for the momentum after the release, not only for the touch', async () => {
+    vi.stubGlobal('onscrollend', null);
+    renderRow();
+    await settle();
+    const row = document.querySelector('[data-suggestion-id="ann"]')!.closest('ul')!;
+    row.dispatchEvent(new Event('touchstart'));
+    row.dispatchEvent(new Event('scroll'));
+    row.dispatchEvent(new Event('touchend'));
+    (
+      document.querySelector('[data-suggestion-id="bob"] [data-suggestion-dismiss]') as HTMLElement
+    ).click();
+    await settle();
+    expect(cardIds()).toEqual(['ann', ENTITY, 'bob']);
+    row.dispatchEvent(new Event('scrollend'));
+    await settle();
+    expect(cardIds()).toEqual(['ann', ENTITY]);
+  });
+
+  it('a cancelled touch (a scroll took it) also frees the row', async () => {
+    renderRow();
+    await settle();
+    const row = document.querySelector('[data-suggestion-id="ann"]')!.closest('ul')!;
+    row.dispatchEvent(new Event('touchstart'));
+    (
+      document.querySelector('[data-suggestion-id="bob"] [data-suggestion-dismiss]') as HTMLElement
+    ).click();
+    row.dispatchEvent(new Event('touchcancel'));
+    await settle();
+    expect(cardIds()).toEqual(['ann', ENTITY]);
+  });
+
+  it('a card keeps its identity while the list is filtered again', async () => {
+    const { feedSuggestionCards, ensureFeedSuggestions, dismissSuggestion } =
+      await import('$lib/follows/suggestions.svelte');
+    api.getFollowSuggestions.mockResolvedValue({ ...DATA, followingCount: 9 });
+    ensureFeedSuggestions();
+    await settle();
+    const before = feedSuggestionCards();
+    await dismissSuggestion('user', 'bob');
+    const after = feedSuggestionCards();
+    expect(after).toHaveLength(1);
+    expect(after[0]).toBe(before[0]);
   });
 
   it('the X dismisses for good: the card leaves at once and the server is told', async () => {

@@ -26,7 +26,7 @@ import { RefusalCode } from '../utils/refusal-codes';
 import { readCallsMode } from '../utils/calls-mode';
 import { ADMITTED_SEAT, callerSeatStanding, refuseAwaitingSeat } from '../utils/group-membership';
 import { voipRingPayload } from './call-ring-payload';
-import { incomingCallAlertBody } from './push-payload';
+import { incomingCallAlertBody, IOS_CALL_RING_SOUND } from './push-payload';
 import {
   METER_TIMEOUT_MS,
   TurnMeterUnavailableError,
@@ -1100,7 +1100,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * titled "Canari" and reads "Appel entrant" / "Incoming call" in the device's language, with no
    * caller and no conversation name - neither in the alert nor in the payload keys, since FCM
    * merges `data` into the APNs payload too. Since 2026-10-30 no ring payload carries a name on any
-   * platform (`fanOutRing`).
+   * platform (`fanOutRing`). It rings with Canari's own tone (`IOS_CALL_RING_SOUND`), as CallKit does.
    */
   private async ringViaFcm(pt: PushToken, dataFields: Record<string, string>): Promise<boolean> {
     const toIos = pt.platform === 'ios';
@@ -1116,7 +1116,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
                 title: 'Canari',
                 body: incomingCallAlertBody(pt.locale),
               },
-              sound: 'default',
+              sound: IOS_CALL_RING_SOUND,
               'mutable-content': 1,
             },
             ...dataFields,

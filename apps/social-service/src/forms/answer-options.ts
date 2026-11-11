@@ -3,7 +3,11 @@ import { OTHERS_BUCKET_ID, type Dimension } from '../pricing/audience';
 import { allCellKeys, pricedQuestionIds, type PriceMatrix } from '../pricing/price-matrix';
 import { normaliseCondition, type ConditionalItem } from './visibility';
 import { isGuestCell } from './form-option-rules';
-import { FORM_ANSWER_NOT_AN_OPTION, formRefusal } from './answer-bounds';
+import {
+  FORM_ANSWER_NOT_AN_OPTION,
+  FORM_GRID_MULTIPLE_CHOICE_SPLIT,
+  formRefusal,
+} from './answer-bounds';
 
 /**
  * WHAT A PRICED ANSWER MAY SAY, AND WHICH PRICE A GRID MAY NOT FALL BACK TO.
@@ -135,6 +139,63 @@ export function assertDeclaredOptionAnswers(
       );
     }
   }
+}
+
+/**
+ * Refuses a grid criterion on a MULTIPLE-choice question that has more than one group.
+ *
+ * A person may tick options from two groups at once, and `bucketFor` takes the first group, in the
+ * grid's order, that any ticked option matches: the price would then depend on the order of the
+ * groups, and adding an option could pick a cheaper cell. The overlap refusal
+ * (`findOverlappingBuckets`) cannot see this - two groups holding different options do not overlap
+ * as option sets, only as answers. One group (and "everyone else") stays allowed: its cell is either
+ * "ticked at least one of these" or not. Judged at save, on the form as it will be stored.
+ *
+ * On an edit, `stored` is the form as it stands: a split it already holds, unchanged, is let through
+ * and its question id returned, so the caller can count the forms that predate the rule.
+ */
+export function assertMultipleChoiceGridOneGroup(
+  matrix: PriceMatrix | null | undefined,
+  items: readonly PricedItem[],
+  stored?: { matrix: PriceMatrix | null | undefined; items: readonly PricedItem[] }
+): string[] {
+  const kept: string[] = [];
+  for (const dimension of matrix?.dimensions ?? []) {
+    if (dimension.kind !== 'answer' || dimension.buckets.length < 2) continue;
+    const item = items.find((i) => i.id === dimension.questionId);
+    if (item?.type !== MULTIPLE_CHOICE_TYPE) continue;
+    if (stored && storedSplitUnchanged(dimension, stored)) {
+      kept.push(dimension.questionId);
+      continue;
+    }
+    throw formRefusal(
+      FORM_GRID_MULTIPLE_CHOICE_SPLIT,
+      `The price grid splits the multiple-choice question "${item.label ?? item.id}" into ` +
+        `${dimension.buckets.length} groups: a person can tick options of two groups, so the price ` +
+        'would depend on their order. Keep one group for it, or make it a single-choice question.',
+      item.id
+    );
+  }
+  return kept;
+}
+
+/**
+ * Whether a split criterion is the one the form ALREADY stores, on a question it already stored as
+ * multiple-choice: such a grid predates the rule, and refusing it would refuse every later edit of
+ * the form, whatever field it touches. Only a split this edit introduces is refused.
+ */
+function storedSplitUnchanged(
+  dimension: Extract<Dimension, { kind: 'answer' }>,
+  stored: { matrix: PriceMatrix | null | undefined; items: readonly PricedItem[] }
+): boolean {
+  const before = stored.matrix?.dimensions?.find(
+    (d) => d.kind === 'answer' && d.questionId === dimension.questionId
+  );
+  if (!before) return false;
+  if (stored.items.find((i) => i.id === dimension.questionId)?.type !== MULTIPLE_CHOICE_TYPE) {
+    return false;
+  }
+  return JSON.stringify(before.buckets) === JSON.stringify(dimension.buckets);
 }
 
 /**

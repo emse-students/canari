@@ -2112,11 +2112,15 @@ export class SqliteStorage implements IStorage {
   }
 
   /** Delete every stored feed page. See {@link IStorage.deleteFeedPages}. */
-  async deleteFeedPages(): Promise<number> {
+  async deleteFeedPages(keyPrefix?: string): Promise<number> {
+    // `substr`, not `LIKE`: a prefix is literal text, never a pattern.
+    const where = keyPrefix === undefined ? '' : ' WHERE substr(feed_key, 1, length($1)) = $1';
+    const args = keyPrefix === undefined ? [] : [keyPrefix];
     const rows: Array<{ n: number | string }> = await this.db.select(
-      'SELECT COUNT(*) AS n FROM feed_pages'
+      `SELECT COUNT(*) AS n FROM feed_pages${where}`,
+      args
     );
-    await this.db.execute('DELETE FROM feed_pages');
+    await this.db.execute(`DELETE FROM feed_pages${where}`, args);
     return Number(rows[0]?.n ?? 0);
   }
 

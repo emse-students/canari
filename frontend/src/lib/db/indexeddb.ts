@@ -2472,17 +2472,20 @@ export class IndexedDbStorage implements IStorage {
   }
 
   /** Delete every stored feed page. See {@link IStorage.deleteFeedPages}. */
-  async deleteFeedPages(): Promise<number> {
+  async deleteFeedPages(keyPrefix?: string): Promise<number> {
     const db = this.ensureDb();
     const tx = db.transaction('feedPages', 'readwrite');
     const done = idbCommitted(tx);
     const store = tx.objectStore('feedPages');
+    const range =
+      keyPrefix === undefined ? undefined : IDBKeyRange.bound(keyPrefix, keyPrefix + '￿');
     const counted = new Promise<number>((resolve, reject) => {
-      const req = store.count();
+      const req = store.count(range);
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
-    store.clear();
+    if (range) store.delete(range);
+    else store.clear();
     const [count] = await Promise.all([counted, done]);
     return count;
   }

@@ -153,7 +153,7 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
   }
 
   forgetGraineSeedCache(sessionIds);
-  for (const sessionId of sessionIds) forgetAskedSession(sessionId);
+  for (const sessionId of sessionIds) forgetAskedSession(sessionId, 'retention');
   await forgetGraineMirroredSessions(sessionIds, userId);
 
   console.info(

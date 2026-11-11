@@ -32,8 +32,11 @@ export interface DecodedChannelEdit {
  * write, so the three cannot disagree. Every refusal is logged: a dropped edit is silent to the
  * user by design, and the line is all it leaves behind.
  *
- * Only a plain TEXT message is editable. A poll, a notice, a media message and a tombstone are not,
- * and `applyEditToBody` would turn the first two into text, which is why it is checked first.
+ * A plain TEXT message is editable, and a media message's CAPTION (owner, 2026-11-11: the photo
+ * stays, the caption changes, and an empty text removes it). A poll, a notice and a tombstone are not,
+ * and `applyEditToBody` would turn the first two into text, which is why it is checked first. A
+ * reader older than this rule drops a caption edit here as "not plain text" and keeps the old
+ * caption with its photo - never a loss (legacy-compatibility).
  */
 export function applyChannelEdit(
   messages: ChatMessage[],
@@ -41,10 +44,8 @@ export function applyChannelEdit(
   log: (line: string) => void = console.warn
 ): { messages: ChatMessage[]; applied: boolean } {
   const short = edit.targetMessageId.slice(0, 8);
-  if (!edit.targetMessageId || !edit.newContent.trim()) {
-    log(
-      `[CHANNEL] Dropped an edit of ${short || 'no message'} - it names nothing or carries no text`
-    );
+  if (!edit.targetMessageId) {
+    log(`[CHANNEL] Dropped an edit of no message - it names nothing`);
     return { messages, applied: false };
   }
   const idx = messages.findIndex((m) => m.id === edit.targetMessageId);
@@ -59,8 +60,14 @@ export function applyChannelEdit(
     );
     return { messages, applied: false };
   }
-  if (target.isDeleted || target.isSystem || parseEnvelope(target.content).kind !== 'text') {
-    log(`[CHANNEL] Dropped an edit of ${short} - the message is deleted or is not plain text`);
+  const kind = parseEnvelope(target.content).kind;
+  if (target.isDeleted || target.isSystem || (kind !== 'text' && kind !== 'media')) {
+    log(`[CHANNEL] Dropped an edit of ${short} - the message is deleted or is not text or media`);
+    return { messages, applied: false };
+  }
+  // A text needs words; a caption may be emptied.
+  if (kind === 'text' && !edit.newContent.trim()) {
+    log(`[CHANNEL] Dropped an edit of ${short} - it carries no text`);
     return { messages, applied: false };
   }
   // The author's own device applies its edit locally and then receives the same row back: that

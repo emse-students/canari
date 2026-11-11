@@ -52,12 +52,12 @@
   import { bootSessionBlocks } from '$lib/stores/bootSession.svelte';
   import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
   import IdentitySplitOverlay from '$lib/components/shared/IdentitySplitOverlay.svelte';
-  import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { feedStoreAccess } from '$lib/posts/feedStore';
   import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
   import { bindPeerNames } from '$lib/utils/users/peerNameStore';
+  import { bindLocalCopies } from '$lib/localCopies/localCopyStore.svelte';
   import { accountLiveness, clearAuthLocally } from '$lib/stores/auth';
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
@@ -260,15 +260,16 @@
   // The directory opens with the SAME gate as the feed's stored pages: the account on screen, its
   // device key, an unlocked session. While no key is in hand it is closed and rows wait as before.
   $effect(() => {
-    bindPeerNames(
-      feedStoreAccess({
-        currentUserId: currentUserId(),
-        sessionUserId: globalSession.userId,
-        deviceKeyB64: globalSession.deviceKeyB64,
-        isLoggedIn: globalSession.isLoggedIn,
-        unattendedFor: unlockUnattendedFor(),
-      })
-    );
+    const access = feedStoreAccess({
+      currentUserId: currentUserId(),
+      sessionUserId: globalSession.userId,
+      deviceKeyB64: globalSession.deviceKeyB64,
+      isLoggedIn: globalSession.isLoggedIn,
+      unattendedFor: unlockUnattendedFor(),
+    });
+    bindPeerNames(access);
+    // The notification list and the profiles already opened, under the same gate and the same epoch.
+    bindLocalCopies(access);
   });
 
   // ── The calls channel's Do Not Disturb ask (Android, Canari's ring, 2026-11-01) ──────
@@ -775,9 +776,6 @@
     class="app-banner-column z-(--z-banner) flex shrink-0 flex-col"
     inert={bootBlocked}
   >
-    <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
-         property of the whole deployment, so a transient notice must not push it off screen. -->
-    <EnvironmentBanner />
     {#if showMaintenanceAdminBanner}
       <MaintenanceAdminBanner />
     {/if}

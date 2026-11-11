@@ -97,9 +97,16 @@
      * dropdown opens the store is populated, so that path always worked.
      */
     void (async () => {
+      // A list drawn from the device's copy (slow-link chantier, gap 2) already says what was
+      // unread: kept as the band, and the answer's own unread rows join it - never fewer, so a
+      // row the reader saw as new before the answer lands is not demoted by it.
+      const fromCopy = postNotifStore.notifications.filter((n) => !n.read).map((n) => n.id);
       await postNotifStore.load(50);
       openedAt = new Date();
-      unreadAtOpen = new Set(postNotifStore.notifications.filter((n) => !n.read).map((n) => n.id));
+      unreadAtOpen = new Set([
+        ...fromCopy,
+        ...postNotifStore.notifications.filter((n) => !n.read).map((n) => n.id),
+      ]);
       await postNotifStore.markAllRead();
     })();
   });

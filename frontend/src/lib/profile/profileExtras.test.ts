@@ -33,16 +33,16 @@ describe('readProfileExtras', () => {
     expect(parrainage).toHaveBeenCalledWith('u1');
   });
 
-  it('a failed section resolves to its empty value, and the others keep theirs', async () => {
+  it('a failed section is typed unanswered with its empty stand-in, and an empty ANSWER stays distinct', async () => {
     memberships.mockRejectedValue(new TypeError('Failed to fetch'));
     roleHistory.mockResolvedValue([{ role: 'r' }]);
     parrainage.mockRejectedValue(new Error('refused'));
 
     const reads = readProfileExtras('u2');
 
-    expect(await reads.memberships).toEqual([]);
-    expect(await reads.roleHistory).toEqual([{ role: 'r' }]);
-    expect(await reads.parrainage).toBeNull();
+    expect(await reads.memberships).toEqual({ answered: false, value: [] });
+    expect(await reads.roleHistory).toEqual({ answered: true, value: [{ role: 'r' }] });
+    expect(await reads.parrainage).toEqual({ answered: false, value: null });
   });
 });
 
@@ -61,7 +61,7 @@ describe('readProfileWithExtras', () => {
     expect(memberships).toHaveBeenCalledWith('u3');
     expect(roleHistory).toHaveBeenCalledWith('u3');
     expect(parrainage).toHaveBeenCalledWith('u3');
-    expect(await extras.memberships).toEqual([{ id: 'm' }]);
+    expect(await extras.memberships).toEqual({ answered: true, value: [{ id: 'm' }] });
 
     answerProfile('the profile');
     expect(await profile).toBe('the profile');

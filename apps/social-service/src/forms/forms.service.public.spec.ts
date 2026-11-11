@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { FormsService } from './forms.service';
 import { OTHERS_BUCKET_ID } from '../pricing/audience';
+import { FORM_GRID_MULTIPLE_CHOICE_SPLIT } from './answer-bounds';
 
 /**
  * A PUBLIC FORM IS ANSWERED BY SOMEBODY WITH NO ACCOUNT, AND EVERY RULE HERE FOLLOWS FROM THAT.
@@ -567,6 +568,105 @@ describe('FormsService - public forms', () => {
 
     // A charging grid must not give a guest a FREE seat by default. Control (2026-10-22): the
     // `freeFallbackCells` refusal removed from `assertPublicConfigValid` -> the three refusals save.
+    // A multiple-choice answer can tick options of two groups, and the first group in the grid's
+    // order would win: the price would depend on that order (backlog triage of 2026-11-11).
+    describe('a grid on a multiple-choice question', () => {
+      const extras = {
+        id: 'q_extras',
+        label: 'Extras',
+        type: 'multiple_choice',
+        options: [
+          { id: 'opt_a', label: 'A', priceModifier: 0 },
+          { id: 'opt_b', label: 'B', priceModifier: 0 },
+        ],
+      };
+      const twoGroups = {
+        dimensions: [
+          {
+            id: 'd1',
+            kind: 'answer',
+            questionId: 'q_extras',
+            buckets: [
+              { id: 'b1', label: 'A', values: ['opt_a'] },
+              { id: 'b2', label: 'B', values: ['opt_b'] },
+            ],
+          },
+        ],
+        cells: { b1: 1000, b2: 1500, [OTHERS_BUCKET_ID]: 1200 },
+      };
+      const oneGroup = {
+        dimensions: [
+          {
+            id: 'd1',
+            kind: 'answer',
+            questionId: 'q_extras',
+            buckets: [{ id: 'b1', label: 'A ou B', values: ['opt_a', 'opt_b'] }],
+          },
+        ],
+        cells: { b1: 1000, [OTHERS_BUCKET_ID]: 1200 },
+      };
+
+      it('refuses its options in two groups', async () => {
+        const { service, formRepo } = makeService();
+        await expect(
+          service.create(input({ requiresPayment: true, items: [extras], priceMatrix: twoGroups }))
+        ).rejects.toMatchObject({
+          response: { code: FORM_GRID_MULTIPLE_CHOICE_SPLIT, itemId: 'q_extras' },
+        });
+        expect(formRepo.save).not.toHaveBeenCalled();
+      });
+
+      // A form saved before the rule must stay editable: refusing its stored grid would refuse an
+      // edit of its title. Control: drop the `stored` argument in `update` -> the second test fails.
+      it('refuses an edit that INTRODUCES the split on a stored form', async () => {
+        const { service, formRepo } = makeService();
+        jest
+          .spyOn(service, 'assertFormManager')
+          .mockResolvedValue(
+            baseForm({ requiresPayment: true, items: [extras], priceMatrix: oneGroup }) as any
+          );
+        await expect(
+          service.update('f1', { priceMatrix: twoGroups } as any, 'u1', false)
+        ).rejects.toMatchObject({ response: { code: FORM_GRID_MULTIPLE_CHOICE_SPLIT } });
+        expect(formRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('saves an edit of another field on a form that already stores the split, and warns', async () => {
+        const { service, formRepo } = makeService();
+        jest
+          .spyOn(service, 'assertFormManager')
+          .mockResolvedValue(
+            baseForm({ requiresPayment: true, items: [extras], priceMatrix: twoGroups }) as any
+          );
+        const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+        await service.update('f1', { title: 'Gala' } as any, 'u1', false);
+        expect(formRepo.save).toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringMatching(/\[FORM_GRID_SPLIT\] form f1 .*q_extras/)
+        );
+      });
+
+      it('accepts every option in one group', async () => {
+        const { service, formRepo } = makeService();
+        await service.create(
+          input({ requiresPayment: true, items: [extras], priceMatrix: oneGroup })
+        );
+        expect(formRepo.save).toHaveBeenCalled();
+      });
+
+      it('accepts two groups on a single-choice question', async () => {
+        const { service, formRepo } = makeService();
+        await service.create(
+          input({
+            requiresPayment: true,
+            items: [{ ...extras, type: 'single_choice' }],
+            priceMatrix: twoGroups,
+          })
+        );
+        expect(formRepo.save).toHaveBeenCalled();
+      });
+    });
+
     describe('the "everyone else" price of a charging grid', () => {
       const grid = (others: number | null) => ({
         dimensions: [
