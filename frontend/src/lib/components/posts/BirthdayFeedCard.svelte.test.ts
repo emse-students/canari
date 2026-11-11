@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 /**
- * THE BIRTHDAY FEED CARD (docs/wiki/birthdays.md): quiet, shown only once the server has answered
- * that the account has no birthday and has not dismissed the help; the cross and "Ajouter" both
+ * THE BIRTHDAY FEED CARD (docs/wiki/birthdays.md): quiet, shown only once it is KNOWN - from the
+ * server, or from the device's copy of an earlier answer (2026-11-11) - that the account has no
+ * birthday and has not dismissed the help; the cross and "Ajouter" both
  * record the help in the account's server-side set, so it never returns.
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';

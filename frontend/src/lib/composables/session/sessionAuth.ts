@@ -1349,7 +1349,10 @@ export async function loginImpl(
   // already holds is SHOWN before the server has confirmed the device, and if the server then says
   // it is revoked (or the login fails for any other reason) everything drawn is removed and the
   // ordinary consequence follows. It reads and never acts - no request, no write, no MLS
-  // (`landingPreview.ts`). The PIN path cannot start it before the PIN is proven: its device key is
+  // (`landingPreview.ts`). The UNATTENDED HARDWARE-HELD path takes the same trade-off since
+  // 2026-11-11 (slow-link chantier, gap 1): its key is a keystore read that prompts nobody, so it is
+  // read before the token and the stored feed and the landing are drawn before the revocation
+  // answer too, withdrawn the same way if that answer says revoked. The PIN path cannot start it before the PIN is proven: its device key is
   // derived from the server's salt AFTER `pin-check`, so nothing is decryptable before then, which
   // is what keeps the PIN gate's promise by construction rather than by a flag.
   //
@@ -1362,6 +1365,8 @@ export async function loginImpl(
   let landingPreview: Promise<void> | null = null;
   let previewWithdrawn = false;
   let storageOpen: Promise<IStorage> | null = null;
+  /** The unattended hardware-held key read started before the token, never rejects (see below). */
+  let earlyHardwareKey: Promise<void> | null = null;
   const startLandingPreview = (storage: Promise<IStorage>, previewKey: string): void => {
     const preview = cb.previewLandingTarget;
     if (!preview) return;
@@ -1475,24 +1480,35 @@ export async function loginImpl(
       //
       // A read that fails here is not answered here: the init below reads the same alias and meets
       // the same refusal on the login's own path, typed. This line says the early read lost its draw.
-      const early = await readHardwareHeldKey(tauriHardwareKeyPort, ctx.getUserId(), cb.log).catch(
-        (e: unknown) => {
+      //
+      // NOT AWAITED IN LINE: the state lookup and the token below start at once, so a fast link
+      // pays nothing for the draw. The key is installed BEFORE the preview starts, inside the same
+      // continuation, and the login awaits this read before the store and the MLS init are opened.
+      earlyHardwareKey = readHardwareHeldKey(tauriHardwareKeyPort, ctx.getUserId(), cb.log)
+        .catch((e: unknown) => {
           cb.log(
             `[AT_REST_KEY] WARN: the hardware-held key could not be read before the token - nothing drawn before the session (${String(e)})`
           );
           return null;
-        }
-      );
-      stopIfSignedOut('hardware-key-before-token');
-      if (early !== null && !isValidDeviceKeyB64(early)) {
-        cb.log('[AT_REST_KEY] WARN: the keystore answered a key that is not 32 bytes - not drawn');
-      } else if (early !== null) {
-        noteHardwareHeldDeviceKey(early);
-        ctx.setDeviceKey(early);
-        storageOpen = getStorage(ctx.getUserId());
-        startLandingPreview(storageOpen, early);
-        cb.log('[AT_REST_KEY] hardware-held key in hand before the token - local pages may draw');
-      }
+        })
+        .then((early) => {
+          if (early === null) return;
+          if (signedOutSinceStart()) {
+            cb.log('[AT_REST_KEY] signed out while the early key was read - nothing drawn');
+            return;
+          }
+          if (!isValidDeviceKeyB64(early)) {
+            cb.log(
+              '[AT_REST_KEY] WARN: the keystore answered a key that is not 32 bytes - not drawn'
+            );
+            return;
+          }
+          noteHardwareHeldDeviceKey(early);
+          ctx.setDeviceKey(early);
+          storageOpen = getStorage(ctx.getUserId());
+          startLandingPreview(storageOpen, early);
+          cb.log('[AT_REST_KEY] hardware-held key in hand before the token - local pages may draw');
+        });
     }
     if (isBiometric) {
       cb.log('[BIOMETRIC] Skipping PIN verification - using device keystore...');
@@ -1827,6 +1843,10 @@ export async function loginImpl(
     // after `login-start` - and `allSettled` means that number is the SLOWER of two concurrent
     // things, with nothing saying which. Three spans, not one: the two halves overlap by
     // construction, which is what this bench was built to report rather than flatten.
+    // The early hardware-held read (local, long settled by now) finishes before the store and the
+    // init are opened, so the store it opened is the one used and its key is the one compared below.
+    if (earlyHardwareKey) await earlyHardwareKey;
+    stopIfSignedOut('hardware-key-before-token');
     beginBootSpan('mls-init-and-storage');
     const [mlsInitSettled, storageSettled] = await Promise.allSettled([
       timeBootSpan(

@@ -259,6 +259,19 @@ describe('refreshAnnouncement draws the device copy before the network answers',
     expect(localStorage.getItem('canari_announcement:v1:u1')).toBeNull();
   });
 
+  it('a refusal keeps the copy (a 5xx is not "none"), and accuses the refusal', async () => {
+    await anOpeningThatListedIt();
+    vi.doMock('$lib/utils/apiFetch', () => ({
+      apiFetch: vi.fn().mockResolvedValue({ ok: false, status: 503 }),
+    }));
+    const accused = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const mod = await load();
+    await mod.refreshAnnouncement('u1');
+    expect(mod.getPendingAnnouncement()?.id).toBe('a1');
+    expect(String(accused.mock.calls[0][0])).toContain('503');
+    expect(localStorage.getItem('canari_announcement:v1:u1')).not.toBeNull();
+  });
+
   it('is not drawn by another client version, nor for another account', async () => {
     await anOpeningThatListedIt();
     vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch: () => new Promise(() => {}) }));

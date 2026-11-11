@@ -107,8 +107,14 @@ export async function refreshAnnouncement(userId: string): Promise<void> {
       return;
     }
     if (!res.ok) {
+      // A REFUSAL KEEPS THE DEVICE COPY, A COST TAKEN KNOWINGLY (2026-11-11). A non-200 says the ASK
+      // failed, not that nothing is waiting: dropping the copy would read a 5xx as "none". The cost:
+      // an announcement withdrawn on the server (or read on another device) stays drawn from the copy
+      // until an answer of 200 says "none" - at most one opening per refusal, and the refusal is
+      // accused here. A 401 never reaches this line: `apiFetch` throws it as a dead session, and the
+      // sign-out that follows resets this store.
       console.error(
-        `[announcement] the announcement endpoint refused: HTTP ${res.status} on ${url}`
+        `[announcement] the announcement endpoint refused: HTTP ${res.status} on ${url}${held ? ` - device copy ${held.id} kept` : ''}`
       );
       return;
     }

@@ -379,7 +379,7 @@ token and every read held unanswered):
 | Screen | Before | After | Test |
 | --- | --- | --- | --- |
 | Feed, vault/web unlock | 0 RTT (stored page) | 0 RTT | `routes/posts/page.slowLinkFirstPaint.svelte.test.ts` |
-| Feed, hardware-held unattended unlock | never (the key came after the token, then the MLS init) | 0 RTT: one keystore read and one store read, no request | `landingPreviewOrder.test.ts` (the order, in the source - the read and the token race only on a device) |
+| Feed, hardware-held unattended unlock | never (the key came after the token, then the MLS init) | 0 RTT by construction: one keystore read and one store read, no request - **NO BEHAVIOURAL PROOF YET** | `landingPreviewOrder.test.ts` only (the order, in the source - the read and the token race only on a device); **the Mi 9T first-paint reading is owed** |
 | Announcement | never (shown after refresh + 1 RTT: ~4.5 s on the owner's link) | 0 RTT for an announcement already listed | `announcement.test.ts` |
 | Help-seen ready (birthday card, guides, photo prompt) | never (~4.5 s on the owner's link) | 0 RTT on a device the server has answered once | `seenHelps.test.ts` |
 | Own-birthday fact | never (~4.5 s) | 0 RTT after one answer | `ownBirthday.test.ts` |
@@ -396,7 +396,19 @@ token and every read held unanswered):
   the login's own path, typed.
 - **The announcement copy is drawn only by the client version that asked**: the server owns the
   range comparison, and a copy asked by another version says nothing about this one. A dismissal
-  drops the copy, and an answer computed before the "seen" landed does not reopen it.
+  drops the copy, and an answer computed before the "seen" landed does not reopen it. **It waits for
+  the version verdict to settle** (`isVersionVerdictSettled`, a fact, not a clock): a below-minimum
+  or maintenance gate decided a moment later must never have the modal flash in front of it;
+  `/api/version` needs no token, so on a slow link it settles before the refresh does. **A refusal
+  (a 5xx, a 403) keeps the copy**, a cost taken knowingly: a non-200 says the ask failed, not that
+  nothing waits, so an announcement withdrawn on the server stays drawn from the copy until an
+  answer of 200 says "none" - one opening per refusal, each refusal accused at `error`. A 401 never
+  gets there: it is a dead session, and the sign-out resets the store.
+- **The early hardware-held read is not awaited in line**: the state lookup and the token start at
+  once, so a fast link pays nothing; the key is installed before the preview starts, in the same
+  continuation, and the login awaits the read before it opens the store and the MLS init. Like the
+  vault path (the decision of 2026-10-12), it draws the stored feed before the revocation answer,
+  and withdraws it if that answer says revoked.
 - **The help-seen copy is drawn only once a server answer filled it ON THIS DEVICE**: a new device
   still waits, so it never replays a tour finished elsewhere. Taken knowingly: a help finished on
   ANOTHER device since that answer may start here before the revalidation lands.

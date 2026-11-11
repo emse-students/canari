@@ -36,7 +36,7 @@ describe('loginImpl and the landing preview', () => {
       loginBody,
       "if (isBiometric && opts?.unattendedKeyRead === true && atRestScheme === 'hardware') {"
     );
-    const read = at(loginBody, 'const early = await readHardwareHeldKey(tauriHardwareKeyPort');
+    const read = at(loginBody, 'earlyHardwareKey = readHardwareHeldKey(tauriHardwareKeyPort');
     const install = at(loginBody, 'ctx.setDeviceKey(early);');
     const start = at(loginBody, 'startLandingPreview(storageOpen, early);');
     const token = at(loginBody, "accessToken = await untilSignedOut(getToken(), 'access-token');");
@@ -44,6 +44,12 @@ describe('loginImpl and the landing preview', () => {
     expect(read).toBeLessThan(install);
     expect(install).toBeLessThan(start);
     expect(start).toBeLessThan(token);
+    // Not awaited in line (a fast link pays nothing), but settled before the store and the init.
+    const block = loginBody.slice(gate, token);
+    expect(block).not.toContain('await readHardwareHeldKey');
+    expect(at(loginBody, 'if (earlyHardwareKey) await earlyHardwareKey;')).toBeLessThan(
+      at(loginBody, "beginBootSpan('mls-init-and-storage');")
+    );
     // The session's own key read does not start a second preview over the first.
     expect(loginBody).toContain(
       'if (!landingPreview) startLandingPreview(Promise.resolve(storageSettled.value), sessionKey);'
