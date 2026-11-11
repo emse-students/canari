@@ -12,7 +12,11 @@
  * `handoff_redemptions` insert, step 5), admission and the session (steps 6-7). It never logs and
  * never returns the token: the caller logs the outcome's class.
  *
- * Classified by the error's CLASS and its `claim` field, never by its message.
+ * Classified by the error's CLASS and its `claim` field, never by its message. A failure to OBTAIN
+ * the keys (Canari's JWKS unreachable, a timeout, a non-200 or malformed answer) is
+ * `keys_unavailable`, decided where it happens - inside the key resolver - so nothing a token carries
+ * can be classified as an outage: the site answers it 503 and logs it at error, the token's fault
+ * answers 400.
  */
 import { errors, jwtVerify, type JWTVerifyGetKey } from 'jose';
 
@@ -25,6 +29,7 @@ export const HANDOFF_MAX_LIFETIME_SECONDS = 60;
 
 /** Why a token was refused, in the contract's words. */
 export type HandoffRefusalClass =
+  | 'keys_unavailable'
   | 'invalid'
   | 'wrong_issuer'
   | 'wrong_audience'
@@ -65,9 +70,21 @@ export async function verifyHandoff(
   options: HandoffVerifyOptions
 ): Promise<HandoffVerification> {
   const currentDate = options.currentDate ?? new Date();
+  // The resolver's own failures are marked here: an unknown or ambiguous `kid` is the token's
+  // fault; anything else it throws means the keys could not be obtained.
+  const keys: JWTVerifyGetKey = async (header, token) => {
+    try {
+      return await options.keys(header, token);
+    } catch (e) {
+      if (e instanceof errors.JWKSNoMatchingKey || e instanceof errors.JWKSMultipleMatchingKeys) {
+        throw e;
+      }
+      throw new KeysUnavailable(e);
+    }
+  };
   let payload: Record<string, unknown>;
   try {
-    ({ payload } = await jwtVerify(token, options.keys, {
+    ({ payload } = await jwtVerify(token, keys, {
       algorithms: ['ES256'],
       typ: HANDOFF_TOKEN_TYPE,
       issuer: options.issuer,
@@ -96,8 +113,16 @@ export async function verifyHandoff(
   return { outcome: 'ok', claims: { sub, jti, dest, iat, exp } };
 }
 
+/** The key resolver could not obtain Canari's keys; `cause` is what it threw. */
+class KeysUnavailable extends Error {
+  constructor(readonly cause: unknown) {
+    super('handoff keys unavailable');
+  }
+}
+
 /** A jose failure, as the contract's class. Anything unrecognised is `invalid`. */
 function classify(e: unknown): HandoffRefusalClass {
+  if (e instanceof KeysUnavailable) return 'keys_unavailable';
   if (e instanceof errors.JWTExpired) return 'expired';
   if (e instanceof errors.JWTClaimValidationFailed) {
     if (e.claim === 'iss') return 'wrong_issuer';

@@ -2,10 +2,10 @@
  * The source copies of the vendored handoff modules, run against the contract's vectors - the same
  * cases each site's copy runs in its own CI (`make test-ci-scripts`).
  */
-import { describe, expect, it } from 'bun:test';
+import { afterAll, describe, expect, it, spyOn } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createLocalJWKSet, type JSONWebKeySet } from 'jose';
+import { createLocalJWKSet, createRemoteJWKSet, type JSONWebKeySet } from 'jose';
 import {
   HANDOFF_LEEWAY_SECONDS,
   HANDOFF_MAX_LIFETIME_SECONDS,
@@ -23,6 +23,7 @@ const vectors = JSON.parse(
   jwks: JSONWebKeySet;
   cases: Array<{ name: string; token: string; now: number; expect: string; sub?: string }>;
   replay: { token: string; now: number; expect: string[] };
+  keysUnavailable: { token: string; now: number; jwksStatus: number; expect: string };
 };
 
 /** MiGallery-shaped: a same-origin path, never `//host` (the vectors' `bad_dest` is `//evil.example/x`). */
@@ -65,6 +66,64 @@ describe('handoff-verify.ts against libs/contracts/handoff-token.cases.json', ()
       }
     }
     expect(answers).toEqual(vectors.replay.expect);
+  });
+});
+
+describe('handoff-verify.ts while the keys cannot be obtained (the keysUnavailable vector)', () => {
+  const ku = vectors.keysUnavailable;
+  // One local server: `/status` answers the vector's status, `/hang` never answers, `/jwks` serves the keys.
+  const server = Bun.serve({
+    port: 0,
+    fetch: (req) => {
+      const path = new URL(req.url).pathname;
+      if (path === '/jwks') return Response.json(vectors.jwks);
+      if (path === '/hang') return new Promise<Response>(() => {});
+      return new Response('down', { status: ku.jwksStatus });
+    },
+  });
+  afterAll(() => server.stop(true));
+  const at = (path: string, timeoutDuration = 2000) =>
+    verifyHandoff(ku.token, {
+      keys: createRemoteJWKSet(new URL(`http://127.0.0.1:${server.port}${path}`), {
+        timeoutDuration,
+      }),
+      issuer: vectors.issuer,
+      audience: vectors.audience,
+      redirectAllows,
+      currentDate: new Date(ku.now * 1000),
+    });
+
+  it('the same token verifies when the keys answer', async () => {
+    expect((await at('/jwks')).outcome).toBe('ok');
+  });
+  it(`a JWKS answering ${ku.jwksStatus} -> ${ku.expect}`, async () => {
+    expect((await at('/status')).outcome).toBe(ku.expect);
+  });
+  it('a JWKS that times out -> keys_unavailable', async () => {
+    expect((await at('/hang', 50)).outcome).toBe(ku.expect);
+  });
+  it('a JWKS that is unreachable -> keys_unavailable', async () => {
+    const closed = Bun.serve({ port: 0, fetch: () => new Response() });
+    const port = closed.port;
+    closed.stop(true);
+    const r = await verifyHandoff(ku.token, {
+      keys: createRemoteJWKSet(new URL(`http://127.0.0.1:${port}/jwks`)),
+      issuer: vectors.issuer,
+      audience: vectors.audience,
+      redirectAllows,
+      currentDate: new Date(ku.now * 1000),
+    });
+    expect(r.outcome).toBe(ku.expect);
+  });
+  it('an unknown kid stays the token`s fault, not an outage', async () => {
+    const r = await verifyHandoff(ku.token, {
+      keys: createLocalJWKSet({ keys: [] }),
+      issuer: vectors.issuer,
+      audience: vectors.audience,
+      redirectAllows,
+      currentDate: new Date(ku.now * 1000),
+    });
+    expect(r.outcome).toBe('invalid');
   });
 });
 
@@ -137,6 +196,7 @@ describe('handoff-landing.ts', () => {
   });
 
   it('a refusal or no answer is the ordinary login without redirectTo', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
     const refused = (async () =>
       new Response(JSON.stringify({ outcome: 'replayed' }), {
         status: 409,
@@ -146,5 +206,27 @@ describe('handoff-landing.ts', () => {
       throw new TypeError('fetch failed');
     }) as unknown as typeof fetch;
     expect(await redeemHandoff('t', false, down)).toEqual({ kind: 'login', redirectTo: null });
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it('logs a refusal and a failure with the status or the error class, never the token', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const secret = 'secret.token.value';
+    await redeemHandoff(
+      secret,
+      false,
+      (async () => new Response('{}', { status: 503 })) as unknown as typeof fetch
+    );
+    await redeemHandoff(secret, false, (async () => {
+      throw new TypeError('fetch failed');
+    }) as unknown as typeof fetch);
+    const lines = warn.mock.calls.map((c) => c.join(' '));
+    warn.mockRestore();
+    expect(lines).toEqual([
+      '[handoff] redemption refused status=503',
+      '[handoff] redemption failed error=TypeError',
+    ]);
+    expect(lines.some((l) => l.includes(secret))).toBe(false);
   });
 });

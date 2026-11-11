@@ -57,9 +57,14 @@ export async function redeemHandoff(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(confirm ? { token, confirm: true } : { token }),
     });
-    if (!res.ok) return { kind: 'login', redirectTo: null };
+    if (!res.ok) {
+      // The status only, never the token: the page falls back to the ordinary login.
+      console.warn(`[handoff] redemption refused status=${res.status}`);
+      return { kind: 'login', redirectTo: null };
+    }
     body = await res.json();
-  } catch {
+  } catch (e) {
+    console.warn(`[handoff] redemption failed error=${e instanceof Error ? e.name : typeof e}`);
     return { kind: 'login', redirectTo: null };
   }
   return stepOf(body);
