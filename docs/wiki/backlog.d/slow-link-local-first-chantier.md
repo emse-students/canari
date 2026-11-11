@@ -85,3 +85,11 @@ the WASM by ORDER, not by data (WP-W3, diagnosed, not built,
 and the runs its section 8 still owes - delivery at the peer, and the Android and iPhone send, kill
 and relaunch rows on a shaped link
 ([section 8](../frontend/offline-and-weak-network.md#8-not-measured-and-owed)).
+
+**Carried from the attachment-path audit (2026-10-10, its entry closed into this one on
+2026-11-11).** The upload bubble, the 8 MiB body budget, navigation never waiting on a post and
+the upload outside the send lane shipped, and the file's bytes left the outbox row (section 13.7).
+Still real: a CHAT attachment restarts at byte 0 after a failure - only a chat reel (RC-5) and a feed
+post resume, the general writer is S2 of [media-streaming-upload](../services/media-streaming-upload.md)
+([section 13](../frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for));
+and a salon poll is not queued while the link is down.

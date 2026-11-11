@@ -225,7 +225,7 @@ and the picker still opens**. What differs is only what the platform holds.
   `NSError` codes only, through `GalleryLog` (`Logger`, every interpolation `.public` and never a
   label), never a Swift `NSLog` (`nativeLogContent.test.ts`).
 - **Erased at sign-out**, an account switch included (on one install, B signs in only after A
-  signed out, [backlog](../backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)): `eraseAccountShortcuts` asks `clear_share_targets` on iOS too, ALWAYS
+  signed out, [backlog](../backlog.md#owed-a-verification-and-nothing-else)): `eraseAccountShortcuts` asks `clear_share_targets` on iOS too, ALWAYS
   (`force`); it does not ask `clear_conversation_shortcuts`, which stays Android-only: the iOS
   notification extension donates no intent and publishes no shortcut, so there is no second set.
 - **The pick comes back through the Share Extension.** Its `Info.plist` declares
@@ -574,18 +574,18 @@ Android leaves - from there, steps 3 to 6 above are the same code.
 
 ## Owed
 
-- **S5 on the Mi 9T**: the suggestions appear in the sheet after a few conversations; picking one
-  opens the picker with it preselected; the toggle off removes them; a sign-out removes them; a
-  second account never sees the first's - nor its conversation shortcuts (a notification's
-  conversation header, the launcher's long-press menu). `adb logcat -s ShareTargets GalleryPlugin IncomingShare`
-  and the page's `[SHARE]` lines tell each step.
+**Read on the Mi 9T on 2026-10-28** ([readings](../device-readings-2026-10.md#2026-10-28---sharing-on-the-mi-9t-151-rig-builds)):
+a text warm and cold behind the PIN, one and several pictures, a refused stream, an undrained share
+kept across a kill, S3 and S6, and the S5 suggestions appearing in the sheet. Left on the Mi 9T:
 
-- A reading on the Mi 9T: text from Chrome, one and several pictures from the gallery, a PDF from
-  Files, a video; cold start, warm, and with the PIN gate up. And the native half no JVM test reaches:
-  a second share while the first waits (the first's copies go), a share whose every stream is
-  refused while one waits (that one stays, the refusal is told), and a kill then relaunch (orphans
-  swept, the waiting share kept). `adb logcat -s IncomingShare` and the
-  page's `[SHARE]` lines tell each step.
+- **S5**: picking a suggestion opens the picker with it preselected; the toggle off removes them; a
+  sign-out removes them; a second account never sees the first's - nor its conversation shortcuts
+  (a notification's conversation header, the launcher's long-press menu).
+  `adb logcat -s ShareTargets GalleryPlugin IncomingShare` and the page's `[SHARE]` lines tell each step.
+- **Share in**: a PDF from Files and a video, and a second share while the first waits (the first's
+  copies go). A share already drained into the picker dies with its page on a kill (decided
+  2026-11-11); only an UNDRAINED one is kept. `adb logcat -s IncomingShare` and the page's `[SHARE]`
+  lines tell each step.
 - **S4, on the iPhone - nothing on Windows compiles Swift, Objective-C or the iOS `cfg` of the
   Rust**, so CI's archive is the first compile and these are the first proof: Canari in the share
   sheet of Photos (one screenshot, several pictures, a video), Safari (a URL), Notes (text) and Files

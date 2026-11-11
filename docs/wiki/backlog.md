@@ -1334,21 +1334,9 @@ identifier; a push decrypted natively needs the name key on the device before an
 native mirror path, [channel-encryption §4.9](protocols/channel-encryption.md#49-notifications-keep-working-and-the-mirror-gets-a-bound));
 server-side admin and moderation screens list communities by name.
 
-## Orphan media rows: source fixed, one reading owed (2026-10-10)
-
-P3. A `mediaId: ''` placeholder with no outbox entry (Mi 9T, alpha.3) is closed at the source and on screen ([media-frame 7](frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)): `enqueue` and `enqueueOutboxMessage` now REJECT (`OutboxEnqueueError`) with no storage, no controller or a failed durable write, `handleSendChat` withdraws the placeholder before re-staging, and the bubble asks the durable queue (`isOutboxEntryQueued`). OWED: (a) SHIPPED in `v1.3.0` (#2055, WP-CONTROL-NOTICE, [media-frame 7](frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)): a refused reaction/edit/pin/delete wears a mention with "Retry" and a refused delete is no longer tombstoned; owed one look on a phone; (b) the row already stored on the Mi 9T is only cleared by its Delete; (c) a reading of the dark card on the phone.
-
-## Four organisers per event: what is left after the cap (user, 2026-10-10)
-
-P3. The cap (#1721), the stacked faces in the list and day rows, the detail modal's chips with the quiet "n pending" line and the picker's `n / 4` are built ([calendar](frontend/modules/calendar.md), [profiles-and-access](profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)). BUILT 2026-10-17: the month grid's tooltip names every organiser (`eventTooltip`), the ICS summary (the feed and the client's export) and the share title name them as `title - A + B`, `A + N autres` beyond (`eventSummary`, `organisersSummary`); no `+N` tag exists because the cap is four bands and the admin agenda rows already list every co-owner. OWED, unbuilt: (c) DECIDED 2026-10-18: an ACCEPTED co-organisation notifies the organiser, once `minClientVersion` covers #1911 by [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24) ([WP-COORG-ACCEPT-NOTICE](#decided-by-the-user-on-2026-10-18---every-design-question-answered); `CoorganisationService.apply` writes the row and announces nothing today). OWED, a reading: nothing here was rendered on a phone (ring and overlap of the stack, the chips' wrap, the counter).
-
 ## P3 - the iOS factory wipe leaves the App Group copies other than the names (2026-10-19)
 
 The wipe (`clear_app_data`) walks the app data directory and, since WP-MENTION-NAME, removes the App Group `display_names.json`. It still does NOT reach the other App Group copies the account deletion removes (#2100): the mirrored `push_context.json` and the extension's `fcm_message_cache.ndjson`. Unverified whether a wipe leaves them; read the container on a device after a wipe before deciding. Not widened into the names PR on purpose.
-
-## Queued media: bytes still live in the DB row (2026-10-10)
-
-P3. Built in [offline-and-weak-network 13.6](frontend/offline-and-weak-network.md): lazy decode, the `error` parking of an attachment, the banner fix. OWED: (a) a SIZE CAP at compose time for a queued attachment (not recommended, see the P1 section above); the bytes are now OUT of the row ([offline-and-weak-network 13.7](frontend/offline-and-weak-network.md)); (b) the terminal state of a text on a persistent 5xx is BUILT (user, 2026-10-18, [offline-and-weak-network 17](frontend/offline-and-weak-network.md#17-a-text-the-server-keeps-failing-becomes-failed-with-a-retry-user-2026-10-18)), owed one phone reading; (c) a re-read on the iPhone 12 or the Mi 9T of the freeze with a 13 MB attachment queued.
 
 ## P2 - GDPR compliance: the open items of the register (2026-10-16)
 
@@ -1665,56 +1653,6 @@ Seen at 04:36, 04:45, 04:55 and 06:12 on a phone left idle. Not investigated: wh
 
 A product's `customAmountMinCents` / `customAmountMaxCents` can be saved outside 0.50-1000 EUR (`libs/contracts/payment-amount-range.json`), so a buyer is refused by the provider range at checkout for an amount the product itself allows. Owed: the product editor names the range when a bound crosses it ([payments](frontend/modules/payments.md)).
 
-## Sharing into and out of Canari - S1-S4 and S5 (Android) built (user, 2026-10-11, a priority 2026-10-21)
-
-Share IN on Android (S1+S2) and share OUT (S3, [share-out](frontend/share-out.md)) are built; a
-waiting share is erased at sign-out (user, 2026-10-22). The Android share-sheet suggestions (S5) are
-built too: recent conversations as direct targets, erased at sign-out, behind a setting. Owed: the
-iPhone 12 readings, and on the Mi 9T what is listed as owed below.
-**Mi 9T readings, 1.5.1 rig build `da43b8447` on dev (2026-10-28), all `PASS`:** a text share (warm,
-and cold behind the PIN: drained on mount, offered once unlocked) and a photo from the gallery land
-in the picked conversation with the conversation OPEN and the share staged, never sent (#2609); the
-text-only inbox folder is deleted at once and a removed staged file leaves `shared_inbox/` empty
-(#2620); a staged text stays with its conversation across a switch (#2614); a refused stream shows
-the `share_items_lost` toast ("1 item(s) lost" in the log); the keyboard rises with the composer
-and the staged file above it; the system sheet offers three Canari direct-share suggestions (S5); a
-post's sheet opens with its send-to grid, "Copier le lien" and "Partager via...", whose system
-chooser carries the post's link. **Second pass, same build and day, synthetic media only:** S3
-`PASS` - a PNG, a PDF and an MP4 sent into a bench DM each open the system chooser on the decrypted
-file ("Partager l'image" with its preview; "Partage de 1 fichier" named `.pdf` / `.mp4`), the log
-showing `share_staged` with the right type and size; deleting the three messages (one choice, a
-definitive delete) leaves three "message deleted" tombstones, and the last copy stays in `cache/share_out/` until the
-next share, a sign-out or a launch, as [share-out](frontend/share-out.md#the-decrypted-copy-and-how-long-it-lives)
-says (the launch sweep was read: `share_out: 1 removed`). Several photos `PASS` - three PNGs from
-Files in one share: `SEND_MULTIPLE`, `3 stream(s)`, three `copied`, "3 FICHIERS EN ATTENTE" in the
-open conversation; removing all three leaves `shared_inbox/` empty and no manifest. Kill-and-relaunch:
-a text share drained into the "Envoyer a..." picker, then `force-stop`, is **not offered again** -
-the drain had claimed `pending_share.json` (`drained (109 bytes)`), so the share lived only in the
-dead page; [sharing](frontend/sharing.md#owed) expects "the waiting share kept" across a kill, which
-covers an UNDRAINED manifest and says nothing of one already in the picker. S6 from a reel **`FAIL`**:
-publishing a reel from a gallery video works, its sheet draws the grid, "Copier le lien" and
-"Partager via...", but every row does nothing and throws (below), so #2609's dismissal could not be
-read; the same sheet from the reel's `/posts/<id>` page opens the chooser on the dev link. The reel
-was deleted from that page's menu - the viewer itself has no author menu.
-**The undrained half of kill-and-relaunch `PASS`** (Mi 9T, rig build `3ea795fd5`, 2026-10-28): a
-text share into a killed app is written natively at once (`ready` 10 ms after `share received`) and
-drained only at the page's mount, about 2 s later. A `force-stop` 0.8 s after the share left
-`pending_share.json` on disk with no drain line; a plain launcher relaunch drained it on mount (before
-the PIN), and after unlock "Envoyer a..." was offered; choosing the bench DM staged the shared text in
-the composer, unsent. (S6 from a reel and #2609's dismissal read `PASS` once the defect below was
-fixed.)
-**Rig build `5c362c0e1`, same day:** a file saved twice from a conversation (#2648) `PASS` - the
-system save dialog shows the audio type, and the second save of a synthetic `.mp3` is
-`<name> (1).mp3`, no longer `<name>.mp3 (1)`.
-**S4, share IN on iOS, is BUILT (2026-10-22)** now that the App ID `fr.emse.canari.share` (App
-Group) and its `CanariShare` profiles exist: a Share Extension writes into the App Group and the app
-carries the share out of it into the Android layout. Nothing on Windows compiles it, so CI's archive
-is its first compile and the iPhone readings listed under Owed on
-[sharing](frontend/sharing.md#owed) are its first proof - including the secret
-`APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. **The iOS
-suggestions (`INSendMessageIntent`, the S5 twin) are BUILT (2026-10-27, rebuilt on main 2026-11-08)**,
-owed the iPhone readings ([sharing](frontend/sharing.md#share-suggestions-ios---lot-s5)).
-
 ## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
 
 - **A text restored while an edit is open is LOST.** A refused send answered (or a share landing)
@@ -1905,6 +1843,14 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a comment, reply or mention opens the post AT the comment - the push since #2000, the bell row since the backlog triage of 2026-11-11 (`notificationHref`, `?comment=`) ([mobile](frontend/mobile.md#what-every-notification-opens-and-what-was-measured-2026-10-08)) | on the Mi 9T and the iPhone 12: one comment push tapped (app killed and backgrounded) and the same row tapped in the bell - the post opens scrolled to that comment |
 | the CanaReels composer, viewer and editor on real content (`v0.18.32`-`v1.0.2`, [reels](frontend/modules/reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29), [reel-editor](frontend/modules/reel-editor.md)); the bench takes so far were lens-covered | one real-content take on each phone (phone held up); the iOS frame timing of the viewer swipe (the Mi 9T measured 11.5 % janky); the whole editor (text, drawing, stickers, "Suivant") on both phones; and the camera preview no longer echoing the microphone (#1368): film with sound near a speaker, no feedback heard |
 | one A0 export of the Carte de la Vie Asso, timed (D8's cost; D11 wanted it before a stable, the stable went first; [carte-vie-asso](carte-vie-asso.md#the-2026-09-27-audit---how-it-was-measured-and-the-eighteen-decisions-it-produced)) | from the production editor on a desktop browser, a space's carte: export A0, record the time, the tab's peak memory and the PDF size, and re-read the text sizes the way the audit did; then the owner's look at that export (in the table below) |
+| the palette-A trills on the iPhone (#2000, `v1.3.0`; the three files are in the app's and the extension's Resources, and every App Store archive since has copied them), and the generic ring alert of an iPhone with no VoIP token rings Canari's own tone (`IOS_CALL_RING_SOUND`, backlog triage of 2026-11-11) ([sounds](frontend/sounds.md)) | on the iPhone 12, a TestFlight build: a DM, a mention and a reaction each heard as its trill; then, with no VoIP token, one incoming call whose banner rings the C1 tone, not the system's |
+| a deploy's `502`/`503`/`504` is "not now", never a send failure (R05, #3189, `v1.6.10`), and a route that stays dead fails a text with a retry after twelve ([chat](frontend/modules/chat.md#a-deploys-not-now-is-not-a-send-failure-r05-2026-11-09), [offline-and-weak-network 17](frontend/offline-and-weak-network.md#17-a-text-the-server-keeps-failing-becomes-failed-with-a-retry-user-2026-10-18)) | a deploy drill on dev with the Mi 9T and the iPhone 12 sending DM and salon texts throughout: no "Echec", no "Non confirme", "En attente du serveur" while it lasts, each message ONCE on the peer; then the same across a production deploy |
+| one MLS state per account on a native install: `mls.bin` is the signed-in account's slot, every other account's state parked by rename (owner, 2026-11-02; compiled and host-tested only, [auth](frontend/modules/auth.md#one-mls-state-per-account-on-a-native-install-owner-decision-2026-11-02)) | on the iPhone 12 after a pre-release: A -> B -> A -> B, each account opens its messages, the `[MLS_ACCOUNT]` lines show each park and unpark |
+| a refused reaction, edit, pin or delete wears a mention with "Retry", a refused delete is not tombstoned (#2055, `v1.3.0`), and the dark card of an orphan media row ([media-frame 7](frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)) | one look on the Mi 9T: each refused control with its mention, and the card in dark mode |
+| up to four organisers per event: the stacked faces, the detail modal's chips with "n pending", the picker's `n / 4`, the month tooltip ([calendar](frontend/modules/calendar.md)) | one look on a phone at an event with four organisers: the ring and overlap of the stack, the chips' wrap, the counter |
+| a 13 MB attachment: the bytes out of the outbox row, an evicted blob parked as `upload_error` ([offline-and-weak-network 13.7](frontend/offline-and-weak-network.md#137-the-file-leaves-the-outbox-row-bytes-in-indexeddb-a-key-in-the-row-2026-10-11)) | on the Mi 9T, the 13 MB send with its `[OUTBOX] ... durable write took N ms` and `payload read in N ms` lines (peak, wait before the first byte, no freeze); on the iPhone 12, kill the app with a queued 13 MB file and relaunch (the send completes, or the bubble shows `upload_error`), and one real file sent on a bad link (progress, cancel, retry) |
+| sharing into Canari on iOS (S4) and the share suggestions on both systems (S5); Android S1-S3, S5 and S6 passed on the Mi 9T on 2026-10-28 ([readings](device-readings-2026-10.md#2026-10-28---sharing-on-the-mi-9t-151-rig-builds)) | the iPhone 12 rows of [sharing, Owed](frontend/sharing.md#owed) (S4, then S5); on the Mi 9T, what is left in the same list (S5 picking, toggle off, sign-out, second account; a PDF and a video shared in; a second share while the first waits) |
+| a notification tap to a usable conversation: F1 (the conversation drawn from the local store before the session, #1770, `v1.2.6`) and the iPhone path ([latency](frontend/notification-to-conversation-latency.md)) | F1's killed-app run on the Mi 9T against the 2026-10-11 medians; the four readings on an iPhone bench build (`ios.yml` with `local_url`, [iOS](frontend/notification-to-conversation-latency.md#ios-iphone-12---not-measured)) |
 
 ---
 
@@ -2090,41 +2036,7 @@ Four senders' devices sealed seed requests at epochs 135-138 while the key group
 
 ## P2 - A notification tap takes 2.7 s to a usable conversation when killed, 5 s behind the PIN (measured 2026-10-11)
 
-**User goal: tap a message notification, be in the conversation, send a reply - extremely fluid, killed or backgrounded.** Mi 9T, `1.2.3-alpha.5`, dev, medians: warm **<= 0.35 s** to a usable composer; killed with "Rester connecte" **2.7 s**; killed behind the PIN **5.0 s** plus the human typing it; a reply is accepted 0.75-1.1 s after the send button. Ranked costs and the plan F1-F8: [notification-to-conversation-latency](frontend/notification-to-conversation-latency.md). **Since (2026-10-12)**: F2 (#1751, composer 5.06 -> 3.83 s) and F3 (#1752, gate 2.19 -> 1.74 s) SHIPPED in `v1.2.4`; F5 was REFUTED (#1753: the resume starts ~50 ms after the tap, the warm wait is the `/chat` render). F1 (opening from the local store before the session is up) shipped in `v1.2.6` (#1770; measured on the Mi 9T before merge: history -0.6 s and routing -0.5 s, composer unchanged or slightly slower on a good network, vault 2630 -> 2792 ms; on a slow network the pane no longer waits for the session, n=2; the preview's ~380 ms store open on Tauri is its remaining cost): owed a phone reading. **Leads left**: a killed-app notified message arrives ~1.2 s after the conversation is drawn; the thread render costs ~0.3 s; the per-request cost behind the edge. **T1 (push-to-banner latency) cannot be measured on dev**: dev has no `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` (owed table). F4 is a user decision. **Owed**: the same readings on the iPhone (bench build with the inspector) and on a production-sized state.
-
-## P2 - Weak network, the attachment path after WP-OFF-8 (audit 2026-10-10)
-
-Prioritised list and numbers: [offline-and-weak-network section 13](frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for). Built: the upload bubble (progress, cancel, retry, refusal) and the 8 MiB body budget (WP-OFF-8), navigation never waiting on the profile call or a post (WP-NAV-1), the upload running outside the lane so a text sent behind a big file does not wait for it (WP-OFF-9, section 13.8). **Open**: every failed upload restarts at byte 0 (resumable chunks need a server offset route, RC-5); a salon poll is still not queued (WP-OFF-3 queues a salon text, edit or reaction, and since 2026-11-02 a salon attachment is drawn at the tap with its upload on its row: [chat](frontend/modules/chat.md#a-salon-attachment-is-drawn-at-the-tap-and-its-row-carries-its-upload-2026-11-02)); the file sits in the outbox row and three times in memory per attempt. **Owed ONE look on the iPhone** with a real file on a bad link.
-
-## P3 - iOS notification sounds still play the default tone (palette A is Android and in-app only, 2026-10-09)
-
-**SHIPPED in `v1.3.0` (#2000):** the three Android files bundled in the app and the extension by reference, the server naming one per push, the extension setting the mention trill ([sounds](frontend/sounds.md)). **Owed**: an `ios.yml` compile check showing the three files copied into both bundles, then a listen on the iPhone 12 (DM, mention, reaction). The call ring (`calls.service.ts`) keeps `'default'` while calls are held off in production.
-
-## Seen on the 2026-10-09 bench runs (around `v1.2.1`)
-
-### P1 - a tab or app open across a production deploy sees the outage as "Échec de l'envoi"
-
-The 1-2 min a prod deploy takes answers `502`, and a send in that window shows "Échec de l'envoi". Clients older than `1.2.1` then stayed blocked by the key-group epoch bug ([channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09)), but the deploy outage is user-visible on its own. **SHIPPED in `v1.3.0` (PK6, #2004): a release starts each new replica beside the old one and drains the old one** ([cicd](cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)); a fixture test sends throughout and sees no failure. **The client half is BUILT (2026-11-09, R05, branch `fix/deploy-outage-is-not-a-send-failure`):** what was left of the symptom was the CLIENT reading a deploy's answers as failures - five `502`/`503`/`504` in a row parked a DM text as "Echec" (each held a one-minute floor, no reconnect resuming it), and one on a salon text drew it "non confirme" until its author retried. They are now typed "not now" at the throw (`unavailableAnswer.ts`, `SendUnavailableError`), held on the plain ladder and resumed by a reconnect, shown "En attente du serveur", and only a refusal - or twelve "not now" in a row with no success between, a route that stays dead - fails a send; each repeat carries its client id ([chat](frontend/modules/chat.md#a-deploys-not-now-is-not-a-send-failure-r05-2026-11-09)). **Owed - the reading:** a deploy drill on dev with the Mi 9T and the iPhone 12 sending DM and salon texts throughout (no "Echec", no "Non confirme", "En attente du serveur" while it lasts, each message ONCE on the peer), then the same on a production deploy; the CI case that still saw two `502`s is [the rolling-replace P2](#p2---the-deploys-rolling-replace-two-posts-answered-502-across-a-release-cause-not-settled-ci-2026-10-22).
-
-### P2 - media-service and call-service still have a gap on each release
-
-Both are `exclusive` in the deploy ([cicd](cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)): media-service keeps its metadata index as one JSON file on the `media_meta` volume, which two replicas would both write, and call-service keeps rooms in memory. An upload or a call started in those few seconds fails. Closing it means moving the index into Postgres (media) and accepting that a release ends a call, or handing rooms over.
-
-### P2 - iPhone: once, a message that arrived while the app was killed left no unread dot
-
-Neither the tab nor the salon showed one. Not reproduced.
-
-### P3 - switching accounts on one iPhone install makes the local store unreadable
-
-The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.
-A candidate cause is fixed in #1862 (`v1.2.8`: the MLS client and its device id survived a sign-out into the next account's login, [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14)).
-**The vault half is fixed (2026-10-14)**: the device-key vault names its account, so B is never handed A's key and never rotates A's `mls.bin` ([auth](frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
-**The owner record SHIPPED in `v1.3.0` (PK1, #2001)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, a state reset (`terminer_session_mls`) removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected.
-**One state per account, built (owner decision, 2026-11-02)**: `mls.bin` is now the signed-in account's slot and every other account's state is parked whole under `mls_accounts/<sha256(id)>/`; `initialiser_mls` switches them by RENAME before it reads anything, ownership proven by `mls.owner` alone, an unrecorded state never moved ([auth](frontend/modules/auth.md#one-mls-state-per-account-on-a-native-install-owner-decision-2026-11-02)). Verified by compiling and host tests only. **Owed: one A -> B -> A -> B reading on the iPhone 12 bench phone (`tools/ios-device`) after a pre-release** - each account opens its messages, `[MLS_ACCOUNT]` lines show each park and unpark; delete this entry then.
-
-### P3 - the per-community triplet, ETag/304 and the Mi 9T's two `history-request`
-
-`devices`, `users/<id>/groups` and `unread-counts` are single-flight since [section 18](frontend/offline-and-weak-network.md#18-wp-w4-first-part-the-account-level-reads-of-a-boot-are-shared-while-in-flight-2026-10-18) and [section 19](frontend/offline-and-weak-network.md#19-wp-w4-second-part-unread-counts-is-one-request-per-boot-ordered-after-the-read-mark-flush-2026-10-19); `register-device` stays, it is the liveness clock. Left: the per-community triplet in one call, ETag/304, and whether the Mi 9T's two `history-request` hit one group.
+**Re-read 2026-11-11.** The goal (user): tap a message notification, be in the conversation, reply - fluid, killed or backgrounded. Measured on the Mi 9T on 2026-10-11: warm <= 0.35 s, killed 2.7 s, behind the PIN 5.0 s. F1-F3 and F9-F12 shipped since, F5 and F13 measured to nothing ([notification-to-conversation-latency](frontend/notification-to-conversation-latency.md)). **Left**, ranked by evidence ([the page](frontend/notification-to-conversation-latency.md#what-is-left-after-f9-to-f13-ranked-by-evidence-2026-10-12)): the thread mount, ~0.3 s of main thread warm or killed - the same work as the salon-page mount of [the community-open budget](frontend/community-open-budget.md); the ~150-250 ms each request pays behind the edge (infrastructure); F6-F8, not built. F4 (making the no-PIN path the expected one) is the owner's call. T1 (push to banner) needs the dev Firebase secret, owed by the user. The readings (F1 on the Mi 9T, the four on an iPhone bench build) are a row of [the verification table](#owed-a-verification-and-nothing-else).
 
 ## Seen on the 2026-10-13 bench pass (Mi 9T `v1.2.6-alpha.1`, iPhone `1.2.3-alpha.5`)
 
@@ -2432,7 +2344,7 @@ Still so (`presenceStore.ts`). DECIDED 2026-10-18: presence is visible to those 
 
 Open: a client-to-server write (migration) so `reportStrandedDeviceMemberships` can join the reason; read
 the first real `skipped` lines before designing it
-([detail](protocols/campaign-measured-defects.md#a-roster-seat-without-a-welcome---the-typed-reason-prod-2026-09-01)).
+([detail](protocols/campaign-measured-defects.md#a-roster-seat-without-a-welcome---the-typed-reason-prod-2026-09-01)). Decided by the user on 2026-10-10: an additive column, one field in the hourly report.
 
 ### P1 - the placeholder is GONE from prod; what it may have left in the MLS TREE is not answered
 
@@ -2442,7 +2354,7 @@ answered only from a member's own client, which reads the tree
 
 ### P2 - a re-admitted device calls its own exclusion window a loss, and reconciles for it (2026-08-26, widened 2026-08-30)
 
-Not built: an ENTITLEMENT FLOOR per group at every entitlement START (re-admission AND a fresh device after
+Not built (queued by the user on 2026-10-10: designed in the wiki first, then built under an adversarial review): an ENTITLEMENT FLOOR per group at every entitlement START (re-admission AND a fresh device after
 a revocation wipe), keyed on the stream position or a surfaced frame epoch. Confirm with GRP-8 AND
 HEAL-REVOKE-5. Never read "no fingerprint repeats across runs" as "new messages". **The policy question
 is DECIDED (user, 2026-10-14): a Remove holds**, and answering peers now withhold every member's
@@ -2742,14 +2654,6 @@ WP-A (#1582), WP-B (#1584), the star reading its audience (#1593), the nominativ
 - **Ambiguity to answer:** what "an institution of another campus" means for a reader (the grant reaches it today).
 - The document-reviewer rows were NOT moved into the grants table (a separate capability on the same page).
 
-## Decided by the user on 2026-10-11
-
-- **Standing release authority.** The lead agent arms a pull request after an adversarial review and a green CI, and cuts pre-releases AND stables once the pre-release has been read on a phone and nothing blocks, informing the user each time. It replaces the 2026-10-01 rule (the stable only on the user's explicit go). Still asked first: a direct production change (a hand edit on the host, a production setting such as `minClientVersion`), a data migration or backfill, any deletion of data. Rule: [durable-rules](durable-rules.md#release-and-ci---cicd).
-- **`minClientVersion`** follows [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24).
-- **No native camera access, anywhere.** The new-post composer and the chat each get ONE "Ouvrir la camera" entry that opens the in-app CanaReel camera; the gallery picker stays. This replaces the chat's `capture` inputs ([chat](frontend/modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). The media's retention class follows its DESTINATION: a post takes the post class, a published reel `reel` (30 days), a chat send `chat-reel` (30 days, [reels-in-chat](frontend/modules/reels-in-chat.md#91-decided---the-ui-target-is-snapchat-user-2026-10-09)). Built: #1859, `v1.2.9`.
-- **CanaReels in chats is a chantier, RC-0 to RC-11, and RC-0 (the measurement, no code) comes first** ([reels-in-chat](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order)).
-- **The Pixel 6a is the user's personal phone: observation only.** No install, reset, sign-in or driving by an agent; a reading on it is the user's own look ([device-verification](device-verification.md)). The bench is the Mi 9T and the iPhone 12.
-
 ## Decided by the user on 2026-10-18 - every design question answered
 
 Each line: the decision, its scope as a work package (WP), and what blocks it. Rows elsewhere in this file point here. Also standing: the lead may cut STABLE releases without asking each time (under the 2026-10-11 authority above).
@@ -2764,7 +2668,7 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 - **WP-MIGALLERY-OFFSITE (M, ops + a MiGallery PR, no native): MiGallery's offsite backup goes to Canari's own offsite server**, Needs the offsite server's access arranged (private notes); a restore test.
 - **WP-MENTION-NAME (M, native Android and iOS, OPUS): a mention notification names its author from the phone's local copy of names**, "someone" if unknown; the name never rides the push. Owed: one look on each phone, and on the Mi 9T whether the COLLAPSED shade shows only the first line of a mention (the author line is line 1 of the message and may hide the text). **SHIPPED in `v1.3.1` (#2047)**: the author on a salon banner (an MLS banner already names its sender), and the mentioned person inside the text from the same copy.
 - **WP-PUSH-I18N (M, Rust + native readings, OPUS): the 16 notification sentences of `mobile/proto_fields.rs` are translated in Rust from the app language, and a voice note stops being announced as an audio file.** One implementation for Android and iOS; a reading on each. **SHIPPED in `v1.3.0` (#2037)** (`mobile/push_text.rs`), owed the two readings.
-- **WP-COORG-ACCEPT-NOTICE (S-M, server + native tables, no MLS): notify the organiser when a co-organisation is accepted** (`CoorganisationService.apply`), a push content in the Android, iOS and NSE tables like `coorganise_proposed`. **Blocks: ships only once `minClientVersion` covers the unknown-type fix (#1911, `v1.2.9`)**, by [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24).
+- **WP-COORG-ACCEPT-NOTICE (S-M, server + native tables, no MLS): notify the organiser when a co-organisation is accepted** (`CoorganisationService.apply`), a push content in the Android, iOS and NSE tables like `coorganise_proposed`. **Re-read 2026-11-11: half covered, the blocker lifted.** An acceptance on a VALIDATED event already notifies the organiser, the partners and the validators (`event_pending_coorganiser`, WP-Q2 #2973, `announceEventReopened`); an acceptance on a PENDING event still announces nothing - that is what is left. The floor it waited for (#1911, `v1.2.9`) is far below every estate's `minClientVersion` now.
 - **WP-NICK-COMMUNITY-RULES (part of the nicknames build, S): in a community the renamed person sees "set by X"**, and **a nickname STAYS when its setter leaves** (the target may always reset it); same for groups. Closes the two questions left open in the nicknames entry.
 - **DECIDED, NO WORK: the stale "added a member to the group" bubbles on devices from before #1870 are left alone** (no data deletion; they age out of view).
 - **DECIDED, NO WORK: iOS keeps its native stacking of post reactions** under `post_reaction_<postId>`; no NSE merge.
