@@ -16,7 +16,7 @@ import {
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { Throttle } from '@nestjs/throttler';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
-import { ChannelService, roleLabelOfBody } from './channel.service';
+import { COMMUNITY_BOOT_READS_MAX, ChannelService, roleLabelOfBody } from './channel.service';
 import {
   type AcceptWorkspaceInviteDto,
   type ChannelInviteDto,
@@ -97,6 +97,32 @@ export class ChannelsController {
   @Get('workspaces/user/me')
   listWorkspaces(@Headers('x-user-id') xUserId: string) {
     return this.service.listWorkspacesForUser(xUserId.trim().toLowerCase());
+  }
+
+  /**
+   * The salon listing of several communities in one answer (`?ids=a,b,c`, at most
+   * {@link COMMUNITY_BOOT_READS_MAX}): database reads only, so the salon rows never wait on
+   * chat-delivery. NOT the key-group reference: that one is read after MLS is ready (see the
+   * service method). Each item carries its own refusal, so one refused community never fails the
+   * rest. The per-community routes stay, for the clients that predate this one.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('workspaces/boot-reads')
+  listCommunityBootReads(@Headers('x-user-id') xUserId: string, @Query('ids') ids?: string) {
+    const list = (ids ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0);
+    if (list.length === 0) {
+      throw new HttpException('ids is required', HttpStatus.BAD_REQUEST);
+    }
+    if (list.length > COMMUNITY_BOOT_READS_MAX) {
+      throw new HttpException(
+        `at most ${COMMUNITY_BOOT_READS_MAX} ids per request`,
+        HttpStatus.BAD_REQUEST
+      );
+    }
+    return this.service.listCommunityBootReads(xUserId.trim().toLowerCase(), list);
   }
 
   /** Persists the order of a community's salons for every member. Needs MANAGE_CHANNEL. */

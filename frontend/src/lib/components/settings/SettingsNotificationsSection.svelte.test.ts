@@ -105,6 +105,8 @@ describe('SettingsNotificationsSection', () => {
       '[data-category-push="suggestions"] input[type="checkbox"]'
     )!;
     expect(push.checked).toBe(false);
+    // Switch on the right, like its neighbours (no icon tile in Notifications).
+    expect(push.closest('label')?.lastElementChild).toBe(push.parentElement);
     expect(switchOf('suggestions').getAttribute('aria-checked')).toBe('true');
     push.click();
     await settle();

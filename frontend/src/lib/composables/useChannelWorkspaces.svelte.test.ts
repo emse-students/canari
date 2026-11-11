@@ -76,6 +76,12 @@ const sendEncryptedChannelMessage = vi.fn();
 
 const listUserWorkspaces = vi.fn();
 const listChannels = vi.fn();
+/** What a load hands the walk: its listings (the route here) and the release it must run. */
+const releaseBootReads = vi.fn();
+const startCommunityBootReads = vi.fn(() => ({
+  listChannels: (id: string) => listChannels(id),
+  release: releaseBootReads,
+}));
 const createWorkspace = vi.fn();
 const createChannel = vi.fn();
 const renameChannel = vi.fn();
@@ -90,6 +96,7 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
   ChannelService: class MockChannelService {
     listUserWorkspaces = listUserWorkspaces;
     listChannels = listChannels;
+    startCommunityBootReads = startCommunityBootReads;
     createWorkspace = createWorkspace;
     createChannel = createChannel;
     renameChannel = renameChannel;
@@ -312,6 +319,62 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
     expect(ctx.log).toHaveBeenCalledWith('[WORKSPACE-LOAD] 1/2 community(ies) failed to load');
     expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
     expect(store.workspacesLoadError).not.toBeNull();
+  });
+
+  it('asks the batched listing for exactly the walked communities and releases it when a chain fails', async () => {
+    listUserWorkspaces.mockResolvedValue([
+      makeWorkspaceDto('ws1', 'One', 'one'),
+      makeWorkspaceDto('ws2', 'Two', 'two'),
+    ]);
+    listChannels.mockImplementation((workspaceId: string) =>
+      workspaceId === 'ws1'
+        ? Promise.reject(new SessionExpiredError())
+        : Promise.resolve([makeChannelDto('c2', 'deux')])
+    );
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    await store.loadChannelWorkspacesFromBackend(ctx);
+
+    // The ids of THIS walk, and the load's own log (so a failed batch reaches the in-app log).
+    expect(startCommunityBootReads).toHaveBeenCalledWith(['ws1', 'ws2'], ctx.log);
+    // One failing chain does not skip the release: the walk's hold never outlives it.
+    expect(releaseBootReads).toHaveBeenCalledTimes(1);
+    expect(store.workspacesLoadError).not.toBeNull();
+  });
+
+  it('starts the batched listing without waiting for it: the key-group join runs while it is out', async () => {
+    listUserWorkspaces.mockResolvedValue([
+      makeWorkspaceDto('ws1', 'One', 'one'),
+      makeWorkspaceDto('ws2', 'Two', 'two'),
+    ]);
+    const answerListing: ((rows: ChannelDto[]) => void)[] = [];
+    startCommunityBootReads.mockImplementationOnce(() => ({
+      // The batch is still on the wire: no listing has been handed out yet.
+      listChannels: () => new Promise<ChannelDto[]>((resolve) => answerListing.push(resolve)),
+      release: releaseBootReads,
+    }));
+    ensureCommunityDistributionGroup.mockClear();
+
+    setMlsReady(true);
+    try {
+      const store = useChannelWorkspaces();
+      const ctx = makeContext({ ensureMls: vi.fn().mockResolvedValue({}) } as never);
+      const promise = store.loadChannelWorkspacesFromBackend(ctx);
+      await tick();
+      await tick();
+
+      // The chains began (and the join was reached) one round trip before the batch could answer.
+      expect(startCommunityBootReads).toHaveBeenCalledTimes(1);
+      expect(ensureCommunityDistributionGroup).toHaveBeenCalled();
+      expect(releaseBootReads).not.toHaveBeenCalled();
+
+      for (const answer of answerListing) answer([makeChannelDto('c1', 'un')]);
+      await promise.catch(() => {});
+      expect(releaseBootReads).toHaveBeenCalledTimes(1);
+    } finally {
+      setMlsReady(false);
+    }
   });
 
   it('refreshes a channel already in the sidebar rather than ignoring it (COMM-13)', async () => {

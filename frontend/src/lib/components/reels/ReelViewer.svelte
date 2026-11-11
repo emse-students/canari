@@ -891,22 +891,18 @@
         <X size={26} strokeWidth={2.5} class="drop-shadow-md" />
       </button>
       {#if orderChoice}
-        <!-- "Pour toi" / "Récents" (owner, 2026-11-10): on a surface of its own, so both labels
-             read on a bright reel and on black alike. The empty box after it balances the X. -->
-        <div
-          class="pointer-events-auto mt-1 rounded-xl bg-(--cn-surface) shadow-md {orderChoice.busy
-            ? 'opacity-70'
-            : ''}"
-          data-reel-order
-        >
+        <!-- "Pour toi" / "Récents" (owner, 2026-11-10; restyled 2026-11-11 as TikTok and Instagram
+             draw it): bare white tabs on the video, the selected one brighter and underlined, a
+             text shadow keeping both readable on a bright reel. The empty box after it balances the X. -->
+        <div class="pointer-events-auto {orderChoice.busy ? 'opacity-70' : ''}" data-reel-order>
           <SegmentedControl
             items={REEL_ORDERS.map((key) => ({ key, label: REEL_ORDER_LABELS[key]() }))}
             value={orderChoice.value}
             onSelect={(key) => orderChoice.onChange(key)}
             label={m.reels_order_label()}
-            tone="yellow"
+            variant="overlay"
             activation="manual"
-            class="w-48"
+            class="w-56"
           />
         </div>
         <span class="w-11 shrink-0" aria-hidden="true"></span>

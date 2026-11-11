@@ -57,6 +57,10 @@ vi.mock('$lib/services/ChannelService', () => ({
   ChannelService: class {
     listUserWorkspaces = listUserWorkspaces;
     listChannels = listChannels;
+    startCommunityBootReads = vi.fn(() => ({
+      listChannels: (id: string) => listChannels(id),
+      release: () => {},
+    }));
     createWorkspace = createWorkspace;
     createChannel = createChannel;
   },
