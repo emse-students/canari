@@ -97,8 +97,9 @@ export class PlatformService implements OnModuleInit {
 
   /**
    * The read every concurrent {@link getConfig} caller joins - ONE in flight, never a TTL cache: it is
-   * dropped the moment it settles, and a config write drops it too, so no caller that arrives after
-   * a write returned joins a read that started before it.
+   * dropped the moment it settles, and a config write drops it too, so no caller IN THIS PROCESS
+   * that arrives after a write returned joins a read that started before it. Another replica is not
+   * told: it may answer a pre-write value for the time of one query it started before the write.
    */
   private configInFlight: Promise<PlatformConfigPublic> | null = null;
 

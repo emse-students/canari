@@ -17,8 +17,9 @@ look up. The row backs the REFRESH token, and carries `sid` + `jti`
 `auth_request` location runs, `/api/auth/verify`, also reads that row by `sid`, so through those
 locations an access token lives no longer than its session ([below](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)). The
 verifier's other read, the platform config for the maintenance check, is ONE query and shared by
-every request in flight at once (`PlatformService.getConfig`, 2026-11-11: never a TTL cache, and a
-config write drops the shared read). On Android a session may also
+every request in flight at once IN THIS PROCESS (`PlatformService.getConfig`, 2026-11-11: never a
+TTL cache, and a config write drops the shared read - another replica of core-service may still
+answer from a read it started before the write, for the time of that one query). On Android a session may also
 own ONE restore key, which dies with the row and moves the session to a new phone rather than adding
 one ([account-restore](account-restore.md)).
 

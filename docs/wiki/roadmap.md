@@ -120,7 +120,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 
 ## Annex A - every row of the backlog
 
-326 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
+325 rows, one per heading and per table row of [backlog.md](backlog.md). State, blocker and topic were classified from the first lines of each section (skim level): **read the linked section before acting on a row.**
 
 | ID | Item | Pri | Topic | State | Blocked by | Where |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -415,7 +415,6 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | B338 | P3 - the vendored websocket plugin: four upstream behaviours found by the review of #2167 | P3 | android | open | none | `docs/wiki/backlog.md#p3---the-vendored-websocket-plugin-four-upstream-behaviours-found-by-the-review-of-2167` |
 | B339 | P3 - Android lint crashes on the Gradle build script, and no CI gate runs Android lint (found 2026-10-20) | P3 | android | open | none | `docs/wiki/backlog.md#p3---android-lint-crashes-on-the-gradle-build-script-and-no-ci-gate-runs-android-lint-found-2026-10-20` |
 | B340 | Found by the dev payment end-to-end of 2026-10-21 (Lydia, sandbox) | none | other | open | none | `docs/wiki/backlog.md#found-by-the-dev-payment-end-to-end-of-2026-10-21-lydia-sandbox` |
-| B341 | P3 - legacy link seats written before migration 038 would now be listed by the group panel (found 2026-10-25) | P3 | communities | open | production count | `docs/wiki/backlog.md#p3---legacy-link-seats-written-before-migration-038-would-now-be-listed-by-the-group-panel-found-2026-10-25` |
 | B342 | an iPhone's salon banner for a session started while it was shut (NOTIF-20's NSE half) | P1 | push-notifications | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B343 | a shut phone joins a salon key group from the push; iOS at the next foreground (#2266) | none | push-notifications | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
 | B344 | a shut phone one commit behind catches up in any community (Mi 9T) | none | communities | built-readings-owed | hardware reading | `docs/wiki/backlog.md#owed-a-verification-and-nothing-else` |
@@ -453,7 +452,7 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 
 ## Annex B - every fragment, question, owed procedure, shim and unwatched mechanism
 
-258 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
+259 rows from [backlog.d](backlog.d/README.md), [open-questions](open-questions.md), [device-verification](device-verification.md), [legacy-compatibility](legacy-compatibility.md), [mechanism-audit](mechanism-audit.md) and the work-package tables of [engagement](engagement.md).
 
 | ID | Source | Item | Pri | Topic | State | Date or version | Blocked by |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -715,3 +714,4 @@ Relative windows with no calendar date (a quiet week, deploy + 1 hour, 7 days un
 | D261 | `docs/wiki/backlog.d/p3-a-90-px-keyboard-leaves-the-composer-12-px-low-for-24-ms.md` | A 90 px keyboard leaves the composer 12 px low for 24 ms on 3 of 5 rises: a per-frame record owed | P3 | android | open | 2026-10-13; 2026-11-11 | hardware reading |
 | D262 | `docs/wiki/backlog.d/a-file-question-on-a-public-form-needs-an-abuse-design.md` | A file question on a public form: an abuse design first (quota, size cap, scan, purge) | none | ecosystem-sites | decided-not-built | 2026-10-15; 2026-11-11 | a design |
 | D263 | `docs/wiki/backlog.d/p3-what-the-offline-cold-start-fix-still-leaves-open.md` | What the offline cold start fix still leaves open: the push context after an offline start, our own devices re-asked, a stale onLine | P3 | other | open | 2026-10-15; 2026-11-11 | none |
+| D264 | `docs/wiki/backlog.d/shop-and-form-follow-ups-of-2026-10-29.md` | Shop and form follow-ups of 2026-10-29: one money formatter, the unpriced base tier, typed form items and prices, a keyboard for the amount keypad | P2 | other | open | 2026-10-29; 2026-11-12 | owner decision (the unpriced base tier) |
