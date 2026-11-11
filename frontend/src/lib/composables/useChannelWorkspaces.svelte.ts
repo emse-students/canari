@@ -15,6 +15,7 @@ import {
 } from '$lib/stores/auth';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import type {
+  CommunityBootReads,
   WorkspaceDto,
   ChannelDto,
   ChannelWritePolicy,
@@ -448,18 +449,35 @@ export function useChannelWorkspaces() {
       prepared.push({ sidebarWorkspace, workspaceId });
     }
 
-    const outcomes = await Promise.allSettled(
-      prepared.map(({ sidebarWorkspace, workspaceId }) =>
-        loadCommunitySalons(
-          ctx,
-          sidebarWorkspace,
-          workspaceId,
-          validChannelConversationIds,
-          session,
-          epochAtRequest
-        )
-      )
+    // THE SALON LISTINGS OF EVERY COMMUNITY LEAVE IN ONE REQUEST (nine communities: 27 requests
+    // become 19 - the key-group reference and the roster stay per community, read where they always
+    // were, because the reference carries a device roster that is only safe to read once MLS is
+    // ready). The answers belong to THIS walk through the `bootReads` handle it passes down: no other
+    // caller of the shared service can take one, and the release drops only this walk's. Settling
+    // every chain below is what makes "the walk is over" a fact. Never throws; a failed batch leaves
+    // the per-community routes to answer, said in `ctx.log`.
+    const bootReads = service.startCommunityBootReads(
+      prepared.map((p) => p.workspaceId),
+      ctx.log
     );
+    let outcomes: PromiseSettledResult<void>[];
+    try {
+      outcomes = await Promise.allSettled(
+        prepared.map(({ sidebarWorkspace, workspaceId }) =>
+          loadCommunitySalons(
+            ctx,
+            sidebarWorkspace,
+            workspaceId,
+            validChannelConversationIds,
+            session,
+            epochAtRequest,
+            bootReads
+          )
+        )
+      );
+    } finally {
+      bootReads.release();
+    }
     const firstFailure = outcomes.find(
       (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
     );
@@ -498,7 +516,8 @@ export function useChannelWorkspaces() {
     workspaceId: string,
     validChannelConversationIds: string[],
     session: number,
-    epochAtRequest: number
+    epochAtRequest: number,
+    bootReads: CommunityBootReads
   ): Promise<void> {
     // THE KEY GROUP AND THE SALON ROWS GO SIDE BY SIDE (F3, 2026-10-14). The salons used to be
     // listed only once the key group had answered - `distribution-group`, then `members`, then the
@@ -520,7 +539,8 @@ export function useChannelWorkspaces() {
 
     let channels: ChannelDto[];
     try {
-      channels = (await service.listChannels(workspaceId)) as ChannelDto[];
+      // Through THIS walk's handle: the batched listing when it answered, the route otherwise.
+      channels = (await bootReads.listChannels(workspaceId)) as ChannelDto[];
     } catch (error) {
       // SETTLED, NOT RACED (see `executeWorkspaceLoadAttempt`): the key-group chain is still this
       // attempt's, and a retry must not start beside it.
