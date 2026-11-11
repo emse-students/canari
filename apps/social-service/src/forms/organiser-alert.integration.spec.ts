@@ -69,7 +69,7 @@ maybe('the organiser alert against PostgreSQL (migration 102)', () => {
     // The table as production has it before this pull request, then the migration itself.
     await q(`ALTER TABLE submissions DROP COLUMN "organiserNotifiedAt"`);
     await q(migration('102_submissions_organiser_notified.sql'));
-    // The bell writes a row only for a reader whose category is on (`recipientsWithCategoryOn`).
+    // The bell gates suggestion and engagement rows on the reader's category (`BELL_ROW_GATE`).
     await createNotificationPreferenceTable((sql) => q(sql));
 
     const none = {} as never;

@@ -20,9 +20,8 @@
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import { Log } from '$lib/utils/Log';
   import {
-    VIDEO_AUTOPLAY_MODES,
-    networkTypeKnown,
-    parseVideoAutoplay,
+    offeredVideoAutoplayModes,
+    videoAutoplayMode,
     type VideoAutoplayMode,
   } from '$lib/video/autoplayPolicy';
   import { goto } from '$app/navigation';
@@ -51,10 +50,13 @@
     never: m.settings_video_autoplay_never,
   };
 
-  /** This device's autoplay mode, as the choice draws it. */
-  const autoplayMode = $derived(parseVideoAutoplay(settings.videoAutoplay));
-  /** Whether this engine reports its link - read once mounted; false says "Wi-Fi only" means never here. */
-  let linkKnown = $state(true);
+  /**
+   * This device's autoplay mode as it applies - a "wifi" stored on a device that cannot tell its link
+   * is drawn as Jamais, which is what it does (owner, 2026-11-11).
+   */
+  const autoplayMode = $derived(videoAutoplayMode());
+  /** The choices this device can honour: no "Wi-Fi" where the engine reports no link. */
+  const autoplayModes = $derived(offeredVideoAutoplayModes());
 
   /** "Lecture automatique des vidéos" (owner, 2026-11-10): kept per device, applied at the next start. */
   function setVideoAutoplay(mode: VideoAutoplayMode) {
@@ -101,7 +103,6 @@
   onMount(() => {
     isTouchDevice = isCoarsePointerDevice();
     isPhoneApp = isMobileTauriRuntime();
-    linkKnown = networkTypeKnown();
   });
 </script>
 
@@ -300,16 +301,11 @@
           <p class="text-text-muted mt-0.5 text-xs font-medium">
             {m.settings_video_autoplay_desc()}
           </p>
-          {#if autoplayMode === 'wifi' && !linkKnown}
-            <p class="text-text-muted mt-0.5 text-xs font-medium" data-video-autoplay-wifi-unknown>
-              {m.settings_video_autoplay_wifi_unknown()}
-            </p>
-          {/if}
         </div>
       </div>
 
       <SegmentedControl
-        items={VIDEO_AUTOPLAY_MODES.map((mode) => ({
+        items={autoplayModes.map((mode) => ({
           key: mode,
           label: VIDEO_AUTOPLAY_LABELS[mode](),
         }))}

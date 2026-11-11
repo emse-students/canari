@@ -95,8 +95,8 @@ export async function suggestedPostIds(
   opts: { peopleOnly?: boolean } = {}
 ): Promise<string[]> {
   if (!viewerId) return [];
-  // ONE SWITCH, "Suggestions", off until turned on ("Nos principes", owner 2026-11-10): Pour toi
-  // merges none and the older clients' route serves none for a reader who did not turn it on.
+  // ONE SWITCH, "Suggestions dans l'app", on by default (owner, "Deux niveaux", 2026-11-11): Pour
+  // toi merges none and the older clients' route serves none for a reader who switched it off.
   if (!(await suggestionsOn(manager, viewerId))) {
     logger.debug(`[SUGGESTED_POSTS] ${viewerId.slice(0, 8)}: Suggestions off - none`);
     return [];

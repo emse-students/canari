@@ -31,7 +31,7 @@ describe('notification categories', () => {
     expect([...NOTIFICATION_CATEGORIES].sort()).toEqual(serverIds().sort());
   });
 
-  it('names the opt-in categories the server names - off until turned on', () => {
+  it('names the opt-in categories the server names - their push off until turned on', () => {
     const src = readFileSync(SERVER, 'utf8');
     const block = /OPT_IN_CATEGORIES: readonly NotificationCategory\[\] = \[([^\]]*)\]/.exec(
       src

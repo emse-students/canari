@@ -33,7 +33,7 @@ export async function createPostNotificationsTable(
   for (const file of POST_NOTIFICATIONS_MIGRATIONS) {
     await q(readFileSync(join(__dirname, '..', 'migrations', file), 'utf8'));
   }
-  // A bell row is written only for a reader whose category is on (`recipientsWithCategoryOn`).
+  // A gated bell row (`BELL_ROW_GATE`) is written only for a reader whose category is on.
   await createNotificationPreferenceTable(q);
 }
 
@@ -53,10 +53,10 @@ export async function createNotificationPreferenceTable(
 }
 
 /**
- * Turns "Suggestions" on for each of `userIds` - off until turned on since 2026-11-10 - as a
- * `1.6.10` save of the switch writes it.
+ * Turns the PUSH of "Suggestions" on for each of `userIds` - opt-in since 2026-11-10 - as a
+ * `1.6.10` save of that switch writes it.
  */
-export async function turnSuggestionsOn(
+export async function turnSuggestionPushOn(
   q: (sql: string, params?: unknown[]) => Promise<unknown>,
   userIds: readonly string[]
 ): Promise<void> {
@@ -64,6 +64,23 @@ export async function turnSuggestionsOn(
     await q(
       `INSERT INTO notification_preference ("userId", "enabledCategories") VALUES ($1, '["suggestions"]')
        ON CONFLICT ("userId") DO UPDATE SET "enabledCategories" = '["suggestions"]'`,
+      [id]
+    );
+  }
+}
+
+/**
+ * Switches "Suggestions dans l'app" OFF for each of `userIds` (on by default, owner's "Deux niveaux"
+ * of 2026-11-11) - the alpha.1 switch's "off" row, which also silences the push.
+ */
+export async function turnSuggestionsOffInApp(
+  q: (sql: string, params?: unknown[]) => Promise<unknown>,
+  userIds: readonly string[]
+): Promise<void> {
+  for (const id of userIds) {
+    await q(
+      `INSERT INTO notification_preference ("userId", "disabledCategories") VALUES ($1, '["suggestions"]')
+       ON CONFLICT ("userId") DO UPDATE SET "disabledCategories" = '["suggestions"]'`,
       [id]
     );
   }

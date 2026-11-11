@@ -1,18 +1,24 @@
 /// <reference types="jest" />
 
 /**
- * THE READER'S SWITCHES, READ BY SOCIAL-SERVICE, AGAINST A REAL POSTGRESQL ("Nos principes", owner
- * 2026-11-10): chat-delivery's `notification_preference` as its migrations 028 and 047 build it.
- * "Suggestions" is off with no row and with a row that does not enable it; every other category is
- * on until disabled; a bell row is written only for a reader whose category is on.
+ * THE READER'S SWITCHES, READ BY SOCIAL-SERVICE, AGAINST A REAL POSTGRESQL - chat-delivery's
+ * `notification_preference` as its migrations 028 and 047 build it. "Deux niveaux" (owner,
+ * 2026-11-11): "Suggestions dans l'app" is on until switched off; the PUSH of Suggestions is off
+ * until turned on, and never sent while the app switch is off; every other category is on until
+ * disabled; the bell withholds only suggestion and engagement content.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every social-service integration spec.
  */
 import { Client } from 'pg';
-import { categoryOffSql, recipientsWithCategoryOn, suggestionsOn } from './notification-category';
+import {
+  inAppCategoryOffSql,
+  pushCategoryOffSql,
+  recipientsWithCategoryOn,
+  suggestionsOn,
+} from './notification-category';
 import {
   createNotificationPreferenceTable,
-  turnSuggestionsOn,
+  turnSuggestionPushOn,
 } from '../posts/post-notifications.it-schema';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -33,9 +39,14 @@ maybe('notification categories (PostgreSQL)', () => {
     await createNotificationPreferenceTable((sql) => q(sql));
     // A re-run of the two files is a no-op (the deploy ledger may run them twice).
     await createNotificationPreferenceTable((sql) => q(sql));
+    // quiet: the alpha.1 switch off (and birthdays); touched: a row that says nothing; asked: the
+    // push turned on; mutedAsked: the push turned on, then the app switch off.
     await q(`INSERT INTO notification_preference ("userId", "disabledCategories") VALUES
       ('quiet', '["birthdays", "suggestions"]'), ('touched', '[]')`);
-    await turnSuggestionsOn(q, ['asked']);
+    await turnSuggestionPushOn(q, ['asked', 'mutedAsked']);
+    await q(
+      `UPDATE notification_preference SET "disabledCategories" = '["suggestions"]' WHERE "userId" = 'mutedAsked'`
+    );
   });
 
   afterAll(async () => {
@@ -43,34 +54,43 @@ maybe('notification categories (PostgreSQL)', () => {
     await admin?.end();
   });
 
-  const off = async (user: string, category: string) =>
-    (await q(`SELECT ${categoryOffSql('$1::varchar', '$2::text')} AS off`, [user, category]))
+  const inAppOff = async (user: string, category: string) =>
+    (await q(`SELECT ${inAppCategoryOffSql('$1::varchar', '$2::text')} AS off`, [user, category]))
+      .rows[0].off as boolean;
+  const pushOff = async (user: string, category: string) =>
+    (await q(`SELECT ${pushCategoryOffSql('$1::varchar', '$2::text')} AS off`, [user, category]))
       .rows[0].off as boolean;
 
-  it('Suggestions is off with no row, with a row that does not enable it, and on once enabled', async () => {
-    expect(await off('nobody', 'suggestions')).toBe(true);
-    expect(await off('touched', 'suggestions')).toBe(true);
-    // Listed as disabled by a 1.6.10-alpha.1 save: off, and the disabled list is not what decides.
-    expect(await off('quiet', 'suggestions')).toBe(true);
-    expect(await off('asked', 'suggestions')).toBe(false);
-    expect(await suggestionsOn(manager, 'nobody')).toBe(false);
-    expect(await suggestionsOn(manager, 'asked')).toBe(true);
+  it('Suggestions in the app: on with no row, off only for the reader who switched it off', async () => {
+    expect(await suggestionsOn(manager, 'nobody')).toBe(true);
+    expect(await suggestionsOn(manager, 'touched')).toBe(true);
+    expect(await suggestionsOn(manager, 'quiet')).toBe(false);
+    expect(await inAppOff('asked', 'suggestions')).toBe(false);
   });
 
-  it('every other category is on until disabled', async () => {
-    expect(await off('nobody', 'birthdays')).toBe(false);
-    expect(await off('quiet', 'birthdays')).toBe(true);
-    expect(await off('quiet', 'posts')).toBe(false);
+  it('the push of Suggestions: off until turned on, and never while the app switch is off', async () => {
+    expect(await pushOff('nobody', 'suggestions')).toBe(true);
+    expect(await pushOff('touched', 'suggestions')).toBe(true);
+    expect(await pushOff('quiet', 'suggestions')).toBe(true);
+    expect(await pushOff('asked', 'suggestions')).toBe(false);
+    expect(await pushOff('mutedAsked', 'suggestions')).toBe(true);
   });
 
-  it('a bell row is written only for a reader whose category is on', async () => {
+  it('every other category is on until disabled, in the app and in the push', async () => {
+    expect(await pushOff('nobody', 'birthdays')).toBe(false);
+    expect(await pushOff('quiet', 'birthdays')).toBe(true);
+    expect(await inAppOff('quiet', 'posts')).toBe(false);
+  });
+
+  it('the bell withholds a gated type only for a reader who switched its category off in the app', async () => {
     expect(
       await recipientsWithCategoryOn(manager, 'birthday', ['nobody', 'quiet', 'touched'])
     ).toEqual(['nobody', 'touched']);
+    // A trend row reaches every reader with the app switch on - its push being opt-in changes nothing here.
     expect(
       await recipientsWithCategoryOn(manager, 'campus_trend', ['nobody', 'quiet', 'asked'])
-    ).toEqual(['asked']);
-    // A type no switch governs reaches every recipient, with no read.
+    ).toEqual(['nobody', 'asked']);
+    // An always-written type reaches every recipient, with no read.
     expect(await recipientsWithCategoryOn(manager, 'live_cut', ['quiet'])).toEqual(['quiet']);
   });
 });

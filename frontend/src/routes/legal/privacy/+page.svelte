@@ -264,10 +264,13 @@
       <div>
         <dt>Suggestions et activité de vos abonnements</dt>
         <dd>
-          Tout ce qui suit est désactivé tant que vous n'activez pas « Suggestions » dans les
-          réglages des notifications (désactivé par défaut, y compris pour les comptes créés avant
-          le 10 novembre 2026) ; ce seul réglage couvre les comptes à suivre, les publications
-          suggérées dans « Pour toi » et les notifications de tendance. Une fois activé, des
+          Les suggestions dans l'application sont activées par défaut et se coupent en un geste : le
+          réglage « Suggestions dans l'app » des notifications couvre les comptes à suivre, les
+          publications suggérées dans « Pour toi » et les tendances de la cloche ; désactivé, rien
+          de ce qui suit n'est calculé pour vous. Les notifications push de tendance sont
+          désactivées par défaut, y compris pour les comptes créés avant le 11 novembre 2026, et ne
+          vous sont envoyées que si vous les activez ; couper les suggestions dans l'app les coupe
+          aussi. Si vous aviez désactivé « Suggestions », les deux restent désactivés. Activées, des
           personnes et des associations à suivre vous sont proposées à partir de ce que le service
           sait déjà (les personnes suivies par celles que vous suivez, vos associations, votre
           campus, votre formation et votre promotion) ; une suggestion que vous écartez ne revient

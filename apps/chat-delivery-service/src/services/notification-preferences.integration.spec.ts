@@ -17,7 +17,11 @@ import { resolve } from 'node:path';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { NotificationPreference } from '../entities/notification-preference.entity';
-import { readDisabledCategoriesStrict, writeDisabledCategories } from './notification-preferences';
+import {
+  readDisabledCategoriesStrict,
+  readSwitchesStrict,
+  writeDisabledCategories,
+} from './notification-preferences';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -28,7 +32,8 @@ maybe('the disabled categories merge (PostgreSQL)', () => {
   let admin: Client;
   let ds: DataSource;
 
-  const stored = async (userId: string) =>
+  /** The categories NOT pushed to `userId` (the push path's reading). */
+  const pushOff = async (userId: string) =>
     [...(await readDisabledCategoriesStrict(ds.manager, userId))].sort();
 
   beforeAll(async () => {
@@ -56,54 +61,59 @@ maybe('the disabled categories merge (PostgreSQL)', () => {
   });
 
   it('a first save stores the set, and answers it', async () => {
-    expect(await writeDisabledCategories(ds.manager, 'u1', ['posts', 'forms'], [])).toEqual([
-      'posts',
-      'forms',
-    ]);
-    expect(await stored('u1')).toEqual(['forms', 'posts']);
+    expect(await writeDisabledCategories(ds.manager, 'u1', ['posts', 'forms'], [], [])).toEqual({
+      disabled: ['posts', 'forms'],
+      enabled: [],
+    });
+    expect(await pushOff('u1')).toEqual(['forms', 'posts', 'suggestions']);
   });
 
-  it('an account with no row has Suggestions off, and only that (owner, 2026-11-10)', async () => {
-    expect(await stored('nobody')).toEqual(['suggestions']);
+  it('an account with no row: Suggestions in the app ON, its push OFF ("Deux niveaux", owner 2026-11-11)', async () => {
+    expect(await readSwitchesStrict(ds.manager, 'nobody')).toEqual({ disabled: [], enabled: [] });
+    expect(await pushOff('nobody')).toEqual(['suggestions']);
   });
 
-  it('a first save from a build that cannot name Suggestions leaves it off', async () => {
-    await writeDisabledCategories(ds.manager, 'u0', ['posts'], ['suggestions']);
-    expect(await stored('u0')).toEqual(['posts', 'suggestions']);
+  it('the push is sent only when turned on AND the category is not off in the app', async () => {
+    await writeDisabledCategories(ds.manager, 'u0', [], [], ['suggestions']);
+    expect(await pushOff('u0')).toEqual([]);
+    // "Suggestions dans l'app" off: one gesture, and no push either.
+    await writeDisabledCategories(ds.manager, 'u0', ['suggestions'], [], ['suggestions']);
+    expect(await pushOff('u0')).toEqual(['suggestions']);
   });
 
-  it('Suggestions turned on survives a later save from a build that cannot name it', async () => {
+  it('a save that does not declare the opt-in reading never touches the push (P3: an alpha.1 save)', async () => {
     await writeDisabledCategories(ds.manager, 'u6', [], []);
-    expect(await stored('u6')).toEqual([]);
-    await writeDisabledCategories(ds.manager, 'u6', ['forms'], ['suggestions']);
-    expect(await stored('u6')).toEqual(['forms']);
+    expect((await readSwitchesStrict(ds.manager, 'u6')).enabled).toEqual([]);
+    // Turned on by a build that declares it, then an undeclared save keeps it on.
+    await writeDisabledCategories(ds.manager, 'u6', [], [], ['suggestions']);
+    await writeDisabledCategories(ds.manager, 'u6', ['forms'], []);
+    expect(await readSwitchesStrict(ds.manager, 'u6')).toEqual({
+      disabled: ['forms'],
+      enabled: ['suggestions'],
+    });
     // And off again from a build that draws it.
-    await writeDisabledCategories(ds.manager, 'u6', ['suggestions'], []);
-    expect(await stored('u6')).toEqual(['suggestions']);
+    await writeDisabledCategories(ds.manager, 'u6', [], [], []);
+    expect((await readSwitchesStrict(ds.manager, 'u6')).enabled).toEqual([]);
   });
 
   it("a build that cannot name suggestions keeps the reader's choice of it, and replaces the rest", async () => {
-    await writeDisabledCategories(ds.manager, 'u2', ['posts', 'suggestions'], []);
+    await writeDisabledCategories(ds.manager, 'u2', ['posts', 'suggestions'], [], []);
     // A 1.6.9 save: switches Publications back on, says nothing of Suggestions.
     await writeDisabledCategories(ds.manager, 'u2', ['forms'], ['suggestions']);
-    expect(await stored('u2')).toEqual(['forms', 'suggestions']);
+    expect((await readSwitchesStrict(ds.manager, 'u2')).disabled).toEqual(['forms', 'suggestions']);
   });
 
-  it('a build that names everything replaces everything', async () => {
-    await writeDisabledCategories(ds.manager, 'u3', ['suggestions', 'posts'], []);
-    await writeDisabledCategories(ds.manager, 'u3', [], []);
-    expect(await stored('u3')).toEqual([]);
-  });
-
-  it('a kept category keeps its stored state', async () => {
-    await writeDisabledCategories(ds.manager, 'u4', ['posts'], []);
-    await writeDisabledCategories(ds.manager, 'u4', ['posts'], ['suggestions', 'birthdays']);
-    // Birthdays was on and stays on; Suggestions was turned on by the first save and stays on.
-    expect(await stored('u4')).toEqual(['posts']);
+  it('a kept category keeps its stored state, its push included', async () => {
+    await writeDisabledCategories(ds.manager, 'u4', ['posts'], [], ['suggestions']);
+    await writeDisabledCategories(ds.manager, 'u4', ['posts'], ['suggestions', 'birthdays'], []);
+    expect(await readSwitchesStrict(ds.manager, 'u4')).toEqual({
+      disabled: ['posts'],
+      enabled: ['suggestions'],
+    });
   });
 
   it('two overlapping saves each merge against the row the other committed', async () => {
-    await writeDisabledCategories(ds.manager, 'u5', ['suggestions'], []);
+    await writeDisabledCategories(ds.manager, 'u5', ['suggestions'], [], []);
     // A second session holds the row; both saves queue behind it, then run one after the other.
     const holder = new Client({ connectionString: URL });
     await holder.connect();
@@ -118,13 +128,13 @@ maybe('the disabled categories merge (PostgreSQL)', () => {
     await holder.end();
     await saves;
     // Whichever committed last, the choice neither caller could name survives both.
-    expect(await stored('u5')).toContain('suggestions');
-    // The same for Suggestions turned ON: neither 1.6.9 save may switch it back off.
-    await writeDisabledCategories(ds.manager, 'u7', [], []);
+    expect((await readSwitchesStrict(ds.manager, 'u5')).disabled).toContain('suggestions');
+    // The same for a push turned ON: neither 1.6.9 save may switch it back off.
+    await writeDisabledCategories(ds.manager, 'u7', [], [], ['suggestions']);
     await Promise.all([
-      writeDisabledCategories(ds.manager, 'u7', ['posts'], ['suggestions']),
-      writeDisabledCategories(ds.manager, 'u7', ['forms'], ['suggestions']),
+      writeDisabledCategories(ds.manager, 'u7', ['posts'], ['suggestions'], []),
+      writeDisabledCategories(ds.manager, 'u7', ['forms'], ['suggestions'], []),
     ]);
-    expect(await stored('u7')).not.toContain('suggestions');
+    expect((await readSwitchesStrict(ds.manager, 'u7')).enabled).toEqual(['suggestions']);
   });
 });

@@ -1,3 +1,0 @@
-### Changed - "Nos principes": Suggestions and "Partager mon activité" are off until turned on, one Suggestions switch covers every suggestion, and three reading settings
-
-One opt-in "Suggestions" switch now governs the trend push, the follow suggestions and the suggested posts of Pour toi (off for every account; chat-delivery migration 047), a switched-off category writes no bell row, and "Partager mon activité" is off unless chosen; Preferences gains "Défilement infini des CanaReels" and "Lecture automatique des vidéos", and CanaReels a "Pour toi / Récents" order ([engagement](docs/wiki/engagement.md#aligned-with-the-charter-owner-2026-11-10)).

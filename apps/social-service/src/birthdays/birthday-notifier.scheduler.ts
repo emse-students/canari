@@ -16,7 +16,7 @@ import {
   noticeOpenSql,
 } from './birthday-date';
 import { birthdayDateVisibleToSql } from './birthday-sql';
-import { categoryOffSql } from '../push/notification-category';
+import { inAppCategoryOffSql } from '../push/notification-category';
 import { BIRTHDAY_NOTIFICATION } from './birthday-notification';
 
 const TAG = '[BIRTHDAY_NOTICE]';
@@ -211,7 +211,7 @@ export class BirthdayNotifier {
            JOIN profile_birthdays b ON b."userId" = f."followedUserId"
           WHERE f."followedUserId" = $1 AND ${acceptedFollowSql('f')}
             AND ${birthdayDateVisibleToSql('b', 'f."followerUserId"')}
-            AND NOT ${categoryOffSql('f."followerUserId"', `'birthdays'`)}
+            AND NOT ${inAppCategoryOffSql('f."followerUserId"', `'birthdays'`)}
           ORDER BY f."followerUserId"`,
         [userId]
       )) as Array<{ id: string }>;

@@ -6211,8 +6211,10 @@
   "notif_birthday_text": "is celebrating their birthday today. Wish them a happy one!",
   "settings_notif_birthdays_label": "Birthdays",
   "settings_notif_birthdays_desc": "On the morning of the birthday of someone you follow.",
-  "settings_notif_suggestions_label": "Suggestions",
-  "settings_notif_suggestions_desc": "Off by default. On: a post your space is reacting to (once a day at most), accounts to follow and suggested posts in For you.",
+  "settings_notif_suggestions_label": "Suggestions in the app",
+  "settings_notif_suggestions_desc": "Accounts to follow, suggested posts in For you and posts your space is reacting to in your notifications. On by default; turning it off also stops their push notifications.",
+  "settings_notif_suggestions_push_label": "Suggestion push notifications",
+  "settings_notif_suggestions_push_desc": "A post your space is reacting to, on your phone, once a day at most. Off by default.",
   "profile_public_default_name": "Canari member",
   "profile_birthday_takes_effect": "Only the day and month count. A saved date cannot change for 30 days.",
   "profile_birthday_ring_note": "On the day, a festive ring surrounds your photo for everyone; your followers are told according to your choice.",
@@ -6268,6 +6270,5 @@
   "settings_video_autoplay_desc": "Feed videos start by themselves when they come into view. Otherwise, a still frame and a play button.",
   "settings_video_autoplay_always": "Always",
   "settings_video_autoplay_wifi": "Wi-Fi",
-  "settings_video_autoplay_never": "Never",
-  "settings_video_autoplay_wifi_unknown": "This device does not say whether it is on Wi-Fi, so videos will always wait for your tap."
+  "settings_video_autoplay_never": "Never"
 }

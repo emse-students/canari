@@ -23,7 +23,7 @@ import { PostNotificationsService } from './post-notifications.service';
 import {
   createEngagementPushCapTables,
   givePushDevices,
-  turnSuggestionsOn,
+  turnSuggestionPushOn,
 } from './post-notifications.it-schema';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import type { NotificationType, PushOnlyNotificationType } from '../push/notification-client-floor';
@@ -90,7 +90,7 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
       `INSERT INTO key_package ("userId", "deviceId", "deviceAppVersion") VALUES ('mixed', 'd2', '1.6.10-alpha.1')`
     );
     await givePushDevices(q, ['unknown'], 'garbage');
-    await turnSuggestionsOn(q, ['old', 'mixed', 'unknown', 'none']);
+    await turnSuggestionPushOn(q, ['old', 'mixed', 'unknown', 'none']);
     const allowed = await claimEngagementPushes(
       manager,
       ['old', 'mixed', 'unknown', 'none'],
@@ -132,16 +132,25 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
     expect(await counter('off')).toBeNull();
   });
 
-  it('Suggestions is off until turned on: only the reader who turned it on spends a unit (owner, 2026-11-10)', async () => {
-    // `other` has a row that says nothing of Suggestions; `fresh` has no row at all.
+  it('the push of Suggestions is opt-in: only a reader who turned it on, and kept the app switch on, spends a unit', async () => {
+    // `other` has a row that says nothing of Suggestions; `fresh` has no row at all; `muted` turned
+    // the push on but switched "Suggestions dans l'app" off - one gesture silences both.
     await q(
       `INSERT INTO notification_preference ("userId", "disabledCategories") VALUES ('other', '[]')`
     );
-    await turnSuggestionsOn(q, ['full']);
-    const allowed = await claimEngagementPushes(manager, ['other', 'fresh', 'full'], 'suggestions');
+    await turnSuggestionPushOn(q, ['full', 'muted']);
+    await q(
+      `UPDATE notification_preference SET "disabledCategories" = '["suggestions"]' WHERE "userId" = 'muted'`
+    );
+    const allowed = await claimEngagementPushes(
+      manager,
+      ['other', 'fresh', 'full', 'muted'],
+      'suggestions'
+    );
     expect([...allowed]).toEqual(['full']);
     expect(await counter('fresh')).toBeNull();
     expect(await counter('other')).toBeNull();
+    expect(await counter('muted')).toBeNull();
   });
 
   it('the GC deletes the rows older than a week and keeps the rest; the erasure takes a reader', async () => {
@@ -232,8 +241,8 @@ maybe('the daily engagement push cap against PostgreSQL (engagement WP-8)', () =
 
     beforeEach(async () => {
       pushed.length = 0;
-      // A trend reaches only a reader who turned Suggestions on (owner, 2026-11-10).
-      await turnSuggestionsOn(q, ['r']);
+      // A trend is pushed only to a reader who turned its push on (opt-in, owner 2026-11-10/11).
+      await turnSuggestionPushOn(q, ['r']);
     });
 
     it('the counted push past the cap reaches the bell only, not the phone', async () => {

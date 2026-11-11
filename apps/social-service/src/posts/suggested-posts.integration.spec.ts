@@ -16,7 +16,7 @@ import type { EntityManager } from 'typeorm';
 import { SUGGESTED_POST_MIN_ENGAGED, suggestedPostIds } from './suggested-posts';
 import {
   createNotificationPreferenceTable,
-  turnSuggestionsOn,
+  turnSuggestionsOffInApp,
 } from './post-notifications.it-schema';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -129,9 +129,9 @@ maybe('suggested posts against PostgreSQL (engagement WP-7)', () => {
       await q(`INSERT INTO users (id, campus, cursus) VALUES ($1, $2, $3)`, [id, SE, ICM]);
     }
     await q(`INSERT INTO users (id, campus, cursus) VALUES ('g', $1, $2)`, [GA, ISMIN]);
-    // "Suggestions" is off until turned on (owner, 2026-11-10): every reader here turned it on but m.
+    // "Suggestions dans l'app" is on by default (owner, "Deux niveaux", 2026-11-11): m switched it off.
     await createNotificationPreferenceTable((sql) => q(sql));
-    await turnSuggestionsOn(q, ['v', 'a', 'fol', 'pend', 'b1', 'b2', 'g']);
+    await turnSuggestionsOffInApp(q, ['m']);
     await follow('v', 'fol');
     await follow('v', 'pend', 'pending');
     await follow('v', 'g');
@@ -186,7 +186,7 @@ maybe('suggested posts against PostgreSQL (engagement WP-7)', () => {
     await admin.end();
   });
 
-  it('suggests nothing to a reader who did not turn Suggestions on ("Nos principes")', async () => {
+  it('suggests nothing to a reader who switched Suggestions off in the app', async () => {
     expect(await suggested('m')).toEqual([]);
   });
 

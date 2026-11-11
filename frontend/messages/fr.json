@@ -6220,8 +6220,10 @@
   "notif_birthday_text": "fête son anniversaire aujourd'hui. Souhaitez-le-lui !",
   "settings_notif_birthdays_label": "Anniversaires",
   "settings_notif_birthdays_desc": "Le matin de l'anniversaire d'une personne que vous suivez.",
-  "settings_notif_suggestions_label": "Suggestions",
-  "settings_notif_suggestions_desc": "Désactivé par défaut. Activé : une publication qui fait réagir votre espace (une fois par jour au plus), les comptes à suivre et les publications suggérées dans Pour toi.",
+  "settings_notif_suggestions_label": "Suggestions dans l'app",
+  "settings_notif_suggestions_desc": "Comptes à suivre, publications suggérées dans Pour toi et publications qui font réagir votre espace dans vos notifications. Activé par défaut ; le désactiver coupe aussi leurs notifications push.",
+  "settings_notif_suggestions_push_label": "Notifications push de suggestions",
+  "settings_notif_suggestions_push_desc": "Une publication qui fait réagir votre espace, sur votre téléphone, une fois par jour au plus. Désactivé par défaut.",
   "profile_public_default_name": "Membre Canari",
   "profile_birthday_takes_effect": "Seuls le jour et le mois comptent. Une date enregistrée ne peut plus changer pendant 30 jours.",
   "profile_birthday_ring_note": "Le jour J, un cercle festif entoure votre photo pour tout le monde ; vos abonnés sont prévenus selon votre choix.",
@@ -6277,6 +6279,5 @@
   "settings_video_autoplay_desc": "Les vidéos du fil démarrent seules quand elles apparaissent. Sinon, une image et un bouton lecture.",
   "settings_video_autoplay_always": "Toujours",
   "settings_video_autoplay_wifi": "Wi-Fi",
-  "settings_video_autoplay_never": "Jamais",
-  "settings_video_autoplay_wifi_unknown": "Cet appareil n'indique pas s'il est en Wi-Fi : les vidéos attendront donc toujours votre appui."
+  "settings_video_autoplay_never": "Jamais"
 }

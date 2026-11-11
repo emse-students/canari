@@ -11,10 +11,10 @@
  * for an MLS group or DM, read in the same request and applied by `useMessaging.notifyInbound` to
  * the notifications this client raises itself.
  *
- * Until the first load answers, the account default holds - everything ON except the opt-in
- * categories (`OPT_IN_CATEGORIES`, "Suggestions": off until turned on) - and a failed load says so
- * and keeps that default rather than inventing a state; the next login and every visit to the
- * settings screen load again.
+ * Until the first load answers, the account default holds - every category ON, and no PUSH of an
+ * opt-in category (`OPT_IN_CATEGORIES`: "Suggestions" in the app on, its push off until turned on,
+ * owner's "Deux niveaux" of 2026-11-11) - and a failed load says so and keeps that default rather
+ * than inventing a state; the next login and every visit to the settings screen load again.
  */
 import {
   fetchChannelNotificationLevel,
@@ -32,13 +32,12 @@ import {
 import { SvelteMap } from 'svelte/reactivity';
 import { Log } from '$lib/utils/Log';
 
+let disabled = $state<NotificationCategory[]>([]);
 /**
- * The account default: the opt-in categories off. A save made before the first load sends it, so it
- * can never turn "Suggestions" on by omission.
+ * The opt-in categories whose PUSH is on. Empty by default, so a save made before the first load can
+ * never turn a push on by omission.
  */
-const DEFAULT_DISABLED: readonly NotificationCategory[] = OPT_IN_CATEGORIES;
-
-let disabled = $state<NotificationCategory[]>([...DEFAULT_DISABLED]);
+let pushEnabled = $state<NotificationCategory[]>([]);
 /** Switched-off ids this build does not know, as read: sent back on every save, never drawn. */
 let unknownDisabled: string[] = [];
 /** Serialises writes: each PUT carries the whole set, so two in flight could land out of order. */
@@ -59,15 +58,73 @@ const channelKey = (id: string): string => id.replace(/^channel_/, '');
 /** Whether {@link groupLevels} has been answered by the server at least once this session. */
 let loaded = $state(false);
 
+const sameSet = <T>(a: readonly T[], b: readonly T[]) =>
+  a.length === b.length && a.every((x) => b.includes(x));
+
+/**
+ * Applies the two sets at once and writes them, serialised behind the previous write: each PUT
+ * carries both whole sets. On a refusal only `category` goes back - a later toggle of another
+ * category may already have landed.
+ */
+function commit(
+  what: string,
+  nextDisabled: NotificationCategory[],
+  nextPush: NotificationCategory[],
+  category: NotificationCategory
+): Promise<boolean> {
+  if (sameSet(nextDisabled, disabled) && sameSet(nextPush, pushEnabled)) {
+    return Promise.resolve(true);
+  }
+  const wasOff = disabled.includes(category);
+  const wasPushed = pushEnabled.includes(category);
+  disabled = nextDisabled;
+  pushEnabled = nextPush;
+  const write = writeChain.then(async () => {
+    try {
+      await saveDisabledCategories(disabled, unknownDisabled, pushEnabled);
+      return true;
+    } catch (e) {
+      Log.d(`notificationPreferences.${what} failed - reverting`, e);
+      disabled = wasOff
+        ? disabled.includes(category)
+          ? disabled
+          : [...disabled, category]
+        : disabled.filter((c) => c !== category);
+      pushEnabled = wasPushed
+        ? pushEnabled.includes(category)
+          ? pushEnabled
+          : [...pushEnabled, category]
+        : pushEnabled.filter((c) => c !== category);
+      return false;
+    }
+  });
+  writeChain = write;
+  return write;
+}
+
 export const notificationPreferences = {
   /** The categories currently switched off. */
   get disabled(): readonly NotificationCategory[] {
     return disabled;
   },
 
-  /** True unless the account switched this category off. */
+  /** True unless the account switched this category off (for an opt-in one: in the app). */
   isEnabled(category: NotificationCategory): boolean {
     return !disabled.includes(category);
+  },
+
+  /**
+   * Whether this category may be PUSHED - and so raised as a notification by this client itself: on,
+   * and for an opt-in category also its push turned on. The server's `effectiveDisabledCategories`.
+   */
+  pushAllowed(category: NotificationCategory): boolean {
+    if (disabled.includes(category)) return false;
+    return !OPT_IN_CATEGORIES.includes(category) || pushEnabled.includes(category);
+  },
+
+  /** Whether the account turned an opt-in category's push on (and kept the category on). */
+  isPushEnabled(category: NotificationCategory): boolean {
+    return pushEnabled.includes(category) && !disabled.includes(category);
   },
 
   /** Reads the account's set from the server. Never throws; a failure is logged and keeps the last set. */
@@ -75,6 +132,7 @@ export const notificationPreferences = {
     try {
       const snapshot = await fetchNotificationPreferences();
       disabled = snapshot.disabled;
+      pushEnabled = snapshot.pushEnabled;
       unknownDisabled = snapshot.unknownDisabled;
       groupLevels = snapshot.groupLevels;
       groupCalls = snapshot.groupCalls;
@@ -88,36 +146,38 @@ export const notificationPreferences = {
 
   /**
    * Switches one category on or off. Optimistic like the per-salon level: the switch moves at once
-   * and returns if the server refuses. Resolves false when the write failed (and was reverted).
+   * and returns if the server refuses. Switching an opt-in category off switches its push off too -
+   * one gesture. Resolves false when the write failed (and was reverted).
    */
   setEnabled(category: NotificationCategory, enabled: boolean): Promise<boolean> {
-    const before = disabled;
-    const next = enabled
-      ? before.filter((c) => c !== category)
-      : before.includes(category)
-        ? before
-        : [...before, category];
-    if (next.length === before.length && next.every((c) => before.includes(c))) {
-      return Promise.resolve(true);
+    const nextDisabled = enabled
+      ? disabled.filter((c) => c !== category)
+      : disabled.includes(category)
+        ? disabled
+        : [...disabled, category];
+    const nextPush = enabled ? pushEnabled : pushEnabled.filter((c) => c !== category);
+    return commit(`setEnabled(${category}, ${enabled})`, nextDisabled, nextPush, category);
+  },
+
+  /**
+   * Turns an opt-in category's PUSH on or off. Turning it on turns the category on too: a push of
+   * suggestions the reader does not see in the app would be one they cannot read. Resolves false
+   * when the write failed (and was reverted).
+   */
+  setPushEnabled(category: NotificationCategory, enabled: boolean): Promise<boolean> {
+    if (!OPT_IN_CATEGORIES.includes(category)) {
+      Log.w(
+        `notificationPreferences.setPushEnabled(${category}): not an opt-in category - ignored`
+      );
+      return Promise.resolve(false);
     }
-    disabled = next;
-    const write = writeChain.then(async () => {
-      try {
-        await saveDisabledCategories(next, unknownDisabled);
-        return true;
-      } catch (e) {
-        Log.d(`notificationPreferences.setEnabled(${category}) failed - reverting`, e);
-        // Revert only this switch: a later toggle of another category may already have landed.
-        disabled = enabled
-          ? disabled.includes(category)
-            ? disabled
-            : [...disabled, category]
-          : disabled.filter((c) => c !== category);
-        return false;
-      }
-    });
-    writeChain = write;
-    return write;
+    const nextPush = enabled
+      ? pushEnabled.includes(category)
+        ? pushEnabled
+        : [...pushEnabled, category]
+      : pushEnabled.filter((c) => c !== category);
+    const nextDisabled = enabled ? disabled.filter((c) => c !== category) : disabled;
+    return commit(`setPushEnabled(${category}, ${enabled})`, nextDisabled, nextPush, category);
   },
 
   /** Whether the server has answered the levels yet - a control must not draw a level that lies. */
@@ -231,7 +291,8 @@ export const notificationPreferences = {
 
   /** Back to the account default - on sign-out, so the next account never inherits a set. */
   reset(): void {
-    disabled = [...DEFAULT_DISABLED];
+    disabled = [];
+    pushEnabled = [];
     unknownDisabled = [];
     groupLevels = {};
     groupCalls = {};

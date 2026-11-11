@@ -22,7 +22,8 @@ import {
   createEngagementPushCapTables,
   createPostNotificationsTable,
   givePushDevices,
-  turnSuggestionsOn,
+  turnSuggestionPushOn,
+  turnSuggestionsOffInApp,
 } from './post-notifications.it-schema';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import type { PushContent } from '../push/push-content';
@@ -141,10 +142,11 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
         [postId]
       )
     ).rows.map((r) => r.recipientId);
-  /** A reader - who turned "Suggestions" on, off until turned on since 2026-11-10, unless `suggestions` is false. */
+  /** A reader - "Suggestions dans l'app" on (the default) and its opt-in PUSH turned on, unless `suggestions` is false: then switched off in the app, which silences both. */
   const user = async (id: string, campus = SE, cursus = ICM, suggestions = true) => {
     await q(`INSERT INTO users (id, campus, cursus) VALUES ($1, $2, $3)`, [id, campus, cursus]);
-    if (suggestions) await turnSuggestionsOn(q, [id]);
+    if (suggestions) await turnSuggestionPushOn(q, [id]);
+    else await turnSuggestionsOffInApp(q, [id]);
   };
 
   beforeAll(async () => {
@@ -197,7 +199,7 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     // a writes; s1, s2, blk, seen, grant share a's space; g is in Gardanne and follows a.
     for (const id of ['a', 's1', 's2', 'blk', 'seen', 'grant']) await user(id);
     await user('g', GA, ISMIN);
-    // nos shares a's space and never turned Suggestions on: told of no trend, ever.
+    // nos shares a's space and switched Suggestions off in the app: told of no trend, ever.
     await user('nos', SE, ICM, false);
     await givePushDevices(q, ['nos']);
     // Every reader has a device of unknown build: the push cap's floor keeps it (a trend has one).
@@ -248,7 +250,7 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     await react(P(1), `e${T - 1}`);
     // s1, s2, grant: they share a's space. Not a (the author), not blk (a block with the author),
     // not seen (a row for the post already), not g (a follower outside the space), not nos (in the
-    // space, but never turned Suggestions on - off by default since 2026-11-10).
+    // space, but switched Suggestions off in the app - on by default).
     expect(await announceCampusTrend({ manager, notifications }, P(1))).toBe(3);
     const stamp = await stampOf(P(1));
     expect(stamp).not.toBeNull();

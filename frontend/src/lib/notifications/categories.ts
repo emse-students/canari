@@ -25,11 +25,11 @@ export const NOTIFICATION_CATEGORIES = [
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
 
 /**
- * THE CATEGORIES OFF UNTIL THE ACCOUNT TURNS THEM ON (owner, 2026-11-10, "Nos principes" - principle
- * 3, attention is not for sale): the server's `OPT_IN_CATEGORIES`, pinned by the contract test.
- * "Suggestions" is the one switch over every suggestion - the trend notifications, the follow
- * suggestions and the suggested posts of Pour toi. Until the server's answer is read, this client
- * draws them OFF, as the server holds them for an account that never chose.
+ * THE CATEGORIES WHOSE PUSH IS OFF UNTIL THE ACCOUNT TURNS IT ON (owner, "Deux niveaux",
+ * 2026-11-11): the server's `OPT_IN_CATEGORIES`, pinned by the contract test. Such a category has TWO
+ * switches: the category itself - "Suggestions dans l'app", ON by default (the follow suggestions,
+ * the suggested posts of Pour toi, the trend rows of the bell) - and its push, OFF until turned on.
+ * Each is switched off in one gesture (principle 3); the push never outlives the app switch.
  */
 export const OPT_IN_CATEGORIES: readonly NotificationCategory[] = ['suggestions'];
 

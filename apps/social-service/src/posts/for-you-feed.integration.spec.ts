@@ -40,7 +40,7 @@ import {
 import { fakeRankedRedis } from './ranked-snapshots.it-fixture';
 import {
   createNotificationPreferenceTable,
-  turnSuggestionsOn,
+  turnSuggestionsOffInApp,
 } from './post-notifications.it-schema';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -238,9 +238,9 @@ maybe('Pour toi against PostgreSQL (feed=foryou)', () => {
     await q(
       `INSERT INTO user_follows ("followerUserId", "followedUserId", status) VALUES ('v', 'f', 'accepted')`
     );
-    // "Suggestions" is off until turned on (owner, 2026-11-10): `v` turned it on; `g` never did.
+    // "Suggestions dans l'app" is on by default (owner, "Deux niveaux", 2026-11-11): `g` switched it off.
     await createNotificationPreferenceTable((sql) => q(sql));
-    await turnSuggestionsOn(q, ['v']);
+    await turnSuggestionsOffInApp(q, ['g']);
     // `n`: no space at all (not a student), follows f - sees f's posts through the follow only.
     await q(`INSERT INTO users (id, cursus, "firstName", "lastName") VALUES ('n', '[]', 'n', 'X')`);
     await q(
@@ -300,7 +300,7 @@ maybe('Pour toi against PostgreSQL (feed=foryou)', () => {
     expect(all[0].feedAsOf).toMatch(FOR_YOU_AS_OF_PATTERN);
   });
 
-  it('merges no suggestion for a reader who did not turn Suggestions on ("Nos principes")', async () => {
+  it('merges no suggestion for a reader who switched Suggestions off in the app', async () => {
     const all = await rows('foryou', { limit: 100, offset: 0 }, false, 'g');
     expect(all.some((r) => r.feedSuggested)).toBe(false);
     expect(all.map((r) => NAME[r.id])).not.toContain('S1');

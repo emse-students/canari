@@ -658,8 +658,9 @@ export class PostNotificationsService {
     pushData?: Record<string, string>;
   }) {
     if (data.recipientId === data.actorId) return;
-    // A category the reader switched off writes no row ("Nos principes", owner, 2026-11-10), and so
-    // no push either - chat-delivery would drop it.
+    // Suggestion and engagement content whose category the reader switched off writes no row
+    // (`BELL_ROW_GATE`), and so no push either - chat-delivery would drop it. Every other notice is
+    // written; its push still follows its category in chat-delivery.
     const [stillOn] = await recipientsWithCategoryOn(this.notifRepo.manager, data.type, [
       data.recipientId,
     ]);
@@ -760,9 +761,9 @@ export class PostNotificationsService {
    * The ROWS of a notice whose rows differ per recipient only by their `meta`, in ONE insert, with
    * no push - the caller pushes afterwards ({@link pushNotice}), so a push that fails can never cost
    * a reader their row. A campus trend's rows each keep whom they name (`announceCampusTrend`);
-   * Rows addressed to the actor, and to a reader who switched the type's category off
-   * (`recipientsWithCategoryOn`, "Nos principes" 2026-11-10: nothing switched off counts in the
-   * badge), are dropped. Answers how many were written.
+   * Rows addressed to the actor, and - for suggestion and engagement content only - to a reader who
+   * switched its category off in the app (`recipientsWithCategoryOn`, `BELL_ROW_GATE`), are dropped.
+   * Answers how many were written.
    */
   async createNotificationRows(data: NotificationRowsInput): Promise<number> {
     const addressed = data.rows.filter((r) => r.recipientId !== data.actorId);

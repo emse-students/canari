@@ -10,6 +10,7 @@ import {
   isNotificationCategory,
   NOTIFICATION_CATEGORIES,
   OPT_IN_CATEGORIES,
+  storedSwitches,
 } from './push-category';
 import { appVersionAtLeast, HEADERLESS_CLIENT_VERSION } from '../utils/app-version';
 
@@ -195,12 +196,24 @@ describe('effectiveDisabledCategories', () => {
     ).toEqual(['posts']);
   });
 
-  it('reads an opt-in category from the enabled set alone, and drops unknown ids', () => {
+  it('pushes an opt-in category only when it is on in the app AND its push is on ("Deux niveaux")', () => {
     expect(
       effectiveDisabledCategories({
         disabledCategories: ['suggestions', 'retired'],
         enabledCategories: ['suggestions', 'retired'],
       })
-    ).toEqual([]);
+    ).toEqual(['suggestions']);
+  });
+});
+
+describe('storedSwitches', () => {
+  it('answers the two sets as stored, unknown ids dropped and only opt-in ids enabled', () => {
+    expect(storedSwitches(null)).toEqual({ disabled: [], enabled: [] });
+    expect(
+      storedSwitches({
+        disabledCategories: ['posts', 'retired'],
+        enabledCategories: ['suggestions', 'posts'],
+      })
+    ).toEqual({ disabled: ['posts'], enabled: ['suggestions'] });
   });
 });

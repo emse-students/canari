@@ -1,5 +1,6 @@
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { Log } from '$lib/utils/Log';
+import { linkType } from './networkLink.svelte';
 
 /**
  * "LECTURE AUTOMATIQUE DES VIDÉOS" ("Nos principes", owner 2026-11-10, principle 3: the reader decides
@@ -8,12 +9,11 @@ import { Log } from '$lib/utils/Log';
  * reader's own tap and plays whatever this says; a conversation's video never started by itself.
  *
  * - `always` (the default): as before, the video on screen plays.
- * - `wifi`: only when the device SAYS it is on Wi-Fi or Ethernet (`navigator.connection.type`, the
- *   Network Information API). Only Chromium exposes that type - the Android app, Chrome; iOS's
- *   WKWebView, Safari and Firefox do not, and no Tauri plugin here reports the link. AN UNKNOWN LINK
- *   IS NOT WI-FI: the setting promises not to spend mobile data, and a guess could break that
- *   promise, so on such a device `wifi` behaves as `never` - and the Settings hint says so on that
- *   device ({@link networkTypeKnown}).
+ * - `wifi`: only when the device SAYS it is on Wi-Fi or Ethernet (`networkLink.svelte.ts`). OFFERED
+ *   ONLY WHERE THE DEVICE CAN TELL (owner, 2026-11-11): only Chromium reports the link - the Android
+ *   app, Chrome; iOS's WKWebView, Safari and Firefox do not, and there the choice is Toujours or
+ *   Jamais. A `wifi` stored on such a device (chosen elsewhere, or before the link went unreported)
+ *   behaves as `never` and is drawn as Jamais: an unknown link is never guessed to be Wi-Fi.
  * - `never`: the first frame and the play button; a tap plays it.
  */
 export type VideoAutoplayMode = 'always' | 'wifi' | 'never';
@@ -31,21 +31,38 @@ export function parseVideoAutoplay(value: string | null | undefined): VideoAutop
     : DEFAULT_VIDEO_AUTOPLAY;
 }
 
-/** This device's chosen mode. */
-export function videoAutoplayMode(): VideoAutoplayMode {
-  return parseVideoAutoplay(settings.videoAutoplay);
-}
-
 /** The Network Information API's link type, or null where the engine does not expose one. */
 export function networkType(): string | null {
-  if (typeof navigator === 'undefined') return null;
-  const connection = (navigator as Navigator & { connection?: { type?: unknown } }).connection;
-  return typeof connection?.type === 'string' ? connection.type : null;
+  return linkType();
 }
 
 /** Whether this engine says what link it is on at all - false on iOS, Safari and Firefox. */
 export function networkTypeKnown(): boolean {
   return networkType() !== null;
+}
+
+/** The modes this device can honour - without `wifi` where it cannot tell its link. */
+export function offeredVideoAutoplayModes(): readonly VideoAutoplayMode[] {
+  return networkTypeKnown()
+    ? VIDEO_AUTOPLAY_MODES
+    : VIDEO_AUTOPLAY_MODES.filter((m) => m !== 'wifi');
+}
+
+/** Whether the "wifi read as never" line was already logged this session. */
+let wifiUnknownLogged = false;
+
+/**
+ * This device's mode as it APPLIES: the stored choice, except a `wifi` on a device that cannot tell
+ * its link, which is `never` (logged once at debug).
+ */
+export function videoAutoplayMode(): VideoAutoplayMode {
+  const stored = parseVideoAutoplay(settings.videoAutoplay);
+  if (stored !== 'wifi' || networkTypeKnown()) return stored;
+  if (!wifiUnknownLogged) {
+    wifiUnknownLogged = true;
+    Log.d('VIDEO', 'autoplay: "wifi" stored on a device that reports no link - applied as never');
+  }
+  return 'never';
 }
 
 /** The link types `wifi` counts as not spending mobile data. */
@@ -73,10 +90,7 @@ export function feedAutoplayAllowed(): boolean {
   const type = networkType();
   const allowed = feedAutoplayPermitted(mode, type);
   if (!allowed) {
-    Log.d(
-      'VIDEO',
-      `autoplay: ${mode}, link ${type ?? 'unknown (not reported by this engine)'} - the feed video waits for a tap`
-    );
+    Log.d('VIDEO', `autoplay: ${mode}, link ${type ?? 'unknown'} - the feed video waits for a tap`);
   }
   return allowed;
 }

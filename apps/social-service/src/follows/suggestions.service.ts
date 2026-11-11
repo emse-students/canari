@@ -201,7 +201,8 @@ export class SuggestionsService {
       Math.max(opts.peopleLimit ?? SUGGESTED_PEOPLE_MAX, 1),
       SUGGESTED_PEOPLE_MAX
     );
-    // ONE SWITCH, "Suggestions", off until turned on ("Nos principes", owner 2026-11-10): the
+    // ONE SWITCH, "Suggestions dans l'app", on by default and off in one gesture (owner, "Deux
+    // niveaux", 2026-11-11): the
     // carousel, the onboarding banner and "Suivez aussi..." all read this route, so none is drawn.
     // The follow count still answers: it is the reader's own fact, not a suggestion.
     if (!(await suggestionsOn(this.db, viewerId))) {

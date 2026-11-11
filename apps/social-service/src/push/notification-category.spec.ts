@@ -4,9 +4,11 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { Logger } from '@nestjs/common';
 import {
+  BELL_ROW_GATE,
   NOTIFICATION_TYPE_CATEGORY,
   OPT_IN_CATEGORIES,
-  categoryOffSql,
+  inAppCategoryOffSql,
+  pushCategoryOffSql,
   suggestionsOn,
 } from './notification-category';
 import { NOTIFICATION_TYPE_MIN_CLIENT } from './notification-client-floor';
@@ -33,7 +35,7 @@ const CHAT_CATEGORIES = (() => {
 })();
 
 describe('notification categories, as social-service reads them', () => {
-  it("names chat-delivery's opt-in categories - Suggestions, off until turned on", () => {
+  it("names chat-delivery's opt-in categories - the push of Suggestions, off until turned on", () => {
     const block = /OPT_IN_CATEGORIES: readonly NotificationCategory\[\] = \[([^\]]*)\]/.exec(
       SOURCE
     )?.[1];
@@ -70,12 +72,54 @@ describe('notification categories, as social-service reads them', () => {
     }
   });
 
-  it('reads an opt-in category from the enabled set, every other from the disabled one', () => {
-    const sql = categoryOffSql('u', `'suggestions'`);
-    expect(sql).toContain(`IN ('suggestions')`);
-    expect(sql).toContain('"enabledCategories" ?');
-    expect(sql).toContain('"disabledCategories" ?');
+  it('reads the app switch from the disabled set, and the push of an opt-in one from both sets', () => {
+    const inApp = inAppCategoryOffSql('u', `'suggestions'`);
+    expect(inApp).toContain('"disabledCategories" ?');
+    expect(inApp).not.toContain('"enabledCategories"');
+    const push = pushCategoryOffSql('u', `'suggestions'`);
+    expect(push).toContain(`IN ('suggestions')`);
+    expect(push).toContain('"enabledCategories" ?');
+    expect(push).toContain('"disabledCategories" ?');
   });
+
+  it('classifies EVERY bell type for the bell gate - a new type fails here until it is placed', () => {
+    expect(Object.keys(BELL_ROW_GATE).sort()).toEqual(
+      Object.keys(NOTIFICATION_TYPE_MIN_CLIENT).sort()
+    );
+  });
+
+  it('withholds in the bell ONLY suggestion and engagement content (review of #3329, P2)', () => {
+    const gated = Object.entries(BELL_ROW_GATE)
+      .filter(([, category]) => category !== null)
+      .map(([type]) => type)
+      .sort();
+    expect(gated).toEqual(['birthday', 'campus_trend', 'friend_comment', 'friend_reaction']);
+    // Each gated type is gated by the very category its push files under.
+    for (const type of gated) {
+      expect([type, BELL_ROW_GATE[type as keyof typeof BELL_ROW_GATE]]).toEqual([
+        type,
+        NOTIFICATION_TYPE_CATEGORY[type as keyof typeof NOTIFICATION_TYPE_CATEGORY],
+      ]);
+    }
+  });
+
+  it.each([
+    'form_paid_over_capacity',
+    'lydia_payments_paused',
+    'delegation_receiver_not_ready',
+    'repost_personal_requested',
+    'repost_proposed',
+    'event_pending',
+    'event_validated',
+    'event_rejected',
+    'repost_personal_accepted',
+    'repost_personal_refused',
+  ] as const)(
+    'always writes %s: it asks the reader to act, or answers their own request',
+    (type) => {
+      expect(BELL_ROW_GATE[type]).toBeNull();
+    }
+  );
 
   it('a failed read of the switch serves no suggestion, and says so', async () => {
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);

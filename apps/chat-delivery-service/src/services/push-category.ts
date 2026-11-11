@@ -56,11 +56,14 @@ export const NOTIFICATION_CATEGORIES = [
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
 
 /**
- * THE CATEGORIES THAT ARE OFF UNTIL THE ACCOUNT TURNS THEM ON (owner, 2026-11-10, "Nos principes",
- * principle 3: attention is not for sale). Stored as the ENABLED set (`"enabledCategories"`,
- * migration 047): an account with no row, or whose row does not list one here, has it OFF, whatever
- * `"disabledCategories"` says of it. social-service's `push/notification-category.ts` names the same
- * list, and its spec reads this file to pin the two together.
+ * THE CATEGORIES WHOSE PUSH IS OFF UNTIL THE ACCOUNT TURNS IT ON (owner, 2026-11-10, "Nos
+ * principes", and "Deux niveaux", 2026-11-11). Two switches per such category:
+ * - `"disabledCategories"` lists it when the account switched the category OFF altogether - for
+ *   `suggestions`, "Suggestions dans l'app" (on by default: the carousel, "Suivez aussi...", the
+ *   suggested posts of Pour toi, the trend rows of the bell);
+ * - `"enabledCategories"` (migration 047) lists it when the account turned its PUSH on.
+ * It is pushed only when both say so; an account with no row is never pushed one. social-service's
+ * `push/notification-category.ts` names the same list, and its spec reads this file to pin them.
  */
 export const OPT_IN_CATEGORIES: readonly NotificationCategory[] = ['suggestions'];
 
@@ -69,19 +72,39 @@ export function isOptInCategory(category: NotificationCategory): boolean {
   return OPT_IN_CATEGORIES.includes(category);
 }
 
+/** The account's two stored switch sets, unknown ids dropped; `enabled` holds opt-in ids only. */
+export interface StoredSwitches {
+  /** The categories switched off altogether (for an opt-in one: in the app too). */
+  disabled: NotificationCategory[];
+  /** The opt-in categories whose PUSH was turned on. */
+  enabled: NotificationCategory[];
+}
+
+/** Reads a row's two columns (`null` for an account that never saved: nothing off, no push on). */
+export function storedSwitches(
+  row: { disabledCategories?: unknown; enabledCategories?: unknown } | null
+): StoredSwitches {
+  const list = (value: unknown): NotificationCategory[] =>
+    (Array.isArray(value) ? (value as unknown[]) : []).filter(isNotificationCategory);
+  const disabled = new Set(list(row?.disabledCategories));
+  const enabled = new Set(list(row?.enabledCategories).filter(isOptInCategory));
+  return {
+    disabled: NOTIFICATION_CATEGORIES.filter((c) => disabled.has(c)),
+    enabled: NOTIFICATION_CATEGORIES.filter((c) => enabled.has(c)),
+  };
+}
+
 /**
- * THE CATEGORIES OFF FOR AN ACCOUNT, from its stored row (`null` for an account that never saved):
- * the default-on categories it switched off, plus every opt-in category it has not switched on.
- * Unknown ids in either column are dropped. The ONE reading of the two columns in this service.
+ * THE CATEGORIES NOT PUSHED TO AN ACCOUNT, from its stored row: every category it switched off,
+ * plus every opt-in category whose push it has not turned on. The ONE push-side reading of the two
+ * columns in this service.
  */
 export function effectiveDisabledCategories(
   row: { disabledCategories?: unknown; enabledCategories?: unknown } | null
 ): NotificationCategory[] {
-  const list = (value: unknown): NotificationCategory[] =>
-    (Array.isArray(value) ? (value as unknown[]) : []).filter(isNotificationCategory);
-  const enabled = new Set(list(row?.enabledCategories));
-  const off = new Set(list(row?.disabledCategories).filter((c) => !isOptInCategory(c)));
-  for (const category of OPT_IN_CATEGORIES) if (!enabled.has(category)) off.add(category);
+  const { disabled, enabled } = storedSwitches(row);
+  const off = new Set(disabled);
+  for (const category of OPT_IN_CATEGORIES) if (!enabled.includes(category)) off.add(category);
   return NOTIFICATION_CATEGORIES.filter((c) => off.has(c));
 }
 

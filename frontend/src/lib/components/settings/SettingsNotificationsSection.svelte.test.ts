@@ -39,6 +39,7 @@ beforeEach(() => {
   api.fetchNotificationPreferences.mockResolvedValue({
     disabled: [],
     unknownDisabled: [],
+    pushEnabled: [],
     groupLevels: {},
     groupCalls: {},
   });
@@ -71,6 +72,7 @@ describe('SettingsNotificationsSection', () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: ['posts'],
       unknownDisabled: [],
+      pushEnabled: [],
       groupLevels: {},
       groupCalls: {},
     });
@@ -83,7 +85,7 @@ describe('SettingsNotificationsSection', () => {
     await render();
     switchOf('reactions').click();
     await settle();
-    expect(api.saveDisabledCategories).toHaveBeenCalledWith(['reactions'], []);
+    expect(api.saveDisabledCategories).toHaveBeenCalledWith(['reactions'], [], []);
     expect(switchOf('reactions').getAttribute('aria-checked')).toBe('false');
   });
 
@@ -95,6 +97,28 @@ describe('SettingsNotificationsSection', () => {
     switchOf('suggestions').click();
     await settle();
     expect(suggestions.resetSuggestions).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws the push of Suggestions apart, off by default; turning it on writes the push and keeps the app switch on', async () => {
+    await render();
+    const push = document.querySelector<HTMLInputElement>(
+      '[data-category-push="suggestions"] input[type="checkbox"]'
+    )!;
+    expect(push.checked).toBe(false);
+    expect(switchOf('suggestions').getAttribute('aria-checked')).toBe('true');
+    push.click();
+    await settle();
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith([], [], ['suggestions']);
+    expect(switchOf('suggestions').getAttribute('aria-checked')).toBe('true');
+    // One gesture switches both off.
+    switchOf('suggestions').click();
+    await settle();
+    expect(api.saveDisabledCategories).toHaveBeenLastCalledWith(['suggestions'], [], []);
+    expect(
+      document.querySelector<HTMLInputElement>(
+        '[data-category-push="suggestions"] input[type="checkbox"]'
+      )!.checked
+    ).toBe(false);
   });
 
   it('puts the switch back and says so when the write fails', async () => {

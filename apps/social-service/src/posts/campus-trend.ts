@@ -118,9 +118,9 @@ RETURNING id, markdown, images,
  * minus its author, a block either way with the author when the post NAMES it (an anonymous or an
  * association post is exempt, as in the feed - `namedAuthorUnblockedSql`), the other side of the
  * review cohort, and whoever already has a row for it in the ledger or in `post_notifications` (L14).
- * ONLY A READER WHO TURNED "SUGGESTIONS" ON ("Nos principes", owner 2026-11-10: off by default, and
- * off writes no bell row) - so a reader who did not spends no slot of their day or week either.
- * Built per call: the cohort is read from the environment.
+ * ONLY A READER WITH "SUGGESTIONS DANS L'APP" ON (the default; owner "Deux niveaux", 2026-11-11 - their
+ * PUSH is opt-in, decided by chat-delivery) - so a reader who switched it off spends no slot of
+ * their day or week. Built per call: the cohort is read from the environment.
  */
 export function campusTrendCandidatesSql(): string {
   return `SELECT ct_post.id AS "postId", ct_user.id AS "recipientId"

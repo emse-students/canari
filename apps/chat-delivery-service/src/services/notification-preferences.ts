@@ -12,7 +12,9 @@ import {
   effectiveDisabledCategories,
   isOptInCategory,
   OPT_IN_CATEGORIES,
+  storedSwitches,
   type NotificationCategory,
+  type StoredSwitches,
 } from './push-category';
 
 const logger = new Logger('NotificationPreferences');
@@ -41,13 +43,27 @@ export async function readDisabledCategories(
   }
 }
 
-/** The same read, failing loudly: a settings screen must never draw switches that lie. */
+/** The same read, failing loudly. */
 export async function readDisabledCategoriesStrict(
   manager: EntityManager,
   userId: string
 ): Promise<ReadonlySet<NotificationCategory>> {
   const row = await manager.findOne(NotificationPreference, { where: { userId } });
   return new Set(effectiveDisabledCategories(row));
+}
+
+/**
+ * The account's two switch sets AS STORED, for the settings screen - failing loudly: a screen must
+ * never draw switches that lie. `disabled` is what a build up to 1.6.10-alpha.1 reads as its whole
+ * answer, so it never carries the push-only reading of an opt-in category: such a build would save
+ * it back as "off in the app too".
+ */
+export async function readSwitchesStrict(
+  manager: EntityManager,
+  userId: string
+): Promise<StoredSwitches> {
+  const row = await manager.findOne(NotificationPreference, { where: { userId } });
+  return storedSwitches(row);
 }
 
 /**
@@ -155,22 +171,26 @@ export async function writeGroupCallsAllowed(
  * every category in `keep` - the ones the caller's build draws no switch for (`categoriesNameableBy`):
  * a `1.6.9` phone saving its switches must not decide "Suggestions", a choice it never showed.
  *
- * `disabled` is what the caller draws OFF. An opt-in category (`OPT_IN_CATEGORIES`) the caller can
- * name and does not list there is one it turned ON, written to `"enabledCategories"` (migration 047);
- * one in `keep` keeps its stored state, and a first save of a build that cannot name it leaves it off.
+ * `disabled` is what the caller draws OFF (for an opt-in category: off in the app too).
+ * `pushEnabled` is the opt-in categories whose PUSH the caller turned on - given ONLY by a build that
+ * declares it knows the opt-in reading (the PUT's `enabled` field). `undefined` (an older save,
+ * 1.6.10-alpha.1 included) leaves `"enabledCategories"` exactly as stored: a save that never drew
+ * the push switch can never turn a push on.
  *
  * ONE statement (`INSERT ... ON CONFLICT DO UPDATE`), so two saves at once each merge against the row
  * the other committed - never a read, then a write over a newer row. Unknown ids are the caller's to
- * refuse. Answers the categories now off (`effectiveDisabledCategories`).
+ * refuse. Answers the two sets as now stored.
  */
 export async function writeDisabledCategories(
   manager: EntityManager,
   userId: string,
   disabled: readonly NotificationCategory[],
-  keep: readonly NotificationCategory[] = []
-): Promise<NotificationCategory[]> {
+  keep: readonly NotificationCategory[] = [],
+  pushEnabled?: readonly NotificationCategory[]
+): Promise<StoredSwitches> {
+  const declared = pushEnabled !== undefined;
   const enabled = OPT_IN_CATEGORIES.filter(
-    (category) => !keep.includes(category) && !disabled.includes(category)
+    (category) => declared && !keep.includes(category) && pushEnabled.includes(category)
   );
   const rows = (await manager.query(
     `INSERT INTO notification_preference ("userId", "disabledCategories", "enabledCategories", "updatedAt")
@@ -184,14 +204,14 @@ export async function writeDisabledCategories(
             WHERE c = ANY($3::text[])
          ) merged
        ),
-       "enabledCategories" = (
+       "enabledCategories" = CASE WHEN $5::boolean THEN (
          SELECT COALESCE(jsonb_agg(c ORDER BY c), '[]'::jsonb) FROM (
            SELECT jsonb_array_elements_text(EXCLUDED."enabledCategories") AS c
            UNION
            SELECT c FROM jsonb_array_elements_text(notification_preference."enabledCategories") c
             WHERE c = ANY($3::text[])
          ) merged
-       ),
+       ) ELSE notification_preference."enabledCategories" END,
        "updatedAt" = now()
      RETURNING "disabledCategories" AS disabled, "enabledCategories" AS enabled`,
     // Sorted here as the merge sorts, so the stored order never depends on which path wrote it.
@@ -200,14 +220,16 @@ export async function writeDisabledCategories(
       JSON.stringify([...new Set(disabled)].sort()),
       [...new Set(keep)],
       JSON.stringify([...enabled].sort()),
+      declared,
     ]
   )) as Array<{ disabled: unknown; enabled: unknown }>;
-  const stored = effectiveDisabledCategories({
+  const stored = storedSwitches({
     disabledCategories: rows[0]?.disabled,
     enabledCategories: rows[0]?.enabled,
   });
   logger.debug(
-    `[NOTIF_PREF] user=${cutUserId(userId)} opt-in on=[${OPT_IN_CATEGORIES.filter((c) => !stored.includes(c)).join(',')}]` +
+    `[NOTIF_PREF] user=${cutUserId(userId)} push on=[${stored.enabled.join(',')}]` +
+      (declared ? '' : ' (push untouched: the save did not declare the opt-in reading)') +
       (keep.some(isOptInCategory) ? ' (some kept unnamed)' : '')
   );
   return stored;

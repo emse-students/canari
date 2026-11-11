@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 /**
  * "NOS PRINCIPES" IN PREFERENCES (owner, 2026-11-10): "Défilement infini des CanaReels" (on by
- * default, kept on this device) and "Lecture automatique des vidéos" (Toujours by default; Wi-Fi
- * says on an engine that reports no link that videos will wait for a tap).
+ * default, kept on this device) and "Lecture automatique des vidéos" (Toujours by default; no Wi-Fi
+ * choice where the engine reports no link, owner 2026-11-11).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount, tick } from 'svelte';
@@ -58,7 +58,16 @@ describe('Défilement infini des CanaReels', () => {
 });
 
 describe('Lecture automatique des vidéos', () => {
-  it('offers Toujours, Wi-Fi, Jamais with Toujours selected, and keeps a pick', async () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A device whose engine reports its link, as Chromium (the Android app) does. */
+  function reportsLink(type: string) {
+    const connection = Object.assign(new EventTarget(), { type });
+    vi.stubGlobal('navigator', { ...navigator, connection });
+  }
+
+  it('offers Toujours, Wi-Fi, Jamais where the device tells its link, Toujours selected, and keeps a pick', async () => {
+    reportsLink('wifi');
     await render();
     const [always, wifi, never] = autoplayChoices();
     expect(always.textContent?.trim()).toBe(m.settings_video_autoplay_always());
@@ -71,14 +80,19 @@ describe('Lecture automatique des vidéos', () => {
     expect(localStorage.getItem('canari_video_autoplay')).toBe('never');
   });
 
-  it('Wi-Fi on an engine that reports no link says videos will wait for a tap', async () => {
+  it('offers no Wi-Fi where the device cannot tell its link (owner, 2026-11-11)', async () => {
     // happy-dom has no `navigator.connection`, as iOS, Safari and Firefox.
     await render();
-    expect(document.body.querySelector('[data-video-autoplay-wifi-unknown]')).toBeNull();
-    autoplayChoices()[1].click();
-    flushSync();
-    expect(
-      document.body.querySelector('[data-video-autoplay-wifi-unknown]')?.textContent
-    ).toContain(m.settings_video_autoplay_wifi_unknown());
+    expect(autoplayChoices().map((b) => b.textContent?.trim())).toEqual([
+      m.settings_video_autoplay_always(),
+      m.settings_video_autoplay_never(),
+    ]);
+  });
+
+  it('a stored Wi-Fi on such a device is drawn as Jamais, which is what it does', async () => {
+    settings.setVideoAutoplay('wifi');
+    await render();
+    const [, never] = autoplayChoices();
+    expect(never.getAttribute('aria-selected')).toBe('true');
   });
 });
