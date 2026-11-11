@@ -725,19 +725,24 @@ which also holds **the contract a site implements**. This section is what Canari
   (`infrastructure/authentik/blueprints/55-handoff-reader.yaml`, token `MICONNECT_READER_TOKEN`),
   the INPUTS of the target application's access decision (`auth/handoff/handoff-access.ts`,
   `miconnect-reader.client.ts`): the account by `users.miconnect_uuid` must be active, the
-  application (`miconnectApplication` in the registry) must have no enabled policy binding, and the
-  tenant flag `core_default_app_access` must not be false (unset is authentik's default, true).
+  application (`miconnectApplication` in the registry) must have no enabled policy binding - nor
+  its provider's authentication and authorization flows, nor any stage binding of them - the
+  MiConnect user's `uid` must be the account's own id (the OIDC `sub`), the authorization flow must
+  ask no more than a signed-in user, and the tenant flag `core_default_app_access` must not be false (unset is authentik's default, true).
   That is exactly when authentik's `check_access` answers passing; `check_access?for_user` itself
   cannot be asked, because authentik 2026.8 honours `for_user` for a superuser only. A bound
   application is REFUSED, never evaluated in Canari. Refusals are typed and logged
   `[HANDOFF] refused class=<class> aud=<site> user=<sub>`: `not_linked`, `unknown_miconnect_user`,
-  `inactive`, `policy_bound`, `default_access_off` (403 `HANDOFF_ACCESS_REFUSED`, at warn), and
+  `inactive`, `identity_mismatch`, `policy_bound`, `flow_restricted`, `default_access_off` (403
+  `HANDOFF_ACCESS_REFUSED`, at warn), and
   `miconnect_not_configured`, `miconnect_unreachable`, `miconnect_refused` (503
   `HANDOFF_MICONNECT_UNAVAILABLE`, at error) - a MiConnect failure never mints. **The watch:** each
   boot logs one `[HANDOFF_ACCESS]` line per handoff application, at warn when it has gained a
   binding (its handoff is then refused until authentik can answer for a non-superuser). The
-  account's real API is proven in CI by `test-handoff-reader.py` (reads work; another application,
-  any write and any binding change are refused).
+  account's real API is proven in CI by `test-handoff-reader.py` (reads work, a binding added later
+  on the application, a flow or a stage is seen; another application, any write and any binding
+  change are refused). Production only: dev holds no reader token and refuses
+  `miconnect_not_configured`, by design.
 - **The registry is closed and server-side.** `libs/contracts/ecosystem-sites.json`, copied by
   core-service (`handoff-sites.ts`) and by the client (`ecosystemSites.ts`), each asserting its copy
   equals the file. The client names a site by id; **core-service composes the URL**

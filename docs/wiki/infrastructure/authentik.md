@@ -87,12 +87,15 @@ secrets, and ignores `expires` on a non-expiring token, which authentik rewrites
 
 **`55-handoff-reader.yaml` (F3-bound, 2026-11-11)** builds the READ-ONLY account Canari's handoff
 mint asks whether a person may enter a site: a role with global `view_user`, `view_policybinding`
-(global on purpose - a grant on today's bindings would not see tomorrow's) and
-`view_system_settings`, plus `view_application` on `migallery`, `sky` and `cercle` only, granted by
+(global on purpose - a grant on today's bindings would not see tomorrow's), `view_flow` and
+`view_flowstagebinding` (the providers' login and authorization flows, whose bindings the mint
+counts too; global for the same reason) and `view_system_settings`, plus `view_application` on `migallery`, `sky` and `cercle` only, granted by
 the `permissions:` of those entries in `60-applications.yaml` (which is why the file sorts before
 it); the group, the account `miconnect-canari-handoff-reader` and its token, key `!Env
-MICONNECT_READER_TOKEN`. CI uses the token (`test-handoff-reader.py`): the four reads work, another
-application is `404`, and every write - a user, an application, a binding, the settings - is `403`
+MICONNECT_READER_TOKEN` (production only; dev holds none). CI uses the token
+(`test-handoff-reader.py`): the reads work, a binding added later on an application, a flow or a
+stage is seen, another application is `404`, and every write - a user, an application, a flow, a
+stage binding, a binding, the settings - is `403`
 ([sessions](../sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08)).
 
 **What is NOT in the blueprints, deliberately:**

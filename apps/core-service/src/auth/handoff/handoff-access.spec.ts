@@ -21,12 +21,25 @@ const TOKEN = 'reader-token-under-test';
 const UUID = '0b6c1c52-3d7c-4a3e-9d8a-2f1e7c9a0b11';
 
 interface World {
-  users: { pk: number; is_active: boolean }[];
+  users: { pk: number; is_active: boolean; uid?: string }[];
+  /** Enabled bindings on the application itself. */
   bindings: number;
+  /** Enabled bindings per binding target other than the application (a flow's or a stage's pbm). */
+  flowBindings?: Record<string, number>;
+  /** The authorization flow's `authentication` requirement. */
+  flowAuth?: string;
+  /** The provider's flows; a null one is a provider that names none. */
+  providerFlows?: { authentication_flow: string | null; authorization_flow: string | null };
   flags: Record<string, unknown>;
-  status?: Partial<Record<'users' | 'app' | 'bindings' | 'settings', number>>;
+  status?: Partial<Record<'users' | 'app' | 'bindings' | 'settings' | 'flows' | 'stages', number>>;
   down?: boolean;
 }
+
+/** The flows of the fake provider, and the binding targets they expose. */
+const AUTHZ = 'authz-flow-uuid';
+const AUTHN = 'authn-flow-uuid';
+const flowPbm = (flow: string) => `${flow}-pbm`;
+const stagePbm = (flow: string) => `${flow}-stage-pbm`;
 
 function fakeFetch(world: World) {
   const calls: { url: string; auth: string | null; method: string }[] = [];
@@ -39,14 +52,45 @@ function fakeFetch(world: World) {
     if (world.down) return Promise.reject(new TypeError('fetch failed'));
     const path = new URL(url).pathname;
     const pick = (k: keyof NonNullable<World['status']>) => world.status?.[k];
+    const query = new URL(url).searchParams;
     if (path === '/api/v3/core/users/') {
-      return reply(pick('users') ?? 200, { results: world.users });
+      return reply(pick('users') ?? 200, {
+        results: world.users.map((u) => ({ uid: 'user-a', ...u })),
+      });
     }
     if (path.startsWith('/api/v3/core/applications/')) {
-      return reply(pick('app') ?? 200, { pk: 'app-pbm-uuid', slug: path.split('/')[5] });
+      return reply(pick('app') ?? 200, {
+        pk: 'app-pbm-uuid',
+        slug: path.split('/')[5],
+        provider_obj: world.providerFlows ?? {
+          authentication_flow: AUTHN,
+          authorization_flow: AUTHZ,
+        },
+      });
+    }
+    if (path === '/api/v3/flows/instances/') {
+      const flow = query.get('flow_uuid') ?? '';
+      const authentication =
+        flow === AUTHZ ? (world.flowAuth ?? 'require_authenticated') : 'require_unauthenticated';
+      return reply(pick('flows') ?? 200, {
+        results: [{ pk: flow, policybindingmodel_ptr_id: flowPbm(flow), authentication }],
+      });
+    }
+    if (path === '/api/v3/flows/bindings/') {
+      const flow = query.get('target') ?? '';
+      return reply(pick('stages') ?? 200, {
+        pagination: { count: 1 },
+        results: [{ pk: `${flow}-stage`, policybindingmodel_ptr_id: stagePbm(flow) }],
+      });
     }
     if (path === '/api/v3/policies/bindings/') {
-      return reply(pick('bindings') ?? 200, { pagination: { count: world.bindings }, results: [] });
+      const count = query
+        .getAll('target_in')
+        .reduce(
+          (n, t) => n + (t === 'app-pbm-uuid' ? world.bindings : (world.flowBindings?.[t] ?? 0)),
+          0
+        );
+      return reply(pick('bindings') ?? 200, { pagination: { count }, results: [] });
     }
     if (path === '/api/v3/admin/settings/') {
       return reply(pick('settings') ?? 200, { flags: world.flags });
@@ -107,13 +151,19 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
     throw new Error('expected a refusal, the mint was let through');
   };
 
-  it('lets an active account into an unbound application, with the four reads and the reader token', async () => {
+  it('lets an active account into an unbound application, with the reads and the reader token', async () => {
     const { access, calls } = build(OPEN_WORLD);
     await expect(access.assertMayEnter('user-a', 'migallery')).resolves.toBeUndefined();
     expect(calls.map((c) => new URL(c.url).pathname).sort()).toEqual([
       '/api/v3/admin/settings/',
       '/api/v3/core/applications/migallery/',
       '/api/v3/core/users/',
+      '/api/v3/flows/bindings/',
+      '/api/v3/flows/bindings/',
+      '/api/v3/flows/instances/',
+      '/api/v3/flows/instances/',
+      '/api/v3/policies/bindings/',
+      '/api/v3/policies/bindings/',
       '/api/v3/policies/bindings/',
     ]);
     for (const c of calls) {
@@ -122,9 +172,15 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
     }
     const users = new URL(calls.find((c) => c.url.includes('/core/users/'))!.url);
     expect(users.searchParams.get('uuid')).toBe(UUID);
-    const bindings = new URL(calls.find((c) => c.url.includes('/bindings/'))!.url);
-    expect(bindings.searchParams.get('target')).toBe('app-pbm-uuid');
-    expect(bindings.searchParams.get('enabled')).toBe('true');
+    const targets = calls
+      .filter((c) => c.url.includes('/policies/bindings/'))
+      .map((c) => new URL(c.url).searchParams);
+    for (const q of targets) expect(q.get('enabled')).toBe('true');
+    // Every binding target an OIDC sign-in walks through is counted: the application, both flows
+    // and their stage bindings.
+    expect(targets.flatMap((q) => q.getAll('target_in')).sort()).toEqual(
+      ['app-pbm-uuid', flowPbm(AUTHN), flowPbm(AUTHZ), stagePbm(AUTHN), stagePbm(AUTHZ)].sort()
+    );
   });
 
   it('lets the flag set explicitly true through as well', async () => {
@@ -147,10 +203,52 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
       HandoffAccessClass.inactive,
     ],
     [
+      'a uuid whose MiConnect user is another person',
+      { ...OPEN_WORLD, users: [{ pk: 7, is_active: true, uid: 'someone-else' }] },
+      UUID,
+      HandoffAccessClass.identityMismatch,
+    ],
+    [
+      'a user answer that carries no uid',
+      { ...OPEN_WORLD, users: [{ pk: 7, is_active: true, uid: '' }] },
+      UUID,
+      HandoffAccessClass.refused,
+    ],
+    [
       'an application with a binding',
       { ...OPEN_WORLD, bindings: 1 },
       UUID,
       HandoffAccessClass.policyBound,
+    ],
+    [
+      'a policy bound on the authorization flow',
+      { ...OPEN_WORLD, flowBindings: { [flowPbm(AUTHZ)]: 1 } },
+      UUID,
+      HandoffAccessClass.policyBound,
+    ],
+    [
+      'a policy bound on a stage of the authentication flow',
+      { ...OPEN_WORLD, flowBindings: { [stagePbm(AUTHN)]: 2 } },
+      UUID,
+      HandoffAccessClass.policyBound,
+    ],
+    [
+      'an authorization flow that requires a superuser',
+      { ...OPEN_WORLD, flowAuth: 'require_superuser' },
+      UUID,
+      HandoffAccessClass.flowRestricted,
+    ],
+    [
+      'a provider that names no authentication flow (the brand default is not read)',
+      { ...OPEN_WORLD, providerFlows: { authentication_flow: null, authorization_flow: AUTHZ } },
+      UUID,
+      HandoffAccessClass.refused,
+    ],
+    [
+      'the reader losing view_flow (403)',
+      { ...OPEN_WORLD, status: { flows: 403 } },
+      UUID,
+      HandoffAccessClass.refused,
     ],
     [
       'default access switched off',
@@ -223,7 +321,13 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
         '/api/v3/core/applications/migallery/',
         '/api/v3/core/applications/sky/',
       ]);
-      expect(lines.filter((l) => l.includes('bindings=0'))).toHaveLength(3);
+      expect(
+        lines.filter((l) =>
+          l.includes(
+            'bindings=0 flow_bindings=0 flow_auth=require_authenticated default_access=unset'
+          )
+        )
+      ).toHaveLength(3);
     });
 
     it('names, at warn, an application that gained a binding', async () => {
@@ -234,7 +338,7 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
       });
       await access.reportBindings();
       expect(warned).toHaveLength(3);
-      expect(warned[0]).toMatch(/site=migallery app=migallery bindings=2 .*REFUSED/);
+      expect(warned[0]).toMatch(/site=migallery app=migallery bindings=2 .*REFUSED policy_bound/);
     });
 
     it('logs a failed read at error and does not throw', async () => {

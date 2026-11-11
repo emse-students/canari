@@ -14,9 +14,13 @@
 # BEFORE it), its policy bindings (`view_policybinding`, GLOBAL on purpose: a binding is its own
 # object, so a grant scoped to today's bindings would not see tomorrow's, and an unseen binding
 # would read as "none" - a fail-OPEN), and the tenant flag `core_default_app_access`
-# (`view_system_settings`, read-only). Canari mints only when the user is active, the application has
-# no enabled binding and the flag is true - exactly when `check_access` answers passing - and
-# refuses otherwise.
+# (`view_system_settings`, read-only). And the FLOWS an OIDC sign-in to the site walks through, whose
+# policies a handoff would otherwise skip: the provider's authentication and authorization flows
+# (`view_flow`) and their stage bindings (`view_flowstagebinding`), both GLOBAL for the same reason -
+# a provider switched to another flow tomorrow must still be readable, and a flow's configuration is
+# no secret. Canari mints only when the user is active, nothing is bound on the application, on
+# either flow or on a stage of them, the authorization flow asks no more than an authenticated user,
+# and the flag is true - and refuses otherwise.
 #
 # THE TOKEN KEY IS `!Env`, never written here: the file is public. It is read from the worker's
 # environment (`MICONNECT_READER_TOKEN`, declared with `:?` in compose.yml), and the same value is the
@@ -36,6 +40,8 @@ entries:
         - authentik_core.view_user
         - authentik_policies.view_policybinding
         - authentik_rbac.view_system_settings
+        - authentik_flows.view_flow
+        - authentik_flows.view_flowstagebinding
   - model: authentik_core.group
     identifiers:
       name: "miconnect-handoff-readers"

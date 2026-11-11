@@ -697,3 +697,27 @@ would read "no binding" (fail-open); the CI test proves a binding added after th
 (its own row). **Rollout order:** the token goes into the MiConnect stack's `.env` and the worker is
 recreated BEFORE the merge (the applier refuses an unset `!Env`), then the GitHub secrets
 (`infrastructure/MIGRATION.md`); the next stable applies the blueprint.
+
+**Hardened after the adversarial review of 2026-11-11** (same decision, closer to OIDC):
+
+- **The person is checked, not only the link.** The MiConnect user found by the account's
+  `miconnectUuid` must have `uid` equal to the Canari account's id - every provider is in
+  `hashed_user_id` mode, so `uid` IS the OIDC `sub` Canari keyed the account by. Otherwise
+  `identity_mismatch` (403).
+- **The flows are counted too.** An OIDC sign-in to a site walks through its provider's
+  authentication flow (`miconnect-auth`) and authorization flow
+  (`default-provider-authorization-implicit-consent`); a policy bound on either, or on one of their
+  stage bindings, would stop a person there, and a handoff skips both. So the mint counts the
+  enabled bindings on the application, both flows and every stage binding of them (`policy_bound`
+  if any), and refuses an authorization flow asking more than a signed-in user (`flow_restricted`).
+  The account gains global `view_flow` and `view_flowstagebinding`, global for the reason
+  `view_policybinding` is. A provider naming no authentication flow (the brand default) is refused,
+  never assumed open. Read on production 2026-11-11, read-only: 0 bindings on the three
+  applications, on both flows and on their stage bindings; authorization flows
+  `require_authenticated`.
+- **The limit that remains, named in every boot line:** what a STAGE itself decides from the user
+  (a group test written inside an expression stage, an identification stage's own rules) is not a
+  binding, so no count sees it. Today's flows bind none; a site that needs such a rule must put it
+  in a POLICY BINDING, which closes the handoff to it.
+- **Dev holds no reader token** (lead, 2026-11-11): it reads every MiConnect user, and dev mints
+  nothing; dev's mint refuses `miconnect_not_configured` by design.

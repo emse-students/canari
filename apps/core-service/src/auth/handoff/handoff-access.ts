@@ -3,7 +3,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { ECOSYSTEM_SITES } from './handoff-sites';
-import { MiconnectReadError, MiconnectReaderClient } from './miconnect-reader.client';
+import {
+  MiconnectReadError,
+  MiconnectReaderClient,
+  OPEN_FLOW_AUTHENTICATION,
+  type MiconnectApplicationAccess,
+} from './miconnect-reader.client';
 
 /** Injection token of the access gate, so a test hands the mint a gate of its own. */
 export const HANDOFF_ACCESS = Symbol('HANDOFF_ACCESS');
@@ -21,8 +26,15 @@ export const HandoffAccessClass = {
   unknownAccount: 'unknown_miconnect_user',
   /** The MiConnect account is deactivated. */
   inactive: 'inactive',
-  /** The target application has an enabled policy binding: only `check_access` could decide, and it cannot be asked (section 9). */
+  /** The uuid on the Canari account names a MiConnect user whose `uid` is not this account's id. */
+  identityMismatch: 'identity_mismatch',
+  /**
+   * A policy is bound on the target application, on its provider's authentication or authorization
+   * flow, or on a stage of them: only MiConnect could evaluate it, and it cannot be asked (section 9).
+   */
   policyBound: 'policy_bound',
+  /** The authorization flow asks more than a signed-in user (e.g. `require_superuser`). */
+  flowRestricted: 'flow_restricted',
   /** The tenant's `core_default_app_access` is false: an unbound application lets nobody in. */
   defaultAccessOff: 'default_access_off',
   /** No reader token or MiConnect URL on this estate. */
@@ -111,17 +123,17 @@ export class MiconnectHandoffAccess implements HandoffAccess, OnApplicationBoots
           `uuid ${uuid.slice(0, 8)}`
         );
       }
+      // The uuid link is trusted only when it leads back to THIS account: authentik's `uid` is the
+      // OIDC `sub` Canari keyed the account by.
+      if (account.uid !== userId) {
+        throw new HandoffAccessRefused(HandoffAccessClass.identityMismatch, `pk ${account.pk}`);
+      }
       if (!account.isActive) {
         throw new HandoffAccessRefused(HandoffAccessClass.inactive, `pk ${account.pk}`);
       }
-      if (access.enabledBindings > 0) {
-        throw new HandoffAccessRefused(
-          HandoffAccessClass.policyBound,
-          `app=${application} bindings=${access.enabledBindings}`
-        );
-      }
-      if (access.defaultAccessFlag === false) {
-        throw new HandoffAccessRefused(HandoffAccessClass.defaultAccessOff, `app=${application}`);
+      const closed = closedBy(access);
+      if (closed) {
+        throw new HandoffAccessRefused(closed, `app=${application} ${describe(access)}`);
       }
     } catch (e) {
       if (e instanceof MiconnectReadError) {
@@ -159,14 +171,16 @@ export class MiconnectHandoffAccess implements HandoffAccess, OnApplicationBoots
       if (!site.miconnectApplication) continue;
       try {
         const access = await this.reader.applicationAccess(site.miconnectApplication);
-        if (access.enabledBindings > 0 || access.defaultAccessFlag === false) {
+        const closed = closedBy(access);
+        if (closed) {
           this.logger.warn(
-            `[HANDOFF_ACCESS] site=${site.id} app=${site.miconnectApplication} bindings=${access.enabledBindings} ` +
-              `default_access=${access.defaultAccessFlag ?? 'unset'} - every handoff to it is REFUSED until MiConnect can answer check_access for a non-superuser (design section 9)`
+            `[HANDOFF_ACCESS] site=${site.id} app=${site.miconnectApplication} ${describe(access)} ` +
+              `- every handoff to it is REFUSED ${closed} until MiConnect can answer check_access for a non-superuser (design section 9)`
           );
         } else {
           this.logger.log(
-            `[HANDOFF_ACCESS] site=${site.id} app=${site.miconnectApplication} bindings=0 default_access=${access.defaultAccessFlag ?? 'unset'} - an active account may be handed off`
+            `[HANDOFF_ACCESS] site=${site.id} app=${site.miconnectApplication} ${describe(access)} ` +
+              '- an active account may be handed off (not read: what a stage itself decides from a user, e.g. a group check inside an expression stage)'
           );
         }
       } catch (e) {
@@ -176,4 +190,22 @@ export class MiconnectHandoffAccess implements HandoffAccess, OnApplicationBoots
       }
     }
   }
+}
+
+/** The class that closes an application to the handoff, or null when its inputs settle it open. */
+function closedBy(access: MiconnectApplicationAccess): HandoffAccessClassCode | null {
+  if (access.enabledBindings > 0 || access.flowBindings > 0) return HandoffAccessClass.policyBound;
+  if (!OPEN_FLOW_AUTHENTICATION.has(access.authorizationFlowAuthentication)) {
+    return HandoffAccessClass.flowRestricted;
+  }
+  if (access.defaultAccessFlag === false) return HandoffAccessClass.defaultAccessOff;
+  return null;
+}
+
+/** The inputs, as a log line names them. */
+function describe(access: MiconnectApplicationAccess): string {
+  return (
+    `bindings=${access.enabledBindings} flow_bindings=${access.flowBindings} ` +
+    `flow_auth=${access.authorizationFlowAuthentication} default_access=${access.defaultAccessFlag ?? 'unset'}`
+  );
 }

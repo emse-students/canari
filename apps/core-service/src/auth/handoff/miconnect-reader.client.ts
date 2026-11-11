@@ -20,11 +20,25 @@ export class MiconnectReadError extends Error {
   }
 }
 
+/** One page holds every stage binding of a flow; more is refused, never guessed. */
+const STAGE_PAGE = 100;
+
 /** The MiConnect user a Canari account is, as the access decision needs it. */
 export interface MiconnectAccount {
   pk: number;
   isActive: boolean;
+  /**
+   * authentik's `uid` - the OIDC `sub` of every provider in `hashed_user_id` mode (all of them,
+   * read 2026-11-11), so it is the Canari account's own id when the uuid link is right.
+   */
+  uid: string;
 }
+
+/** The authorization-flow `authentication` modes that ask nothing beyond a signed-in user. */
+export const OPEN_FLOW_AUTHENTICATION: ReadonlySet<string> = new Set([
+  'none',
+  'require_authenticated',
+]);
 
 /**
  * What MiConnect would decide an application's access FROM when no policy is bound: its enabled
@@ -32,6 +46,14 @@ export interface MiconnectAccount {
  */
 export interface MiconnectApplicationAccess {
   enabledBindings: number;
+  /**
+   * Enabled bindings on the flows an OIDC sign-in to the site walks through - the provider's
+   * authentication and authorization flows - and on their stage bindings: a policy a handoff would
+   * skip if it minted past it.
+   */
+  flowBindings: number;
+  /** The authorization flow's `authentication` requirement (`require_authenticated`, ...). */
+  authorizationFlowAuthentication: string;
   /** The flag, `null` when the tenant never set it (authentik then applies its default, true). */
   defaultAccessFlag: boolean | null;
 }
@@ -39,11 +61,11 @@ export interface MiconnectApplicationAccess {
 /**
  * READS MICONNECT through the read-only service account `miconnect-canari-handoff-reader`
  * (infrastructure/authentik/blueprints/55-handoff-reader.yaml): `view_user`, `view_application` on
- * the three handoff applications only, `view_policybinding`, `view_system_settings` - nothing that
- * writes. Proven against a real authentik by `infrastructure/authentik/test-handoff-reader.py`.
+ * the three handoff applications only, `view_policybinding`, `view_system_settings`, `view_flow`,
+ * `view_flowstagebinding` - nothing that writes. Proven against a real authentik by `infrastructure/authentik/test-handoff-reader.py`.
  *
- * Read-only, so dev MAY hold the token (dev and production share ONE MiConnect); the editor's
- * production-only rule is about writes.
+ * Production only (lead, 2026-11-11): the token reads every MiConnect user, and dev mints nothing,
+ * so dev holds none and its mint refuses `miconnect_not_configured`.
  */
 @Injectable()
 export class MiconnectReaderClient {
@@ -56,7 +78,7 @@ export class MiconnectReaderClient {
 
   /** The MiConnect user with this uuid; `null` when MiConnect knows no such user. */
   async findAccount(uuid: string): Promise<MiconnectAccount | null> {
-    const body = await this.get<{ results?: { pk: number; is_active: boolean }[] }>(
+    const body = await this.get<{ results?: { pk: number; is_active: boolean; uid: string }[] }>(
       `/api/v3/core/users/?uuid=${encodeURIComponent(uuid)}`
     );
     const results = body.results ?? [];
@@ -64,27 +86,88 @@ export class MiconnectReaderClient {
     if (results.length > 1) {
       throw new MiconnectReadError('refused', `uuid matched ${results.length} users`);
     }
-    return { pk: results[0].pk, isActive: results[0].is_active === true };
+    if (typeof results[0].uid !== 'string' || !results[0].uid) {
+      throw new MiconnectReadError('refused', 'the user answer carries no uid');
+    }
+    return { pk: results[0].pk, isActive: results[0].is_active === true, uid: results[0].uid };
   }
 
   /** The inputs of `application`'s access decision (its slug at MiConnect). */
   async applicationAccess(application: string): Promise<MiconnectApplicationAccess> {
     const [app, settings] = await Promise.all([
-      this.get<{ pk: string }>(`/api/v3/core/applications/${encodeURIComponent(application)}/`),
+      this.get<{
+        pk: string;
+        provider_obj?: { authentication_flow?: string | null; authorization_flow?: string | null };
+      }>(`/api/v3/core/applications/${encodeURIComponent(application)}/`),
       this.get<{ flags?: Record<string, unknown> }>('/api/v3/admin/settings/'),
     ]);
-    const bindings = await this.get<{ pagination?: { count?: number } }>(
-      `/api/v3/policies/bindings/?target=${encodeURIComponent(app.pk)}&enabled=true`
+    const authorization = app.provider_obj?.authorization_flow;
+    const authentication = app.provider_obj?.authentication_flow;
+    // A provider with no authentication flow of its own uses the BRAND's, which this account does
+    // not read: refused rather than assumed open (every handoff provider names one, 2026-11-11).
+    if (!authorization || !authentication) {
+      throw new MiconnectReadError(
+        'refused',
+        `${application}: the provider names no ${authorization ? 'authentication' : 'authorization'} flow`
+      );
+    }
+    const [appBindings, authz, authn] = await Promise.all([
+      this.countBindings([app.pk]),
+      this.flowGate(authorization),
+      this.flowGate(authentication),
+    ]);
+    const flag = settings.flags?.core_default_app_access;
+    return {
+      enabledBindings: appBindings,
+      flowBindings: authz.bindings + authn.bindings,
+      authorizationFlowAuthentication: authz.authentication,
+      defaultAccessFlag: typeof flag === 'boolean' ? flag : null,
+    };
+  }
+
+  /** A flow's own enabled bindings plus those on each of its stage bindings, and its requirement. */
+  private async flowGate(flowUuid: string): Promise<{ bindings: number; authentication: string }> {
+    const id = encodeURIComponent(flowUuid);
+    const [flows, stages] = await Promise.all([
+      this.get<{
+        results?: { policybindingmodel_ptr_id?: string; authentication?: string }[];
+      }>(`/api/v3/flows/instances/?flow_uuid=${id}`),
+      this.get<{
+        pagination?: { count?: number };
+        results?: { policybindingmodel_ptr_id?: string }[];
+      }>(`/api/v3/flows/bindings/?target=${id}&page_size=${STAGE_PAGE}`),
+    ]);
+    const flow = flows.results ?? [];
+    const own = flow[0]?.policybindingmodel_ptr_id;
+    const requirement = flow[0]?.authentication;
+    if (flow.length !== 1 || !own || !requirement) {
+      throw new MiconnectReadError(
+        'refused',
+        `flow ${flowUuid.slice(0, 8)}: ${flow.length} answers`
+      );
+    }
+    const stageTargets = (stages.results ?? []).map((s) => s.policybindingmodel_ptr_id ?? '');
+    if (stages.pagination?.count !== stageTargets.length || stageTargets.some((t) => !t)) {
+      throw new MiconnectReadError(
+        'refused',
+        `flow ${flowUuid.slice(0, 8)}: its stage bindings were not all read`
+      );
+    }
+    const bindings = await this.countBindings([own, ...stageTargets]);
+    return { bindings, authentication: requirement };
+  }
+
+  /** The enabled policy bindings on any of these binding targets (their `pbm_uuid`). */
+  private async countBindings(targets: string[]): Promise<number> {
+    const query = targets.map((t) => `target_in=${encodeURIComponent(t)}`).join('&');
+    const answer = await this.get<{ pagination?: { count?: number } }>(
+      `/api/v3/policies/bindings/?${query}&enabled=true`
     );
-    const count = bindings.pagination?.count;
+    const count = answer.pagination?.count;
     if (typeof count !== 'number') {
       throw new MiconnectReadError('refused', 'the bindings answer carries no count');
     }
-    const flag = settings.flags?.core_default_app_access;
-    return {
-      enabledBindings: count,
-      defaultAccessFlag: typeof flag === 'boolean' ? flag : null,
-    };
+    return count;
   }
 
   private async get<T>(path: string): Promise<T> {

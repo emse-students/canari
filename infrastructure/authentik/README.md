@@ -134,7 +134,7 @@ machine a l autre : `sha256:7421753c...` des deux cotes pour `2026.8.0`.
 | `AUTHENTIK_SECRET_KEY` | cle secrete Authentik |
 | `MIGALLERY_AVATAR_SIGNING_KEY` | signe l URL d avatar du mapping `avatar` - la meme valeur que le secret `AVATAR_SIGNING_KEY` de MiGallery |
 | `MICONNECT_EDITOR_TOKEN` | cle API du compte de service `miconnect-canari-editor` (voir et modifier les utilisateurs, rien d autre), creee par `blueprints/80-profile-editor.yaml` ; la meme valeur est le secret GitHub `MICONNECT_EDITOR_TOKEN` de Canari |
-| `MICONNECT_READER_TOKEN` | cle API du compte de service `miconnect-canari-handoff-reader` (LECTURE SEULE : les utilisateurs, les trois applications de la connexion transmise, leurs liaisons de politiques, les reglages), creee par `blueprints/55-handoff-reader.yaml` ; la meme valeur est le secret GitHub `MICONNECT_READER_TOKEN` de Canari (et `DEV_MICONNECT_READER_TOKEN`) |
+| `MICONNECT_READER_TOKEN` | cle API du compte de service `miconnect-canari-handoff-reader` (LECTURE SEULE : les utilisateurs, les trois applications de la connexion transmise, les flux d'authentification et d'autorisation et leurs etapes, les liaisons de politiques, les reglages), creee par `blueprints/55-handoff-reader.yaml` ; la meme valeur est le secret GitHub `MICONNECT_READER_TOKEN` de Canari, en production seulement (le dev n'en a pas, par decision du 2026-11-11) |
 | `MICONNECT_CAS_CONSUMER_SECRET` | secret du client OIDC `miconnect` cree par la DSI sur le CAS, lu par `blueprints/30-sources.yaml` |
 
 Elles vivent dans le `.env` de la boite, a cote du `compose.yml`.
