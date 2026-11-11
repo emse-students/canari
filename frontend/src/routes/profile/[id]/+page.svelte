@@ -4,7 +4,15 @@
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { fetchUserProfile, type UserProfile, getSavedUserId } from '$lib/stores/user';
+  import { untrack } from 'svelte';
+  import {
+    fetchUserProfile,
+    isAbsentUserError,
+    type UserProfile,
+    getSavedUserId,
+  } from '$lib/stores/user';
+  import { forgetProfileCopy, readProfileCopy, rememberProfile } from '$lib/profile/profileCopies';
+  import { localCopiesOpenFor } from '$lib/localCopies/localCopyStore.svelte';
   import { PROFILE_SELF_SEGMENT } from '$lib/profile/profileSections';
   import { getFollowStatus, type FollowStatus } from '$lib/follows/api';
   import {
@@ -58,6 +66,12 @@
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
+  /**
+   * What is on screen is the device's COPY of this profile (slow-link chantier, gap 2), drawn before
+   * the read answers. It holds no verdict about the reader, so the follow and block gestures wait
+   * for the answer.
+   */
+  let fromCopy = $state(false);
   let error = $state('');
   /** Where the reader stands with this person: a request, a follow, or neither (WP-F4). */
   let followStatus = $state<FollowStatus | null>(null);
@@ -112,6 +126,7 @@
       const [prof, status, blocks] = await profileRead;
       if (token !== loadToken) return;
       profile = prof;
+      fromCopy = false;
       followStatus = status;
       blocked = blocks.some((b) => b.userId === userId);
       extrasLoading = true;
@@ -134,9 +149,25 @@
         `${rows.length} membership(s), ${history.length} role(s), entourage ${entourage ? 'read' : 'none'}`
       );
       if (token === loadToken) extrasLoading = false;
+      // Kept for the next visit, whatever the link: sealed on the device, never in clear.
+      void rememberProfile({ profile: prof, memberships: rows, roleHistory: history });
     } catch (err) {
       Log.d('profile.load failed', err);
       if (token !== loadToken) return;
+      if (fromCopy && !isAbsentUserError(err)) {
+        // THE COPY STAYS: a failed revalidation says nothing about the profile. Logged, not shown.
+        console.warn(
+          `[PROFILE-COPIES] ${userId} not refreshed, the device copy stays: ${String(err)}`
+        );
+        extrasLoading = false;
+        return;
+      }
+      if (isAbsentUserError(err)) {
+        // An ANSWER: the account is gone, its copy goes with it.
+        forgetProfileCopy(userId);
+        fromCopy = false;
+        profile = null;
+      }
       error = m.profile_public_load_error();
     } finally {
       if (token === loadToken) loading = false;
@@ -153,6 +184,7 @@
     // profile's content is never shown while the new one loads.
     const token = ++loadToken;
     profile = null;
+    fromCopy = false;
     error = '';
     memberships = [];
     roleHistory = [];
@@ -176,6 +208,33 @@
     }
 
     void loadProfile(userId, token);
+  });
+
+  /**
+   * DRAWS THE PROFILE FROM THE DEVICE while its read is on the wire (slow-link chantier, gap 2).
+   * Re-runs when the device's copies open (the key may arrive after the first frame). Never over
+   * anything already drawn - an answer that won the race is newer - and never with an error up.
+   */
+  $effect(() => {
+    const userId = page.params.id;
+    const open = localCopiesOpenFor();
+    if (!userId || !open) return;
+    const token = untrack(() => loadToken);
+    if (untrack(() => profile !== null || error !== '')) return;
+    let cancelled = false;
+    void readProfileCopy(userId).then((copy) => {
+      if (cancelled || !copy || token !== loadToken || profile !== null || error !== '') return;
+      profile = copy.profile;
+      memberships = copy.memberships;
+      roleHistory = copy.roleHistory;
+      fromCopy = true;
+      loading = false;
+      extrasLoading = false;
+      Log.d('profile.copy', `${userId} drawn from the device, no network`);
+    });
+    return () => {
+      cancelled = true;
+    };
   });
 
   function formatYear(year: number | null): string {
@@ -342,7 +401,7 @@
             variant={followStatus ? 'secondary' : 'primary'}
             class="min-h-11 flex-1 sm:flex-none"
             onclick={handleFollowToggle}
-            disabled={followLoading}
+            disabled={followLoading || fromCopy}
             data-follow-status={followStatus ?? 'none'}
           >
             {#if followStatus === 'accepted'}
@@ -372,7 +431,7 @@
           {/if}
           <ProfileOverflowMenu
             {blocked}
-            busy={blockLoading}
+            busy={blockLoading || fromCopy}
             onReport={() => (reportOpen = true)}
             onBlockToggle={handleBlockToggle}
           />

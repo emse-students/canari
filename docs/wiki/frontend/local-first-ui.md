@@ -429,6 +429,59 @@ token and every read held unanswered):
 the cold boot after this lands, and the first paint read on the bench Mi 9T, which is the
 hardware-held path.
 
+## 4ter. The bell and profiles already opened have a local copy (2026-11-11)
+
+Gap 2 of the [slow-link chantier](../backlog.d/slow-link-local-first-chantier.md). The owner's
+point: on a weak link the app is WORSE than with no network, because a screen with no copy waits for
+an answer while offline it draws from local state. Three screens were named.
+
+| Screen | Local copy | Drawn | Revalidated by |
+| --- | --- | --- | --- |
+| Pour toi | **already there**: the feed's stored first page, slot `feed:foryou` (the same store as every bare tab, section 4bis); no new work, one more first-paint test (`routes/posts/page.slowLinkFirstPaint.svelte.test.ts`) | at mount, with no token | the first page |
+| The bell (`/notifications`, the dropdown, the badge) | the newest 50 notifications, slot `copy:bell` | when the account's key is in hand, at once | `postNotifStore.load`; the answer replaces the list |
+| A profile already opened | the last 12 profiles opened, newest first, slot `copy:profiles`: the public profile fields, associations and role history | when the page mounts and the key is in hand | the profile read, as before |
+
+**One mechanism, `lib/localCopies/localCopyStore.svelte.ts`.** A slot of the account's sealed
+`feed_pages` table (the feed's and the peer-name directory's table), sealed under the DEVICE KEY, an
+envelope repeating `owner`, `epoch` and `slot`. **Its lifetime is the peer-name directory's epoch**:
+ended only by a sign-out or a change of account (`endPeerNames`); a copy of another account, another
+slot, an ended epoch or another shape is deleted unread; an unreadable one is deleted; a store that
+failed to open keeps the row. The gate is the feed's (`feedStoreAccess`), bound in the root layout
+beside the directory: **a locked device draws nothing**, and `localCopiesOpenFor()` is reactive so a
+screen drawn before the bind reads again when it opens. Never localStorage, except the epoch id.
+
+**Rules each screen keeps.**
+- *Never a spinner over a copy, and a failed revalidation keeps the copy*, logged at `warn` (a
+  transport failure on the bell stays the quiet once-per-spell line). A 404 on a profile is an
+  ANSWER: the copy is forgotten and the error drawn.
+- *A copy holds no verdict about the reader.* A profile drawn from the device has its follow button
+  and its block entry disabled until the read answers: the follow status and the block flag are never
+  stored, and the profile's `posts` and entourage (other people) are not kept either.
+- *The bell page's "new" band* is the union of what the copy said was unread and what the answer
+  says, so a row seen as new is not demoted by the answer; the read receipt still goes only after the
+  answer (`markAllRead` on the server's list).
+- *Bounded*: 50 notifications, 12 profiles; a profile reopened moves to the front, the oldest leaves.
+- *A feed refusal's `deleteFeedPages()` empties the shared table*, taking these copies with it; the
+  next answer writes them again. A PIN change drops them with every stored page and the stores seal
+  what they hold in memory under the new key.
+
+**What was measured (vitest, every read held unanswered; the number that closes a screen).**
+
+| Screen | Before | After | Test |
+| --- | --- | --- | --- |
+| Pour toi, hardware-held or vault unlock | 0 RTT (stored page) | 0 RTT | `page.slowLinkFirstPaint.svelte.test.ts` |
+| Bell page, a list seen before | never (spinner until the list read, one RTT after the token) | 0 requests for the paint | `routes/notifications/page.localCopy.svelte.test.ts`, `postNotifStore.copy.svelte.test.ts` |
+| A profile opened before | never (header after the profile read: 2.0-4.2 s on the audit's links) | 0 requests for the paint | `routes/profile/[id]/page.localCopy.svelte.test.ts`, `profileCopies.test.ts` |
+
+**NOT measured here:** a DevTools-throttled dev read or a phone read - the numbers above are the
+tests' own, the model of the owner's link, not a clock. Owed on a pre-release: the Mi 9T and the
+iPhone cold start on a shaped link (bell, a profile seen yesterday), and the hardware-held key path
+for the bell (its key arrives before the token only since gap 1).
+
+**Left, taken knowingly.** A profile whose three extras fail on the revalidation replaces the copy's
+associations with empty lists (`readProfileExtras` resolves a failure to `[]`, indistinguishable from
+"none" - the other chantier's seam); the entourage is not kept; today's celebrants stay network-only.
+
 ## 5. The tools, and where they live
 
 Both are scratch instruments rather than committed gates - they drive a phone that is not in CI.
