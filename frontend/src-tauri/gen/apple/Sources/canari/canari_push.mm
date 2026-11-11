@@ -706,11 +706,29 @@ static NSString *CanariLocalized(NSString *key) {
   return [CanariLocaleBundle() localizedStringForKey:key value:key table:nil];
 }
 
-static NSString *CanariBuildFallbackText(NSString *senderName) {
-  if (senderName.length > 0) {
+/**
+ * Whether a message notification is titled with a GROUP rather than with its sender. NO is a direct
+ * message, titled with the sender. Twins: `NotificationService.titledByGroup`,
+ * `ConversationShape.isGroup` (Android).
+ */
+static BOOL CanariTitledByGroup(NSString *groupName, NSString *senderName) {
+  return groupName.length > 0 && ![groupName isEqualToString:senderName];
+}
+
+/**
+ * The line standing in for a message this process could not open. A direct message is titled with
+ * its sender, so it reads "Nouveau message" without repeating the name; a group's title is the
+ * group, so its line says who wrote (owner, 2026-11-11). Twins: `NotificationService.fallbackText`,
+ * `FallbackLine` (Android).
+ */
+static NSString *CanariBuildFallbackText(NSString *senderName, NSString *groupName) {
+  if (senderName.length == 0) {
+    return CanariLocalized(@"notif.message.encrypted");
+  }
+  if (CanariTitledByGroup(groupName, senderName)) {
     return [NSString stringWithFormat:CanariLocalized(@"notif.message.from"), senderName];
   }
-  return CanariLocalized(@"notif.message.encrypted");
+  return CanariLocalized(@"notif.message.new");
 }
 
 /**
@@ -3465,7 +3483,7 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   if (canari_ios_is_in_foreground()) {
     return;
   }
-  BOOL isGroup = groupName.length > 0 && ![groupName isEqualToString:senderName];
+  BOOL isGroup = CanariTitledByGroup(groupName, senderName);
   NSString *title = isGroup ? groupName : (senderName.length > 0 ? senderName : @"Canari");
   NSString *deepLink =
       (groupId.length > 0 ? CanariChatLink(groupId, @"") : nil) ?: @"fr.emse.canari://chat";
@@ -4337,7 +4355,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
         CanariRunBackgroundCleanup();
         NSLog(@"[CanariPush] decrypt failed - cleanup pending db");
       }
-      body = CanariBuildFallbackText(senderName);
+      body = CanariBuildFallbackText(senderName, groupName);
     } else {
       CanariWriteFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted);
     }

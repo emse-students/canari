@@ -44,6 +44,7 @@ import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelBannerAuthor
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.ConversationShape
+import fr.emse.canari.push.FallbackLine
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
 import fr.emse.canari.push.KeyGroupPushJoin
@@ -2661,7 +2662,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             CanariApplication.ensureChannels(this, manager)
             val res = appLocaleContext(this)
 
-            val isGroup = groupName.isNotEmpty() && groupName != senderName
+            val isGroup = ConversationShape.isGroup(groupName, senderName)
 
             // Stable ID per conversation: notify() with the same ID updates the existing notification.
             // A reaction takes its own namespace so it updates the previous REACTION rather than the
@@ -3736,7 +3737,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
                     enqueueRefusedFrameWorker()
                 }
-                buildFallbackText(appLocaleContext(this), senderName)
+                buildFallbackText(appLocaleContext(this), senderName, groupName)
                     .also { Log.w(TAG, "Fallback notification: $it") }
             }
 
@@ -6872,10 +6873,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     private fun buildChannelFallbackText(res: Context, channelName: String): String =
         res.getString(R.string.notif_channel_new_message, channelName)
 
-    /** Fallback text used when MLS decryption fails (group not yet initialized). */
-    private fun buildFallbackText(res: Context, senderName: String): String =
-        if (senderName.isNotEmpty()) res.getString(R.string.notif_new_message_from, senderName)
-        else res.getString(R.string.notif_new_message_generic)
+    /**
+     * Fallback text used when MLS decryption fails (group not yet initialized). A direct message
+     * does not repeat the sender its title already names - see [FallbackLine].
+     */
+    private fun buildFallbackText(res: Context, senderName: String, groupName: String): String =
+        when (FallbackLine.of(senderName, groupName)) {
+            FallbackLine.Kind.FROM_SENDER -> res.getString(R.string.notif_new_message_from, senderName)
+            FallbackLine.Kind.NEW_MESSAGE -> res.getString(R.string.notif_new_message)
+            FallbackLine.Kind.ENCRYPTED -> res.getString(R.string.notif_new_message_generic)
+        }
 
     private fun ensureNotificationChannels(manager: NotificationManager) =
         CanariApplication.ensureChannels(this, manager)

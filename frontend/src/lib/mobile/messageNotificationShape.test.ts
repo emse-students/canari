@@ -58,6 +58,39 @@ describe('a message notification names every author (user, 2026-10-01)', () => {
   });
 });
 
+describe('an unreadable direct message does not repeat its sender (owner, 2026-11-11)', () => {
+  const APPLE = resolve(here, '../../../src-tauri/gen/apple');
+  const read = (path: string) => readFileSync(join(APPLE, path), 'utf8');
+
+  it('Android picks the line through FallbackLine, given the group name', () => {
+    // The decision itself is pinned by the JVM test `FallbackLineTest`.
+    expect(kotlin).toContain('buildFallbackText(appLocaleContext(this), senderName, groupName)');
+    expect(kotlin).toContain(
+      'FallbackLine.Kind.NEW_MESSAGE -> res.getString(R.string.notif_new_message)'
+    );
+    expect(stringsFr).toContain('<string name="notif_new_message">Nouveau message</string>');
+    expect(stringsEn).toContain('<string name="notif_new_message">New message</string>');
+  });
+
+  it('iOS reads the same rule in the extension and in the app', () => {
+    const nse = read('canari_NSE/NotificationService.swift');
+    const app = read('Sources/canari/canari_push.mm');
+    expect(nse).toContain('fallbackText(senderName: senderName, groupName: groupName');
+    expect(nse).not.toContain('fallbackText(senderName: senderName, locale:');
+    expect(nse).toContain('return localized("notif.message.new", locale: locale)');
+    expect(app).toContain('CanariBuildFallbackText(senderName, groupName)');
+    expect(app).toContain('return CanariLocalized(@"notif.message.new");');
+    for (const bundle of ['canari_NSE', 'canari_iOS']) {
+      expect(read(`${bundle}/fr.lproj/Localizable.strings`)).toContain(
+        '"notif.message.new" = "Nouveau message";'
+      );
+      expect(read(`${bundle}/en.lproj/Localizable.strings`)).toContain(
+        '"notif.message.new" = "New message";'
+      );
+    }
+  });
+});
+
 describe('the avatar cache remembers "no picture", and only that', () => {
   const icon = body('private fun Context.cachedRemoteIcon(');
 

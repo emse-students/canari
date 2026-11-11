@@ -36,6 +36,14 @@ object ConversationShape {
      */
     data class Shape(val title: String?, val groupConversation: Boolean)
 
+    /**
+     * Whether a message post is titled with a GROUP rather than with its sender: a named group
+     * distinct from the sender. False is a direct message, whose title (or shortcut header) is the
+     * sender - the ONE predicate both the shape below and [FallbackLine] read.
+     */
+    fun isGroup(groupName: String, senderName: String): Boolean =
+        groupName.isNotEmpty() && groupName != senderName
+
     /** The first API level whose SystemUI draws a shortcut-backed post as a conversation. */
     const val CONVERSATION_LAYOUT_API = 30
 

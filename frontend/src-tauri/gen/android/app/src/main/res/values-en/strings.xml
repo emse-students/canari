@@ -32,6 +32,7 @@
 
     <string name="notif_channel_new_message">New message in #%1$s</string>
     <string name="notif_new_message_from">New message from %1$s</string>
+    <string name="notif_new_message">New message</string>
     <string name="notif_new_message_generic">You received an encrypted message</string>
 
     <string name="notif_mention_you">you</string>

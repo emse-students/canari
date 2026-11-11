@@ -1132,7 +1132,7 @@ class NotificationService: UNNotificationServiceExtension {
         content: content, senderName: senderName, groupName: groupName,
         // No context means no mirrored locale either, so this one sentence falls back to the main
         // bundle - French. It is the honest answer: nothing on the device knows better here.
-        body: Self.fallbackText(senderName: senderName, locale: nil), groupId: groupId,
+        body: Self.fallbackText(senderName: senderName, groupName: groupName, locale: nil), groupId: groupId,
         senderId: senderId, ctx: nil, media: nil,
         level: Self.levelDecision(level: notifLevel, mentioned: nil, myUserId: nil, groupId: groupId))
       return
@@ -1172,7 +1172,7 @@ class NotificationService: UNNotificationServiceExtension {
     }
     trace?.outcome = decrypted != nil ? "decrypted" : "fallback"
 
-    let body = decrypted?.text ?? Self.fallbackText(senderName: senderName, locale: ctx.locale)
+    let body = decrypted?.text ?? Self.fallbackText(senderName: senderName, groupName: groupName, locale: ctx.locale)
 
     // Cache decrypted messages so the app can pre-inject them at boot. Do not cache
     // call signaling or empty fallback bodies. Android twin: writeFcmCache after the
@@ -1639,7 +1639,7 @@ class NotificationService: UNNotificationServiceExtension {
     groupId: String, senderId: String, ctx: PushContext?, media: DecryptResult?,
     level: LevelDecision
   ) {
-    let isGroup = !groupName.isEmpty && groupName != senderName
+    let isGroup = Self.titledByGroup(groupName: groupName, senderName: senderName)
     content.title = isGroup ? groupName : (senderName.isEmpty ? "Canari" : senderName)
     // Inside a group, surface who spoke as a subtitle (flat DMs already have it as the title).
     if isGroup, !senderName.isEmpty {
@@ -2756,10 +2756,21 @@ class NotificationService: UNNotificationServiceExtension {
     }
   }
 
-  private static func fallbackText(senderName: String, locale: String?) -> String {
-    senderName.isEmpty
-      ? localized("notif.message.encrypted", locale: locale)
-      : localizedFormat("notif.message.from", senderName, locale: locale)
+  /// Whether a message notification is titled with a GROUP rather than with its sender. False is a
+  /// direct message, titled with the sender. Android twin: `ConversationShape.isGroup`.
+  static func titledByGroup(groupName: String, senderName: String) -> Bool {
+    !groupName.isEmpty && groupName != senderName
+  }
+
+  /// The line standing in for a message this extension could not open. A direct message is titled
+  /// with its sender, so it reads "Nouveau message" without repeating the name; a group's title is
+  /// the group, so its line says who wrote (owner, 2026-11-11). Android twin: `FallbackLine`.
+  private static func fallbackText(senderName: String, groupName: String, locale: String?) -> String {
+    if senderName.isEmpty { return localized("notif.message.encrypted", locale: locale) }
+    if titledByGroup(groupName: groupName, senderName: senderName) {
+      return localizedFormat("notif.message.from", senderName, locale: locale)
+    }
+    return localized("notif.message.new", locale: locale)
   }
 
   private static func string(_ value: Any?) -> String? { value as? String }

@@ -3164,9 +3164,18 @@ drawn by the legacy layout in the one-to-one shape: the name is the title once a
 lines carry none - the lopsided reading of 2026-10-01, taken knowingly for that opt-out. **iOS had no
 such repeat**: a decrypted DM is titled with the sender, carries no subtitle, and its body is the
 message (`applyMessageContent`, `NotificationService.swift`; `canari_push.mm` passes no subtitle for
-a DM). The BLIND fallback line ("Nouveau message de X" under the title X) repeats the name on both
-platforms - a decrypt failure's placeholder, not this defect. **Owed**: expand a DM on the Mi 9T and
-the iPhone 12, reply inline, and read the name once with "Vous" above the reply.
+a DM). **The line standing in for an UNREADABLE message repeated it on both platforms**, "Nouveau
+message de X" under the title X, and now reads **"Nouveau message" / "New message"** on a DM (lead,
+same day, the owner's "the name once"). A group keeps "Nouveau message de X": its title is the group,
+so the sentence is what says who wrote. With no sender name the "message chiffré" line is unchanged.
+One rule, three copies of its one predicate (a title that is a group: `groupName` non-empty and not the
+sender's name): `push/FallbackLine.kt` + `ConversationShape.isGroup` (Android, pinned by
+`FallbackLineTest`), `NotificationService.fallbackText` / `titledByGroup` (NSE) and
+`CanariBuildFallbackText` / `CanariTitledByGroup` (`canari_push.mm`), with `notif_new_message` and
+`notif.message.new` in fr and en; `messageNotificationShape.test.ts` pins the iOS half in the source.
+The rig already classifies `^Nouveau message$` as a generic body (`notif-bodies.mjs`). **Owed**: expand
+a DM on the Mi 9T and the iPhone 12, reply inline, and read the name once with "Vous" above the reply;
+and one unreadable DM banner on each, reading "Nouveau message" under the sender.
 
 **The group key is still ONE constant**, `setGroup(GROUP_KEY_MESSAGES)` at three call sites of `CanariFirebaseMessagingService.kt` with one summary, where Messenger keys per THREAD (`GROUP:<threadId>`) - open, P3 ([backlog](../backlog.md)); measure on the Mi 9T after any change, since nothing in CI sees which section of the shade a notification lands in.
 

@@ -6,6 +6,7 @@
    the app, NOT the device language. See NotificationService.localized(). */
 "notif.reaction.body" = "a réagi %@ à votre message";
 "notif.message.from" = "Nouveau message de %@";
+"notif.message.new" = "Nouveau message";
 "notif.message.encrypted" = "Vous avez reçu un message chiffré";
 "notif.channel.message" = "Nouveau message dans #%@";
 "notif.channel.unnamed" = "Salon";
