@@ -21,23 +21,49 @@ import { PENDING_CONTACT_KEY } from './selectionAcrossReload';
  * already uses - and read until then, never consumed early.
  */
 
-/** The sessionStorage key a profile's "Message" button writes: the PEER's user id. */
+/**
+ * The sessionStorage key a profile's "Message" button writes: `{ owner, peer }` as JSON.
+ *
+ * THE OWNER IS PART OF THE ASK. sessionStorage outlives a sign-out in the same tab, so a person
+ * picked by account A and still pending when B signs in would otherwise start a DM between B and A's
+ * pick. No sign-out hook clears tab storage, so the opening names who asked and is dropped, with a
+ * warning, for anybody else.
+ */
 export const PENDING_DIRECT_PEER_KEY = 'canari_pending_direct_peer';
 
 /** What the chat page was asked to open. */
 export type PendingChatOpening =
   | { kind: 'conversation'; key: string }
-  | { kind: 'direct'; peerUserId: string };
+  | { kind: 'direct'; owner: string; peerUserId: string };
 
 /** The storage the opening travels through - `sessionStorage` in the app, a fake in the tests. */
 export type OpeningStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 /**
- * Asks the chat page to open the direct conversation with `peerUserId`, existing or new. Written by
- * a page that is about to navigate to `/chat`.
+ * Asks the chat page to open the direct conversation with `peerUserId`, existing or new, on behalf
+ * of `owner` (the signed-in account). Written by a page that is about to navigate to `/chat`.
  */
-export function requestDirectConversationWith(peerUserId: string, storage: OpeningStorage): void {
-  storage.setItem(PENDING_DIRECT_PEER_KEY, peerUserId);
+export function requestDirectConversationWith(
+  owner: string,
+  peerUserId: string,
+  storage: OpeningStorage
+): void {
+  storage.setItem(PENDING_DIRECT_PEER_KEY, JSON.stringify({ owner, peer: peerUserId }));
+}
+
+/** The stored person ask, or null when it is absent or not the shape this module writes. */
+function parseDirectAsk(raw: string | null): { owner: string; peer: string } | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as { owner?: unknown; peer?: unknown };
+    if (typeof v.owner === 'string' && v.owner && typeof v.peer === 'string' && v.peer) {
+      return { owner: v.owner, peer: v.peer };
+    }
+  } catch {
+    // Falls through to the warning below: an unreadable ask is said, never guessed at.
+  }
+  console.warn('[OPEN] a pending DM ask is not readable - dropped');
+  return null;
 }
 
 /**
@@ -45,11 +71,18 @@ export function requestDirectConversationWith(peerUserId: string, storage: Openi
  * person was asked by the reader's own tap on a profile, which is necessarily the later of the two.
  */
 export function takePendingChatOpening(storage: OpeningStorage): PendingChatOpening | null {
-  const peerUserId = storage.getItem(PENDING_DIRECT_PEER_KEY);
+  const direct = parseDirectAsk(storage.getItem(PENDING_DIRECT_PEER_KEY));
   const key = storage.getItem(PENDING_CONTACT_KEY);
   storage.removeItem(PENDING_DIRECT_PEER_KEY);
   storage.removeItem(PENDING_CONTACT_KEY);
-  if (peerUserId) return { kind: 'direct', peerUserId };
+  if (direct) {
+    if (key) {
+      console.warn(
+        `[OPEN] a conversation ask (${key.slice(0, 8)}...) was pending beside a DM ask - the DM ask wins, the conversation is not opened`
+      );
+    }
+    return { kind: 'direct', owner: direct.owner, peerUserId: direct.peer };
+  }
   if (key) return { kind: 'conversation', key };
   return null;
 }
@@ -57,6 +90,8 @@ export function takePendingChatOpening(storage: OpeningStorage): PendingChatOpen
 /** What {@link landPendingChatOpening} needs from the chat page. */
 export interface PendingChatOpeningDeps {
   storage: OpeningStorage;
+  /** The signed-in account: a DM ask made by any other is dropped. */
+  userId: string;
   /** True once every pass that can add a conversation has run: the map is authoritative. */
   sourcesSettled: () => boolean;
   /** Whether the map holds this key. */
@@ -73,6 +108,8 @@ export interface PendingChatOpeningDeps {
  * Opens what another page asked for, once the conversation map is authoritative.
  *
  * Before then it does nothing and CONSUMES nothing, so the caller re-runs it when the map settles.
+ * It never rejects: a failure after the ask is consumed is logged, and a DM path that THREW reaches
+ * the reader as `creation-failed`, like one that refused.
  *
  * @returns what was opened, `null` when nothing was pending or the map is not settled yet.
  */
@@ -80,7 +117,15 @@ export async function landPendingChatOpening(
   deps: PendingChatOpeningDeps
 ): Promise<PendingChatOpening | null> {
   if (!deps.sourcesSettled()) return null;
-  const opening = takePendingChatOpening(deps.storage);
+  let opening: PendingChatOpening | null;
+  try {
+    opening = takePendingChatOpening(deps.storage);
+  } catch (e) {
+    // The storage itself refused (a disabled or blocked sessionStorage): nothing can be read, so
+    // nothing is known to have been asked - said, never left as an unhandled rejection.
+    console.warn(`[OPEN] the pending opening could not be read: ${String(e)}`);
+    return null;
+  }
   if (!opening) return null;
   if (opening.kind === 'conversation') {
     if (!deps.hasConversation(opening.key)) {
@@ -94,8 +139,23 @@ export async function landPendingChatOpening(
     deps.selectConversation(opening.key);
     return opening;
   }
+  if (opening.owner !== deps.userId) {
+    console.warn(
+      `[OPEN] a DM ask made by another account (${opening.owner.slice(0, 8)}...) was pending in this tab - dropped`
+    );
+    return opening;
+  }
   deps.log(`[OPEN] opening the DM with the asked person ${opening.peerUserId.slice(0, 8)}...`);
-  const outcome = await deps.startDirectConversation(opening.peerUserId);
+  let outcome: ConversationOutcome;
+  try {
+    outcome = await deps.startDirectConversation(opening.peerUserId);
+  } catch (e) {
+    // The ask was consumed before the await, so a throw would lose the press with nothing on screen.
+    console.warn(
+      `[OPEN] DM with ${opening.peerUserId.slice(0, 8)}... threw instead of answering: ${String(e)}`
+    );
+    outcome = { ok: false, reason: 'creation-failed' };
+  }
   if (outcome.ok) {
     deps.log(
       outcome.key

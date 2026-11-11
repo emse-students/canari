@@ -2444,7 +2444,7 @@ each with its own key (`utils/chat/pendingChatOpening.ts`):
 | Key | Written by | Names | Answered by |
 | --- | --- | --- | --- |
 | `canari_pending_contact` | the posts mini panel, the multi-tab reload (`selectionAcrossReload.ts`) | a conversation's MAP key (its group id) | `selectConversation`, if the map holds it |
-| `canari_pending_direct_peer` | a profile's "Message" button | a PERSON (their user id) | `startNewConversation`: the DM in the map, else the server's, else a new one; a refusal is a toast (`conversationRefusalMessage`) |
+| `canari_pending_direct_peer` | a profile's "Message" button | a PERSON (their user id), and the account that asked (`{ owner, peer }`) | `startNewConversation`: the DM in the map, else the server's, else a new one; a refusal is a toast (`conversationRefusalMessage`) |
 
 **The defect (production web `1.6.10`):** the profile button wrote the person's USER id into the
 conversation key. No conversation is keyed by a user id
@@ -2459,6 +2459,15 @@ the notification landing uses), never on a clock, and is not consumed before the
 `pendingChatOpening.test.ts` (an existing DM opens, a DM restored after the press opens once
 restored, no DM creates and opens one, a refusal reaches the reader, a conversation key waits for
 the map). Logged under `[OPEN]`.
+
+**What is never lost or misapplied.** The ask is removed from storage before the DM path is awaited,
+so a THROW there (no MLS client, a follower tab's delegation) would have lost the press in an
+unhandled rejection; `landPendingChatOpening` never rejects - a throw reaches the reader as
+`creation-failed`, like a refusal. sessionStorage outlives a sign-out in the same tab and no sign-out
+hook clears it, so a DM ask names its OWNER and is dropped, with a warning, for any other account -
+otherwise B signing in after A's tap would start a DM between B and A's pick. A conversation ask
+pending beside a DM ask is dropped with a warning (the DM ask, the later tap, wins). The conversation
+key carries no owner: it can only select a key the map already holds, never create anything.
 
 ### Being removed from a channel or a community
 

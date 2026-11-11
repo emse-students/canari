@@ -18,7 +18,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 
 vi.mock('$lib/users/blocks', () => ({ isBlockedWith: vi.fn(async () => false) }));
 
-import { startNewConversation } from './groupCreation';
+import { startNewConversation, type ConversationOutcome } from './groupCreation';
 import {
   landPendingChatOpening,
   requestDirectConversationWith,
@@ -27,6 +27,8 @@ import {
 import { PENDING_CONTACT_KEY } from './selectionAcrossReload';
 
 const PEER = 'b3c1f0aa-0000-4000-8000-00000000beef';
+const ME = 'me-0000';
+const OTHER_ACCOUNT = 'other-0000';
 
 /** A sessionStorage stand-in: the opening only ever reads, writes and removes. */
 function memoryStorage(): OpeningStorage & { size: () => number } {
@@ -40,7 +42,7 @@ function memoryStorage(): OpeningStorage & { size: () => number } {
 }
 
 /** The chat page around the opening: a map, a selection, and the real DM path with a fake MLS. */
-function chatPage() {
+function chatPage(signedIn = ME) {
   const local = new Set<string>();
   const conversations = new SvelteMap<string, Record<string, unknown>>();
   let settled = false;
@@ -75,17 +77,21 @@ function chatPage() {
   };
   const storage = memoryStorage();
   const onRefused = vi.fn();
+  /** Replaced by a case to make the DM path throw instead of answering. */
+  let startDirect: ((peerUserId: string) => Promise<ConversationOutcome>) | null = null;
   const land = () =>
     landPendingChatOpening({
       storage,
+      userId: signedIn,
       sourcesSettled: () => settled,
       hasConversation: (key) => conversations.has(key),
       selectConversation,
       startDirectConversation: (peerUserId) =>
+        startDirect?.(peerUserId) ??
         startNewConversation(peerUserId, {
           mlsService: mlsService as never,
           storage: null,
-          userId: 'me-0000',
+          userId: signedIn,
           deviceKeyB64: 'k',
           historyBaseUrl: 'https://example.invalid',
           conversations: conversations as never,
@@ -106,6 +112,11 @@ function chatPage() {
       settled = true;
     },
     selected: () => selected,
+    throwOnStart: (e: Error) => {
+      startDirect = async () => {
+        throw e;
+      };
+    },
   };
 }
 
@@ -132,7 +143,7 @@ describe("a profile's Message button", () => {
     existingDm(page);
     page.settle();
 
-    requestDirectConversationWith(PEER, page.storage);
+    requestDirectConversationWith(ME, PEER, page.storage);
     await page.land();
 
     // The DM's KEY is selected, never the person's id.
@@ -143,7 +154,7 @@ describe("a profile's Message button", () => {
 
   it('waits for the restore when pressed before the map holds the DM, then opens it', async () => {
     const page = chatPage();
-    requestDirectConversationWith(PEER, page.storage);
+    requestDirectConversationWith(ME, PEER, page.storage);
 
     // The map is not authoritative yet: nothing is selected, nothing created, nothing consumed.
     expect(await page.land()).toBeNull();
@@ -162,7 +173,7 @@ describe("a profile's Message button", () => {
     const page = chatPage();
     page.settle();
 
-    requestDirectConversationWith(PEER, page.storage);
+    requestDirectConversationWith(ME, PEER, page.storage);
     await page.land();
 
     expect(page.mlsService.createRemoteGroup).toHaveBeenCalledTimes(1);
@@ -176,11 +187,72 @@ describe("a profile's Message button", () => {
     page.mlsService.fetchUserDevices = vi.fn(async () => []);
     page.settle();
 
-    requestDirectConversationWith(PEER, page.storage);
+    requestDirectConversationWith(ME, PEER, page.storage);
     await page.land();
 
     expect(page.onRefused).toHaveBeenCalledWith('peer-has-no-device');
     expect(page.selected()).toBeNull();
+  });
+});
+
+describe('a DM ask that cannot be honoured is said, never lost silently', () => {
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('reaches the reader as `creation-failed` when the DM path throws', async () => {
+    const page = chatPage();
+    page.throwOnStart(new Error('no MLS client'));
+    page.settle();
+
+    requestDirectConversationWith(ME, PEER, page.storage);
+    // Never rejects: the press was consumed, so the throw must end on screen, not in the console.
+    await expect(page.land()).resolves.not.toBeNull();
+
+    expect(page.onRefused).toHaveBeenCalledWith('creation-failed');
+    expect(page.selected()).toBeNull();
+  });
+
+  it('does not reject when the storage itself throws', async () => {
+    const page = chatPage();
+    page.settle();
+    page.storage.getItem = () => {
+      throw new Error('storage disabled');
+    };
+
+    await expect(page.land()).resolves.toBeNull();
+    expect(page.selected()).toBeNull();
+  });
+
+  it('is dropped when another account made it (a sign-out and sign-in in the same tab)', async () => {
+    const page = chatPage(ME);
+    page.settle();
+
+    requestDirectConversationWith(OTHER_ACCOUNT, PEER, page.storage);
+    await page.land();
+
+    expect(page.mlsService.createRemoteGroup).not.toHaveBeenCalled();
+    expect(page.mlsService.getUserGroups).not.toHaveBeenCalled();
+    expect(page.selected()).toBeNull();
+    expect(page.storage.size()).toBe(0);
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('says so when a conversation ask is dropped in favour of a DM ask', async () => {
+    const page = chatPage();
+    existingDm(page);
+    page.settle();
+    page.storage.setItem(PENDING_CONTACT_KEY, 'g-other-convo');
+
+    requestDirectConversationWith(ME, PEER, page.storage);
+    await page.land();
+
+    expect(page.selected()).toBe('g-existing-dm');
+    expect(warn.mock.calls.some((call: unknown[]) => String(call[0]).includes('DM ask wins'))).toBe(
+      true
+    );
+    expect(page.storage.size()).toBe(0);
   });
 });
 

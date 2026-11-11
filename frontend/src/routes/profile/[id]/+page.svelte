@@ -269,11 +269,16 @@
   function handleSendMessage() {
     // A PERSON, not a conversation: the chat page finds the DM with them or creates it
     // (`pendingChatOpening.ts`). Handed over as a conversation key, this user id opened nothing.
-    if (profile?.id) {
-      Log.d('[PROFILE] "Message": asking the chat page for the DM with this person');
-      requestDirectConversationWith(profile.id, sessionStorage);
-      goto(resolve('/chat'));
+    if (!profile?.id) return;
+    // The ask names who made it, so an account signed in after this tap never acts on it.
+    const owner = getSavedUserId();
+    if (!owner) {
+      console.warn('[PROFILE] "Message" pressed with no signed-in account - nothing is asked');
+      return;
     }
+    Log.d('[PROFILE] "Message": asking the chat page for the DM with this person');
+    requestDirectConversationWith(owner, profile.id, sessionStorage);
+    goto(resolve('/chat'));
   }
 
   /**

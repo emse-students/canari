@@ -1019,6 +1019,7 @@
     untrack(() => {
       void landPendingChatOpening({
         storage: sessionStorage,
+        userId: session.userId ?? '',
         sourcesSettled: () => convs.conversationSourcesSettled,
         hasConversation: (key) => convs.conversations.has(key),
         selectConversation: convs.selectConversation,
