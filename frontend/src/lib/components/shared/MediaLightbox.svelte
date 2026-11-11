@@ -61,6 +61,7 @@
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import FullScreenViewer from './FullScreenViewer.svelte';
+  import { wheelOverVolume } from '$lib/reels/reelWheel';
   import UserName from './UserName.svelte';
   import EmojiText from './EmojiText.svelte';
 
@@ -425,6 +426,8 @@
 
   // Wheel zoom handler (registered non-passively via $effect)
   function handleWheel(e: WheelEvent) {
+    // The wheel over a video's volume pill is the volume's (the pill stops it too).
+    if (wheelOverVolume(e.target)) return;
     e.preventDefault();
     const pivot = pivotOf(e, e.currentTarget as HTMLElement);
     const delta = e.deltaY * (e.deltaMode === 1 ? 20 : 1);

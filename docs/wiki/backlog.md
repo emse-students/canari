@@ -1346,37 +1346,23 @@ P2. From the owner's GDPR review; the substance is [register-of-processing](comp
 
 ## P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)
 
-**HELD since 2026-10-17 (user: stable 1.2.9 ships without it).** `45-consent.yaml` waits in
-`infrastructure/authentik/blueprints/held/`, never sent and named at every run, and the 8 providers
-point back at `default-provider-authorization-implicit-consent`; asserted by
-`held-blueprints.test.sh` and `test-blueprints.sh` ([authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)).
-The hold binds a stable only through a pre-release cut AFTER it merged (a stable ships its latest
-alpha's commit; `v1.2.9-alpha.6` and earlier still carry the stage). **Lifting it = `git revert` of
-the hold's commit**, once the three conditions below hold; the revert also restores the
-`changelog.d/miconnect-terms-of-use.md` fragment and drops `miconnect-terms-held.md` (if a stable
-folded that one already, the revert's conflict on it is resolved by deleting it).
+**Re-read 2026-11-11: still HELD, and nothing moved since 2026-10-18.** `45-consent.yaml` still waits
+in `infrastructure/authentik/blueprints/held/` (`held-blueprints.test.sh`, `test-blueprints.sh`), so
+the 8 providers keep `default-provider-authorization-implicit-consent`. Lifting it is a `git revert`
+of the hold's commit, which also restores `changelog.d/miconnect-terms-of-use.md`. The mechanism, the
+rollback and the fail-open property are in
+[authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16).
 
-`miconnect-authorization` (blueprint `45-consent.yaml`, 8 providers) is applied by the stable deploy
-like any blueprint, so **do not lift the hold until these hold**, in this order: (1) the page
-`/legal/miconnect` answers 200 on dev (pre-release first), because the prompt links to it; (2) the
-cross-client harness accounts carry `attributes.cgu_version` (read-modify-write of the whole
-attributes bag - the profile editor PATCH replaces it), or `login.mjs` ticks the box, else every
-harness login stalls on the new page; (3) the prompt is READ in a real browser, on the Mi 9T and on
-the iPhone (the CI test proves the HTML reaches the challenge, not that a native auth session renders
-and follows its link). Rollback: re-apply the previous ref's blueprints, or flip the 8 providers back
-to `default-provider-authorization-implicit-consent` in `/if/admin/`. The flow fails OPEN: a broken
-policy skips the consent, it never locks anyone out. Accounts that never sign in again are never
-asked. See [authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16).
-
-**Where the three stand (read 2026-10-18):** (1) MET - `dev.canari-emse.fr/legal/miconnect` answers
-200 with its own title (a missing `/legal/` path answers 404). (2) HALF - `login.mjs` ticks the box on
-the web and in the Android Custom Tab (`idpform.mjs`, pinned by `archive/idpform-selftest.mjs`, never
-yet run against the live page because the stage is held); the iOS sheet path (`signInThroughSheet`)
-does not know the page, so an iPhone row needs the account's `cgu_version` set, or an iOS stage read
-on the bench first. (3) NOT MET - every phone reading so far proves the hold (no terms page, PASS 3 of
-3 on the iPhone 12), none reads the prompt. One MiConnect serves dev and production, so (3) can only be
-read once the stage is live somewhere: bind `miconnect-authorization` to ONE provider first (`Canari
-Local`, the harness's), read it on both phones, then lift the hold for the eight.
+The three conditions, in order:
+1. **MET** (2026-10-18): `/legal/miconnect` answers 200 on dev.
+2. **HALF**: `login.mjs` ticks the box on the web and in the Android Custom Tab (`idpform.mjs`,
+   pinned by `archive/idpform-selftest.mjs`, never run against the live page). The iOS sheet path
+   (`signInThroughSheet`, `phone-ios.mjs`) still knows only the system consent alert, not the terms
+   page. Owed: teach it the page, or set the iPhone account's `cgu_version` (a read-modify-write of
+   the whole attributes bag).
+3. **NOT MET**: the prompt read on the Mi 9T and the iPhone. One MiConnect serves dev and production,
+   so bind `miconnect-authorization` to ONE provider first (the harness's `Canari Local`), read it on
+   both phones, then lift the hold for the eight.
 
 ## Decided by the user on 2026-10-16 - the GDPR pass over the whole ecosystem
 
@@ -1402,7 +1388,7 @@ no purge date (flagged to the DPO); account deletion is a durable queue (#1965).
 - **`graine_seeds.json` and `channel_keys.json` stay on account deletion for now.** They are per-install native files holding community keys, with no owner. Backlog item: verify whether the next session re-mirrors them, then write an erasure rule using the same `push_context.json` ownership proof. *(Superseded 2026-11-07: each mirror entry now names its writers and the account wipes remove the account's own - [auth](frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07); `channel_keys.json` is deleted at every start.)*
 - **WP-RESTORE-1 (account restore through WebAuthn, native + server)** is MERGED (#2065, 2026-10-24); it stays out of a stable until it is read on a phone ([its entry](#p2---wp-restore-1-zero-tap-sign-in-restoration-required-by-google-play-from-april-2027)).
 - **The MiConnect terms hold is lifted by the lead** as soon as the three preconditions listed above are verified; the lead tells the user.
-- **The KLIPY key is not rotated** (re-decided 2026-10-24: dev reuses the production key) - the revisit condition is on [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review).
+- **The KLIPY key is not rotated** (re-decided 2026-10-24: dev reuses the production key) - the revisit condition is in [chat](frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18).
 
 ## Decided by the user on 2026-10-22 - the app needs iOS 16
 
@@ -1637,10 +1623,6 @@ Registration refuses a device id another account holds (`device_id_taken`) by a 
 
 On a key-group frame `openDistributionFrame` compares only the envelope's USER with the MLS credential; the envelope's `senderDeviceId` stays self-asserted ([channel-encryption section 21.1](protocols/channel-encryption.md#211-the-verified-sender-measured-then-refused-wp-g2-1-g2-1b)). Handing it to the sender check would REFUSE every frame whose device disagrees, and production has never been read for `path=distribution kind=device`, so it was taken out of #2027 (user, 2026-10-18). What it would buy: a device could no longer answer "I hold nothing" in a sibling's name ([section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)). MERGED as #2090 (2026-10-24): `openDistributionFrame` hands the envelope's device to the sender check whenever the envelope carries one; an envelope with no device still compares the user alone. **The pre-stable production evidence is INDIRECT, and it is the only kind there can be** - an alpha deploys dev alone, so production never runs this code before a stable. READ 2026-10-24 on chat-delivery, every log still kept (production 2026-10-10 to 2026-10-24, with size-cap gaps): ZERO `[SENDER_MISMATCH]` of any path or kind, and zero `POST /api/mls/sender-mismatch` in the production access log - the `live` path compares the device on the SAME envelope field (`deliveryMeta.senderDeviceId`, written from the sender's `POST /api/mls/send`) and never disagreed. Owed, in order: (1) an alpha, then `[SENDER_MISMATCH] path=distribution` read on dev's chat-delivery - weak evidence, dev's population being a fictional seed plus the testers; (2) the stable; (3) the same line read on production AFTER that stable. A nonzero `kind=device` there is triaged from its reports (envelope device against verified device) before any further stable: an honest client disagreeing with its own credential means the device hand-over is reverted in a patch release and the client cause fixed before it ships again (a refused seed is recoverable by a history request); a sibling naming another device is the case it was built to refuse, and stays.
 
-## P3 - `[TAURI] Couldn't find callback id` every ~15 s after a text-size WebView reload (2026-10-17)
-
-One id, repeated at 15 s, from the previous page's callback. Suspect, unproven: the `plugin-websocket` listener of `TauriMlsService` outliving the page (no `pagehide` release). Evidence and next step: [device-verification](device-verification.md#2026-10-17-follow-up-the-sort-row-fixed-and-the-stale-tauri-callback-open-cause-not-proven). 2026-10-17: `TauriMlsService` now releases the native socket (listener and connection) on `pagehide` through `pauseSocket`. OWED: one Mi 9T reading after a text-size reload that the repeating id is gone; delete this item then, and if it repeats the cause is elsewhere.
-
 ## P3 - EXIT-FORTIFY: closing the app logs a native abort `pthread_mutex_lock called on a destroyed mutex` (Mi 9T, `v1.3.1-alpha.5`, 2026-10-21)
 
 On app close Android logged `FORTIFY: pthread_mutex_lock called on a destroyed mutex`, recorded as a normal exit. Suspect, unproven: a thread still locking after shutdown destroyed the mutex. It could surface in Play crash reports. Owed: the thread's name from logcat on a second close. Evidence: [device-readings-2026-10](device-readings-2026-10.md), section "2026-10-21 - `v1.3.1-alpha.5` - the stable gate" (#2178).
@@ -1855,6 +1837,12 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a group joined in the background before its row existed: the "already held" Welcome writes and announces the row, the resume merge announces its rows, the gap healer holds a live frame while refused frames wait (PK2, #1999, `v1.3.0`; [mls-recovery-ladder](protocols/mls-recovery-ladder.md#a-group-joined-in-the-background-before-its-row-existed-pk2-2026-10-14)) | ONE Mi 9T cold start with a group created by another device of the same account while the app was killed: no `LOST frame ... past epoch application frame` and no second `Message for absent conversation` pass for it |
 | the PIN gate at the largest text size on the iPhone (Dynamic Type #1884 and #1926 passed on 2026-10-15/16; the 2x reading left "Saisie manuelle" and "PIN oublie ?" behind the sticky Deverrouiller button) | one look on the iPhone 12 at the largest standard size: both links reachable without hiding the dots; if they are not, a fragment of its own |
 | "Modifier les pseudos" for a group and a community (#3177, `v1.6.9-alpha.1`; readings 1 and 3 passed on 2026-11-09, [chat](frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)) | on a pre-release: (1) a third device offline during a set and a reset converges from the log; (2) a member added after a nickname shows it on first open ([#3185's entry](backlog.d/p2-a-member-added-after-a-nickname-does-not-receive-it.md)); (4) the target who blocked the setter does not see it in a group, and a community set answers `USER_BLOCKED`; (5) an older build in the same group and community logs nothing new; (6) a reported community nickname in `/admin/moderation`, with its text, and none once changed; (7) a blocked setter's nickname reads "a nickname you cannot see is set", and its reset clears it for everyone; (8) a sign-out then another account on the same install shows none of the first's nicknames and `canari_nicknames:v1:<first account>:*` is gone |
+| a GIF never reaches `static.klipy.com` from a reader's browser: the relay carries every recipient's GIF, the picker's thumbnails and a comment GIF (#2016, `v1.3.0`; [chat](frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18)) | a network trace on dev across a GIF bubble, a quoted GIF, the picker and a comment attach: zero request to `static.klipy.com`; the same look on the Mi 9T and the iPhone 12; then a day of `[GIF_MEDIA]` lines (refusals by reason, cache hits) |
+| in a DM ending in a tall card, the iPhone's native "+" and header stand where the web ones are when the keyboard rises (the piece's rect anchored to the document, `nativeGlassPiece.svelte.ts`; the cause read on `1.6.4-alpha.2`, [mobile](frontend/mobile.md#the-dm-whose-chrome-stands-one-keyboard-too-high-2026-10-17)) | on the iPhone 12, the three rounds of that reading on a build carrying the fix: the "+" at the composer's height beside "Envoyer", the header in place, one "compensating a document scroll" line; then one salon |
+| a left-edge swipe over a `Modal` or sheet on the iPhone closes it, and over a gate does nothing (`Modal.svelte` carries `swipeBack` when narrow and `dismissible`, `Modal.dismissal.svelte.test.ts`; [reels-in-chat](frontend/modules/reels-in-chat.md#the-iphone-12-reading-of-v129-alpha2---the-edge-swipe-is-the-ios-back-2026-10-16)) | on the iPhone 12: one swipe over a sheet opened from a conversation (it closes, the conversation stays) and one over a gate (nothing moves) |
+| a DM read receipt survives a kill inside the 2 s window (the owed mark written at decision time and drained at every outbox registration; [history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)) | on the Mi 9T: read a DM, kill the app within 2 s, relaunch - the peer shows it read; and the count of received `[READ] ... has read up to` lines and of MLS checkpoints per 3 minutes of a two-person exchange, against the build before the coalescing |
+| iOS silent frames reach Canari's code: the method ADDED with `class_replaceMethod`, a woken process limited to an allowlist of dismissals (#2000, `v1.3.0`; [mobile](frontend/mobile.md#silent-frames-reach-the-app-through-a-method-canari-adds-2026-10-17)) | on the iPhone 12: `remote notification hook installed` in the syslog, then a salon read on another device clears the banner, app backgrounded and then foregrounded |
+| a HISTORY ask answered "I hold nothing" is final for its roster (WP-HOLD-NOTHING, #2027, `v1.3.0`; [channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)) | one Mi 9T offline cold start in a community whose online answerer holds nothing: one ask, one answer, no re-ask at the next launch |
 
 ---
 
@@ -1881,32 +1869,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **raise `minClientVersion` (production and dev) each time both stores serve the latest update** - the one floor rule (owner, 2026-10-24); every item that waits on a floor waits on this gesture, the hardened v2 reader's writer flip (#2074) and a re-admitted member's window included | 1 setting per release | [the floor rule](legacy-compatibility.md#the-floor-rule-raised-when-both-stores-serve-the-latest-update-owner-2026-10-24) |
 | **the DSI's go after it extends the shared host's root disk** - until then no new container is started there (2026-10-24) | blocked upstream | [host-updates](infrastructure/host-updates.md#the-root-disk-no-new-container-until-the-dsi-extends-it-2026-10-24) |
 | **look at the A0 export of the Carte de la Vie Asso** once the lead has taken it (D11), and say whether the text sizes hold at print | 1 look | [the A0 row](#owed-a-verification-and-nothing-else), [carte-vie-asso](carte-vie-asso.md) |
-
-## P2 - A GIF sent in a chat is loaded by every recipient from KLIPY's CDN (found 2026-10-16, GDPR review)
-
-**SHIPPED in `v1.3.0` (#2016).** The search goes through Canari since 2026-10-16; the GIF relay
-(`GET /api/mls/gifs/media`: KLIPY's CDN only, no query, 12 MiB measured, streamed, byte cache,
-single-flight, 16 in flight, 600/min per address, a day-long ticket) now carries the three paths that still reached `static.klipy.com` - every recipient's GIF,
-the searcher's thumbnails, a comment GIF's bytes. A GIF from any other host still loads directly
-(owner decision: no regression), so a reader of a pasted giphy/tenor GIF still reaches that host,
-unmeasured; routing them is one line in `proxiedGifUrl`. Mechanism and decisions:
-[chat](frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18).
-**Owed, and it closes this entry:** a network trace on dev (zero request to
-`static.klipy.com` from the browser across a GIF bubble, a quoted GIF, the picker and a comment
-attach), the same look on the Mi 9T and the iPhone, and the server log after a day
-(`[GIF_MEDIA]` refusals by reason, cache hits). **Owner's call:** drop `static.klipy.com` from
-`connect-src` once no tab runs an older bundle. **The KLIPY key is not rotated, and dev reuses the
-production key** (owner, 2026-10-24); revisit when `minClientVersion` excludes the native builds that
-still call KLIPY directly (installed before 2026-10-16).
-
-**Measured 2026-10-18 (PK9), the relay's ceiling comes from it:** 144 GIFs (trending plus 5
-searches), `HEAD` content-length.
-
-| Rendition | p50 | p90 | max | Over 3 MiB |
-| --- | --- | --- | --- | --- |
-| `sm` | 0.36 MB | 0.88 MB | 2.9 MB | 0 of 144 |
-| `md` | 1.1 MB | 4.4 MB | 11.7 MB | 29 of 144 (20%) |
-| `hd` | 1.8 MB | 7.9 MB | 19.9 MB | 48 of 144 |
 
 ## P1 - Opening a community: F1-F7 BUILT, the 200 ms budget is what is left (user, 2026-10-14; state re-read 2026-10-22)
 
@@ -1958,25 +1920,6 @@ The window override pins `prefers-color-scheme` to the page's own command, so in
 
 `AssociationsService.remove(A)` locks A, then deletes A's events. Migration 074's trigger takes their co-owner rows and `coorganise` proposals, and these can name B. The row delete of A then cascades into the co-owner rows and proposals where A co-organises B's events. `remove(B)` does the same in mirror, so each delete can hold a row the other's cascade needs: `40P01`, one delete aborted and retried by hand. This is older than #2116. It needs two staff deleting two linked associations at the same moment. The likely fix is for `remove` to lock, in id order, every association its events' co-organisation reaches before deleting anything. [profiles-and-access](profiles-and-access.md)
 
-## P2 - In a DM, the iPhone's native chrome stands one keyboard too high (2026-10-17)
-
-iPhone 12, `v1.2.9-alpha.7`. A DM whose last message is a tall video, and the keyboard rising from
-closed. Every native glass piece then stood 301 pt (the overlap) above its web twin: the "+"
-mid-thread, the header off-screen. The salon was right, and so was a later keyboard change in the
-same DM. It is not new in 1.2.9. The cause is not measured. Owed: one reading of the
-`keyboard settled:` syslog line on the next build, which names one of the three causes. The fix
-follows from that line. The analysis is in
-[mobile](frontend/mobile.md#the-dm-whose-chrome-stands-one-keyboard-too-high-2026-10-17), and the
-procedure in [device-verification](device-verification.md#the-iphone-12-readings-of-v129-alpha7-2026-10-17).
-
-## P3 - iOS: a Modal or sheet over a conversation has no edge swipe (found 2026-10-16)
-
-The iOS app's only Back is the conversation's own left-edge swipe, and a `Modal` is portalled to `document.body`, out of `ChatArea`: a swipe over its backdrop reaches nothing, as the camera review's did ([reels-in-chat](frontend/modules/reels-in-chat.md#the-iphone-12-reading-of-v129-alpha2---the-edge-swipe-is-the-ios-back-2026-10-16)). The fix is the camera's: the layer carries `swipeBack` calling `backHistoryOverlayFromGesture`, enabled only when it is `dismissible` (a gate pushes no entry, so the top overlay would be the one UNDER it). BUILT 2026-10-17 in `Modal.svelte` (backdrop carries `swipeBack`, enabled when narrow and `dismissible`). OWED: one iPhone reading that a left-edge swipe over a sheet closes it, and over a gate does nothing.
-
-## P2 - A DM receipt killed inside the 2 s window: BUILT, owed a phone reading (2026-10-17)
-
-The owed mark is written at decision time and drained into the outbox at every outbox registration (PK4 pull request, [history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)). **Owed**: on the Mi 9T, read a DM, kill the app within 2 s, relaunch: the peer must show it read. **And still owed from the coalescing**: a Mi 9T count of received `[READ] ... has read up to` lines and of MLS checkpoints per 3 minutes of a two-person DM exchange, on the coalescing build against the one before it.
-
 ## P3 - A leader taken over in the middle of its own PIN change reloads and tears the change (found 2026-10-18, review of #2058)
 
 Another tab's "Take over" makes the changing leader `releaseLeadership`, and the demotion handler (`useChatSession.svelte.ts`) reloads it 50 ms later whatever it is doing; the recovery finishes the move, but it costs a recovery prompt. **Owed**: refuse or defer a takeover while this tab is changing the key (the realm knows it, `RealmHold.changing`), with a two-realm test ([auth](frontend/modules/auth.md#the-other-tabs-of-the-account)).
@@ -1984,24 +1927,6 @@ Another tab's "Take over" makes the changing leader `releaseLeadership`, and the
 ## P3 - The case-collision refusal keeps the deletion marker for ever (found 2026-10-18, fourth review of #2023)
 
 `wipeDeletedAccountLocalData` refuses an id that differs from another stored id only by letter case and keeps the wipe OWED, reported once per start, "until a human looks" - but nothing ever asks a human, so the marker lives until the subject signs in again. It was the main precondition of scenario A of that review (a resume wiping the NEW account), now closed by the callback dropping the marker and every login refusing a deleted account; what is left is an owed wipe that never completes and is never surfaced. **Owed**: a decision on what a collision does (wipe the parts not shared by case, and surface the rest to the user), and a test ([auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18)).
-
-## P3 - Four things the offline cold start fix left open (Mi 9T, `v1.2.9-alpha.1`, 2026-10-15)
-
-From [offline-and-weak-network section 15](frontend/offline-and-weak-network.md#15-an-offline-cold-start-sends-nothing-it-knows-will-fail-2026-10-15). (a) An answerer holding nothing answers a HISTORY ask by silence, so the requester cannot record an answer and re-asks its named online device once per launch: SHIPPED in `v1.3.0` as WP-HOLD-NOTHING (#2027, [channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)); owed one bench reading. (b) The push context written after the MLS init is not re-attempted after an offline start: the native side keeps the previous launch's context until the next start; a retry on reconnect must check the device key has not changed meanwhile. (c) When only OUR OWN other devices could answer a history ask and none is online, nothing re-asks when one comes online in the same session: `parkHistoryUntilOnline` rides `whenAnyComesOnline`, which watches USERS, and our own user is online by definition, so it would fire at once. The fix is a per-device presence waiter (the roster already carries `onlineDevices`); until then the next start re-reads presence. (d) A no-network spell (`auth.refresh`) is ended by the reconnect or the foreground: a STALE `navigator.onLine === false` whose one spell refresh failed while the server was down, followed by the server coming back with no `online` event and no foreground, keeps refusing until one of the two.
-
-## P2 - iOS silent frames reach no Canari native code, background or foreground (found 2026-10-15, iPhone 12 syslog)
-
-**SHIPPED in `v1.3.0` (#2000):** the method is ADDED with `class_replaceMethod`, and what a woken process may do is an allowlist of dismissals (`channel_read`, my own MLS frame, `call_ring_end`) that never reaches `CanariHandleFcmData` - mechanism in [mobile](frontend/mobile.md#silent-frames-reach-the-app-through-a-method-canari-adds-2026-10-17). **Owed**: the iPhone 12 reading named there (`remote notification hook installed`, then a salon read elsewhere clearing the banner, backgrounded and foregrounded). The Welcome kinds stay unhandled on iOS until the background-join row fix below.
-
-## P3 - A re-added reader rescans its own dropped tail on every launch (fifth review of #1878, 2026-10-15)
-
-When a re-added reader's only unread history rows fall inside its own exclusion window, the server drops them and the cursor cannot move past them. Every launch reads them again, bounded by `MAXLEN` in whole chunks. This cost is accepted.
-
-Letting the cursor jump the tail (`skipTo`) was built and deleted because it could hide entitled rows for good ([history-reconciliation](protocols/history-reconciliation.md)). A future version must prove three things before it moves a cursor past rows it did not hand:
-
-- every window touching the skipped span is CLOSED and ends after the span;
-- the windows were repaired before the filter ran (no roster member is left without an open interval);
-- the client accepts a skip only when it is ahead of its cursor and at or before the walk head.
 
 ## P2 - Key-group requests sealed 3-6 epochs behind are unreadable by every current member (console export, 2026-10-12)
 

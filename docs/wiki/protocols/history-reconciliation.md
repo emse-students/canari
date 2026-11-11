@@ -1190,7 +1190,14 @@ Three more things made it unsafe:
 - the client did not check that a `skipTo` lay ahead of its cursor and at or before the walk head;
 - a client with an empty local store clears its cursor on every launch, so it never helped there.
 
-What a future version must prove first is in the [backlog](../backlog.md) (P3).
+A future version must prove three things before it moves a cursor past rows it did not hand:
+
+- every window touching the skipped span is CLOSED and ends after the span;
+- the windows were repaired before the filter ran (no roster member is left without an open
+  interval);
+- the client accepts a skip only when it is ahead of its cursor and at or before the walk head.
+
+Until then the rescan is the accepted cost, and nothing is owed on it (backlog triage of 2026-11-11).
 
 **The interval read repairs before it filters**: a roster member with no open interval gets one from
 their roster row's `joinedAt` (`openMissingIntervals`, shared with `GET .../exclusions`, one ERROR

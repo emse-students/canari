@@ -931,6 +931,8 @@
   "post_media_video_label": "Vidéo",
   "post_fullscreen_label": "Plein écran",
   "video_sound_label": "Son des vidéos",
+  "video_volume_label": "Volume",
+  "video_volume_valuetext": "{percent} %",
   "video_player_label": "Lecteur vidéo",
   "video_play_label": "Lire",
   "video_loading_label": "Chargement de la vidéo",

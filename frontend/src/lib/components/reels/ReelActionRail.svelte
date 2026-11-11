@@ -293,6 +293,7 @@
     <VideoSoundButton
       muted={videoSound.muted}
       onToggle={() => videoSound.toggle()}
+      onLevel={(v) => videoSound.setVolume(v)}
       rail
       data-reel-rail-sound
     />
