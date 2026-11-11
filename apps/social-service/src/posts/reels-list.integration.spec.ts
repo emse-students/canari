@@ -68,7 +68,7 @@ const R = {
   scheduled: P(9), // au's reel, scheduled tomorrow
   gardanne: P(10), // gx's reel
   republished: P(11), // au's reel, republished by A5
-  photo: P(12), // au's one-photo post: in the viewer (singlePhotos), like on Instagram
+  photo: P(12), // au's one-photo post: in the viewer (multiMedia), like on Instagram
   tieA: P(13), // two reels by au published at the SAME instant: the id breaks the tie
   tieB: P(14),
 };
@@ -108,7 +108,7 @@ maybe('the CanaReels viewer list against PostgreSQL (feed=reels)', () => {
       feed,
       viewerUserId,
       kind: 'reel',
-      singlePhotos: true,
+      multiMedia: true,
     };
     const got: { id: string }[] = await (
       service as unknown as { listPostRows(p: ListPostsParams): Promise<{ id: string }[]> }
