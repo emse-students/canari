@@ -2706,6 +2706,25 @@ for the search, how many messages were actually looked at.
 the ordinary case for most of a conversation - logging it would put a line on every search over
 normal history. It is named here so the next reader does not re-open it.
 
+## The search bar opens on the field and lands on the first match (2026-11-11)
+
+- **Typing takes the reader to the match the counter calls 1, which is the NEWEST** (lead
+  decision, 2026-11-11, reversible: landing on the oldest forced a long scroll and loaded old
+  history on every search; Messenger and WhatsApp land on the newest). `searchMatches` is held
+  newest-first (`onSearchAll` answers oldest-first and is reversed). `refreshSearchMatches` ends by
+  calling `navigateToMessageEnsureLoaded(searchMatches[0])` once the list for the current term is
+  known - a superseded query returns before it (the `searchSeq` token), so a keystroke whose list
+  is still being computed never moves the view, and no timer is involved. An unloaded match pages
+  older history in exactly as the arrows do. **Directions:** the up arrow and Shift+Enter go to
+  OLDER matches (`jumpSearch('older')`, counter rises), the down arrow and Enter toward NEWER ones
+  (counter falls, wrapping from 1 to the oldest). The icons did not move: up is up the conversation.
+- **The tap focuses the field.** `openSearch` sets `showSearch` and calls `flushSync()` so the input
+  is mounted inside the tap's own call stack, then focuses it: iOS raises the keyboard only for a
+  focus made in the gesture, so a `tick()` or a `setTimeout` focus would lose it.
+- **Escape (or the toggle) closes** through `closeSearch`, which resets the search and calls
+  `ChatHeader.focusSearchToggle()` to return the focus to the magnifier. Test:
+  `ChatArea.search.svelte.test.ts`.
+
 ## One fold behind every search box (2026-08-31)
 
 Seven places in this app removed accents from a string, each with its own spelling of "which marks",

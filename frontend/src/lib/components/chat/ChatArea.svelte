@@ -16,7 +16,7 @@
     Pin,
     ChartColumn,
   } from '@lucide/svelte';
-  import { onDestroy, tick, untrack } from 'svelte';
+  import { flushSync, onDestroy, tick, untrack } from 'svelte';
   import { createEditSession } from '$lib/utils/chat/editSession.svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
@@ -450,6 +450,8 @@
   /** Monotonic token to drop stale async search results. */
   let searchSeq = 0;
   let showSearch = $state(false);
+  let searchInputEl = $state<HTMLInputElement | null>(null);
+  let chatHeaderRef = $state<{ focusSearchToggle: () => void } | null>(null);
   /** Whether local DB may have messages older than what's currently in memory. */
   let hasMoreInDb = $state(true);
   let isLoadingOlder = $state(false);
@@ -1086,13 +1088,23 @@
     if (seq !== searchSeq) return; // a newer query superseded this one
 
     if (ids === null) {
-      searchMatches = inMemoryMatches(q);
+      // NEWEST FIRST: match 1 is the one nearest the bottom, as Messenger and WhatsApp land.
+      searchMatches = inMemoryMatches(q).reverse();
       searchLimitedToLoaded = isChannel;
     } else {
-      searchMatches = ids;
+      searchMatches = [...ids].reverse();
       searchLimitedToLoaded = false;
     }
     activeSearchIndex = searchMatches.length > 0 ? 0 : -1;
+    // The list for THIS term is now known (a superseded one returned above): take the reader to
+    // the match the counter calls 1, paging older history in exactly as the arrows do.
+    if (activeSearchIndex === 0) {
+      Log.d(
+        'chat.search',
+        `term settled: ${searchMatches.length} match(es), jumping to 1 (the newest)`
+      );
+      await navigateToMessageEnsureLoaded(searchMatches[0]);
+    }
   }
 
   /**
@@ -1114,7 +1126,41 @@
     await navigateToMessage(messageId);
   }
 
-  async function jumpSearch(delta: 1 | -1) {
+  /**
+   * Opens the bar and focuses its field in the SAME call stack as the tap: `flushSync` mounts the
+   * input now, because iOS raises the keyboard only for a focus made inside the user gesture.
+   */
+  function openSearch() {
+    showSearch = true;
+    flushSync();
+    Log.d('chat.search', `opened, field ${searchInputEl ? 'focused' : 'missing'}`);
+    searchInputEl?.focus();
+  }
+
+  /** Closes the bar, resets the search and hands the focus back to the magnifier. */
+  function closeSearch() {
+    showSearch = false;
+    searchQuery = '';
+    searchMatches = [];
+    activeSearchIndex = -1;
+    searchLimitedToLoaded = false;
+    Log.d('chat.search', 'closed, focus returned to the magnifier');
+    chatHeaderRef?.focusSearchToggle();
+  }
+
+  function onSearchKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeSearch();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      void jumpSearch(e.shiftKey ? 'older' : 'newer');
+    }
+  }
+
+  /** Steps through the newest-first list: `older` is the up arrow, `newer` the down arrow. */
+  async function jumpSearch(direction: 'older' | 'newer') {
+    const delta = direction === 'older' ? 1 : -1;
     if (searchMatches.length === 0) return;
     const next = (activeSearchIndex + delta + searchMatches.length) % searchMatches.length;
     activeSearchIndex = next;
@@ -1558,14 +1604,8 @@
         {onStartVideoCall}
         {onOpenMembers}
         {membersActive}
-        onToggleSearch={() => {
-          showSearch = !showSearch;
-          if (!showSearch) {
-            searchQuery = '';
-            searchMatches = [];
-            activeSearchIndex = -1;
-          }
-        }}
+        bind:this={chatHeaderRef}
+        onToggleSearch={() => (showSearch ? closeSearch() : openSearch())}
         searchActive={showSearch}
         {onOpenMedia}
       />
@@ -1577,7 +1617,9 @@
               <Search size={15} class="opacity-60" />
               <input
                 type="text"
+                bind:this={searchInputEl}
                 value={searchQuery}
+                onkeydown={onSearchKeydown}
                 oninput={(e) => (searchQuery = e.currentTarget.value)}
                 placeholder={m.chat_search_in_conversation_placeholder()}
                 class="chat-search-input"
@@ -1606,7 +1648,7 @@
               </span>
               <button
                 type="button"
-                onclick={() => void jumpSearch(-1)}
+                onclick={() => void jumpSearch('older')}
                 class="ui-icon-button chat-search-action"
                 aria-label={m.chat_previous_match_label()}
                 disabled={searchMatches.length === 0}
@@ -1615,7 +1657,7 @@
               </button>
               <button
                 type="button"
-                onclick={() => void jumpSearch(1)}
+                onclick={() => void jumpSearch('newer')}
                 class="ui-icon-button chat-search-action"
                 aria-label={m.chat_next_match_label()}
                 disabled={searchMatches.length === 0}
