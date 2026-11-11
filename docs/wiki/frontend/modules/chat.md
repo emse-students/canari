@@ -655,7 +655,10 @@ it always did.
   Dropping it is a narrowing the owner may take; `csp.test.ts` says so.
 - **Not proven here:** that a real browser on a deployed estate makes ZERO request to
   `static.klipy.com` - owed as a network trace on dev after an alpha, and on the phones
-  ([backlog](../../backlog.md)).
+  ([the verification table](../../backlog.md#owed-a-verification-and-nothing-else)).
+- **The KLIPY key is not rotated, and dev reuses the production key** (owner, 2026-10-24). Revisit
+  when `minClientVersion` excludes the native builds that still call KLIPY directly (installed before
+  2026-10-16).
 
 ### The GIF picker loads in a controlled way, and a comment GIF says what it is doing (2026-10-22)
 
