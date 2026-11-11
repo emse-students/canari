@@ -4907,6 +4907,7 @@
   "reels_carousel_next": "Photo ou vidéo suivante",
   "reels_carousel_position": "{index} sur {total}",
   "reels_viewer_load_error": "Les CanaReels suivants n'ont pas pu être chargés.",
+  "reels_viewer_crashed": "Les CanaReels ont rencontré une erreur et ont été fermés.",
   "reels_rail_label": "Actions du CanaReel",
   "reels_rail_drawer_label": "Choisir une réaction",
   "reels_rail_like": [

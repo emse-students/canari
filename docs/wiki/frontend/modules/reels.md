@@ -1149,6 +1149,67 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
    [legacy-compatibility](../../legacy-compatibility.md)); and a stored `feed:<tab>:reel`
    page is never asked for and goes with the other stored pages at the next sign-out.
 
+### The order of the stream, and a change of order is a NEW LIST (owner, 2026-11-10; crash fixed 2026-11-11)
+
+"Pour toi" or "Récents" is drawn at the top of the viewer (`orderChoice`, `reels/reelOrder.ts`,
+remembered on the device): "Nos principes", principle 3 - a chronological view must always exist. A
+change reads the first page of the other order, then hands the viewer a new loader, and the viewer
+starts over at the top of the new list. A refused or empty read keeps the stream as it was.
+
+**EVERY OPENER OF THE STREAM SHARES ONE IMPLEMENTATION** (`reels/reelStream.svelte.ts`, `ReelStream`:
+the order, the change, the first page read in it, the loader built from both, the switch handed to
+the viewer):
+
+- **The CanaReels entry** (`ReelsEntryButton`) reads the first page in the remembered order before it
+  opens (an empty stream opens nothing); its `startPost` is that page's first reel, and a change
+  starts over at the new order's first reel.
+- **A feed video opened full screen** (`PostContent`, owner 2026-11-11) continues in the REMEMBERED
+  order - it used to go on in "Pour toi" whatever the reader had chosen, with no switch - and draws
+  the switch too. Its `startPost` is the opened post, kept first on a change: the new list is that
+  post, then the new order's reels (the post itself once, `mergeReelPage`). With "Défilement infini
+  des CanaReels" off (`feedReelsContinue`) the viewer is handed `NO_FURTHER_REELS` and NO switch:
+  there is no list to order ([engagement](../../engagement.md)).
+
+**AN ANSWER BELONGS TO ITS OPENING.** `open` and `close` each start a new opening, and a change's
+read carries the one it was asked in: an answer landing after the viewer closed (or closed and
+reopened on the same card) is dropped and said, never applied - it would reopen the entry's viewer
+by itself, reorder a later opening and remember an order nobody saw. `close` clears nothing the
+loader is built from (only `opened`; `open` replaces the first page), so a closing viewer is never
+handed a new list built only to be torn down.
+
+**THE LIST IS A `$derived` OF THE LOADER** (`reels/reelList.svelte.ts`, `ReelList`): its reels, the
+reel on screen, its pages read, its settle, each carousel's visible media and the track's move all
+live on ONE object, so a new loader is a new list in the same instant the prop changes. Nothing is
+reset afterwards, and anything that outlives its list - a page that lands, a track move that lands -
+writes into the object it was started on, which nothing draws: identity says which list a result
+belongs to, not a generation counter. **And every slide is handed ITS OWN POST** (`mountedReelSlots`:
+the each block iterates `{ post, i }` keyed by the post), never `reels[i]` read again later. The
+comments and share sheets and a held carousel drag are the list's too, so a change of order with the
+comments open gives the reel its full size and the keys back. **A track move in flight at the swap
+is landed explicitly, on its own list** (a close swipe still closes); the transition end the swap
+cancels belongs to no current move and is said at debug, never warned.
+
+**The defect both close (production, 1.6.10, Firefox, 2026-11-11):** opened in Récents, switched to
+Pour toi at the third reel (survived), stepped to the fourth, switched back - and the feed page
+crashed on `can't access property "kind", e is undefined`. The list used to be reset by an `$effect`
+after the new props rendered, and each slide's post was the getter `reels[i]`. The new list tore down
+the slide of the NEXT reel, which had preloaded behind the settled one; its preload's cleanup read its
+`active` prop, whose `{@const role}` re-read the slide's panes, whose post was the NEW list read at
+the OLD index: `undefined`, then `fullScreenPageOf(undefined)`. The first switch survived because the
+reel on screen had not settled, so no preload, so no cleanup read anything. Read on the stack in
+`ReelViewer.order.svelte.test.ts` (`ReelMediaPane` preload teardown -> `role` -> `panes` -> `page`),
+red on 1.6.10.
+
+**A THROW INSIDE THE VIEWER CLOSES THE VIEWER, NOT THE PAGE.** The entry's viewer sits in the feed's
+tab row, outside every card's boundary, so the throw reached the route's boundary (Kit's) and the
+whole feed became the error page. The viewer is a visible feature inside a page, so it takes its own
+`svelte:boundary` ([architecture](../architecture.md#an-uncaught-error-in-the-reactive-graph-is-permanent-until-a-reload-so-boundaries-are-placed-by-blast-radius)):
+`[reel-viewer] the viewer failed in <where>` at error, the toast "Les CanaReels ont rencontré une
+erreur", and the viewer closes once through its history entry - the feed under it never left. A
+boundary in the template cannot see the viewer's OWN effects (the next-page read, the swap, the
+wheel and gesture listeners), so each runs through `guarded`, which closes it the same way. The line
+reads nothing of the list, which may be what threw.
+
 ### "Reels 2 and 3 never play" was two reels with no video (iPhone 12, `v1.2.9-alpha.4`, 2026-10-16)
 
 **Not a player defect, and the suspects are REFUTED on the phone.** The reading swiped from reel 1
