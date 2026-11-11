@@ -18,7 +18,9 @@ state first, then revalidates ([local-first-ui](../frontend/local-first-ui.md)).
    Left: today's celebrants stay network-only (memory-only by the birthdays decision); the dev cold
    boot re-read under DevTools throttling and the Mi 9T first-paint reading are owed.
 2. Some screens have no local copy: Pour toi, the bell, profiles already seen.
-3. Media seen once is not kept, within a size budget.
+3. Media seen once is not kept, within a size budget. (The CanaReels look-ahead of 2026-11-11 does
+   not build this store: its heads live only while held, its pictures in the existing pool -
+   [reels](../frontend/modules/reels.md#a-loading-reel-shows-its-first-frame-never-a-play-glyph-owner-2026-10-31).)
 4. Per-community triplet reads: 27 calls for 9 communities.
 5. Duplicate `users/batch`, follow-statuses x8 and `devices/self` x3
    ([audit](../frontend/weak-network-audit-2026-11-10.md), section 4).

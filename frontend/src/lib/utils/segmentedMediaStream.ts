@@ -60,7 +60,8 @@
  *   needs the container's index (a WebM `Cues`, an MP4 `sidx`), and that belongs with the capture
  *   that writes the container (R3).
  * - A closed stream re-fetches its head when it is opened again: the segments it had are not kept
- *   anywhere but the element it fed, which closing released.
+ *   anywhere but the element it fed, which closing released - unless the reel viewer's look-ahead
+ *   still holds that head (`mediaHeadStore.ts`), which the feed then joins.
  * - A range the ENGINE EVICTS from the buffer is not fetched again: segments go in once, in order. A
  *   `ManagedMediaSource` (iPhone) may evict under memory pressure and stall there - the pacing
  *   honours its `streaming` flag, but re-fetching an evicted range needs the time-to-segment index
@@ -75,6 +76,8 @@ import { SEGMENTED_MEDIA_ENCODING, SEGMENTED_MEDIA_SEGMENT_BYTES } from '$lib/me
 import type { MediaRef } from '$lib/media';
 import { httpRangeSource, openSegmentedMedia } from './segmentedMediaReader';
 import { isMp4Type, writeMvhdDuration } from './mp4Duration';
+import { LinkRateMeter, sessionLinkRate } from './linkRate';
+import { headedRangeSource, joinMediaHead } from './mediaHeadStore';
 
 /** The constructor MSE offers on this engine: the standard one, or Safari's managed one. */
 export type MediaSourceConstructor = {
@@ -411,36 +414,38 @@ interface SegmentFeed {
   linkBytesPerSecond(): number | null;
 }
 
-/** Weight of the newest read in {@link SegmentFeed.linkBytesPerSecond}. */
-const RATE_SMOOTHING = 0.5;
-
-/** A read shorter than this says nothing about the link (a short closing segment, a tiny file). */
-const MIN_MEASURED_BYTES = 64 * 1024;
-
-/** A feed over `ref`; every read is aborted with `signal` (the root stream's close). */
+/**
+ * A feed over `ref`; every read is aborted with `signal` (the root stream's close).
+ *
+ * A HEAD FETCHED AHEAD IS JOINED, NEVER FETCHED AGAIN (owner, 2026-11-11): when the reel viewer's
+ * look-ahead holds this media's first bytes (`mediaHeadStore.ts`), the feed takes its own hold on
+ * them and its reads inside them are answered from memory - the bytes in flight included - so the
+ * stream's first segments cost no second request. The hold is given back with the root's close.
+ */
 function createSegmentFeed(
   ref: MediaRef,
   baseUrl: string,
   signal: AbortSignal,
   clock: () => number
 ): SegmentFeed {
-  let rate: number | null = null;
+  const meter = new LinkRateMeter();
   const observe = (bytes: number, seconds: number) => {
-    if (bytes < MIN_MEASURED_BYTES || seconds <= 0) return;
-    const sample = bytes / seconds;
-    rate = rate === null ? sample : RATE_SMOOTHING * sample + (1 - RATE_SMOOTHING) * rate;
+    meter.observe(bytes, seconds);
+    sessionLinkRate.observe(bytes, seconds);
   };
+  const network = httpRangeSource(baseUrl, ref.mediaId, observe, clock);
+  const head = joinMediaHead(ref.mediaId);
+  if (head) {
+    console.debug(`[media-seg] stream ${ref.mediaId}: joins the head fetched ahead`);
+    signal.addEventListener('abort', () => head.release(), { once: true });
+  }
+  const source = head ? headedRangeSource(head, network) : network;
   let reader: ReturnType<typeof openSegmentedMedia> | null = null;
   // A FAILURE IS NOT MEMOISED: a transient range error on the card's read must not be handed to the
   // viewer forever - the next consumer asks again (a closed root rejects them all anyway).
   const open = () => {
     if (!reader) {
-      const opening = openSegmentedMedia(
-        httpRangeSource(baseUrl, ref.mediaId, observe, clock),
-        ref.key,
-        ref.iv,
-        signal
-      );
+      const opening = openSegmentedMedia(source, ref.key, ref.iv, signal);
       reader = opening;
       opening.catch(() => {
         if (reader === opening) reader = null;
@@ -466,7 +471,7 @@ function createSegmentFeed(
       }
       return pending;
     },
-    linkBytesPerSecond: () => rate,
+    linkBytesPerSecond: () => meter.bytesPerSecond,
   };
 }
 

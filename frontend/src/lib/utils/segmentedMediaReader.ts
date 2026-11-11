@@ -30,7 +30,7 @@ import {
   MediaPurgedError,
   MediaUnreachableError,
 } from './mediaErrors';
-import { mediaRequestGate } from './requestGate';
+import { mediaRequestGate, type GateLane, type GateRank } from './requestGate';
 
 /** Where a reader's ciphertext bytes come from. */
 export interface CiphertextRangeSource {
@@ -72,12 +72,16 @@ export type RangeReadObserver = (bytes: number, seconds: number) => void;
  * @param observe Told what each answered read achieved ({@link RangeReadObserver}): how a stream
  *   learns the rate of its link.
  * @param clock   Milliseconds, for that measure; a test's stand-in drives it.
+ * @param lane    The gate's lane: `background` for bytes fetched ahead of the reader
+ *   (`mediaHeadStore.ts`), which never take the last free slot from what is on screen; a
+ *   {@link GateRank} when a reader that joins it may raise it to the foreground.
  */
 export function httpRangeSource(
   baseUrl: string,
   mediaId: string,
   observe?: RangeReadObserver,
-  clock: () => number = () => performance.now()
+  clock: () => number = () => performance.now(),
+  lane: GateLane | GateRank = 'foreground'
 ): CiphertextRangeSource {
   const url = `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`;
   return {
@@ -86,19 +90,23 @@ export function httpRangeSource(
       let grantedAt = 0;
       // Typed exactly as the whole download types them (`fetchMediaObject`), so a renderer reads
       // one vocabulary (`mediaFailureCause`) whichever path the media took.
-      const res = await mediaRequestGate.run(async () => {
-        grantedAt = clock();
-        const headers = {
-          Authorization: `Bearer ${await getToken()}`,
-          Range: `bytes=${start}-${endExclusive - 1}`,
-        };
-        try {
-          return await fetch(url, { headers, signal });
-        } catch (err) {
-          if (signal?.aborted) throw err;
-          throw new MediaUnreachableError(err);
-        }
-      }, signal);
+      const res = await mediaRequestGate.run(
+        async () => {
+          grantedAt = clock();
+          const headers = {
+            Authorization: `Bearer ${await getToken()}`,
+            Range: `bytes=${start}-${endExclusive - 1}`,
+          };
+          try {
+            return await fetch(url, { headers, signal });
+          } catch (err) {
+            if (signal?.aborted) throw err;
+            throw new MediaUnreachableError(err);
+          }
+        },
+        signal,
+        lane
+      );
       if (res.status === 410) throw new MediaPurgedError();
       if (res.status === 404) throw new MediaNotFoundError();
       // 416: the range starts past the end - the blob is shorter than its header announces.
