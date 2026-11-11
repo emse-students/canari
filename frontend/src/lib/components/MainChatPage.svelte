@@ -79,6 +79,8 @@
   import { MediaService } from '$lib/media';
   import { signOutGeneration } from '$lib/stores/auth';
   import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
+  import { landPendingChatOpening } from '$lib/utils/chat/pendingChatOpening';
+  import { conversationRefusalMessage } from '$lib/utils/chat/conversationRefusalMessage';
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
@@ -1010,17 +1012,20 @@
     };
   });
 
-  // ─── Apply pending conversation selection (from cross-page navigation) ────
+  // ─── Apply what another page asked to open (a conversation, or the DM with a person) ────
+  // Once the map is authoritative, never on a clock: `pendingChatOpening.ts`.
   $effect(() => {
-    if (!session.isLoggedIn) return;
+    if (!session.isLoggedIn || !convs.conversationSourcesSettled) return;
     untrack(() => {
-      const pending = sessionStorage.getItem('canari_pending_contact');
-      if (pending) {
-        sessionStorage.removeItem('canari_pending_contact');
-        setTimeout(() => {
-          convs.selectConversation(pending);
-        }, 600);
-      }
+      void landPendingChatOpening({
+        storage: sessionStorage,
+        sourcesSettled: () => convs.conversationSourcesSettled,
+        hasConversation: (key) => convs.conversations.has(key),
+        selectConversation: convs.selectConversation,
+        startDirectConversation: (peerUserId) => convs.startNewConversation(peerUserId, convCtx()),
+        onRefused: (reason) => showToast(conversationRefusalMessage(reason)),
+        log,
+      });
     });
   });
 

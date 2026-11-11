@@ -37,6 +37,7 @@
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Log } from '$lib/utils/Log';
+  import { requestDirectConversationWith } from '$lib/utils/chat/pendingChatOpening';
   import ProfileHeader from '$lib/components/profile/ProfileHeader.svelte';
   import ProfileOverflowMenu from '$lib/components/profile/ProfileOverflowMenu.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -266,8 +267,11 @@
   });
 
   function handleSendMessage() {
+    // A PERSON, not a conversation: the chat page finds the DM with them or creates it
+    // (`pendingChatOpening.ts`). Handed over as a conversation key, this user id opened nothing.
     if (profile?.id) {
-      sessionStorage.setItem('canari_pending_contact', profile.id);
+      Log.d('[PROFILE] "Message": asking the chat page for the DM with this person');
+      requestDirectConversationWith(profile.id, sessionStorage);
       goto(resolve('/chat'));
     }
   }
