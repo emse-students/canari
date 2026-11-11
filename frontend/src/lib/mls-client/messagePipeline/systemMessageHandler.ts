@@ -55,10 +55,9 @@ import {
   sendHistoryDigest,
 } from '$lib/utils/chat/groupActions';
 import {
-  countUnreadForUser,
+  derivedUnreadCount,
   mergeReadWatermarks,
   parseReadWatermarks,
-  readPointFor,
   boundedServerMarks,
   receivedReadWatermarkMark,
   watermarkAfterReading,
@@ -1623,10 +1622,14 @@ export async function handleSystemEvent(
           //    unread because it cannot see read state - a message this user already read on
           //    another device is below the watermark and must not raise a badge here.
           //    Clamped to the current value: an open conversation was already zeroed by the
-          //    add-path and must never regain a badge, and a genuine new member - whose watermark
-          //    is 0 - keeps the full count.
-          const mine = readPointFor(c, userId.toLowerCase());
-          const stillUnread = countUnreadForUser(nextMessages, mine.stamped, mine.server);
+          //    add-path and must never regain a badge, and a genuine new member - no saved mark
+          //    and no own message - keeps the full count.
+          //    At the SAME read point a cold start derives the count from (`derivedUnreadCount`), so
+          //    the badge this bundle leaves is the one the next load re-derives.
+          const stillUnread = derivedUnreadCount(
+            { ...c, messages: nextMessages },
+            userId.toLowerCase()
+          );
           const nextUnreadCount = Math.min(c.unreadCount ?? 0, stillUnread);
           if (changedIds.size > 0 || nextUnreadCount !== (c.unreadCount ?? 0)) {
             conversations.set(convoKey, {

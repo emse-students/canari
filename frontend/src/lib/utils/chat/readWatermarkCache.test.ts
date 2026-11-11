@@ -48,6 +48,22 @@ describe('applyNativeReadWatermarks', () => {
     expect(convs.get('g1')!.unreadCount).toBe(1);
   });
 
+  it("never RAISES a badge: a shade mark below the upgrade's seed leaves covered what it covered", () => {
+    // The store migration seeded this row at 3000 (server clock): nothing it held then counts.
+    const dated = (id: string, at: number) =>
+      ({ ...(msg(id, at - 5) as object), serverTimestamp: at }) as never;
+    const convs = mapOf({
+      ...convo('g1', [dated('a', 1000), dated('b', 3000)]),
+      unreadCount: 0,
+      localReadSeed: 3000,
+    } as Conversation);
+
+    applyNativeReadWatermarks([{ groupId: 'g1', at: 1500, serverAt: 1500 }], convs, ME);
+
+    expect(convs.get('g1')!.serverReadWatermarks![meNorm]).toBe(1500);
+    expect(convs.get('g1')!.unreadCount).toBe(0);
+  });
+
   /**
    * A line from the Android shade since 2026-10-31 carries the server's `createdAt` too, and it lands
    * in the server-clock map. `b` was on the banner: its server time is covered although its author's

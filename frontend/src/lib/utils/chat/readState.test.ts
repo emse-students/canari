@@ -3,7 +3,10 @@ import { compareMessageOrder } from './messageOrder';
 import {
   countUnreadBelow,
   countUnreadForUser,
+  countingReadPoint,
+  derivedUnreadCount,
   hasRead,
+  parseLocalReadSeed,
   isUnreadForUser,
   mergeReadWatermark,
   mergeReadWatermarks,
@@ -188,6 +191,122 @@ describe('the unread badge', () => {
     expect(countUnreadForUser(afterScrollingUp, read)).toBe(0);
   });
 });
+
+describe('the read point an unread count is taken at', () => {
+  /** A DM/group row the server dated `at`; its author's phone stamped it `stamp`. */
+  const dated = (id: string, at: number, senderId = PEER, stamp = at - 5) =>
+    msg(id, stamp, senderId, { serverTimestamp: at });
+
+  it('is the saved mark whenever one is saved, own messages after it changing nothing', () => {
+    const c = {
+      messages: [dated('a', 1000), dated('r', 3000, ME), dated('b', 4000)],
+      serverReadWatermarks: { [ME]: 2000 },
+    };
+    expect(countingReadPoint(c, ME)).toEqual({ stamped: 0, server: 2000, source: 'saved' });
+    expect(derivedUnreadCount(c, ME)).toBe(1);
+  });
+
+  it('with no saved mark, is the SERVER time of my newest own message', () => {
+    const c = {
+      messages: [dated('a', 1000), dated('r1', 2000, ME), dated('b', 3000), dated('r2', 4000, ME)],
+    };
+    expect(countingReadPoint({ messages: [...c.messages, dated('c', 5000)] }, ME)).toEqual({
+      stamped: 0,
+      server: 4000,
+      source: 'own',
+    });
+    expect(derivedUnreadCount({ messages: [...c.messages, dated('c', 5000)] }, ME)).toBe(1);
+  });
+
+  it('an own row the server has not dated yet (still queued) implies nothing', () => {
+    const c = { messages: [dated('a', 1000), msg('queued', 2000, ME)] };
+    expect(countingReadPoint(c, ME).server).toBe(0);
+    expect(derivedUnreadCount(c, ME)).toBe(1);
+  });
+
+  it('is decided by ONE clock: neither phone being wrong moves it', () => {
+    // My phone an hour FAST: my reply at server 2000 must not cover the peer's later 3000.
+    const fast = { messages: [dated('r', 2000, ME, 3_602_000), dated('b', 3000)] };
+    expect(derivedUnreadCount(fast, ME)).toBe(1);
+    // My phone an hour SLOW: my reply at server 2000 covers the peer's earlier 1500.
+    const slow = { messages: [dated('a', 1500), dated('r', 2000, ME, 2000 - 3_600_000)] };
+    expect(derivedUnreadCount(slow, ME)).toBe(0);
+  });
+
+  it('with no saved mark, no seed and no own message (a first contact), is 0: every foreign message counts', () => {
+    const c = { messages: [dated('a', 1000), dated('b', 2000), dated('n', 3000, 'system')] };
+    expect(countingReadPoint(c, ME)).toEqual({ stamped: 0, server: 0, source: 'none' });
+    expect(derivedUnreadCount(c, ME)).toBe(2);
+  });
+
+  it("with no saved mark, takes the upgrade's local seed (the max with my newest own message)", () => {
+    const seeded = { messages: [dated('a', 1000), dated('b', 3000)], localReadSeed: 2000 };
+    expect(countingReadPoint(seeded, ME)).toEqual({ stamped: 0, server: 2000, source: 'seed' });
+    expect(derivedUnreadCount(seeded, ME)).toBe(1);
+    const replied = { ...seeded, messages: [...seeded.messages, dated('r', 3500, ME)] };
+    expect(countingReadPoint(replied, ME)).toEqual({ stamped: 0, server: 3500, source: 'own' });
+  });
+
+  it('a mark BELOW the seed never raises a count: the seed keeps covering what it covered', () => {
+    const seeded = { messages: [dated('a', 1000), dated('b', 3000)], localReadSeed: 3000 };
+    expect(derivedUnreadCount(seeded, ME)).toBe(0);
+    // A "Marquer comme lu" from the shade, or another device, lands a mark at 1500.
+    const marked = { ...seeded, serverReadWatermarks: { [ME]: 1500 } };
+    expect(countingReadPoint(marked, ME)).toEqual({ stamped: 0, server: 3000, source: 'seed' });
+    expect(derivedUnreadCount(marked, ME)).toBe(0);
+    // A mark above it decides.
+    const later = { ...seeded, messages: [...seeded.messages, dated('c', 5000)] };
+    expect(derivedUnreadCount({ ...later, serverReadWatermarks: { [ME]: 4000 } }, ME)).toBe(1);
+    expect(countingReadPoint({ ...later, serverReadWatermarks: { [ME]: 4000 } }, ME).source).toBe(
+      'saved'
+    );
+  });
+
+  it('reads a stored seed: a number, 0, or null (absent, covers nothing)', () => {
+    expect(parseLocalReadSeed(2000)).toBe(2000);
+    expect(parseLocalReadSeed('2000')).toBe(2000);
+    expect(parseLocalReadSeed(0)).toBe(0);
+    expect(parseLocalReadSeed(null)).toBeNull();
+    expect(parseLocalReadSeed(undefined)).toBeNull();
+    expect(parseLocalReadSeed('nope')).toBeNull();
+  });
+
+  it('is what withOwnReadAdvanced recounts at, so a read leaves the derived count', () => {
+    const c = {
+      messages: [dated('a', 1000), dated('r', 2000, ME), dated('b', 3000)],
+      unreadCount: 1,
+    };
+    const next = withOwnReadAdvanced(c, ME, 3000, 'server');
+    expect(next.unreadCount).toBe(0);
+    expect(derivedUnreadCount(next, ME)).toBe(0);
+  });
+
+  it('PINS THE SALON BEHAVIOUR: with no salon mark, my own post bounds what this device counts', () => {
+    // A salon row's stamp IS its server `createdAt`. No mark of mine; I posted at 2000.
+    const salon = (id: string, at: number, senderId = PEER) =>
+      msg(id, at, senderId, { serverTimestamp: at });
+    const c = { messages: [salon('mine', 2000, ME)] };
+    // A row older than my post, delivered late, is not counted here (the server's count, which a
+    // reconnect merges, still counts it - this device's live add path no longer does).
+    expect(isUnreadForUser(salon('late', 1500), ...pointOf(c))).toBe(false);
+    // A row after it is.
+    expect(isUnreadForUser(salon('new', 2500), ...pointOf(c))).toBe(true);
+    // And the salon self-mark (stamped clock) recounts at the same point.
+    const read = withOwnReadAdvanced(
+      { ...c, messages: [...c.messages, salon('new', 2500)], unreadCount: 1 },
+      ME,
+      2500,
+      'stamped'
+    );
+    expect(read.unreadCount).toBe(0);
+  });
+});
+
+/** A read point as `isUnreadForUser`'s two trailing arguments. */
+function pointOf(convo: Parameters<typeof countingReadPoint>[0]): [number, number] {
+  const point = countingReadPoint(convo, ME);
+  return [point.stamped, point.server];
+}
 
 describe('the unread count of the scroll-to-bottom button', () => {
   const thread = [

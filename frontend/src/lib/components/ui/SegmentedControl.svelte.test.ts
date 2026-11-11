@@ -88,6 +88,26 @@ it('underline variant keeps the tablist contract: roving tabindex, aria-controls
   expect(onSelect).toHaveBeenCalledWith('b');
 });
 
+it('overlay variant: no track, selected tab full white and medium, the other dimmed, 44px targets, tab semantics kept', () => {
+  const { target, tabs } = render({ variant: 'overlay', value: 'b' });
+  const list = target.querySelector('[role="tablist"]')!;
+  expect(list.getAttribute('data-variant')).toBe('overlay');
+  expect(list.className).not.toContain('bg-black');
+  expect(tabs().map((t) => t.getAttribute('aria-selected'))).toEqual(['false', 'true', 'false']);
+  const [idle, selected] = tabs();
+  expect(selected.className).toMatch(/(^| )text-white$/);
+  expect(selected.className).toContain('font-medium');
+  expect(idle.className).toContain('text-white/60');
+  expect(idle.className).not.toContain('font-medium');
+  expect(selected.className).toContain('text-shadow');
+  for (const t of tabs()) expect(t.className).toContain('min-h-11');
+  expect(t0Focusable(tabs())).toBe(true);
+});
+
+/** Keyboard focus stays visible: every tab keeps its focus ring. */
+const t0Focusable = (tabs: HTMLButtonElement[]) =>
+  tabs.every((t) => t.className.includes('focus-visible:ring-2'));
+
 it('manual activation moves focus on an arrow key and selects nothing', () => {
   const { tabs, onSelect } = render({ activation: 'manual' });
   tabs()[0].dispatchEvent(

@@ -41,6 +41,16 @@ state first, then revalidates ([local-first-ui](../frontend/local-first-ui.md)).
    ([video-player](../frontend/modules/video-player.md#a-link-slower-than-the-video-one-honest-load-2026-11-11)).
    Left: the throttled-link reading on both phones, and the lower-bitrate rendition (not built).
 
+**Gaps 4 and 5, built (2026-11-11, draft PR).** Gap 4: nine communities cost 27 requests at a load,
+now 19 - one batched `GET /api/channels/workspaces/boot-reads` for the salon listings only (database
+reads, the rows no longer wait on chat-delivery); the key-group reference and the roster stay per
+community on purpose (the reference carries a device roster that is unsafe to read before MLS is
+ready, review of #3332). Gap 5: `follow-statuses` 8 -> 2 for
+eight card ticks (one round in flight); `users/batch` has no identical request left to remove and
+`devices/self` x3 are three different URLs (C4). Numbers, causes and what was left:
+[audit section 4.5](../frontend/weak-network-audit-2026-11-10.md#4-the-leads-field-evidence-owners-android-169-log-production-nginx-read-against-the-code).
+Owed: the same count on a real boot of the owner's account, and the batched route on dev.
+
 **Method.** Measure every screen on a simulated slow link before and after, as in the audit
 ([method](../frontend/weak-network-audit-2026-11-10.md#1-method-and-what-it-cannot-see)); the number
 that closes a screen is its first paint with the network answering nothing.

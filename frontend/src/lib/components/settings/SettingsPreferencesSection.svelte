@@ -16,6 +16,7 @@
     Lightbulb,
     Smile,
     Play,
+    Infinity as InfinityIcon,
   } from '@lucide/svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import { Log } from '$lib/utils/Log';
@@ -281,6 +282,8 @@
 
     <div data-infinite-reels-setting>
       <Toggle
+        layout="row"
+        icon={InfinityIcon}
         checked={settings.infiniteReelsEnabled}
         label={m.settings_infinite_reels_label()}
         hint={m.settings_infinite_reels_hint()}

@@ -2452,6 +2452,60 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
+   * The salon listing ({@link listChannelsForUser}) of SEVERAL communities in ONE answer, the first
+   * of the three per-community reads of a boot.
+   *
+   * ONLY THE SALON LISTING, and that is a decision: it is database reads and nothing else. The key
+   * group's reference (`getDistributionGroupForMember`) carries a roster of this user's devices
+   * that decides whether the device forgets its tree and external-joins, and it must be read where
+   * it always was - after MLS is ready and the startup drain has run - or an owed Welcome landing
+   * during boot is forgotten against a stale roster (the GRP-4 duplicate-leaf pattern). The roster
+   * of the community is not batched either: it is read after the device's own tree.
+   *
+   * EACH ITEM IS ITS OWN VERDICT. The answer comes from the very method the per-community route
+   * calls, so authorization and shape are its, and a refusal on one community (a 403 on a community
+   * just left) is carried as `{ status, code, message }` on that item and never fails the others -
+   * the client rethrows it as the refusal the single route would have given. Ids beyond
+   * {@link COMMUNITY_BOOT_READS_MAX} are not answered at all (the caller chunks), a repeated id is
+   * answered once, and at most {@link COMMUNITY_BOOT_READS_CONCURRENCY} communities are read at a
+   * time so one request never holds the whole connection pool.
+   */
+  async listCommunityBootReads(
+    userId: string,
+    workspaceIds: readonly string[]
+  ): Promise<{ items: CommunityBootReadItem[] }> {
+    const ids = [...new Set(workspaceIds)].slice(0, COMMUNITY_BOOT_READS_MAX);
+    this.logger.log(
+      `[BOOT_READS] user=${userId.slice(0, 8)} communities=${ids.length} (asked ${workspaceIds.length})`
+    );
+    const items: CommunityBootReadItem[] = [];
+    for (let i = 0; i < ids.length; i += COMMUNITY_BOOT_READS_CONCURRENCY) {
+      const slice = ids.slice(i, i + COMMUNITY_BOOT_READS_CONCURRENCY);
+      items.push(
+        ...(await Promise.all(
+          slice.map(async (workspaceId): Promise<CommunityBootReadItem> => {
+            try {
+              const channels = await this.listChannelsForUser(workspaceId, userId);
+              return { workspaceId, channels, channelsRefusal: null };
+            } catch (e) {
+              const refusal = bootReadRefusal(e);
+              // The detail stays here: an unclassified failure is a generic 500 to the client.
+              this.logger.warn(
+                `[BOOT_READS] workspace=${workspaceId} user=${userId.slice(0, 8)} channels=${refusal.status}` +
+                  (e instanceof HttpException
+                    ? ''
+                    : ` ${e instanceof Error ? e.message : String(e)}`)
+              );
+              return { workspaceId, channels: null, channelsRefusal: refusal };
+            }
+          })
+        ))
+      );
+    }
+    return { items };
+  }
+
+  /**
    * Publishes a member's freshly committed GroupInfo for the community's distribution group.
    * Monotonic on the delivery side, so a late refresh can never regress the served base epoch.
    */
@@ -7114,6 +7168,43 @@ class ErasedAccountLeftAlone extends Error {
     super(`erased account is the last member of workspace ${workspaceId}`);
     this.name = 'ErasedAccountLeftAlone';
   }
+}
+
+/** The most communities one {@link ChannelService.listCommunityBootReads} answers; the client chunks. */
+export const COMMUNITY_BOOT_READS_MAX = 50;
+
+/** A refusal carried on one item of a batched read, the shape the single route's error body has. */
+export interface BootReadRefusal {
+  status: number;
+  code: string | null;
+  message: string;
+}
+
+/** How many communities one batched read lists at a time (database reads, so a small bound). */
+export const COMMUNITY_BOOT_READS_CONCURRENCY = 10;
+
+/** One community's part of the batched boot read: its salon listing or its refusal. */
+export interface CommunityBootReadItem {
+  workspaceId: string;
+  channels: Awaited<ReturnType<ChannelService['listChannelsForUser']>> | null;
+  channelsRefusal: BootReadRefusal | null;
+}
+
+/**
+ * A failure of a batched read, as the refusal the single route would have answered: an HTTP
+ * exception keeps its status, `code` and message; anything else is a GENERIC 500 - its message can
+ * name a table or a host, so it is logged by the caller and never sent.
+ */
+export function bootReadRefusal(err: unknown): BootReadRefusal {
+  if (err instanceof HttpException) {
+    const body = err.getResponse();
+    const code =
+      body && typeof body === 'object' && typeof (body as { code?: unknown }).code === 'string'
+        ? (body as { code: string }).code
+        : null;
+    return { status: err.getStatus(), code, message: err.message };
+  }
+  return { status: 500, code: null, message: 'Internal error' };
 }
 
 /**
