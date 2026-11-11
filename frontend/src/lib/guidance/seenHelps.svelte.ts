@@ -108,7 +108,7 @@ export class SeenHelps {
   #confirmed = false;
   /** Whether the server answered in THIS process for the current account - a load is then a no-op. */
   #answered = false;
-  /** Whether the server offers this account the profile-photo prompt (TEMPORARY gate, see below). */
+  /** Whether the server offers this account the profile-photo prompt (the space gate, see below). */
   #profilePhotoPromptEligible = $state(false);
   /** Moves on with every account change, so an answer for the previous account is dropped. */
   #generation = 0;
@@ -125,9 +125,9 @@ export class SeenHelps {
   }
 
   /**
-   * Whether the server offers the current account the profile-photo prompt - TEMPORARY (owner,
-   * 2026-11-10): only the spaces named by the server's `PROFILE_PHOTO_PROMPT_SPACES`. Decided on the
-   * server and read with the seen set, so widening it needs no release; `false` until it answers.
+   * Whether the server offers the current account the profile-photo prompt - only the
+   * spaces named by the server's `PROFILE_PHOTO_PROMPT_SPACES` (owner, 2026-11-10, kept for good
+   * 2026-11-11). Decided on the server and read with the seen set, so changing it needs no release; `false` until it answers.
    */
   get profilePhotoPromptEligible(): boolean {
     return this.#profilePhotoPromptEligible;
