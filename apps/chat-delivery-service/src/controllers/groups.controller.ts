@@ -14,7 +14,7 @@ import {
   Headers,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { Group } from '../entities/group.entity';
@@ -86,6 +86,38 @@ export class GroupsController {
         )
       );
     }
+  }
+
+  /**
+   * Whether [groupId] is a live conversation the caller CREATED and nobody else ever entered: no
+   * seat at all in `dm_group_members` - the creator's own `registerMember` never landed - and no
+   * device of another account in it. The allowlist a destructive shortcut needs: the recorded
+   * creator (`Group.createdBy`, written from the authenticated caller), a group nothing else
+   * names, never a key-distribution group. Any other shape takes the ordinary member check.
+   */
+  private async isCreatorsUnseatedGroup(
+    groupId: string,
+    headerUserId: string | undefined
+  ): Promise<boolean> {
+    const header = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    if (!header) return false;
+    const caller = canonicalUserId(header);
+    const group = await this.groupRepo.findOne({
+      where: { id: groupId, deletedAt: IsNull() },
+      select: {
+        id: true,
+        createdBy: true,
+        distributionWorkspaceId: true,
+        distributionChannelId: true,
+      },
+    });
+    if (!group || group.createdBy !== caller || isKeyDistributionGroup(group)) return false;
+    const seats = await this.groupMemberRepo.count({ where: { groupId } });
+    if (seats > 0) return false;
+    const othersDevices = await this.deviceGroupRepo.count({
+      where: { groupId, userId: Not(caller) },
+    });
+    return othersDevices === 0;
   }
 
   private makeTraceId(scope: string): string {
@@ -352,13 +384,24 @@ export class GroupsController {
    * **ONLY AN ADMITTED MEMBER MAY END IT**, and the check runs before the tombstone. The tombstone
    * purges every seat, so a second delete - a client replaying an exit it still owes - is answered
    * the 403 `NOT_A_MEMBER`, which that replay reads as "already done" and stops owing.
+   *
+   * **AND ITS CREATOR, WHILE NOBODY HOLDS A SEAT** ({@link isCreatorsUnseatedGroup}): a creation
+   * that failed between this service's `POST mls/groups` and the creator's `registerMember` left a
+   * live row nobody could end - the client's cleanup delete met the 403, because the creator held
+   * no seat yet (backlog, 2026-10-25).
    */
   async deleteGroup(
     @Param('groupId') groupId: string,
     @Headers('x-user-id') headerUserId?: string
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
-    await this.assertMayEditConversation('DELETE_GROUP', safeGroupId, headerUserId);
+    if (await this.isCreatorsUnseatedGroup(safeGroupId, headerUserId)) {
+      this.logger.log(
+        `[DELETE_GROUP] ${safeGroupId.slice(0, 8)}… ended by its creator before any seat was written - a failed creation's cleanup`
+      );
+    } else {
+      await this.assertMayEditConversation('DELETE_GROUP', safeGroupId, headerUserId);
+    }
 
     const counts = await tombstoneGroups(this.groupRepo.manager, this.redis, [safeGroupId]);
 

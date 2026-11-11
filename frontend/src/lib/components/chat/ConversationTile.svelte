@@ -5,7 +5,6 @@
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
-  import { onMount } from 'svelte';
   import { extractMentionUserIds } from '$lib/utils/mentions';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { visibleNickname } from '$lib/utils/users/conversationNicknames.svelte';
@@ -126,11 +125,13 @@
         : resolvedDisplayName)
   );
 
-  onMount(() => {
-    // Only poll presence for real user IDs (direct conversations).
+  $effect(() => {
+    // Only poll presence for real user IDs (direct conversations). AN EFFECT, NOT `onMount`: a tile
+    // the list reuses for another row, or whose peer resolves after mount, moves its watch with the
+    // props instead of watching the first peer for ever (review of #2618, 2026-10-27).
     // The teardown names the peer it watched, captured here: a prop read in a teardown can re-run a
     // parent derived with stale values and rewire it (frontend/architecture, on teardowns).
-    if (isDirect) {
+    if (isDirect && contactName) {
       const watched = contactName;
       watchUsers([watched]);
       return () => unwatchUsers([watched]);

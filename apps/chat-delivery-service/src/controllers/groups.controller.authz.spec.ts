@@ -27,6 +27,7 @@ type Seat = { groupId: string; userId: string; awaitingAdmission: boolean };
 type DeviceRow = { groupId: string; userId: string; deviceId: string; status: string };
 type GroupRow = {
   id: string;
+  createdBy?: string | null;
   distributionWorkspaceId?: string | null;
   distributionChannelId?: string | null;
   deletedAt?: Date | null;
@@ -70,10 +71,16 @@ function makeTables() {
       const seat = tables.seats.find(match<Seat>(where));
       return seat ? { id: `${seat.groupId}:${seat.userId}`, ...seat } : null;
     }),
+    count: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
+      return tables.seats.filter(match<Seat>(where)).length;
+    }),
   };
   const deviceRepo = {
     findOne: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
       return tables.devices.find(match<DeviceRow>(where)) ?? null;
+    }),
+    count: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
+      return tables.devices.filter(match<DeviceRow>(where)).length;
     }),
   };
   return { tables, groupRepo, seatRepo, deviceRepo };
@@ -221,6 +228,51 @@ describe('the group routes enforce membership', () => {
     expect(refusal).toBeInstanceOf(ForbiddenException);
     expect((refusal as ForbiddenException).getStatus()).toBe(403);
     expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+  });
+
+  describe('a failed creation: the creator ends a group nobody holds a seat in', () => {
+    // The client registers its seat after `POST mls/groups`; a failure between the two used to
+    // leave a live row its cleanup delete could not end (403, no seat).
+    beforeEach(() => {
+      t.tables.groups = [{ id: GROUP, createdBy: MEMBER }];
+      t.tables.seats = [];
+      t.tables.devices = [{ groupId: GROUP, userId: MEMBER, deviceId: 'd-1', status: 'active' }];
+      t.groupRepo.manager.transaction.mockResolvedValue({});
+    });
+
+    it('the creator ends it', async () => {
+      await expect(groups.deleteGroup(GROUP, MEMBER)).resolves.toEqual({ status: 'deleted' });
+      expect(t.groupRepo.manager.transaction).toHaveBeenCalled();
+    });
+
+    it('anyone else is the 403, and nothing is written', async () => {
+      const refusal = await groups.deleteGroup(GROUP, STRANGER).catch((e: unknown) => e);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({ code: 'NOT_A_MEMBER' });
+      expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('a group someone else entered takes the member check, even for its creator', async () => {
+      t.tables.devices.push({
+        groupId: GROUP,
+        userId: STRANGER,
+        deviceId: 'd-2',
+        status: 'active',
+      });
+      await expect(groups.deleteGroup(GROUP, MEMBER)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('a tombstoned group stays the 403 an owed exit reads as done', async () => {
+      t.tables.groups = [{ id: GROUP, createdBy: MEMBER, deletedAt: new Date() }];
+      await expect(groups.deleteGroup(GROUP, MEMBER)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('a key-distribution group is never ended this way', async () => {
+      t.tables.groups = [{ id: GROUP, createdBy: MEMBER, distributionWorkspaceId: 'ws-1' }];
+      await expect(groups.deleteGroup(GROUP, MEMBER)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+    });
   });
 
   it('a key-distribution group is never deleted for everyone here, whoever asks', async () => {

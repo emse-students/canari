@@ -38,6 +38,8 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       lateKeyPackages?: number;
       /** 1:1 DMs the discovery finds, tombstoned whole. */
       dmGroups?: string[];
+      /** Other people on a flagged 1:1's roster, by group - a third makes it a group to leave. */
+      dmRosterOthers?: Record<string, string[]>;
       /** The DMs the account's erasure marker still names: a run that died after a tombstone. */
       marked?: string[];
       /** Items per SCAN/SSCAN/HSCAN page, so a reader of one page only is caught. */
@@ -135,9 +137,12 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       })),
       ...(opts.dmGroups ?? []).map((id) => ({ id, isGroup: false })),
     ]);
-    repos.groupMember.find.mockResolvedValue(
-      (opts.dmGroups ?? []).map((groupId) => ({ groupId, userId: USER }))
-    );
+    repos.groupMember.find.mockImplementation(async () => [
+      ...(opts.dmGroups ?? []).map((groupId) => ({ groupId, userId: USER })),
+      ...Object.entries(opts.dmRosterOthers ?? {}).flatMap(([groupId, others]) =>
+        others.map((userId) => ({ groupId, userId }))
+      ),
+    ]);
     // A Redis in memory, paging every scan by `pageSize`; the steps the order tests read are
     // recorded around it: the route sweep's first SCAN, the marker's writes, a DM's key delete.
     const MARKER = `erasure:dms:${USER}`;
@@ -328,7 +333,14 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
       groupId: 'g-1',
       requesterUserId: 'x',
     });
-    redis.lists.set('pending_welcome_notify:other', [mine, theirs, mine]);
+    // The same account written in another case (a mixed-case id the mint rule admits) is the same
+    // requester to every reader that compares ids, so it goes too.
+    const mineUpper = JSON.stringify({
+      type: 'welcome_request',
+      groupId: 'g-1',
+      requesterUserId: USER.toUpperCase(),
+    });
+    redis.lists.set('pending_welcome_notify:other', [mine, theirs, mine, mineUpper]);
     redis.lists.set(`pending_welcome_notify:${USER}`, [theirs]);
     redis.hashes.set(`user:online:${USER}:dev-1`, new Map([['s', '1']]));
     redis.hashes.set(`addressing:sessions:${USER}:dev-1`, new Map([['s', '1']]));
@@ -380,6 +392,21 @@ describe('InternalController - DELETE internal/users/:userId (account erasure)',
     expect(at('mark g-dm')).toBeLessThan(at('tombstone'));
     expect(steps.lastIndexOf(`del ${keys}`)).toBeGreaterThan(at('tombstone'));
     expect(at('unmark')).toBeGreaterThan(steps.lastIndexOf(`del ${keys}`));
+  });
+
+  it('tombstones a 1:1 whose roster is two people, and only removes the account from a flagged 1:1 holding three', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { controller, steps } = make({
+      dmGroups: ['g-dm', 'g-three'],
+      dmRosterOthers: { 'g-dm': ['peer'], 'g-three': ['peer', 'third'] },
+    });
+    await controller.deleteUserData(USER, SECRET);
+
+    expect(steps).toContain('mark g-dm');
+    expect(steps).not.toContain('mark g-dm,g-three');
+    expect(steps).toContain('cut g-three');
+    expect(steps).not.toContain('cut g-dm');
+    expect(warn.mock.calls.flat().join(' ')).toContain('flagged one-to-one');
   });
 
   it("deletes a DM's Redis keys on a RETRY that finds no row naming it, through the account's erasure marker", async () => {

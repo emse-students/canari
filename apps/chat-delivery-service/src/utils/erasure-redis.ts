@@ -182,7 +182,12 @@ export async function eraseUserRedisTraces(redis: Redis, userId: string): Promis
         );
         continue;
       }
-      if (requester !== userId) continue;
+      // ASCII-lowercased like every MLS comparison of a user id (review of #2585, 2026-10-27): the
+      // mint rule admits a mixed-case id, and a frame written in another case still names this
+      // account to every reader that compares ids.
+      if (typeof requester !== 'string' || requester.toLowerCase() !== userId.toLowerCase()) {
+        continue;
+      }
       traces.notifyFrames += await redis.lrem(key, 0, frame);
     }
   }

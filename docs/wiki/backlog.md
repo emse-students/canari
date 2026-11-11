@@ -324,6 +324,8 @@ as calls are on. Read on web (W2 calling W4, `1.4.1-alpha.6`).
   - Owed: an answer to the second caller (busy, or not answered at once), and the callee's missed
     call.
 
+**Plan (batch 14, 2026-11-12) - the readings moved, one piece left.** The CALL-WEB-4..7 web rows are a row of [the verification table](#owed-a-verification-and-nothing-else). Left: render a call row from `callEvent.outcome` and `starterId` in the bubble that draws it, through Paraglide, instead of the text `recordCallEnded` bakes per side; the stored text stays as the fallback for rows written before `callEvent` existed. Client only, one renderer and its test per outcome; no agent needed.
+
 ## Decision owed - does LIVE-STALL-1 judge the documented contract, "one stall per longer-than-seen gap"? (2026-10-29)
 
 - The buffer policy promises that [a longer gap than any seen costs at most one stall](frontend/modules/live.md#the-buffer-policy-l-f1-2026-10-27):
@@ -463,6 +465,8 @@ info [21:28:49.602] [HISTORY] 1589de4c… holds 6 frame(s) it can never read - r
 Those `TooDistantInThePast` lines are the item already filed above (*A past-epoch frame older than
 the joiner's own Welcome is logged at WARN*). This item is the `AeadError` alone.
 
+**Plan (batch 14, 2026-11-12) - a finding to read, not code to write.** One rig row answers the three questions: DEV-6 re-run with the minted device's console and the server's `[COMMIT]` lines for its group captured, to read (1) why `[READD]` served a device whose Welcome had just landed - the roster seat check before the Welcome's merge was recorded is the first suspect - and (2) whether the epoch-1 frame was sealed after the external commit (an `AeadError` then means the sender used a secret of a branch this device never held). A fix follows the reading; MLS, so an agent of its own.
+
 ## P3 - A commit that has its answer waits for a history bundle applied under its loan (DEV-6, `1.4.1-alpha.6`, 2026-10-26)
 
 The cause is to be read. On the second minted device (W6), two stray-leaf removals of the revoked
@@ -498,38 +502,7 @@ at 11:58:00. It is the kick's own commit, so it is not tied to a minted device. 
 unread. Until it is read, the line stays dirt in the removal rows: it is not added to the rig's
 classifier.
 
-## P3 - A community's history ask goes to the same member twice, 46 ms apart, and the first ask's answers are discarded (RM-4, `1.4.1-alpha.6`, 2026-10-26)
-
-The salon creator (W1) asked the same member the same question twice: same devices, same community,
-same epoch:
-
-```
-[21:49:56.321] [GRAINE] asked <member> (<their 2 devices>) for the history of community 53844ba7 at epoch 5 - reason no-seed-held, key group lost none this session
-[21:49:56.367] [GRAINE] asked <member> (<their 2 devices>) for the history of community 53844ba7 at epoch 5 - reason no-seed-held, key group lost none this session
-[21:49:56.446] [GRAINE] ignoring "I hold nothing" for community 53844ba7 from <member>: it answers request d6b6eb63…, not the history ask in flight (addressed to <member>)
-```
-
-The second ask replaced the first in `historyRequest`. Both devices' answers to the first ask were
-then dropped at `debug` (`noteHistoryHeldNothing` in `graine/repair.ts`), so W1 printed the
-`ignoring` line twice, and the member answered again. Nothing was lost; the cost is one extra round
-trip per member. The row's other seats (W2, W4) show the same line shape.
-
-The `ignoring` line is correct for a genuinely superseded ask. The defect is the second ask: two
-triggers fire `requestCommunityHistory` for one epoch with nothing deduplicating them.
-
-To do: name the two callers (the log context shows a key-group epoch move to 5 just before), and make
-an ask for an epoch that already has one in flight to the same member a no-op.
-
-## P3 - "Made private" is logged for a privacy flip the removal bound then refuses (RM-6, `1.4.1-alpha.6`, 2026-10-26)
-
-`updateChannelAccess` (`channel.service.ts`) logs `[CHANNEL_ACCESS] made private by <actor>, granting
-them channel=<salon>` when it adds the actor to the list it is about to compute. The removal bound
-is checked after that. On RM-6, the moderator's flip was refused `403 REMOVAL_EXCEEDS_ACTOR`: the salon
-stayed public and no group was minted. The server log still says the salon was made private.
-
-A line that states an outcome before the outcome is decided is false whenever the write is refused,
-so it cannot be narrated. Log the grant after the save, with the save's result, or reword it as the
-intent ("flip to private by ... would grant them").
+**Plan (batch 14, 2026-11-12) - a decision first, then MLS scheduler work.** Recommended: a frame lends nothing while its application persists an encrypted checkpoint - known only after decryption, so the loan is returned before a `history_bundle` system event is APPLIED (the store and the checkpoint run after the commit merges), rather than bounded by a clock. Built in `lendMlsLockWhile` (`mlsPerGroupScheduler.ts`) with a test that a bundle under a loan never delays the lender's merge. MLS locking: an agent of its own, with an adversarial review.
 
 ## P3 - A refused Welcome's leaf stays in a private salon's tree, and the next Add reads it as "already holds a leaf" (RM-5, `1.4.1-alpha.6`, 2026-10-26)
 
@@ -584,6 +557,8 @@ To read:
 - when the stray sweep runs for a salon group;
 - whether `ADMIT ... already hold a leaf` should check the seat (`active`) rather than the leaf.
 
+**Plan (batch 14, 2026-11-12) - the P2 is refuted (the 2026-10-27 reading), two reads left, one change proposed.** (1) Read where the stray sweep runs for a salon's distribution group (`graine/`), and write it beside the seat rule in [channel-encryption](protocols/channel-encryption.md). (2) Proposed: `ADMIT ... already hold a leaf` decides from the device's seat (`active`) rather than from the leaf, so a leaf no seat holds is re-added and the stale one removed in the same commit. MLS client work: an agent of its own.
+
 ## Authorization audit of the group routes, remainder tracked privately (2026-10-25)
 
 What the audit left open is in the private operations notes until each item is fixed; the rule is
@@ -606,6 +581,8 @@ yes because it is a migration: a partial unique index on `(associationId, varian
 `membership` products (plus one for the base tier's null key), after counting the duplicates it
 would refuse.
 
+**The read-only count is written (batch 14, 2026-11-12):** `tools/read-only-sql/membership-tier-key-duplicates.sql` lists every (association, tier key) held by more than one membership product, base tier included, and the total the index would refuse. Not run here: the lead runs it on dev, then on production with the owner. The migration is drafted only once the count is known (0: as proposed; otherwise the duplicates are settled first).
+
 ## P3 - `/api/auth/verify` reads the platform config on every request (2026-10-25)
 
 Every `auth_request` reads `platformService.getConfig()` for the maintenance check, and since
@@ -613,13 +590,6 @@ Every `auth_request` reads `platformService.getConfig()` for the maintenance che
 for every request. A per-process read deduplicated across concurrent requests (one in flight, not a
 TTL cache) would remove the config's queries (`ensureDefaults` plus the row read) from most requests. Not done in the liveness change, to keep it to one
 fact. Owed: measure the verifier's query rate on production first.
-
-## P3 - A group creation that fails before its creator is registered leaves an orphan group row (2026-10-25)
-
-When creation fails between the remote group's creation and the creator's registration, the
-client's cleanup `DELETE mls/groups/:id` is now answered 403 `NOT_A_MEMBER` (the creator holds no
-seat yet), so the empty row stays. Owed: a server-side path that ends a group nobody ever joined
-(the creator's own bootstrap, or the orphan sweep), with a spec.
 
 ## P3 - A resubmission refused for a reason that can later flip is read as definitive (ADM-3 review, 2026-10-26)
 
@@ -632,6 +602,8 @@ refusal reasons are definitive, and re-plan rather than settle on the others, wi
 A conversation's gate refuses the whole commit when it may not admit someone (ADM-3); a key group's
 gate still accepts it and drops that admit. Owed: decide whether key groups follow the same
 whole-commit rule, and the client rebuild it needs, with a spec on each side.
+
+**Decided by the lead on 2026-11-12, under the owner's delegation: key groups follow the conversation rule and refuse the whole commit** ([mls-protocol](protocols/mls-protocol.md#an-add-enrols-its-people-with-the-accepted-commit-2026-10-25)). **Not built yet, and not small:** the key-group Add (`graine/distributionGroup.ts`) reads no `admit_refused` today, so the server half alone would stall every grant that races a kick. Both halves land together, with a spec on each side: the gate refuses in the `admitClaims` loop of `MessagingService` for a key group too, and the key-group Add rebuilds without the named people. MLS gate and client: an agent of its own, with an adversarial review.
 
 ## P3 - Three helpers answer "is this caller a member of this group" (2026-10-25)
 
@@ -960,27 +932,6 @@ departed member's leaves are still in the tree after that read; say "removed by 
 commit" when the log already removed them. Never branch on the error's message: the outcome is a
 fact the caller already holds.
 
-## P3 - The presence watch list is a set, not a count: one release unwatches a peer every other holder still wants (review of #2618, 2026-10-27)
-
-`watchUsers` / `unwatchUsers` (`presenceStore.ts`) add to and delete from one `Set`. Several holders
-watch the same peer at once: the DM's `ChatHeader`, that DM's sidebar `ConversationTile`, and a
-salon's `ChannelMembersList` (`ChannelMembersList.svelte:59` releases every member id it watched).
-When one of them releases, the peer leaves the poll for all of them. Leaving a DM therefore stops
-polling a peer whose sidebar tile is still on screen, and the dot freezes until something else
-watches that peer again. Owed: count the holders per id, with the release decrementing. Add a unit
-test with two holders and one release, which must still poll. The WP-PRESENCE push that replaces the
-poll needs the same count for its watch set.
-
-## P3 - A conversation tile watches the presence of the peer it MOUNTED with, never the one it shows later (review of #2618, 2026-10-27)
-
-`ConversationTile.svelte` calls `watchUsers([contactName])` in `onMount`. A tile whose `contactName`
-or `isDirect` changes while it stays mounted (a keyed list that reuses the component, or a row whose
-identity resolves after mount) keeps watching the first peer. Owed: an `$effect` on `contactName` and
-`isDirect`, capturing the watched id in its body as `ChatHeader` does
-([architecture](frontend/architecture.md#a-teardown-sees-the-values-its-effect-saw-and-a-derived-read-there-keeps-them-2026-10-27)),
-with a test that changes the prop and asserts the watch moves. It is cheap to fix together with the
-ref-count entry above.
-
 ## P3 - A pass's unconfirmed tree aborts the group's later pending rows (review of #2416, 2026-10-25)
 
 `pendingAddFactsOf` caches the confirmed tree for a pass, an `unconfirmed` reading included, so every later row of that group aborts `tree-unconfirmed` in the same sweep. Conservative (nothing is added on an unknown tree) and the next sweep retries; a fresh read per row after an unconfirmed one is the candidate. Not built.
@@ -1229,24 +1180,6 @@ account's roster row to the roster delete and its device rows to the sweep's cut
 pass does not find it either, since nothing of the account names it any more. Small and rare (a DM
 opened inside the erasure window); fix by having the sweep tombstone any DM whose roster the
 account was on.
-
-## P3 - A conversation flagged one-to-one is not held to two members (review of #2585, 2026-10-27)
-
-`dm_groups."isGroup" = false` is what an account erasure reads as "a 1:1 DM" and tombstones whole
-(`deleteUserData`), but nothing bounds such a conversation's roster to two people: the creation and
-the member routes do not read the flag. A conversation flagged one-to-one that holds more than two
-members would be ended for all of them by one member's erasure, instead of losing that member only.
-Owed first: one `GROUP BY` over production counting the roster of every `isGroup = false`
-conversation, then either a bound where the roster is written or the erasure deciding by the roster
-size rather than the flag ([account-erasure](account-erasure.md)).
-
-## P3 - The erasure sweep matches a frame's requester exact-case (review of #2585, 2026-10-27)
-
-A `pending_welcome_notify` frame is removed when its `requesterUserId` equals the erased id byte for
-byte, while every MLS comparison of a user id lowercases ASCII letters. It holds because a minted id
-is in practice a lowercase 64-hex subject and the same string is written everywhere; a mixed-case
-id would need the same ASCII-lowercase comparison. The sentence sits beside the mint rule in
-[account-erasure](account-erasure.md); owed only if the mint rule ever admits a mixed-case id.
 
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
 
@@ -1655,6 +1588,8 @@ A product's `customAmountMinCents` / `customAmountMaxCents` can be saved outside
 
 [chat](frontend/modules/chat.md#each-conversation-keeps-its-own-draft-2026-10-27)
 
+**Plan (batch 14, 2026-11-12) - four small client pieces, no agent needed.** (a) A text restored during an edit goes to the conversation's saved draft (`editSession.svelte.ts` `begin`'s copy), not into the composer that holds the edited message, so `cancel` and `confirm` cannot drop or absorb it; a test per exit. (b) The salon ledger detour stays until drafts outlive the page (kept as written). (c) The mention list closes on a conversation switch: `useMentionAutocomplete` gets a `dismiss()` that clears the debounce and a generation counter so a late search answer cannot reopen it, called by `MentionComposerInput` when its conversation key changes. (d) `draftByConversation` drops the entry when the conversation is left or deleted, at the same place the conversation leaves the list.
+
 ## P2 - A waiting share is locked with the device on iOS - built 2026-10-27, owed its iPhone readings
 
 A waiting share (manifest and copies) is written under Data Protection on iOS - the extension's
@@ -1691,21 +1626,14 @@ discarded about 10 s after it), Console on `[CanariShare]` / `[SHARE]` and categ
    locked: it consumes nothing until the unlock, where newest wins as usual.
 7. Sign out while locked, then unlock: the old share is dropped as stale.
 
-## P3 - The share-in picker lists conversations alphabetically, every other share surface by recency (Mi 9T, 2026-10-27)
-
-A share from another app opens "Envoyer a..." (`IncomingShareHost`), which reuses
-`ForwardMessageModal` and so `shareDestinations` with `order: 'alphabetical'`. The conversation
-list, the share-sheet suggestions (S5) and a post's share sheet (`order: 'recent'`) all lead with
-the most recent conversation, so the one the member just left is at the top everywhere except
-there. Deciding: whether the forward and the share-in picker split their order, or both go to
-`'recent'` ([sharing](frontend/sharing.md)).
-
 ## P3 - `ChatArea.entryWindow` "never mounts more than the 20-row entry frame" fails under the full sweep and passes alone (2026-10-27)
 
 Seen failing in a full `vitest run` on a loaded machine, and passing when the file runs alone.
 Not diagnosed: the test asserts a mount count, so a mount that has not settled yet when the
 assertion runs (a timing dependency) is the first suspect, not proven. Owed: run it under
 `--repeat` with the full sweep's load, and name the condition before touching the test.
+
+**Plan (batch 14, 2026-11-12).** Reproduce before touching the test: `bunx vitest run --repeat=20` with the whole suite's load (`--pool=forks` and the CI worker count), then name what the mount count waits on - a settle the assertion does not await is the first suspect. Shared with the other flaky test, `outbox.reelResume.test.ts`; both are piece (c) of the 1.4.1 campaign-noise entry. No agent needed.
 
 ## P3 - The eight service images run as root (Trivy DS-0002, measured 2026-10-23)
 
@@ -1843,6 +1771,7 @@ gate) is on [device-readings-2026-10](device-readings-2026-10.md#2026-10-22---v1
 | a DM read receipt survives a kill inside the 2 s window (the owed mark written at decision time and drained at every outbox registration; [history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)) | on the Mi 9T: read a DM, kill the app within 2 s, relaunch - the peer shows it read; and the count of received `[READ] ... has read up to` lines and of MLS checkpoints per 3 minutes of a two-person exchange, against the build before the coalescing |
 | iOS silent frames reach Canari's code: the method ADDED with `class_replaceMethod`, a woken process limited to an allowlist of dismissals (#2000, `v1.3.0`; [mobile](frontend/mobile.md#silent-frames-reach-the-app-through-a-method-canari-adds-2026-10-17)) | on the iPhone 12: `remote notification hook installed` in the syslog, then a salon read on another device clears the banner, app backgrounded and then foregrounded |
 | a HISTORY ask answered "I hold nothing" is final for its roster (WP-HOLD-NOTHING, #2027, `v1.3.0`; [channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)) | one Mi 9T offline cold start in a community whose online answerer holds nothing: one ask, one answer, no re-ask at the next launch |
+| the call record's web rows, CALL-WEB-4..7 (B15 and B16 of [calls](frontend/modules/calls.md#the-blockers-each-with-its-evidence): one writer, a typed end reason, the busy answer) | on web, W2 calling W4: a cancelled, a declined, an unanswered and a busy call each read their own sentence on both sides, with no duration; the second caller of a busy callee stops ringing at once |
 
 ---
 

@@ -917,8 +917,34 @@ export class InternalController {
     if (groupIds.length > 0) {
       const groups = await this.groupRepo.findBy({ id: In(groupIds) });
 
-      const dmGroups = groups.filter((g) => !g.isGroup);
-      const multiGroups = groups.filter((g) => g.isGroup);
+      // THE FLAG ALONE DOES NOT MAKE A 1:1, THE ROSTER DOES. Nothing bounds a conversation flagged
+      // `isGroup = false` to two people (review of #2585, 2026-10-27), and tombstoning one that holds
+      // more would end it for every other member over one member's erasure. A flagged 1:1 with a
+      // third person on its roster loses this account only, like any group - and says so, because
+      // that roster is a defect upstream of this route.
+      const flaggedOneToOne = groups.filter((g) => !g.isGroup).map((g) => g.id);
+      const rosters = new Map<string, Set<string>>();
+      if (flaggedOneToOne.length > 0) {
+        const seats = await this.groupMemberRepo.find({
+          where: { groupId: In(flaggedOneToOne) },
+          select: { groupId: true, userId: true },
+        });
+        for (const seat of seats) {
+          const people = rosters.get(seat.groupId) ?? new Set<string>();
+          people.add(seat.userId.toLowerCase());
+          rosters.set(seat.groupId, people);
+        }
+      }
+      const dmGroups = groups.filter((g) => !g.isGroup && (rosters.get(g.id)?.size ?? 0) <= 2);
+      const multiGroups = groups.filter((g) => !dmGroups.includes(g));
+      for (const g of groups) {
+        if (!g.isGroup && !dmGroups.includes(g)) {
+          this.logger.warn(
+            `[INTERNAL_DELETE] group=${g.id} is flagged one-to-one and its roster holds ` +
+              `${rosters.get(g.id)?.size} people - only this account is removed from it, the conversation stays`
+          );
+        }
+      }
 
       // ── DMs: delete the entire group ─────────────────────────────────────
       // ONE UNIT OF WORK FOR EVERY DM AT ONCE, through {@link tombstoneGroups}. This branch used to
