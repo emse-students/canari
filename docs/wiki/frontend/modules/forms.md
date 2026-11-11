@@ -622,8 +622,13 @@ boutique products and cotisation tiers, so all three get it.
 - **A MULTIPLE-choice question takes ONE group** (2026-11-11). A person can tick options of two
   groups, and `bucketFor` takes the first group in the grid's order that any ticked option matches,
   so two groups would make the price depend on their order - and adding an option could pick a
-  cheaper cell. The server refuses such a grid at create and at every edit
-  (`assertMultipleChoiceGridOneGroup`, `answer-options.ts`; `forms.service.public.spec.ts`). One
+  cheaper cell. The server refuses such a grid at create, and at an edit that INTRODUCES the split,
+  with the typed code `FORM_GRID_MULTIPLE_CHOICE_SPLIT` (in `libs/contracts/form-answers.json`; the
+  editor's sentence comes from `formCodeMessage`, never from the server's prose)
+  (`assertMultipleChoiceGridOneGroup`, `answer-options.ts`; `forms.service.public.spec.ts`). A form
+  that already STORES such a split, unchanged, on a question already stored as multiple-choice, stays
+  saveable - refusing it would refuse an edit of its title - and each such save logs
+  `[FORM_GRID_SPLIT] form <id>` at WARN, so the forms predating the rule are counted. One
   group ("ticked at least one of these") and "Tous les autres" stay allowed, and a single-choice
   question keeps any number of groups. The editor offers no second group on such a criterion and
   says "Choix multiple : un seul groupe" instead (`takesOneGroup`, `bucketValues.ts`;

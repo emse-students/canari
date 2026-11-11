@@ -1,7 +1,8 @@
 ### Changed - the backlog entries of 2026-10-12 to 2026-10-15 triaged, and a price grid can no longer split a multiple-choice question
 
 A form's price grid may no longer split a multiple-choice question into several groups. Someone
-could tick options from two groups, and the price then depended on the order of the groups
+could tick options from two groups, and the price then depended on the order of the groups; a form
+already storing such a grid stays editable
 ([forms](docs/wiki/frontend/modules/forms.md)). The next twelve oldest backlog entries were re-read
 against the code. What they still owe is now a row of
 [the verification table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else) or a fragment of

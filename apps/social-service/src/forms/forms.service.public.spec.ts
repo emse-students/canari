@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { FormsService } from './forms.service';
 import { OTHERS_BUCKET_ID } from '../pricing/audience';
+import { FORM_GRID_MULTIPLE_CHOICE_SPLIT } from './answer-bounds';
 
 /**
  * A PUBLIC FORM IS ANSWERED BY SOMEBODY WITH NO ACCOUNT, AND EVERY RULE HERE FOLLOWS FROM THAT.
@@ -609,8 +610,40 @@ describe('FormsService - public forms', () => {
         const { service, formRepo } = makeService();
         await expect(
           service.create(input({ requiresPayment: true, items: [extras], priceMatrix: twoGroups }))
-        ).rejects.toThrow(/multiple-choice question "Extras" into 2 groups/);
+        ).rejects.toMatchObject({
+          response: { code: FORM_GRID_MULTIPLE_CHOICE_SPLIT, itemId: 'q_extras' },
+        });
         expect(formRepo.save).not.toHaveBeenCalled();
+      });
+
+      // A form saved before the rule must stay editable: refusing its stored grid would refuse an
+      // edit of its title. Control: drop the `stored` argument in `update` -> the second test fails.
+      it('refuses an edit that INTRODUCES the split on a stored form', async () => {
+        const { service, formRepo } = makeService();
+        jest
+          .spyOn(service, 'assertFormManager')
+          .mockResolvedValue(
+            baseForm({ requiresPayment: true, items: [extras], priceMatrix: oneGroup }) as any
+          );
+        await expect(
+          service.update('f1', { priceMatrix: twoGroups } as any, 'u1', false)
+        ).rejects.toMatchObject({ response: { code: FORM_GRID_MULTIPLE_CHOICE_SPLIT } });
+        expect(formRepo.save).not.toHaveBeenCalled();
+      });
+
+      it('saves an edit of another field on a form that already stores the split, and warns', async () => {
+        const { service, formRepo } = makeService();
+        jest
+          .spyOn(service, 'assertFormManager')
+          .mockResolvedValue(
+            baseForm({ requiresPayment: true, items: [extras], priceMatrix: twoGroups }) as any
+          );
+        const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+        await service.update('f1', { title: 'Gala' } as any, 'u1', false);
+        expect(formRepo.save).toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringMatching(/\[FORM_GRID_SPLIT\] form f1 .*q_extras/)
+        );
       });
 
       it('accepts every option in one group', async () => {
