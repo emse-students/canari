@@ -35,24 +35,30 @@ printf 'a2\n' > pkg/kept.ts
 printf 'b2\n' > pkg/fixed.ts
 git add pkg/kept.ts pkg/fixed.ts
 printf 'c2\n' > pkg/unstaged.ts
+export STAGED_FILES
 STAGED_FILES=$(git diff --cached --name-only)
 
 # A "fixer" rewrites one staged file only.
 printf 'b3\n' > pkg/fixed.ts
 
-# Count the `git add` calls the function makes.
+# Count the `git add` calls the function makes: a `git` on PATH that logs, then runs the real one.
 adds="$scratch/adds"
 : > "$adds"
-git() {
-  [ "$1" = add ] && echo "$*" >> "$adds"
-  command git "$@"
-}
+real_git=$(command -v git)
+mkdir -p "$scratch/bin"
+cat > "$scratch/bin/git" <<SHIM
+#!/bin/sh
+[ "\$1" = add ] && echo "\$*" >> "$adds"
+exec "$real_git" "\$@"
+SHIM
+chmod +x "$scratch/bin/git"
+PATH="$scratch/bin:$PATH"
 eval "$fn"
 restage pkg
 
-if [ "$(command git show :pkg/fixed.ts)" = b3 ]; then echo "  ok    the fixer's rewrite is re-staged"; else echo "  FAIL  the fixer's rewrite is not re-staged"; fail=1; fi
+if [ "$(git show :pkg/fixed.ts)" = b3 ]; then echo "  ok    the fixer's rewrite is re-staged"; else echo "  FAIL  the fixer's rewrite is not re-staged"; fail=1; fi
 if [ "$(wc -l < "$adds")" -eq 1 ]; then echo "  ok    one git add, for the one file the fixer changed"; else echo "  FAIL  $(wc -l < "$adds") git add calls: $(cat "$adds")"; fail=1; fi
-if command git diff --cached --name-only | grep -qx pkg/unstaged.ts; then echo "  FAIL  a file the commit never staged was staged"; fail=1; else echo "  ok    a dirty file the commit never staged stays out"; fi
+if git diff --cached --name-only | grep -qx pkg/unstaged.ts; then echo "  FAIL  a file the commit never staged was staged"; fail=1; else echo "  ok    a dirty file the commit never staged stays out"; fi
 
 # Nothing changed by the fixer: no git add at all, so no index lock is taken.
 : > "$adds"
