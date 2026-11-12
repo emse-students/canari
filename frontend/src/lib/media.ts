@@ -148,6 +148,14 @@ export interface MediaRef {
    * authority and a 410 is the truth.
    */
   expiresAtMs?: number;
+  /**
+   * A video's sound as its AUTHOR'S DEVICE measured it at send (`loudnessMeter.ts`: BS.1770
+   * integrated LUFS and sample peak, `MediaMsg.loudness`, a post's media JSON): what a reader's
+   * player normalises to (`loudnessPlayback.ts`, owner 2026-11-11). The file itself is never
+   * altered. Absent on every video sent before it, on a silent one and on a live replay: those play
+   * exactly as they always did. An older client ignores it and plays the video as it is.
+   */
+  loudness?: MediaLoudness;
 }
 
 /** The intents a client can name; see {@link MediaRef.intent}. */
@@ -179,6 +187,8 @@ export interface PendingMediaFile {
    * byte arrives, and a stream can be sought in before it is whole (owner, 2026-11-10).
    */
   durationMs?: number;
+  /** A prepared video's measured sound - see {@link MediaRef.loudness}. */
+  loudness?: MediaLoudness;
 }
 
 /** Per-context presets - higher quality, less aggressive resize. */
@@ -218,6 +228,7 @@ import {
   requestBodyBytes,
 } from '$lib/utils/mediaRequestLimits';
 import { prepareVideoForUpload, type PrepareVideoOptions } from '$lib/video/prepareVideoForUpload';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import { acquireDecryptedMediaBlobUrl, acquireRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
 import { mediaUrl } from '$lib/utils/apiUrl';
 import {
@@ -389,7 +400,8 @@ export async function readImageDimensions(file: File): Promise<ImageDimensions |
  * already applied.
  *
  * A video also reports its prepared LENGTH (`durationMs`): the publish queue reads it with the frame
- * to decide whether the post is a CanaReel (owner, 2026-11-09, `reels/reelRule.ts`).
+ * to decide whether the post is a CanaReel (owner, 2026-11-09, `reels/reelRule.ts`), and its
+ * measured LOUDNESS (`MediaRef.loudness`), which the post's media carries to every reader's player.
  *
  * @param video The bounds, progress and cancel for a video; ignored for anything else.
  * @throws {VideoPrepareError} when a video cannot be prepared - typed, so the screen names why.
@@ -397,7 +409,7 @@ export async function readImageDimensions(file: File): Promise<ImageDimensions |
 export async function preparePostMedia(
   file: File,
   video: PrepareVideoOptions = {}
-): Promise<{ file: File; dims?: ImageDimensions; durationMs?: number }> {
+): Promise<{ file: File; dims?: ImageDimensions; durationMs?: number; loudness?: MediaLoudness }> {
   if (file.type.startsWith('image/')) {
     const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
     const compressed = await compressImage(file, maxWidth, maxHeight, quality);
@@ -409,6 +421,7 @@ export async function preparePostMedia(
       file: prepared.file,
       dims: { width: prepared.width, height: prepared.height },
       durationMs: Math.round(prepared.durationSeconds * 1000),
+      ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
     };
   }
   return { file };

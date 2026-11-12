@@ -322,7 +322,7 @@
       const uploadedRefs: PostMediaRef[] = [];
       const limits = newFiles.length > 0 ? await mediaService.uploadLimits() : null;
       for (let i = 0; i < newFiles.length; i++) {
-        const { file, dims } = await preparePostMedia(
+        const { file, dims, loudness } = await preparePostMedia(
           newFiles[i],
           videoPreparation.optionsFor(limits?.maxPlaintextBytes)
         );
@@ -341,6 +341,7 @@
         uploadedRefs.push({
           ...ref,
           ...(placeholder ? { placeholder } : {}),
+          ...(loudness ? { loudness } : {}),
           ...(caption ? { caption } : {}),
         });
       }

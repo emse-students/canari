@@ -10,6 +10,7 @@
  */
 
 import type { MediaRef } from '$lib/media';
+import { isMediaLoudness } from '$lib/video/loudnessMeter';
 import type { MessageReference } from '$lib/types';
 import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
 import { extractFirstUrl, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
@@ -329,6 +330,8 @@ export function parseEnvelope(content: string): MessageEnvelope {
               ...(typeof media.expiresAtMs === 'number' && media.expiresAtMs > 0
                 ? { expiresAtMs: media.expiresAtMs }
                 : {}),
+              // A video's measured sound: kept only when it is one a player may apply.
+              ...(isMediaLoudness(media.loudness) ? { loudness: media.loudness } : {}),
             },
             caption: typeof obj.caption === 'string' ? obj.caption : undefined,
             replyTo: safeReplyTo(obj.replyTo),
