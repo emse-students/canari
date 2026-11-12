@@ -2669,8 +2669,24 @@ revisit them:**
 
 ### An institution's reach per post, as built (owner, 2026-11-10)
 
-The owner's decisions and the readings owed are in the [backlog entry](backlog.d/institution-post-reach.md);
-the rule in one line: an INSTITUTION chooses, at every post, the spaces of its own audience the post
+**The owner's decisions (2026-11-10)**, amending D19 for institutions only:
+
+1. **Spaces.** The institution ticks the spaces (formation x campus) the post targets, with the
+   shortcuts "a whole campus" and "a whole formation" - never wider than the audience the admin
+   gave the institution; the server refuses anything else (typed, at the throw).
+2. **Public**, a second choice: **Tous / Étudiants / Personnel** - everyone in the ticked spaces,
+   only students (an account with a cursus), or only staff (no cursus).
+3. **No default.** Nothing is pre-selected; "Publier" stays disabled until both are chosen.
+4. **Editable after publishing, both ways.** Narrowing withdraws the post from the excluded readers
+   at once, widening gives it back; an edit sends no new notification.
+5. **Everything a post reaches follows the rule** - feed, search, the post by id, comments,
+   reactions, votes, notifications and announcements, trends - so it lives in the ONE visibility
+   predicate. An event announced by the post keeps its own visibility.
+6. "Clair, propre, user-friendly": one compact block.
+
+Shipped in `1.6.10` (#3314); the readings owed are a row of the [verification table](backlog.md#owed-a-verification-and-nothing-else).
+
+The rule in one line: an INSTITUTION chooses, at every post, the spaces of its own audience the post
 targets and the public in them (everyone, the students, the staff), with no default, and may change
 both after publishing, both ways. Associations, lists and personal posts keep D19. It is the posts
 half of the reform's C1 / WP-I ([reform section 3](spaces-and-audiences-reform.md#3-per-item-audience-for-institutions-only-c1)).
