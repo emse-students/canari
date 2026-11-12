@@ -14,8 +14,9 @@
 
 import { canari } from './canari.js';
 import type { MediaRef } from '$lib/media';
+import { isMediaLoudness, type MediaLoudness } from '$lib/video/loudnessMeter';
 import { SEGMENTED_MEDIA_ENCODING } from '$lib/mediaSegmented';
-import { fromBase64, toBase64 } from '$lib/utils/hex';
+import { fromBase64, fromHex, toBase64 } from '$lib/utils/hex';
 
 // ─── Re-export the generated types so callers don't need to import canari.js ──
 
@@ -133,6 +134,77 @@ export function mediaReelFromProto(media: IMediaMsg): MediaReelDeclaration {
       : {}),
     ...(duration > 0 ? { durationMs: duration } : {}),
     ...(expires > 0 ? { expiresAtMs: expires } : {}),
+  };
+}
+
+/**
+ * The `MediaMsg.loudness` field for a measured video, to spread into `mkMedia` - written ONLY when
+ * there is a measurement, so every other attachment encodes byte for byte as before.
+ */
+export function mediaLoudnessProtoField(loudness?: MediaLoudness): {
+  loudness?: { integratedLufs: number; samplePeakDbfs: number };
+} {
+  return isMediaLoudness(loudness)
+    ? {
+        loudness: {
+          integratedLufs: loudness.integratedLufs,
+          samplePeakDbfs: loudness.samplePeakDbfs,
+        },
+      }
+    : {};
+}
+
+/**
+ * A decoded `MediaMsg.loudness` as the `MediaRef` carries it, or nothing: absent (every message
+ * before it), or values no real signal gives (`isMediaLoudness`) - the video then plays as it is.
+ */
+export function mediaLoudnessFromProto(media: IMediaMsg): { loudness?: MediaLoudness } {
+  const raw = media.loudness;
+  if (!raw) return {};
+  const loudness = {
+    integratedLufs: Number(raw.integratedLufs ?? 0),
+    samplePeakDbfs: Number(raw.samplePeakDbfs ?? 0),
+  };
+  return isMediaLoudness(loudness) ? { loudness } : {};
+}
+
+/**
+ * Maps an envelope media type to its protobuf `MediaKind`. A file has no dedicated kind, so anything
+ * unrecognised falls through to UNSPECIFIED, which is what the renderer treats as "generic
+ * attachment".
+ */
+export function mediaKindFromEnvelope(type: string): number {
+  switch (type) {
+    case 'image':
+      return canari.MediaKind.MEDIA_KIND_IMAGE;
+    case 'video':
+      return canari.MediaKind.MEDIA_KIND_VIDEO;
+    case 'audio':
+      return canari.MediaKind.MEDIA_KIND_AUDIO;
+    default:
+      return canari.MediaKind.MEDIA_KIND_UNSPECIFIED;
+  }
+}
+
+/**
+ * The `MediaMsg` a FORWARD sends for a media it relays: the same blob, so the same key, the way it
+ * was sealed (`encoding`), its first-frame placeholder and its measured sound (`loudness`) - the
+ * forwarded video plays as the original does. ONE builder for the DM and the salon forward.
+ */
+export function forwardedMediaMsg(media: MediaRef, caption?: string): canari.MediaMsg.$Properties {
+  return {
+    kind: mediaKindFromEnvelope(media.type),
+    mediaId: media.mediaId,
+    key: fromHex(media.key),
+    iv: fromHex(media.iv),
+    mimeType: media.mimeType,
+    size: media.size,
+    fileName: media.fileName ?? '',
+    caption,
+    ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
+    ...mediaPlaceholderProtoField(media.placeholder),
+    ...mediaEncodingProtoField(media.encoding),
+    ...mediaLoudnessProtoField(media.loudness),
   };
 }
 

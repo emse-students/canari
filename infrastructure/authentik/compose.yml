@@ -123,6 +123,9 @@ services:
       # La cle API du compte de service qui ecrit les profils pour Canari, lue par 80-profile-editor.yaml
       # (`!Env`). Meme principe : un .env qui l oublie fait echouer le demarrage.
       MICONNECT_EDITOR_TOKEN: ${MICONNECT_EDITOR_TOKEN:?cle du compte editeur de profils requise}
+      # La cle API du compte de service en LECTURE SEULE que Canari interroge a chaque connexion
+      # transmise, lue par 55-handoff-reader.yaml (`!Env`). Meme principe.
+      MICONNECT_READER_TOKEN: ${MICONNECT_READER_TOKEN:?cle du compte lecteur de la connexion transmise requise}
     shm_size: 512mb
     depends_on:
       postgresql:

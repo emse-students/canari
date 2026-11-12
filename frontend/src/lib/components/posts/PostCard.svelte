@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { publicSectionHref } from '$lib/associations/publicSections';
   import {
     votePoll,
@@ -68,7 +69,6 @@
   import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
   import { REACTIONS, reactionCountsOf } from '$lib/posts/reactions';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   /**
    * Props for the PostCard component.
@@ -738,7 +738,7 @@
               {m.post_event_label()}
               {ev.title}
               ·
-              {new Date(ev.startsAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+              {new Date(ev.startsAt).toLocaleString(intlLocale(), {
                 day: 'numeric',
                 month: 'short',
                 hour: '2-digit',

@@ -15,9 +15,11 @@ export interface EcosystemSiteContract {
   origin: string;
   /** Signs in through MiConnect: the ONLY condition for being in the handoff registry. */
   miconnect: boolean;
+  /** Its application slug at MiConnect, which the mint's access check reads; null outside MiConnect. */
+  miconnectApplication: string | null;
   /**
-   * The handoff is ON for it. True only when F3's MiConnect access check runs at mint (the user
-   * active, `check_access` passing on the target application), the site's provider `sub_mode` was
+   * The handoff is ON for it. True only when F3-bound's MiConnect access check runs at mint (the
+   * user active, the application unbound and open by default - `handoff-access.ts`), the site's provider `sub_mode` was
    * read as `hashed_user_id`, and its own `/auth/handoff` is live with handoff sessions marked and
    * stepped up before any state-changing action (the contract file's description).
    */
@@ -31,6 +33,7 @@ export const ECOSYSTEM_SITES: readonly EcosystemSiteContract[] = [
     id: 'migallery',
     origin: 'https://gallery.mitv.fr',
     miconnect: true,
+    miconnectApplication: 'migallery',
     handoff: false,
     dests: ['/', '/mes-photos', '/albums/{uuid}'],
   },
@@ -38,14 +41,23 @@ export const ECOSYSTEM_SITES: readonly EcosystemSiteContract[] = [
     id: 'le-cercle',
     origin: 'https://cercle.emse.fr',
     miconnect: true,
+    miconnectApplication: 'cercle',
     handoff: false,
     dests: ['/'],
   },
-  { id: 'sky', origin: 'https://sky.emse.fr', miconnect: true, handoff: false, dests: ['/'] },
+  {
+    id: 'sky',
+    origin: 'https://sky.emse.fr',
+    miconnect: true,
+    miconnectApplication: 'sky',
+    handoff: false,
+    dests: ['/'],
+  },
   {
     id: 'portail-etu',
     origin: 'https://portail-etu.emse.fr',
     miconnect: false,
+    miconnectApplication: null,
     handoff: false,
     dests: [],
   },
@@ -64,6 +76,10 @@ export const HandoffRefusal = {
   siteNotEnabled: 'HANDOFF_SITE_NOT_ENABLED',
   /** 400 - a `dest` outside the site's allowlist. */
   badDest: 'HANDOFF_BAD_DEST',
+  /** 403 - MiConnect would not let this person into the site (inactive, a bound application...). */
+  accessRefused: 'HANDOFF_ACCESS_REFUSED',
+  /** 503 - MiConnect could not be asked (no reader token, no answer, an unexpected status). */
+  miconnectUnavailable: 'HANDOFF_MICONNECT_UNAVAILABLE',
 } as const;
 
 export type HandoffRefusalCode = (typeof HandoffRefusal)[keyof typeof HandoffRefusal];

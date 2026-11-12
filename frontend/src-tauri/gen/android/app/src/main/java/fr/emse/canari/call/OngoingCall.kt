@@ -89,6 +89,11 @@ sealed class CallServiceCommand {
     object HangUp : CallServiceCommand()
     /** The mute / unmute action of the ongoing notification. */
     object ToggleMute : CallServiceCommand()
+    /**
+     * The page asks for the audio focus again for [callId] (the member tapped mute or unmute while the
+     * call is held for a focus loss; `CallFocusHold`, D056). [why] is for the log.
+     */
+    data class AskFocus(val callId: String, val why: String) : CallServiceCommand()
 }
 
 /** What the service does. Exactly one per command, so every command is logged with its effect. */
@@ -114,6 +119,8 @@ sealed class CallServiceEffect {
      * the notification shows the state the CALL is in, never the one a press assumed.
      */
     data class ForwardMute(val callId: String) : CallServiceEffect()
+    /** Ask the audio focus again for the running call, which releases a hold when granted. */
+    data class AskFocus(val callId: String, val why: String) : CallServiceEffect()
     /**
      * Nothing to do, and the reason says why. Every case reaching it is EXPECTED - a page command in
      * flight when the service had already left (the user hung up from the notification, the start was
@@ -162,6 +169,11 @@ fun decide(current: String?, command: CallServiceCommand): CallServiceEffect = w
     CallServiceCommand.ToggleMute ->
         if (current != null) CallServiceEffect.ForwardMute(current)
         else CallServiceEffect.Ignore("mute pressed as the call ended - nothing in the foreground")
+    is CallServiceCommand.AskFocus -> when (current) {
+        command.callId -> CallServiceEffect.AskFocus(command.callId, command.why)
+        null -> CallServiceEffect.Ignore("focus asked (${command.why}) with no call in the foreground")
+        else -> CallServiceEffect.Ignore("focus asked (${command.why}) for an earlier call, landing late")
+    }
 }
 
 /** Why a start was refused, as the page reads it (`NativeCallRefusal` in `androidCallService.ts`). */
@@ -225,12 +237,10 @@ class OffScreenGate {
      * The activity resumed (its "on screen" flag already written). Calls [onResumed] with the call
      * whose start was refused, once, inside the lock; nothing when nothing is pending.
      */
-    fun resumed(onResumed: (String) -> Unit) {
-        synchronized(lock) {
-            val callId = pending ?: return
-            pending = null
-            onResumed(callId)
-        }
+    fun resumed(onResumed: (String) -> Unit): Unit = synchronized(lock) {
+        val callId = pending ?: return
+        pending = null
+        onResumed(callId)
     }
 }
 

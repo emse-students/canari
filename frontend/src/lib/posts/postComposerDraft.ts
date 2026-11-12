@@ -1,3 +1,4 @@
+import { intlLocale } from '$lib/utils/intlLocale';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { getSavedUserId } from '$lib/stores/user';
 import { emptyPollOptions, newPollOption, type PollDraftOption } from './pollDraft';
@@ -278,7 +279,7 @@ export function formOpensAtIso(opensAt?: string | null): string | null {
 }
 
 export function formatFormOpensAt(opensAt: string): string {
-  return new Date(opensAt).toLocaleString('fr-FR', {
+  return new Date(opensAt).toLocaleString(intlLocale(), {
     weekday: 'short',
     day: 'numeric',
     month: 'short',

@@ -1494,7 +1494,7 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 | GET | `/api/mls/groups/:groupId` | Get group metadata |
 | PATCH | `/api/mls/groups/:groupId` | Rename group (admitted member; never a key-distribution group) |
 | PATCH | `/api/mls/groups/:groupId/image` | Set/clear group avatar (admitted member; never a key-distribution group) |
-| DELETE | `/api/mls/groups/:groupId` | Soft-delete group (admitted member; never a key-distribution group) |
+| DELETE | `/api/mls/groups/:groupId` | Soft-delete group (admitted member, or its creator while nobody holds a seat; never a key-distribution group) |
 
 **A ROUTE KEYED BY A GROUP ID ASKS THE GROUP, NOT ONLY THE LOGIN (2026-10-25).** `HeaderAuthGuard`
 says who is asking; `assertCallerActsOnGroup` (`utils/group-membership.ts`) says whether that person
@@ -1514,7 +1514,16 @@ and never one in a key-distribution group. The condition rides the delete itself
 after the queue's delete, so the statements keep the one delete order of `utils/seat-eviction.ts` -
 locking the device row first would invert it and can deadlock; a row left behind is active and is the
 403 `MEMBERSHIP_NOT_ALLOWED`, whose rollback restores the Welcomes. The pending list a member's client
-sweeps (`GET mls/invitations/pending`) names conversations only, never a key-distribution group. Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
+sweeps (`GET mls/invitations/pending`) names conversations only, never a key-distribution group. One
+exception lets a delete through without a seat (2026-11-12): the group's recorded creator
+(`createdBy`) may end a live conversation that has NO seat at all and no device of another account -
+the row a creation leaves when it fails between `POST mls/groups` and the creator's `registerMember`,
+whose cleanup delete used to meet the 403 and leave the row for ever. A seat of ANY account counts,
+one awaiting admission included. The condition is read twice: once to choose the path, then again
+under the group's seat lock inside the transaction that tombstones it (`tombstoneGroupsIf` in
+`utils/group-purge.ts`), and a seat or a device written in between turns it into the 403 - an
+unlocked check followed by a tombstone would end a conversation someone had just entered (review of
+#3383). Pinned by `groups.controller.authz.spec.ts` and `addLock.onePolicy.spec.ts`.
 
 ### Membership
 
@@ -2267,8 +2276,10 @@ because one is not enough:
 
 - **`assertSafeExternalUrl`** rejects non-http(s) schemes, embedded credentials, `localhost`, and
   any host that DNS-resolves to a non-public address. Redirects are handled manually
-  (`redirect: 'manual'`, 3 max) and each hop is re-validated - an allowed host that answers `302
-  http://127.0.0.1/` is the obvious bypass otherwise.
+  (`redirect: 'manual'`) and each hop is re-validated before anything is sent to it - an allowed
+  host that answers `302 http://127.0.0.1/` is the obvious bypass otherwise. ONE walk does it for
+  every preview fetch, `fetchThroughCheckedHops` in the controller: 3 redirects for a page, 5 for
+  an image.
 - **`ssrfSafeDispatcher`** re-checks at connect time through undici's `lookup`, so the IP the
   socket reaches is the IP that was validated. This closes the DNS-rebinding window: the two
   resolutions are separate events and an attacker-controlled zone can answer differently.
@@ -2397,9 +2408,10 @@ reader's IP, their user agent, and the moment they scrolled to the message. Encr
 then fetching its illustration in clear gives a good part of that back.
 
 - Same SSRF guard as the page fetch - the URL is caller-supplied, so it is exactly as
-  attacker-controlled as the pasted link. Redirects are *followed* here rather than walked by hand
-  (a CDN answers image requests with two or three), which is safe because `ssrfSafeDispatcher`
-  re-validates at every connect.
+  attacker-controlled as the pasted link - and the same redirect walk, each hop judged by
+  `assertSafeExternalUrl` before it is fetched. The allowance is 5 rather than 3 because a CDN
+  answers an image request with two or three redirects; a hop that is refused, or a chain that is
+  longer, is a 502 with no body.
 - `image/*` only, **SVG excluded**: an SVG is a document that can carry script, and it would be
   served from our own origin. `X-Content-Type-Options: nosniff` on the way out.
 - 3 MB ceiling, checked on `content-length` *and* on the received body, because the header can be

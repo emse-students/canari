@@ -1261,6 +1261,10 @@ all:
   `phone.awaitNotification` renews the link first through `requireFreshFcmLink` and REFUSES when it
   cannot get a new one; `archive/transport-selftest.mjs` refuses a runner that forgets. The story is
   in `fcmlink.mjs` and in [testing-methodology](../../docs/wiki/testing-methodology.md).
+- **A WEB RECEIVER NOBODY TOUCHES SENDS NO READ MARKS** (since 2026-11-11): a window counts as read
+  only after a gesture in the last two minutes ([read-receipt-privacy](../../docs/wiki/read-receipt-privacy.md#reopened-2026-11-11---an-idle-window-is-not-a-reader)),
+  so a check that expects a mark must nudge the receiver first - a CDP `Input.dispatchMouseEvent`
+  `mouseMoved` (trusted, with movement) - and a check that expects NONE must not.
 - **Observation is part of every check, not a debugging step.** A verdict is `PASS` only if the
   assertions hold *and* the run is clean. A line that turns out to be routine is added to the benign
   list - never ignored in place. Two shipped bugs came out of the logs of *passing* checks.

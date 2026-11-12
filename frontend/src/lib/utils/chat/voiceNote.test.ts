@@ -1,4 +1,4 @@
-import { isVoiceNote } from './voiceNote';
+import { isVoiceNote, voiceNoteEntry } from './voiceNote';
 
 /**
  * `isVoiceNote` decides whether an attachment is a TURN in the conversation or a FILE somebody
@@ -63,5 +63,18 @@ describe('isVoiceNote', () => {
     it('refuses the name on anything the recorder does not produce', () => {
       expect(isVoiceNote({ type: 'file', fileName: 'vocal_1757900000000.m4a' })).toBe(false);
     });
+  });
+});
+
+describe('voiceNoteEntry - what a recording is sent as', () => {
+  const file = new File([new Uint8Array([1])], 'vocal_1.webm', { type: 'audio/webm' });
+
+  it('declares the voice note and carries its measured sound', () => {
+    const loudness = { integratedLufs: -20, samplePeakDbfs: -4 };
+    expect(voiceNoteEntry({ file }, loudness)).toEqual({ file, voiceNote: true, loudness });
+  });
+
+  it('carries no loudness when the recording could not be measured', () => {
+    expect(voiceNoteEntry({ file }, null)).toEqual({ file, voiceNote: true });
   });
 });

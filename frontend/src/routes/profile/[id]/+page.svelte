@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import { resolve } from '$app/paths';
   import ProfileSummaryLine from '$lib/components/profile/ProfileSummaryLine.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -37,6 +38,7 @@
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Log } from '$lib/utils/Log';
+  import { requestDirectConversationWith } from '$lib/utils/chat/pendingChatOpening';
   import ProfileHeader from '$lib/components/profile/ProfileHeader.svelte';
   import ProfileOverflowMenu from '$lib/components/profile/ProfileOverflowMenu.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -62,7 +64,6 @@
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { Building2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   let profile = $state<UserProfile | null>(null);
   let loading = $state(true);
@@ -266,10 +267,18 @@
   });
 
   function handleSendMessage() {
-    if (profile?.id) {
-      sessionStorage.setItem('canari_pending_contact', profile.id);
-      goto(resolve('/chat'));
+    // A PERSON, not a conversation: the chat page finds the DM with them or creates it
+    // (`pendingChatOpening.ts`). Handed over as a conversation key, this user id opened nothing.
+    if (!profile?.id) return;
+    // The ask names who made it, so an account signed in after this tap never acts on it.
+    const owner = getSavedUserId();
+    if (!owner) {
+      console.warn('[PROFILE] "Message" pressed with no signed-in account - nothing is asked');
+      return;
     }
+    Log.d('[PROFILE] "Message": asking the chat page for the DM with this person');
+    requestDirectConversationWith(owner, profile.id, sessionStorage);
+    goto(resolve('/chat'));
   }
 
   /**
@@ -558,10 +567,11 @@
                 {m.profile_member_since_label()}
               </p>
               <p class="text-text-main text-sm font-bold capitalize">
-                {new Date(profile.createdAt).toLocaleDateString(
-                  getLocale() === 'en' ? 'en-US' : 'fr-FR',
-                  { year: 'numeric', month: 'long', day: 'numeric' }
-                )}
+                {new Date(profile.createdAt).toLocaleDateString(intlLocale(), {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
               </p>
             </div>
           </div>

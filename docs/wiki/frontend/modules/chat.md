@@ -767,9 +767,9 @@ the bytes decrypted, and was red on the defect.
 2026-10-02). The bubble used to turn into a textarea with Save and Cancel buttons (`MessageEditForm`,
 deleted); it now only ANNOUNCES the edit.
 
-- **`MessageBubble` takes `onBeginEdit(messageId, text)`**, not `onEdit`. The toolbar's and the mobile
-  sheet's "edit" call it for the author's own text message (`canEdit`: not deleted, own, no media, a
-  parent able to take it). It is threaded `ChatArea` -> `ChatMessageGroups` -> `MessageBubble`.
+- **`MessageBubble` takes `onBeginEdit(messageId, text, captionOnly)`**, not `onEdit`. The toolbar's and the mobile
+  sheet's "edit" call it for the author's own message (`canEdit`: not deleted, own, not a poll, a
+  parent able to take it) - a media message's edit is its CAPTION's since 2026-11-11, [below](#a-media-messages-edit-is-a-caption-edit-2026-11-11). It is threaded `ChatArea` -> `ChatMessageGroups` -> `MessageBubble`.
 - **`createEditSession` (`utils/chat/editSession.svelte.ts`) holds the state.** `begin` loads the
   message into the composer's text and keeps the DRAFT it replaced; `cancel` and `confirm` give the
   draft back, so fixing a typo never eats the sentence the member was in the middle of. Switching
@@ -798,6 +798,82 @@ Verified in Chromium on the composer in edit mode at 390 and 1000 px. Tests:
 draft kept across two edits, unchanged and empty saved as nothing, reset). **Not exercised:** a real
 edit through `handleEditMessage` end to end on a phone.
 
+### A media message's edit is a caption edit (2026-11-11)
+
+Owner, 2026-11-11: a message carrying a photo, a video or a file is editable, **caption only** - the
+media stays the same and the bubble shows the same "modifié" mark as an edited text. A poll is not.
+**Scope (lead's decision, 2026-11-11):** a CanaReel sent in a conversation stays editable, since a take's
+caption is text like a photo's; a **voice note is not** (`mediaRef.voiceNote`): it has no caption to
+edit. Until then `canEdit` hid the action on a media message on purpose (`!mediaRef`, and `!hasMedia` in
+`MessageBubbleToolbar` and `MessageMobileActions`); both props are gone and the bubble's `canEdit` is
+the one rule.
+
+**NO NEW WIRE SHAPE, AND THAT IS THE DECISION.** The frame is the `edit_message` a text edit has
+always been, `{ messageId, newContent, editedAt }`, and `newContent` is the caption. Every applier
+already writes the text through `applyEditToBody`, whose media branch replaces `caption` and keeps
+`media` (blob id, key, iv) and `replyTo` - since #903 (`v0.18.18`), far under the `1.6.6` floor. So
+an old client never meets a shape it does not know, and none of them can replace the body with
+plain text and drop the photo: the one way that could happen (a whole-body write of `newContent`)
+was removed for the reply quote's sake in September. A new field (`caption`, `kind`) would have
+bought nothing and made older readers fall back on `newContent` anyway.
+
+**What each reader sees:**
+
+| Reader | Caption edited | Caption emptied |
+| --- | --- | --- |
+| this build, DM or group | new caption, media kept, "modifié" | photo bare, "modifié" |
+| older build (>= `1.6.6`), DM or group | same | **either result, depending on the path the edit took**. Live and replay: **old caption kept, no mark** (the `data.newContent` truthiness check drops `''`). A history bundle carrying the author's signed edit: **photo bare, marked** (`vetRestoredEdit` takes any string and stores `caption: ''`, which the bubble draws bare). So one old build can show either, and two old builds can disagree |
+| this build, salon | new caption, media kept, "modifié" | photo bare, "modifié" |
+| older build, salon | **old caption kept, no mark**: `applyChannelEdit` refused every non-text target (`not plain text`, logged) | same |
+
+Every row keeps the media. The degraded cells are a stale caption, never a loss, and they end
+with the floor passing this release.
+
+**An empty caption.** `editFitsBody(content, text)` (`envelope.ts`) is the one rule, asked by every
+applier before `applyEditToBody` - the live path, the replay, the post-save pass, a parked edit
+(`pendingMutations`), a restored signed edit and the sender's own write: any text fits a media
+message's caption, an empty one included, and only a non-empty text fits anything else (the old
+truthiness rule, unchanged for a text message). The live and replay paths now accept a STRING
+`newContent` rather than a truthy one, so `''` reaches that rule. `applyEditToBody` stores an
+emptied caption as NO caption, the shape of a photo sent without one, so the bubble draws it bare.
+In the composer, `editSession.begin(id, text, captionOnly)` records that the edit may be emptied and
+`ChatComposer`'s `editingAllowsEmpty` lets Save through on an empty field.
+
+**An edit of a file still queued (DM, group).** The edit goes into the outbox as usual and names the
+message, so `dependsOnAny` holds it behind the file: the peers receive the file, then the edit. The
+author's own row was the trap: the real envelope swapped in once the upload ends is built from the
+QUEUE ENTRY, which holds the caption typed at the tap, so `updateMessageContent` (`outbox.ts`) wrote
+the old caption back over the edit - and `persistSent` stored it. Two places fix it, one per half:
+- **At rest, the stored row decides** (`sentRowContent`, inside `persistSent`'s compare-and-set). If
+  the stored row holds a later edit than the copy on screen (`editSupersedes`), its text goes onto
+  the sent body through `applyEditToBody`, so the attachment reference is the send's and the caption
+  is the edit's. This matters because the flushing tab may not be the editing one. A leader tab that
+  flushes a follower's queued photo holds the tap caption on screen while the follower's edit is at
+  rest, and writing the screen's body showed "modifié" over the old caption after a reload. A text
+  edited in a follower tab had the same flaw, and the same rule fixes it.
+- **On screen**, `updateMessageContent` keeps an edited row's caption over the real attachment
+  reference (`[OUTBOX] … keeps the caption edited while it was queued`), and leaves a deleted row
+  alone - a tombstone does not get its attachment back.
+
+The edit of a message that then never leaves (withdrawn, or failed for good) is not handled yet:
+[backlog](../../backlog.d/p3-an-edit-of-a-queued-message-whose-send-never-happens.md). A salon echo still uploading is not editable at all (`awaitingServerId` withholds every
+action addressed by a server id), so the salon has no such window.
+
+**The sender's other devices** receive the edit like any member and apply it by the same rule; the
+conversation list follows because its preview is read from the row's body. The push and the native
+layers do not render an edit (`proto_fields.rs` silences `edit_message`).
+
+Tests: `envelope.editBody.test.ts` (caption replaced, emptied, media and quote kept; `editFitsBody`),
+`systemMessageHandler.captionEdit.test.ts` (live path, in memory and at rest; an empty text on a text
+row dropped), `messagingEditCaption.test.ts` (the frame's three keys, the empty string an older
+client drops), `channelEdit.test.ts` (salon caption edited and emptied),
+`outbox.captionEditedWhileQueued.test.ts`, `editSession.svelte.test.ts`,
+`ChatComposer.edit.svelte.test.ts`, `MessageBubble.editAction.svelte.test.ts` and
+`MessageMobileActions.row.svelte.test.ts` (Modifier offered on an own media message and a CanaReel,
+not on a voice note). `outbox.captionEditedWhileQueued.test.ts` also covers the stored row edited
+with the screen stale. **Not
+exercised:** a real caption edit between two phones, and a `1.6.x` store build receiving one.
+
 ### Editing your own message in a salon (2026-10-05)
 
 **An edit is a SILENT ENCRYPTED CHANNEL ROW, exactly like a reaction** ([channel-encryption 4.7](../../protocols/channel-encryption.md)): a new `EditMsg` (`AppMessage.edit`, field 13: the target's SERVER row id, the replacement TEXT, `edited_at`), sealed under the author's Graine session by `sendChannelEdit` (`channelCrypto.ts`). The server stores an opaque row flagged `silent`, so **there is no new push and no server change, no endpoint, no migration** - and none COULD validate it: it cannot tell the row is an edit or whose message it names.
@@ -805,7 +881,7 @@ edit through `handleEditMessage` end to end on a phone.
 - **Authorship is checked by every reader**, in ONE function, `applyChannelEdit` (`utils/chat/channelEdit.ts`), used by the live handler (`channelEventHandler`), a history page and the search sweep (`useConversations`) and the sender's own write (`editChannelMessage`). The edit's sender is the ROW's - what Graine v2 proves, unforgeable by the server and by other members - and it must equal the target's author. **A moderator may remove someone's message (`channel.moderate`), never rewrite it.** A refusal is logged (`REFUSED`), silent to the user.
 - **"Proven" holds for v2 sessions only.** A row opened under a v1 session has a server-supplied, unsigned `senderId`, so a malicious server or a pre-G2-5 v1 row could forge an edit from the author - the same trust level as DELETE today, not a regression, and deliberately not restricted. It ends with the v1 reader ([channel-encryption 21.5b](../../protocols/channel-encryption.md#215b-what-a-salon-edit-trusts-2026-10-05), [backlog](../../backlog.md)).
 - **Paging limit, stated exactly.** `listMessages` returns silent rows only inside `[oldest body of the page, before)`, and the server cannot know which silent row targets which message (opaque), so no clean server-side fix exists. With a `before` cursor an edit made AFTER the cursor is not in that page. Nothing affected today: the history load takes the newest page (no cursor), channels have no older-page load (`loadOlderMessages` returns false), and the search sweep applies edits over ALL pages it collected. Reactions share the limit. Backlog item below.
-- It edits a plain TEXT message only: not a poll, a notice, a media message or a tombstone (a delete is final). Empty text is refused. Order is `editSupersedes` (later `editedAt` wins, tie on the text), so two devices converge in any arrival order; the author's own echo is a quiet no-op.
+- It edits a plain TEXT message, and a media message's CAPTION since 2026-11-11 ([below](#a-media-messages-edit-is-a-caption-edit-2026-11-11)): not a poll, a notice or a tombstone (a delete is final). Empty text is refused on a text, and removes a caption. Order is `editSupersedes` (later `editedAt` wins, tie on the text), so two devices converge in any arrival order; the author's own echo is a quiet no-op.
 - **The history load applies the edit rows after the page is built**, because a salon is not stored locally: the marker and the new text come back from the same silent rows. The page limit counts non-silent rows and brings every newer silent row, so an edit of a loaded message is always on the page.
 - UI: `MainChatPage` now passes `onEdit` for a channel (`channels.editChannelMessage`); the inline edit is the composer's, shared with DMs and groups, and the edited marker is the existing `isEdited`.
 - **Old clients** read `AppMessage` with an unknown oneof, which decodes to an empty frame: the row is not rendered and nothing breaks, they simply keep the original text. **Not exercised: two real devices round-trip, and the 365-day retention purge of an edit row whose (pinned) target outlives it** - the edit is then lost with its row, the original text stays.
@@ -888,6 +964,21 @@ reader and the accounts the reader blocked are never offered (the server hides b
 ways from search; the client only knows its own blocks). An EMPTY roster, a list still loading,
 falls back to the server search, logged. Posts and comments pass no roster and keep the search.
 default.
+
+**Typing an `@` looped the roster picker's effect on `1.6.6`-`1.6.8`, and the chat fell to its
+boundary (reported on Android `1.6.6`, 2026-11-12).** The caret reaching an `@` changes `start`,
+which re-runs the effect `MentionComposerInput` keeps on the roster prop (`refreshRoster`). There,
+`suggestLocally` wrote `suggestions` and read it back to set `open`, so the effect depended on the
+array it replaced on every run: `effect_update_depth_exceeded` at the first `@`, in a DM and in a
+salon alike, right after the blocks read and the name batch the picker's first open asks for. **It
+was fixed by #3233 (`v1.6.9`)**, which sets `open` from the local array; a reader on an older build
+only has to update. `MentionComposerInput.keystrokes.svelte.test.ts` types "salut @" and "a@b." key
+by key through the real component, with the blocks read and the batch answered asynchronously, and
+fails with that error on the `1.6.6` shape. The boundary's own line read `[object Object]` in that
+log; it now goes through `describeCaughtError` (name, message, three stack frames) at the error
+level. On the way: a server search still waiting for its delay ran after the mention had ended
+("a@b." typed quickly) and reopened the picker on plain text with nothing selectable; the end of a
+mention now drops it.
 
 ### The composer's own emoji picker, and what it shares with the reaction one
 
@@ -2284,7 +2375,7 @@ showing the quote out of the in-memory `ChatMessage.replyTo` set at send time, s
 like a peer-side defect - it was reported as one, two screenshots of one message, quoted on its
 author's PC and bare on the peer's - and one reload would have lost it there too. `applyEditToBody`
 (`envelope.ts`) is the one implementation: it parses the stored body, replaces the text (or a media
-envelope's caption, unreachable from this UI and better than throwing the attachment away), and
+envelope's caption - reachable from the UI since 2026-11-11, [below](#a-media-messages-edit-is-a-caption-edit-2026-11-11)), and
 re-serializes, so every field the edit does not carry survives it.
 
 **THAT MADE THE TIE-BREAK READ THE ENVELOPE TOO**, and it is the part worth keeping. `editSupersedes`
@@ -2438,6 +2529,39 @@ The inviter's copy is inserted **locally** by `inviteMemberToChannel`, because M
 device back its own application message. The `senderNorm === userId` branch of
 `systemMessageHandler` builds the identical envelope, and only ever runs on the inviter's *other*
 devices. Pinned by `systemMessageHandler.channelInvite.test.ts`.
+
+### Opening from another page: a conversation, or the DM with a person (fixed 2026-11-11)
+
+Another page hands the chat page something to open through `sessionStorage`, and there are two KINDS,
+each with its own key (`utils/chat/pendingChatOpening.ts`):
+
+| Key | Written by | Names | Answered by |
+| --- | --- | --- | --- |
+| `canari_pending_contact` | the posts mini panel, the multi-tab reload (`selectionAcrossReload.ts`) | a conversation's MAP key (its group id) | `selectConversation`, if the map holds it |
+| `canari_pending_direct_peer` | a profile's "Message" button | a PERSON (their user id), and the account that asked (`{ owner, peer }`) | `startNewConversation`: the DM in the map, else the server's, else a new one; a refusal is a toast (`conversationRefusalMessage`) |
+
+**The defect (production web `1.6.10`):** the profile button wrote the person's USER id into the
+conversation key. No conversation is keyed by a user id
+([one key per conversation](#one-key-per-conversation---the-a-dm-has-two-keys-premise-audited-and-refuted-2026-10-04)),
+so the selection watchdog dropped it in the same frame - `[SELECT] <id> is not in the conversation
+map - selection dropped, nothing opens` - and "Message" opened nothing, whether a DM with the person
+existed or not. A second defect sat under it: the key was applied **600 ms after login**, a guess at
+the restore's length; on a slower restore the map was still empty and even a real key was dropped.
+
+**Now:** the opening is applied when the map is authoritative (`conversationSourcesSettled`, the gate
+the notification landing uses), never on a clock, and is not consumed before then. Pinned by
+`pendingChatOpening.test.ts` (an existing DM opens, a DM restored after the press opens once
+restored, no DM creates and opens one, a refusal reaches the reader, a conversation key waits for
+the map). Logged under `[OPEN]`.
+
+**What is never lost or misapplied.** The ask is removed from storage before the DM path is awaited,
+so a THROW there (no MLS client, a follower tab's delegation) would have lost the press in an
+unhandled rejection; `landPendingChatOpening` never rejects - a throw reaches the reader as
+`creation-failed`, like a refusal. sessionStorage outlives a sign-out in the same tab and no sign-out
+hook clears it, so a DM ask names its OWNER and is dropped, with a warning, for any other account -
+otherwise B signing in after A's tap would start a DM between B and A's pick. A conversation ask
+pending beside a DM ask is dropped with a warning (the DM ask, the later tap, wins). The conversation
+key carries no owner: it can only select a key the map already holds, never create anything.
 
 ### Being removed from a channel or a community
 

@@ -460,8 +460,8 @@ describe('Mention tokens in a native banner', () => {
     expect(objc).toMatch(
       /if \(namesMentionAuthor && mentionsMe\) \{\s*subtitle = CanariMentionAuthorLine\(senderId, nameBook\);/
     );
-    expect(objc).toMatch(/shownMentionsMe,\s*initialsName, YES, NO, names\);/);
-    expect(objc).toMatch(/decrypted, NO,\s*senderName, NO, YES, nil\);/);
+    expect(objc).toMatch(/shownMentionsMe,\s*initialsName, YES, NO, names, nil\);/);
+    expect(objc).toMatch(/decrypted, NO,\s*senderName, NO, YES, nil, isGroup\);/);
   });
 
   it("reads a salon banner's names ONCE and says why they are missing ONCE (iOS, 2026-11-01)", () => {

@@ -77,7 +77,7 @@ INTERNAL_SHARED_SECRET	required	required	secret:INTERNAL_SHARED_SECRET	inter-ser
 CALL_ROOM_SECRET	required	required	secret:CALL_ROOM_SECRET	WebRTC room access control is disabled, which is a security hole
 AGENDA_SIGNING_KEY	required	required	secret:AGENDA_SIGNING_KEY	calendar subscription links cannot be signed and every campus / formation feed is refused
 LIVE_REPORT_SIGNING_KEY	required	required	secret:LIVE_REPORT_SIGNING_KEY	a reported live chat line cannot be signed, so every chat-line report is refused 503 and nothing is kept for staff
-ALLOW_ORIGIN	computed	computed	computed	the chat-gateway refuses every client, or accepts every origin on earth
+ALLOW_ORIGIN	computed	computed	computed	the chat-gateway and the call-service refuse every client's socket, or the gateway's CORS accepts every origin on earth
 CALL_E2E_ENCRYPTION	literal	literal	literal:false	nothing - it is off in both environments
 QUEUED_PAYLOAD_SHARED_WRITES	literal	literal	literal:false	nothing - a key-group frame is queued inline per seat; turned true only in a release AFTER the one shipping its readers (docs/wiki/services/chat-delivery.md)
 INTERNAL_SECRET	warn	warn	secret:INTERNAL_SECRET	social and form push notifications are disabled, and an owner's device delete answers 503 (chat-delivery cannot ask core-service to end the device's sessions)
@@ -93,6 +93,7 @@ CLOUDFLARE_TURN_ANALYTICS_TOKEN	warn	warn	secret:CLOUDFLARE_TURN_ANALYTICS_TOKEN
 MIGALLERY_API_KEY	warn	warn	secret:MIGALLERY_API_KEY	the avatar service does not work
 AVATAR_OVERRIDE_EXTRA	skip	warn	secret:AVATAR_OVERRIDE_EXTRA	the bench accounts show an initials circle on dev instead of their explicit avatar (the four demo people still do) - DEV ONLY: skipped in production, whose compose never reads it
 MICONNECT_EDITOR_TOKEN	warn	skip	secret:MICONNECT_EDITOR_TOKEN	an admin's profile edit is refused (typed: not configured) - production only, because dev and production share ONE MiConnect
+MICONNECT_READER_TOKEN	warn	skip	secret:MICONNECT_READER_TOKEN	no sign-in handoff is minted (the mint cannot ask MiConnect whether the user may enter the site, so it refuses HANDOFF_MICONNECT_UNAVAILABLE) and every MiConnect site opens plainly - production only: it reads every MiConnect user, and dev, which mints nothing (no DEV_HANDOFF_SIGNING_KEY, and no site trusts its issuer), has no use for such a key (lead, 2026-11-11)
 HANDOFF_SIGNING_KEY	warn	silent	secret:HANDOFF_SIGNING_KEY	no sign-in handoff is minted (POST /api/auth/handoff answers HANDOFF_NOT_OFFERED), so every MiConnect site Canari opens is opened plainly and may ask for a MiConnect sign-in again; silent on dev, where no site trusts the dev issuer yet
 GOOGLE_SAFE_BROWSING_API_KEY	warn	warn	secret:GOOGLE_SAFE_BROWSING_API_KEY	links are not checked against Safe Browsing
 KLIPY_API_KEY	warn	warn	secret:KLIPY_API_KEY	the GIF picker answers that GIF search is not configured
@@ -113,5 +114,6 @@ FRONTEND_HOST_PORT	computed	computed	computed	the host port this estate's nginx 
 GARAGE_API_HOST_PORT	computed	computed	computed	garage's S3 API on 127.0.0.1 - 19010 prod, 19100 dev
 GARAGE_ADMIN_HOST_PORT	computed	computed	computed	garage's admin API on 127.0.0.1 - 19011 prod, 19101 dev
 LIVE_ENABLED	literal	literal	literal:true	the live routes (docs/wiki/services/lives.md) - true on both estates since the production flip (2026-10-30); platform_config.lives_mode closes them at runtime
+COMMUNITY_OWNED_MAX	literal	literal	literal:20	the communities one account may hold as their creator - 20 on both estates, changed by a commit to this row; a value that is not a positive integer stops social-service at boot (docs/wiki/services/social-service.md)
 PROFILE_PHOTO_PROMPT_SPACES	literal	literal	literal:ICM:saint-etienne	TEMPORARY (owner, 2026-11-10): nobody is invited to add a profile photo; the spaces (FORMATION:campus) the prompt is offered to - docs/wiki/frontend/guided-help.md
 LYDIA_RECONCILE_ENABLED	computed	computed	computed	the Lydia reconciliation sweep (docs/wiki/lydia-api.md) - true on dev, false on production until the signed amount format is measured, so a stable release asks Lydia nothing on its own
