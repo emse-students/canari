@@ -150,14 +150,22 @@
     if (isPlaying) {
       audioEl.pause();
     } else {
-      // The play tap is the gesture WebKit honours a `resume()` in - made before `play()`.
-      loudnessHandle?.prime();
-      audioEl.play().catch((err: unknown) => {
-        console.warn('[voice] play() refused', {
-          name: err instanceof Error ? err.name : String(err),
-        });
-      });
+      // The play tap is the gesture WebKit honours a `resume()` in - made before `play()`. When one
+      // was asked, `play()` waits for its answer: the route is then built at the note's gain on its
+      // first `play`, and the first syllable is never heard at the uncorrected level (review of
+      // #3394). Nothing asked (an old note, a context already running): played in this very turn.
+      const primed = loudnessHandle?.prime() ?? null;
+      if (primed) void primed.then(() => startPlayback(audioEl));
+      else startPlayback(audioEl);
     }
+  }
+
+  function startPlayback(element: HTMLAudioElement | null) {
+    element?.play().catch((err: unknown) => {
+      console.warn('[voice] play() refused', {
+        name: err instanceof Error ? err.name : String(err),
+      });
+    });
   }
 
   function seekTo(value: string) {

@@ -57,6 +57,7 @@ describe('loudnessGainDb - the law', () => {
 
 /** A `<video>` as the wiring sees it: its mute, pause and volume, and its events. */
 class FakeVideo extends EventTarget {
+  tagName = 'VIDEO';
   muted = true;
   paused = true;
   #volume = 1;
@@ -146,10 +147,11 @@ function setup(
     resumesTo?: AudioContextState | null;
     /** `resume()` never answers. */
     resumeHangs?: boolean;
+    /** The element is NOT registered with the playback arbiter. */
+    unarbitrated?: boolean;
   } = {}
 ) {
   const contexts: FakeContext[] = [];
-  let screen: ((onScreen: boolean) => void) | null = null;
   const audio = new LoudnessAudio({
     createContext: () => {
       if (options.noWebAudio) return null;
@@ -161,11 +163,7 @@ function setup(
       return ctx as unknown as AudioContext;
     },
     isWebKit: () => options.webkit ?? false,
-    onScreenChange: (fn) => {
-      screen = fn;
-      return () => (screen = null);
-    },
-    onScreen: () => true,
+    isArbitrated: () => !options.unarbitrated,
   });
   const mount = (
     loudness?: { integratedLufs: number; samplePeakDbfs: number },
@@ -176,7 +174,7 @@ function setup(
     handle.setLoudness(loudness);
     return { video, handle };
   };
-  return { audio, contexts, mount, leaveScreen: () => screen?.(false) };
+  return { audio, contexts, mount };
 }
 
 const LOUD = { integratedLufs: -8, samplePeakDbfs: 0 }; // -6 dB
@@ -246,12 +244,45 @@ describe('LoudnessAudio - the wiring', () => {
     b.handle.destroy();
   });
 
-  it('suspends in the background even while a routed video plays', () => {
-    const { contexts, mount, leaveScreen } = setup();
+  it('NOTHING BUT A PAUSE SUSPENDS: a routed element still playing keeps its output running', () => {
+    // The app leaving the screen is not a source here (review of #3394): on native the arbiter
+    // pauses the element, which lands as the `pause` above; on web the note plays on behind a tab.
+    const { contexts, mount, audio } = setup();
     const { video, handle } = mount(LOUD);
     video.unmuteAndPlay();
-    leaveScreen();
+    audio.suspendIfIdle('anything');
+    expect(contexts[0].suspend).not.toHaveBeenCalled();
+    expect(contexts[0].state).toBe('running');
+    handle.destroy();
+  });
+
+  it('never routes an element the playback arbiter does not know, and says so', () => {
+    const { contexts, mount } = setup({ unarbitrated: true });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { video, handle } = mount(LOUD);
+    video.unmuteAndPlay();
+    expect(contexts[0].sources).toHaveLength(0);
+    expect(String(error.mock.calls[0][0])).toContain('not registered with the playback arbiter');
+    // The fallback's attenuation still applies where the engine honours a volume.
+    expect(video.volume).toBeCloseTo(dbToGain(-6));
+    handle.destroy();
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('a play tap on an ALREADY ROUTED element resumes its suspended context inside the tap', async () => {
+    const { contexts, mount } = setup();
+    const { video, handle } = mount(LOUD);
+    video.unmuteAndPlay();
+    video.pause();
     expect(contexts[0].state).toBe('suspended');
+    const resumes = contexts[0].resume.mock.calls.length;
+    const primed = handle.prime();
+    // Called synchronously, inside the gesture - and settled once it answered.
+    expect(contexts[0].resume.mock.calls.length).toBe(resumes + 1);
+    await primed;
+    expect(contexts[0].state).toBe('running');
     handle.destroy();
   });
 

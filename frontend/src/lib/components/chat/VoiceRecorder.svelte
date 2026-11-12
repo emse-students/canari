@@ -34,10 +34,19 @@
   import { onDestroy } from 'svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
+  import {
+    tapRecordingLoudness,
+    type RecordingLoudnessTap,
+  } from '$lib/utils/audio/recordingLoudness';
+  import { recordingLoudnessDeps } from '$lib/utils/audio/recordingLoudnessAssets';
+  import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
   interface Props {
-    /** Callback fired with the recorded audio blob when the gesture ends in a send. */
-    onRecordingComplete: (audioBlob: Blob) => void;
+    /**
+     * Callback fired with the recorded audio blob when the gesture ends in a send, and its sound as
+     * measured WHILE it was recorded (`recordingLoudness.ts`; null: not measured, or silence).
+     */
+    onRecordingComplete: (audioBlob: Blob, loudness: MediaLoudness | null) => void;
     /** Optional callback invoked when the recording is thrown away rather than sent. */
     onCancel?: () => void;
     /**
@@ -99,6 +108,8 @@
   interface Session {
     recorder: MediaRecorder;
     stream: MediaStream;
+    /** The loudness measured as the samples are recorded - stopped with the recording. */
+    loudness: RecordingLoudnessTap;
     chunks: Blob[];
     startedAt: number;
     /** Decided by the gesture, read once by `onstop`. */
@@ -172,7 +183,14 @@
       const recorder = mimeType
         ? new MediaRecorder(stream, { mimeType })
         : new MediaRecorder(stream);
-      const started: Session = { recorder, stream, chunks: [], startedAt: 0, keep: false };
+      const started: Session = {
+        recorder,
+        stream,
+        loudness: tapRecordingLoudness(stream, recordingLoudnessDeps),
+        chunks: [],
+        startedAt: 0,
+        keep: false,
+      };
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) started.chunks.push(event.data);
@@ -183,7 +201,9 @@
         console.debug(`[VoiceRecorder] stopped - ${keep ? 'sending' : 'discarding'}`);
         if (keep) {
           const finalType = recorder.mimeType || started.chunks[0]?.type || 'audio/webm';
-          onRecordingComplete(new Blob(started.chunks, { type: finalType }));
+          // Read at the recorder's own stop, so the tail it flushed is measured too.
+          const loudness = started.loudness.stop();
+          onRecordingComplete(new Blob(started.chunks, { type: finalType }), loudness);
         }
         // The device goes back only once the last chunk has arrived; releasing it any earlier
         // truncates the tail of the very message this is about to send.
@@ -238,6 +258,7 @@
 
   /** The one place a microphone is handed back, whichever way the recording ended. */
   function releaseDevice(ended: Session) {
+    ended.loudness.stop();
     ended.stream.getTracks().forEach((track) => track.stop());
     ended.chunks = [];
   }

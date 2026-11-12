@@ -175,8 +175,8 @@ import {
 } from '$lib/notifications/conversationLevel';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
-import { measureRecordingLoudness } from '$lib/utils/audio/recordingLoudness';
 import { voiceNoteEntry } from '$lib/utils/chat/voiceNote';
+import type { MediaLoudness } from '$lib/video/loudnessMeter';
 
 /** Runtime dependencies injected into all messaging operations. */
 export interface MessagingContext {
@@ -2658,14 +2658,16 @@ export function useMessaging() {
    * send: draining the pending queue here would post a half-written caption and any photo staged
    * beside it, neither of which the user asked to send by lifting their finger off a microphone.
    */
-  async function sendVoiceNote(file: File, ctx: MessagingContext) {
-    // THE SOUND IS MEASURED WHILE THE CEILING IS ASKED (owner, 2026-11-12): the same BS.1770 meter
-    // as a video's, carried in `MediaRef.loudness` to every reader's player, DM, group and salon
-    // alike - all three leave through `buildMediaMessage`.
-    const [ready, loudness] = await Promise.all([
-      prepareMediaFiles([file], ctx),
-      measureRecordingLoudness(file),
-    ]);
+  async function sendVoiceNote(
+    file: File,
+    ctx: MessagingContext,
+    loudness: MediaLoudness | null = null
+  ) {
+    // THE SOUND WAS MEASURED WHILE IT WAS RECORDED (owner, 2026-11-12; `recordingLoudness.ts`):
+    // the send waits for nothing more. Carried in `MediaRef.loudness` to every reader's player, DM,
+    // group and salon alike - all three leave through `buildMediaMessage`. Null (not measured, or
+    // silence) sends the note unmeasured, as every note before this was.
+    const ready = await prepareMediaFiles([file], ctx);
     // Empty means the ceiling refused it - `prepareMediaFiles` has already said so on both surfaces.
     if (ready.length === 0) return;
     // THIS IS THE ONLY PLACE IN THE APPLICATION THAT KNOWS. Past it, a recording and an imported
