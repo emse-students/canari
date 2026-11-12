@@ -175,6 +175,12 @@ Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 
 > device to reach, and both halves of push (FCM and the three APNs values) are ordinary optional
 > credentials.
 
+> **`ALLOW_ORIGIN` is not a secret and nobody types it**: the deploy computes it from the site's
+> names (`infrastructure/deploy/render-env.sh`) and writes it into `infrastructure/.env`. Two
+> containers read it since 2026-11-12, **chat-gateway and call-service**, and both refuse a socket
+> upgrade from a page that is not in it - so an estate brought up by hand must set it to every
+> origin its clients' pages have (`.env.example` carries the list), never to `*`.
+
 ## 3bis. Repository settings that are not secrets, and that no file in the tree carries
 
 **A SETTING NO FILE CARRIES IS REPRODUCED FROM NOWHERE ON A FORK OR A REBUILD**, and these three

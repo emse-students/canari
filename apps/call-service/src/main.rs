@@ -37,6 +37,9 @@ use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
 use webrtc::track::track_remote::TrackRemote;
 
+// `log_repeat.rs` and `origin.rs` are chat-gateway's files, byte for byte
+// (`declared-duplicates.mjs`); this crate does not call every method of the first.
+#[allow(dead_code)]
 mod log_repeat;
 mod origin;
 mod p2p;
