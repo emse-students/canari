@@ -79,8 +79,8 @@ build sends, so it deploys only to an estate whose floor already reads `1.6.6`.*
 | An institution's republication request accepted by a build that never showed its audience (nothing to remove) | #2965, `v1.6.3` | **CLOSED**: no floor build can meet the stuck case |
 | A creator managing two BDEs reading an old build's generic creation error (nothing to remove) | #2986, `v1.6.3` | **CLOSED** |
 | A post whose comments are withheld (`canSeeComments`), a live chat withheld (`withheld`), a moderation tombstone (`removedByModeration`) drawn by a build that knows none of them (nothing to remove) | #2998, #3014, #2999, `v1.6.5` | **CLOSED**: three dead controls no floor build draws |
-| The CanaReels modes `singlePhotos`, `singleMedia` and the link kept out without `withLinks` (`full-screen-post-sql.ts`) | #3056, #3062, #3074, `v1.6.6` | floor MET, **kept**, owed: the collapse to one mode in ONE pull request (it rewrites the list SQL, its cache key and two specs - not a deletion) |
-| The client sending `singlePhotos` and `singleMedia` beside `multiMedia` (`buildListPostsSearchParams`) | server version, not a floor | MET (both estates carry `v1.6.6`), **kept**, owed: one client pull request |
+| The CanaReels modes `singlePhotos`, `singleMedia` and the link kept out without `withLinks` (`full-screen-post-sql.ts`) | #3056, #3062, #3074, `v1.6.6` | **REMOVED** (2026-11-11, five entries): one clause, `FULL_SCREEN_POST_SQL`, read by `multiMedia` alone, links allowed; the three DTO fields are gone (the whitelisting pipe strips them, so a floor client that still sends them gets the same list); the cache key keeps `+carousel-links`, the one every floor client already used. A stale web tab of a pre-`1.6.6` bundle degrades rather than breaks: a `v1.6.5` bundle receives the link posts and drops them, and a tab older than `multiMedia` gets the reels only. The floor does not reach a web tab left open, so this is the tolerated cost; `list-posts-query.dto.spec.ts` pins the strip (never a `400`) |
+| The client sending `singlePhotos`, `singleMedia` and `withLinks` beside `multiMedia` (`buildListPostsSearchParams`) | server version, not a floor | **REMOVED** in the same pull request: the client sends `multiMedia=true` alone |
 | `kind=reel` on `feed=all` read as `feed=reels` | #2990, `v1.6.3` (server) | **kept**: the client switch to `feed=reels` is not made, so the floor that retires it is the stable that will carry it, then a week of `[LEGACY]` silence |
 | The further-device self-join held shut | needs D2/D3 (`1.6.7` at the earliest) | not met |
 
@@ -208,7 +208,6 @@ REST: those rows need a count, then a migration.
 | Plaintext live key: the `"liveKey"` column, `openLiveKey`'s plaintext arm, `LivesService.sealPlaintextKeys` (migration 110) | 0 rows with `"liveKey" IS NOT NULL` on both estates, read AFTER the first deploy carrying 110 has fully replaced the previous replica | not a version question (server only) | `lives."liveKey"` | 1 arm + 1 sweep step + a migration dropping the column, the index and `lives_key_one_form` | owed: the count below, then that migration ([lives](services/lives.md#the-live-key-at-rest)) |
 | `follow-status` answers `following: true` for a PENDING follow request (`posts.controller.ts`, `getUserFollowStatus`; WP-F1) | floor past the first stable carrying the request screens (WP-F4), which read `status` | NO (unbuilt) | none | drop `following`, or make it mean accepted | waits for the floor. An older client's button shows the leave action for a request, so its user can withdraw what they asked; reading `following` as "accepted" would show "Suivre" and leave the request unwithdrawable there ([backlog](backlog.md#follow-requests-member-reposts-and-visibility-between-spaces---decided-by-the-user-on-2026-10-25)) |
 | The account-seat `awaitingAdmission` on the groups list read off `deviceMembership.awaitingAdmission` when a row lacks it (`syncAdmissionFlags`, `admissionState.ts`; #2894) | production's chat-delivery serves the top-level field (one read of `GET mls/users/:userId/groups` on production showing it) | not a client version question: a deploy-order WINDOW, a store build ahead of production | none | the `??` arm and its WARN line | remove once production serves the field; until then each pass that takes it logs `[DISCOVERY] [WARN] ... read off this device's seat` |
-| A new person admitted only by a member's decision (#2358): member clients that still Add automatically | floor >= the first stable carrying #2358, raised once BOTH stores serve it (not at deploy, no date), AND migration 038 deployed with it | NO (unreleased) | `dm_group_members."awaitingAdmission"` | nothing to remove - the floor is what makes the rule TRUE | waits for the floor ([diary](#no-date-yet---a-member-client-older-than-the-admission-rule-still-adds-a-new-person-automatically)) |
 | The `join-ask-1` capability gate: `group.join_ask` / `group.join_ask.settled` reach only devices every session of which declared `join-ask-1` (chat-delivery `JOIN_ASK_PUBLISH_LUA`, gateway `requiresCapability`) | floor >= the first stable carrying the ask frames (#2442), raised once BOTH stores serve it | NO (unreleased) | none - the gateway's twin hash `addressing:join-ask:*`, one field per session with a TTL | the twin hash + its script + the `requiresCapability` field + `JOIN_ASK_CAPABILITY` in three places; the presence check stays | waits for the floor: an older build routes only `channel.`/`workspace.` frames and would log each ask as reaching no handler, so until the floor the gate is what keeps that line from every older client ([mls-protocol](protocols/mls-protocol.md#who-admits-a-new-person-2026-10-23), [chat-gateway](services/chat-gateway.md#presence)) |
 | `PUT associations/:id/lydia-business-key` answers a typed `410 LYDIA_KEY_PASTE_RETIRED` and writes nothing; `GET` on the same path still answers `{ set }` (enrolment lot 1) | `minClientVersion` past the first build without the paste field, on BOTH stores | NO (unreleased) | none - the key column stays, written at `business/create` | 2 routes + `isLydiaBusinessKeySet` + 1 spec block | waits for the floor ([diary](#no-date-yet---the-lydia-key-paste-field-of-a-build-older-than-enrolment-lot-1)) |
 | A `closed` admission classification dropped at load (`drop_closed_admission_policies`, `mls-core` `state.rs`; review of #2817) | every device that ran a dev build of #2815 has loaded its state once on a later build - dev and alpha builds only, nothing shipped `closed` to a store | not a version question (dev/alphas) | `PersistedState.admission` in `mls.bin` | 1 function + 1 call + 1 test | remove 2027-02-01, or when the fix-forward re-arms the rule - whichever is first, since a re-armed rule writes `closed` again and must not have it dropped ([mls-protocol](protocols/mls-protocol.md)) |
@@ -377,55 +376,6 @@ That squatting is NOT new (every client could before), and it ends with the bran
 **Removal condition:** `minClientVersion` covers the release carrying the derived slug on BOTH stores,
 so no supported client still sends one. Then make the DTO refuse `slug` (or drop it) and delete the
 branch and its tests; the derived path is then the only one.
-
-### No date yet - a member client older than the admission rule still adds a new person automatically
-
-**Site:** `automaticAdmission` in `frontend/src/lib/utils/chat/actions.ts` (the rule), and the server's
-`GroupMember.awaitingAdmission` with its lift (`liftAwaitingAdmission` in `messaging.service.ts`).
-**What holds before the floor:** "a new person joins only through a member's decision" is a CLIENT
-rule - a member's device refuses to Add a user absent from its tree - so it holds only for members
-running a build that carries it. A member on an older build still Adds from the `pending` row the
-link wrote, with no human asked: that is the behaviour this rule replaces, and nothing on the server
-can tell it from a member's Add. The server honours it as one: that older client's commit declares
-the joiner in its `admits` (every client at the floor does, #1151, `v0.18.28`), and the accepted
-commit lifts the joiner's `awaitingAdmission`. **The Welcome-sent-apart lift is GONE since ADM-3
-(2026-10-25)**: it existed for a commit older than `admits`, which no client at the floor sends, and
-it was the door through which a Decline the gate had honoured was undone
-([mls-protocol](protocols/mls-protocol.md#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
-**When the floor is raised (user, 2026-10-24):** once BOTH stores serve the version carrying #2358 -
-never at the deploy, never on a date. Until then an older client gets the tolerated 409
-`awaiting_admission` path (the external-join base refused as a wait, not a 403, so it asks a member
-instead of retiring the conversation), and an older member's automatic Add is honoured through its
-commit's `admits`. That tolerance is the shim; its removal condition is that floor, and there is no
-calendar date.
-**The rule becomes TRUE when** `minClientVersion` reaches the first stable carrying #2358, both stores
-serving it - AND migration 038 is deployed with that build: the column is what holds a link joiner
-outside (the base, the commit gate, the joiner's own membership read), and the server reads it on
-every one of those paths, so the build does not run without it.
-**Removal:** nothing - this entry closes when the floor passes; the lift by the accepted commit is
-how every Add admits, and stays.
-**A one-off population, not a shim: link seats written BEFORE migration 038.** The column defaults
-every existing row to `false`, so a person who accepted a link before the deploy and had not entered
-yet holds an ORDINARY seat, not an ask. Nobody is asked in their name and a Decline answers
-`not-awaiting`. Neither the base nor the commit gate refuses them, so they may still enter by their
-own external commit exactly as before the rule, and the members then report it:
-`[UNINVITED_ENTRY] kind=new-person` in the delivery log, the count the rollout is read on. The
-population cannot grow (only `acceptGroupInvite` writes the flag from then on). It is LISTED
-read-only on production, once, right after the deploy - each seat with no trace of an admission:
-
-```sql
-SELECT m."groupId", m."userId" FROM dm_group_members m
-WHERE NOT m."awaitingAdmission"
-  AND NOT EXISTS (SELECT 1 FROM dm_device_group_memberships d
-                  WHERE d."groupId" = m."groupId" AND d."userId" = m."userId"
-                    AND (d.status = 'active' OR d."admittedAtEpoch" IS NOT NULL));
-```
-
-**How the rollout count subtracts it:** an `[UNINVITED_ENTRY] kind=new-person` line whose `group`
-and entrant user (the `entrant` up to its `:`) are a pair of that list is this population entering
-the way it always could - not a bypass of the rule - and is counted apart. Every other `new-person`
-line after the floor is the rule failing. The list stays in the private operations notes with the
-deploy date; only this query and the rule live here.
 
 ### No date yet - a notification TYPE the client does not know, from any new server type
 
@@ -1280,7 +1230,9 @@ deleted (reels.md point 5; `routes/posts/+page.ts` and `buildListOptions` never 
 only `listPosts({ kind })` caller in the client is `reels/allReels.ts`. Production's floor is past
 `1.2.9`, and dev's `1.2.7`-`1.2.8` builds predate the filter, so their only `kind=reel` was the
 viewer too. A `1.2.9-alpha.2`/`.3` device still filtering its "Tout" tab would get the viewer's set
-there: reels it may see, nothing more. Since 2026-11-06 the current client asks `singleMedia=true` AND `singlePhotos=true`; `singlePhotos` alone stays served as pictures only, so these installed clients never receive a video (`services/reels.md`).
+there: reels it may see, nothing more. Since 2026-11-11 the server reads `multiMedia` alone; a
+pre-floor client asking `singlePhotos` alone now gets the reels only, and none unlocks under the
+`1.6.6` floor.
 **Why the client still sends the old shape:** a stable ships both stores BEFORE production deploys,
 and `feed=reels` is refused `400` by an older server's `@IsIn` - a native build sending it would
 lose the viewer for those days. So the client switches (`listAllReels`: `feed: 'reels'`, and
@@ -1548,95 +1500,6 @@ mobile only - green build, green deploy, wrong behaviour.
 **Cost of keeping it:** two shapes for one concept, and a head typed optional at every use site
 though the server always sends one. No correctness cost: a missing head means an unbounded walk,
 which is what every client did before the bound existed.
-
-### No date yet - the CanaReels list asked with BOTH `singleMedia=true` and `singlePhotos=true` (2026-11-06)
-
-**Site:** `buildListPostsSearchParams` in
-[`frontend/src/lib/posts/api.ts`](../../frontend/src/lib/posts/api.ts) (the `singlePhotos` line next to
-`singleMedia`).
-**What it humours:** a social-service that does not carry the `singleMedia` switch yet (a production
-or dev estate deployed before this change) drops the unknown parameter and would answer the reels
-alone; the extra `singlePhotos=true` keeps the pictures coming.
-**Removal condition:** both estates' social-service carry the change that introduced `singleMedia`
-(a stable shipped and deployed on production, the pre-release on dev). Then the client sends
-`singleMedia` only and the line goes. **MET (2026-11-08):** #3056 is first in `v1.6.6`, production
-serves `1.6.7` and dev `1.6.8-alpha.1`; owed: the client pull request (not a floor question).
-**Cost of keeping it:** one redundant query parameter. The server reads `singleMedia` first, so
-nothing is read twice.
-
----
-
-### No date yet - `singlePhotos=true` answered as pictures only, after `singleMedia` exists (2026-11-06)
-
-**Site:** `singleMediaModeOf` and `SINGLE_PHOTO_POST_SQL` in
-[`apps/social-service/src/posts/full-screen-post-sql.ts`](../../apps/social-service/src/posts/full-screen-post-sql.ts),
-read by `PostsService` (`kindFilterSql`).
-**What it humours:** every installed client up to the last release that does not send `singleMedia`
-asks `GET /api/posts?kind=reel&singlePhotos=true`. Its `fullScreenPageOf` knows no video outside a
-reel and would draw one as a reel page and log an accusation, so the server must not hand it a feed
-video: the old switch keeps meaning "pictures only".
-**Removal condition:** `minClientVersion` has passed the first stable that sends `singleMedia`
-(`singlePhotos` then reaches only a client that no longer unlocks). Then `singlePhotos`, its DTO
-field, `SINGLE_PHOTO_POST_SQL` and the `'photos'` mode and cache-key suffix are deleted and
-`singleMedia` becomes the only switch. **Floor met (`1.6.6`, the first stable carrying #3056), owed:
-the collapse** - done with the two entries below in ONE pull request, since the three modes fold
-into one; the DTO fields may go with it (the whitelisting ValidationPipe strips an unknown key, it
-does not refuse it, and every floor client still sends them).
-**Cost of keeping it:** a second SQL clause and a cache-key variant; two tests pin the precedence.
-
----
-
-### No date yet - the CanaReels list asked with `multiMedia=true` AND both older switches (2026-11-06)
-
-**Site:** `buildListPostsSearchParams` in
-[`frontend/src/lib/posts/api.ts`](../../frontend/src/lib/posts/api.ts) (`multiMedia` sets
-`singleMedia` and `singlePhotos` too).
-**What it humours:** a social-service without the `multiMedia` switch (an estate deployed before
-this change) drops the unknown parameter; the two older switches keep the single pictures and
-videos coming, and the client simply draws no carousel it was not sent.
-**Removal condition:** both estates' social-service carry the change that introduced `multiMedia`
-(a stable deployed on production, the pre-release on dev). Then the client sends `multiMedia` alone
-and both lines go (this entry and the `singleMedia` + `singlePhotos` one above). **MET
-(2026-11-08)**, as above (#3062, `v1.6.6`); owed: the same client pull request.
-**Cost of keeping it:** two redundant query parameters. The server reads `multiMedia` first.
-
----
-
-### No date yet - `singleMedia=true` answered without carousels, after `multiMedia` exists (2026-11-06)
-
-**Site:** `singleMediaModeOf` and the `media` mode in
-[`apps/social-service/src/posts/full-screen-post-sql.ts`](../../apps/social-service/src/posts/full-screen-post-sql.ts).
-**What it humours:** every installed client up to the last release that does not send `multiMedia`
-asks `kind=reel&singleMedia=true`. Its `fullScreenPageOf` reads a post of several media as no page at
-all, draws it as a reel of its first media and logs an accusation, so the server must not hand it a
-carousel: `singleMedia` keeps meaning "one picture or one video".
-**Removal condition:** `minClientVersion` has passed the first stable that sends `multiMedia`. Then
-`singleMedia`, its DTO field, the `media` mode and its `+media` cache-key suffix go (with
-`singlePhotos`, per the entry above), and `multiMedia` becomes the only switch. **Floor met
-(`1.6.6`, the first stable carrying #3062), owed: the collapse above.**
-**Cost of keeping it:** one more mode and cache-key variant; `posts.service.reels.spec.ts` pins that
-`singleMedia` alone never answers a carousel.
-
----
-
-### No date yet - the CanaReels list keeps a post with a link OUT unless `withLinks=true` (2026-11-06)
-
-**Site:** `singleMediaModeOf`, the `carousel` mode and the `http(s)://` clause of `nothingElseSql` in
-[`apps/social-service/src/posts/full-screen-post-sql.ts`](../../apps/social-service/src/posts/full-screen-post-sql.ts).
-**What it humours:** every client built without the change that introduced `withLinks` - every
-release through `1.6.6-alpha.1`, and any later one cut before that change merged - reads a photo,
-video or carousel post with a link in its text as no page at all (`fullScreenPageOf`), draws it
-wrong and logs an accusation. None of them sends `withLinks`, so the server keeps the link out for
-them, in every mode. The first client that sends it is `1.6.6-alpha.2` at the earliest, the first
-stable `1.6.6` at the earliest.
-**Removal condition:** `minClientVersion` has passed the first stable that sends `withLinks`
-(read from the tags: #3074 is first in `v1.6.6`, so floor `1.6.6` MEETS it; owed: the collapse
-above). Then
-the link clause, the `kept-out` rule, the `carousel` mode and its `+carousel` cache-key suffix go,
-and `multiMedia` alone means `carousel-links` (with the `singleMedia` and `singlePhotos` entries
-above, `withLinks` and `multiMedia` collapse into one switch).
-**Cost of keeping it:** one more mode and cache-key variant; `posts.service.reels.spec.ts` pins
-that neither `multiMedia` nor `withLinks` alone lets a link in.
 
 ---
 
