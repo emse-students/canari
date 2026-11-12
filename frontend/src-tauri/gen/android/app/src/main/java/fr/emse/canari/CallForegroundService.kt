@@ -79,6 +79,7 @@ class CallForegroundService : Service() {
         private const val ACTION_STOP = "fr.emse.canari.call.STOP"
         private const val ACTION_HANG_UP = "fr.emse.canari.call.HANG_UP"
         private const val ACTION_TOGGLE_MUTE = "fr.emse.canari.call.TOGGLE_MUTE"
+        private const val ACTION_ASK_FOCUS = "fr.emse.canari.call.ASK_FOCUS"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_TEXT = "text"
         private const val EXTRA_CONNECTED_AT = "connectedAtMs"
@@ -126,6 +127,9 @@ class CallForegroundService : Service() {
                 }
                 CallServiceCommand.HangUp -> intent.setAction(ACTION_HANG_UP)
                 CallServiceCommand.ToggleMute -> intent.setAction(ACTION_TOGGLE_MUTE)
+                is CallServiceCommand.AskFocus ->
+                    intent.setAction(ACTION_ASK_FOCUS).putExtra(EXTRA_CALL_ID, command.callId)
+                        .putExtra(EXTRA_REASON, command.why)
             }
             return intent
         }
@@ -191,6 +195,8 @@ class CallForegroundService : Service() {
                 ACTION_STOP -> CallServiceCommand.Stop(id, intent.getStringExtra(EXTRA_REASON) ?: "unspecified")
                 ACTION_HANG_UP -> CallServiceCommand.HangUp
                 ACTION_TOGGLE_MUTE -> CallServiceCommand.ToggleMute
+                ACTION_ASK_FOCUS ->
+                    id?.let { CallServiceCommand.AskFocus(it, intent.getStringExtra(EXTRA_REASON) ?: "unspecified") }
                 else -> null
             }
         }
@@ -205,6 +211,7 @@ class CallForegroundService : Service() {
             is CallServiceCommand.Stop -> "stop(call=${short(command.callId)} ${command.reason})"
             CallServiceCommand.HangUp -> "hang-up"
             CallServiceCommand.ToggleMute -> "toggle-mute"
+            is CallServiceCommand.AskFocus -> "ask-focus(call=${short(command.callId)} ${command.why})"
         }
 
         /** Never the peer's id either: only whether there is one. */
@@ -271,6 +278,7 @@ class CallForegroundService : Service() {
                 if (CallBridge.hasPage()) CallBridge.emit("mute", effect.callId)
                 else Log.w(TAG, "mute pressed and no page is attached - the call is already gone with its page")
             }
+            is CallServiceEffect.AskFocus -> audio?.askFocus(effect.why)
             is CallServiceEffect.Ignore -> {
                 Log.i(TAG, "ignored: ${effect.reason}")
                 if (!running) stopSelf(startId)
@@ -320,7 +328,13 @@ class CallForegroundService : Service() {
             acquire(WAKE_LOCK_PERIOD_MS)
         }
         main.postDelayed(wakeLockPeriodOver, WAKE_LOCK_PERIOD_MS)
-        screenListener = { onScreen -> main.post { applyProximity("app on screen=$onScreen") } }
+        screenListener = { onScreen ->
+            main.post {
+                applyProximity("app on screen=$onScreen")
+                // A permanent loss is never followed by a GAIN: coming back on screen asks again.
+                if (onScreen) audio?.askFocus("the app is back on screen")
+            }
+        }
         audio = CallAudio(getSystemService(Context.AUDIO_SERVICE) as AudioManager, callId, ::onOutput)
             .also { it.open(spec.speaker, spec.speakerChosen) }
         loadAvatar(spec.peerUserId)
@@ -627,18 +641,41 @@ private class CallAudio(
                 "LOSS_TRANSIENT_CAN_DUCK" to FocusChange.LOSS_TRANSIENT_CAN_DUCK
             else -> "change $change" to FocusChange.OTHER
         }
-        when (hold.on(kind)) {
+        apply(hold.on(kind), what)
+    }
+
+    /** Tells the page what [step] asks of the call; [what] names the change or the answer. */
+    private fun apply(step: FocusStep, what: String) {
+        when (step) {
             FocusStep.HOLD -> {
                 Log.w(TAG, "audio focus $what for call=$call - another app's sound takes over; the microphone is held")
                 CallBridge.emit("focus", callId, reason = what, code = "lost")
             }
             FocusStep.RELEASE -> {
-                Log.i(TAG, "audio focus GAIN for call=$call - the call has it back; the member's mute state returns")
+                Log.i(TAG, "audio focus back ($what) for call=$call - the member's mute state returns")
                 CallBridge.emit("focus", callId, reason = what, code = "gained")
+            }
+            FocusStep.STILL_HELD -> {
+                Log.i(TAG, "audio focus asked again ($what) for call=$call - refused, the microphone stays held")
+                CallBridge.emit("focus", callId, reason = what, code = "refused")
             }
             FocusStep.NONE ->
                 Log.i(TAG, "audio focus $what for call=$call - no change for the call (held=${hold.held})")
         }
+    }
+
+    /**
+     * ASKS FOR THE FOCUS AGAIN while the call is held - the way back from a permanent `LOSS`, which
+     * no GAIN ever follows ([CallFocusHold]). A call not held asks nothing (its focus is not in doubt,
+     * and a request would interrupt nothing new). Main looper, like every other method here.
+     */
+    fun askFocus(why: String) {
+        if (!hold.wantsAsk) {
+            Log.i(TAG, "focus not asked again ($why) for call=$call - the call is not held")
+            return
+        }
+        val granted = manager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        apply(hold.onAsk(granted), if (granted) "granted: $why" else "refused: $why")
     }
 
     /**

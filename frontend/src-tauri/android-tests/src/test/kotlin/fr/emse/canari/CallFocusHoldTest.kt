@@ -19,11 +19,40 @@ class CallFocusHoldTest {
         assertFalse(hold.held)
     }
 
+    /**
+     * A PERMANENT LOSS IS NEVER FOLLOWED BY A GAIN (a video started in another app): no GAIN ever
+     * comes, so the way back is the member's tap or the return on screen, which ASK again.
+     */
     @Test
-    fun aPermanentLossHoldsTooAndNeverEndsTheCall() {
+    fun aPermanentLossWithNoGainIsReleasedOnlyByAGrantedAsk() {
         val hold = CallFocusHold()
         assertEquals(FocusStep.HOLD, hold.on(FocusChange.LOSS))
-        assertEquals(FocusStep.RELEASE, hold.on(FocusChange.GAIN))
+        assertTrue(hold.wantsAsk)
+        // The member taps while another app still holds the focus: refused, still held, said.
+        assertEquals(FocusStep.STILL_HELD, hold.onAsk(granted = false))
+        assertTrue(hold.held)
+        // The member taps again once that app let go: granted, released.
+        assertEquals(FocusStep.RELEASE, hold.onAsk(granted = true))
+        assertFalse(hold.held)
+        assertFalse(hold.wantsAsk)
+    }
+
+    @Test
+    fun anAskAnsweredWhenNothingIsHeldChangesNothing() {
+        val hold = CallFocusHold()
+        assertEquals(FocusStep.NONE, hold.onAsk(granted = true))
+        assertEquals(FocusStep.NONE, hold.onAsk(granted = false))
+        hold.on(FocusChange.LOSS_TRANSIENT)
+        hold.on(FocusChange.GAIN)
+        assertEquals(FocusStep.NONE, hold.onAsk(granted = true))
+    }
+
+    @Test
+    fun aGrantedAskThenALateGainSaysNothingTwice() {
+        val hold = CallFocusHold()
+        hold.on(FocusChange.LOSS_TRANSIENT)
+        assertEquals(FocusStep.RELEASE, hold.onAsk(granted = true))
+        assertEquals(FocusStep.NONE, hold.on(FocusChange.GAIN))
     }
 
     @Test

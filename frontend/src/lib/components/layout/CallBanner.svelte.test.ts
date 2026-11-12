@@ -53,6 +53,7 @@ function fakeService() {
     reconnecting: writable(false),
     e2eProven: writable(false),
     localMicSuspended: writable(false),
+    audioFocusHeld: writable(false),
     peerMicSuspended: writable(false),
     videoSendReduced: writable(false),
     noiseSuppression: writable<NoiseSuppressionView>(initialNoiseSuppressionView()),

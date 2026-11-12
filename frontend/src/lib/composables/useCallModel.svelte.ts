@@ -30,6 +30,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
   let isReconnecting = $state(false);
   let e2eProven = $state(false);
   let localMicSuspended = $state(false);
+  let audioFocusHeld = $state(false);
   let peerMicSuspended = $state(false);
   let videoSendReduced = $state(false);
   let noiseSuppression = $state<NoiseSuppressionView>(initialNoiseSuppressionView());
@@ -54,6 +55,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
       service.reconnecting.subscribe((v) => (isReconnecting = v)),
       service.e2eProven.subscribe((v) => (e2eProven = v)),
       service.localMicSuspended.subscribe((v) => (localMicSuspended = v)),
+      service.audioFocusHeld.subscribe((v) => (audioFocusHeld = v)),
       service.peerMicSuspended.subscribe((v) => (peerMicSuspended = v)),
       service.videoSendReduced.subscribe((v) => (videoSendReduced = v)),
       service.noiseSuppression.subscribe((v) => (noiseSuppression = v)),
@@ -141,6 +143,10 @@ export function useCallModel(getService: () => CallService | null | undefined) {
     /** THIS device's OS holds the microphone (`CallService.localMicSuspended`). */
     get localMicSuspended() {
       return localMicSuspended;
+    },
+    /** Android's audio focus is held for a loss (`CallService.audioFocusHeld`): the microphone is silent. */
+    get audioFocusHeld() {
+      return audioFocusHeld;
     },
     /** The other party's OS holds ITS microphone, as it told us (`CallService.peerMicSuspended`). */
     get peerMicSuspended() {

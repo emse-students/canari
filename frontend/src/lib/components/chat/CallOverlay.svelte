@@ -349,13 +349,20 @@
   const androidCall = isAndroidTauriRuntime()
     ? openAndroidCallSession(window, {
         onHangUp: () => callService.endCall(),
-        onMute: () => callService.toggleMute(),
-        onFocus: (held) => callService.onAudioFocus(held),
+        onMute: () => callService.notificationMuteTap(),
+        onFocus: (state) => callService.onAudioFocus(state),
         onRoute: (available) => (androidRouteAvailable = available),
         onOutput: (speaker) => (routedSpeaker = speaker),
       })
     : null;
   $effect(() => () => androidCall?.dispose());
+  // The way back from a focus loss no GAIN follows: the call asks the focus again through this
+  // session (a mute or unmute tap while held, D056).
+  $effect(() => {
+    if (!androidCall) return;
+    callService.setAudioFocusAsker((why) => androidCall.askFocus(why));
+    return () => callService.setAudioFocusAsker(null);
+  });
   $effect(() => {
     if (!androidCall) return;
     androidCall.publish(
@@ -366,7 +373,9 @@
         speaker: isSpeakerOn,
         // A default yields to a connected headset natively; the user's tap does not.
         speakerChosen: speakerChoice !== null,
-        muted: call.isMuted,
+        // Held for a focus loss, the microphone is silent whatever the member's own mute: the
+        // notification says so, and its action then asks the focus again (`notificationMuteTap`).
+        muted: call.isMuted || call.audioFocusHeld,
       }),
       `kind=${call.kind}`
     );

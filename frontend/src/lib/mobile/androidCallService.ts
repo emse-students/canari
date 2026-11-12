@@ -101,6 +101,11 @@ export interface AndroidCallBridge {
   dndRegrantAnswered(how: string): void;
   /** Opens the calls channel's system settings. */
   openCallChannelSettings(): void;
+  /**
+   * Asks the audio focus again for `callId` while it is held for a focus loss (D056); the answer
+   * comes back as a `focus` event (`gained` or `refused`).
+   */
+  askFocus(callId: string, why: string): void;
 }
 
 /** What `ringStart` carries: the call, and what the native ring posts off screen. */
@@ -152,6 +157,16 @@ export function askCallChannelDndIfOwed(
  */
 export type NativeCallRefusal = 'off-screen' | 'refused';
 
+/** What a native `focus` event says of the call's audio focus (`CallFocusHold.kt`). */
+export type NativeFocusState = 'lost' | 'gained' | 'refused';
+
+/**
+ * What a session hands the call about the focus: the native states, and `released` when the service
+ * is gone (stopped, hung up, the call surface closed) while a hold it had forwarded was still on - no
+ * native event can end that hold any more, so the session ends it.
+ */
+export type CallFocusState = NativeFocusState | 'released';
+
 /**
  * What the native side reports, `detail` of {@link NATIVE_CALL_EVENT}. Every event names the call it
  * is about (the id `start` carried), so one of an earlier call that lands late is dropped by a fact.
@@ -166,11 +181,11 @@ export type NativeCallEvent = { callId: string } & (
   /** The output the service APPLIED: the loudspeaker or not, null when the platform routes. */
   | { kind: 'output'; speaker: boolean | null }
   /**
-   * The call's audio focus (D056, decided 2026-11-12): `held` true when another app's sound took it
-   * (a cellular call ringing in) and the microphone must be silenced, false when it came back.
-   * `reason` is the platform's name for the change (`LOSS_TRANSIENT`, `GAIN`).
+   * The call's audio focus (D056, decided 2026-11-12): `lost` when another app's sound took it (the
+   * microphone is held), `gained` when it came back (by the platform, or an ask granted), `refused`
+   * when an ask was refused (still held). `reason` is the platform's name for the change.
    */
-  | { kind: 'focus'; held: boolean; reason: string }
+  | { kind: 'focus'; state: NativeFocusState; reason: string }
 );
 
 /**
@@ -207,9 +222,8 @@ export function parseNativeCallEvent(detail: unknown): NativeCallEvent | null {
     case 'stopped':
       return { callId, kind: 'stopped', reason };
     case 'focus':
-      if (d.code === 'lost') return { callId, kind: 'focus', held: true, reason };
-      if (d.code === 'gained') return { callId, kind: 'focus', held: false, reason };
-      return null;
+      if (d.code !== 'lost' && d.code !== 'gained' && d.code !== 'refused') return null;
+      return { callId, kind: 'focus', state: d.code, reason };
     default:
       return null;
   }
@@ -280,6 +294,11 @@ export interface AndroidCallSession {
   publish(spec: OngoingCallSpec | null, why: string): void;
   /** The call surface is going: stop the service if it was started, stop listening. */
   dispose(): void;
+  /**
+   * Asks the audio focus again (the member tapped mute or unmute while held, D056). Nothing is asked
+   * of a service that is not running for this call.
+   */
+  askFocus(why: string): void;
 }
 
 /** What the notification and the service hand back to the call ({@link openAndroidCallSession}). */
@@ -304,10 +323,10 @@ export interface AndroidCallHandlers {
    */
   onOutput?: (speaker: boolean | null) => void;
   /**
-   * The call lost (true) or got back (false) the audio focus: the page holds the microphone through
+   * The call's audio focus ({@link CallFocusState}): the page holds the microphone through
    * the loss and gives the member's own mute state back after it. Never a hang-up (D056).
    */
-  onFocus?: (held: boolean) => void;
+  onFocus?: (state: CallFocusState) => void;
 }
 
 /** Opens the session for one call. `callId` names this call on the bridge; drawn per session. */
@@ -328,7 +347,7 @@ export function openAndroidCallSession(
     appendLog(
       '[Call] ERROR this Android build has no ongoing-call service (no canariCall bridge) - the call stops when the app leaves the screen'
     );
-    return { publish: () => {}, dispose: () => {} };
+    return { publish: () => {}, dispose: () => {}, askFocus: () => {} };
   }
   let routeAvailable = true;
   const setRoute = (available: boolean) => {
@@ -346,6 +365,15 @@ export function openAndroidCallSession(
   /** The description last sent, or to send if a `foreground` comes. */
   let current: OngoingCallSpec | null = null;
   let lastSent: string | null = null;
+  /** A focus loss was handed to the call and no `gained` has followed: the hold this session owes. */
+  let focusHeld = false;
+  /** The service is gone for this call: a hold it handed over can never be released by it now. */
+  const releaseFocusHold = (why: string) => {
+    if (!focusHeld) return;
+    focusHeld = false;
+    appendLog(`[Call] audio focus hold released - ${why}`);
+    onFocus('released');
+  };
 
   const send = (spec: OngoingCallSpec, why: string) => {
     const json = JSON.stringify(spec);
@@ -420,6 +448,7 @@ export function openAndroidCallSession(
           started = false;
           over = true;
           setRoute(false);
+          releaseFocusHold('the service stopped');
         }
         return;
       case 'hangup':
@@ -427,6 +456,7 @@ export function openAndroidCallSession(
         started = false;
         over = true;
         appendLog('[Call] hang-up from the ongoing-call notification');
+        releaseFocusHold('hung up from the notification');
         onHangUp();
         return;
       case 'output':
@@ -447,12 +477,20 @@ export function openAndroidCallSession(
         onMute();
         return;
       case 'focus':
+        if (!started) {
+          // A late event of a service already gone: no hold of it may reach the call now.
+          appendLog(
+            `[Call] audio focus ${event.state} (${event.reason}) with no service started - ignored`
+          );
+          return;
+        }
+        // The call writes the one WARN line of a loss; this says only what crossed the bridge.
         appendLog(
-          event.held
-            ? `[Call] WARN audio focus lost (${event.reason}) - the microphone is held until it comes back`
-            : `[Call] audio focus back (${event.reason}) - the member's own microphone state returns`
+          `[Call] audio focus ${event.state} (${event.reason}) from the ongoing-call service`
         );
-        onFocus(event.held);
+        if (event.state === 'lost') focusHeld = true;
+        if (event.state === 'gained') focusHeld = false;
+        onFocus(event.state);
         return;
     }
   };
@@ -480,7 +518,16 @@ export function openAndroidCallSession(
     },
     dispose() {
       stop('the call surface closed');
+      releaseFocusHold('the call surface closed');
       host.removeEventListener(NATIVE_CALL_EVENT, onEvent);
+    },
+    askFocus(why) {
+      if (!started || over) {
+        appendLog(`[Call] audio focus not asked again (${why}) - no service runs for this call`);
+        return;
+      }
+      appendLog(`[Call] asking the audio focus again (${why})`);
+      bridge.askFocus(callId, why);
     },
   };
 }

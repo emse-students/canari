@@ -633,6 +633,7 @@
   "call_mic_suspended_peer": "Le téléphone de {name} a coupé son micro : vous ne l'entendez pas",
   "call_mic_suspended_peer_unnamed": "Le téléphone de votre correspondant a coupé son micro : vous ne l'entendez pas",
   "call_mic_was_suspended": "Votre téléphone a coupé votre micro pendant {seconds} s : votre correspondant ne vous a pas entendu",
+  "call_focus_still_taken": "Une autre application garde le son : votre micro reste coupé. Réessayez quand elle s'arrête.",
   "call_tap_to_hear": "Toucher pour entendre",
   "call_mute_short_label": "Muet",
   "call_camera_short_label": "Caméra",

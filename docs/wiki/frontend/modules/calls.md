@@ -3297,11 +3297,27 @@ playing. What changed:
   (`CallService.onAudioFocus`) disables every capture track whatever the member's own mute, shows
   "Votre téléphone a coupé votre micro" and tells the peer `MicSuspended` - the same state, strings
   and frame the OS's own microphone hold uses, with the two sources counted apart so neither clears
-  the other. The `GAIN` after it emits `focus`/`gained`: the tracks follow the member's OWN mute
-  again (muted before stays muted; a mute tap during the loss is what comes back), the toast says
-  how long they could not be heard. `LOSS_TRANSIENT_CAN_DUCK` changes nothing. Rejected: hanging
-  up on `LOSS` (only the member ends a call) and muting both ways (the member may want to hear the
-  peer say "I'll wait"). Every change is still logged (`audio focus ... - the microphone is held`).
+  the other. The `GAIN` after a transient loss emits `focus`/`gained`: the tracks follow the
+  member's OWN mute again (muted before stays muted; a mute tap during the loss is what comes
+  back), the toast says how long they could not be heard. `LOSS_TRANSIENT_CAN_DUCK` changes nothing.
+  Rejected: hanging up on `LOSS` (only the member ends a call) and muting both ways (the member may
+  want to hear the peer say "I'll wait"). Every change is logged natively; the page writes ONE WARN
+  per loss (`CallService`), the bridge line is plain.
+- **A permanent `LOSS` is never followed by a GAIN** (Android's contract; review of #3395): a video
+  started in another app would hold the microphone for the rest of the call. The way back is
+  ASKING: a mute or unmute tap while held (`CallService.toggleMute` -> the session's `askFocus` ->
+  `CallBridge.askFocus` -> `CallServiceCommand.AskFocus` -> `CallAudio.askFocus`), and the app
+  coming back on screen (the service's screen listener). A grant is `focus`/`gained`; a refusal (a
+  phone call still holds the focus) is `focus`/`refused`, the hold stays and the member reads
+  "Une autre application garde le son". A call not held asks nothing.
+- **The ongoing notification shows the call MUTED while held** (`muted = isMuted || audioFocusHeld`),
+  and its action then asks the focus again without touching the member's own mute
+  (`CallService.notificationMuteTap`); with no hold it is the member's toggle.
+- **A hold never outlives its service or its call.** A session whose service stops (`stopped`), hangs
+  up from the notification or closes while a hold it forwarded is on hands the call `released`,
+  which ends the hold like a gain; a `focus` event reaching a session whose service is not started
+  is dropped, `onAudioFocus` ignores any state with no live call (no capture, or the ended summary),
+  and a new capture starts unheld.
 - The mute action draws a microphone, struck while muted.
 
 **The native incoming ring (item 4 of the study) was NOT in this change**: it shipped with Canari's
