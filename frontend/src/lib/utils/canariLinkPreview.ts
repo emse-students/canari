@@ -4,10 +4,10 @@ import { getPost, isReel } from '$lib/posts/api';
 import { getGroupInvitePreview } from '$lib/mls/groupInvites';
 import { channelService } from '$lib/services/ChannelService';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
+import { formatAmount } from '$lib/forms/fillAnswers';
 import { m } from '$lib/paraglide/messages';
 import {
   CANARI_BADGE_LABEL,
-  formatPriceCents,
   parseCanariLinkTarget,
   postAuthorDisplayName,
   postPreviewTitle,
@@ -61,7 +61,7 @@ async function fetchFormPreview(formId: string): Promise<CanariLinkPreview> {
   const subtitle = form.description?.trim()
     ? truncateForMeta(markdownToPlainText(form.description), 90)
     : form.basePrice > 0
-      ? formatPriceCents(form.basePrice, form.currency)
+      ? formatAmount(form.basePrice, form.currency)
       : undefined;
 
   return {

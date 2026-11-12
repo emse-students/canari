@@ -2272,8 +2272,10 @@ because one is not enough:
 
 - **`assertSafeExternalUrl`** rejects non-http(s) schemes, embedded credentials, `localhost`, and
   any host that DNS-resolves to a non-public address. Redirects are handled manually
-  (`redirect: 'manual'`, 3 max) and each hop is re-validated - an allowed host that answers `302
-  http://127.0.0.1/` is the obvious bypass otherwise.
+  (`redirect: 'manual'`) and each hop is re-validated before anything is sent to it - an allowed
+  host that answers `302 http://127.0.0.1/` is the obvious bypass otherwise. ONE walk does it for
+  every preview fetch, `fetchThroughCheckedHops` in the controller: 3 redirects for a page, 5 for
+  an image.
 - **`ssrfSafeDispatcher`** re-checks at connect time through undici's `lookup`, so the IP the
   socket reaches is the IP that was validated. This closes the DNS-rebinding window: the two
   resolutions are separate events and an attacker-controlled zone can answer differently.
@@ -2402,9 +2404,10 @@ reader's IP, their user agent, and the moment they scrolled to the message. Encr
 then fetching its illustration in clear gives a good part of that back.
 
 - Same SSRF guard as the page fetch - the URL is caller-supplied, so it is exactly as
-  attacker-controlled as the pasted link. Redirects are *followed* here rather than walked by hand
-  (a CDN answers image requests with two or three), which is safe because `ssrfSafeDispatcher`
-  re-validates at every connect.
+  attacker-controlled as the pasted link - and the same redirect walk, each hop judged by
+  `assertSafeExternalUrl` before it is fetched. The allowance is 5 rather than 3 because a CDN
+  answers an image request with two or three redirects; a hop that is refused, or a chain that is
+  longer, is a 502 with no body.
 - `image/*` only, **SVG excluded**: an SVG is a document that can carry script, and it would be
   served from our own origin. `X-Content-Type-Options: nosniff` on the way out.
 - 3 MB ceiling, checked on `content-length` *and* on the received body, because the header can be

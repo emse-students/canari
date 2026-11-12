@@ -1,10 +1,10 @@
 <script lang="ts">
+  import { intlLocale } from '$lib/utils/intlLocale';
   import type { Snippet } from 'svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { formatCotisationTag, resolveIssuingAssociation } from '$lib/associations/cotisationTag';
   import type { Association, UserTag } from '$lib/associations/api';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     /** The cotisation tag to render. */
@@ -40,9 +40,7 @@
   const duration = $derived(
     tag.expiresAt
       ? m.cotisation_tag_expires_at({
-          date: new Date(tag.expiresAt).toLocaleDateString(
-            getLocale() === 'en' ? 'en-US' : 'fr-FR'
-          ),
+          date: new Date(tag.expiresAt).toLocaleDateString(intlLocale()),
         })
       : (fmt.period ?? m.cotisation_tag_permanent())
   );

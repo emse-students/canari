@@ -1,5 +1,5 @@
+import { intlLocale } from '$lib/utils/intlLocale';
 import { m } from '$lib/paraglide/messages';
-import { getLocale } from '$lib/paraglide/runtime';
 import type { PickerOption } from '$lib/components/ui/picker';
 
 /** "3 min", "2 h", "4 j" / "4 d", or a short date for older entries. */
@@ -12,7 +12,7 @@ export function timeAgo(dateStr: string): string {
   if (h < 24) return `${h} h`;
   const d = Math.floor(h / 24);
   if (d < 7) return m.time_short_days({ count: d });
-  return new Date(dateStr).toLocaleDateString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+  return new Date(dateStr).toLocaleDateString(intlLocale(), {
     day: 'numeric',
     month: 'short',
   });
@@ -20,7 +20,7 @@ export function timeAgo(dateStr: string): string {
 
 /** Full date + time, locale-aware: "12 mai 2026 à 14:30" / "May 12, 2026, 2:30 PM". */
 export function exactDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
+  return new Date(dateStr).toLocaleString(intlLocale(), {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
@@ -34,7 +34,7 @@ export function exactDate(dateStr: string): string {
  * One implementation for the composer and the editor, which each carried a copy.
  */
 export function linkableEventLabel(ev: { startsAt: string; title: string }): string {
-  const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
+  const locale = intlLocale();
   const d = new Date(ev.startsAt);
   const date = d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
   const time = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
