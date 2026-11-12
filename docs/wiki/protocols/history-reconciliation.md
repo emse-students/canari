@@ -1835,9 +1835,14 @@ groups, one `[DM_MERGE]` line per pair per session.
 
 - Two clients running this rule never delete the lowest id, so they can no longer lose both.
 - A group this device holds always keeps a row while the server routes it: a device either holds
-  back, or deletes on the server first and keeps the row when that delete fails (a frame for a
-  held group with no row is refused `absent-conversation`, and discovery never re-creates a second
-  DM of a loaded peer). The next boot retries.
+  back, or deletes on the server first and keeps the row when that delete is refused or gets no
+  answer (a frame for a held group with no row is refused `absent-conversation`, and discovery
+  never re-creates a second DM of a loaded peer). The next boot retries.
+- Every delete after the first is answered the 403 `NOT_A_MEMBER` (the tombstone purges every
+  seat): the peer's, the user's other device's, or this device's own after it was killed between
+  the server delete and the local one. `classifyExitFailure` reads it `already-gone`, and the fold
+  deletes the row locally - the server no longer routes that group. Only `refused` and
+  `unreachable` keep it.
 - A Welcome into the higher id leaves a tie (the joined row carries the old row's `updatedAt`), so
   the next boot folds it back into the lower one; a message in the higher group after the Welcome
   makes it the more recent, and the device holds instead.

@@ -31,7 +31,7 @@ import { countingReadPoint, derivedUnreadCount } from './readState';
 import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { isUuidLike } from '$lib/utils/uuidShape';
-import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
+import { classifyExitFailure, logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 
 /** Why a restore stopped asking the server part-way: the connectivity store saw the link drop. */
 class LinkDroppedMidPassError extends Error {
@@ -754,10 +754,12 @@ const reportedHeldPairs = new Set<string>();
  *
  * A fold moves each other group's rows into the survivor ({@link moveDirectConversationRows}), then
  * deletes that group ON THE SERVER, then its row locally. In that order so that a group whose
- * server delete failed keeps its row: the server still routes its frames here, and a frame for a
- * held group with no row is refused `absent-conversation` until something creates one - which
- * discovery never does for a second DM of a loaded peer. The next boot retries the fold, which
- * moves nothing more and deletes again.
+ * server delete was refused or got no answer keeps its row: the server still routes its frames
+ * here, and a frame for a held group with no row is refused `absent-conversation` until something
+ * creates one - which discovery never does for a second DM of a loaded peer. The next boot retries
+ * the fold, which moves nothing more and deletes again. A delete the server answers `already-gone`
+ * (the 403 `NOT_A_MEMBER` every delete after the first receives, since the tombstone purges every
+ * seat) routes nothing any more, so the row goes locally too.
  *
  * Returns the deduplicated, normalised list of `ConversationMeta` objects.
  */
@@ -820,18 +822,27 @@ export async function mergeDirectConversationDuplicates(
             `[DM_MERGE] ${left} row(s) of ${loser.id.slice(0, 8)}... do not open with this device's key - deleted with the duplicate, as they could never be shown`
           );
         }
+        let serverAnswer = 'deleted on the server';
         try {
           await mlsService.deleteGroupOnServer(loser.id);
         } catch (e) {
-          logBestEffortGroupDeleteFailure(loser.id, e, 'merged duplicate 1:1');
-          log(
-            `[DM_MERGE] ${pair} ${moved.length} row(s) moved, the row KEPT: the server delete failed and its frames still need a row - the next boot retries`
-          );
-          continue;
+          // THE SERVER'S 403 `NOT_A_MEMBER` IS AN ANSWER, AND IT IS THE END STATE: the delete's
+          // tombstone purges every seat, so every delete after the first - the peer's, this user's
+          // other device, this device killed between the two deletes - is answered it. Keeping the
+          // row for it would keep a dead group's row for ever and retry on every boot. Only a
+          // refusal or no answer at all keeps the row ({@link classifyExitFailure}).
+          if (classifyExitFailure(e) !== 'already-gone') {
+            logBestEffortGroupDeleteFailure(loser.id, e, 'merged duplicate 1:1');
+            log(
+              `[DM_MERGE] ${pair} ${moved.length} row(s) moved, the row KEPT: the server delete failed and its frames still need a row - the next boot retries`
+            );
+            continue;
+          }
+          serverAnswer = 'the server had already deleted it';
         }
         await storage.deleteConversation(loser.id);
         mergedAway.add(loser.id);
-        log(`[DM_MERGE] ${pair} merged, ${moved.length} row(s) moved, deleted on the server`);
+        log(`[DM_MERGE] ${pair} merged, ${moved.length} row(s) moved, ${serverAnswer}`);
       } catch (error) {
         log(`[DM_MERGE] ${pair} merge error - the next boot retries it: ${String(error)}`);
       }

@@ -15,6 +15,8 @@
  */
 import type { ConversationMeta, IStorage, StoredMessage } from '$lib/db/types';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { GroupExitRefusedError } from '$lib/mls-client/mlsDeliveryApi';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import { mergeDirectConversationDuplicates } from './conversations';
 
 const ALICE = 'a11ce000-0000-4000-8000-000000000000';
@@ -33,13 +35,32 @@ interface Device {
   held: string[];
 }
 
-/** The server: what it has deleted, and the deletes it refuses (a transport failure). */
+/**
+ * The server: what it has deleted, and the deletes that fail before reaching it (groupId -> what
+ * the call throws: no answer, or a refusal).
+ */
 interface Server {
   deleted: string[];
-  failing: Set<string>;
+  failing: Map<string, () => Error>;
 }
 
-const newServer = (): Server => ({ deleted: [], failing: new Set() });
+const newServer = (): Server => ({ deleted: [], failing: new Map() });
+
+/**
+ * What the delivery service answers a delete of a group it has ALREADY deleted: the tombstone purged
+ * every seat, so the caller is no member - the 403 `NOT_A_MEMBER` in its own envelope, typed the way
+ * `MlsDeliveryApi.deleteGroupOnServer` types it (`groupExitRefusal`).
+ */
+const notAMember = (id: string) =>
+  new GroupExitRefusedError(id, 403, 'delete', 'gateway', 'NOT_A_MEMBER');
+
+/** No answer at all - the type `isTransportFailure` reads (`unreachable`). */
+const noAnswer = () => new TransportFailureError('error sending request');
+/** An edge's 403 page, which says nothing about the group (`refused`). */
+const edgeRefusal = (id: string) => () => new GroupExitRefusedError(id, 403, 'delete', 'edge');
+/** The delivery service up and unhappy (`refused`). */
+const serverError = (id: string) => () =>
+  new GroupExitRefusedError(id, 500, 'delete', 'gateway', 'INTERNAL');
 
 function storageOf(device: Device): IStorage {
   const messages = new Map<string, StoredMessage>();
@@ -100,7 +121,9 @@ async function boot(device: Device, server: Server): Promise<string[]> {
     (l) => lines.push(l),
     {
       deleteGroupOnServer: async (id: string) => {
-        if (server.failing.has(id)) throw new Error('transport failure');
+        const failure = server.failing.get(id);
+        if (failure) throw failure();
+        if (server.deleted.includes(id)) throw notAMember(id);
         server.deleted.push(id);
       },
     } as unknown as IMlsService
@@ -198,12 +221,62 @@ describe('a crossed DM pair - the boot merge never loses both groups', () => {
     expect(rowIds(bob)).toEqual([HIGH, LOW].sort());
 
     // A message in LOW makes it the more recent on both sides; the next boot folds HIGH into it.
+    // Alice deletes HIGH; Bob's delete is answered the 403 `NOT_A_MEMBER` and still ends his row.
     for (const d of [alice, bob]) d.rows = d.rows.map(([g, t]) => [g, g === LOW ? 300 : t]);
     await boot(alice, server);
-    await boot(bob, server);
+    const bobLog = await boot(bob, server);
     expect(rowIds(alice)).toEqual([LOW]);
     expect(rowIds(bob)).toEqual([LOW]);
-    expect(server.deleted).not.toContain(LOW);
+    expect(bob.messages[LOW]).toEqual(['m-high', 'm-low']);
+    expect(server.deleted).toEqual([HIGH]);
+    expect(bobLog.some((l) => l.includes('the server had already deleted it'))).toBe(true);
+  });
+
+  it('the second device to fold is answered NOT_A_MEMBER and still ends with LOW alone', async () => {
+    const server = newServer();
+    // The same user on two devices, both of whose recencies keep LOW.
+    const mk = (): Device => ({
+      userId: ALICE,
+      peerId: BOB,
+      rows: [
+        [LOW, 300],
+        [HIGH, 200],
+      ],
+      messages: { [LOW]: ['m-low'], [HIGH]: ['m-high'] },
+      ...structuredClone(both),
+    });
+    const phone = mk();
+    const laptop = mk();
+    await boot(phone, server);
+    await boot(laptop, server);
+    expect(server.deleted).toEqual([HIGH]);
+    for (const d of [phone, laptop]) {
+      expect(rowIds(d)).toEqual([LOW]);
+      expect(d.messages).toEqual({ [LOW]: ['m-high', 'm-low'] });
+      expectEveryRoutedGroupHasARow(d, server);
+    }
+    // And the next boot has nothing left to retry.
+    expect(await boot(laptop, server)).toEqual([]);
+  });
+
+  it('a device killed between the server delete and the local one: the next boot finishes it', async () => {
+    const server = newServer();
+    // The first boot moved HIGH's rows and deleted HIGH on the server, then the app died.
+    server.deleted.push(HIGH);
+    const alice: Device = {
+      userId: ALICE,
+      peerId: BOB,
+      rows: [
+        [LOW, 300],
+        [HIGH, 100],
+      ],
+      messages: { [LOW]: ['m-high', 'm-low'] },
+      ...structuredClone(both),
+    };
+    await boot(alice, server);
+    expect(rowIds(alice)).toEqual([LOW]);
+    expect(alice.messages).toEqual({ [LOW]: ['m-high', 'm-low'] });
+    expect(server.deleted).toEqual([HIGH]);
   });
 
   it('a tie on updatedAt folds into LOW whatever the storage order', async () => {
@@ -267,31 +340,38 @@ describe('a crossed DM pair - the boot merge never loses both groups', () => {
     expectEveryRoutedGroupHasARow(alice, server);
   });
 
-  it('a server delete that fails keeps the row its frames still need; the next boot finishes', async () => {
-    const server = newServer();
-    server.failing.add(HIGH);
-    const alice: Device = {
-      userId: ALICE,
-      peerId: BOB,
-      rows: [
-        [LOW, 300],
-        [HIGH, 100],
-      ],
-      messages: { [LOW]: ['m-low'], [HIGH]: ['m-high'] },
-      ...structuredClone(both),
-    };
-    await boot(alice, server);
-    // The rows moved, the row stayed: the server still routes HIGH's frames to this device.
-    expect(alice.messages[LOW]).toEqual(['m-high', 'm-low']);
-    expect(rowIds(alice)).toEqual([HIGH, LOW].sort());
-    expectEveryRoutedGroupHasARow(alice, server);
+  it.each([
+    ['no answer (unreachable)', () => noAnswer],
+    ["an edge's 403 (refused)", () => edgeRefusal(HIGH)],
+    ["the delivery service's 500 (refused)", () => serverError(HIGH)],
+  ])(
+    'a server delete that gets %s keeps the row its frames still need; the next boot finishes',
+    async (_label, failure) => {
+      const server = newServer();
+      server.failing.set(HIGH, failure());
+      const alice: Device = {
+        userId: ALICE,
+        peerId: BOB,
+        rows: [
+          [LOW, 300],
+          [HIGH, 100],
+        ],
+        messages: { [LOW]: ['m-low'], [HIGH]: ['m-high'] },
+        ...structuredClone(both),
+      };
+      await boot(alice, server);
+      // The rows moved, the row stayed: the server still routes HIGH's frames to this device.
+      expect(alice.messages[LOW]).toEqual(['m-high', 'm-low']);
+      expect(rowIds(alice)).toEqual([HIGH, LOW].sort());
+      expectEveryRoutedGroupHasARow(alice, server);
 
-    server.failing.clear();
-    await boot(alice, server);
-    expect(rowIds(alice)).toEqual([LOW]);
-    expect(alice.messages[LOW]).toEqual(['m-high', 'm-low']);
-    expect(server.deleted).toEqual([HIGH]);
-  });
+      server.failing.clear();
+      await boot(alice, server);
+      expect(rowIds(alice)).toEqual([LOW]);
+      expect(alice.messages[LOW]).toEqual(['m-high', 'm-low']);
+      expect(server.deleted).toEqual([HIGH]);
+    }
+  );
 
   describe('a mixed pair - a 1.6.6-1.6.10 peer still on recency', () => {
     const mk = (userId: string, peerId: string, low: number, high: number): Device => ({
