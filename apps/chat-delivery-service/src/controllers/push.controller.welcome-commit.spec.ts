@@ -301,6 +301,37 @@ describe('PushController - sendWelcomeAndCommitPush (background re-add)', () => 
     expect(sendWelcome).not.toHaveBeenCalled();
   });
 
+  it('answers a RETRY of an accepted commit as accepted, though the target was removed and re-invited by link in between', async () => {
+    // The first POST landed, its answer was lost, the target was removed and asked back by link
+    // (the seat now awaits admission): `awaiting_admission` here would make the phone clear a stage
+    // the group holds, exactly as `not_a_member` would.
+    groupMemberRepo.findOne.mockResolvedValue({
+      groupId: 'g1',
+      userId: 'u2',
+      awaitingAdmission: true,
+    });
+    answerIfAlreadyAccepted.mockResolvedValue({ accepted: true, newEpoch: 8, duplicate: true });
+
+    const res = await controller.sendWelcomeAndCommitPush(AUTH, body);
+
+    expect(res).toEqual({ status: 'accepted', newEpoch: 8 });
+    expect(answerIfAlreadyAccepted).toHaveBeenCalledWith(
+      body.groupId,
+      body.baseEpoch,
+      body.commitPayload,
+      body.deviceId,
+      expect.any(String)
+    );
+    expect(validateCommit).not.toHaveBeenCalled();
+    expect(sendWelcome).not.toHaveBeenCalled();
+  });
+
+  it('asks the commit log nothing for a seat that may be added, and lets the gate decide', async () => {
+    await controller.sendWelcomeAndCommitPush(AUTH, body);
+    expect(answerIfAlreadyAccepted).not.toHaveBeenCalled();
+    expect(validateCommit).toHaveBeenCalled();
+  });
+
   it("answers the gate's own awaiting_admission (a link ask written after the route's read) as a typed 409", async () => {
     validateCommit.mockResolvedValue({
       accepted: false,

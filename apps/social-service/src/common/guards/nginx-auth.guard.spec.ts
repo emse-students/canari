@@ -1,6 +1,10 @@
 /// <reference types="jest" />
 
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  ExecutionContext,
+  InternalServerErrorException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { createHmac } from 'crypto';
 import { NginxAuthGuard } from './nginx-auth.guard';
 
@@ -37,11 +41,15 @@ describe('NginxAuthGuard (social-service)', () => {
     process.env.NODE_ENV = savedEnv;
   });
 
-  it('refuses every request when the secret is unset, whatever NODE_ENV is (or is not)', () => {
+  it('refuses every request with a 500 when the secret is unset, whatever NODE_ENV is (or is not)', () => {
     delete process.env.NODE_ENV;
     expect(() => guard.canActivate(makeContext({ 'x-user-id': 'user-1' }))).toThrow(
-      UnauthorizedException
+      InternalServerErrorException
     );
+  });
+
+  it('answers the same 500 with NO header at all when the secret is unset: the secret is asked first', () => {
+    expect(() => guard.canActivate(makeContext({}))).toThrow(InternalServerErrorException);
   });
 
   it('does not need NODE_ENV once the secret and a valid token are present', () => {
@@ -65,12 +73,14 @@ describe('NginxAuthGuard (social-service)', () => {
       // an env template, not the production container - so no check ran at all and the bare
       // `X-User-Id` header was accepted as proof of its own authenticity.
       const ctx = makeContext({ 'x-user-id': 'user-1', 'x-internal-token': 'anything' });
-      expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
+      expect(() => guard.canActivate(ctx)).toThrow(InternalServerErrorException);
     });
 
     it('does not accept a bare X-User-Id even when a legacy nginx secret is present', () => {
       // The deleted branch read this variable. Setting it must no longer buy a caller anything.
       process.env.NGINX_AUTH_SECRET = 'legacy-value';
+      // The secret IS set, so the refusal is about the missing internal token, not a 500.
+      process.env.INTERNAL_SHARED_SECRET = SECRET;
       const ctx = makeContext({ 'x-user-id': 'user-1', 'x-nginx-auth': 'legacy-value' });
       expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
     });
@@ -147,7 +157,7 @@ describe('NginxAuthGuard (social-service)', () => {
 
     it('FAILS CLOSED when INTERNAL_SHARED_SECRET is absent: a bare X-User-Id is no longer enough', () => {
       expect(() => guard.canActivate(makeContext({ 'x-user-id': 'user-1' }))).toThrow(
-        UnauthorizedException
+        InternalServerErrorException
       );
     });
 
@@ -177,12 +187,14 @@ describe('NginxAuthGuard (social-service)', () => {
      * whose `sub` is a real user id, arriving with no header, must now be refused.
      */
     it('refuses a Bearer token on its own, however well formed its sub claim is', () => {
+      process.env.INTERNAL_SHARED_SECRET = SECRET;
       const payload = Buffer.from(JSON.stringify({ sub: 'user-1' })).toString('base64url');
       const ctx = makeContext({ authorization: `Bearer header.${payload}.signature` });
       expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
     });
 
     it('does not let a Bearer token put an identity on a request that had none', () => {
+      process.env.INTERNAL_SHARED_SECRET = SECRET;
       const payload = Buffer.from(JSON.stringify({ sub: 'user-1' })).toString('base64url');
       const headers: Record<string, string> = {
         authorization: `Bearer header.${payload}.signature`,
