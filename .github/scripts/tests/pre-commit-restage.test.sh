@@ -58,7 +58,7 @@ restage pkg
 
 if [ "$(git show :pkg/fixed.ts)" = b3 ]; then echo "  ok    the fixer's rewrite is re-staged"; else echo "  FAIL  the fixer's rewrite is not re-staged"; fail=1; fi
 if [ "$(wc -l < "$adds")" -eq 1 ]; then echo "  ok    one git add, for the one file the fixer changed"; else echo "  FAIL  $(wc -l < "$adds") git add calls: $(cat "$adds")"; fail=1; fi
-if git diff --cached --name-only | grep -qx pkg/unstaged.ts; then echo "  FAIL  a file the commit never staged was staged"; fail=1; else echo "  ok    a dirty file the commit never staged stays out"; fi
+if git diff --cached --name-only | grep -x pkg/unstaged.ts >/dev/null; then echo "  FAIL  a file the commit never staged was staged"; fail=1; else echo "  ok    a dirty file the commit never staged stays out"; fi
 
 # Nothing changed by the fixer: no git add at all, so no index lock is taken.
 : > "$adds"
